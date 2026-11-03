@@ -1,14 +1,18 @@
 /**
  * R-S10: every AMQP read runs under a Studio deadline and cannot crash the process. Each hostile peer, with a 2,000 ms
- * deadline, settles within the deadline plus the margin set below, with no uncaught error and no socket left open, under Bun in this
- * process and under every Node binary in NODE_TRANSPORT_NODES (or the node on PATH), from a bundle of the read loop and
- * the peers. Node needs its own run because a throw inside a socket listener exits a Node process, while Bun turns it
- * into a rejection.
+ * deadline, stops at the first socket chunk it is handed after the deadline and settles within the deadline plus the
+ * margin set below, with no uncaught error and no socket left open, under Bun in this process and under every Node
+ * binary in NODE_TRANSPORT_NODES (or the node on PATH), from a bundle of the read loop and the peers. Node needs its
+ * own run because a throw inside a socket listener exits a Node process, while Bun turns it into a rejection.
  *
- * The margin is measured where the failures came from: 10 iterations of this set beside three busy loops on
- * windows-latest and macos-latest stretched the timeout-derived stops to 2,427 ms, and the reported CI failure sat at
- * 2,178 ms, so MARGIN_MS is 500. The old 100 ms covered the 3.9 ms overshoot measured for one read per process; a
- * starved runner stretches timers far beyond contention between the peers themselves.
+ * Wall time alone cannot hold a read to its deadline on a starved runner, so the settle time is taken less the
+ * lateness of a reference timer due at the deadline, which is how long the loop ran nothing but callbacks past it.
+ * That alone would forgive a read that keeps walking chunks past its deadline, since the walk is what holds the timer
+ * back: measured under coverage beside busy loops, the header-heavy read walked one to three 512 KiB chunks after the
+ * deadline, 190 to 400 ms each, before a due timer ran, and stopped on its budget at 2,612 ms in CI. So the read must
+ * also be handed at most one chunk after its deadline, on a socket it has not destroyed: the one in which its own
+ * clock check stops it. MARGIN_MS is 500 from 10 iterations of this set beside three busy loops on windows-latest and
+ * macos-latest, which stretched the timeout-derived stops to 2,427 ms.
  *
  * Several expected stops are a race on one event loop: a peer's close or cancel against the read's 1,000 ms idle timer,
  * and the idle timer against the 2,000 ms deadline. The client's parse of the header-heavy pair holds the loop for one
@@ -29,9 +33,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { makeCertificates } from "../../../helpers/node-transport-fixtures";
-import { HOSTILE_PEERS, type HostileOutcome, runHostileSet } from "../../../helpers/rabbitmq-fake-peer";
+import {
+  HOSTILE_DEADLINE_MS,
+  HOSTILE_PEERS,
+  type HostileOutcome,
+  runHostileSet,
+} from "../../../helpers/rabbitmq-fake-peer";
 
-const DEADLINE_MS = 2_000;
 const MARGIN_MS = 500;
 const HELPER = join(import.meta.dir, "..", "..", "..", "helpers", "rabbitmq-fake-peer.ts");
 
@@ -138,15 +146,20 @@ function check(run: RuntimeRun): void {
       allowed: true,
     });
     const ms = Math.round(outcome.ms);
+    const lateness = Math.round(outcome.lateness);
     expect({
       name: outcome.name,
       label: outcome.label,
       ms,
-      withinDeadline: ms <= DEADLINE_MS + MARGIN_MS,
+      lateness,
+      chunksAfterDeadline: outcome.chunksAfterDeadline,
+      withinDeadline: ms - lateness <= HOSTILE_DEADLINE_MS + MARGIN_MS,
+      stoppedAtFirstChunk: outcome.chunksAfterDeadline <= 1,
     }).toMatchObject({
       name: outcome.name,
       label: outcome.label,
       withinDeadline: true,
+      stoppedAtFirstChunk: true,
     });
     // clientOpen is the read's own promise, taken the moment it settles; openAfter is the peer seeing that close.
     expect({
@@ -187,9 +200,14 @@ describe("R-S10: hostile peers settle within the deadline, uncaught-free, leavin
     }
   });
 
+  // A peer that admits several stops races them, so its outcome is the admitted set, whichever stop won the race.
   test("both runtimes come to the same outcome for every peer", () => {
     const labels = (run: RuntimeRun) =>
-      run.outcomes.map((outcome) => [outcome.name, outcome.label.startsWith("error:") ? "error" : outcome.label]);
+      run.outcomes.map((outcome, index) => {
+        const admitted = HOSTILE_PEERS[index]?.expect ?? [];
+        if (admitted.length > 1 && admitted.includes(outcome.label)) return [outcome.name, admitted.join(" | ")];
+        return [outcome.name, outcome.label.startsWith("error:") ? "error" : outcome.label];
+      });
     for (const run of underNode) expect(labels(run)).toEqual(labels(underBun));
   });
 

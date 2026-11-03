@@ -7,8 +7,9 @@
  * RABBITMQ_BODY_PREFIX_BYTES; the rest is stepped over in place, and an optional observer sees each stepped-over span
  * as a view of the socket chunk, never a copy.
  *
- * Feeding is synchronous and handles one socket chunk per call, so the walk always returns to the event loop between
- * chunks and a deadline timer can fire there.
+ * Feeding is synchronous and handles one socket chunk per call. Returning between chunks is not enough for a deadline
+ * timer to fire: a runtime runs a due timer only after the batch of reads in hand, so the read loop reads the clock at
+ * every event the walk emits (`read-loop.ts`).
  */
 import type { ProtocolFact } from "../errors";
 import {

@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D424, U17 · 310
+- [Drivers and connections](#drivers-and-connections) — D1-D423, U17 · 308
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U196 · 182
@@ -4006,17 +4006,6 @@ Found 2026-10-28 on Bun 1.4.2 and re-measured on 1.4.4.
 
 **Done when:** the RabbitMQ case gives each outcome its own expected object, a sweep of `tests/` splits every other expected object reused inside one `toMatchObject` call, and the behaviour is reported to Bun with the one-line repro above.
 
-### D403. The RabbitMQ hostile-peer runtimes disagree on Windows about which bound stopped one peer
-
-`both runtimes come to the same outcome for every peer` in `tests/unit/db/rabbitmq/hostile-peers.test.ts` holds Node's label for each peer equal to Bun's.
-On `Cross-platform Tests (windows-latest)` the `header-heavy-bytes` peer ended `stop:deadline` under Bun and `stop:budget` under Node, twice: run 40731517642 on 2026-10-28 and attempt 1 of run 40803313969 on 2026-10-29, each passing on its rerun.
-The peer's own expectation in `tests/helpers/rabbitmq-fake-peer.ts` admits `stop:budget`, `stop:limit` and `stop:deadline`, so both outcomes are legitimate and only the equality fails: which bound trips first is a race on a slow runner.
-D424 is the same file's other load failure.
-
-Found 2026-10-29 while reading Windows job failures on `main` and its branches.
-
-**Done when:** the cross-runtime comparison treats a peer's admitted set as one outcome, or the peer is built so that only one bound can trip, and the file passes repeated runs on the Windows job.
-
 ### D404. The Oracle Thin driver keeps a pooled session that `close({ drop: true })` asks it to drop
 
 Measured on node-oracledb 6.10 in Thin mode: a session closed with `close({ drop: true })` came back from the pool with the same session ID and the `CURRENT_SCHEMA` the previous call set.
@@ -4222,19 +4211,6 @@ The service declares `restart: unless-stopped`, so a host reboot or a `docker co
 Found 2026-11-02 while verifying the fix for D160.
 
 **Done when:** a stop and a start of the `db2` service, measured on 12.1.0.0 and 11.5.9.0, bring the database back with its fixture, or the compose file states why the service cannot be restarted and how to recreate it.
-
-### D424. The RabbitMQ hostile-peer test's 500 ms margin can be too small for the header-heavy read under coverage on a loaded runner
-
-`tests/unit/db/rabbitmq/hostile-peers.test.ts` (R-S10) holds every hostile read to its 2,000 ms deadline plus `MARGIN_MS` (500).
-On `Unit & Integration Tests` (coverage, 4 jobs), attempt 1 of run 41577804888 on 2026-11-03, `header-heavy-bytes` under Bun settled `stop:budget` at 2,612 ms and the file failed; the rerun passed.
-The same read takes 240 to 260 ms alone without coverage and 300 to 390 ms with it (5 runs each), so 2,612 ms is a starved process rather than a slow parse.
-Locally, 24 coverage copies of the file beside 12 busy loops on 20 cores failed 10 and 52 of 192 runs in two batches: mostly `withinDeadline` on `header-heavy-bytes`, otherwise a peer ending on a stop its expectation does not admit, such as `error:TimeoutError`; 10 copies beside 10 busy loops passed 50 of 50.
-The frame reader returns to the event loop between socket chunks (`frame-reader.ts` docblock), so the deadline fires only there; whether the overshoot is one long chunk walk or a late timer was not measured.
-Of the 600 CI runs from 2026-09-28 to 2026-11-03 the file failed in 11, 10 of them on the cross-platform jobs and 10 naming a header-heavy peer.
-
-Found 2026-11-03 while fixing the hostile-peer socket count flake, to which this CI failure was first attributed.
-
-**Done when:** the overshoot's cause is measured under coverage (chunk walk time against timer lateness), and either the read stops within the margin on a starved runner or the margin is set from that measurement on the coverage job, and the file passes repeated runs of `Unit & Integration Tests`.
 
 ## Value interpolation
 

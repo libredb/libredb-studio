@@ -289,6 +289,7 @@ describe("TLS dials", () => {
       limit: 1,
       signal: new AbortController().signal,
       deadlineSeconds: 30,
+      deadlineAt: 30_000,
       replicas: { online: [], members: [] },
       dial: dialAmqp,
       clock: createManualClock(),

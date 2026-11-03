@@ -289,13 +289,13 @@ export function message(options: {
 
 export const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/** A port nothing listens on: bound once, then closed. */
-export async function closedPort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as AddressInfo).port;
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return port;
+/**
+ * A port nothing listens on: port 1, which no runtime hands out for a listen on port 0. A port bound once and closed
+ * went back to that pool, and with copies of the hostile set running side by side another copy's fake peer was
+ * measured listening on it before the dial, so "closed-port" ended on that peer's stops instead of a refusal.
+ */
+export function closedPort(): Promise<number> {
+  return Promise.resolve(1);
 }
 
 /** Waits until `check` holds, polling every 5 ms, or fails naming `what` after `ms`. */
@@ -1029,6 +1029,13 @@ export interface HostileOutcome {
   readonly rows: number;
   /** From the read's start to its settling. */
   readonly ms: number;
+  /**
+   * How late a reference timer due at the read's deadline ran, 0 when the read settled by its deadline: the time the
+   * event loop ran nothing but callbacks past the deadline, the read's own walk included.
+   */
+  readonly lateness: number;
+  /** Socket chunks the read was handed once its deadline had passed, on a socket it had not destroyed. */
+  readonly chunksAfterDeadline: number;
   /** Client sockets the read dialled and had not destroyed when it settled. */
   readonly clientOpen: number;
   /** Peer sockets still open after the bounded wait that follows the read settling. */
@@ -1043,9 +1050,12 @@ export interface HostileOutcome {
  */
 export const PEER_CLOSE_WAIT_MS = 10_000;
 
+/** Each hostile read's deadline. */
+export const HOSTILE_DEADLINE_MS = 2_000;
+
 /**
- * Runs one hostile peer against the real read loop and dial under the system clock with a 2,000 ms deadline, and
- * answers what it came to. Self-contained in its imports, so a Node child can run it from a bundle.
+ * Runs one hostile peer against the real read loop and dial under the system clock with a HOSTILE_DEADLINE_MS
+ * deadline, and answers what it came to. Self-contained in its imports, so a Node child can run it from a bundle.
  */
 export async function runHostilePeer(
   peer: HostilePeer,
@@ -1056,7 +1066,20 @@ export async function runHostilePeer(
     : await startFakePeer(peer.steps?.() ?? [], peer.tlsPeer ? { tls: certificate } : {});
   const port = fake?.port ?? (await closedPort());
   const clients: AmqpSocket[] = [];
+  let chunksAfterDeadline = 0;
   const started = performance.now();
+  // The reference timer, the read's deadline signal and its deadline instant start together.
+  let referenceRan = Number.POSITIVE_INFINITY;
+  let referenceDone: () => void = () => {};
+  const reference = new Promise<void>((resolve) => {
+    referenceDone = resolve;
+  });
+  const referenceTimer = setTimeout(() => {
+    referenceRan = performance.now() - started;
+    referenceDone();
+  }, HOSTILE_DEADLINE_MS);
+  const deadlineSignal = AbortSignal.timeout(HOSTILE_DEADLINE_MS);
+  const deadlineAt = SYSTEM_CLOCK.now() + HOSTILE_DEADLINE_MS;
   let label: ReadLabel;
   let rows = 0;
   try {
@@ -1073,12 +1096,17 @@ export async function runHostilePeer(
       stream: "st",
       from: { kind: "keyword", value: "first" },
       limit: peer.limit ?? 50,
-      signal: AbortSignal.timeout(2_000),
-      deadlineSeconds: 2,
+      signal: deadlineSignal,
+      deadlineSeconds: HOSTILE_DEADLINE_MS / 1000,
+      deadlineAt,
       replicas: { online: [], members: [] },
       dial: async (target, signal) => {
         const socket = await dialAmqp(target, signal);
         clients.push(socket);
+        // Registered before the read's own listener, so it sees each chunk before the read walks it.
+        socket.on("data", () => {
+          if (!socket.destroyed && SYSTEM_CLOCK.now() >= deadlineAt) chunksAfterDeadline += 1;
+        });
         return socket;
       },
       clock: SYSTEM_CLOCK,
@@ -1091,6 +1119,9 @@ export async function runHostilePeer(
   }
   const ms = performance.now() - started;
   const clientOpen = clients.filter((socket) => !socket.destroyed).length;
+  if (ms > HOSTILE_DEADLINE_MS) await reference;
+  clearTimeout(referenceTimer);
+  const lateness = ms > HOSTILE_DEADLINE_MS ? Math.max(0, referenceRan - HOSTILE_DEADLINE_MS) : 0;
   if (fake !== null) {
     let stopWait: () => void = () => {};
     const bound = new Promise<void>((resolve) => {
@@ -1102,7 +1133,7 @@ export async function runHostilePeer(
   }
   const openAfter = fake?.openSockets() ?? 0;
   await fake?.stop();
-  return { name: peer.name, label, rows, ms, clientOpen, openAfter };
+  return { name: peer.name, label, rows, ms, lateness, chunksAfterDeadline, clientOpen, openAfter };
 }
 
 /**

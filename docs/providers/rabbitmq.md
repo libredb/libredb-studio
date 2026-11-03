@@ -212,6 +212,7 @@ A declared body above 512 MiB is refused as a protocol violation before any body
 A read that reaches its row limit ends without a warning.
 Every other stop is one warning, listed first: no message within 1 s (which is not proof that the stream ends there), the 8 MiB result limit, the 64 MiB transfer limit, the broker's cancel, the broker closing the connection, the time limit, and Stop.
 A read stops at `min(Query Timeout, 30 s)`.
+Once deliveries flow, the read also checks that time at every frame it reads, so a broker that keeps the socket full cannot hold it past the limit: Bun and Node run a due timer only after the batch of socket reads in hand, and a timer alone let a loaded read walk up to 21 more chunks after its limit, measured by R-S10 in `tests/unit/db/rabbitmq/hostile-peers.test.ts`.
 
 ### 5.6 Messages the broker cannot convert (541)
 
