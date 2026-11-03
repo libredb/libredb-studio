@@ -1,0 +1,243 @@
+{
+  "$captured": {
+    "image": "eclipse-mosquitto:2.0.22@sha256:199ea8ef2e35ec2b1b37e59cfd1dbae538ed4dfa4a2251a121a52215a6248a21",
+    "date": "2026-11-03",
+    "runtime": "bun 1.4.4",
+    "brokers": "open: the fixture's anonymous broker; acl: anonymous, reads one of the two groups alone"
+  },
+  "reads": {
+    "window": {
+      "isError": false,
+      "row": {
+        "window_ms": 3001,
+        "listened_ms": 3001,
+        "stop_reason": "time-budget",
+        "scope": "window",
+        "broker_reason_code": null,
+        "subscriptions_refused": 0,
+        "groups_seen": 2,
+        "edge_nodes_seen": 4,
+        "devices_seen": 1,
+        "messages": 16,
+        "nbirth": 6,
+        "ndeath": 0,
+        "ndata": 6,
+        "dbirth": 2,
+        "ddeath": 0,
+        "ddata": 2,
+        "other_messages": 0,
+        "metrics": 52,
+        "payload_bytes": 1544,
+        "messages_not_decodable": 0,
+        "payloads_not_kept": 0
+      },
+      "notes": [
+        "Studio listened to the whole spBv1.0 namespace for 3,001 ms after subscribing, in a window that ran 3,001 ms from the start of the read, dial included (Studio's window is 3,000 ms), and stopped because the window ended. It counted 16 messages from 2 groups, 4 edge nodes and 1 device.",
+        "An edge node or device not seen in the window may still exist: Sparkplug has no command that lists edge nodes or devices, a birth certificate is published at QoS 0 and not retained, and an edge node that published nothing in the window looks exactly like one that is gone, so no answer is a complete count of the plant, and no answer says that a node or device is online, offline or absent, only what the window saw."
+      ],
+      "carriesSeeded": false
+    },
+    "group": {
+      "isError": false,
+      "row": {
+        "window_ms": 3001,
+        "listened_ms": 3001,
+        "stop_reason": "time-budget",
+        "scope": "window",
+        "broker_reason_code": null,
+        "subscriptions_refused": 0,
+        "seen": true,
+        "messages": 6,
+        "nbirth": 2,
+        "ndeath": 0,
+        "ndata": 2,
+        "dbirth": 1,
+        "ddeath": 0,
+        "ddata": 1,
+        "birth_seen": true,
+        "death_seen": false,
+        "last_seen_ms": 1790,
+        "metrics": 23,
+        "payload_bytes": 690,
+        "messages_not_decodable": 0,
+        "payloads_not_kept": 0
+      },
+      "notes": [
+        "Studio listened to the one group the request named for 3,001 ms after subscribing, in a window that ran 3,001 ms from the start of the read, dial included (Studio's window is 3,000 ms), and stopped because the window ended. It counted 6 messages from it.",
+        "last_seen_ms is when the last message from it arrived, counted from the subscription; the message counts, the metrics and the payload bytes are totals over the window, and birth_seen and death_seen say whether the window saw a birth or a death, not whether it is online or offline now.",
+        "An edge node or device not seen in the window may still exist: Sparkplug has no command that lists edge nodes or devices, a birth certificate is published at QoS 0 and not retained, and an edge node that published nothing in the window looks exactly like one that is gone, so no answer is a complete count of the plant, and no answer says that a node or device is online, offline or absent, only what the window saw."
+      ],
+      "carriesSeeded": false
+    },
+    "device": {
+      "isError": false,
+      "row": {
+        "window_ms": 3001,
+        "listened_ms": 3000,
+        "stop_reason": "time-budget",
+        "scope": "window",
+        "broker_reason_code": null,
+        "subscriptions_refused": 0,
+        "seen": true,
+        "messages": 4,
+        "nbirth": null,
+        "ndeath": null,
+        "ndata": null,
+        "dbirth": 2,
+        "ddeath": 0,
+        "ddata": 2,
+        "birth_seen": true,
+        "death_seen": false,
+        "last_seen_ms": 2787,
+        "metrics": 16,
+        "payload_bytes": 452,
+        "messages_not_decodable": 0,
+        "payloads_not_kept": 0
+      },
+      "notes": [
+        "Studio listened to the birth, death and data topics of the one device the request named for 3,000 ms after subscribing, in a window that ran 3,001 ms from the start of the read, dial included (Studio's window is 3,000 ms), and stopped because the window ended. It counted 4 messages from it.",
+        "last_seen_ms is when the last message from it arrived, counted from the subscription; the message counts, the metrics and the payload bytes are totals over the window, and birth_seen and death_seen say whether the window saw a birth or a death, not whether it is online or offline now.",
+        "An edge node or device not seen in the window may still exist: Sparkplug has no command that lists edge nodes or devices, a birth certificate is published at QoS 0 and not retained, and an edge node that published nothing in the window looks exactly like one that is gone, so no answer is a complete count of the plant, and no answer says that a node or device is online, offline or absent, only what the window saw."
+      ],
+      "carriesSeeded": false
+    }
+  },
+  "sessions": {
+    "perCall": 2,
+    "distinctIds": 2
+  },
+  "scope": {
+    "aclWindow": {
+      "isError": false,
+      "row": {
+        "window_ms": 3001,
+        "listened_ms": 3001,
+        "stop_reason": "time-budget",
+        "scope": "window",
+        "broker_reason_code": null,
+        "subscriptions_refused": 0,
+        "groups_seen": 1,
+        "edge_nodes_seen": 3,
+        "devices_seen": 1,
+        "messages": 6,
+        "nbirth": 2,
+        "ndeath": 0,
+        "ndata": 2,
+        "dbirth": 1,
+        "ddeath": 0,
+        "ddata": 1,
+        "other_messages": 0,
+        "metrics": 23,
+        "payload_bytes": 690,
+        "messages_not_decodable": 0,
+        "payloads_not_kept": 0
+      },
+      "notes": [
+        "Studio listened to the whole spBv1.0 namespace for 3,001 ms after subscribing, in a window that ran 3,001 ms from the start of the read, dial included (Studio's window is 3,000 ms), and stopped because the window ended. It counted 6 messages from 1 group, 3 edge nodes and 1 device.",
+        "An edge node or device not seen in the window may still exist: Sparkplug has no command that lists edge nodes or devices, a birth certificate is published at QoS 0 and not retained, and an edge node that published nothing in the window looks exactly like one that is gone, so no answer is a complete count of the plant, and no answer says that a node or device is online, offline or absent, only what the window saw."
+      ],
+      "carriesSeeded": false
+    },
+    "aclOutsidePublishing": {
+      "isError": false,
+      "row": {
+        "window_ms": 3000,
+        "listened_ms": 3000,
+        "stop_reason": "time-budget",
+        "scope": "window",
+        "broker_reason_code": null,
+        "subscriptions_refused": 0,
+        "seen": false,
+        "messages": 0,
+        "nbirth": 0,
+        "ndeath": 0,
+        "ndata": 0,
+        "dbirth": 0,
+        "ddeath": 0,
+        "ddata": 0,
+        "birth_seen": false,
+        "death_seen": false,
+        "last_seen_ms": null,
+        "metrics": 0,
+        "payload_bytes": 0,
+        "messages_not_decodable": 0,
+        "payloads_not_kept": 0
+      },
+      "notes": [
+        "Studio listened to the one group the request named for 3,000 ms after subscribing, in a window that ran 3,000 ms from the start of the read, dial included (Studio's window is 3,000 ms), and stopped because the window ended. It counted 0 messages from it.",
+        "last_seen_ms is when the last message from it arrived, counted from the subscription; the message counts, the metrics and the payload bytes are totals over the window, and birth_seen and death_seen say whether the window saw a birth or a death, not whether it is online or offline now.",
+        "An edge node or device not seen in the window may still exist: Sparkplug has no command that lists edge nodes or devices, a birth certificate is published at QoS 0 and not retained, and an edge node that published nothing in the window looks exactly like one that is gone, so no answer is a complete count of the plant, and no answer says that a node or device is online, offline or absent, only what the window saw."
+      ],
+      "carriesSeeded": false
+    },
+    "aclOutsidePublishingVsMissingAlike": true,
+    "openMissingGroup": {
+      "isError": false,
+      "row": {
+        "window_ms": 3001,
+        "listened_ms": 3001,
+        "stop_reason": "time-budget",
+        "scope": "window",
+        "broker_reason_code": null,
+        "subscriptions_refused": 0,
+        "seen": false,
+        "messages": 0,
+        "nbirth": 0,
+        "ndeath": 0,
+        "ndata": 0,
+        "dbirth": 0,
+        "ddeath": 0,
+        "ddata": 0,
+        "birth_seen": false,
+        "death_seen": false,
+        "last_seen_ms": null,
+        "metrics": 0,
+        "payload_bytes": 0,
+        "messages_not_decodable": 0,
+        "payloads_not_kept": 0
+      },
+      "notes": [
+        "Studio listened to the one group the request named for 3,001 ms after subscribing, in a window that ran 3,001 ms from the start of the read, dial included (Studio's window is 3,000 ms), and stopped because the window ended. It counted 0 messages from it.",
+        "last_seen_ms is when the last message from it arrived, counted from the subscription; the message counts, the metrics and the payload bytes are totals over the window, and birth_seen and death_seen say whether the window saw a birth or a death, not whether it is online or offline now.",
+        "An edge node or device not seen in the window may still exist: Sparkplug has no command that lists edge nodes or devices, a birth certificate is published at QoS 0 and not retained, and an edge node that published nothing in the window looks exactly like one that is gone, so no answer is a complete count of the plant, and no answer says that a node or device is online, offline or absent, only what the window saw."
+      ],
+      "carriesSeeded": false
+    },
+    "scopedOtherGroup": {
+      "isError": true,
+      "text": "The statement was refused before it reached the database: This connection names one group in its Database field, and an agent read stays inside it: name that group, or read the window, which listens to that group alone. Nothing was sent.",
+      "carriesSeeded": false
+    }
+  },
+  "refused": [
+    {
+      "request": "an id with a wildcard",
+      "sessionsUnfenced": 1
+    },
+    {
+      "request": "an id with a level separator",
+      "sessionsUnfenced": 1
+    },
+    {
+      "request": "the host state group",
+      "sessionsUnfenced": 1
+    },
+    {
+      "request": "a rebirth command",
+      "sessionsUnfenced": 1
+    },
+    {
+      "request": "a filter of the model's",
+      "sessionsUnfenced": 1
+    }
+  ],
+  "limits": {
+    "leastTimeoutAnsweredMs": 3016,
+    "belowLeast": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 5000,\n    \"inclusive\": true,\n    \"path\": [\n      \"timeout_ms\"\n    ],\n    \"message\": \"timeout_ms must be at least 5000 for run_sparkplug_read: a Sparkplug read listens for a 3,000 ms window and needs 4,000 ms with its dial, after the connection's own handshake, and a window is never shortened, so nothing was sent.\"\n  }\n]",
+    "cancelAnsweredMs": 1007
+  },
+  "inspect": {
+    "totalTables": 0,
+    "isError": false
+  }
+}
