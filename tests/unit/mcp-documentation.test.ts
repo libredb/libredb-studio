@@ -180,6 +180,16 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("carries run_mqtt_read's and run_sparkplug_read's seeds, notes and inspect_schema answers", () => {
+    expect(MCP_DOC).toContain("An MQTT seed's `user` is never proven read-only");
+    expect(MCP_DOC).toContain("a retained topic outside its ACL answers exactly as a topic that does not exist");
+    expect(MCP_DOC).toContain("A Sparkplug B seed carries no credential");
+    expect(MCP_DOC).toContain("On MQTT it refuses the call the same way, naming `run_mqtt_read`");
+    expect(MCP_DOC).toContain("On Sparkplug B it lists no group, edge node or device and answers an empty page");
+    expect(MCP_DOC).toContain("`timeout_ms` must be at least 5000");
+    expect(MCP_DOC).toContain("which then reach the client as the answer's `notes`");
+  });
+
   test("says inspect_schema refuses Kubernetes", () => {
     expect(MCP_DOC).toContain(
       "On Kubernetes it refuses the call by name, because no Kubernetes kind is a table: the refusal names `run_kubectl_read`, which reads its objects, and is answered as soon as the connection resolves, before anything is acquired.",

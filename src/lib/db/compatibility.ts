@@ -589,8 +589,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // withholds them is designed yet (BACKLOG B158).
   snmp: false,
   // Offered with every answer metadata only, as agent mode reads it: ids, metric names and values are withheld, so
-  // `inspect_schema` answers an empty page, since an agent-mode handle declares no kind, and `run_sparkplug_read` answers one window's totals or one named object's counts, with its window and the
-  // completeness sentence.
+  // `inspect_schema` answers an empty page, since an agent-mode handle declares no kind, and `run_sparkplug_read`
+  // answers one window's totals or one named object's counts, with its window and the completeness sentence.
   sparkplug: true,
   libredb: true,
 });
