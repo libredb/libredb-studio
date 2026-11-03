@@ -3141,7 +3141,7 @@ describe("QueryEditor", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Branch coverage: console.error "Canceled" suppression (line 403)
+  // Branch coverage: console.error "Canceled" suppression
   // -----------------------------------------------------------------------
 
   test("console.error suppression returns early for Canceled messages", () => {
@@ -3186,7 +3186,7 @@ describe("QueryEditor", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Branch coverage: format keyboard shortcut handler (line 706)
+  // Branch coverage: format keyboard shortcut handler
   // -----------------------------------------------------------------------
 
   test("Alt+Shift+F keyboard shortcut triggers format", () => {
@@ -3203,7 +3203,7 @@ describe("QueryEditor", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Branch coverage: handleFormat else branch for unsupported language (line 212)
+  // Branch coverage: handleFormat else branch for unsupported language
   // -----------------------------------------------------------------------
 
   test("Format button is hidden for languages without a formatter (e.g. libredb)", () => {

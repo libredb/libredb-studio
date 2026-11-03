@@ -936,7 +936,7 @@ describe("POST /api/db/objects/describe", () => {
   // PostgreSQL checks for a zero-row catalog answer and raises `No detail row for ...`
   // (`describeObject` in `src/lib/db/providers/sql/postgres.ts`); oracle, mysql and couchbase have no such check
   // and answer three empty arrays, couchbase because a rejected INFER is deliberately not an error
-  // (`src/lib/db/providers/document/couchbase/introspect.ts:206-215`). Both cases are driven
+  // (`inferColumns` in `src/lib/db/providers/document/couchbase/introspect.ts`). Both cases are driven
   // through DOUBLES over one missing path and are never asserted as a count of engines.
   const DROPPED_PATH = ["app", "orders_dropped"];
 

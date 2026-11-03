@@ -96,7 +96,7 @@ import { ModbusDecodeError } from "./values";
  * WHY EVERY REFUSAL HERE IS A `QueryError` AND NOT A PLAIN `Error`. Measured on `90881379`: the
  * product treats the two differently, and a plain `Error` is the worse answer. `isQueryError`
  * (`src/lib/db/errors.ts`) tests `instanceof QueryError`, and a reader such as
- * `src/lib/db/providers/platform/kubernetes/objects.ts:348` turns a `QueryError` into
+ * `countKind` in `src/lib/db/providers/platform/kubernetes/objects.ts` turns a `QueryError` into
  * `{ unavailable }` while letting anything else propagate as an unexpected failure. So a refusal
  * thrown as a plain `Error` reaches the user as a crash rather than as the sentence it carries.
  * This was a real defect in the first version of this file and it is fixed here.

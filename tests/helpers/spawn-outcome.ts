@@ -74,7 +74,7 @@ export function howItFailed(run: SpawnFailure): string {
   if (signal) return `was killed by ${signal}`;
   // node:child_process reports neither a status nor a signal when the child could not be started
   // or hit its `timeout`, and puts the reason in `error` instead. `tests/integration/db/
-  // sqlite-provider.test.ts:3801` records the same thing: a status of null read on its own USED TO
+  // the test "core CRUD, schema, maintenance, and error mapping work under Node" in sqlite-provider.test.ts` records the same thing: a status of null read on its own USED TO
   // raise a message that names nothing, and under a concurrent runner a timeout is the likely
   // failure. (That file's wording is past tense because this change gave its message a cause.)
   if (run.error) return `could not run (${run.error.message})`;

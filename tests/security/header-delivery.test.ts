@@ -12,7 +12,7 @@ import { mintTestToken, useMcpChannel } from "../helpers/mcp-token";
  * Threat: a response path that escapes the headers. proxy() has eleven return statements; a new
  * branch that forgets withSecurityHeaders() ships a document with no CSP and no clickjacking
  * defence, and nothing else in the suite would notice. Ten of the eleven are driven here; the
- * eleventh - the Origin-mismatch 403 - is driven in csrf-origin.test.ts:86 ("still carries the
+ * eleventh - the Origin-mismatch 403 - is driven in the test "is refused when it carries neither an Origin nor a Referer" in csrf-origin.test.ts ("still carries the
  * security headers, so the 403 is not a hole of its own"), since that branch's own threat model
  * belongs with the rest of the Origin-check suite.
  */

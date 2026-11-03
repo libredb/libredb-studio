@@ -213,11 +213,11 @@ StudioのAIの中心は、エディタの隣にあるエージェントレール
 
 - **読み取り専用。しかもデータベース自身が保証する**：エージェントが実行するすべての文は、**エージェント
   専用の監査付きパイプライン**を通ります。ドライバに触れる前にポリシー判定・監査イベント・予算計上が行われ
-  （`executeAuditedOperation`、`src/lib/db/operations/execution.ts:129`）、読み取り専用の実行プロファイルで
+  （`executeAuditedOperation`、`src/lib/db/operations/execution.ts`）、読み取り専用の実行プロファイルで
   動きます（PostgreSQLでは読み取り専用トランザクション、SQLiteでは文ごとに`PRAGMA query_only`を再宣言、DuckDBでは`READ_ONLY`のエンジンハンドルに加えてSQLレベルのガード。そのフラグだけでは`COPY … TO`、`EXPORT DATABASE`、ローカルファイルを読むテーブル関数が通ってしまうためです。読み取り専用トランザクションがそもそも存在しないSQL Serverでは、接続を開く時点でセッションのプリンシパルが書けないことを検証し、オプティマイザが各文を実行せずにコンパイルだけして受け入れ、行数をサーバー側で制限し、必ずロールバックされるトランザクションの中で実行します）。
   書き込みとDDLはデータベースに届く前に拒否され、`EXPLAIN ANALYZE`は文を実際に実行してしまうため既定で
   不許可です。このパイプラインはエージェント専用です。あなたがエディタで自分で実行する文はプロバイダを直接
-  呼び出しており（`src/app/api/db/query/route.ts:312`）、ここでのポリシー判定も監査も受けません。
+  呼び出しており（`runEditorQuery` in `src/lib/api/editor-query.ts`）、ここでのポリシー判定も監査も受けません。
 - **Agentモードが対応するのはPostgreSQL・SQLite・DuckDB・SQL Server・MySQL・Kubernetes・MongoDB・ClickHouse・libSQL・InfluxDB 3 (SQL)・Elasticsearch・OpenSearch・Oracle・Db2 LUW・Apache Cassandra・Couchbase・Apache Druid・LibreDB・InfluxDB (InfluxQL)・Weaviate・Qdrant・Neo4j・Milvus・Redis・etcd・Oxia・RabbitMQ・Apache Kafka・S3-compatible object storage・Firestore・SNMP・NETCONF・Modbus・Prometheus・OPC UA・MTConnect・MQTT・Sparkplug B・Trinoだけ**：読み取り専用プロファイルは、
   それを実装したプロバイダにしか存在しません。`postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、
   `mssql.ts`、`mysql.ts`、`kubernetes/index.ts`、`mongodb/index.ts`、`clickhouse/index.ts`、`libsql/index.ts`、`influxdb/sql-provider.ts`、`search/index.ts`、`oracle/index.ts`、`db2/index.ts`、`cassandra/index.ts`、`couchbase/index.ts`、`druid/index.ts`、`libredb.ts`、`influxdb/influxql-provider.ts`、`weaviate/index.ts`、`qdrant/index.ts`、`neo4j/index.ts`、`milvus/index.ts`、`redis.ts`、`etcd/index.ts`、`oxia/index.ts`、`rabbitmq/index.ts`、`kafka/index.ts`、`s3/index.ts`、`firestore/index.ts`、`snmp/index.ts`、`netconf/index.ts`、`modbus/index.ts`、`prometheus/index.ts`、`opcua/index.ts`、`mtconnect/index.ts`、`mqtt/index.ts`、`sparkplug/index.ts`、`trino/index.ts`の`queryReadOnly`のみで、他にはありません。
@@ -238,7 +238,7 @@ StudioのAIの中心は、エディタの隣にあるエージェントレール
 - **モデルは自分のもの**：Gemini（既定）、OpenAI、Ollama、またはOpenAI互換の任意のエンドポイント。
   **Agent**モードにはツール呼び出しに対応したモデルが必要で、Ollamaではそれをベンダーの資料ではなく実際の
   プローブで確かめます。**Plan**モードはツールを必要とせず、プローブも行われないため
-  （`src/lib/agent/capability-gate.ts:74`）、Agentモードで拒否されたモデルでもPlanモードでは使えます。
+  （the `mode === "planning"` early return in `admitAgentModel`, `src/lib/agent/capability-gate.ts`）、Agentモードで拒否されたモデルでもPlanモードでは使えます。
   レール自身もそれを案内します。
 - **モデルを設定しなければAIもありません**：`LLM_*` を何も設定していなければレール自体が表示されず、
   ネットワークの外へは何も出ません。スイッチはキーではない点に注意してください。Ollamaやカスタム

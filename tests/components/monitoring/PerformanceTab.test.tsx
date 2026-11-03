@@ -219,8 +219,8 @@ describe("PerformanceTab", () => {
   });
 
   // Trino "holds no buffer pool" and "takes no locks, so there are no deadlocks to
-  // count" (providers/sql/trino/introspect.ts:622-639), Cassandra and Druid omit the
-  // same two fields, and sqlite.ts:715 sets bufferPoolUsage undefined outright. The
+  // count" (`getPerformanceMetrics` in providers/sql/trino/introspect.ts), Cassandra and Druid omit the
+  // same two fields, and `BlankDefinitionShape` in sqlite.ts sets bufferPoolUsage undefined outright. The
   // panel used to answer those absences with "0 %"/"Poor" and "0"/"None
   // detected"/"Healthy" - a rating and a clean bill of health for measurements nobody
   // made. Same rule as the cache hit ratio card three lines above it.

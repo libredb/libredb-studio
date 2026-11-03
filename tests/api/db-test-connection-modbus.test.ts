@@ -3,7 +3,7 @@
  *
  * This exists because of a measured defect. `connect()` parsed the register map and opened nothing,
  * and this route reports a health failure after a successful connect as a DEGRADED SUCCESS
- * (`route.ts:146-160`), so an address with no device behind it answered:
+ * (`POST` in `route.ts`), so an address with no device behind it answered:
  *
  *     HTTP 200 {"success":true,"degraded":true,"message":"Connected, but this server answered no
  *               health data: The connection to 127.0.0.1:9 failed: connect ECONNREFUSED"}

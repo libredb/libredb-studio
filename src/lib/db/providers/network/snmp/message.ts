@@ -2,7 +2,7 @@
  * SNMPv2c messages, built and read by this provider rather than by a library.
  *
  * WHY THERE IS NO CLIENT LIBRARY HERE. The house doctrine says a protocol worth supporting is
- * worth supporting without a dependency (`docs/ADDING_A_PROVIDER.md:21`), and the precedent is
+ * worth supporting without a dependency (the "Prerequisites" section of `docs/ADDING_A_PROVIDER.md`), and the precedent is
  * S3's request signing, which is Studio's own `node:crypto` code rather than an SDK. The second
  * reason is specific to SNMP: every client library on npm carries an agent, a trap sender and a
  * notification receiver in the same module, so depending on one means spending the rest of the

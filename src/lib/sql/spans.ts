@@ -25,9 +25,9 @@
  * grammar (S1), which is why the list of readers deliberately left alone is down to
  * one:
  *
- * - `alias-extractor.ts:134-135` blanks literals with a regex that honours
+ * - `preprocessSql` in `alias-extractor.ts` blanks literals with a regex that honours
  *   BACKSLASH escapes, which this module reports as undeterminable instead unless
- *   the grammar declares `backslashAlwaysEscapes` (see `readQuoted`). Its comment strip (lines 130-132) knows `--` and the block form
+ *   the grammar declares `backslashAlwaysEscapes` (see `readQuoted`). Its comment strip knows `--` and the block form
  *   and no dialect at all, so it does not know `//` either. Its job is autocomplete,
  *   where a wrong alias costs a suggestion; here a wrong literal boundary costs a
  *   bound on a write - or, at the splitter, a fragment that gets executed.

@@ -530,8 +530,7 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
     expect(DOC).toMatch(/^#{1,6} .*Object edit \(#789\)/m);
   });
 
-  test("the doc carries no em dash and no en dash, and cites no factory.ts line", () => {
+  test("the doc carries no em dash and no en dash", () => {
     expect(DOC).not.toMatch(/[\u2013\u2014]/);
-    expect(DOC).not.toMatch(/factory\.ts:\d/);
   });
 });

@@ -2240,9 +2240,9 @@ describe("the object surface declaration", () => {
    *
    * Three kinds declare it and the third is the one that refutes `role === "relation"` as a
    * gate: `type` is `role: "config"` and `typeDetail` maps the UDT's `field_names` and
-   * `field_types` into columns (`cassandra/objects.ts:867-886`). `index` is `config` too and
+   * `field_types` into columns (`cassandra/objects.ts`). `index` is `config` too and
    * does NOT declare, because `indexDetail` answers `columns: []` and puts the whole content
-   * of an index into `indexes` (`cassandra/objects.ts:892-894`) - a twisty there would open on
+   * of an index into `indexes` (`cassandra/objects.ts`) - a twisty there would open on
    * nothing. `function`, `aggregate` and `trigger` have no columns at all and take the
    * undeclared default, which reads as false.
    */

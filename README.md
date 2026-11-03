@@ -211,7 +211,7 @@ what comes back, and finishes by composing a report whose every claim cites the 
 
 - **Read-only, enforced by the database rather than by a parser.** Every statement the agent runs
   goes through the agent's own audited pipeline — a policy decision, an audit event and budget
-  accounting before the driver is touched (`executeAuditedOperation`, `src/lib/db/operations/execution.ts:129`)
+  accounting before the driver is touched (`executeAuditedOperation`, `src/lib/db/operations/execution.ts`)
   — under a read-only execution profile: a read-only transaction on PostgreSQL, `PRAGMA query_only`
   re-asserted per statement on SQLite, a `READ_ONLY` engine handle on DuckDB paired with an
   SQL-level guard, because that flag alone still lets `COPY … TO`, `EXPORT DATABASE` and the
@@ -221,7 +221,7 @@ what comes back, and finishes by composing a report whose every claim cites the 
   always rolled back. Writes and DDL are refused before the database is reached,
   and `EXPLAIN ANALYZE` is default-denied because it would run the statement. This pipeline is the
   agent's alone: statements you run yourself in the editor call the provider directly
-  (`src/app/api/db/query/route.ts:312`) and are neither policy-checked nor audited this way.
+  (`runEditorQuery` in `src/lib/api/editor-query.ts`) and are neither policy-checked nor audited this way.
 - **Agent mode reads PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino.** The read-only profile
   exists only where a provider implements it: `queryReadOnly` on
   `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts`, `search/index.ts`, `oracle/index.ts`, `db2/index.ts`, `cassandra/index.ts`, `couchbase/index.ts`, `druid/index.ts`, `libredb.ts`, `influxdb/influxql-provider.ts`, `weaviate/index.ts`, `qdrant/index.ts`, `neo4j/index.ts`, `milvus/index.ts`, `redis.ts`, `etcd/index.ts`, `oxia/index.ts`, `rabbitmq/index.ts`, `kafka/index.ts`, `s3/index.ts`, `firestore/index.ts`, `snmp/index.ts`, `netconf/index.ts`, `modbus/index.ts`, `prometheus/index.ts`, `opcua/index.ts`, `mtconnect/index.ts`, `mqtt/index.ts`, `sparkplug/index.ts` and `trino/index.ts`, and nowhere else.
@@ -250,7 +250,7 @@ what comes back, and finishes by composing a report whose every claim cites the 
 - **Your own model.** Gemini (the default), OpenAI, Ollama, or any OpenAI-compatible endpoint.
   **Agent** mode needs a model that can call tools — on Ollama, a live probe, not the vendor's page,
   is what establishes that, and the guide says how to run one. **Plan** mode needs no tools and is
-  never probed (`src/lib/agent/capability-gate.ts:74`), so a model refused for Agent mode can still
+  never probed (the `mode === "planning"` early return in `admitAgentModel`, `src/lib/agent/capability-gate.ts`), so a model refused for Agent mode can still
   be used in Plan mode, which is what the rail offers you.
 - **No model configured, no AI.** With no `LLM_*` settings at all, the rail does not render, and
   nothing leaves your network. Note that a key is not the switch: Ollama and a custom endpoint count

@@ -37,29 +37,29 @@ The rail is part of the **standalone application only** — the embedded `@libre
 renders no agent surface at all (`src/workspace/StudioWorkspace.tsx`, and
 `tests/unit/agent-package-boundary.test.ts` pins it). Above the `md` breakpoint it is a resizable
 panel beside the editor; below it, the same rail opens as a sheet
-(`AgentRail.tsx:2241-2264` chooses the presentation, and it is one component instance either way, so
+(`AgentRail` in `AgentRail.tsx` chooses the presentation, and it is one component instance either way, so
 an objective you are typing survives a window resize).
 
 Three controls elsewhere in the shell open it **carrying the statement in your editor**:
 
 | Control | Where | What it does |
 | --- | --- | --- |
-| "Ask the agent about this query" | Command palette (`src/components/CommandPalette.tsx:134-137`) | Fills the objective with the editor's statement, and names the *Investigate* workflow for it |
-| "Ask about this query" | Mobile header (`src/components/studio/StudioMobileHeader.tsx:272-282`) | The same, and opens the sheet |
-| "Agent" | Mobile nav (`src/components/Studio.tsx:857-863`) | Opens the rail and asks nothing |
+| "Ask the agent about this query" | Command palette (`CommandPalette` in `src/components/CommandPalette.tsx`) | Fills the objective with the editor's statement, and names the *Investigate* workflow for it |
+| "Ask about this query" | Mobile header (`StudioMobileHeader` in `src/components/studio/StudioMobileHeader.tsx`) | The same, and opens the sheet |
+| "Agent" | Mobile nav (`Studio` in `src/components/Studio.tsx`) | Opens the rail and asks nothing |
 
 **The two that name a workflow name it under Advanced, and open that panel to show you.** The
 workflow axis is **Automatic** by default (below), so a shortcut that quietly set it would be
 making a choice you could not see. It sets *Investigate* explicitly and unfolds the disclosure, so
 the run it starts is one you named — no classification happens for it, and one click puts the axis
-back to Automatic (`Studio.tsx:276-283`, applied by the rail at `AgentRail.tsx:776-814`).
+back to Automatic (`Studio` in `Studio.tsx`, applied by the rail at `AgentRail` in `AgentRail.tsx`).
 
 **None of them starts a run.** The shortcut fills the box; pressing **Start**
 is yours (`src/components/agent/use-agent-prefill.ts`, and the rail's own effect at
-`AgentRail.tsx:776-814`). If you were already typing an objective, the shortcut does not overwrite
+`AgentRail` in `AgentRail.tsx`). If you were already typing an objective, the shortcut does not overwrite
 it — it offers the new one on a line reading `Suggested: …` with a **Replace** control beside it
-(`AgentRail.tsx:1511-1528`). The statement is passed as you wrote it, minus surrounding whitespace;
-nothing is composed around it on your behalf (`Studio.tsx:276-283`).
+(`AgentRail` in `AgentRail.tsx`). The statement is passed as you wrote it, minus surrounding whitespace;
+nothing is composed around it on your behalf (`Studio` in `Studio.tsx`).
 
 **If the rail is not there, the server is telling you something.** Visibility is derived rather than
 flagged: the browser asks `GET /api/agent/config` once per mount
@@ -77,7 +77,7 @@ There are three things it is decided by, and you only have to answer two of them
 control in the rail's header, the objective is the box, and the **workflow is read off your
 objective unless you say otherwise**.
 
-**1. The mode — how the run executes** (`AgentRail.tsx:1464-1487`, labels at `AgentRail.tsx:149-152`):
+**1. The mode — how the run executes** (`AgentRail` in `AgentRail.tsx`, labels at `MODE_LABELS` in `AgentRail.tsx`):
 
 | Button | What it means |
 | --- | --- |
@@ -85,7 +85,7 @@ objective unless you say otherwise**.
 | **Agent** | The model is given the read-only tools and investigates: it drafts statements, reads results, and finishes by composing a report whose claims cite what it read. |
 
 **2. The workflow — what the run is for**, and it is **Automatic** unless you say otherwise. Under
-**Advanced** (`AgentRail.tsx:1544-1601`, labels at `AgentRail.tsx:163-169`) the five are all there —
+**Advanced** (`AgentRail` in `AgentRail.tsx`, labels at `WORKFLOW_LABELS` in `AgentRail.tsx`) the five are all there —
 **Investigate**, **Optimize**, **Assess**, **Operate**, **Analyze** — offered in both modes, because
 "how would you make this faster?" is an ordinary thing to ask a plan for.
 
@@ -110,7 +110,7 @@ Three consequences worth knowing before you rely on it:
   run's workflow cannot be edited, and both consequences are written beside the control rather than
   discovered. If the stop is refused, nothing new is opened and the rail says the run is still
   going, because two runs on one connection is the outcome that must not happen quietly.
-  (`AgentRail.tsx:1761-1826`.) Your objective is not lost: the new run re-asks the same question,
+  (`AgentRail` in `AgentRail.tsx`.) Your objective is not lost: the new run re-asks the same question,
   read off the run that was open.
 
 **What leaves your machine for the classification** — your objective, before any run exists — is
@@ -132,7 +132,7 @@ other four workflows have no answer to present.
 **3. The objective** — what the run is asked, and what the reading above reads. The box is labelled
 *"What should the run investigate?"*, placeholder *"Why is checkout slow?"*, and it is bounded to
 4000 characters (`AGENT_MAX_OBJECTIVE_LENGTH` in
-`src/lib/agent/execution-policy.ts:479`). It is **emptied once the server has opened the run**, so
+`AGENT_MAX_OBJECTIVE_LENGTH` in `src/lib/agent/execution-policy.ts`). It is **emptied once the server has opened the run**, so
 the next question needs no deleting; the question itself is not lost, since the run's header carries
 it and the timeline's first entry quotes it. A start that was *refused* leaves what you typed exactly
 where it was, so retrying is one click rather than one retyping.
@@ -161,7 +161,7 @@ you to work it out from an answer that does not resolve. The same line appears, 
 when a conversation could not be reached at all.
 
 Both axes are **fixed when the run opens** and are read from the run's own record for the rest of
-its life (`src/app/api/agent/runs/route.ts:35-56`), so nothing can widen a Plan run into an Agent
+its life (`ROUTE` in `src/app/api/agent/runs/route.ts`), so nothing can widen a Plan run into an Agent
 one afterwards. The record also carries **how** the workflow was decided and how that reading went,
 which is what lets the rail say the same true sentence about a run after a reload as it said when
 it opened it.
@@ -347,7 +347,7 @@ establishes (the investigation variant's `objective` in `AGENT_WORKFLOW_VARIANTS
 Tools: `inspect_schema`, `run_read_query`, `inspect_plan`, `compose_report` (the same variant's `tools`).
 
 **Answered when** the run composed at least one claim and the claims do not rest entirely on empty
-results (`verifyInvestigationGoal`, `src/lib/agent/goal-claims.ts:76-83`).
+results (`verifyInvestigationGoal`, `src/lib/agent/goal-claims.ts`).
 
 ### Optimize
 
@@ -359,11 +359,11 @@ Two things this workflow will not do, and it says so rather than implying otherw
 - **Every plan is an estimate.** `EXPLAIN ANALYZE` executes the statement and is policy-denied, so
   the comparison entry carries a sentence the application wrote: *"Estimates only: these plans were
   described, not executed. EXPLAIN ANALYZE is policy-denied because it would run the statement."*
-  (`PLAN_ESTIMATE_CAVEAT`, `timeline.ts:499`, used at `:1019`).
+  (`PLAN_ESTIMATE_CAVEAT` in `timeline.ts`).
 - **A recommendation is never applied.** Every recommendation entry carries *"Not applied: nothing
-  here runs this statement."* (`NOT_APPLIED_CAVEAT`, `timeline.ts:503`, used at `:1029`), and the only thing offered
+  here runs this statement."* (`NOT_APPLIED_CAVEAT` in `timeline.ts`), and the only thing offered
   is an **Apply to editor** button, which puts the text in your editor and runs nothing
-  (`HydrationControls`, `AgentRail.tsx:401-447`).
+  (`HydrationControls` in `AgentRail.tsx`).
 
 **Answered when** the Investigate bar is met **and** the change it proposes rests on a plan it read:
 a before/after comparison for a rewrite, or — for an index, whose "after" plan would need the index
@@ -378,7 +378,7 @@ It adds one tool, `profile_table` (the same variant's `tools`), and the rule tha
 **A profile records counts, never values.** Row counts, present counts, distinct counts, and how
 many values match a shape — computed inside the database with `count(CASE WHEN <predicate> …)`, so no
 matching value leaves it. There is deliberately no `min`/`max`, because on a text column those
-return real values (`src/lib/agent/table-profile.ts:1-30`).
+return real values (the header of `src/lib/agent/table-profile.ts`).
 
 Two shapes are tested at `pattern` depth, and each is the **dialect's own** predicate rather than one
 shared operator: an email address (`LIKE '%_@_%._%'`, spelled the same on both engines) and a run of
@@ -390,7 +390,7 @@ in it means "any character". The findings — `high_null`, `constant`,
 those counts, with stated thresholds; the model may interpret them and cannot invent one.
 
 **Answered when** the Investigate bar is met **and** a table was actually profiled
-(`verifyDatabaseAssessmentGoal`, `goal-verifier.ts:446`).
+(`verifyDatabaseAssessmentGoal`, `goal-verifier.ts`).
 
 ### Operate
 
@@ -533,7 +533,7 @@ figures that move, so how far in a run is takes nothing to read. See
 that is open, because it is what you asked for; the spend is what it took to get there.
 
 The rail's timeline is a fold over the run's ledger, one line per recorded event
-(`foldLedgerEntries`, `timeline.ts:1416`). Before anything has happened it says *"No activity
+(`foldLedgerEntries`, `timeline.ts`). Before anything has happened it says *"No activity
 yet. A run's steps appear here as they are recorded."*
 
 **The three entries that only say a run began are folded** — `Run opened`, `Run started` and
@@ -565,7 +565,7 @@ they arrive, exactly as before.
 
 **Wording the application chose and text that came from elsewhere never share a line.** Headlines
 and details are the application's words; anything from the model, the engine or you is rendered as a
-quoted block, because database content is untrusted input (`timeline.ts:35-40`).
+quoted block, because database content is untrusted input (`AgentTimelineTone` in `timeline.ts`).
 
 **The one exception is the closing statement, and it is a rendering rather than a mixing.** Models
 write that block as markdown, so it is rendered as markdown — headings, bullets, bold and inline
@@ -597,7 +597,7 @@ Two controls appear under an entry only when there is something to act on **and*
   provenance badge naming the run. It is offered only **while the run is live**: a run's stored rows
   are released when it ends, and the rail says so where the results are listed — *"A run's stored
   rows are released when the run ends, so a result can be shown only while its run is still
-  going."* (`AgentRail.tsx:2186-2190`).
+  going."* (`AgentRail` in `AgentRail.tsx`).
 
 **The answer itself is shown without being asked for.** When an `Answer composed` entry arrives, the
 rail opens that result immediately — as the chart the run composed, or as a table — because a run
@@ -617,7 +617,7 @@ section at the foot of the rail: it rendered the same claims and the same citati
 how one statement came to be offered to your editor three times over. A citation the rail cannot
 resolve in what it has read says so rather than looking checked — in words and not only in amber, on
 the chip in the answer as well as in the evidence beneath it, because a gap in what a run established
-is not a thing to say in a colour (`UNRESOLVED_DETAIL`, `timeline.ts:1359`).
+is not a thing to say in a colour (`UNRESOLVED_DETAIL`, `timeline.ts`).
 
 ---
 
@@ -649,7 +649,7 @@ On MongoDB it waits on a reading of the engine's plans the gate below could weig
 **On SQL Server, DuckDB and MySQL it is offered and never runs anything for you.**
 The gate below weighs only PostgreSQL's and SQLite's plans, so every answer of a ticked run on those engines is put in your editor unrun, with the reason beside it (A6 in `docs/BACKLOG.md`).
 
-**You are asked for it after Start, not before it** (`AgentRail.tsx:847,2305`). Pressing Start on
+**You are asked for it after Start, not before it** (`AgentRail` in `AgentRail.tsx`). Pressing Start on
 an Analyze run in Agent mode — whether you named the workflow or the server read it — raises a
 consent step in place of opening the run:
 
@@ -723,15 +723,15 @@ The status word — `succeeded`, `failed`, `cancelled` — says how the run ende
 whether you got an answer: a run whose model stopped without composing a report ends `succeeded`,
 and a run that ran out of turns ends `failed`, and neither answered anything. This was not a
 hypothesis; both were observed on live runs, which is why the verdict is a separate field
-(`timeline.ts:604-631`, and [`docs/AGENT.md`](./AGENT.md#whether-the-run-answered) for the mechanism).
+(`describeEnding` in `timeline.ts`, and [`docs/AGENT.md`](./AGENT.md#whether-the-run-answered) for the mechanism).
 
 So the last line of a run reads **"Run answered"** or **"Run did not answer"**
-(`answeredHeadline`, `timeline.ts:626-627`). A ledger written before verdicts existed carries none,
+(`answeredHeadline`, `timeline.ts`). A ledger written before verdicts existed carries none,
 and such a run keeps the status word it always had (`Run succeeded`) rather than being given a
 judgement nobody made.
 
 Under it, when the run fell short, is **one sentence naming what it did not produce**. These are the
-whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:633-645`):
+whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts`):
 
 | The run did not answer because | The sentence you get |
 | --- | --- |
@@ -749,15 +749,15 @@ whole vocabulary (`SHORTFALL_SENTENCES`, `timeline.ts:633-645`):
 | `cancelled` | "The run was stopped before it could finish." |
 
 A run **you** stopped reports `cancelled` rather than the output it was missing: a stop is not a
-defect of the run (`goal-verifier.ts:273,283`).
+defect of the run (`verifyPlanningGoal` in `goal-verifier.ts`).
 
 If the run had no shortfall to report, the line under the verdict says how the loop ended instead
-(`STOP_SENTENCES`, `timeline.ts:528-545`) — for example *"The run reached its step limit before it
+(`STOP_SENTENCES`, `timeline.ts`) — for example *"The run reached its step limit before it
 finished. What it had gathered is above."*
 
-**The shortfall wins over the ending in both modes** (`describeEnding`, `timeline.ts:604-624`), and
+**The shortfall wins over the ending in both modes** (`describeEnding`, `timeline.ts`), and
 one ending is where that matters. When the model simply stops, an **Agent** run that composed no
-claims also carries the `no-report` shortfall (`verifyInvestigationGoal`, `goal-claims.ts:81`), so
+claims also carries the `no-report` shortfall (`verifyInvestigationGoal`, `goal-claims.ts`), so
 the sentence you actually read is the shortfall one — *"The run finished without composing a cited
 report, so nothing it found was written down."* The stop sentence for that ending, *"The model
 stopped without composing a cited report."*, is what a run whose ledger carries **no verdict at all**
@@ -770,7 +770,7 @@ stopped after a lecture — no statement drafted and no `NO STATEMENT:` refusal 
 
 And when the run failed for a reason that is not about the answer at all, that sentence wins over
 both, and also appears next to the Start button so you can fix it before starting another
-(`FAILURE_SENTENCES`, `timeline.ts:335-345`; rendered at `AgentRail.tsx:1618-1622`): the model
+(`FAILURE_SENTENCES`, `timeline.ts`; rendered at `AgentRail` in `AgentRail.tsx`): the model
 provider not being configured or reachable, limiting this key's requests, rejecting the credentials,
 an engine with no read-only execution profile, a connection that no longer resolves, or an internal
 failure whose reason is in the server log.
@@ -869,7 +869,7 @@ gauges it is about:
 Before an **Agent** run opens, the server asks the configured model to call one trivial tool and
 watches what comes back (`src/lib/agent/capability-probe.ts`). If it establishes that the model
 cannot do the job, the run is refused with `422` and the rail renders a state of its own rather than
-a red error line (`AgentRail.tsx:1905-1948`):
+a red error line (`AgentRail` in `AgentRail.tsx`):
 
 - the heading *"This model cannot drive an agent run."*;
 - **The probe could not establish:** one chip per capability, in this build's own labels — *tool
@@ -879,7 +879,7 @@ a red error line (`AgentRail.tsx:1905-1948`):
 - and what is still worth trying.
 
 That last line has three registers, and which one you get is a fact about what the probe saw
-(`refusalActionText`, `AgentRail.tsx:333-345`). Where nothing the probe observed rules it out, you
+(`refusalActionText`, `AgentRail.tsx`). Where nothing the probe observed rules it out, you
 are offered **Switch to Plan mode** — because Plan mode is toolless and is never probed, so it is
 reachable with exactly the model that was just refused. The copy says *"may still work"* and not
 *does*: admission without probing is not proof of compatibility. Where the probe **watched** the
@@ -896,14 +896,14 @@ start the run and are reported by the drive as `model-unauthorized`, `model-rate
 
 Ollama is a first-class path: `LLM_PROVIDER=ollama` with `LLM_API_URL=http://localhost:11434/v1`
 reaches the OpenAI-compatible Chat Completions endpoint through the same adapter as the `custom` kind
-(`src/lib/agent/provider-registry.ts:131-145,168-173`); the `openai` kind shares the adapter but
+(`src/lib/agent/provider-registry.ts`); the `openai` kind shares the adapter but
 calls OpenAI's Responses API. No key is required: the adapter sends a
 placeholder rather than leaving `apiKey` undefined, so an ambient `OPENAI_API_KEY` cannot leak in
-(`provider-registry.ts:96,117,120`).
+(`OLLAMA_PLACEHOLDER_KEY` in `provider-registry.ts`).
 
 **The model decides whether a local deployment can run the agent — not the endpoint.** This is
 worth stating precisely, because it is the opposite of what the mechanism suggests. The capability
-probe sends `toolChoice: "required"` (`capability-probe.ts:259`), which the OpenAI-compatible
+probe sends `toolChoice: "required"` (`observeProbe` in `capability-probe.ts`), which the OpenAI-compatible
 provider serializes as `tool_choice` — and **Ollama documents `tool_choice` as an unsupported
 field** on `/v1/chat/completions` (<https://docs.ollama.com/openai>), with forcing a tool call
 listed under future improvements in its own tool-support announcement
@@ -973,7 +973,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
 - **It cannot write.** Every database reach the agent makes goes through the agent's own audited
   pipeline — the policy decision, the audit event and the budget accounting that
   `executeAuditedOperation` performs before the driver is touched
-  (`src/lib/db/operations/execution.ts:129`, reached only from `src/lib/agent/tools.ts:1906`) — under
+  (`executeAuditedOperation` in `src/lib/db/operations/execution.ts`, reached only from `runAuditedAgentCall` in `src/lib/agent/tools.ts`) — under
   a read-only execution profile whose boundary on the SQL engines is database-native rather than a parser: a read-only
   transaction on PostgreSQL, `PRAGMA query_only` re-asserted per statement on SQLite, a `READ_ONLY`
   engine handle plus an SQL-level guard on DuckDB, and on SQL Server a verified least-privilege

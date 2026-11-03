@@ -51,7 +51,7 @@ describe("couchbaseJsonStrategy", () => {
   // reach the request-level profile parameter that would carry real timings. The
   // estimate is therefore returned for both modes, exactly as the SQLite strategy
   // does for EXPLAIN QUERY PLAN. Returning null for analyze instead would kill the
-  // direct Explain action outright: use-query-execution.ts:165 builds that action
+  // direct Explain action outright: `useQueryExecution` in use-query-execution.ts builds that action
   // with mode "analyze" and refuses the run when the strategy declines it.
   test("buildSql returns the estimate plan in analyze mode, matching the SQLite strategy", () => {
     expect(couchbaseJsonStrategy.buildSql("SELECT * FROM hotel", "analyze")).toBe("EXPLAIN SELECT * FROM hotel");

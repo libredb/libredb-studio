@@ -71,17 +71,17 @@ export const PATH_LINE =
 const CONTINUATION = [/`:\d{2,}(?:-\d+)?`/, /(?:(?<=[^\s`])`|\]\([^)\s]*\)):\d+(?:-\d+)?\b/];
 const FILE_NAME = /\.(?:tsx?|mjs|js)\b/;
 
-/** "line 12 of `file`" and "`file` ... (line 12)". */
+/** "line N of `file`" and "`file` ... (line N)", N a number. */
 const IMPLICIT = [
   /\b(?:near|around|at|see)?\s*lines?\s+\d+(?:\s*(?:-|,|and|to)\s*\d+)*\s+(?:of|in)\s+`[^`]+`/i,
   /`[^`]+\.\w+`[^.]{0,80}\((?:around |near )?lines?\s+\d+(?:\s*-\s*\d+)?\)/i,
 ];
 /**
- * "at line 12" names a location only when a tracked path follows it on the line ("at line 12 in factory.ts"); an
+ * "at line N" names a location only when a tracked path follows it on the line ("at line N in factory.ts"); an
  * engine's "at line 1, column 5" never does, and neither does measured output that names its file first.
  */
 const AT_LINE = /\b(?:at|near|around) lines? \d+\b(?!,? column)/;
-/** "(line 12)" in a code comment. */
+/** "(line N)" in a code comment. */
 const PAREN_LINE = /\(line \d+\)/;
 /** A pasted stack frame. */
 const STACK_FRAME = /^\s*at .*:\d+\)?$/;

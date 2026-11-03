@@ -8,7 +8,7 @@
  *  - `@google/generative-ai` (the chat surface) takes `RequestOptions.baseUrl` as
  *    an ORIGIN and appends the version itself —
  *    `` `${baseUrl}/${apiVersion}/${model}:${task}` `` with `apiVersion` defaulting
- *    to `v1beta` (`node_modules/@google/generative-ai/dist/index.js:333-335`),
+ *    to `v1beta` (`DEFAULT_API_VERSION` in @google/generative-ai 0.24.1's `dist/index.js`),
  *  - `@ai-sdk/google` (the agent adapter) takes a `baseURL` that already CARRIES
  *    the version path, defaulting to
  *    `https://generativelanguage.googleapis.com/v1beta`

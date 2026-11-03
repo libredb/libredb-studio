@@ -11,7 +11,7 @@
  * `probe_shapes`), so the fake speaks exactly what the server speaks.
  *
  * THIS FILE'S JOB IS THE DIVERGENCE. One implementation serves two type-ids
- * (`src/lib/db/providers/sql/search/index.ts:11-16`), and the Elasticsearch
+ * (the header of `src/lib/db/providers/sql/search/index.ts`), and the Elasticsearch
  * sibling covers the behaviour the two share; what is asserted here is what
  * OpenSearch does DIFFERENTLY, so that "two type-ids, one implementation" is a
  * tested claim rather than an assumption. The seven measured differences the
@@ -19,33 +19,33 @@
  *
  * - The success envelope is `schema`/`datarows` with `total` and `size` beside it,
  *   not Elasticsearch's `columns`/`rows` with no count at all
- *   (`http-transport.ts:554-557`).
+ *   (`DIALECTS` in `http-transport.ts`).
  * - `SELECT customer AS who` declares `{"name":"customer","alias":"who"}` here and
  *   `{"name":"who"}` on Elasticsearch, so reading `name` alone would put the WRONG
- *   label on the same statement's column (`http-transport.ts:719-731`).
+ *   label on the same statement's column (`describeColumns` in `http-transport.ts`).
  * - A missing index is HTTP **404** (`IndexNotFoundException`) where Elasticsearch
  *   answers HTTP 400 - the same typo, two statuses, which is why categorisation is
- *   body-driven (`http-transport.ts:35-42`).
+ *   body-driven (the header of `http-transport.ts`).
  * - The SQL plugin names its faults with JAVA CLASSES
  *   (`SQLFeatureNotSupportedException`, `SemanticCheckException`,
  *   `EOFParserException`, ...) while the CORE REST layer keeps Elasticsearch's
  *   lineage and answers `index_not_found_exception` in snake_case, so one product
  *   speaks both vocabularies depending on which endpoint replied
- *   (`http-transport.ts:570-577`).
+ *   (`DIALECTS` in `http-transport.ts`).
  * - `SELECT 1 AS c, 2 AS c` is REFUSED here (`IllegalArgumentException`, "Multiple
  *   entries with same key") and answers 200 with three columns named `c` on
  *   Elasticsearch, so the seam's uniqueness invariant is load-bearing on exactly
- *   one of the two products (`http-transport.ts:24-31`).
+ *   one of the two products (the header of `http-transport.ts`).
  * - `LIMIT n OFFSET m` is accepted here and is a syntax error on Elasticsearch,
- *   which is the one behavioural difference ABOVE the wire (`index.ts:225-230`).
+ *   which is the one behavioural difference ABOVE the wire (`SearchProduct` in `index.ts`).
  * - A stock node ships system indices the dot rule alone does not catch:
  *   `.plugins-ml-config` AND `top_queries-<date>-<n>`, so two of four indices on a
  *   cluster holding two probe indices are not the user's
- *   (`http-transport.ts:427-439`).
+ *   (`DOT_PREFIXED` in `http-transport.ts`).
  *
  * Where a divergence is only visible below the provider - a fault CATEGORY, for
  * instance, since four of them collapse onto one `QueryError` by design
- * (`index.ts:685-689`) - the transport is driven directly. That is the seam the
+ * (`SearchProvider.query` in `index.ts`) - the transport is driven directly. That is the seam the
  * categorisation lives on, and asserting it through a class that erases it would
  * have tested nothing.
  */
@@ -163,7 +163,7 @@ const ORDERS_BODY = JSON.stringify({
  * `SELECT address, items FROM probe_shapes` - and it SUCCEEDS.
  *
  * Elasticsearch refuses the same projection ("Cannot use field [address] type
- * [object] only its subfields", HTTP 400). `introspect.ts:70-80` deliberately does
+ * [object] only its subfields", HTTP 400). `SEARCH_CONTAINER_TYPES` in `introspect.ts` deliberately does
  * NOT branch on that: the starter query projects leaves on both products, because a
  * query that works on one type-id and fails on the other is worse than one that
  * works on both. The schema assertions below are what hold that decision in place.
@@ -218,7 +218,7 @@ const PAGE_THREE_BODY = JSON.stringify({ datarows: [["3c1f1d19-0a4b-4a52-9f6a-2b
 // `reason` is a CONSTANT banner here ("Invalid SQL query") and `details` holds the
 // only text specific to the failure, which is the reverse of Elasticsearch, whose
 // `reason` is the good text ("line 1:15: Unknown index [nope_missing]") and which
-// has no `details` at all. `http-transport.ts:806-817` prefers the detail for
+// has no `details` at all. `faultMessage` in `http-transport.ts` prefers the detail for
 // exactly that reason.
 // ============================================================================
 
@@ -247,7 +247,7 @@ const MISSING_INDEX_BODY = JSON.stringify({
  *
  * The SQL plugin above answers `IndexNotFoundException` for the same missing
  * index; the CORE REST layer keeps Elasticsearch's lineage. Both are measured, and
- * `http-transport.ts:590-591` lists both spellings for that reason.
+ * `DIALECTS` in `http-transport.ts` lists both spellings for that reason.
  */
 const MAPPING_NOT_FOUND_BODY = JSON.stringify({
   error: {
@@ -265,7 +265,7 @@ const MAPPING_NOT_FOUND_BODY = JSON.stringify({
  * What OpenSearch answers a request for ELASTICSEARCH's SQL endpoint: HTTP 405,
  * and `error` as a STRING where a real engine fault spells it as an object. That
  * JSON type is the "this is not that product / the SQL plugin is not installed"
- * discriminator (`http-transport.ts:43-50`).
+ * discriminator (the header of `http-transport.ts`).
  */
 const WRONG_ENDPOINT_BODY = JSON.stringify({
   error: "Incorrect HTTP method for uri [/_sql?format=json] and method [POST], allowed: [PUT, DELETE, HEAD, GET]",
@@ -423,7 +423,7 @@ const SHAPES_MAPPING_BODY = JSON.stringify({
  * `GET /` - and `version.distribution` is the member Elasticsearch does not send
  * at all. The fork added it so a client could tell the two apart, so its presence
  * here and its absence there are both readings of the payload
- * (`http-transport.ts:344-357`).
+ * (`VERSION_FIELDS` in `http-transport.ts`).
  */
 const ROOT_BODY = JSON.stringify({
   name: "898fbd5c381a",
@@ -966,7 +966,7 @@ describe("OpenSearch envelope", () => {
 describe("OpenSearch faults", () => {
   /**
    * Every name here is a JAVA CLASS, and every row was measured with one probe
-   * against the live plugin. The table in `http-transport.ts:588-601` is doing real
+   * against the live plugin. The table in `DIALECTS` in `http-transport.ts` is doing real
    * work: nothing about `EOFParserException` reads as "syntax" to anything but that
    * table, and nothing about `SQLFeatureNotSupportedException` reads as the answer
    * to a MISTYPED keyword - which is what it is here, while Elasticsearch calls the
@@ -1652,7 +1652,7 @@ describe("object surface", () => {
     // ONE declaration constant serves both type-ids, so this expectation is written out
     // here rather than compared against the other product's, for the same reason the
     // source test above is. The three kinds are the ones `describeObject` reads
-    // `_mapping` for (`search/index.ts:1251`, gated on `SEARCH_MAPPED_KINDS` at `:478`).
+    // `_mapping` for (`search/index.ts`, gated on `SEARCH_MAPPED_KINDS`).
     expect(
       kinds
         .filter((kind) => kind.hasColumns === true)
@@ -1670,7 +1670,7 @@ describe("object surface", () => {
 
     // The declaration against the engine's own answer, one kind each way. A data stream
     // row's columns are the mapping of its CURRENT backing index, which is what the
-    // transport takes (`search/http-transport.ts:1283`).
+    // transport takes (`SearchHttpTransport.mapping` in `search/http-transport.ts`).
     const stream = await provider.describeObject(["probe_stream"], "stream");
     expect(stream.columns.length).toBeGreaterThan(0);
     for (const column of stream.columns) {

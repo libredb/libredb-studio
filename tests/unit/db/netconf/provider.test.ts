@@ -111,7 +111,7 @@ test("the key kind is not counted and not listed here, because the Keys panel en
 
 /**
  * What answers `{ unavailable }` and what rises is decided by scope, which is the rule at
- * `providers/platform/kubernetes/objects.ts:348`: a refusal of this one read belongs to this kind,
+ * `countKind` in `providers/platform/kubernetes/objects.ts`: a refusal of this one read belongs to this kind,
  * and anything that spoils the whole connection has to rise, or every module would be drawn
  * "unavailable" while the connection still looked healthy.
  *
@@ -202,7 +202,7 @@ test("the surfaces this engine cannot answer refuse with a sentence rather than 
    *
    * It read `/five read operations/`, so when the sentence said five the test PROTECTED the
    * error: the number was wrong in three user-visible sentences and every run stayed green.
-   * MEASURED in `requests.ts:5-12`, with the fixture's read-only account: `get`, `get-config`,
+   * MEASURED in the header of `requests.ts`, with the fixture's read-only account: `get`, `get-config`,
    * `get-data` and `get-schema` returned data and `close-session` answered `<ok/>`. So it is
    * four reads AND a close, and calling the close a read also made the sentence's "and nothing
    * else" untrue of the operation it had miscounted.
@@ -252,7 +252,7 @@ test("a key page removes repeats, sorts, and carries a start-after cursor", asyn
     "running/ietf-interfaces:interfaces/ge-0%2F0%2F1",
     "running/ietf-interfaces:interfaces/ge-0%2F0%2F2",
   ]);
-  // The cursor is in the same space as the names it is compared against (`keypath.ts:166`), which
+  // The cursor is in the same space as the names it is compared against (`levelPage` in `keypath.ts`), which
   // is the decoded one, and it is opaque to everything outside this provider.
   expectBe(page.cursor, "ge-0/0/2");
   // `total` is not read under `totalScope: "none"`, and an unread field still has to be honest.
@@ -311,7 +311,7 @@ test("nothing answers before connect", async () => {
  * message, because a message can be reworded and a type cannot.
  *
  * MEASURED on `origin/main`: the surfaces that turn a failure into a stated refusal check
- * `error instanceof QueryError` (`providers/platform/kubernetes/objects.ts:348`,
+ * `error instanceof QueryError` (`countKind` in `providers/platform/kubernetes/objects.ts`,
  * `isQueryError` in `src/lib/db/errors.ts`). A refusal thrown as a plain `Error` is not
  * converted: it passes as an unexpected failure and the sentence it carries never reaches the
  * user. The first version of this provider had three such refusals, in `keypath.ts`,
@@ -380,7 +380,7 @@ test("the capabilities carry the declared key scan and object kinds themselves",
 /**
  * The Source tab the declaration promises.
  *
- * MEASURED in `src/lib/api/object-route.ts:549`: a provider that declares a kind with `hasSource`
+ * MEASURED in `requireSourceReader` in `src/lib/api/object-route.ts`: a provider that declares a kind with `hasSource`
  * and omits `readObjectSource` is answered 400, `declares no readable source for kind`, because the
  * method is optional on the interface. So the tree drew the tab and the tab refused, which is what
  * these cases are here to stop happening again.
@@ -464,7 +464,7 @@ test("the provider publishes the declared labels, and they name what this engine
 
 /**
  * The keys route's own check on a level page, which the route keeps private
- * (`src/app/api/db/keys/scan/route.ts:215-219`): keys and prefixes together fit in count, every
+ * (`checkAnswer` in `src/app/api/db/keys/scan/route.ts`): keys and prefixes together fit in count, every
  * prefix ends at the first separator after the pattern, every key sits directly under the pattern
  * and is not empty, and nothing is listed twice.
  *
@@ -515,7 +515,7 @@ function treeReader(): DeviceReader {
 
 test("a folder's own prefix lists its level, and every row sits inside it", async () => {
   // The spelling the panel sends when a reader OPENS a folder, and the one its placeholder teaches
-  // (`Prefix, e.g. app/config/`, KeyBrowser.tsx:676).
+  // (`Prefix, e.g. app/config/`, `KeyBrowser` in KeyBrowser.tsx).
   const provider = new NetconfProvider(connection, {}, {}, async () => treeReader());
   await provider.connect();
   const pattern = "running/ietf-interfaces:interfaces/";

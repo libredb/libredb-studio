@@ -70,7 +70,7 @@ describe("copy-monaco CLI", () => {
     const proc = Bun.spawnSync(["node", script], { cwd: root });
 
     expect(proc.exitCode).toBe(0);
-    // The script prints path.relative(cwd, target) (scripts/copy-monaco.mjs:54), and target is
+    // The script prints path.relative(cwd, target) (`main` in scripts/copy-monaco.mjs), and target is
     // built with path.join, so the separator is the platform's: "public\\monaco\\vs" on Windows.
     // Build the expected fragment the same way instead of hardcoding a POSIX spelling.
     expect(proc.stdout.toString()).toContain(join("public", "monaco", "vs"));

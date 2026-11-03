@@ -734,7 +734,7 @@ export function StudioWorkspace({
    * `grep -rE 'addEventListener\(\s*"keydown' src` answers SIX, of which exactly one can move
    * the active tab here:
    *
-   * - `src/components/studio/StudioTabBar.tsx:115`, on `document`: the new-tab shortcut, which is
+   * - `StudioTabBar` in `src/components/studio/StudioTabBar.tsx`, on `document`: the new-tab shortcut, which is
    *   the one this handler guards. It opens a tab and `addTab` activates it.
    * - `src/components/DataProfiler.tsx` (its Escape effect), on `document`, and MOUNTED BY THIS SHELL below. It is
    *   bound only while the profiler is open, it answers Escape alone, and all it does is call the
@@ -742,15 +742,15 @@ export function StudioWorkspace({
    * - `src/components/CodeGenerator.tsx`, on `document`, and MOUNTED BY THIS SHELL below. It is
    *   bound only while the generator is open, answers an unhandled Escape alone, closes only that
    *   modal and moves no tab (#879).
-   * - `src/components/ShortcutsDialog.tsx:117`, on `document` (#746), and MOUNTED BY THIS SHELL
+   * - `ShortcutsDialog` in `src/components/ShortcutsDialog.tsx`, on `document` (#746), and MOUNTED BY THIS SHELL
    *   indirectly - `DataProfiler.tsx` always renders one while it is open. It answers `?` alone,
    *   opens a dialog of shortcut labels, and moves no tab.
-   * - `src/components/CommandPalette.tsx:103`, on `document`, whose table rows call
+   * - `CommandPalette` in `src/components/CommandPalette.tsx`, on `document`, whose table rows call
    *   `handleTableClick` and DO move the active tab. That is the standalone shell's second gesture
    *   in D82, and this shell renders no palette. It is still the reason `onTableClick` above now
    *   carries the same guard: what keeps that door shut here is a covering overlay and a component
    *   this shell happens not to render, and neither is an absence.
-   * - `src/components/ui/sidebar.tsx:94`, on `window`, toggling a sidebar. It is an unused shadcn
+   * - `SidebarProvider` in `src/components/ui/sidebar.tsx`, on `window`, toggling a sidebar. It is an unused shadcn
    *   primitive with no importer anywhere in `src` (P5), so it is not mounted here or anywhere.
    *
    * REFUSED IS NOT SWALLOWED, and on this shell that costs a surface rather than a toast. A

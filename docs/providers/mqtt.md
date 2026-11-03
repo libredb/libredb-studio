@@ -167,7 +167,7 @@ The comparison is case sensitive because `$SHARE/...` in uppercase is an ordinar
 
 ### 3.7 The Keys panel cursor
 
-CHOICE. The provider answers `cursor: "0"`, which `types.ts:779` defines as "this walk reached the end". Cost:
+CHOICE. The provider answers `cursor: "0"`, which `KeyScanPage` in `types.ts` defines as "this walk reached the end". Cost:
 the panel's "Scan more" is disabled, so a reader cannot ask for the rest.
 
 The alternative was worse. A live cursor would make each "Scan more" open a second connection and merge its

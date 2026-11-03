@@ -1547,7 +1547,7 @@ describe("CouchbaseProvider object surface (#789)", () => {
 
     // A SEEDED NON-EMPTY collection, deliberately: `hotel` and `bookings` are empty in the
     // fixture and an INFER over an empty collection answers error 7014 and no column at all
-    // (docs/providers/couchbase.md:763-764), so either of those would fail a correct provider
+    // (the "6a.7 `describeObject`" section of docs/providers/couchbase.md), so either of those would fail a correct provider
     // for a fixture reason rather than a declaration one.
     const collection = await objectProvider.describeObject([BUCKET, "inventory", "airline"], "collection");
     expect(collection.columns.length).toBeGreaterThan(0);

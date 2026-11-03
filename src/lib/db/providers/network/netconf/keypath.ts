@@ -27,7 +27,7 @@ import { QueryError } from "@/lib/db/errors";
  * Refusals here are `QueryError`, not a class of this file's own.
  *
  * MEASURED on `origin/main`: only a `QueryError` or a `TimeoutError` is turned into a stated
- * refusal by the surfaces that catch one (`providers/platform/kubernetes/objects.ts:348`,
+ * refusal by the surfaces that catch one (`countKind` in `providers/platform/kubernetes/objects.ts`,
  * `isQueryError` in `src/lib/db/errors.ts`). A refusal thrown as a plain `Error` passes as an
  * unexpected failure and the sentence it carries never reaches the user, which for this file means
  * a key value the user typed is rejected with no explanation of what is wrong with it.

@@ -59,7 +59,7 @@ function connectionWithEverySecret(): DatabaseConnection {
 /**
  * Stands in for a real provider at exactly the point one receives its argument. Both shipped
  * providers do `JSON.stringify(data)` into a bound parameter and nothing else
- * (src/lib/storage/providers/sqlite.ts:118, postgres.ts:107), which is what `persisted()` models.
+ * (`SQLiteStorageProvider.setCollection` in src/lib/storage/providers/sqlite.ts, `PostgresStorageProvider.setCollection` in postgres.ts), which is what `persisted()` models.
  */
 class CaptureProvider implements ServerStorageProvider {
   readonly rows = new Map<string, unknown>();

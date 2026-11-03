@@ -100,7 +100,7 @@ export async function dialNetconf(config: DialConfig, ssh: SshPort, socket: Sock
   if (!pin.ok) throw new DialError({ kind: "configuration", reason: "pin-unreadable", message: pin.message });
 
   // `socketEgress` refuses a link-local literal itself when `refusesLinkLocal` is set
-  // (`egress-policy.ts:220`), and it answers the lookup the socket dials through, so the address
+  // (`socketEgress` in `egress-policy.ts`), and it answers the lookup the socket dials through, so the address
   // that was checked is the address connected. An earlier version of this function called
   // `assertNotLinkLocalLiteral` here as well; a planted mutation removing that call failed no
   // test, because the refusal still came from inside `socketEgress`. The call was dead and is

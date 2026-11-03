@@ -7,7 +7,7 @@
  * prerendered, so baking an answer into the bundle at build time would answer for
  * the build rather than for the operator's running container. Discovery is therefore
  * a request, the same shape the storage mode already uses (`/api/storage/config`,
- * `src/hooks/use-storage-sync.ts:184`), with one deliberate difference: this one
+ * `init` in `src/hooks/use-storage-sync.ts`), with one deliberate difference: this one
  * requires a session, because T9 pinned that an unauthenticated caller may not learn
  * whether an agent surface exists here.
  *

@@ -105,7 +105,7 @@ describe("one page of topics", () => {
   test("the page is sorted, and its cursor says the walk ended", () => {
     const page = mqttKeyScanPage(topics, { cursor: "0", count: 100 });
     expect(page.keys).toEqual(["office/temp", "plant/line1/state", "plant/line2/state"]);
-    // "0" is `types.ts:779`'s "this walk reached the end". There is no second page to ask for.
+    // "0" is `KeyScanPage` in `types.ts`'s "this walk reached the end". There is no second page to ask for.
     expect(page.cursor).toBe("0");
     // `totalScope: "none"` means the field is not read; a provider answers 0 rather than inventing a number.
     expect(page.total).toBe(0);

@@ -15,15 +15,15 @@ import type { KeyScanCapability, ObjectKindSpec } from "@/lib/db/types";
  *
  * The declaration is a requirement rather than a detail because getting it wrong compiles and
  * passes every unit test. SOURCE at `90881379`: `enumerableKinds()` in
- * `src/lib/db/object-kinds.ts:61` answers the declared kinds whose `enumeratedBy` is absent, and
+ * `enumerableKinds` in `src/lib/db/object-kinds.ts` answers the declared kinds whose `enumeratedBy` is absent, and
  * those are the kinds the tree, the inventory and search routes and the agent's grounding walk all
- * read; `keyBrowserKind()` at line 168 answers the one kind that declares `"key-browser"`. A kind
+ * read; `keyBrowserKind()` in the same file answers the one kind that declares `"key-browser"`. A kind
  * the Keys panel lists while leaving the field absent is therefore walked by the object surface as
  * well, and a provider that leaves it out of `countObjects` and refuses it by name in `listObjects`
  * fails that walk after the connection opens.
  *
  * SOURCE: the two existing cases declare the same three fields together,
- * `providers/keyvalue/etcd/objects.ts:138-141` and `providers/document/firestore/objects.ts:138-141`.
+ * `ETCD_OBJECT_KINDS` in `providers/keyvalue/etcd/objects.ts` and `FIRESTORE_OBJECT_KINDS` in `providers/document/firestore/objects.ts`.
  * etcd adds `acceptsSourceEdits: true`; this provider does not, because it writes nothing.
  * SOURCE: `tests/isolated/object-source-declarations.test.ts` refuses a second key-browser kind,
  * one without `hasSource`, and one on capabilities that carry no `keyScan`.

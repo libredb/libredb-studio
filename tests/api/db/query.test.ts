@@ -897,7 +897,7 @@ describe("POST /api/db/query", () => {
 
   test("a SQL result with no pagination of its own answers exactly what the route answered before", async () => {
     // Every shipped provider's shape: the mock's default `prepareQuery` rewrote the statement
-    // (`wasLimited: true`, limit 50, `tests/helpers/mock-provider.ts:157-165`) and the result
+    // (`wasLimited: true`, limit 50, `createMockProvider` in `tests/helpers/mock-provider.ts`) and the result
     // carries no `pagination`. The whole object is pinned, so no field of it moved.
     (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
       rows: Array.from({ length: 51 }, (_, i) => ({ id: i + 1 })),

@@ -716,13 +716,13 @@ export const S3_ACCEPTANCE: readonly S3AcceptanceRow[] = [
         ...NUMERIC_HOSTS.map((host) => ({ step: host, outcome: before(`endpoint:host:${host}`) })),
       ],
     }),
-    evidence: ["docs/providers/s3.md", "src/lib/db/http/endpoint.ts:50-95"],
+    evidence: ["docs/providers/s3.md", "`NUMERIC_LABEL` in src/lib/db/http/endpoint.ts"],
   },
   {
     id: "A55b",
     behaviour: "DB_HTTP_BLOCK_PRIVATE_HOSTS=true, root, 127.0.0.1",
     expect: cells({ minio: one(before("egress:blocked:127.0.0.1"), "blocked") }),
-    evidence: ["docs/providers/s3.md", "src/lib/db/http/egress-policy.ts:12"],
+    evidence: ["docs/providers/s3.md", "`BLOCKED_HOST` in src/lib/db/http/egress-policy.ts"],
   },
   {
     id: "A63",

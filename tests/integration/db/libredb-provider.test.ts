@@ -904,7 +904,7 @@ describe("LibreDBProvider object surface (#789)", () => {
       kinds: { table: 3, collection: 2, keyspace: 3 },
       sampleObject: { path: ["employees:*"], kind: "table" },
       // Invariant 8's negative direction runs zero times here, and saying so is mandatory
-      // rather than polite: `columnsForGroup` (`libredb.ts:642-663`) has three arms and every
+      // rather than polite: `columnsForGroup` (`libredb.ts`) has three arms and every
       // one of them returns a non-empty list, so all three declared kinds declare columns and
       // a silent zero-iteration loop would certify nothing (#789).
       noAbstainingKinds: true,

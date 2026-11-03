@@ -214,8 +214,8 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 उस read का हवाला देता है जिस पर वह टिका है।
 
 - **Read-only, और यह गारंटी डेटाबेस ख़ुद देता है**: Agent का हर statement **Agent की अपनी audited pipeline** से गुज़रता है।
-  Driver तक पहुँचने से पहले policy decision, audit event और budget accounting होती है (`executeAuditedOperation`,
-  `src/lib/db/operations/execution.ts:129`)। साथ में read-only execution profile लगता है: PostgreSQL पर read-only
+  Driver तक पहुँचने से पहले policy decision, audit event और budget accounting होती है (`executeAuditedOperation` in
+  `src/lib/db/operations/execution.ts`)। साथ में read-only execution profile लगता है: PostgreSQL पर read-only
   transaction, SQLite पर हर statement के साथ दोबारा `PRAGMA query_only`, और DuckDB पर `READ_ONLY` engine handle के ऊपर
   एक SQL guard, क्योंकि सिर्फ़ वह flag `COPY … TO`, `EXPORT DATABASE` और local files पढ़ने वाले table functions को नहीं रोकता।
   SQL Server पर किसी भी तरह का read-only transaction होता ही नहीं, इसलिए वहाँ चार परतें हैं: connection खुलते समय यह जाँचा जाता है
@@ -223,7 +223,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
   rows की सीमा server पर ही लगती है, और statement एक ऐसे transaction के अंदर चलता है जिसे हमेशा rollback किया जाता है।
   Writes और DDL डेटाबेस तक पहुँचने से पहले ही मना कर दिए जाते हैं। `EXPLAIN ANALYZE` statement को सच में चलाता है,
   इसलिए default रूप से बंद है। यह pipeline सिर्फ़ Agent के लिए है: एडिटर में आप जो statements ख़ुद चलाते हैं वे सीधे
-  provider को जाते हैं (`src/app/api/db/query/route.ts:312`), यहाँ की policy से नहीं गुज़रते, और ऐसा audit record नहीं बनाते।
+  provider को जाते हैं (`runEditorQuery` in `src/lib/api/editor-query.ts`), यहाँ की policy से नहीं गुज़रते, और ऐसा audit record नहीं बनाते।
 - **Agent mode सिर्फ़ PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B और Trino पर**: read-only profile सिर्फ़ उन providers पर है
   जिन्होंने इसे implement किया है: `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts`, `search/index.ts`, `oracle/index.ts`, `db2/index.ts`, `cassandra/index.ts`, `couchbase/index.ts`, `druid/index.ts`, `libredb.ts`, `influxdb/influxql-provider.ts`, `weaviate/index.ts`, `qdrant/index.ts`, `neo4j/index.ts`, `milvus/index.ts`, `redis.ts`, `etcd/index.ts`, `oxia/index.ts`, `rabbitmq/index.ts`, `kafka/index.ts`, `s3/index.ts`, `firestore/index.ts`, `snmp/index.ts`, `netconf/index.ts`, `modbus/index.ts`, `prometheus/index.ts`, `opcua/index.ts`, `mtconnect/index.ts`, `mqtt/index.ts`, `sparkplug/index.ts` और `trino/index.ts`
   का `queryReadOnly`, और कोई नहीं। हर engine की read-only सीमा अलग है, और वह उस engine के docs में लिखी है।
@@ -243,7 +243,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 - **सीमाएँ तय हैं, और screen पर दिखती हैं**: हर run में 20 statements, 60 सेकंड database time, एक read में 200 rows, और पूरे run के लिए 5 मिनट।
 - **अपना model इस्तेमाल करें**: Gemini (default), OpenAI, Ollama, या कोई भी OpenAI-compatible endpoint। **Agent** mode के लिए ऐसा
   model चाहिए जो सच में tool calling करता हो। Ollama पर यह vendor docs से नहीं, एक असली probe से पक्का किया जाता है। **Plan** mode को
-  tools नहीं चाहिए और वह कभी probe नहीं करता (`src/lib/agent/capability-gate.ts:74`), इसलिए Agent mode में मना किया गया model
+  tools नहीं चाहिए और वह कभी probe नहीं करता (the `mode === "planning"` early return in `admitAgentModel`, `src/lib/agent/capability-gate.ts`), इसलिए Agent mode में मना किया गया model
   Plan mode में चल सकता है, और panel आपको यही सुझाव देता है।
 - **Model configure नहीं, तो AI नहीं**: जब कोई `LLM_*` configuration नहीं होता, तो panel दिखता ही नहीं और कोई डेटा आपके network से बाहर नहीं जाता।
   ध्यान दें कि switch key नहीं है: Ollama और custom endpoints बिना key के भी configured model गिने जाते हैं, और तब AI चालू होता है।

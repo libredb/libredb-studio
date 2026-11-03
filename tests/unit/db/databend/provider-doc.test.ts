@@ -639,9 +639,8 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     );
   });
 
-  test("the programmatic example names the factory's entry point and no line of it", () => {
+  test("the programmatic example names the factory's entry point", () => {
     expect(DOC).toMatch(/`createDatabaseProvider\(\)` \(\[`factory\.ts`\]\(\.\.\/\.\.\/src\/lib\/db\/factory\.ts\)\)/);
-    expect(DOC).not.toMatch(/factory\.ts:\d/);
   });
 
   test("the field rows are the dialog's hints, and the port is the provider's default", () => {

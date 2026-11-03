@@ -39,7 +39,7 @@ export function describeExportScope(
    * Elasticsearch the answer is yes while no control exists to fetch it: their provider
    * declares `supportsResultPagination: false`, and their 50-row table preview reports
    * `hasMore: true` when the route's probe found a row past the bound
-   * (`src/lib/api/page-probe.ts:32`). Without this, the dialog told those users to load
+   * (`pageOfProbe` in `src/lib/api/page-probe.ts`). Without this, the dialog told those users to load
    * rows that nothing can load. Such a preview now reads as the rows shown, with the cut
    * shortfall.
    */

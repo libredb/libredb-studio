@@ -161,7 +161,7 @@ export function studioCspDirectives(options: CspOptions = {}): CspDirectives {
 
   // 'unsafe-inline': see the module comment. 'unsafe-eval' is absent unless the CALLER asks for it
   // (`allowEval`, which config.ts sets in development only) — Monaco's AMD loader picks the
-  // tag-injection loader on the document thread (public/monaco/vs/loader.js:365), and no worker
+  // tag-injection loader on the document thread (public/monaco/vs/loader.js), and no worker
   // bundle, elkjs, or sql-formatter path calls eval or new Function.
   const scriptSrc = ["'self'", "'unsafe-inline'"];
   if (options.allowEval === true) scriptSrc.push("'unsafe-eval'");

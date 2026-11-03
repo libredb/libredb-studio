@@ -3750,7 +3750,7 @@ describe("object surface", () => {
         .sort(),
     ).toEqual(["materialized_view", "table", "view"]);
     // The other direction, and `sequence` is the entry that matters. This provider gates
-    // describeObject on the ROLE (`oracle/index.ts:2000`), so an Oracle sequence answers no
+    // describeObject on the ROLE (`OracleProvider.buildQueryResult` in `oracle/index.ts`), so an Oracle sequence answers no
     // columns at all - the opposite of PostgreSQL's sequence, which answers last_value,
     // log_cnt and is_called. Same kind id, opposite answer, which is why the fact is
     // declared per provider and never derived from the role or from the id (#789).
@@ -3974,7 +3974,7 @@ describe("object surface", () => {
       //
       // The rows are the DRIVER'S rows and the naming is left to `oracle/index.ts`, which spells
       // a flat name BARE: the read is scoped to the connection owner by `WHERE OWNER = :1`
-      // (`oracle/index.ts:1492`), so the owner is a fact about the statement rather than a
+      // (`IntervalColumn` in `oracle/index.ts`), so the owner is a fact about the statement rather than a
       // qualifier on the answer, and every name comes back unqualified against a
       // `[owner, name]` path. A fixture that returned `APP.APP_ORDERS` would assert a
       // spelling this provider never produces.
@@ -6157,7 +6157,7 @@ describe("Oracle object source", () => {
   /*
     ORA-31603 IS READ OFF `errorNum`, NOT OFF THE SENTENCE (#789, the external review of
     PR #820). node-oracledb carries the Oracle error number as a NUMERIC field on the error it
-    rejects with, in both modes: thin sets it at `lib/thin/protocol/protocol.js:206`
+    rejects with, in both modes: thin sets it in `Protocol._processMessage` of oracledb 6.10.0's `lib/thin/protocol/protocol.js`
     (`err.errorNum = message.errorInfo.num`) and the thick binding exports the same property
     name from every prebuilt addon in `build/Release` (`strings oracledb-6.10.0-linux-x64.node
     | grep -x errorNum`). Scanning the MESSAGE for "ORA-31603" is the same defect class as
