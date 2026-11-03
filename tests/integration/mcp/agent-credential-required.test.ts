@@ -1,8 +1,8 @@
 /**
  * An engine MCP reads only under a seed's own agent credential, refused without one at load and at open.
  *
- * The shipped `MCP_AGENT_CREDENTIAL_REQUIRED` registry names no engine yet, so this file replaces it, in its own
- * process, with a copy whose Postgres row the test sets. The seed schema and the MCP context both read the replaced
+ * The shipped `MCP_AGENT_CREDENTIAL_REQUIRED` registry names S3 alone, whose reads run-s3-read.test.ts drives, so this
+ * file replaces it, in its own process, with a copy whose Postgres row the test sets. The seed schema and the MCP context both read the replaced
  * registry, so a refusal either one stopped making is a failure here, with the shipped rows unchanged.
  *
  * The load is the seed file's: the schema refuses it by name. The open is MCP's: a connection that was loaded while the

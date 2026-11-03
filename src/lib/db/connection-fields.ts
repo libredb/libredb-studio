@@ -652,6 +652,7 @@ export interface SeedAgentCredential {
 
 const PAIR: SeedAgentCredential = Object.freeze({ form: "pair", supersededBy: Object.freeze([]) });
 const SECRET: SeedAgentCredential = Object.freeze({ form: "secret", supersededBy: Object.freeze([]) });
+const DEDICATED_PAIR: SeedAgentCredential = Object.freeze({ form: "dedicated-pair", supersededBy: Object.freeze([]) });
 
 /**
  * Which agent credential a seed of each engine may carry, read by the seed schema at load and by the projection's
@@ -698,7 +699,8 @@ export const SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCrede
   bigquery: SECRET,
   snowflake: null,
   spark: null,
-  s3: PAIR,
+  // An access key ID and secret of its own: an agent key ID equal to the connection's names the same key.
+  s3: DEDICATED_PAIR,
   kubernetes: SECRET,
   mqtt: PAIR,
   firestore: null,

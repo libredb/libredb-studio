@@ -53,6 +53,7 @@ const RUN_MILVUS_READ_ARM = mcpStatementArm("run_milvus_read");
 const RUN_MQTT_READ_ARM = mcpStatementArm("run_mqtt_read");
 const RUN_SPARKPLUG_READ_ARM = mcpStatementArm("run_sparkplug_read");
 const RUN_SNMP_READ_ARM = mcpStatementArm("run_snmp_read");
+const RUN_S3_READ_ARM = mcpStatementArm("run_s3_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
@@ -62,6 +63,7 @@ const RunRabbitmqReadInputSchema = RUN_RABBITMQ_READ_ARM.inputSchema;
 const RunCypherReadInputSchema = RUN_CYPHER_READ_ARM.inputSchema;
 const RunRedisReadInputSchema = RUN_REDIS_READ_ARM.inputSchema;
 const RunMtconnectReadInputSchema = RUN_MTCONNECT_READ_ARM.inputSchema;
+const RunS3ReadInputSchema = RUN_S3_READ_ARM.inputSchema;
 
 /** True only when `A` and `B` are the same union, member for member. */
 type SameUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -85,11 +87,11 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("the tool names are distinct, run_<word>_<read|query|command> shaped, and none is a metadata tool's", () => {
+  test("the tool names are distinct, run_<word>_<read|query|command> shaped, a word a digit may end, and none is a metadata tool's", () => {
     const tools = ARMS.map((arm) => arm.tool);
     expect(new Set(tools).size).toBe(tools.length);
     for (const tool of tools) {
-      expect(tool).toMatch(/^run_[a-z]+_(?:read|query|command)$/);
+      expect(tool).toMatch(/^run_[a-z][a-z0-9]*_(?:read|query|command)$/);
       expect(SHARED_TOOLS as readonly string[]).not.toContain(tool);
     }
   });
@@ -147,8 +149,9 @@ describe("MCP_STATEMENT_ARMS", () => {
       const facet = AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet;
       expect(arm.answersWarnings).toBe(facet.answersWarnings === true);
     }
-    // The window tools say what a window cannot; SNMP names the withheld subtrees a read stepped over or answered.
-    for (const arm of [RUN_MQTT_READ_ARM, RUN_SPARKPLUG_READ_ARM, RUN_SNMP_READ_ARM])
+    // The window tools say what a window cannot; SNMP names the withheld subtrees a read stepped over or answered; S3
+    // says a pinned connection's bucket list holds its one bucket.
+    for (const arm of [RUN_MQTT_READ_ARM, RUN_SPARKPLUG_READ_ARM, RUN_SNMP_READ_ARM, RUN_S3_READ_ARM])
       expect(arm.answersWarnings).toBe(true);
     expect(RUN_READ_QUERY_ARM.answersWarnings).toBe(false);
     expect(RUN_ETCD_READ_ARM.answersWarnings).toBe(false);
@@ -1151,6 +1154,101 @@ describe("the mtconnectread arm", () => {
   });
 });
 
+describe("the s3api arm", () => {
+  const server = languageServer("s3api");
+
+  test("takes one command, no offset and no database, and sends it as written", () => {
+    expect(RUN_S3_READ_ARM.title).toBe("Run a read-only S3 metadata read");
+    expect(RUN_S3_READ_ARM.argument).toBe("statement");
+    expect(RUN_S3_READ_ARM.paging).toBe("none");
+    expect(RUN_S3_READ_ARM.types).toEqual(["s3"]);
+    expect(RUN_S3_READ_ARM.withholdsDatabase).toBe(false);
+    expect(RUN_S3_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    expect(RUN_S3_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "sales" }, { sql: "SELECT 1" }]) {
+      expect(
+        RunS3ReadInputSchema.safeParse({ connection_id: "seed:s", statement: "aws s3api list-buckets", ...extra })
+          .success,
+      ).toBe(false);
+    }
+    expect(RunS3ReadInputSchema.safeParse({ connection_id: "seed:s", statement: "" }).success).toBe(false);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_S3_READ_ARM.canonicalize("aws s3api list-buckets")).toBe(server.canonicalize("aws s3api list-buckets"));
+    expect(RUN_S3_READ_ARM.canonicalize({ statement: "aws s3api list-buckets" })).toBeNull();
+  });
+
+  test.each([
+    ["an object listing", "aws s3api list-objects-v2 --bucket sales"],
+    ["a key listing", "aws s3 ls s3://sales/"],
+    ["a count over a prefix", "aws s3 ls s3://sales/2026/ --recursive --summarize"],
+    ["a --prefix", "aws s3api head-bucket --bucket sales --prefix a"],
+    ["an object read", "aws s3api get-object --bucket sales --key a.csv out.csv"],
+    ["a preview", "preview s3://sales/a.csv"],
+    ["a write", "aws s3api put-object --bucket sales --key a.csv"],
+    ["an endpoint", "aws s3api list-buckets --endpoint-url http://elsewhere"],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, line) => {
+    const refusal = server.admit?.(line);
+    expect(refusal).not.toBeNull();
+    expect(RUN_S3_READ_ARM.fence(line, "s3")).toBe(
+      `The command was refused before it reached the server (${refusal?.code}). ${refusal?.message}`,
+    );
+  });
+
+  test("admits each of the six reads", () => {
+    for (const line of [
+      "aws s3api list-buckets",
+      "aws s3api head-bucket --bucket sales",
+      "aws s3api get-bucket-location --bucket sales",
+      "aws s3api get-bucket-versioning --bucket sales",
+      "aws s3 ls s3://sales --recursive --summarize",
+      "aws s3api head-object --bucket sales --key a.csv",
+    ]) {
+      expect(RUN_S3_READ_ARM.fence(line, "s3")).toBeNull();
+    }
+  });
+
+  test("points past a cut bucket list at one bucket the request names, never at a page", () => {
+    const rows = RUN_S3_READ_ARM.moreRows("aws s3api list-buckets", "s3", {
+      maxRows: 100,
+      shown: 100,
+      cut: "max_rows",
+    });
+    expect(rows).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("aws s3api list-buckets", "100")} To read past the 100 rows returned, raise max_rows (at most 500), or read one bucket you name with head-bucket, since an S3 read is never paged.`,
+    );
+    const bytes = RUN_S3_READ_ARM.moreRows("aws s3api list-buckets", "s3", {
+      maxRows: 500,
+      shown: 1,
+      cut: "result_bytes",
+    });
+    expect(bytes).toBe(
+      "More rows exist than the 32 KiB result limit holds, and 1 of them fitted; this tool does not page with offset. Read one bucket you name with head-bucket instead of the bucket list to fit more rows, and to read past the 1 row returned, read one bucket you name with head-bucket, since an S3 read is never paged.",
+    );
+    expect(RUN_S3_READ_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit, which a name, a count and a flag never are. Run the read again.",
+    );
+  });
+
+  test("describes the six reads, what is withheld, the agent read key and its engine", () => {
+    const description = RUN_S3_READ_ARM.description;
+    expect(description.startsWith("Run one read-only S3 metadata read")).toBe(true);
+    expect(description).toContain("Runs on S3-compatible object storage; other engines refuse it.");
+    expect(description).toContain("this tool takes no offset");
+    expect(description).toContain(
+      "object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and the endpoint are withheld",
+    );
+    expect(description).toContain(
+      "Every read is signed with the connection's agent read key, never the connection's own key",
+    );
+    expect(description).toContain(
+      "a bucket or key it may not read answers in the same sentence as one that does not exist",
+    );
+    expect(description).toContain("inspect_schema refuses an S3 connection");
+  });
+});
+
 describe("the Milvus arm", () => {
   const server = languageServer("milvusrpc");
   const collections = "POST /v2/vectordb/collections/list";
@@ -1485,7 +1583,7 @@ describe("the rabbitread arm", () => {
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl and MQTT declare it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, etcd, rabbitread, Kafka, Cypher, Milvus, Redis, MTConnect, Sparkplug and SNMP do not", () => {
+  test("kubectl, MQTT and S3 declare it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, etcd, rabbitread, Kafka, Cypher, Milvus, Redis, MTConnect, Sparkplug and SNMP do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
@@ -1510,6 +1608,8 @@ describe("the arms whose engines hold no table", () => {
     expect(RUN_SPARKPLUG_READ_ARM.holdsNoTables).toBe(false);
     // A conceptual table and a group of scalars are relation kinds, so inspect_schema lists the bundled catalog's.
     expect(RUN_SNMP_READ_ARM.holdsNoTables).toBe(false);
+    // A bucket and an object are config kinds, not relations, so inspect_schema refuses an S3 connection by name.
+    expect(RUN_S3_READ_ARM.holdsNoTables).toBe(true);
   });
 
   test.each(ARMS.flatMap((arm) => arm.types.map((type) => [arm.tool, type, arm] as const)))(

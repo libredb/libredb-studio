@@ -271,3 +271,12 @@ describe("Source tab and preview over captures", () => {
     }
   });
 });
+
+describe("the agent credential", () => {
+  test("takes an access key ID of its own, never the connection's, as the agent's key", () => {
+    // An access key ID equal to the connection's own names the same key, so an agent pair beside it would narrow
+    // nothing: the factory refuses one at open, and the seed schema at load.
+    const provider = new S3Provider({ id: "s3-agent-form", name: "s3", type: "s3", createdAt: new Date(0) });
+    expect(provider.getCapabilities().agentCredential).toBe("dedicated-user");
+  });
+});

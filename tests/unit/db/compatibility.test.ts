@@ -487,7 +487,7 @@ describe("wire-compatibility registry", () => {
     expect(CONNECTION_STRING_ACCEPTED.snowflake).toBe(false);
   });
 
-  test("s3 ships as an external engine that keeps the read-only mode, is not offered to MCP, and has no relatives", () => {
+  test("s3 ships as an external engine that keeps the read-only mode, is offered to MCP under an agent key alone, and has no relatives", () => {
     // S3-compatible object storage the user already runs, reached over the S3 REST API by a client of this repository's
     // own. MinIO, Silo, Garage and RustFS are the servers the s3 driver itself was verified on, not relatives:
     // counting them would count one product twice.
@@ -495,7 +495,9 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("s3")).toBe(true);
     expect(compatibleEnginesFor("s3")).toEqual([]);
     expect(READ_ONLY_ENFORCED.s3).toBe(true);
-    expect(MCP_EXPOSABLE.s3).toBe(false);
+    expect(MCP_EXPOSABLE.s3).toBe(true);
+    expect(MCP_STATEMENT_READ.s3).toBe(true);
+    expect(MCP_AGENT_CREDENTIAL_REQUIRED.s3).toBe(true);
     expect(READS_FILE_ACCESS_POSTURE.s3).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.s3).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.s3).toBe(false);

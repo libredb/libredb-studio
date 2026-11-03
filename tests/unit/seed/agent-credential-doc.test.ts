@@ -30,6 +30,9 @@ describe("docs/SEED_CONNECTIONS.md: an agent credential", () => {
     expect(namedOn("- `agentUser` and `agentPassword` together:")).toEqual(
       where((type) => SEED_AGENT_CREDENTIAL[type]?.form === "pair"),
     );
+    expect(namedOn("- `agentUser` and `agentPassword` together, with an `agentUser` other than `user`:")).toEqual(
+      where((type) => SEED_AGENT_CREDENTIAL[type]?.form === "dedicated-pair"),
+    );
     expect(namedOn("- `agentPassword` alone")).toEqual(where((type) => SEED_AGENT_CREDENTIAL[type]?.form === "secret"));
     expect(namedOn("- Neither:")).toEqual(where((type) => SEED_AGENT_CREDENTIAL[type] === null));
   });
