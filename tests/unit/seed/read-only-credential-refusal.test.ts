@@ -26,7 +26,7 @@ import {
 /**
  * "Load refuses what the file shows; resolution refuses the rest." The load stage is the seed schema; the
  * resolution stage is `readOnlySeedRefusal` over what the resolver returns, which a declaring type's provider
- * runs before it dials. The declarations are synthetic, on etcd, the one type whose provider enforces readOnly.
+ * runs before it dials. The declarations are synthetic, on etcd, a type whose write reach is not open.
  */
 
 const PAIR_SENTENCE = `Credential warning: ${SYNTHETIC_PAIR.message}`;
