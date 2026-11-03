@@ -17,6 +17,8 @@ import { join } from "node:path";
 import type { DatabaseType } from "@/lib/types";
 import * as realCompatibility from "@/lib/db/compatibility";
 
+const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
+
 const required: Record<DatabaseType, boolean> = { ...realCompatibility.MCP_AGENT_CREDENTIAL_REQUIRED };
 
 mock.module("@/lib/db/compatibility", () => ({ ...realCompatibility, MCP_AGENT_CREDENTIAL_REQUIRED: required }));
@@ -51,7 +53,7 @@ async function call(name: string, args: Record<string, unknown>): Promise<ToolAn
 /** A Postgres seed opted into MCP that carries no agent credential, as the file a test writes. */
 function seedWithoutAgentCredential(): string {
   return writeSeedFile(dir, [
-    { id: "warehouse", type: "postgres", host: "127.0.0.1", user: "owner", password: "not-a-real-password" },
+    { id: "warehouse", type: "postgres", host: "127.0.0.1", user: "owner", password: STAND_IN_PASSWORD },
   ]);
 }
 

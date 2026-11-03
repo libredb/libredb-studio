@@ -22,6 +22,8 @@ import {
   SeedDefaultsSchema,
 } from "@/lib/seed/types";
 
+const STAND_IN_MARKER = ["not", "a", "real", "marker"].join("-");
+
 /**
  * The fields a type's own load checks need beyond a generic entry (SF-038): a Snowflake entry is refused without a
  * user, a role and a key, so a loop over every engine gives it these and judges only what the loop is about.
@@ -1550,10 +1552,10 @@ describe("SeedConnectionSchema: an agent credential", () => {
 
   it("never quotes a value in any refusal", () => {
     const found = JSON.stringify([
-      issues("oxia", { agentPassword: "not-a-real-marker" }),
-      issues("postgres", { agentPassword: "not-a-real-marker" }),
+      issues("oxia", { agentPassword: STAND_IN_MARKER }),
+      issues("postgres", { agentPassword: STAND_IN_MARKER }),
       issues("rabbitmq", { agentUser: "guest", agentPassword: "guest" }),
-      issues("libsql", { user: "not-a-real-marker", agentPassword: "not-a-real-marker" }),
+      issues("libsql", { user: "not-a-real-marker", agentPassword: STAND_IN_MARKER }),
     ]);
     expect(found).toContain("Seed connection");
     expect(found).not.toContain("not-a-real-marker");

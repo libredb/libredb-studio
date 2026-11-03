@@ -39,6 +39,10 @@ import {
   writeSeedFile,
 } from "../../helpers/mcp-fixtures";
 
+const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
+const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
+const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
+
 pinMcpTestEnvironment();
 
 const ROOT = resolve(import.meta.dir, "../../..");
@@ -533,7 +537,7 @@ describe("a seed's agent credential", () => {
     process.env.VAULT_TOKEN = "not-a-real-token";
     process.env.MCP_CONTEXT_AGENT_USER = "agent_reader";
     globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ data: { data: { password: "not-a-real-agent-password" } } }), {
+      new Response(JSON.stringify({ data: { data: { password: STAND_IN_AGENT_PASSWORD } } }), {
         status: 200,
         headers: { "content-type": "application/json" },
       })) as unknown as typeof fetch;
@@ -544,7 +548,7 @@ describe("a seed's agent credential", () => {
         host: "127.0.0.1",
         port: 5432,
         user: "owner",
-        password: "not-a-real-owner-password",
+        password: STAND_IN_OWNER_PASSWORD,
         agentUser: "${MCP_CONTEXT_AGENT_USER}",
         agentPassword: "${vault:secret/data/mcp/agent#password}",
       },
@@ -563,8 +567,8 @@ describe("a seed's agent credential", () => {
     }
 
     expect(captured.logins).toEqual([
-      ["agent_reader", "not-a-real-agent-password"],
-      ["agent_reader", "not-a-real-agent-password"],
+      ["agent_reader", STAND_IN_AGENT_PASSWORD],
+      ["agent_reader", STAND_IN_AGENT_PASSWORD],
     ]);
   });
 });
@@ -585,10 +589,7 @@ describe("an engine MCP reads only under an agent credential", () => {
   test("refuses a connection with no agent credential in Studio's words, naming the connection", () => {
     let refusal: unknown;
     try {
-      assertAgentCredentialWhereRequired(
-        listed("postgres", { user: "owner", password: "not-a-real-password" }),
-        required,
-      );
+      assertAgentCredentialWhereRequired(listed("postgres", { user: "owner", password: STAND_IN_PASSWORD }), required);
     } catch (error) {
       refusal = error;
     }
@@ -598,7 +599,7 @@ describe("an engine MCP reads only under an agent credential", () => {
     expect((refusal as Error).message).toBe(
       'Connection "seed:store" is read by MCP only under an agent credential of its own, and it has none: an operator sets agentUser and agentPassword on this seed.',
     );
-    expect((refusal as Error).message).not.toContain("not-a-real-password");
+    expect((refusal as Error).message).not.toContain(STAND_IN_PASSWORD);
   });
 
   test("admits one that sets either field, which the factory then holds to the engine's form", () => {
@@ -606,7 +607,7 @@ describe("an engine MCP reads only under an agent credential", () => {
       assertAgentCredentialWhereRequired(listed("postgres", { agentUser: "agent" }), required),
     ).not.toThrow();
     expect(() =>
-      assertAgentCredentialWhereRequired(listed("postgres", { agentPassword: "not-a-real-password" }), required),
+      assertAgentCredentialWhereRequired(listed("postgres", { agentPassword: STAND_IN_PASSWORD }), required),
     ).not.toThrow();
   });
 

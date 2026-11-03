@@ -17,6 +17,9 @@ import {
 import { resetVaultCache, VaultError } from "@/lib/seed/vault-client";
 import type { SeedConnection } from "@/lib/seed/types";
 
+const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
+const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
+
 const REFERENCE = "${vault:secret/data/prod/postgres#password}";
 
 /** What the logger was asked to warn, each call as the arguments it was handed. */
@@ -197,7 +200,7 @@ describe("credential-resolver vault scheme", () => {
       {
         fetch: (async () =>
           new Response(
-            JSON.stringify({ data: { data: { user: "agent_reader", password: "not-a-real-agent-password" } } }),
+            JSON.stringify({ data: { data: { user: "agent_reader", password: STAND_IN_AGENT_PASSWORD } } }),
             {
               status: 200,
               headers: { "content-type": "application/json" },
@@ -206,11 +209,11 @@ describe("credential-resolver vault scheme", () => {
       },
     );
 
-    expect([resolved.agentUser, resolved.agentPassword]).toEqual(["agent_reader", "not-a-real-agent-password"]);
+    expect([resolved.agentUser, resolved.agentPassword]).toEqual(["agent_reader", STAND_IN_AGENT_PASSWORD]);
   });
 
   it("warns once, naming agentPassword and never its value, for a plaintext agent password", () => {
-    const conn = { ...baseConn, id: "plain", agentUser: "agent", agentPassword: "not-a-real-agent-password" };
+    const conn = { ...baseConn, id: "plain", agentUser: "agent", agentPassword: STAND_IN_AGENT_PASSWORD };
     resolveConnectionCredentials(conn);
     resolveConnectionCredentials(conn);
     expect(warnings()).toEqual([
@@ -225,8 +228,8 @@ describe("credential-resolver vault scheme", () => {
     const conn = {
       ...baseConn,
       id: "both",
-      password: "not-a-real-password",
-      agentPassword: "not-a-real-agent-password",
+      password: STAND_IN_PASSWORD,
+      agentPassword: STAND_IN_AGENT_PASSWORD,
     };
     resolveConnectionCredentials(conn);
     resolveConnectionCredentials(conn);

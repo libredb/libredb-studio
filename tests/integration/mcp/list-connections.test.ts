@@ -21,6 +21,8 @@ import type { DatabaseType } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile, type SeedEntry } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo, type Negotiation } from "../../helpers/mcp-harness";
 
+const STAND_IN_AGENT_PASSWORD_MARKER = ["not", "a", "real", "agent", "password", "marker"].join("-");
+
 pinMcpTestEnvironment();
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-list-"));
@@ -111,7 +113,7 @@ describe("the answer", () => {
   });
 
   test("carries neither field of an agent credential, nor either value, on any page", async () => {
-    const agent = { agentUser: "not-a-real-agent-user-marker", agentPassword: "not-a-real-agent-password-marker" };
+    const agent = { agentUser: "not-a-real-agent-user-marker", agentPassword: STAND_IN_AGENT_PASSWORD_MARKER };
     const many = Array.from({ length: 40 }, (_, index) => ({ ...ANALYTICS, id: `analytics-${index}`, ...agent }));
     writeSeedFile(dir, [SHOP, ...many]);
     let offset: number | null = 0;

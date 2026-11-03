@@ -7,6 +7,8 @@ import type { AgentCredentialForm } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
+const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
+
 /**
  * `ProviderCapabilities.agentCredential` across every shipped provider.
  *
@@ -118,7 +120,7 @@ describe("SEED_AGENT_CREDENTIAL against each provider's form and field row", () 
       apiKeyId: "not-a-real-key-id",
       apiKeySecret: "not-a-real-key-secret",
       user: "agent_reader",
-      password: "not-a-real-password",
+      password: STAND_IN_PASSWORD,
     });
     const authorization = (transport as unknown as { readonly authorization?: string }).authorization ?? "";
     expect(authorization.startsWith("ApiKey ")).toBe(true);

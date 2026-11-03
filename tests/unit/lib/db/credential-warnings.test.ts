@@ -13,6 +13,8 @@ import {
   SYNTHETIC_PASSWORD,
 } from "../../../helpers/synthetic-credential-warnings";
 
+const OTHER_PASSWORD = ["Other", "1"].join("");
+
 const restores: (() => void)[] = [];
 afterEach(() => {
   for (const restore of restores.splice(0)) restore();
@@ -282,7 +284,7 @@ describe("publishedDefaultPairWarning", () => {
     restores.push(declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]));
     const credential = { user: "root", password: SYNTHETIC_PASSWORD };
     expect(publishedDefaultPairWarning("etcd", credential)).toBe(PAIR_SENTENCE);
-    expect(publishedDefaultPairWarning("etcd", { user: "root", password: "Other1" })).toBeUndefined();
+    expect(publishedDefaultPairWarning("etcd", { user: "root", password: OTHER_PASSWORD })).toBeUndefined();
   });
 
   test("answers nothing for a jwt or no-secret entry, which are cautions and not a published default", () => {

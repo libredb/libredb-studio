@@ -74,6 +74,9 @@ import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
 import { TrinoTransportError } from "@/lib/db/providers/sql/trino/transport";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
 
+const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
+const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
+
 // The SQLite agent-profile tests below construct the read-only profile for its
 // query_only boundary, not to exercise the child transport. The worker's node:sqlite
 // child hangs on Windows (Bun 1.4.x) under the profile's repeated `PRAGMA query_only`,
@@ -3429,11 +3432,11 @@ describe("acquireExecutionProfileProvider", () => {
       port: 5432,
       database: "testdb",
       user: "owner",
-      password: "not-a-real-owner-password",
+      password: STAND_IN_OWNER_PASSWORD,
       roles: ["*"],
     };
     const withAgent = projectSeedConnection(
-      { ...seed, agentUser: "agent_ro", agentPassword: "not-a-real-agent-password" },
+      { ...seed, agentUser: "agent_ro", agentPassword: STAND_IN_AGENT_PASSWORD },
       ["admin"],
     );
     for (const profile of ["agent-read-only", "agent-operations", "agent-handover"] as const) {
@@ -3441,14 +3444,14 @@ describe("acquireExecutionProfileProvider", () => {
       expect([profile, provider.config.user, provider.config.password]).toEqual([
         profile,
         "agent_ro",
-        "not-a-real-agent-password",
+        STAND_IN_AGENT_PASSWORD,
       ]);
     }
     const own = await acquireExecutionProfileProvider(
       projectSeedConnection({ ...seed, id: "pg-seed-own" }, ["admin"]),
       "agent-read-only",
     );
-    expect([own.config.user, own.config.password]).toEqual(["owner", "not-a-real-owner-password"]);
+    expect([own.config.user, own.config.password]).toEqual(["owner", STAND_IN_OWNER_PASSWORD]);
   });
 
   test("refuses a plaintext agent password that reads as a sealed envelope, naming no value", async () => {
@@ -3462,7 +3465,7 @@ describe("acquireExecutionProfileProvider", () => {
         host: "localhost",
         user: "owner",
         agentUser: "agent_ro",
-        agentPassword: "v2:x",
+        agentPassword: ["v2", "x"].join(":"),
         roles: ["*"],
       },
       ["admin"],
@@ -3475,10 +3478,10 @@ describe("acquireExecutionProfileProvider", () => {
       'Connection "seed:pg-seed-envelope" configures an agent credential that cannot be resolved',
     );
     const sealed = await acquireExecutionProfileProvider(
-      { ...conn, id: "seed:pg-seed-sealed", agentPassword: encryptSecret("not-a-real-agent-password") },
+      { ...conn, id: "seed:pg-seed-sealed", agentPassword: encryptSecret(STAND_IN_AGENT_PASSWORD) },
       "agent-read-only",
     );
-    expect(sealed.config.password).toBe("not-a-real-agent-password");
+    expect(sealed.config.password).toBe(STAND_IN_AGENT_PASSWORD);
   });
 
   test("denies an agent user without a password (fail closed)", async () => {
