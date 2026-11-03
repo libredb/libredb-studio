@@ -168,11 +168,11 @@ describe("inspect_schema", () => {
 });
 
 describe("the model's own requests against Milvus", () => {
-  test("run only on the agent read-only profile, answer metadata only, and MCP read stays closed", async () => {
+  test("run only on the agent read-only profile, answer metadata only, and MCP read opens on the same path", async () => {
     const { provider } = await connected();
     const engines: readonly string[] = AGENT_EXECUTION_ENGINES;
     expect(engines).toContain("milvus");
-    expect(MCP_STATEMENT_READ.milvus).toBe(false);
+    expect(MCP_STATEMENT_READ.milvus).toBe(true);
     expect(provider.getCapabilities().metadataOnly).toBe(MILVUS_METADATA_ONLY);
     expect(provider.getCapabilities().supportsExplain).toBe(false);
     // This handle is read-only but sends no statement, as the operations profile's: it is refused before the wire.

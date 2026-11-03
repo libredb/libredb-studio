@@ -398,10 +398,18 @@ export class MilvusProvider extends BaseDatabaseProvider {
   // Object surface, answered by objects.ts
   // ==========================================================================
 
-  /** The databases; nothing nests under one, which answers with no call. */
+  /**
+   * The databases; nothing nests under one, which answers with no call. A handle opened under an execution profile
+   * lists the connection's own database alone, with no call, since an agent request reads that database and no other:
+   * so MCP's `inspect_schema` and the agent's catalog read the seed's database, as `run_milvus_read` does.
+   */
   public async listContainers(parent?: readonly string[]): Promise<Container[]> {
     const { session, context } = this.surface();
     if (parent !== undefined && parent.length > 0) return [];
+    if (this.execution.readOnly === true) {
+      const database = session.options.database;
+      return [{ path: [database], name: database, level: 0, isSessionDefault: true }];
+    }
     return listMilvusDatabases(session.client, context);
   }
 

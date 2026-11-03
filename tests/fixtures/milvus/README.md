@@ -50,3 +50,19 @@ The containers are removed when the run ends; `MILVUS_PREFIX` names them and `MI
 - `list-databases-*` to `describe-alias-*`: the console's metadata reads; `query-values-*` and `search-text-*`: a read of stored values, and a text search the server runs the BM25 function for.
 - `write-*`: every write and state change, refused to each read-only principal, then sent by a principal that may write; `state-*`: what root reads before and after them.
 - `select-grant-own-role-after-grant-midrun` and `write-insert-after-grant-midrun`: a grant made during the run.
+
+## The data scope
+
+`3.0.2/mcp-scope/` holds what Milvus 3.0.2 answers narrow read-only users about objects inside and outside their grants, which the provider's agent tests replay and `docs/providers/milvus.md` section 15.3.1 cites.
+`3.0.2/mcp-scope/run.sh` writes every file there: it starts one digest-pinned server of its own with authorization on, generates root's password for the run, and runs `mcp-scope-probe.ts`, which seeds three databases, collections, aliases and three users (`dbro`, `few`, `onedb`), generates every user's password and refuses to write a capture holding any form of any credential it sent.
+The container is removed when the run ends; `MILVUS_PREFIX` names it and `MILVUS_PORT` picks its loopback port.
+
+- `list-cred-users-*`, `select-user-self-*`, `select-grant-own-role-*`, `select-grant-public-*`: the read-only proof's reads, which each narrow user passes.
+- `list-databases-*`, `show-collections-*`, `list-aliases-*`, `describe-database-*`: the listings and the database reads, the connection's own database and another.
+- `describe-collection-<tag>-*`, `statistics-<tag>-*`, `load-state-<tag>-*`, `show-partitions-<tag>-*`, `describe-index-<tag>-*`, `list-aliases-of-<tag>-*`: each collection read naming a granted collection, an ungranted one, a missing name, an alias of a granted and of an ungranted collection, and an alias in another database.
+- `describe-alias-*`, `describe-index-missing-index-*`, `batch-describe-collection-*`: the alias reads, a missing index, and the bulk describe `inspect_schema` reads through.
+
+## The MCP boundary
+
+`3.0.2/mcp-boundary/boundary.json` is what `tests/live/milvus-mcp-boundary.ts` recorded of MCP's `run_milvus_read` and `inspect_schema` on two fresh 3.0.2 servers, one with authorization on and one with it off: each check's name, its outcome and what it saw.
+`3.0.2/mcp-boundary/run.sh` starts the servers, generates root's password for the run, runs the script and removes the containers; the script makes every other user's password and refuses to write a file holding any of them.

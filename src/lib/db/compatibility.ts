@@ -526,8 +526,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4), and for
   // `run_cypher_read`, which MCP_STATEMENT_READ opens on it.
   neo4j: true,
-  // Offered for the two metadata tools (vector-family E17); `run_read_query` does not serve it, because the provider
-  // implements no `queryReadOnly`.
+  // Offered for the two metadata tools (vector-family E17), and for `run_milvus_read`, which MCP_STATEMENT_READ opens on
+  // it.
   milvus: true,
   // Offered for the two metadata tools, carrying names and types only (vector-family spec 4.4), and for
   // `run_qdrant_read`, which MCP_STATEMENT_READ opens on it.
@@ -608,6 +608,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * reads metadata only, for Kafka, whose metadata read `run_kafka_read` reads,
  * for Neo4j, whose Cypher `run_cypher_read` reads, and for Weaviate, whose request `run_weaviate_read` reads metadata only.
  * True for MTConnect, whose request line `run_mtconnect_read` reads under the agent's closed route table.
+ * True for Milvus, whose metadata request `run_milvus_read` reads.
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
@@ -674,9 +675,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // server proves before every statement to hold only reads, no LOAD and no extension it can execute, and the
   // server's own classification of every statement (docs/providers/neo4j.md section 15).
   neo4j: true,
-  // Agent mode executes metadata-only reads on Milvus, and MCP read stays closed on it until a change of its own
-  // opens it.
-  milvus: false,
+  // Opened on its own: run_milvus_read runs under the boundary agent mode uses, the provider's closed RPC table and a
+  // user the server proves read-only before every request, every call naming a collection sent only when the user's own
+  // collection list holds it, every answer projected to names, counts and flags (docs/providers/milvus.md, section
+  // Agent mode).
+  milvus: true,
   // Opened on its own: run_qdrant_read runs under the boundary agent mode uses, the provider's closed table of read
   // routes and a key the server refuses an empty alias update and an empty point delete on every collection it lists,
   // before every request, with every answer projected to names, counts and flags (docs/providers/qdrant.md, section

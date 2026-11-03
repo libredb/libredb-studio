@@ -17,6 +17,7 @@ import { CYPHER_MCP_FACET } from "./cypher/mcp";
 import { KAFKAREAD_MCP_FACET } from "./kafkaread/mcp";
 import { KUBECTL_MCP_FACET } from "./kubectl/mcp";
 import { LIBREDBKV_MCP_FACET } from "./libredbkv/mcp";
+import { MILVUSRPC_MCP_FACET } from "./milvusrpc/mcp";
 import { MONGO_MCP_FACET } from "./mongo/mcp";
 import { MTCONNECTREAD_MCP_FACET } from "./mtconnectread/mcp";
 import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
@@ -88,8 +89,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   weaviateapi: WEAVIATEAPI_MCP_FACET,
   qdrantapi: QDRANTAPI_MCP_FACET,
   cypher: CYPHER_MCP_FACET,
-  // No MCP statement tool yet: MCP read stays closed on Milvus until a change of its own declares one and opens it.
-  milvusrpc: null,
+  milvusrpc: MILVUSRPC_MCP_FACET,
   rediscli: REDISCLI_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on etcd until a change of its own declares one and opens it.
   etcdctl: null,

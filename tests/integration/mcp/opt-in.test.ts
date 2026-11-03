@@ -160,7 +160,7 @@ describe("a seed file that cannot be loaded", () => {
       const session = await connectClient(admin, { negotiation });
       try {
         expect(session.client.getProtocolEra()).toBe(negotiation === "legacy" ? "legacy" : "modern");
-        expect((await session.client.listTools()).tools).toHaveLength(13);
+        expect((await session.client.listTools()).tools).toHaveLength(14);
       } finally {
         await session.close();
       }

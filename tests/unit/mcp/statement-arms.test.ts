@@ -44,6 +44,7 @@ const RUN_CYPHER_READ_ARM = mcpStatementArm("run_cypher_read");
 const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
 const RUN_WEAVIATE_READ_ARM = mcpStatementArm("run_weaviate_read");
 const RUN_MTCONNECT_READ_ARM = mcpStatementArm("run_mtconnect_read");
+const RUN_MILVUS_READ_ARM = mcpStatementArm("run_milvus_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
@@ -67,7 +68,7 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_weaviate_read, run_qdrant_read, run_rabbitmq_read, run_kafka_read, run_cypher_read, run_redis_read and run_mtconnect_read", () => {
+  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_weaviate_read, run_qdrant_read, run_rabbitmq_read, run_kafka_read, run_cypher_read, run_milvus_read, run_redis_read and run_mtconnect_read", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
@@ -77,6 +78,7 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(MCP_STATEMENT_ARMS.rabbitread).toBe(RUN_RABBITMQ_READ_ARM);
     expect(MCP_STATEMENT_ARMS.kafkaread).toBe(RUN_KAFKA_READ_ARM);
     expect(MCP_STATEMENT_ARMS.cypher).toBe(RUN_CYPHER_READ_ARM);
+    expect(MCP_STATEMENT_ARMS.milvusrpc).toBe(RUN_MILVUS_READ_ARM);
     expect(MCP_STATEMENT_ARMS.rediscli).toBe(RUN_REDIS_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mtconnectread).toBe(RUN_MTCONNECT_READ_ARM);
     expect(ARMS.map((arm) => arm.tool)).toEqual([
@@ -87,6 +89,7 @@ describe("MCP_STATEMENT_ARMS", () => {
       "run_weaviate_read",
       "run_qdrant_read",
       "run_cypher_read",
+      "run_milvus_read",
       "run_redis_read",
       "run_rabbitmq_read",
       "run_kafka_read",
@@ -97,8 +100,6 @@ describe("MCP_STATEMENT_ARMS", () => {
   test("a language with no MCP tool yet has no arm, and its engine no read tool", () => {
     expect(MCP_STATEMENT_ARMS.influxql).toBeNull();
     expect(mcpStatementToolFor("influxdb")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.milvusrpc).toBeNull();
-    expect(mcpStatementToolFor("milvus")).toBeNull();
     expect(MCP_STATEMENT_ARMS.etcdctl).toBeNull();
     expect(mcpStatementToolFor("etcd")).toBeNull();
     expect(MCP_STATEMENT_ARMS.oxiacli).toBeNull();
@@ -1036,6 +1037,106 @@ describe("the mtconnectread arm", () => {
   });
 });
 
+describe("the Milvus arm", () => {
+  const server = languageServer("milvusrpc");
+  const collections = "POST /v2/vectordb/collections/list";
+
+  test("takes one request, no offset and no database, and sends it as written", () => {
+    expect(RUN_MILVUS_READ_ARM.title).toBe("Run a read-only Milvus metadata read");
+    expect(RUN_MILVUS_READ_ARM.argument).toBe("statement");
+    expect(RUN_MILVUS_READ_ARM.paging).toBe("none");
+    expect(RUN_MILVUS_READ_ARM.types).toEqual(["milvus"]);
+    expect(RUN_MILVUS_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    expect(RUN_MILVUS_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "default" }, { sql: "SELECT 1" }]) {
+      expect(
+        RUN_MILVUS_READ_ARM.inputSchema.safeParse({ connection_id: "seed:m", statement: collections, ...extra })
+          .success,
+      ).toBe(false);
+    }
+    expect(RUN_MILVUS_READ_ARM.inputSchema.safeParse({ connection_id: "seed:m", statement: "" }).success).toBe(false);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_MILVUS_READ_ARM.canonicalize(collections)).toBe(server.canonicalize(collections));
+    expect(RUN_MILVUS_READ_ARM.canonicalize({ route: "collections/list" })).toBeNull();
+  });
+
+  test.each([
+    ["a query of stored values", 'POST /v2/vectordb/entities/query\n{"collectionName": "docs", "filter": "id > 0"}'],
+    ["a search", 'POST /v2/vectordb/entities/search\n{"collectionName": "docs", "annsField": "vec", "data": [[0.1]]}'],
+    ["a write", 'POST /v2/vectordb/collections/drop\n{"collectionName": "docs"}'],
+    ["a Load", 'POST /v2/vectordb/collections/load\n{"collectionName": "docs"}'],
+    ["every alias of the database", "POST /v2/vectordb/aliases/list"],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, request) => {
+    const refusal = server.admit?.(request);
+    expect(refusal).not.toBeNull();
+    expect(RUN_MILVUS_READ_ARM.fence(request, "milvus")).toBe(
+      `The request was refused before it reached the server (${refusal?.code}). ${refusal?.message}`,
+    );
+  });
+
+  test("admits each metadata read", () => {
+    for (const request of [
+      collections,
+      "POST /v2/vectordb/databases/list",
+      'POST /v2/vectordb/collections/describe\n{"collectionName": "docs"}',
+      'POST /v2/vectordb/aliases/list\n{"collectionName": "docs"}',
+      'POST /v2/vectordb/aliases/describe\n{"aliasName": "docs_alias"}',
+    ]) {
+      expect(RUN_MILVUS_READ_ARM.fence(request, "milvus")).toBeNull();
+    }
+  });
+
+  test("answers a row refusal with the read's own row-cap advice", () => {
+    const rows = classifyReadQueryFailure(
+      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      1,
+      2,
+      RUN_MILVUS_READ_ARM.tooLarge(collections, "milvus"),
+    );
+    expect(rows).toEqual({
+      kind: "too-large",
+      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice(collections, "1000")}`,
+    });
+  });
+
+  test("reads past a cut with a narrower route, never an offset, a SQL clause or a MongoDB stage", () => {
+    const hint = RUN_MILVUS_READ_ARM.moreRows(collections, "milvus", { maxRows: 100, shown: 100, cut: "max_rows" });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(collections, "100")} To read past the 100 rows returned, read a narrower route, one collection instead of a whole list, since a Milvus read is never paged.`,
+    );
+    const bytes = RUN_MILVUS_READ_ARM.moreRows(collections, "milvus", { maxRows: 100, shown: 40, cut: "result_bytes" });
+    expect(bytes).toContain("40 of them fitted; this tool does not page with offset.");
+    for (const text of [hint, bytes, RUN_MILVUS_READ_ARM.rowOverCap]) {
+      expect(text).not.toContain("$skip");
+      expect(text).not.toContain("LIMIT");
+    }
+  });
+
+  test("a cut at one row names one row", () => {
+    const hint = RUN_MILVUS_READ_ARM.moreRows(collections, "milvus", { maxRows: 1, shown: 1, cut: "max_rows" });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(collections, "1")} To read past the 1 row returned, read a narrower route, one collection instead of a whole list, since a Milvus read is never paged.`,
+    );
+    const bytes = RUN_MILVUS_READ_ARM.moreRows(collections, "milvus", { maxRows: 100, shown: 1, cut: "result_bytes" });
+    expect(bytes).toContain("to read past the 1 row returned,");
+  });
+
+  test("describes the reads, what is never read, the data scope, the proof and its engine", () => {
+    const description = RUN_MILVUS_READ_ARM.description;
+    expect(description.startsWith("Run one read-only Milvus metadata read")).toBe(true);
+    expect(description).toContain("Runs on Milvus; other engines refuse it.");
+    expect(description).toContain("this tool takes no offset");
+    for (const route of ["databases/list", "collections/list", "collections/describe", "aliases/describe"]) {
+      expect(description).toContain(route);
+    }
+    expect(description).toContain("never a stored field value or vector");
+    expect(description).toContain("only of the collections collections/list lists the connection's user");
+    expect(description).toContain("before every read the server must prove the user read-only");
+  });
+});
+
 describe("the tool each engine is read with", () => {
   test("is the tool whose arm serves it, and null where none does", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
@@ -1045,7 +1146,7 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Weaviate with run_weaviate_read, Qdrant with run_qdrant_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, Redis with run_redis_read, MTConnect with run_mtconnect_read, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Weaviate with run_weaviate_read, Qdrant with run_qdrant_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, Milvus with run_milvus_read, Redis with run_redis_read, MTConnect with run_mtconnect_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
     expect(mcpStatementToolFor("libredb")).toBe("run_libredb_read");
@@ -1054,6 +1155,7 @@ describe("the tool each engine is read with", () => {
     expect(mcpStatementToolFor("rabbitmq")).toBe("run_rabbitmq_read");
     expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
     expect(mcpStatementToolFor("neo4j")).toBe("run_cypher_read");
+    expect(mcpStatementToolFor("milvus")).toBe("run_milvus_read");
     expect(mcpStatementToolFor("mtconnect")).toBe("run_mtconnect_read");
     for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
     expect(mcpStatementToolFor("clickhouse")).toBe("run_read_query");
@@ -1080,6 +1182,7 @@ describe("the tool each engine is read with", () => {
       "run_weaviate_read",
       "run_qdrant_read",
       "run_cypher_read",
+      "run_milvus_read",
       "run_redis_read",
       "run_rabbitmq_read",
       "run_kafka_read",
@@ -1320,7 +1423,7 @@ describe("the rabbitread arm", () => {
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, rabbitread, Kafka, Cypher, Redis and MTConnect do not", () => {
+  test("kubectl declares it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, rabbitread, Kafka, Cypher, Milvus, Redis and MTConnect do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
@@ -1332,6 +1435,7 @@ describe("the arms whose engines hold no table", () => {
     expect(RUN_RABBITMQ_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_KAFKA_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_CYPHER_READ_ARM.holdsNoTables).toBe(false);
+    expect(RUN_MILVUS_READ_ARM.holdsNoTables).toBe(false);
     // A Redis key grouping is a `keyspace` relation, which inspect_schema lists.
     expect(RUN_REDIS_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_MTCONNECT_READ_ARM.holdsNoTables).toBe(false);
@@ -1357,6 +1461,7 @@ describe("the arms whose engines hold no table", () => {
     expect(mcpTablelessReadTool("qdrant")).toBeNull();
     expect(mcpTablelessReadTool("kafka")).toBeNull();
     expect(mcpTablelessReadTool("neo4j")).toBeNull();
+    expect(mcpTablelessReadTool("milvus")).toBeNull();
     expect(mcpTablelessReadTool("postgres")).toBeNull();
     expect(mcpTablelessReadTool("redis")).toBeNull();
     expect(mcpTablelessReadTool("libredb")).toBeNull();

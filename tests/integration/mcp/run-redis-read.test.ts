@@ -177,12 +177,12 @@ const textOf = (result: Answered) => result.content.map((block) => block.text).j
 const sentCommands = () => opened.flatMap((connection) => connection.calls);
 
 describe("the tool", () => {
-  test("is listed after run_cypher_read, read-only, with the statement schema and no offset or database", async () => {
+  test("is listed after run_milvus_read, read-only, with the statement schema and no offset or database", async () => {
     const session = await connectClient(serve, { negotiation: "legacy" });
     try {
       const tools = (await session.client.listTools()).tools;
       expect(tools.map((tool) => tool.name).indexOf("run_redis_read")).toBe(
-        tools.map((tool) => tool.name).indexOf("run_cypher_read") + 1,
+        tools.map((tool) => tool.name).indexOf("run_milvus_read") + 1,
       );
       const tool = tools.find((candidate) => candidate.name === "run_redis_read");
       expect(tool?.description).toBe(RUN_REDIS_READ_ARM.description);

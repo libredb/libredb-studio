@@ -39,7 +39,6 @@ describe("the routes an agent request may name", () => {
       request("indexes/describe", { collectionName: "docs", indexName: "vec_idx" }),
       { op: "indexes/describe", collection: "docs", indexName: "vec_idx" },
     ],
-    [request("aliases/list"), { op: "aliases/list", collection: undefined }],
     [request("aliases/list", { collectionName: "docs" }), { op: "aliases/list", collection: "docs" }],
     [request("aliases/describe", { aliasName: "docs_alias" }), { op: "aliases/describe", alias: "docs_alias" }],
   ])("%s is admitted, in the connection's database", (text, expected) => {
@@ -84,6 +83,16 @@ describe("what an agent request may not be", () => {
       message: MILVUS_AGENT_SENTENCES.metadataOnly(route),
     });
   });
+
+  test.each([request("aliases/list"), request("aliases/list", {}), request("aliases/list", { dbName: "analytics" })])(
+    "%s names no collection and is refused: the server answers every alias of the database to any user",
+    (text) => {
+      for (const reading of [readMilvusAgentStatement(text, "analytics"), readMilvusAgentStatement(text)]) {
+        expect(reading).toEqual({ ok: false, code: "scope", message: MILVUS_AGENT_SENTENCES.aliasList });
+      }
+      expect(MILVUS_AGENT_SENTENCES.aliasList).toEndWith("Nothing was sent.");
+    },
+  );
 
   test.each([
     request("collections/list", { dbName: "other" }),
