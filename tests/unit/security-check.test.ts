@@ -68,8 +68,8 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the reserved role for Kubernetes-discovered connections, the OpenShift self review, admin rule and platform check, the Kubernetes discovery controls, the operator's own namespace, then the OpenShift console plugin's server", () => {
-    expect(PROGRAMME_CONTROL_IDS.slice(-10)).toEqual([
+  test("the programme ends with the reserved role for Kubernetes-discovered connections, the OpenShift self review, admin rule and platform check, the Kubernetes discovery controls, the operator's own namespace, the OpenShift console plugin's server, then a seed's agent credential", () => {
+    expect(PROGRAMME_CONTROL_IDS.slice(-11)).toEqual([
       "3.28",
       "3.29",
       "3.30",
@@ -80,8 +80,9 @@ describe("parseTables and findControlTable", () => {
       "3.35",
       "3.36",
       "3.37",
+      "3.38",
     ]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(64);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(65);
   });
 
   test("ignores a table that is not the control table", () => {
