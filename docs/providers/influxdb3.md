@@ -531,6 +531,7 @@ None: no Admin > Operations card and no tree control is offered, because InfluxD
 | `queryLanguage` | `"sql"` |
 | `defaultPort` | `8181` |
 | `enforcesReadOnly` | `true` |
+| `writeReach` | the editor absent with its proof, `evaluateInfluxSql`, and object edit, maintenance and transactions absent |
 | `supportsResultPagination` | `true` |
 | `supportsExternalQueryLimiting` | `true` |
 | `supportsExplain` | `false` |

@@ -501,6 +501,7 @@ None: InfluxDB compacts its own storage and keeps no statistics to update.
 | `declaresForeignKeys` | `false` |
 | `tablesAreDerivedGroupings` | `false` |
 | `enforcesReadOnly` | `true` |
+| `writeReach` | the editor absent with its proof, `evaluateInfluxql`, and object edit, maintenance and transactions absent |
 | `supportsMaintenance` | `false` |
 | `maintenanceOperations` | `[]` |
 | `supportsConnectionString` | `false` |

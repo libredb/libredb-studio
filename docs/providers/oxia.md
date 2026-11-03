@@ -631,6 +631,7 @@ Every capability is written, since the base's defaults are SQL's:
 | `declaresForeignKeys` | `false` |
 | `tablesAreDerivedGroupings` | `false` |
 | `enforcesReadOnly` | `true` |
+| `writeReach` | `OXIA_WRITE_REACH` |
 | `supportsMaintenance` | `false` |
 | `maintenanceOperations` | `[]` |
 | `supportsConnectionString` | `false` |
