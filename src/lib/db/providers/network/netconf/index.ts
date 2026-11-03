@@ -61,6 +61,15 @@ import { netconfAgentResult, runNetconfAgentReadWithin } from "./agent-read";
 import { readNetconfAgentStatement } from "./agent-statement";
 import { NETCONF_AGENT_WITHHELD } from "./agent-surface";
 import { NETCONF_METADATA_ONLY } from "./agent-withheld";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the request builder writes four read operations and close-session, and no edit-config.
+ */
+const NETCONF_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/network/netconf/requests.ts",
+  symbol: "buildRpc",
+});
 
 export { parseReadRequest } from "./read-request";
 import type { TopLevelNode } from "./reader";
@@ -223,6 +232,7 @@ export class NetconfProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: false,
       // Structural: this provider has no code that can write to a device.
       enforcesReadOnly: true,
+      writeReach: NETCONF_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

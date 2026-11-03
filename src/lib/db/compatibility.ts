@@ -21,6 +21,7 @@
  * hold its own copy of the data.
  */
 import type { DatabaseType } from "@/lib/types";
+import type { WriteReach } from "./write-reach";
 
 /**
  * The drivers we ship, i.e. the engines that have a provider, a doc page and an
@@ -253,6 +254,123 @@ export function isExternalDatabaseType(type: DatabaseType): boolean {
   return EXTERNAL[type] === true;
 }
 
+/** A total record with every value mapped, keyed exactly as the record it was mapped from. */
+function mapEntries<K extends string, V, W>(record: Readonly<Record<K, V>>, map: (value: V) => W): Record<K, W> {
+  return Object.fromEntries(Object.entries<V>(record).map(([key, value]) => [key, map(value)])) as Record<K, W>;
+}
+
+/**
+ * What Studio can write on each shipped engine, one of `WriteReach`'s three values (`./write-reach.ts`): `none`, no
+ * code in the provider can send a write on any write path; `guarded`, every write path it has is refused by a named
+ * gate while read-only mode holds; `open`, at least one path sends a write no Studio gate refuses. A fact about
+ * Studio's code, not about the engine or the role a connection signs in as. The static answer
+ * `summarizeWriteReach(ProviderCapabilities.writeReach)` gives once a provider is built.
+ *
+ * Static because its readers decide before a provider exists, as `READ_ONLY_ENFORCED`'s do, which is derived from it
+ * below. An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering,
+ * and `tests/unit/db/write-reach-capability.test.ts` holds every entry equal to what that engine's provider declares,
+ * and holds a `none` provider to declaring no write capability on any path. Frozen like the records above it.
+ *
+ * It is not an MCP criterion and no MCP code reads it: whether a machine client may read an engine is
+ * `MCP_EXPOSABLE`'s answer, which holds on every engine whatever its reach.
+ */
+export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.freeze({
+  postgres: "open",
+  bigquery: "open",
+  snowflake: "open",
+  spark: "open",
+  mysql: "open",
+  sqlite: "open",
+  libsql: "open",
+  duckdb: "open",
+  oracle: "open",
+  db2: "open",
+  mssql: "open",
+  clickhouse: "open",
+  // Druid native SQL refuses a write, but that is the engine's grammar: Studio sends the statement the editor holds.
+  druid: "open",
+  trino: "open",
+  cassandra: "open",
+  // As Druid: the SQL grammar has no write, and Studio sends whatever the editor holds.
+  elasticsearch: "open",
+  // As Elasticsearch, and the server's own DELETE can be switched on in 2.x.
+  opensearch: "open",
+  mongodb: "open",
+  couchbase: "open",
+  redis: "open",
+  // No write path in the code, but recorded open until its proof test and live measurement land.
+  prometheus: "open",
+  // As Prometheus.
+  kafka: "open",
+  // The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit
+  // and maintenance operation before any request while the mode holds (`write-policy.ts`).
+  etcd: "guarded",
+  // Read-only whatever the flag says: this version of the provider refuses every write before it is sent,
+  // offers no object edit and no maintenance operation, so a connection marked read-only keeps the promise.
+  neo4j: "none",
+  // Its provider refuses Load and Release before any request while the mode holds, and every v1 console request is
+  // a read (vector-family E8).
+  milvus: "guarded",
+  // Every v1 console request is a read and the provider has no maintenance operation, and while the mode holds it
+  // refuses every route that is not a read before any request (vector-family spec 4.4).
+  qdrant: "none",
+  // As Qdrant (#1566 spec 3.5): every console request is a read, the provider has no maintenance operation, and it
+  // refuses every route that is not a read, and every request that would wake a cold tenant, before any request.
+  weaviate: "none",
+  // Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`influxql-policy.ts`) is the only
+  // boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW`
+  // or `EXPLAIN` before any request; the route table reaches no write endpoint.
+  influxdb: "none",
+  // Read-only whatever the flag says: the closed route table reaches no write, configure, token, cache or plugin
+  // endpoint, the SQL policy refuses every statement that does not lead with a read keyword before any request, and
+  // the 3.12 planner refuses every write besides.
+  influxdb3: "none",
+  // Read-only whatever the flag says: the adapter's stub holds only `GetShardAssignments`, `Read`, `List`, `RangeScan`
+  // and `Health/Check` (O8), and the parser refuses every write verb by name, naming the read-only mode while it
+  // holds (O1).
+  oxia: "none",
+  // No read-only mode: the provider sends the statement the editor holds, as Db2's does.
+  databend: "open",
+  // Read-only whatever the flag says: the console's closed command table reaches no write, and the provider sends only
+  // GET and HEAD.
+  s3: "none",
+  // Read-only whatever the flag says: the request policy admits GET and the three self reviews only, before any
+  // socket, and the provider offers no object edit and no maintenance operation.
+  kubernetes: "none",
+  // Structural rather than a mode: the encoder has no function that writes a PUBLISH, so there is no
+  // write to enforce against. The valve repeats the check on the bytes.
+  mqtt: "none",
+  // Read-only whatever the flag says: the client builds only the read requests of its closed table, before any
+  // socket, and the provider offers no object edit and no maintenance operation.
+  firestore: "none",
+  // Read-only whatever the flag says: the management client's closed route table holds GET routes only, and the AMQP
+  // client has no encoder for a publish, a get, a reject or any queue or exchange method, so no request path writes.
+  rabbitmq: "none",
+  // Structural rather than a mode: the client seam names eight read services and none of them writes, so there
+  // is no write to enforce against (`src/lib/db/providers/industrial/opcua/client.ts`).
+  opcua: "none",
+  // Structural rather than a mode: the request table holds nine routes and every one of them is a GET, so there
+  // is no write to enforce against (`src/lib/db/providers/industrial/mtconnect/routes.ts`).
+  mtconnect: "none",
+  // Structural rather than configured: the encoder names four read function codes and device
+  // identification, and there is no code in the provider that can build a write (#1723 MB-S1,
+  // `src/lib/db/providers/industrial/modbus/valve.ts` re-checks every outbound byte).
+  modbus: "none",
+  // Structural rather than a mode: the request builder writes four read bodies and `<close-session>`, and no
+  // function in the provider builds an `<edit-config>` or any other write
+  // (`src/lib/db/providers/network/netconf/requests.ts`).
+  netconf: "none",
+  // Structural rather than a mode: the valve refuses every outbound datagram whose PDU is not a read, so no Set
+  // request leaves Studio (`src/lib/db/providers/network/snmp/valve.ts`).
+  snmp: "none",
+  // Structural rather than a mode, and the structure is an absence: `encoder.ts` encodes CONNECT, SUBSCRIBE,
+  // UNSUBSCRIBE, PINGREQ and DISCONNECT and has no function that writes a PUBLISH, while the CONNECT takes no
+  // will parameter at all, so no later edit can register a death certificate by passing a value (5.4).
+  sparkplug: "none",
+  // Studio's own store: the editor's `put` and `delete` are sent whatever the connection's flag says.
+  libredb: "open",
+});
+
 /**
  * Which shipped engines keep a read-only connection's promise: their provider refuses every write,
  * object edit and maintenance operation before any request while the connection's `readOnly` is true
@@ -264,98 +382,11 @@ export function isExternalDatabaseType(type: DatabaseType): boolean {
  * draws its toggle, and writes the field, only where this answers true. Refused rather than ignored,
  * because a mode an engine ignores lists a connection as read-only and sends its writes.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
- * answering, and `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to
- * what that engine's provider declares, so the two cannot drift. Frozen like the records above it.
+ * Derived from `WRITE_REACH`, so there is one hand-written answer: true wherever the reach is not `open`.
+ * `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to what that engine's provider
+ * declares, so the two cannot drift. Frozen like the records above it.
  */
-export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
-  postgres: false,
-  bigquery: false,
-  snowflake: false,
-  spark: false,
-  mysql: false,
-  sqlite: false,
-  libsql: false,
-  duckdb: false,
-  oracle: false,
-  db2: false,
-  mssql: false,
-  clickhouse: false,
-  druid: false,
-  trino: false,
-  cassandra: false,
-  elasticsearch: false,
-  opensearch: false,
-  mongodb: false,
-  couchbase: false,
-  redis: false,
-  prometheus: false,
-  kafka: false,
-  // The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit
-  // and maintenance operation before any request while the mode holds.
-  etcd: true,
-  // Read-only whatever the flag says: this version of the provider refuses every write before it is sent,
-  // offers no object edit and no maintenance operation, so a connection marked read-only keeps the promise.
-  neo4j: true,
-  // Its provider refuses Load and Release before any request while the mode holds, and every v1 console request is
-  // a read (vector-family E8).
-  milvus: true,
-  // Every v1 console request is a read and the provider has no maintenance operation, and while the mode holds it
-  // refuses every route that is not a read before any request (vector-family spec 4.4).
-  qdrant: true,
-  // As Qdrant (#1566 spec 3.5): every console request is a read, the provider has no maintenance operation, and it
-  // refuses every route that is not a read, and every request that would wake a cold tenant, before any request.
-  weaviate: true,
-  // Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`influxql-policy.ts`) is the only
-  // boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW`
-  // or `EXPLAIN` before any request; the route table reaches no write endpoint.
-  influxdb: true,
-  // Read-only whatever the flag says: the closed route table reaches no write, configure, token, cache or plugin
-  // endpoint, the SQL policy refuses every statement that does not lead with a read keyword before any request, and
-  // the 3.12 planner refuses every write besides.
-  influxdb3: true,
-  // Read-only whatever the flag says: the adapter's stub holds only `GetShardAssignments`, `Read`, `List`, `RangeScan`
-  // and `Health/Check` (O8), and the parser refuses every write verb by name, naming the read-only mode while it
-  // holds (O1).
-  oxia: true,
-  // No read-only mode: the provider sends the statement the editor holds, as Db2's does.
-  databend: false,
-  // Read-only whatever the flag says: the console's closed command table reaches no write, and the provider sends only
-  // GET and HEAD.
-  s3: true,
-  // Read-only whatever the flag says: the request policy admits GET and the three self reviews only, before any
-  // socket, and the provider offers no object edit and no maintenance operation.
-  kubernetes: true,
-  // Structural rather than a mode: the encoder has no function that writes a PUBLISH, so there is no
-  // write to enforce against. The valve repeats the check on the bytes.
-  mqtt: true,
-  // Read-only whatever the flag says: the client builds only the read requests of its closed table, before any
-  // socket, and the provider offers no object edit and no maintenance operation.
-  firestore: true,
-  // Read-only whatever the flag says: the management client's closed route table holds GET routes only, and the AMQP
-  // client has no encoder for a publish, a get, a reject or any queue or exchange method, so no request path writes.
-  rabbitmq: true,
-  // Structural rather than a mode: the client seam names eight read services and none of them writes, so there
-  // is no write to enforce against (`src/lib/db/providers/industrial/opcua/client.ts`).
-  opcua: true,
-  // Structural rather than a mode: the request table holds nine routes and every one of them is a GET, so there
-  // is no write to enforce against (`src/lib/db/providers/industrial/mtconnect/routes.ts`).
-  mtconnect: true,
-  // Structural rather than configured: the encoder names four read function codes and device
-  // identification, and there is no code in the provider that can build a write (#1723 MB-S1,
-  // `src/lib/db/providers/industrial/modbus/valve.ts` re-checks every outbound byte).
-  modbus: true,
-  // Structural rather than a mode: the request builder writes four read bodies and `<close-session>`, and no
-  // function in the provider builds an `<edit-config>` or any other write
-  // (`src/lib/db/providers/network/netconf/requests.ts`).
-  netconf: true,
-  snmp: true,
-  // Structural rather than a mode, and the structure is an absence: `encoder.ts` encodes CONNECT, SUBSCRIBE,
-  // UNSUBSCRIBE, PINGREQ and DISCONNECT and has no function that writes a PUBLISH, while the CONNECT takes no
-  // will parameter at all, so no later edit can register a death certificate by passing a value (5.4).
-  sparkplug: true,
-  libredb: false,
-});
+export const READ_ONLY_ENFORCED = Object.freeze(mapEntries(WRITE_REACH, (reach) => reach !== "open"));
 
 /**
  * Which shipped engines open their editor handle under a file-access posture: their provider reads

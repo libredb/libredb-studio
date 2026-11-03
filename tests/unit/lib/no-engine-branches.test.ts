@@ -78,7 +78,7 @@ export const REGISTRIES: readonly Listed[] = [
   ...[
     "SHIPPED",
     "EXTERNAL",
-    "READ_ONLY_ENFORCED",
+    "WRITE_REACH",
     "READS_FILE_ACCESS_POSTURE",
     "SINGLE_WRITER_FILE",
     "MCP_EXPOSABLE",

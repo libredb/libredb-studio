@@ -69,6 +69,13 @@ import {
 } from "./monitoring-reads";
 import { NEO4J_POLICY_PROFILE } from "./profile";
 import { neo4jStatementGate } from "./statement-gate";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the shared Cypher read policy refuses every statement that is not a read before any Bolt
+ * request.
+ */
+const NEO4J_WRITE_REACH = noWritePath({ module: "src/lib/db/graph/cypher/read-policy.ts", symbol: "checkCypherRead" });
 
 /** Bolt's registered port. */
 const NEO4J_DEFAULT_PORT = 7687;
@@ -137,6 +144,7 @@ export class Neo4jProvider extends GraphBaseProvider {
       // A label is a name the server holds, not a grouping this server derived.
       tablesAreDerivedGroupings: false,
       enforcesReadOnly: true,
+      writeReach: NEO4J_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

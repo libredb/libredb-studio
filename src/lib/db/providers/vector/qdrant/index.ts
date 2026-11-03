@@ -103,6 +103,16 @@ import {
 import { createRestQdrantClient } from "./rest-client";
 import { QDRANT_CONSOLE, QDRANT_ROUTES } from "./routes";
 import { type QdrantVersion, readQdrantVersion, versionGateRefusal } from "./versions";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: every route of the closed console route table is a read, and any other route is refused
+ * before any request.
+ */
+const QDRANT_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/vector/qdrant/routes.ts",
+  symbol: "QDRANT_ROUTES",
+});
 
 /** The in-flight bounds of spec 6.6: four per provider, the transport's sockets, sixteen per process, a queue of 64. */
 export const QDRANT_LIMITER_OPTIONS = { perProvider: QDRANT_MAX_IN_FLIGHT, perEngine: 16, queueDepth: 64 } as const;
@@ -218,6 +228,7 @@ export class QdrantProvider extends BaseDatabaseProvider {
       containerLevels: [],
       objectKinds: QDRANT_OBJECT_KINDS,
       enforcesReadOnly: true,
+      writeReach: QDRANT_WRITE_REACH,
       // The secret alone signs in, so the agent's own key is `agentPassword` alone; a user is refused here as it is
       // on the connection.
       agentCredential: "token",

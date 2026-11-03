@@ -76,6 +76,13 @@ import {
   listKubernetesObjects,
 } from "./objects";
 import { readKubernetesSource } from "./source";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/** No write path on any route: the request policy admits GET and the three self reviews only, before any socket. */
+const KUBERNETES_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/platform/kubernetes/request-policy.ts",
+  symbol: "admitRequest",
+});
 
 /** What a connect or a health check still opening answers once a disconnect or a newer connect closed its session. */
 export const KUBERNETES_CLOSED_WHILE_OPENING =
@@ -147,6 +154,7 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: false,
       // Read-only whatever the flag says: the request policy admits GET and the three self reviews only.
       enforcesReadOnly: true,
+      writeReach: KUBERNETES_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

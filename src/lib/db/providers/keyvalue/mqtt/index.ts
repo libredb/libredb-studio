@@ -72,6 +72,16 @@ import {
   mqttSourceDocument,
 } from "./objects";
 import { readTopics, type MqttReadOutcome, type MqttSessionOptions, type MqttTransportFactory } from "./session";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the encoder has no PUBLISH function, and the valve refuses any other packet on the
+ * bytes.
+ */
+const MQTT_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/keyvalue/mqtt/valve.ts",
+  symbol: "guardOutboundPacket",
+});
 
 const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
 const NO_ESTIMATE = "MQTT composes no estimating plan for the agent";
@@ -150,6 +160,7 @@ export class MqttProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: false,
       // Structural: this provider has no code that can write to a broker.
       enforcesReadOnly: true,
+      writeReach: MQTT_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

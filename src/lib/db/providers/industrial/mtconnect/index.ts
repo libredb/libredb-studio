@@ -71,6 +71,13 @@ import { indexMtconnectModel, modelIsCurrent, type MtcModel } from "./model";
 import type { MtcElement, MtcObservation } from "./xml";
 import type { MtcOp } from "./routes";
 import { buildRow, rowsFromAssets, rowsFromModel, sortRows, type MtcRow } from "./rows";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/** No write path on any route: every route of the closed route table is a GET. */
+const MTCONNECT_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/industrial/mtconnect/routes.ts",
+  symbol: "MTC_ROUTES",
+});
 
 /** One agent's session: the transport, the held model and the window the cursor is read against. */
 interface MtcSession {
@@ -235,6 +242,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: false,
       // Read-only whatever the connection's flag says: the client has one operation and it is a GET.
       enforcesReadOnly: true,
+      writeReach: MTCONNECT_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

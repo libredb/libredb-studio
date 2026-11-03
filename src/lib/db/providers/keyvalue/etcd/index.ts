@@ -108,6 +108,28 @@ import {
 } from "./objects";
 import { type AccessScope, describeScope, ROOT_ROLE, readableScope, writableScope } from "./permissions";
 import { commandResult } from "./results";
+import { declareWriteReach } from "@/lib/db/write-reach";
+
+/**
+ * Every write path the provider has is refused while read-only mode holds, before any request: a write command
+ * (put, del, lease revoke) by `refuseBeforeSend`, and the value edit and the maintenance operations (compact,
+ * defragment, disarm) by `refuseReadOnly`, which `refuseBeforeSend` calls first. There is no transaction route.
+ */
+const ETCD_WRITE_REACH = declareWriteReach({
+  editor: {
+    reach: "gated",
+    gate: { module: "src/lib/db/providers/keyvalue/etcd/write-policy.ts", symbol: "refuseBeforeSend" },
+  },
+  objectEdit: {
+    reach: "gated",
+    gate: { module: "src/lib/db/providers/keyvalue/etcd/write-policy.ts", symbol: "refuseReadOnly" },
+  },
+  maintenance: {
+    reach: "gated",
+    gate: { module: "src/lib/db/providers/keyvalue/etcd/write-policy.ts", symbol: "refuseReadOnly" },
+  },
+  transaction: { reach: "absent" },
+});
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: an etcdctl command has no placeholders";
 
@@ -343,6 +365,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
       objectKinds: ETCD_OBJECT_KINDS,
       keyScan: ETCD_KEY_SCAN,
       enforcesReadOnly: true,
+      writeReach: ETCD_WRITE_REACH,
       // Key names and values are stored values: the agent's answers carry the cluster's metadata, counts and sizes.
       metadataOnly: ETCD_METADATA_ONLY,
       schemaRefreshPattern: ETCD_SCHEMA_REFRESH_PATTERN,
