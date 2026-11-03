@@ -1342,6 +1342,9 @@ describe("the snmpget language's server adapter and admission", () => {
     expect(snmpgetRowCapAdvice(READ, "2")).toBe(
       "Ask for at most 2 rows: get and next answer one row per object they name, walk one row per instance under its subtree and table one row per index, so walk a narrower subtree (one column, such as ifDescr, rather than ifEntry) or name the instances with get.",
     );
+    expect(snmpgetRowCapAdvice(READ, "1")).toBe(
+      "Ask for at most 1 row: get and next answer one row per object they name, walk one row per instance under its subtree and table one row per index, so walk a narrower subtree (one column, such as ifDescr, rather than ifEntry) or name the instances with get.",
+    );
     expect(languageServer("snmpget").shapeAdvice).toContain("a valid console command");
   });
 
