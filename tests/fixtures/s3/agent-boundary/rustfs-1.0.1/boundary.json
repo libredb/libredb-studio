@@ -1,7 +1,7 @@
 {
   "server": "rustfs",
   "image": "rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c",
-  "date": "2026-10-31",
+  "date": "2026-11-02",
   "region": "us-east-1",
   "reader": "a key made for the run, holding the read policy beside run.sh",
   "root": "the root key the server was started with, made for the run",
@@ -42,11 +42,11 @@
       "rows": [
         {
           "bucket": "agent-demo",
-          "created": "2026-10-31T03:20:49.732Z"
+          "created": "2026-11-02T19:57:41.732Z"
         },
         {
           "bucket": "agent-versions",
-          "created": "2026-10-31T03:20:49.755Z"
+          "created": "2026-11-02T19:57:41.776Z"
         }
       ]
     },
@@ -75,18 +75,7 @@
       "requests": [
         "HEAD /agent-missing"
       ],
-      "fields": [
-        "bucket",
-        "exists",
-        "region"
-      ],
-      "rows": [
-        {
-          "bucket": "agent-missing",
-          "exists": false,
-          "region": null
-        }
-      ]
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "statement": "aws s3api get-bucket-location --bucket agent-demo",
@@ -187,7 +176,7 @@
       "requests": [
         "GET /agent-missing?encoding-type=url&list-type=2&max-keys=200&prefix="
       ],
-      "refused": "The bucket does not exist, or this connection's key may not see it. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "statement": "aws s3api head-object --bucket agent-demo --key named/report.csv",
@@ -207,7 +196,7 @@
           "bucket": "agent-demo",
           "exists": true,
           "size_bytes": 26,
-          "last_modified": "2026-10-31T03:20:49.000Z",
+          "last_modified": "2026-11-02T19:57:41.000Z",
           "storage_class": null
         }
       ]
@@ -230,7 +219,7 @@
           "bucket": "agent-versions",
           "exists": true,
           "size_bytes": 26,
-          "last_modified": "2026-10-31T03:20:49.000Z",
+          "last_modified": "2026-11-02T19:57:41.000Z",
           "storage_class": null
         }
       ]
@@ -241,25 +230,7 @@
       "requests": [
         "HEAD /agent-demo/named/absent.csv"
       ],
-      "fields": [
-        "bucket",
-        "exists",
-        "size_bytes",
-        "last_modified",
-        "storage_class"
-      ],
-      "rows": [
-        {
-          "bucket": "agent-demo",
-          "exists": false,
-          "size_bytes": null,
-          "last_modified": null,
-          "storage_class": null
-        }
-      ],
-      "warnings": [
-        "A HEAD that finds nothing does not say whether the key or the bucket is missing: read the bucket with aws s3api head-bucket to tell them apart."
-      ]
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "statement": "aws s3api head-object --bucket agent-missing --key named/report.csv",
@@ -267,25 +238,7 @@
       "requests": [
         "HEAD /agent-missing/named/report.csv"
       ],
-      "fields": [
-        "bucket",
-        "exists",
-        "size_bytes",
-        "last_modified",
-        "storage_class"
-      ],
-      "rows": [
-        {
-          "bucket": "agent-missing",
-          "exists": false,
-          "size_bytes": null,
-          "last_modified": null,
-          "storage_class": null
-        }
-      ],
-      "warnings": [
-        "A HEAD that finds nothing does not say whether the key or the bucket is missing: read the bucket with aws s3api head-bucket to tell them apart."
-      ]
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "statement": "aws s3api list-buckets",
@@ -300,11 +253,11 @@
       "rows": [
         {
           "bucket": "agent-demo",
-          "created": "2026-10-31T03:20:49.732Z"
+          "created": "2026-11-02T19:57:41.732Z"
         },
         {
           "bucket": "agent-versions",
-          "created": "2026-10-31T03:20:49.755Z"
+          "created": "2026-11-02T19:57:41.776Z"
         }
       ]
     },
@@ -531,7 +484,7 @@
           ],
           "name": "agent-demo",
           "kind": "bucket",
-          "status": "created 2026-10-31"
+          "status": "created 2026-11-02"
         },
         {
           "path": [
@@ -539,7 +492,7 @@
           ],
           "name": "agent-versions",
           "kind": "bucket",
-          "status": "created 2026-10-31"
+          "status": "created 2026-11-02"
         }
       ]
     },

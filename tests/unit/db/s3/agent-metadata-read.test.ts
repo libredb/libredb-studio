@@ -23,6 +23,7 @@ import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { LimiterTicket, ProviderLimiter } from "@/lib/db/utils/bounded-limiter";
 import {
   bucketsXml,
+  errorXml,
   type FakeS3Handler,
   fakeS3Transport,
   objectsXml,
@@ -108,13 +109,6 @@ describe("one bucket's reads", () => {
       { bucket: "sales", exists: true, region: "eu-central-1" },
     ]);
     expect(fake.lines()).toEqual(["HEAD /sales"]);
-  });
-
-  test("head-bucket of a missing bucket answers exists false", async () => {
-    const { run } = harness(() => ({ status: 404 }));
-    expect(result(await run({ op: "head-bucket", bucket: "gone" })).rows).toEqual([
-      { bucket: "gone", exists: false, region: null },
-    ]);
   });
 
   test("the location and the versioning status", async () => {
@@ -286,21 +280,77 @@ describe("one object's head", () => {
     ]);
     expect(JSON.stringify(answered)).not.toContain(MARKER);
   });
+});
 
-  test("a 404 is exists false, with the note that a HEAD cannot tell a missing bucket from a missing key", async () => {
-    const { run } = harness(() => ({ status: 404, headers: [["x-amz-delete-marker", "true"]] }));
-    const answered = result(await run({ op: "head-object", bucket: "s", key: "k" }));
-    expect(answered.rows).toEqual([
-      { bucket: "s", exists: false, size_bytes: null, last_modified: null, storage_class: null },
-    ]);
-    expect(answered.warnings).toEqual([{ message: S3_AGENT_FAILURE_SENTENCES.notFoundNote }]);
-    expect(JSON.stringify(answered)).not.toContain("delete");
+/**
+ * A server may answer a bucket the key is granted nothing on with 403 and a bucket that does not exist with 404, as
+ * Garage does, so every read that names a bucket or a key answers the two, and a missing key, in one sentence: an
+ * agent's read never tells a key that a bucket or an object it may not read exists.
+ */
+describe("a named bucket or key that is missing or not readable", () => {
+  const NAMED: readonly S3AgentPlan[] = [
+    { op: "head-bucket", bucket: "s" },
+    { op: "get-bucket-location", bucket: "s" },
+    { op: "get-bucket-versioning", bucket: "s" },
+    { op: "summary", bucket: "s" },
+    { op: "head-object", bucket: "s", key: "k" },
+  ];
+  const ANSWERS: readonly [string, () => ReturnType<FakeS3Handler>][] = [
+    ["a 403", () => xmlAnswer(errorXml("AccessDenied", `Access Denied to ${MARKER}`), 403)],
+    ["a bare 404", () => ({ status: 404 })],
+    ["a 404 behind a delete marker", () => ({ status: 404, headers: [["x-amz-delete-marker", "true"]] })],
+    ["a 404 named NoSuchBucket", () => ({ status: 404, headers: [["x-minio-error-code", "NoSuchBucket"]] })],
+    ["a NoSuchKey body", () => xmlAnswer(errorXml("NoSuchKey", `The key ${MARKER} does not exist`), 404)],
+    // A body that is not S3's error XML, or one sent compressed, must not tell a 403 from a 404 either.
+    [
+      "a 403 whose body is not S3 XML",
+      () => ({ status: 403, body: `<html>${MARKER}</html>`, contentType: "text/html" }),
+    ],
+    [
+      "a 404 whose body is not S3 XML",
+      () => ({ status: 404, body: `<html>${MARKER}</html>`, contentType: "text/html" }),
+    ],
+    ["a 403 sent compressed", () => ({ ...xmlAnswer(errorXml("AccessDenied", MARKER), 403), contentEncoding: "gzip" })],
+    ["a 404 sent compressed", () => ({ ...xmlAnswer(errorXml("NoSuchBucket", MARKER), 404), contentEncoding: "gzip" })],
+  ];
+
+  test.each(NAMED.map((plan) => [plan.op, plan] as const))("%s answers each one in one sentence", async (_op, plan) => {
+    const failures = await Promise.all(
+      ANSWERS.map(([, answer]) =>
+        harness(answer)
+          .run(plan)
+          .catch((e: unknown) => e),
+      ),
+    );
+    for (const failure of failures) {
+      expect(failure).toBeInstanceOf(QueryError);
+      expect((failure as Error).message).toBe(S3_AGENT_FAILURE_SENTENCES.notFound);
+      expect(s3AgentFailure(failure, BUDGET)).toBeUndefined();
+    }
   });
 
-  test("a 404 the server names as a missing bucket is refused as one", async () => {
-    const { run } = harness(() => ({ status: 404, headers: [["x-minio-error-code", "NoSuchBucket"]] }));
-    const failure = await run({ op: "head-object", bucket: "s", key: "k" }).catch((e: unknown) => e);
-    expect(s3AgentFailure(failure, BUDGET)?.message).toBe(S3_AGENT_FAILURE_SENTENCES.missingBucket);
+  test("the sentence says the read cannot tell a missing bucket or key from one the key may not read", () => {
+    expect(S3_AGENT_FAILURE_SENTENCES.notFound).toBe(
+      "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name.",
+    );
+  });
+
+  test("a 401 and any other status keep their own sentences", async () => {
+    const cases = [
+      [401, S3_AGENT_FAILURE_SENTENCES.denied],
+      [400, S3_AGENT_FAILURE_SENTENCES.status(400)],
+      [503, S3_AGENT_FAILURE_SENTENCES.status(503)],
+    ] as const;
+    const failures = await Promise.all(
+      cases.map(([status]) =>
+        harness(() => ({ status }))
+          .run({ op: "head-object", bucket: "s", key: "k" })
+          .catch((e: unknown) => e),
+      ),
+    );
+    cases.forEach(([, sentence], index) => {
+      expect(s3AgentFailure(failures[index], BUDGET)?.message).toBe(sentence);
+    });
   });
 });
 
