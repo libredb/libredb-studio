@@ -367,7 +367,7 @@ describe("KAFKA_READ_APIS, the client's API key set", () => {
   });
 
   test("holds read APIs only, each under its own protocol key", () => {
-    for (const [name, key] of Object.entries(KAFKA_READ_APIS)) {
+    for (const [name, key] of Object.entries(KAFKA_READ_APIS) as [string, number][]) {
       expect({ name, key }).toEqual({ name, key: READ_API_KEYS[name] });
     }
   });
@@ -569,7 +569,8 @@ describe("platformatic-client.ts sends nothing the table does not cover", () => 
         expect({ member, api, inTable: Object.hasOwn(KAFKA_READ_APIS, api) }).toMatchObject({ inTable: true });
     }
     // The control: together the mapped calls reach every table entry, so the table holds nothing the source cannot send.
-    expect([...new Set(Object.values(MEMBER_APIS).flat())].sort()).toEqual(Object.keys(KAFKA_READ_APIS).sort());
+    const reached: string[] = [...new Set(Object.values(MEMBER_APIS).flat())].sort();
+    expect(reached).toEqual(Object.keys(KAFKA_READ_APIS).sort());
   });
 
   test("the file still has the library calls the check looks for", () => {

@@ -275,7 +275,7 @@ async function main(): Promise<void> {
         new KafkaProvider(CONNECTION, {}, { readOnly: true, sendsStatements: true } as ProviderExecutionContext),
       async (provider, measured) => {
         for (const text of AGENT_READS) {
-          await attempt(measured, `queryReadOnly ${text}`, () => provider.queryReadOnly(text, BUDGET));
+          await attempt(measured, `queryReadOnly ${text}`, async () => provider.queryReadOnly?.(text, BUDGET));
         }
       },
     ),
