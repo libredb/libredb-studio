@@ -74,6 +74,11 @@ export interface McpStatementArm {
    * reach the client as `notes`; the language's facet declares it, and every other arm's answers carry no warning.
    */
   readonly answersWarnings: boolean;
+  /**
+   * True where a connection's database setting is a stored value on this language's engines, so list_connections leaves
+   * it out; the language's facet declares it.
+   */
+  readonly withholdsDatabase: boolean;
   readonly description: string;
   /** The argument as the one statement text every later step reads, or null when it carries no statement. */
   canonicalize(raw: unknown): string | null;
@@ -189,6 +194,7 @@ function statementArm(language: AgentStatementLanguageId, facet: AgentLanguageMc
     engines,
     holdsNoTables: facet.holdsNoTables,
     answersWarnings: "answersWarnings" in facet && facet.answersWarnings === true,
+    withholdsDatabase: "withholdsDatabase" in facet && facet.withholdsDatabase === true,
     description: `${facet.describe({ engines, limits: SHARED_LIMITS })} ${MCP_UNTRUSTED_NOTICE}`,
     ...(facet.fence === "read-only-statement"
       ? READ_ONLY_STATEMENT_READER
@@ -246,6 +252,15 @@ function servingArmFor(type: DatabaseType): McpStatementArm | null {
 /** The tool that runs a statement on `type`, or null where no statement tool serves it and inspect_schema is the read. */
 export function mcpStatementToolFor(type: DatabaseType): McpStatementTool | null {
   return servingArmFor(type)?.tool ?? null;
+}
+
+/**
+ * Whether list_connections leaves `type`'s database setting out of a connection's row: true where the arm its language
+ * declares, serving or not, says that setting is a stored value.
+ */
+export function mcpWithholdsDatabase(type: DatabaseType): boolean {
+  const language = AGENT_STATEMENT_LANGUAGE[type];
+  return language !== null && MCP_STATEMENT_ARMS[language]?.withholdsDatabase === true;
 }
 
 /**

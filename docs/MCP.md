@@ -12,6 +12,7 @@ It is off by default.
   - `list_connections` lists the connections opted in for MCP that your token's role may use, without credentials.
     It works for every engine but Oxia, S3-compatible object storage, Firestore, OPC UA, Modbus, NETCONF and SNMP, whose connections the seed file cannot opt in.
     Each connection's `read_tool` names the statement tool below that runs a statement on it, and is `null` where `inspect_schema` is the only read.
+    A connection's `database` is left out on MQTT and Sparkplug B, where that setting is a stored value, the discovery topic filter or the group id, as the language's facet declares (`withholdsDatabase`).
   - `inspect_schema` lists one connection's tables with their columns and, on request, their indexes.
     It works on the same engines as `list_connections`: it lists every object kind the engine reads rows from, such as views beside tables, MongoDB collections, Redis keyspaces and search indexes, and `kind` names which one each entry is.
     On Kubernetes it refuses the call by name, because no Kubernetes kind is a table: the refusal names `run_kubectl_read`, which reads its objects, and is answered as soon as the connection resolves, before anything is acquired.
@@ -160,6 +161,7 @@ It is off by default.
 - Each statement tool is one statement language's MCP facet, declared in that language's own pack at `src/lib/agent/languages/<statement-language>/mcp.ts` and registered in `AGENT_LANGUAGE_MCP_FACETS`: the tool's name, its statement argument, its description and the words its refusals use.
   `src/lib/mcp/tools/statement-arms.ts` builds the tools from those facets and names no language, so a language that gains an MCP tool adds its facet and edits nothing under `src/lib/mcp/`.
   A facet may raise the least `timeout_ms` its tool takes (`leastTimeout`), which tools/list then shows as the field's minimum, and may declare that its provider's warnings are Studio's own sentences an answer must carry (`answersWarnings`), which then reach the client as the answer's `notes`; every other tool's answers carry no warning text.
+  A facet may also declare that a connection's database setting is a stored value on its engines (`withholdsDatabase`), which `list_connections` then leaves out of that connection's row.
 - Read-only is the database's own enforcement, not a filter over statement text: every statement tool takes the connection under Studio's agent read-only execution profile and runs through the provider's read-only statement path, and each engine enforces it as follows:
   - PostgreSQL: by a read-only transaction, and refuses a login that could do more than read.
   - SQLite: by a read-only open.

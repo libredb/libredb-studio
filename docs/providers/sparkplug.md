@@ -422,6 +422,7 @@ MCP clients run a Sparkplug read with `run_sparkplug_read`, the tool the family 
 The agent's own reader is the tool's fence, so a request outside the table is refused before anything is acquired, in the sentence an agent run reads; with that fence removed the provider's reader refuses it before anything is sent past the connection's handshake (`tests/live/sparkplug-mcp-boundary.ts`).
 A read of another group on a connection that names one is refused by the provider after the handshake, before the read is sent.
 It takes no `offset` and no `database`: every read answers one row.
+`list_connections` lists a Sparkplug connection without its `database`, since that setting is the group id the connection names, a stored value; the facet says so (`withholdsDatabase`).
 
 Every answer carries `notes`, the provider's warnings: the window it listened for, what it counted and why it stopped, for an exact read what its columns are, what the read could not count, and that an edge node or device not seen in the window may still exist.
 An MCP answer carries no warning on other tools; these are Studio's own sentences, naming no id, so this tool's facet passes them on (`answersWarnings`).

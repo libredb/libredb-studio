@@ -31,6 +31,7 @@ import {
   mcpStatementArm,
   mcpStatementToolFor,
   mcpTablelessReadTool,
+  mcpWithholdsDatabase,
   servingStatementArms,
 } from "@/lib/mcp/tools/statement-arms";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
@@ -149,6 +150,21 @@ describe("MCP_STATEMENT_ARMS", () => {
       "run_mqtt_read",
       "run_sparkplug_read",
     ]);
+  });
+
+  test("leaves a connection's database setting out of list_connections only where its facet says it is a stored value", () => {
+    for (const arm of ARMS) {
+      const facet = AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet;
+      expect(arm.withholdsDatabase).toBe(facet.withholdsDatabase === true);
+    }
+    expect(ARMS.filter((arm) => arm.withholdsDatabase).map((arm) => arm.tool)).toEqual([
+      "run_mqtt_read",
+      "run_sparkplug_read",
+    ]);
+    expect(mcpWithholdsDatabase("mqtt")).toBe(true);
+    expect(mcpWithholdsDatabase("sparkplug")).toBe(true);
+    expect(mcpWithholdsDatabase("postgres")).toBe(false);
+    expect(mcpWithholdsDatabase("spark")).toBe(false);
   });
 
   test("finds an arm by its tool, and names the tool no language declares", () => {

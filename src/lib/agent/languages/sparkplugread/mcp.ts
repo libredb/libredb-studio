@@ -14,7 +14,8 @@
  * refused below the window plus its dial, so the tool takes no `timeout_ms` that cannot leave that after the
  * handshake, and a smaller one is refused before anything is acquired.
  *
- * No `database` key: the connection's group setting is its scope, and it declares no `catalogSessions`. An edge node
+ * No `database` key: the connection's group setting is its scope, and it declares no `catalogSessions`. That setting
+ * is a group id, a stored value, so list_connections leaves it out. An edge node
  * and a device are relation kinds, so the facet holds tables; inspect_schema lists none on Sparkplug all the same,
  * since an agent-mode handle declares no container level and no object kind, ids being withheld, and the description
  * says so.
@@ -53,6 +54,7 @@ export const SPARKPLUGREAD_MCP_FACET = Object.freeze({
     why: `a Sparkplug read listens for a ${ms(WINDOW_MS)} ms window and needs ${ms(SPARKPLUG_AGENT_MIN_STATEMENT_MS)} ms with its dial, after the connection's own handshake, and a window is never shortened, so nothing was sent.`,
   },
   answersWarnings: true,
+  withholdsDatabase: true,
   describe: ({ engines, limits }) =>
     `Run one read-only Sparkplug read on a connection: one JSON object, {"read": "window"}, {"read": "group", "group": "G"}, {"read": "edgeNode", "group": "G", "edgeNode": "E"} or {"read": "device", "group": "G", "edgeNode": "E", "device": "D"}. The window read subscribes to the whole spBv1.0 namespace, or the connection's own group when it names one, for one ${ms(WINDOW_MS)} ms window and answers totals only: distinct groups, edge nodes and devices seen, messages by type, metrics and payload bytes, never an id. An exact read subscribes to the one object the request names in full and answers whether it was seen, its messages by type, metrics, whether a birth or death was seen and its last arrival, never a metric name or value and never the id it named; a connection that names a group refuses a read of another. The one row says how long the window ran (window_ms) and listened (listened_ms), why it stopped (stop_reason, broker_reason_code) and its scope, never complete; notes say the same in words, and that no answer is complete: an edge node or device not seen in the window may still exist, and no answer says one is online, offline or absent. An id with +, # or /, a group named STATE, any other key or read, a command and a will are refused before the broker is reached. A call opens two broker sessions, each with a fresh client id: the handshake, which subscribes to nothing, then the read. timeout_ms must be at least ${SPARKPLUG_MCP_LEAST_TIMEOUT_MS}, and a smaller one is refused before anything is sent. inspect_schema lists no group, edge node or device of a Sparkplug connection, since ids are withheld. Runs on ${engines}; other engines refuse it. ${limits}; this tool takes no offset, and every read answers one row.`,
   words: {

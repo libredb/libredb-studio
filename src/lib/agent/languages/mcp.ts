@@ -80,6 +80,12 @@ interface AgentLanguageMcpFacetBase {
    * client as the answer's `notes`. Absent, a warning stays off the answer, and the description says what it would.
    */
   readonly answersWarnings?: true;
+  /**
+   * True where a connection's database setting is, on this language's engines, a stored value rather than a catalog's
+   * name (a topic filter, a group id), so list_connections leaves it out of the connection's row. Absent, the row
+   * carries it.
+   */
+  readonly withholdsDatabase?: true;
 }
 
 /**

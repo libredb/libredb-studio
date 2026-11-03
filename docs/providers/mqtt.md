@@ -691,6 +691,7 @@ MCP clients run an MQTT read with `run_mqtt_read`, the tool the family declares 
 `run_mqtt_read` takes one read request as `statement` and runs it through `queryReadOnly` under the agent read-only profile, so every rule of section 14 holds for it unchanged: the closed five-packet encoder and the valve, one fresh session per read, and the metadata-only projection.
 The agent's own reader is the tool's fence, so a request outside the table is refused before anything is acquired, in the sentence an agent run reads; with that fence removed the provider's reader refuses it before anything is sent past the connection's handshake (`tests/live/mqtt-mcp-boundary.ts`).
 It takes no `offset` and no `database`: every read answers one row.
+`list_connections` lists an MQTT connection without its `database`, since that setting is the discovery topic filter, a stored value; the facet says so (`withholdsDatabase`).
 
 Every answer carries `notes`, the provider's warnings: the window it listened for, what it counted and why it stopped, for a topic read what its per-message columns are, a loss the read proved, counted, and that a topic not seen in the window may still exist.
 An MCP answer carries no warning on other tools; these are Studio's own sentences, naming no topic, so this tool's facet passes them on (`answersWarnings`).

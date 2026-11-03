@@ -173,6 +173,15 @@ describe("the tool", () => {
     expectNoWithheld(result);
   });
 
+  test("list_connections leaves out a connection's discovery filter, since a topic filter is a stored value", async () => {
+    writeSeedFile(dir, [{ ...BROKER_SEED, id: "homes", database: "homes/ayse-yilmaz/#" }]);
+    const result = await call("list_connections", {});
+    expect(result.structuredContent?.connections).toEqual([
+      { id: "seed:homes", name: "homes", engine: "mqtt", read_tool: "run_mqtt_read" },
+    ]);
+    expectNoWithheld(result);
+  });
+
   test("inspect_schema refuses an MQTT connection by name before anything is acquired, pointing here", async () => {
     const result = await call("inspect_schema", { connection_id: "seed:plant" });
     expect(result).toEqual({

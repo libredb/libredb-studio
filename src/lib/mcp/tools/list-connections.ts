@@ -18,13 +18,15 @@ import {
   resultBytes,
   type ToolResult,
 } from "../output";
-import { MCP_STATEMENT_TOOLS, mcpStatementToolFor } from "./statement-arms";
+import { MCP_STATEMENT_TOOLS, mcpStatementToolFor, mcpWithholdsDatabase } from "./statement-arms";
 
 /**
  * list_connections (#246): the connections this deployment opted in for MCP that the token's role
  * may use, without credentials and without a server-side file path, paged under the result cap.
  * Each names its read_tool, the statement tool that serves its engine, read from the same
  * served-engine resolver the tools register and gate on, or null where none does.
+ * A connection whose database setting is a stored value on its engine (a topic filter, a group id),
+ * as its language's facet says, lists no database.
  *
  * Connection metadata comes from the operator's seed file, not from anyone who can write to a
  * database, so the result carries no untrusted-content notice. No provider is called, so one audit
@@ -71,7 +73,9 @@ function listed(connection: ManagedConnection): ListedConnection {
     id: connection.id,
     name: connection.name,
     engine: connection.type,
-    ...(database === undefined ? {} : { database: isFileBased(connection.type) ? fileName(database) : database }),
+    ...(database === undefined || mcpWithholdsDatabase(connection.type)
+      ? {}
+      : { database: isFileBased(connection.type) ? fileName(database) : database }),
     ...(environment === undefined ? {} : { environment }),
     read_tool: mcpStatementToolFor(connection.type),
   };

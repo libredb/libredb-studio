@@ -163,6 +163,15 @@ describe("the tool", () => {
     ]);
   });
 
+  test("list_connections leaves out the group a connection names, since a group id is a stored value", async () => {
+    const result = await call("list_connections", {});
+    const north = result.structuredContent?.connections.find(
+      (connection: { id: string }) => connection.id === "seed:north",
+    );
+    expect(north).toEqual({ id: "seed:north", name: "north", engine: "sparkplug", read_tool: "run_sparkplug_read" });
+    holdsNoId(result);
+  });
+
   test("inspect_schema answers an empty page, since an agent-mode handle declares no kind, after one handshake", async () => {
     const result = await call("inspect_schema", { connection_id: "seed:north" });
     expect(result.isError ?? false).toBe(false);
