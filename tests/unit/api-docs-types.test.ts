@@ -19,6 +19,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -181,6 +182,22 @@ describe("the unions docs/API_DOCS.md inlines in VectorColumn match the publishe
       expect(quotedMembers(fieldTypeText(DATA_TYPES, "VectorColumn", field))).toEqual(fromSource);
     });
   }
+});
+
+describe("docs/SEED_CONNECTIONS.md names every type a seed may carry", () => {
+  const SEED = read("docs/SEED_CONNECTIONS.md");
+
+  test("the connections[].type row lists exactly the shipped types", () => {
+    const row = SEED.split("\n").find((line) => line.startsWith("| `connections[].type` |"));
+    const listed = (row?.match(/`[a-z0-9]+`/g) ?? []).map((cell) => cell.slice(1, -1)).sort();
+    expect(listed).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+
+  test("the example's Required comment lists exactly the shipped types", () => {
+    const line = SEED.split("\n").find((candidate) => candidate.includes("# Required: postgres|"));
+    const listed = (line?.split("# Required: ")[1] ?? "").trim().split("|").sort();
+    expect(listed).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
 });
 
 describe("the allowInsecureAuth field names every engine that reads it", () => {

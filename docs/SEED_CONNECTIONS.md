@@ -190,7 +190,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|firestore|clickhouse|druid|elasticsearch|opensearch|trino|bigquery|snowflake|spark|cassandra|prometheus|kafka|mqtt|rabbitmq|opcua|mtconnect|etcd|neo4j|milvus|qdrant|weaviate|influxdb|influxdb3|oxia|databend|s3|kubernetes
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|firestore|clickhouse|druid|elasticsearch|opensearch|trino|bigquery|snowflake|spark|cassandra|prometheus|kafka|mqtt|rabbitmq|opcua|mtconnect|modbus|netconf|snmp|sparkplug|etcd|neo4j|milvus|qdrant|weaviate|influxdb|influxdb3|oxia|databend|s3|kubernetes
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -373,7 +373,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `mtconnect`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `mtconnect`, `modbus`, `netconf`, `snmp`, `sparkplug`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**. S3: the optional pinned bucket. PostgreSQL: empty reaches the whole server, every database the role can CONNECT to) |
