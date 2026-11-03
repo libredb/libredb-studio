@@ -7,12 +7,12 @@ are environment variables read at server startup, which is how everything else i
 is configured. It keeps the choice with whoever operates the server rather than turning it into
 a permission to grant, revoke and audit per user.
 
-Forty-six models are supported — every one of them clears all six agent surfaces five
+Fifty-one models are supported — every one of them clears all six agent surfaces five
 consecutive times. They are listed with their measured durations in the [index](README.md).
 
 ## A local model, through Ollama
 
-Thirty-four of the thirty-five run locally, with no key and no traffic leaving the machine.
+Fifty of the fifty-one run locally, with no key and no traffic leaving the machine.
 
 ```bash
 # macOS
@@ -38,7 +38,7 @@ where is in [`../AGENT_DATA_FLOW.md`](../AGENT_DATA_FLOW.md).
 
 ## A hosted model
 
-One of the thirty-five is hosted, and it is configured the same way with one line more:
+One of the fifty-one is hosted, and it is configured the same way with one line more:
 
 ```bash
 LLM_PROVIDER=gemini

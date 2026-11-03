@@ -1,12 +1,13 @@
 # gemma4
 
-`ollama pull gemma4:<size>` · sizes supported: 12b, 26b, 31b
+`ollama pull gemma4:<size>` · sizes supported: e4b, 12b, 26b, 31b
 
 Every size listed here runs **all six agent surfaces**, five consecutive times each: 30 of 30
 runs. The 26b is the size that carries this family, and the one whose ledger taught this project
 what an empty completion looks like. The 12b is the smaller, faster one, and it is the model that
 made the product learn to tell an agent turn to stop thinking. The 31b is the largest, the slowest
-model on the whole roster, and the one that shows what this family's growth actually buys.
+model on the whole roster, and the one that shows what this family's growth actually buys. The
+e4b is the newest and the only one of the four that asked for nothing.
 
 ## What it does, and how long it takes
 
@@ -15,6 +16,7 @@ Seconds are the median of the runs that passed, per surface.
 | Size | Disk | Investigate | Optimize | Assess | Operate | Analyze | Plan | Median | Slowest |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | gemma4:12b | 7.6 GB | 4s | 24s | 21s | 14s | 11s | 2s | **11s** | 1:03 |
+| gemma4:e4b | 9.5 GB | 12s | 49s | 1:34 | 40s | 29s | 9s | **34s** | 2:32 |
 | gemma4:26b | 16 GB | 15s | 1:02 | 31s | 26s | 46s | 36s | **36s** | 1:32 |
 | gemma4:31b | 19 GB | 26s | 6:18 | 3:34 | 1:33 | 2:12 | 3s | **1:47** | 6:38 |
 
@@ -28,6 +30,18 @@ only if this exact model is what you have to run; otherwise the 12b is the same 
 the same six questions.
 
 ## What it needs that the defaults do not give it
+
+### `gemma4:e4b`
+
+**Nothing.** All six cells locked on the compiled defaults, each on its first attempt, and the
+whole model closed inside half an hour. It is the only size in this family that carries no
+setting, and the comparison is worth stating plainly: the three that do were each found by
+spending hours on a walled cell, and this one was found by pulling an untried tag off the
+library listing and running the same six questions at it.
+
+It sits between the 12b and the 26b on every axis that matters — 9.5 GB against 7.6 and 16, a
+34-second median against 11 and 36 — so it does not displace the 12b as this family's first
+choice. What it offers is six surfaces with no profile to deploy alongside them.
 
 ### `gemma4:12b`
 

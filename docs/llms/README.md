@@ -8,10 +8,10 @@ writes beautiful prose about a database and never calls a tool answers nothing h
 question these pages answer is not what a model knows but what it DOES on a run, and every figure
 comes from a run whose ledger is on disk.
 
-**Forty-six models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
-Operate, Analyze and Plan — five consecutive times: 1380 runs, 1230 passes.
+**Fifty-one models are supported.** Each cleared all six surfaces — Investigate, Optimize, Assess,
+Operate, Analyze and Plan — five consecutive times: 1530 runs, 1530 passes.
 
-Twenty-six of the thirty-five cleared them at the 90-second per-turn limit the product ships. Nine
+Forty-two of the fifty-one cleared them at the 90-second per-turn limit the product ships. Nine
 carry a 150-second limit of their own — `qwen3.5:9b`, `qwen3.6:27b`, `qwen3.6:35b`, `gemma4:12b`,
 `gemma4:31b`, `nemotron-3-nano:30b`, `nemotron-3.5-lightning:30b`, `muse-glimmer:latest` and
 `glm-4.7-flash:latest` — because one turn of theirs does not fit inside 90 while every other
@@ -41,6 +41,7 @@ each page says what its model needed.
 | [`ornith:9b`](ornith/ornith.md) | Ollama | 5.5 GB | 31s | 118s |
 | [`qwen3.5:9b`](qwen/qwen3.5.md) | Ollama | 5.8 GB | 33s | 98s |
 | [`glm-4.7-flash:latest`](zhipu/glm-4.7-flash.md) | Ollama | 19 GB | 34s | 85s |
+| [`gemma4:e4b`](gemma/gemma4.md) | Ollama | 9.5 GB | 34s | 152s |
 | [`gemma4:26b`](gemma/gemma4.md) | Ollama | 16 GB | 36s | 92s |
 | [`ornith:35b`](ornith/ornith.md) | Ollama | 21 GB | 36s | 150s |
 | [`qwen3:8b`](qwen/qwen3.md) | Ollama | 5.2 GB | 36s | 108s |
@@ -48,18 +49,24 @@ each page says what its model needed.
 | [`qwen3:14b`](qwen/qwen3.md) | Ollama | 9.3 GB | 41s | 303s |
 | [`granite4.2:8b`](granite/granite4.2.md) | Ollama | 5.3 GB | 46s | 116s |
 | [`nemotron-3-nano:30b`](nvidia/nemotron-3-nano.md) | Ollama | 24 GB | 46s | 190s |
+| [`bonsai-2:4b`](bonsai/bonsai-2.md) | Ollama | 1.6 GB | 46s | 198s |
+| [`bonsai-2:2b`](bonsai/bonsai-2.md) | Ollama | 911 MB | 52s | 324s |
+| [`bonsai-2:9b`](bonsai/bonsai-2.md) | Ollama | 3.2 GB | 55s | 113s |
 | [`qwen3:4b`](qwen/qwen3.md) | Ollama | 2.5 GB | 72s | 160s |
 | [`qwen3.8:latest`](qwen/qwen3.8.md) | Ollama | 19 GB | 72s | 195s |
 | [`qwq:32b`](qwen/qwq.md) | Ollama | 19 GB | 76s | 360s |
 | [`qwen3.5:27b`](qwen/qwen3.5.md) | Ollama | 17 GB | 78s | 239s |
 | [`qwen3.6:27b`](qwen/qwen3.6.md) | Ollama | 17 GB | 82s | 252s |
+| [`lfm3:1.7b`](liquid/lfm3.md) | Ollama | 1.7 GB | 84s | 333s |
 | [`gemma4:31b`](gemma/gemma4.md) | Ollama | 19 GB | 107s | 398s |
 | [`muse-glimmer:latest`](muse/muse-glimmer.md) | Ollama | 18 GB | 115s | 285s |
 
 The durations are from one machine and are comparable with each other rather than portable: every
 figure was taken the same way, on the same database, through the same six surfaces. What they are
-for is choosing between these thirty-five — the fastest reaches the same verdicts as the slowest in
-an eighteenth of the time.
+for is choosing between the models listed here — the fastest reaches the same verdicts as the
+slowest in an eighteenth of the time. The table is not the whole roster: a model is listed once
+its timings have been read off its own ledger, and several supported models are still waiting for
+that reading.
 
 One page per model version. Sizes are rows inside it, because `ollama pull qwen3:4b` is how a
 size is chosen and because the interesting fact is usually the difference between two sizes of
