@@ -24,9 +24,15 @@ interface Named {
 }
 
 async function namedProofs(): Promise<Named[]> {
+  const providers = await Promise.all(
+    SHIPPED_DATABASE_TYPES.map(async (type) => ({
+      type,
+      provider: await createDatabaseProvider(CENSUS_CONNECTION[type]),
+    })),
+  );
   const named: Named[] = [];
-  for (const type of SHIPPED_DATABASE_TYPES) {
-    const declared = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities().writeReach;
+  for (const { type, provider } of providers) {
+    const declared = provider.getCapabilities().writeReach;
     if (declared === undefined) continue;
     for (const path of WRITE_PATHS) {
       const reach = declared[path];

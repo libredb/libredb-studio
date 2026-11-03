@@ -206,9 +206,11 @@ describe("every etcd write path under every read-only source", () => {
       const applied = await provider.applyObjectEdit?.(plan);
       expect(applied).toMatchObject({ outcome: "refused", refusal: { refusal: "privilege", sentence } });
 
-      for (const operation of ["compact", "defragment", "disarm"] as const) {
-        await expect(provider.runMaintenance(operation)).rejects.toThrow(sentence);
-      }
+      await Promise.all(
+        (["compact", "defragment", "disarm"] as const).map((operation) =>
+          expect(provider.runMaintenance(operation)).rejects.toThrow(sentence),
+        ),
+      );
       expect(sentAfter(client, mark)).toEqual([]);
     },
   );

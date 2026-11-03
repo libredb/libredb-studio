@@ -100,11 +100,11 @@ describe("a read-only Milvus connection, down to the client the adapter built", 
     expect(clients).toHaveLength(1);
     const [client] = clients;
     const mark = client.calls.length;
-    for (const operation of ["load", "release"] as const) {
-      await expect(provider.runMaintenance(operation, "docs_int64", "default")).rejects.toThrow(
-        readOnlySentence("seed"),
-      );
-    }
+    await Promise.all(
+      (["load", "release"] as const).map((operation) =>
+        expect(provider.runMaintenance(operation, "docs_int64", "default")).rejects.toThrow(readOnlySentence("seed")),
+      ),
+    );
     expect(sentAfter(client, mark)).toEqual([]);
   });
 
