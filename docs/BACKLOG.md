@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D447, U17 · 331
+- [Drivers and connections](#drivers-and-connections) — D1-D447, U17 · 330
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U198 · 184
@@ -3110,14 +3110,6 @@ This is inferred from the shared pattern and not measured on Kafka.
 Found 2026-10-12 while designing the RabbitMQ provider.
 
 **Done when:** a Kafka record value nested deeper than a named bound is shown in its base64 or text form rather than parsed, with a test that sends one through the query route on Node 24 and Bun.
-
-### D309. Kafka declares `READ_ONLY_ENFORCED: false` by default, not by reason
-
-`READ_ONLY_ENFORCED.kafka` is false although the provider has no write path, which reads as a decision while it is an older provider's default; the RabbitMQ, S3 and Kubernetes rows declare true for the same reason Kafka could.
-
-Found 2026-10-12 while designing the RabbitMQ provider.
-
-**Done when:** `READ_ONLY_ENFORCED.kafka` is true with the S3 and Kubernetes comment wording, or the row says why it is false, with the capability test updated.
 
 ### D310. Kubernetes runs its access reviews and namespace listing on every background cache miss
 
