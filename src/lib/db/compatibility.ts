@@ -360,14 +360,14 @@ export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.fr
   // function in the provider builds an `<edit-config>` or any other write
   // (`src/lib/db/providers/network/netconf/requests.ts`).
   netconf: "none",
-  // Structural rather than a mode: the valve refuses every outbound datagram whose PDU is not a read, so no Set
-  // request leaves Studio (`src/lib/db/providers/network/snmp/valve.ts`).
+  // Structural rather than a mode: the statement grammar holds four read commands (get, next, walk, table), and the
+  // valve refuses a Set PDU on every datagram it can read (`src/lib/db/providers/network/snmp/valve.ts`).
   snmp: "none",
   // Structural rather than a mode, and the structure is an absence: `encoder.ts` encodes CONNECT, SUBSCRIBE,
   // UNSUBSCRIBE, PINGREQ and DISCONNECT and has no function that writes a PUBLISH, while the CONNECT takes no
   // will parameter at all, so no later edit can register a death certificate by passing a value (5.4).
   sparkplug: "none",
-  // Studio's own store: the editor's `put` and `delete` are sent whatever the connection's flag says.
+  // Studio's own store: the editor sends `put` and `delete`, and no gate refuses them on a connection.
   libredb: "open",
 });
 
