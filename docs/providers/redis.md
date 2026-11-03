@@ -964,6 +964,7 @@ NOPERM User noconf has no permissions to run the 'config|get' command
 ```
 
 DigitalOcean managed Valkey 9 answers the first shape (measured 2026-11-01).
+A `+@read` user does not hold the admin `CONFIG GET` either and is refused with the second shape (measured on Redis 8.10.2 and Valkey 9.1.2).
 Any other error reply, and a dropped connection, still raises.
 
 Every database is listed, including the empty ones, because a
@@ -2257,15 +2258,16 @@ What the measured users get:
 
 Any other answer refuses the profile: a reply says the user may write, and any other error, whether an admitted probe's own error, a renamed command's `ERR unknown command`, a replica's `READONLY` or another server's wording, proves nothing.
 Nothing is kept between two proofs: `+del` granted to a user that passed is caught at its next command (`midrun.json`), and the command is never sent.
-The probes cannot name every write, so a user granted one write command they leave out passes; the closed table, which sends no write, is what stops that user, and the proof is never instead of it.
+The proof covers the probed commands only: a user granted a write they leave out passes it, as `~* +@read +flushall` and `~* +@read +publish` pass the open (measured on Redis 8.10.2 and Valkey 9.1.2 on 2026-11-02), and the closed table, which refuses every command outside it before anything is sent, is what refuses that user's `FLUSHALL` or `PUBLISH`; the proof is never instead of it.
 A key-pattern reader (`%R~* +@read` or `~app:* +@read`) passes, since it holds no probed command, and a key outside its pattern answers `NOPERM No permissions to access a key` (`prefix.json`), which agent mode is told without the server's words.
-A transport failure is raised as itself, never read as a verdict.
+A connection that names a database other than 0 is opened with a `SELECT`, which `+@read` does not hold, so its user also needs `+select`, or the open is refused as "Redis refused database 1: the connection's ACL user does not hold the 'select' command it needs (NOPERM).", which names the command and never the user the server's `NOPERM` names (measured on Redis 8.10.2 and Valkey 9.1.2 on 2026-11-02).
+A transport failure is raised as itself, never read as a verdict: a round trip or a `SELECT` the server does not answer before its timeout is the read's timeout, not a refusal.
 An agent connection skips ioredis's ready check, whose `INFO` is refused a `+@read` user and would log a warning on every command; the proof's `HELLO` checks the connection instead.
 The operations profile sends no command of the model's, so it opens with any user and no proof, and plan mode keeps grounding on a privileged connection, `default` included.
 
 ### 16.3 What an agent command may be
 
-One line, with no control character anywhere, so a second command, an inline `MULTI` or a CRLF is refused; words separated by spaces, each bare (no quote and no backslash) or wrapped in double quotes with `\"` and `\\` as the only escapes.
+One line, with no control character anywhere, a leading or trailing line break or tab included, so a second command, an inline `MULTI` or a CRLF is refused before any surrounding space is trimmed; words separated by spaces, each bare (no quote and no backslash) or wrapped in double quotes with `\"` and `\\` as the only escapes.
 The command words are matched case-insensitively against the table, a key is 1 to 1,024 characters, and `MEMORY USAGE` takes `SAMPLES` 1 to 5 and nothing else, since 0 samples every nested value.
 Everything else is refused before anything is sent, by a sentence that quotes nothing the command wrote.
 The command runs on a connection of its own in the connection's database, with the request's deadline as its command timeout, and the connection is closed after it, so no `SELECT`, `CLIENT SETNAME`, protocol switch or open `MULTI` reaches the next command; the argv sent is the reader's, the command words uppercased and the key as written.
@@ -2280,7 +2282,8 @@ Each agent-mode path reads this much:
 | Investigation commands | agent read-only profile | the closed table below, projected to counts, types and sizes |
 | Investigation grounding | agent read-only profile | the session database's number; each kind's count is withheld with the reason, and no grouping or library is listed |
 | Operations workflow and plan-mode grounding | operations profile | the key groupings and function library names; the slow log, sessions, health and storage reads |
-| MCP `inspect_schema` | operations profile | the key groupings and function library names |
+| MCP `run_redis_read` | agent read-only profile | the closed table below, projected to counts, types and sizes, as an investigation command ([§16.7](#167-mcp-read)) |
+| MCP `inspect_schema` | operations profile, which opens with any user and no proof | the key groupings' leading segments, never a function library name, since it lists relation kinds alone |
 
 On a handle of either profile, a key grouping names a delimited key's leading segment only (`user:*`), and every key with no `:` after its first character is counted under one grouping, `(keys with no delimiter)`, never under its own name.
 A slow-log entry carries its id, its duration, the command name and the number of arguments it took (`GET (1 argument)`), never an argument; an entry Redis cut at 32 words is counted through its `... (N more arguments)` marker, and an entry whose words are not a list is withheld whole.
@@ -2304,7 +2307,7 @@ A server refusal is worded by its code alone, since a Redis error can repeat a k
 A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
 Under the profile the object surface lists no key or library name: the grounding walk reads the connection's own database alone, each kind's count is withheld with the reason, the listings are empty, and the key walk, a grouping's detail and a raw command are refused.
 
-Two server-side effects of a read are the server's own and are residual: a read of a key that has expired deletes it (lazy expiry, which replicates a `DEL`), and on a server whose `notify-keyspace-events` holds the key-miss class, `TYPE`, `EXISTS` and `TTL` of a missing key publish a `keymiss` event naming that key to the server's own subscribers (`notifications.json`).
+Two server-side effects of a read are the server's own and are residual: a read of a key that has expired deletes it (lazy expiry, which replicates a `DEL`), and on a server whose `notify-keyspace-events` holds the key-miss class, every key read of the table but `OBJECT ENCODING` and `MEMORY USAGE` publishes a `keymiss` event naming that key to the server's own subscribers when the key is missing (`notifications.json`, on Redis 8.10.2 and Valkey 9.1.2).
 
 ### 16.5 Agent language pack
 
@@ -2317,7 +2320,7 @@ This overlay overrides no Shared member, so every Shared member is the `rediscli
 The family offers the investigation workflow, through `run_read_query` with one Redis command, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a Redis command: the family declares no MCP facet, and `MCP_STATEMENT_READ.redis` is false (B156).
+MCP clients run a Redis command with `run_redis_read`, the family's MCP facet ([`src/lib/agent/languages/rediscli/mcp.ts`](../../src/lib/agent/languages/rediscli/mcp.ts)), and `MCP_STATEMENT_READ.redis` is true ([§16.7](#167-mcp-read)).
 
 ### 16.6 Tests
 
@@ -2325,5 +2328,27 @@ No MCP tool runs a Redis command: the family declares no MCP facet, and `MCP_STA
 - `tests/unit/db/redis/agent-statement.test.ts`: the exact argv of every read, and every refusal before the network.
 - `tests/unit/db/redis/read-only-proof.test.ts`: the proof over every principal's captures, a grant made during the run included.
 - `tests/unit/db/redis/metadata-read.test.ts`: every projection over the captured replies, and the wording of every failure.
-- `tests/unit/db/redis/agent-provider.test.ts`: the open, the proof before every command on its own connection, the argv sent, the object surface under the profile, the slow log reduced to command names and argument counts, and the wording of a failure.
-- `tests/integration/db/redis-provider.test.ts`: `queryReadOnly` refused on an editor handle, and on an operations-profile handle the slow log reduced to command names and argument counts, keys with no delimiter counted under one grouping, and no session name, beside the editor handle's unchanged reads.
+- `tests/unit/db/redis/agent-provider.test.ts`: the open, the proof before every command on its own connection, that connection's options (no retry, no request retries, no offline queue), the argv sent, the object surface under the profile, the slow log reduced to command names and argument counts, and the wording of a failure.
+- `tests/integration/db/redis-provider.test.ts`: `queryReadOnly` refused on an editor handle, and on an operations-profile handle the slow log reduced to command names and argument counts, keys with no delimiter counted under one grouping, no session name, a user refused `CONFIG GET` listed its session database alone, and a `NOPERM` of the object surface or of a `SELECT` worded without the user, beside the editor handle's unchanged reads.
+- `tests/unit/db/redis/agent-stalled-server.test.ts`: over the real driver and a peer that stops answering or drops the connection, an agent command ends on its one connection one time left after it began, on database 0 and on database 1, with no second connection and no promise rejected unheard.
+- `tests/integration/mcp/run-redis-read.test.ts`: MCP `run_redis_read` through the route, the seed file and the factory, over the same driver double: a read answered behind the untrusted-content notice without its key, the proof on the command's own connection, each refused form refused before anything is acquired, a seed naming no user or `default` refused before any socket, a writable user refused at the open, a key-pattern reader refused a key outside its pattern in the same words whether the key exists or not, the timeout and the cancel.
+
+### 16.7 MCP read
+
+MCP's `run_redis_read` reads one command with the agent's own reader and admission, takes the connection under the agent read-only profile, and runs it through `queryReadOnly`, so an MCP call meets the boundary, the proof and the projection of [§16.1](#161-the-boundary) to [§16.4](#164-metadata-only) unchanged; it takes no `offset`, since every read answers one row, and no `database`, since a connection reads the numbered database it names ([`docs/MCP.md`](../MCP.md)).
+A seed opted in for MCP needs the same user agent mode does: an ACL user of its own, never `default`, refused every probe as a command it does not hold.
+
+What a call can read is decided in two layers.
+The first is the ACL user's key patterns, which the server enforces: a `~app:* +@read` user reads `app:*` keys, and a key outside the pattern is answered `NOPERM No permissions to access a key` whether it exists or not, which reaches the client as "The agent's ACL user may not read the key this request names", never naming the key; a `~*` user may ask about any key it names, so `EXISTS` answers whether a key exists.
+`DBSIZE` is not a key read, so it counts every key of the connection's database whatever the patterns.
+The second is Studio's, independent of how the command was written: the closed table sends no command that lists keys or reads a value, and the projection keeps only counts, types and sizes and never repeats the key, so neither a key name the command did not write nor a stored value reaches the answer, whatever the user's patterns allow.
+MCP's `inspect_schema` takes the operations profile, which proves no user, so it lists the leading segments of the key groupings (`app:*`) for the seed's user whether or not the proof would pass it: `default`, a full user and a `+@read` reader alike.
+Its listing is one bounded `SCAN` walk, which the server does not filter by key patterns, so a `~app:* +@read` user is listed the groupings of keys outside its patterns too (`secret:*`); a user refused `CONFIG GET` is listed its session database alone, and a refusal reaches the client worded by the command it names, never the user.
+It lists no function library, since a library is not a relation kind.
+That is the operations handle's projection, not this tool's (B156).
+
+A cancel ends the client's wait at once; the read runs on its own connection, whose TCP connect waits up to the provider's query timeout and each of whose later steps, the sign-in, the `SELECT` of a database other than 0, the proof's round trip and the command, takes the call's time left as its own command timeout.
+That connection is the only one the read opens: it never reconnects and queues nothing, so when a step's timeout passes it is closed and the read ends, and a server that stops answering holds the read one time left after the step it holds began, as D128 records.
+
+`bun tests/live/redis-mcp-boundary.ts`, run on 2026-11-02 against Redis 8.10.2 and Valkey 9.1.2, each digest-pinned and started with `--enable-debug-command yes` so `DEBUG SLEEP` can hold the server, passes 64 checks through `run_redis_read`'s and `inspect_schema`'s own handlers, with the factory's profiled acquisition and its fence removed where a check says so: a `~* +@read` user is served under `agent-read-only`, and a connection naming no user or `default`, a `~* &* +@all` user, a `~app:* +@read +@write` user and a `~* +@read +del` user are each refused through MCP in the tool's sentence before any command; one read of each command of the table answers one row that never names its key; with the fence in place each write, key listing, value read, `INFO`, `SELECT`, `CONFIG GET`, `OBJECT FREQ`, `MEMORY USAGE ... SAMPLES 0`, second command, leading or trailing line break and `EVAL_RO` is refused before anything is acquired, and with it removed the provider refuses each before it is sent; the same writes sent raw as the reader are refused `NOPERM` by the server, the administrator runs each on a control key, the positive control, and every key, value, time to live, ACL user and function reads the same after; the key-pattern reader's answers are the ones above; `inspect_schema` lists `app:*` and `secret:*` and no function library for `default`, the `~* +@read` reader and the `~app:* +@read` reader alike; a read past `timeout_ms` of 500 is answered as the timeout at 503 to 504 ms, on database 1 too, where the read settled at 501 ms; a call of 2000 ms cancelled at 300 ms is answered as the cancel at once while its read settled 2000 to 2001 ms after the call began; and no promise rejected unheard.
+With `--relative`, it shows a `~* +@read` user refused at the open through MCP on KeyDB 6.3.4, whose `DEL` refusal is worded otherwise, and on Garnet 2.1.5 with its ACL authenticator on, whose `HELLO` names neither measured server.

@@ -27,6 +27,9 @@ let principal = "reader-info";
 let probeOverride: readonly CapturedStep[] | undefined;
 /** A reply that stands in for the next table read's, or an error to throw from it. */
 let readOverride: { reply?: unknown; error?: Error } | undefined;
+/** An error the driver emits while the next connection connects, which still resolves, and one SELECT throws. */
+let connectingError: Error | undefined;
+let selectError: Error | undefined;
 
 interface Opened {
   readonly options: Record<string, unknown>;
@@ -61,11 +64,16 @@ mock.module("ioredis", () => {
       this.state = { options, calls: [], pipelines: [], disconnected: false };
       opened.push(this.state);
     }
-    on() {
+    private readonly listeners: ((error: Error) => void)[] = [];
+    on(_event: string, listener: (error: Error) => void) {
+      this.listeners.push(listener);
       return this;
     }
-    async connect() {}
+    async connect() {
+      if (connectingError !== undefined) for (const listener of this.listeners) listener(connectingError);
+    }
     async select(db: number) {
+      if (selectError !== undefined) throw selectError;
       this.state.selected = db;
       return "OK";
     }
@@ -135,6 +143,8 @@ beforeEach(() => {
   principal = "reader-info";
   probeOverride = undefined;
   readOverride = undefined;
+  connectingError = undefined;
+  selectError = undefined;
   opened.length = 0;
 });
 
@@ -241,6 +251,33 @@ describe("one agent command", () => {
     expect(opened).toHaveLength(2);
     expect(opened[1].calls).toEqual([["MEMORY", "USAGE", "agent:hash", "SAMPLES", "5"]]);
     expect(opened[1].pipelines).toHaveLength(1);
+  });
+
+  test("the command's connection is never reopened: no retry, no request retries and no offline queue", async () => {
+    const provider = await opened_();
+    await provider.queryReadOnly("DBSIZE", BUDGET);
+    const options = opened[0].options;
+    expect(options.commandTimeout).toBe(4_000);
+    expect((options.retryStrategy as (times: number) => unknown)(1)).toBeNull();
+    expect(options.maxRetriesPerRequest).toBe(0);
+    expect(options.enableOfflineQueue).toBe(false);
+  });
+
+  test("a connection that failed while connecting, or a SELECT nobody answered, is raised as the client's own failure", async () => {
+    const provider = await opened_({ database: "3" });
+    connectingError = new Error("Command timed out");
+    expect(((await failureOf(provider.queryReadOnly("DBSIZE", BUDGET))) as Error).message).toBe(
+      "Read-only execution exceeded the time budget: no answer within 4000ms",
+    );
+    expect(opened[0].pipelines).toEqual([]);
+    expect(opened[0].disconnected).toBe(true);
+    connectingError = new Error("read ECONNRESET");
+    const reset = await failureOf(provider.queryReadOnly("DBSIZE", BUDGET));
+    expect((reset as Error).message).toBe("Failed to connect to Redis: read ECONNRESET");
+    connectingError = undefined;
+    selectError = new Error("Connection is closed.");
+    expect(await failureOf(provider.queryReadOnly("DBSIZE", BUDGET))).toBe(selectError);
+    expect(opened.every((client) => client.calls.length === 0 && client.disconnected)).toBe(true);
   });
 
   test("every command outside the table is refused before any connection opens", async () => {

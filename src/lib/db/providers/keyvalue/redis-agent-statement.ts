@@ -178,9 +178,10 @@ function operationOf(argv: readonly string[]): RedisAgentOperation | undefined {
 
 /** One agent command read to the argv the provider sends, or to why it sends nothing. Never sends anything. */
 export function readRedisAgentStatement(text: string): RedisAgentReading {
+  // Before the trim, which would take a leading or trailing line break or tab away unread.
+  if (holdsControl(text)) return refuse("request", REDIS_AGENT_SENTENCES.control);
   const line = text.trim();
   if (line === "") return refuse("request", REDIS_AGENT_SENTENCES.empty);
-  if (holdsControl(line)) return refuse("request", REDIS_AGENT_SENTENCES.control);
   const argv = words(line);
   if (argv === null) return refuse("request", REDIS_AGENT_SENTENCES.quoting);
   const op = operationOf(argv);

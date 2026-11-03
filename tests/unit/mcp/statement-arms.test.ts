@@ -41,6 +41,7 @@ const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_CYPHER_READ_ARM = mcpStatementArm("run_cypher_read");
+const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
@@ -48,6 +49,7 @@ const RunLibredbReadInputSchema = RUN_LIBREDB_READ_ARM.inputSchema;
 const RunQdrantReadInputSchema = RUN_QDRANT_READ_ARM.inputSchema;
 const RunRabbitmqReadInputSchema = RUN_RABBITMQ_READ_ARM.inputSchema;
 const RunCypherReadInputSchema = RUN_CYPHER_READ_ARM.inputSchema;
+const RunRedisReadInputSchema = RUN_REDIS_READ_ARM.inputSchema;
 
 /** True only when `A` and `B` are the same union, member for member. */
 type SameUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -62,7 +64,7 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_qdrant_read, run_rabbitmq_read, run_kafka_read and run_cypher_read", () => {
+  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_qdrant_read, run_rabbitmq_read, run_kafka_read, run_cypher_read and run_redis_read", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
@@ -71,6 +73,7 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(MCP_STATEMENT_ARMS.rabbitread).toBe(RUN_RABBITMQ_READ_ARM);
     expect(MCP_STATEMENT_ARMS.kafkaread).toBe(RUN_KAFKA_READ_ARM);
     expect(MCP_STATEMENT_ARMS.cypher).toBe(RUN_CYPHER_READ_ARM);
+    expect(MCP_STATEMENT_ARMS.rediscli).toBe(RUN_REDIS_READ_ARM);
     expect(ARMS.map((arm) => arm.tool)).toEqual([
       "run_read_query",
       "run_kubectl_read",
@@ -78,6 +81,7 @@ describe("MCP_STATEMENT_ARMS", () => {
       "run_libredb_read",
       "run_qdrant_read",
       "run_cypher_read",
+      "run_redis_read",
       "run_rabbitmq_read",
       "run_kafka_read",
     ]);
@@ -90,8 +94,6 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("weaviate")).toBeNull();
     expect(MCP_STATEMENT_ARMS.milvusrpc).toBeNull();
     expect(mcpStatementToolFor("milvus")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.rediscli).toBeNull();
-    expect(mcpStatementToolFor("redis")).toBeNull();
     expect(MCP_STATEMENT_ARMS.etcdctl).toBeNull();
     expect(mcpStatementToolFor("etcd")).toBeNull();
     expect(MCP_STATEMENT_ARMS.oxiacli).toBeNull();
@@ -714,6 +716,113 @@ describe("the Cypher arm", () => {
   });
 });
 
+describe("the Redis arm", () => {
+  const server = languageServer("rediscli");
+
+  test("takes one command line, no offset and no database, and sends it as written", () => {
+    expect(RUN_REDIS_READ_ARM.title).toBe("Run a read-only Redis metadata read");
+    expect(RUN_REDIS_READ_ARM.argument).toBe("statement");
+    expect(RUN_REDIS_READ_ARM.paging).toBe("none");
+    expect(RUN_REDIS_READ_ARM.types).toEqual(["redis"]);
+    expect(RUN_REDIS_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    expect(RUN_REDIS_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "1" }, { sql: "SELECT 1" }]) {
+      expect(
+        RunRedisReadInputSchema.safeParse({ connection_id: "seed:r", statement: "DBSIZE", ...extra }).success,
+      ).toBe(false);
+    }
+    const empty = RunRedisReadInputSchema.safeParse({ connection_id: "seed:r", statement: "" });
+    expect(empty.error?.issues.map((issue) => issue.message)).toEqual(["statement cannot be empty"]);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_REDIS_READ_ARM.canonicalize("TYPE user:42")).toBe(server.canonicalize("TYPE user:42"));
+    expect(RUN_REDIS_READ_ARM.canonicalize({ statement: "DBSIZE" })).toBeNull();
+  });
+
+  test.each([
+    ["a write", "SET user:42 x"],
+    ["a key listing", "SCAN 0"],
+    ["a value read", "GET user:42"],
+    ["INFO", "INFO keyspace"],
+    ["a second command", "DBSIZE\nDEL user:42"],
+    ["MEMORY USAGE sampling every nested value", "MEMORY USAGE user:42 SAMPLES 0"],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, line) => {
+    const refusal = server.admit?.(line);
+    expect(refusal).not.toBeNull();
+    expect(RUN_REDIS_READ_ARM.fence(line, "redis")).toBe(
+      `The command was refused before it reached the server (${refusal?.code}). ${refusal?.message}`,
+    );
+    // The refusal never repeats the key the command named.
+    expect(RUN_REDIS_READ_ARM.fence(line, "redis")).not.toContain("user:42");
+  });
+
+  test("admits each read of the closed table", () => {
+    for (const line of [
+      "DBSIZE",
+      "TYPE user:42",
+      "EXISTS user:42",
+      "TTL user:42",
+      "PTTL user:42",
+      "STRLEN user:42",
+      "LLEN user:42",
+      "HLEN user:42",
+      "SCARD user:42",
+      "ZCARD user:42",
+      "XLEN user:42",
+      "OBJECT ENCODING user:42",
+      "MEMORY USAGE user:42 SAMPLES 5",
+    ]) {
+      expect({ line, fence: RUN_REDIS_READ_ARM.fence(line, "redis") }).toEqual({ line, fence: null });
+    }
+  });
+
+  test("answers a row refusal with the command's own row-cap advice", () => {
+    const rows = classifyReadQueryFailure(
+      new Error("Read-only execution exceeded the row budget: 2 rows > 1 allowed"),
+      1,
+      2,
+      RUN_REDIS_READ_ARM.tooLarge("DBSIZE", "redis"),
+    );
+    expect(rows).toEqual({
+      kind: "too-large",
+      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice("DBSIZE", "1000")}`,
+    });
+  });
+
+  test("says a Redis read answers one row and is never paged, naming no SQL clause or MongoDB stage", () => {
+    const hint = RUN_REDIS_READ_ARM.moreRows("DBSIZE", "redis", { maxRows: 1, shown: 1, cut: "max_rows" });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("DBSIZE", "1")} To read past the 1 rows returned, read one key at a time, since a Redis read answers one row and is never paged.`,
+    );
+    const bytes = RUN_REDIS_READ_ARM.moreRows("DBSIZE", "redis", { maxRows: 100, shown: 0, cut: "result_bytes" });
+    expect(bytes).toBe(
+      "More rows exist than the 32 KiB result limit holds, and 0 of them fitted; this tool does not page with offset. Read one key at a time to fit more rows, and to read past the 0 rows returned, read one key at a time, since a Redis read answers one row and is never paged.",
+    );
+    for (const text of [hint, bytes, RUN_REDIS_READ_ARM.rowOverCap]) {
+      expect(text).not.toContain("$skip");
+      expect(text).not.toContain("LIMIT");
+    }
+    expect(RUN_REDIS_READ_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit. Read one key at a time, and run it again.",
+    );
+  });
+
+  test("describes the reads it takes, what an answer withholds, the proof and its engine", () => {
+    const description = RUN_REDIS_READ_ARM.description;
+    expect(description.startsWith("Run one read-only Redis metadata read")).toBe(true);
+    expect(description).toContain("Runs on Redis; other engines refuse it.");
+    expect(description).toContain("this tool takes no offset");
+    for (const word of ["DBSIZE", "MEMORY USAGE", "SCAN", "KEYS", "INFO", "never repeats the key"]) {
+      expect(description).toContain(word);
+    }
+    // The data-scope promise: what a call reads is bounded by the ACL user's key patterns, enforced by the server.
+    expect(description).toContain(
+      "The connection's ACL user is proved read-only by the server before every command, and a key outside that user's key patterns is refused by the server.",
+    );
+  });
+});
+
 describe("the tool each engine is read with", () => {
   test("is the tool whose arm serves it, and null where none does", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
@@ -723,7 +832,7 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Qdrant with run_qdrant_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Qdrant with run_qdrant_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, Redis with run_redis_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
     expect(mcpStatementToolFor("libredb")).toBe("run_libredb_read");
@@ -742,7 +851,7 @@ describe("the tool each engine is read with", () => {
     expect(mcpStatementToolFor("db2")).toBe("run_read_query");
     expect(mcpStatementToolFor("cassandra")).toBe("run_read_query");
     expect(mcpStatementToolFor("couchbase")).toBe("run_read_query");
-    expect(mcpStatementToolFor("redis")).toBeNull();
+    expect(mcpStatementToolFor("redis")).toBe("run_redis_read");
     expect(mcpStatementToolFor("snowflake")).toBeNull();
   });
 
@@ -755,6 +864,7 @@ describe("the tool each engine is read with", () => {
       "run_libredb_read",
       "run_qdrant_read",
       "run_cypher_read",
+      "run_redis_read",
       "run_rabbitmq_read",
       "run_kafka_read",
     ]);
@@ -993,7 +1103,7 @@ describe("the rabbitread arm", () => {
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL, MongoDB, libredbkv, Qdrant, rabbitread, Kafka and Cypher do not", () => {
+  test("kubectl declares it, SQL, MongoDB, libredbkv, Qdrant, rabbitread, Kafka, Cypher and Redis do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
@@ -1004,6 +1114,8 @@ describe("the arms whose engines hold no table", () => {
     expect(RUN_RABBITMQ_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_KAFKA_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_CYPHER_READ_ARM.holdsNoTables).toBe(false);
+    // A Redis key grouping is a `keyspace` relation, which inspect_schema lists.
+    expect(RUN_REDIS_READ_ARM.holdsNoTables).toBe(false);
   });
 
   test.each(ARMS.flatMap((arm) => arm.types.map((type) => [arm.tool, type, arm] as const)))(

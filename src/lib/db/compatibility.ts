@@ -602,7 +602,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
  *
  * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
- * for ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, for Kubernetes, whose kubectl line `run_kubectl_read` reads
+ * for ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, for Redis, whose metadata read `run_redis_read` reads, for Kubernetes, whose kubectl line `run_kubectl_read` reads
  * under the agent's machine redaction, for LibreDB, whose command `run_libredb_read` reads on a read-only handle, for
  * Qdrant, whose metadata request `run_qdrant_read` reads, for RabbitMQ, whose stream read request `run_rabbitmq_read`
  * reads metadata only, for Kafka, whose metadata read `run_kafka_read` reads,
@@ -655,9 +655,10 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // on named scopes of the bucket, checked at open and again before every statement on a server proven to enforce it,
   // and a fence that sends one SELECT (docs/providers/couchbase.md section 15).
   couchbase: true,
-  // Agent mode executes metadata-only reads on Redis, and MCP read stays closed on it until a change of its own opens
-  // it.
-  redis: false,
+  // Opened on its own: run_redis_read runs under the boundary agent mode uses, the closed table of metadata reads and
+  // an ACL user the server refuses every write probe before every command, on that command's own connection, with
+  // every answer projected to counts, types and sizes (docs/providers/redis.md section 16).
+  redis: true,
   // Agent mode executes PromQL reads on Prometheus, with the flags and every URL's userinfo and query string withheld,
   // and MCP read stays closed on it until a change of its own opens it (BACKLOG B161).
   prometheus: false,

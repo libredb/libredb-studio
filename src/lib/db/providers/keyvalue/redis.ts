@@ -34,7 +34,12 @@ import { EDIT_CHARACTER_LIMIT, userPositionOf } from "../../object-edit";
 import { connectionFingerprint } from "../../connection-fingerprint";
 import { readRedisCommandText } from "./redis-command-text";
 import { readRedisAgentStatement } from "./redis-agent-statement";
-import { REDIS_METADATA_ONLY, redisAgentFailure, redisAgentResult } from "./redis-metadata-read";
+import {
+  REDIS_COMMAND_TIMED_OUT,
+  REDIS_METADATA_ONLY,
+  redisAgentFailure,
+  redisAgentResult,
+} from "./redis-metadata-read";
 import { proveRedisReadOnly, type RedisRoundTrip, redisAgentUser } from "./redis-read-only-proof";
 import { comparePaths } from "../../object-path";
 import {
@@ -1047,6 +1052,19 @@ function isRefusedCommandReply(error: unknown): boolean {
 }
 
 /**
+ * A server refusal's reason as an agent-mode handle words it. Redis words a missing command `NOPERM User <user> has no
+ * permissions to run the '<command>' command`, which names the ACL user, so a `NOPERM` reaches an agent or an MCP
+ * client as the command it names and the code, never the user; any other error line keeps the server's words.
+ */
+function agentRefusalReason(error: Error): string {
+  if (!error.message.startsWith("NOPERM")) return error.message;
+  const command = /'([^']+)' command/.exec(error.message)?.[1];
+  return command === undefined
+    ? "the connection's ACL user may not access a key or channel it needs (NOPERM)."
+    : `the connection's ACL user does not hold the '${command}' command it needs (NOPERM).`;
+}
+
+/**
  * How a server's reply to a refused credential begins.
  *
  * Measured 2026-10-04 through ioredis 5.11.1. On redis 8.10.2 and valkey 9.1.2 a wrong password,
@@ -1240,17 +1258,33 @@ const KEY_NAMES_WITHHELD =
 const PROFILE_SURFACE_REFUSED =
   "A Redis handle opened under the agent read-only profile answers only the agent's metadata reads, through queryReadOnly.";
 
-/** One round trip of commands on `client`, each answered in order with its reply or the server's error line. */
+/**
+ * One round trip of commands on `client`, each answered in order with its reply or the server's error line. A command
+ * the server did not answer, timed out or dropped with its connection, raises the client's own error instead, so the
+ * proof never reads a failed round trip as a verdict.
+ */
 function pipelineRoundTrip(client: Redis): RedisRoundTrip {
   return async (commands) => {
     const pipeline = client.pipeline();
     for (const [command, ...args] of commands) pipeline.call(command, ...args);
     const results = (await pipeline.exec()) ?? [];
     return commands.map((_, index) => {
-      const [error, reply] = results[index] ?? [new Error("no reply"), undefined];
+      const [error, reply] = results[index] ?? [new Error("Redis answered no reply to a command of the round trip")];
+      if (error && !isServerErrorReply(error)) throw error;
       return error ? { ok: false as const, error: error.message } : { ok: true as const, reply };
     });
   };
+}
+
+/**
+ * The options of a connection that serves one agent command and is closed after it: the time left as every command's
+ * timeout, and no second connection. ioredis otherwise reconnects about 50 ms after a timed-out sign-in closes the
+ * first one, signs in again and replays its queued commands there, so a server that stops answering held one read for
+ * twice the time left, after a cancel too, and a replayed `SELECT` rejected with nobody listening. With no retry and no
+ * offline queue, the read ends on its one connection when its time runs out.
+ */
+function oneCommandOptions(commandTimeout: number): RedisOptions {
+  return { commandTimeout, retryStrategy: () => null, maxRetriesPerRequest: 0, enableOfflineQueue: false };
 }
 
 /** `CLIENT LIST` flags. `b` is a client blocked on a command; every other flag, including `N`, is idle. */
@@ -1528,7 +1562,10 @@ export class RedisProvider extends BaseDatabaseProvider {
    * carries the command it answered, which for `AUTH` holds the password.
    */
   private async openClient(db: number, commandTimeout?: number): Promise<Redis> {
-    const client = new Redis({ ...this.redisOptions(), ...(commandTimeout === undefined ? {} : { commandTimeout }) });
+    const client = new Redis({
+      ...this.redisOptions(),
+      ...(commandTimeout === undefined ? {} : oneCommandOptions(commandTimeout)),
+    });
     let connecting = true;
     let firstError: Error | undefined;
     client.on("error", (error: Error) => {
@@ -1544,12 +1581,20 @@ export class RedisProvider extends BaseDatabaseProvider {
         .finally(() => {
           connecting = false;
         });
+      // ioredis reports a connection ready once its client-info commands settle, even when its sign-in timed out and
+      // closed it in the same turn, so a one-command connection that failed while connecting is raised here, before
+      // anything is sent on it. A timeout stays the driver's own error, which the agent words as the time budget.
+      if (commandTimeout !== undefined && firstError !== undefined) {
+        throw firstError.message === REDIS_COMMAND_TIMED_OUT
+          ? firstError
+          : connectFailure(firstError, this.config.host, this.config.port || 6379);
+      }
       if (db !== 0) {
         await client.select(db).catch((error: unknown) => {
-          throw new QueryError(
-            `Redis refused database ${db}: ${error instanceof Error ? error.message : String(error)}`,
-            "redis",
-          );
+          // A SELECT the server did not answer is not a refusal of the database, so it is raised as the client's own.
+          if (!isServerErrorReply(error)) throw error;
+          const reason = this.agentProfile ? agentRefusalReason(error as Error) : (error as Error).message;
+          throw new QueryError(`Redis refused database ${db}: ${reason}`, "redis");
         });
       }
       return client;
@@ -1959,6 +2004,10 @@ export class RedisProvider extends BaseDatabaseProvider {
     const client = await this.openClient(db);
     try {
       return await read(client);
+    } catch (error) {
+      // On an agent-mode handle a server refusal is worded without the ACL user its words name.
+      if (!this.agentProfile || !isServerErrorReply(error)) throw error;
+      throw new QueryError(`Redis refused the read: ${agentRefusalReason(error as Error)}`, "redis");
     } finally {
       client.disconnect();
     }

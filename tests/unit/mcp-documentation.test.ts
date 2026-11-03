@@ -20,6 +20,7 @@ const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
+const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const MCP_DOC = read("docs/MCP.md");
@@ -95,7 +96,20 @@ describe("docs/MCP.md", () => {
 
   test("names every statement tool this build registers, and counts the tools", () => {
     const tools = ["list_connections", "inspect_schema", ...servingStatementArms().map((arm) => arm.tool)];
-    const COUNT_WORDS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
+    const COUNT_WORDS = [
+      "Zero",
+      "One",
+      "Two",
+      "Three",
+      "Four",
+      "Five",
+      "Six",
+      "Seven",
+      "Eight",
+      "Nine",
+      "Ten",
+      "Eleven",
+    ];
     expect(MCP_DOC).toContain(`- ${COUNT_WORDS[tools.length]} tools, each annotated read-only and closed-world:`);
     for (const tool of tools) expect(MCP_DOC).toMatch(new RegExp(`^ {2}- \`${tool}\` `, "m"));
   });
@@ -173,6 +187,36 @@ describe("docs/MCP.md", () => {
       "since that limit measures the whole tool result, which carries every row twice, once in its text block and once in `structuredContent`, a value of about 16 KiB is already refused.",
     );
     expect(MCP_DOC).not.toContain("a value larger than the 32 KiB result limit is refused whole");
+  });
+
+  test("carries run_redis_read's engine sentence, the seed it needs, inspect_schema's unproven open and its cancel row", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_REDIS_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toMatch(/^ {2}- `run_redis_read` runs one read-only Redis metadata read/m);
+    expect(MCP_DOC).toContain(
+      "A Redis seed's `user` must be an ACL user of its own, never `default`, that the server refuses every write probe as a command it does not hold, such as `on`, a password, `~*` and `+@read`",
+    );
+    expect(MCP_DOC).toContain(
+      "Redis proves its ACL user only for a connection that sends statements, so `inspect_schema` opens a Redis connection unproven, as the editor does, with any user, `default` and a `+@read` reader included, and lists the leading segment of each key grouping (`user:*`), never a full key name and never a function library.",
+    );
+    expect(MCP_DOC).toContain("a user refused `CONFIG GET` is listed its session database alone");
+    expect(MCP_DOC).toMatch(/^\| Redis \| .*after which the connection is closed and never reopened, /m);
+    expect(MCP_DOC).toMatch(/^\| Redis \| Studio stops waiting; /m);
+  });
+
+  test("states run_redis_read's waits, its seed's SELECT and its keymiss reads as the code and the capture have them", () => {
+    // `openClient` sends SELECT for a database other than 0, which @read does not hold, under the call's time left;
+    // the TCP connect waits for the provider's query timeout instead.
+    expect(MCP_DOC).toContain("a seed that names a database other than 0 also needs `+select`");
+    const row = MCP_DOC.split("\n").find((line) => line.startsWith("| Redis | Studio stops waiting; "));
+    expect(row).toContain(
+      "the sign-in, the `SELECT` of a database other than 0, the proof's round trip and the command",
+    );
+    expect(row).toContain("the provider's query timeout");
+    expect(row).not.toContain("three times");
+    // tests/fixtures/redis/<version>/agent-boundary/notifications.json: every key read of the table but these two.
+    expect(MCP_DOC).toContain(
+      "every key read of the table but `OBJECT ENCODING` and `MEMORY USAGE` publishes a `keymiss` event naming that key",
+    );
   });
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {
@@ -428,6 +472,7 @@ describe("docs/MCP.md", () => {
     expect(read("docs/FEATURES.md")).toContain(
       `\`run_read_query\` on ${RUN_READ_QUERY_ENGINES}, \`run_kubectl_read\` on Kubernetes`,
     );
+    expect(read("docs/FEATURES.md")).toContain("`run_redis_read` on Redis");
   });
 
   test("says which libSQL token a seed needs and that inspect_schema opens libSQL unproven", () => {

@@ -136,6 +136,7 @@ describe("the tool", () => {
         "run_libredb_read",
         "run_qdrant_read",
         "run_cypher_read",
+        "run_redis_read",
         "run_rabbitmq_read",
         "run_kafka_read",
       ]);

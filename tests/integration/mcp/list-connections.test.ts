@@ -119,9 +119,9 @@ describe("the answer", () => {
     // From the one served-engine resolver: ClickHouse's, libSQL's, InfluxDB 3's, Elasticsearch's, OpenSearch's,
     // Oracle's, Db2 LUW's, Cassandra's and Couchbase's SQL is read by run_read_query, MongoDB's command by
     // run_mongo_command, a Kubernetes line by run_kubectl_read, a LibreDB command by run_libredb_read, a Qdrant request
-    // by run_qdrant_read, a RabbitMQ stream read by run_rabbitmq_read, a Kafka metadata read by run_kafka_read, and an
-    // engine no statement tool serves, such as Redis, or Snowflake and InfluxDB over InfluxQL, whose agent reads stay
-    // closed to MCP, has none.
+    // by run_qdrant_read, a Redis metadata read by run_redis_read, a RabbitMQ stream read by run_rabbitmq_read, a Kafka
+    // metadata read by run_kafka_read, and an engine no statement tool serves, such as Snowflake and InfluxDB over
+    // InfluxQL, whose agent reads stay closed to MCP, has none.
     const CLUSTER = {
       id: "cluster",
       type: "kubernetes",
@@ -181,7 +181,7 @@ describe("the answer", () => {
       ["seed:vectors", "run_qdrant_read"],
       ["seed:broker", "run_rabbitmq_read"],
       ["seed:stream", "run_kafka_read"],
-      ["seed:cache", null],
+      ["seed:cache", "run_redis_read"],
       ["seed:warehouse", null],
     ]);
   });
