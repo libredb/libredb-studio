@@ -445,7 +445,7 @@ jobs:
   # The product's reason to exist, end to end: boot the app, create a real
   # PostgreSQL connection through the modal, run SQL, see rows. Split out of the
   # e2e job because the spec starts its own throwaway postgres with
-  # `docker run -p 127.0.0.1:54329:5432` - that binds the HOST loopback, and a
+  # `docker run -p 127.0.0.1::5432` - that binds the HOST loopback, and a
   # container job has its own network namespace and cannot reach it. Keeping
   # this on the bare runner is what lets the spec stay free of any CI-only
   # branch, which is the whole point of a test that claims to exercise the real
@@ -479,20 +479,28 @@ jobs:
         # SQLite in `bun run test`, against a real PostgreSQL: its casts, row locks and ON CONFLICT
         # behaviour under concurrency are what the multi-replica guarantees rest on, and a mocked
         # pg cannot show them. Superuser, because one case deletes an account with foreign keys off.
+        # The host port is Docker's pick and the name is per run: a fixed loopback port inside the ephemeral range
+        # (32768-60999) can be held by a client socket, open or in TIME_WAIT, and Docker then refuses the bind
+        # with "address already in use", as 54332 did for the check below on PR #2216.
         run: |
-          docker run -d --rm --name passkey-contract-pg -e POSTGRES_PASSWORD=contract -p 127.0.0.1:55432:5432 postgres:17
+          pg="passkey-contract-pg-$(openssl rand -hex 4)"
+          trap 'docker rm -f "$pg" > /dev/null' EXIT
+          docker run -d --rm --name "$pg" -e POSTGRES_PASSWORD=contract -p 127.0.0.1::5432 postgres:17
+          port="$(docker port "$pg" 5432/tcp | head -n 1)"
+          port="${port##*:}"
+          export LIBREDB_LIVE_POSTGRES_URL="postgresql://postgres:contract@127.0.0.1:${port}/postgres?sslmode=disable"
           # The image's first start runs a temporary server on its Unix socket only, stops it and starts the real
           # one, so a psql over the socket can answer from the temporary server and the contract's TCP connection
           # then lands in the restart ("Connection terminated unexpectedly"). Wait on TCP, where only the real
           # server listens, and stop here if it never does.
           ready=""
           for i in $(seq 1 60); do
-            docker exec passkey-contract-pg pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && { ready=yes; break; }
+            docker exec "$pg" pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && { ready=yes; break; }
             sleep 1
           done
           if [ -z "$ready" ]; then
             echo "PostgreSQL accepted no TCP connection within 60 s"
-            docker logs passkey-contract-pg
+            docker logs "$pg"
             exit 1
           fi
           bun tests/live/passkey-store-postgres.ts
@@ -503,15 +511,12 @@ jobs:
           # manifest, read by the real snapshot loader as libredb_studio. Any failed case exits non-zero and fails the
           # step; later governance slices add their cases to the same script.
           bun tests/live/governance-live-check.ts
-          docker rm -f passkey-contract-pg
-        env:
-          LIBREDB_LIVE_POSTGRES_URL: postgresql://postgres:contract@127.0.0.1:55432/postgres?sslmode=disable
 
       - name: PostgreSQL agent read-only live check
         # The agent's PostgreSQL read-only profile against a real server, through the production factory
         # and the resolved agent role: a write and a multi-command string must both be refused. The
         # integration suite proves the same rules against a mock, which cannot see a pg driver or server
-        # change. The script starts and removes its own container.
+        # change. The script starts and removes its own container, on a host port Docker picks.
         run: bun tests/live/postgres-read-only-live.ts
 
       - name: Install Playwright browsers
