@@ -199,6 +199,26 @@ describe("the answer", () => {
     expect(Object.hasOwn(result.structuredContent?.rows[0], "__proto__")).toBe(true);
   });
 
+  test("carries none of the provider's warnings, since this arm's facet does not answer them", async () => {
+    const original = SQLiteProvider.prototype.queryReadOnly;
+    SQLiteProvider.prototype.queryReadOnly = async function (
+      this: SQLiteProvider,
+      ...args: Parameters<typeof original>
+    ) {
+      const result = await original.apply(this, args);
+      return { ...result, warnings: [{ message: "a provider warning that names stored-value-7" }] };
+    };
+    try {
+      const result = await query({ connection_id: "seed:shop", sql: "SELECT id FROM numbers LIMIT 1" });
+      expect(result.isError ?? false).toBe(false);
+      expect(result.structuredContent?.rows).toEqual([{ id: 1 }]);
+      expect(result.structuredContent).not.toHaveProperty("notes");
+      expect(JSON.stringify(result)).not.toContain("stored-value-7");
+    } finally {
+      SQLiteProvider.prototype.queryReadOnly = original;
+    }
+  });
+
   test("never quotes a fake column or a TRUNCATED marker", async () => {
     const result = await query({ connection_id: "seed:shop", sql: "SELECT id, pad FROM kilobyte_rows ORDER BY id" });
     expect(JSON.stringify(result)).not.toContain("TRUNCATED");

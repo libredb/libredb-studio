@@ -333,6 +333,18 @@ describe("a refusal", () => {
     ]);
   });
 
+  test.each(["database", "offset"])(
+    "an argument the tool does not name (%s) is refused, not dropped, before anything is acquired",
+    async (key) => {
+      const result = await mqtt('{"read": "window"}', { [key]: key === "offset" ? 1 : "elsewhere" });
+      expect(result.isError).toBe(true);
+      const text = result.content.map((block) => block.text).join("\n");
+      expect(text).toContain("Input validation error");
+      expect(text).toContain(key);
+      expect(acquireSpy()).not.toHaveBeenCalled();
+    },
+  );
+
   test("a timeout_ms too short for the window and its dial is refused in words before anything is acquired", async () => {
     const result = await mqtt('{"read": "window"}', { timeout_ms: 4_999 });
     expect(result.isError).toBe(true);
