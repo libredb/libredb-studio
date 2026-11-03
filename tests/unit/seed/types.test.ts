@@ -1054,6 +1054,19 @@ describe("SeedConfigSchema: an etcd seed opted into MCP", () => {
     );
   });
 
+  it("judges the seed's user when the agent user is empty, so root as that user is refused at user", () => {
+    expect(
+      issuesOf({
+        ...etcd,
+        user: "root",
+        password: "${ETCD_ROOT_PASSWORD}",
+        mcp: true,
+        agentUser: "",
+        agentPassword: "",
+      }),
+    ).toEqual([["connections.0.user", `Seed connection "cluster": user is refused: ${ETCD_MCP_ROOT_REFUSAL}`]]);
+  });
+
   it("refuses root as the agent user, at agentUser", () => {
     expect(
       issuesOf({ ...etcd, user: "owner", mcp: true, agentUser: "root", agentPassword: "${ETCD_AGENT_PASSWORD}" }),
@@ -1425,6 +1438,18 @@ describe("SeedConnectionSchema: an agent credential", () => {
     },
   );
 
+  it.each(["agentUser", "agentPassword"])(
+    "refuses an empty %s on a seed that takes no agent credential, since the field is present",
+    (field) => {
+      expect(issues("sqlite", { [field]: "" })).toEqual([
+        [
+          field,
+          `Seed connection "store": ${field} is refused: a sqlite seed takes no agent credential, so the agent and MCP could not run under one. Remove ${field} from this connection.`,
+        ],
+      ]);
+    },
+  );
+
   it("refuses agentUser on an engine that takes the agent's secret alone", () => {
     expect(issues("qdrant", { agentUser: "agent", agentPassword: "${QDRANT_AGENT_KEY}" })).toEqual([
       [
@@ -1602,7 +1627,7 @@ describe("refuseMcpWithoutAgentCredential", () => {
     expect(issues({ type: "mysql", mcp: true })).toEqual([]);
   });
 
-  it("is applied to the seed schema with the shipped registry, which names no engine yet", () => {
+  it("names no engine in the shipped registry, so the shipped seed schema admits an MCP opt-in without one", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_AGENT_CREDENTIAL_REQUIRED[type])).toEqual([]);
     expect(
       SeedConnectionSchema.safeParse({ id: "pg", name: "pg", type: "postgres", roles: ["admin"], mcp: true }).success,
