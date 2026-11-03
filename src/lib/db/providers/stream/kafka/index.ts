@@ -52,6 +52,7 @@ import type {
   TableStats,
 } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { noWritePath } from "@/lib/db/write-reach";
 import {
   KAFKA_AGENT_TOPIC_COLUMNS,
   KAFKA_METADATA_ONLY,
@@ -77,6 +78,16 @@ import { createPlatformaticClient, loadPlatformatic } from "./platformatic-clien
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET, type ReadLimits, readMessages } from "./read";
 import { parseReadRequest } from "./request";
 import { toQueryResult } from "./results";
+
+/**
+ * No write path on any route: every request the client sends is one of the read APIs of `KAFKA_READ_APIS`, the editor's
+ * text is a read request `parseReadRequest` admits or refuses, and nothing produces, commits, joins a group or creates
+ * a topic.
+ */
+const KAFKA_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/stream/kafka/platformatic-client.ts",
+  symbol: "KAFKA_READ_APIS",
+});
 
 /** How a real connection gets its client: the library, loaded once for the process. */
 const defaultCreateClient = async (options: KafkaConnectionOptions): Promise<KafkaReadClient> =>
@@ -239,6 +250,10 @@ export class KafkaProvider extends BaseDatabaseProvider {
       supportsExplain: false,
       supportsTransactions: false,
       supportsMaintenance: false,
+      // Nothing this product offers writes to Kafka, so a connection is read-only whatever its flag says, and the
+      // flag is accepted.
+      enforcesReadOnly: true,
+      writeReach: KAFKA_WRITE_REACH,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: false,

@@ -17,7 +17,7 @@
 | **Connection string** | Not supported: a Kafka client takes a bootstrap address, and no URI convention is read |
 | **SSH tunnel** | Refused: a tunnel forwards one address, and a Kafka client reaches every broker at the address the broker advertises ([§4.5](#45-no-ssh-tunnel)) |
 | **EXPLAIN** | None |
-| **Write reach** | open: Studio offers no write ([§6.3](#63-object-edit-789)), and the record keeps the value open until a test holds the client's request set to reads, so a read-only connection is still refused |
+| **Write reach** | none: the client sends only the read APIs of its API key set `KAFKA_READ_APIS`, the editor's text is a read request `parseReadRequest` admits or refuses, and there is no object edit, maintenance or transaction route, so every connection is read-only and a read-only one is accepted ([§11.5](#115-write-reach-measured-live)) |
 | **Transactions** | Not applicable; reads are read-committed ([§5.2](#52-result-shape)) |
 | **Maintenance** | None |
 | **Query cancellation** | None: a read is bounded by its limit, its budgets and its timeout, and there is no server-side evaluation to stop ([§5.5](#55-timeout-and-cancellation)) |
@@ -568,6 +568,7 @@ A direct call of `runMaintenance` is refused with a `QueryError`.
 ### `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/stream/kafka/index.ts))
 
 - `queryLanguage: "json"`, `queryDialect: "kafka"`.
+- `enforcesReadOnly: true` and `writeReach`, which declares the editor absent with the API key set `KAFKA_READ_APIS` in [`platformatic-client.ts`](../../src/lib/db/providers/stream/kafka/platformatic-client.ts) as its proof, and object edit, maintenance and transactions absent ([§11.5](#115-write-reach-measured-live)).
 - `createTable`: absent; the provider declares no `createTable`.
 - `supportsExplain`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
 - `tablesAreDerivedGroupings: false`: a topic is a relation the broker holds, unlike a Redis key prefix.
@@ -636,7 +637,7 @@ An error that did not come from the client, such as a defect in the provider's o
 | File | Owns |
 |---|---|
 | [`tests/integration/db/kafka-provider.test.ts`](../../tests/integration/db/kafka-provider.test.ts) | The provider end to end over the real adapter, with the recorded library of `tests/helpers/kafka-fixtures.ts` injected through the constructor's `createClient` parameter, so only the broker is fake; the answers are the captures of `tests/fixtures/kafka/` |
-| `tests/unit/db/kafka/` | One file per module: `client`, `connection-options`, `request`, `decode`, `results`, `read` (the fetch loop against a reference over generated logs), `groups`, `objects`, `monitoring`, `errors`, `platformatic-client` (the adapter over the recorded library, and sessionless fetches against a local broker), `provider` (the composition over a fake `KafkaReadClient`), `provider-library-load` (a client library the installation cannot load, over the runtimes' own resolution errors), `tls-handshake` (real handshakes, and live transport failures against local listeners), `seam-guard` (K4), `dependency-resolution` and `provider-doc` (this document against the code) |
+| `tests/unit/db/kafka/` | One file per module: `client`, `connection-options`, `request`, `decode`, `results`, `read` (the fetch loop against a reference over generated logs), `groups`, `objects`, `monitoring`, `errors`, `platformatic-client` (the adapter over the recorded library, and sessionless fetches against a local broker), `provider` (the composition over a fake `KafkaReadClient`), `provider-library-load` (a client library the installation cannot load, over the runtimes' own resolution errors), `tls-handshake` (real handshakes, and live transport failures against local listeners), `seam-guard` (K4), `write-reach` (the client's API key set against the real library, [§11.5](#115-write-reach-measured-live)), `dependency-resolution` and `provider-doc` (this document against the code) |
 
 No `mock.module()` anywhere in this suite: it is process-wide in Bun.
 The captured answers live in [`tests/fixtures/kafka/`](../../tests/fixtures/kafka/), and its README says how each was taken, with the image digests and cluster ids.
@@ -721,6 +722,24 @@ With node 3 stopped, `orders` reads as `under-replicated`, the Brokers folder li
 `offline` was reached on a throwaway single node with two log directories whose second directory was made unreadable: the partitions on it went offline within about 10 seconds.
 There the Topics listing shows the topic `offline`, its source shows its partitions with no offsets, a read of it is refused naming the leaderless partitions, and a read of a healthy topic still answers.
 The three panels do not answer there: the broker answers DescribeLogDirs for the failed directory with `KAFKA_STORAGE_ERROR`, and the overview, health and storage fail with that error (`docs/BACKLOG.md` D125).
+
+### 11.5 Write reach, measured live
+
+Kafka's write reach is `none`: every request the client sends is one of the read APIs of the frozen table `KAFKA_READ_APIS` in `platformatic-client.ts`, and none of them produces, creates or deletes a topic or records, alters a config, commits or deletes an offset, joins, syncs, heartbeats or leaves a group, or starts a producer or a transaction.
+[`write-reach.test.ts`](../../tests/unit/db/kafka/write-reach.test.ts) holds that four ways.
+The table itself: frozen, every entry a read API under its own protocol key, and none of the protocol's write, group-membership or admin APIs.
+The real `@platformatic/kafka`, loaded through `loadPlatformatic()`, driven through every method of the client against a local listener that records the API key of every request frame: the keys recorded are exactly the table's, every Metadata request carries `allow_auto_topic_creation` false, and each method that names a topic refuses `__consumer_offsets`, `__transaction_state` and `__share_group_state` before any frame is sent.
+A parse of `platformatic-client.ts` that finds no call on a library object outside a map of the read calls to the table's APIs, no raw protocol call but the Fetch and ConsumerGroupDescribe ones, and no library client but the four it builds, so a direct call on one of the adapter's named library objects in a branch no run drives fails it too.
+An alias or a cast of a library object is outside that parse, and the seam guard, [`seam-guard.test.ts`](../../tests/unit/db/kafka/seam-guard.test.ts), refuses it.
+And the replay of the live capture below.
+The integration test opens a `readOnly: true` connection, which the factory accepts, drives every surface over the captured broker, and holds each library call to those read calls.
+
+The live run is [`tests/fixtures/kafka/4.3.1/write-reach/run.sh`](../../tests/fixtures/kafka/4.3.1/write-reach/run.sh): a fresh `apache/kafka:4.3.1` by digest, one KRaft node with no authentication, no authorizer and `auto.create.topics.enable=true`, so any write Studio sent would land, seeded with a three-partition topic and a group that committed part of it.
+[`tests/live/kafka-write-reach.ts`](../../tests/live/kafka-write-reach.ts) takes the broker snapshot of [§11.4](#114-the-live-read-only-check) (the topic and group lists, every group's committed offsets, every partition's earliest and latest offsets, and the topic and broker configs) before and after every surface of a read-only connection, of the agent read-only profile and of the agent operations profile, each of which also reads a topic no one created.
+The snapshot does not see a group joined and left with nothing committed, a heartbeat, a producer id, or a transaction begun and aborted, which leave it unchanged.
+Those are shown absent by the recorded request list instead, `sentByStudio`, which holds the API key and version of every request the library sent in the run, read at its one request writer, `Connection.prototype.send`.
+Measured 2026-11-03: the snapshot was unchanged across every handle and the missing topic was never created; `sentByStudio` held Fetch, ListOffsets, Metadata, OffsetFetch, FindCoordinator, DescribeGroups, ListGroups, ApiVersions, DescribeConfigs and DescribeLogDirs, all in the table, the fixture holding no consumer-protocol group or SASL listener for the other three; the script's own produce, group commit and topic creation afterwards moved the topic list, the end offsets and the committed offsets, which is the control that a write would have been seen.
+The test replays that capture.
 
 ---
 

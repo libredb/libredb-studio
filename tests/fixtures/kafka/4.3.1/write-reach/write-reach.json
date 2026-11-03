@@ -1,0 +1,516 @@
+{
+  "$captured": {
+    "image": "apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837",
+    "date": "2026-11-03",
+    "runtime": "bun 1.4.4",
+    "broker": "one KRaft node, no authentication, no authorizer, auto.create.topics.enable=true",
+    "note": "`handles` runs every provider surface of each handle between two broker snapshots; `snapshotDiff` is what moved, and must be empty. `sentByStudio` is every request the client library sent in those runs, as `<API key> v<version>`. `control` is the snapshot diff of the script's own produce, group commit and topic creation."
+  },
+  "measured": "2026-11-03",
+  "readOnlyConnectionAccepted": true,
+  "handles": [
+    {
+      "handle": "read-only connection",
+      "surfaces": [
+        {
+          "surface": "connect",
+          "ok": true
+        },
+        {
+          "surface": "listObjects topic",
+          "ok": true
+        },
+        {
+          "surface": "describeObjects topic",
+          "ok": true
+        },
+        {
+          "surface": "describeObject topic",
+          "ok": true
+        },
+        {
+          "surface": "readObjectSource topic",
+          "ok": true
+        },
+        {
+          "surface": "listObjects consumer_group",
+          "ok": true
+        },
+        {
+          "surface": "describeObjects consumer_group",
+          "ok": true
+        },
+        {
+          "surface": "describeObject consumer_group",
+          "ok": true
+        },
+        {
+          "surface": "readObjectSource consumer_group",
+          "ok": true
+        },
+        {
+          "surface": "listObjects broker",
+          "ok": true
+        },
+        {
+          "surface": "describeObjects broker",
+          "ok": true
+        },
+        {
+          "surface": "describeObject broker",
+          "ok": true
+        },
+        {
+          "surface": "readObjectSource broker",
+          "ok": true
+        },
+        {
+          "surface": "describeObject topic write-reach-missing",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "listContainers",
+          "ok": true
+        },
+        {
+          "surface": "countObjects",
+          "ok": true
+        },
+        {
+          "surface": "getHealth",
+          "ok": true
+        },
+        {
+          "surface": "getOverview",
+          "ok": true
+        },
+        {
+          "surface": "getPerformanceMetrics",
+          "ok": true
+        },
+        {
+          "surface": "getSlowQueries",
+          "ok": true
+        },
+        {
+          "surface": "getActiveSessions",
+          "ok": true
+        },
+        {
+          "surface": "getTableStats",
+          "ok": true
+        },
+        {
+          "surface": "getIndexStats",
+          "ok": true
+        },
+        {
+          "surface": "getStorageStats",
+          "ok": true
+        },
+        {
+          "surface": "getMonitoringData",
+          "ok": true
+        },
+        {
+          "surface": "runMaintenance vacuum",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance analyze",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance reindex",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance optimize",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance check",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance kill",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "query {\"topic\":\"orders\",\"from\":\"earliest\",\"limit\":50}",
+          "ok": true
+        },
+        {
+          "surface": "query {\"topic\":\"orders\",\"from\":\"latest\",\"limit\":5}",
+          "ok": true
+        },
+        {
+          "surface": "query {\"topic\":\"orders\",\"partition\":0,\"from\":{\"offset\":\"1\"},\"limit\":5}",
+          "ok": true
+        },
+        {
+          "surface": "query {\"topic\":\"orders\",\"from\":{\"timestamp\":\"2026-01-01T00:00:00Z\"},\"limit\":5}",
+          "ok": true
+        },
+        {
+          "surface": "query {\"topic\":\"write-reach-missing\"}",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "query {\"topic\":\"__consumer_offsets\"}",
+          "ok": false,
+          "error": "QueryError"
+        }
+      ],
+      "snapshotDiff": [],
+      "missingTopicCreated": false
+    },
+    {
+      "handle": "agent read-only profile",
+      "surfaces": [
+        {
+          "surface": "connect",
+          "ok": true
+        },
+        {
+          "surface": "listObjects topic",
+          "ok": true
+        },
+        {
+          "surface": "describeObjects topic",
+          "ok": true
+        },
+        {
+          "surface": "describeObject topic",
+          "ok": true
+        },
+        {
+          "surface": "readObjectSource topic",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "listObjects consumer_group",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "describeObjects consumer_group",
+          "ok": true
+        },
+        {
+          "surface": "listObjects broker",
+          "ok": true
+        },
+        {
+          "surface": "describeObjects broker",
+          "ok": true
+        },
+        {
+          "surface": "describeObject broker",
+          "ok": true
+        },
+        {
+          "surface": "readObjectSource broker",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "describeObject topic write-reach-missing",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "listContainers",
+          "ok": true
+        },
+        {
+          "surface": "countObjects",
+          "ok": true
+        },
+        {
+          "surface": "getHealth",
+          "ok": true
+        },
+        {
+          "surface": "getOverview",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getPerformanceMetrics",
+          "ok": true
+        },
+        {
+          "surface": "getSlowQueries",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getActiveSessions",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getTableStats",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getIndexStats",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getStorageStats",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getMonitoringData",
+          "ok": true
+        },
+        {
+          "surface": "runMaintenance vacuum",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance analyze",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance reindex",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance optimize",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance check",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance kill",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "queryReadOnly {\"read\": \"topics\"}",
+          "ok": true
+        },
+        {
+          "surface": "queryReadOnly {\"read\": \"brokers\"}",
+          "ok": true
+        },
+        {
+          "surface": "queryReadOnly {\"read\": \"partitions\", \"topic\": \"orders\"}",
+          "ok": true
+        },
+        {
+          "surface": "queryReadOnly {\"read\": \"offsets\", \"topic\": \"orders\"}",
+          "ok": true
+        },
+        {
+          "surface": "queryReadOnly {\"read\": \"offsets\", \"topic\": \"write-reach-missing\"}",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "queryReadOnly {\"read\": \"partitions\", \"topic\": \"write-reach-missing\"}",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "queryReadOnly {\"read\": \"groups\"}",
+          "ok": false,
+          "error": "RefusedBeforeSendError"
+        },
+        {
+          "surface": "queryReadOnly {\"read\": \"topics\", \"allowAutoTopicCreation\": true}",
+          "ok": false,
+          "error": "RefusedBeforeSendError"
+        }
+      ],
+      "snapshotDiff": [],
+      "missingTopicCreated": false
+    },
+    {
+      "handle": "agent operations profile",
+      "surfaces": [
+        {
+          "surface": "connect",
+          "ok": true
+        },
+        {
+          "surface": "listObjects topic",
+          "ok": true
+        },
+        {
+          "surface": "describeObjects topic",
+          "ok": true
+        },
+        {
+          "surface": "describeObject topic",
+          "ok": true
+        },
+        {
+          "surface": "readObjectSource topic",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "listObjects consumer_group",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "describeObjects consumer_group",
+          "ok": true
+        },
+        {
+          "surface": "listObjects broker",
+          "ok": true
+        },
+        {
+          "surface": "describeObjects broker",
+          "ok": true
+        },
+        {
+          "surface": "describeObject broker",
+          "ok": true
+        },
+        {
+          "surface": "readObjectSource broker",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "describeObject topic write-reach-missing",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "listContainers",
+          "ok": true
+        },
+        {
+          "surface": "countObjects",
+          "ok": true
+        },
+        {
+          "surface": "getHealth",
+          "ok": true
+        },
+        {
+          "surface": "getOverview",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getPerformanceMetrics",
+          "ok": true
+        },
+        {
+          "surface": "getSlowQueries",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getActiveSessions",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getTableStats",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getIndexStats",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getStorageStats",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "getMonitoringData",
+          "ok": true
+        },
+        {
+          "surface": "runMaintenance vacuum",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance analyze",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance reindex",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance optimize",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance check",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "runMaintenance kill",
+          "ok": false,
+          "error": "QueryError"
+        },
+        {
+          "surface": "query",
+          "ok": false,
+          "error": "RefusedBeforeSendError"
+        }
+      ],
+      "snapshotDiff": [],
+      "missingTopicCreated": false
+    }
+  ],
+  "studioLeftStateUnchanged": true,
+  "requestsByStudio": 100,
+  "sentByStudio": [
+    "1 v13",
+    "2 v9",
+    "3 v12",
+    "9 v9",
+    "10 v6",
+    "15 v5",
+    "16 v5",
+    "18 v3",
+    "32 v4",
+    "35 v4"
+  ],
+  "control": {
+    "topicList": true,
+    "endOffsets": true,
+    "committedOffsets": true,
+    "diffLines": 43
+  }
+}

@@ -301,8 +301,9 @@ export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.fr
   // Read-only whatever the flag says: the transport requests only the closed endpoint table `PATHS`, every one a read,
   // and a live run left the TSDB's series count unchanged after every provider surface.
   prometheus: "none",
-  // No write path in the code, but recorded open until its proof test and live measurement land.
-  kafka: "open",
+  // Read-only whatever the flag says: the client sends only the read APIs of `KAFKA_READ_APIS`, and a live run left the
+  // topic list, every end offset and every group's committed offsets unchanged after every provider surface.
+  kafka: "none",
   // The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit
   // and maintenance operation before any request while the mode holds (`write-policy.ts`).
   etcd: "guarded",
