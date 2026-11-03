@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D452, U17 · 334
+- [Drivers and connections](#drivers-and-connections) — D1-D452, U17 · 333
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U199 · 185
@@ -4296,14 +4296,6 @@ The `scopeServer` helper had the same collision and now matches the request body
 Found 2026-11-03 while fixing that helper.
 
 **Done when:** `agentServer` matches a request by its line and body, or refuses at build time when two captures of one principal share a line, with a helper test on the two root captures.
-
-### D434. The OPC UA live step publishes its fixture on a fixed port inside the ephemeral range
-
-The CI step that starts the OPC UA fixture publishes it on `127.0.0.1:54840` (`.github/workflows/ci.yml`, `LIBREDB_OPCUA_LIVE_URL`), and `tests/unit/db/opcua/live-environment.test.ts` pins that mapping.
-54840 is inside Linux's ephemeral port range (32768 to 60999), where a client socket of an earlier step, open or in `TIME_WAIT`, can hold it, and Docker then refuses the bind with "address already in use"; the live PostgreSQL fixtures failed this way and now publish on a port Docker picks.
-Found 2026-11-03 while moving those fixtures.
-
-**Done when:** the OPC UA live step publishes on a port Docker picks and passes it to the probes through `LIBREDB_OPCUA_LIVE_URL`, or on a fixed port below 32768, with `live-environment.test.ts` pinning the new form.
 
 ### D435. A discovered connection cannot carry an agent credential
 

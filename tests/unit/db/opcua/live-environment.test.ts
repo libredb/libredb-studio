@@ -83,7 +83,10 @@ describe("the OPC UA fixture's environment", () => {
     // The block is written to be merged into `database-compose.yml`; until it is, this is the only
     // thing holding it to the two files beside it. A third copy of an image reference is a third
     // thing to drift.
-    expect(SERVICE).toContain('"127.0.0.1:54840:50000"');
+    // On loopback, at a port Docker picks: a fixed host port inside Linux's ephemeral range (32768 to 60999) can be
+    // held by a client socket open or in TIME_WAIT, and Docker then refuses the bind.
+    expect(SERVICE).toContain('"127.0.0.1::50000"');
+    expect(SERVICE).not.toContain("54840");
     expect(SERVICE.match(/mcr\.microsoft\.com\/iotedge\/opc-plc:[\d.]+@sha256:[0-9a-f]{64}/)?.[0]).toBe(
       README.match(/mcr\.microsoft\.com\/iotedge\/opc-plc:[\d.]+@sha256:[0-9a-f]{64}/)?.[0],
     );
@@ -111,8 +114,13 @@ describe("the OPC UA fixture's environment", () => {
     ]);
   });
 
-  test("the CI step publishes on loopback too, and silences nothing", () => {
-    expect(CI_STEP).toContain("-p 127.0.0.1:54840:50000");
+  test("the CI step publishes on loopback at a port Docker picks, reads it back for the probes, and silences nothing", () => {
+    expect(CI_STEP).toContain("-p 127.0.0.1::50000");
+    expect(CI_STEP).toContain('port="$(docker port libredb-ci-opcua 50000/tcp | head -n 1)"');
+    expect(CI_STEP).toContain('export LIBREDB_OPCUA_LIVE_URL="opc.tcp://127.0.0.1:${port##*:}/"');
+    // The URL is set only after the container runs, since the port exists only then.
+    expect(CI_STEP.indexOf("export LIBREDB_OPCUA_LIVE_URL")).toBeGreaterThan(CI_STEP.indexOf("docker run -d"));
+    expect(CI_STEP).not.toContain("54840");
     // The four shapes that would turn a red step green without anyone deciding to.
     for (const silencer of ["continue-on-error", "|| true", "set +e"]) expect(CI_STEP).not.toContain(silencer);
   });
