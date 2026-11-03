@@ -27,8 +27,9 @@
  * each a fresh session over the same encoder, and each answer projected to counts and flags (`agent-read.ts`), never an
  * id, a metric name or a value, and always with the window it listened for and the sentence that an edge node or
  * device not seen may still exist. On a handle opened for any agent-mode profile, connecting is a handshake that
- * subscribes to nothing, and every other surface answers its reason (`agent-surface.ts`). MCP read stays closed on
- * this engine.
+ * subscribes to nothing, and every other surface answers its reason (`agent-surface.ts`). MCP's `run_sparkplug_read`
+ * reads through this same `queryReadOnly` on an agent read-only handle, and its answers carry the window and the
+ * completeness sentence as notes.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { ConnectionError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";

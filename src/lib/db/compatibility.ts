@@ -554,10 +554,10 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // `queryReadOnly`, whose output masks every Secret name, and `inspect_schema` lists relations alone, which no
   // Kubernetes kind is, so no object name, a Secret's included, reaches it.
   kubernetes: true,
-  // Agent mode reads MQTT through a window whose every answer says a topic not seen may still exist, with topic
-  // names and payloads withheld; no MCP surface that reads through the same window, completeness sentence and
-  // projection is designed yet (BACKLOG B164).
-  mqtt: false,
+  // Offered with every answer metadata only, as agent mode reads it: topic names and payloads are withheld, so
+  // `inspect_schema` refuses an MQTT connection by name, since a broker declares no relation kind, and `run_mqtt_read`
+  // answers one window's totals or one named topic's counts and flags, with its window and the completeness sentence.
+  mqtt: true,
   // Closed, as Oxia's and S3's: agent mode reads Firestore's metadata within a run's read allowance, every read
   // is billed to the user's project, and no MCP surface that lists collections but never a document id is designed yet
   // (BACKLOG B107).
@@ -588,10 +588,10 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Closed: agent mode reads SNMP values with the SNMP security modules withheld, and no MCP surface that
   // withholds them is designed yet (BACKLOG B158).
   snmp: false,
-  // Agent mode reads Sparkplug through a window whose every answer says an edge node or device not seen may still
-  // exist, with ids, metric names and values withheld; no MCP surface that reads through the same window,
-  // completeness sentence and projection is designed yet (BACKLOG B165).
-  sparkplug: false,
+  // Offered with every answer metadata only, as agent mode reads it: ids, metric names and values are withheld, so
+  // `inspect_schema` answers an empty page, since an agent-mode handle declares no kind, and `run_sparkplug_read` answers one window's totals or one named object's counts, with its window and the
+  // completeness sentence.
+  sparkplug: true,
   libredb: true,
 });
 
@@ -698,9 +698,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // (BACKLOG B104).
   s3: false,
   kubernetes: true,
-  // Agent mode executes window reads on MQTT, metadata only, and MCP read stays closed on it until a change of its own
-  // opens it (BACKLOG B164).
-  mqtt: false,
+  // Opened on its own: run_mqtt_read runs under the boundary agent mode uses, the provider's closed five-packet
+  // encoder and valve, which send no PUBLISH and no Will, with every answer projected to one window's counts and flags,
+  // never a topic name or a payload, and carrying its window and the completeness sentence as notes
+  // (docs/providers/mqtt.md section 15).
+  mqtt: true,
   // Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it until a change of its own
   // opens it (BACKLOG B107).
   firestore: false,
@@ -724,9 +726,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes reads on SNMP with the SNMP security modules withheld, and MCP read stays closed on it
   // until a change of its own opens it (BACKLOG B158).
   snmp: false,
-  // Agent mode executes window reads on Sparkplug, metadata only, and MCP read stays closed on it until a change of
-  // its own opens it (BACKLOG B165).
-  sparkplug: false,
+  // Opened on its own: run_sparkplug_read runs under the boundary agent mode uses, the provider's closed encoder, which
+  // sends no PUBLISH, command or Will, with every answer projected to one window's counts and flags, never an id, a
+  // metric name or a value, and carrying its window and the completeness sentence as notes
+  // (docs/providers/sparkplug.md section 15).
+  sparkplug: true,
   // Opened on its own: run_libredb_read runs under the boundary agent mode uses, a read-only handle of its own for every
   // command, opened through Studio's read-only file adapter, which takes no lock and cannot write; the seed names the
   // one file it reads, Studio's own storage and credential files are refused as a target, and the file's reserved

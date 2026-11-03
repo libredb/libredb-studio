@@ -69,6 +69,11 @@ export interface McpStatementArm {
    * holds it to every served engine's own relation kinds.
    */
   readonly holdsNoTables: boolean;
+  /**
+   * True where the provider's warnings on this arm's answers are Studio's own sentences an answer must carry, so they
+   * reach the client as `notes`; the language's facet declares it, and every other arm's answers carry no warning.
+   */
+  readonly answersWarnings: boolean;
   readonly description: string;
   /** The argument as the one statement text every later step reads, or null when it carries no statement. */
   canonicalize(raw: unknown): string | null;
@@ -94,6 +99,16 @@ const DATABASE = z.string().min(1).optional().describe(DATABASE_ARGUMENT_DESCRIP
 const MAX_ROWS = z.number().int().min(1).max(500).default(100);
 const OFFSET = z.number().int().min(0).default(0);
 const TIMEOUT_MS = z.number().int().min(500).max(30000).default(10000);
+
+/** The timeout of a tool whose reads need more than the shared least: refused below it, in the facet's words. */
+function leastTimeoutMs(tool: string, least: { readonly ms: number; readonly why: string }) {
+  return z
+    .number()
+    .int()
+    .min(least.ms, `timeout_ms must be at least ${least.ms} for ${tool}: ${least.why}`)
+    .max(30000)
+    .default(10000);
+}
 const SHARED_LIMITS =
   "Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut";
 
@@ -101,7 +116,8 @@ const engineNames = (types: readonly DatabaseType[]) => namedList(types.map((typ
 
 /**
  * An arm's input: the connection, a `database` where the facet takes one, the statement under the language's own
- * argument, the row cap, an `offset` where the arm pages, and the timeout, in the order tools/list shows them.
+ * argument, the row cap, an `offset` where the arm pages, and the timeout, from the facet's least where it declares
+ * one, in the order tools/list shows them.
  */
 function statementInputSchema(facet: AgentLanguageMcpFacet, argument: AgentStatementArgument): z.ZodObject {
   const shape = {
@@ -110,7 +126,7 @@ function statementInputSchema(facet: AgentLanguageMcpFacet, argument: AgentState
     [argument]: facet.statementInput,
     max_rows: MAX_ROWS,
     ...(facet.paging === "offset" ? { offset: OFFSET } : {}),
-    timeout_ms: TIMEOUT_MS,
+    timeout_ms: facet.leastTimeout === undefined ? TIMEOUT_MS : leastTimeoutMs(facet.tool, facet.leastTimeout),
   };
   return facet.strictInput ? z.strictObject(shape) : z.object(shape);
 }
@@ -172,6 +188,7 @@ function statementArm(language: AgentStatementLanguageId, facet: AgentLanguageMc
     types,
     engines,
     holdsNoTables: facet.holdsNoTables,
+    answersWarnings: "answersWarnings" in facet && facet.answersWarnings === true,
     description: `${facet.describe({ engines, limits: SHARED_LIMITS })} ${MCP_UNTRUSTED_NOTICE}`,
     ...(facet.fence === "read-only-statement"
       ? READ_ONLY_STATEMENT_READER
