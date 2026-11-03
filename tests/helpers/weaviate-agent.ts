@@ -5,6 +5,7 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { NodeResponse } from "@/lib/db/http/node-transport";
 import type { WeaviateAnswer } from "@/lib/db/providers/vector/weaviate/client";
 import type { RecordedAnswer } from "./weaviate-wire";
@@ -46,22 +47,34 @@ function scopeCaptureNames(): readonly string[] {
  * A recording transport's answers for a data-scope `principal` (`viewer`, `scoped`, `nodata`): each request line is
  * answered with the data-scope capture of the same line sent as that principal, and the meta read with the
  * agent-boundary viewer's, since every key is answered the same meta; `overrides` answers a request line otherwise. A
- * line no capture holds throws by name.
+ * line no capture holds throws by name. Where two captures share a line and differ by body (the counts of tenants acme
+ * and globex), the request is answered by the capture whose body equals its own as JSON, and a body neither sent
+ * throws by name: the directory's listing order is the platform's (sorted on macOS, hash order on Linux), so it never
+ * picks the answer.
  */
 export function scopeServer(
   principal: string,
   overrides: Readonly<Record<string, WeaviateAnswer>> = {},
 ): RecordedAnswer {
-  const byLine = new Map<string, WeaviateAnswer>([["GET /v1/meta", agentAnswer("meta-viewer")]]);
+  const byLine = new Map<string, { readonly body: unknown; readonly answer: WeaviateAnswer }[]>([
+    ["GET /v1/meta", [{ body: undefined, answer: agentAnswer("meta-viewer") }]],
+  ]);
   for (const name of scopeCaptureNames()) {
     if (!name.endsWith(`-${principal}`)) continue;
     const capture = scopeCapture(name);
-    byLine.set(`${capture.request.method} ${capture.request.path}`, scopeAnswer(name));
+    const line = `${capture.request.method} ${capture.request.path}`;
+    byLine.set(line, [...(byLine.get(line) ?? []), { body: capture.request.body, answer: scopeAnswer(name) }]);
   }
-  return (_request, line) => {
-    const found = overrides[line] ?? byLine.get(line);
-    if (found === undefined) throw new Error(`no ${principal} data-scope capture answers ${line}`);
-    return asResponse(found);
+  return (request, line) => {
+    const override = overrides[line];
+    if (override !== undefined) return asResponse(override);
+    const captures = byLine.get(line);
+    if (captures === undefined) throw new Error(`no ${principal} data-scope capture answers ${line}`);
+    if (captures.length === 1) return asResponse(captures[0].answer);
+    const body: unknown = request.body === undefined ? undefined : JSON.parse(request.body);
+    const found = captures.find((capture) => isDeepStrictEqual(capture.body, body));
+    if (found === undefined) throw new Error(`no ${principal} data-scope capture answers ${line} with that body`);
+    return asResponse(found.answer);
   };
 }
 
