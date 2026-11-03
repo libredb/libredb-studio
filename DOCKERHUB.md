@@ -128,9 +128,9 @@ The forty-third row is the embedded LibreDB store: it ships inside the image.
 | **Couchbase** | none, HTTP | SQL++ query editor, bucket/scope/collection browser, cluster health |
 | **Firestore** | none, REST | Read-only Admin SDK query chain |
 | **ClickHouse** | none, HTTP | Full SQL IDE over the HTTP interface, part/compression sizes, `system.*` monitoring |
-| **Apache Druid** | none, HTTP | Read-only SQL IDE over the SQL endpoint, datasource and segment browser |
-| **Elasticsearch** | none, HTTP | Read-only SQL IDE over `_sql`, mapping-driven index/field explorer, cluster health with per-index document counts and store sizes |
-| **OpenSearch** | none, HTTP | The same read-only IDE over `_plugins/_sql`, from the same provider module; `LIMIT … OFFSET` paging works here |
+| **Apache Druid** | none, HTTP | SQL IDE over the SQL endpoint, datasource and segment browser |
+| **Elasticsearch** | none, HTTP | SQL IDE over `_sql`, mapping-driven index/field explorer, cluster health with per-index document counts and store sizes |
+| **OpenSearch** | none, HTTP | The same SQL IDE over `_plugins/_sql`, from the same provider module; `LIMIT … OFFSET` paging works here |
 | **Trino** | none, HTTP | Full SQL IDE over the client protocol, every configured catalog in one tree, `EXPLAIN (FORMAT JSON)` plans, `system.runtime` monitoring and query cancellation |
 | **Databend** | none, HTTP | SQL IDE over its own query API, self-hosted or a Databend Cloud warehouse; `system.*` monitoring and `KILL QUERY`. No keys, so no inline row edits |
 | **BigQuery** | none, REST | GoogleSQL; EXPLAIN is a dry run |
@@ -154,8 +154,9 @@ The forty-third row is the embedded LibreDB store: it ships inside the image.
 | **OPC UA** | `node-opcua-client` | Read-only address-space browser; node values and raw history |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
-**Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing.
-Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, SNMP, Oxia, S3-compatible object storage and Kubernetes are read-only too: Studio calls only read APIs.
+**No write in the grammar.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE`, so inline editing and DDL show as unsupported.
+The limit is the engine's: Studio sends what the editor holds, with no read-only mode there.
+Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, SNMP, Oxia, S3-compatible object storage and Kubernetes are read-only: Studio calls only read APIs.
 
 ### Engines with no provider of their own
 

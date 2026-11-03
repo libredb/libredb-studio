@@ -17,7 +17,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { WIRE_COMPATIBLE_ENGINES } from "@/lib/db/compatibility";
+import { WIRE_COMPATIBLE_ENGINES, WRITE_REACH } from "@/lib/db/compatibility";
 
 const REPO_ROOT = join(import.meta.dir, "../..");
 const LISTING_PATH = join(REPO_ROOT, "DOCKERHUB.md");
@@ -100,4 +100,17 @@ test("the listing's relatives section names every verified relative", () => {
     (engine) => !section.includes(`${engine.name} |`) && !section.includes(`${engine.name} ·`),
   );
   expect(missing.map((engine) => engine.name)).toEqual([]);
+});
+
+test("the listing says the grammar, not Studio, refuses a write on Druid, Elasticsearch and OpenSearch", () => {
+  // The editor sends the statement it holds, so their write reach is open and Studio has no read-only mode there.
+  expect([WRITE_REACH.druid, WRITE_REACH.elasticsearch, WRITE_REACH.opensearch]).toEqual(["open", "open", "open"]);
+  const paragraph = listing
+    .split("\n\n")
+    .find((block) => block.includes("Druid, Elasticsearch and OpenSearch have no `UPDATE`"));
+  expect(paragraph).toBeDefined();
+  expect(paragraph).not.toContain("**Read-only");
+  expect(paragraph).toContain(
+    "The limit is the engine's: Studio sends what the editor holds, with no read-only mode there.",
+  );
 });

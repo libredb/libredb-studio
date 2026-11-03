@@ -1413,8 +1413,9 @@ export interface ProviderCapabilities {
    * read-only and send its writes. So `readOnly: true` is accepted only where this holds, and refused
    * everywhere else: by the seed schema at load, by `assertReadOnlyHonoured` in
    * `src/lib/db/factory.ts` before anything is built or dialled, and by the connection form, which
-   * draws its toggle only here. All three read `READ_ONLY_ENFORCED` in `src/lib/db/compatibility.ts`
-   * rather than this field, because each decides before a provider exists, and
+   * draws its toggle only here. `assertReadOnlyHonoured` reads `READ_ONLY_ENFORCED` in
+   * `src/lib/db/compatibility.ts`, and the seed schema and the form read `WRITE_REACH`, from which that map is
+   * derived, rather than this field, because each decides before a provider exists, and
    * `tests/unit/db/read-only-enforced-capability.test.ts` holds that map equal to this declaration
    * for every shipped type-id.
    *

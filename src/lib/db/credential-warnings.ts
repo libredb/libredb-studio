@@ -11,7 +11,7 @@
  *
  * Pure, browser-safe and UI-free: it imports types only. It is not in src/lib/db-ui-config.ts because that
  * module imports React icon components, which the seed loader must not load, the reason the seed schema reads
- * `READ_ONLY_ENFORCED` from src/lib/db/compatibility.ts.
+ * `WRITE_REACH` from src/lib/db/compatibility.ts.
  *
  * A JWT is decoded here, locally, with `atob`: its signature is never checked and nothing is sent anywhere. The
  * sentence says what the token declares, never what a server granted, and names no claim value.
@@ -64,7 +64,7 @@ export type CredentialWarning =
  * whatever password arrives, so `root` with an empty password box signs in only as that user, and the dialog says
  * the server accepts any password for it. The `pair` kind with an empty password
  * is the row: it warns for `root` and no password, and for nothing else. A read-only seed is refused for Databend
- * on `READ_ONLY_ENFORCED` already, so the shared refusal adds no new refusal there.
+ * already, since its `WRITE_REACH` is `open`, so the shared refusal adds no new refusal there.
  *
  * S3: MinIO and RustFS start with a documented default credential when none is configured, so the pair warns in
  * the dialog. A read-only seed with it is refused, as Milvus's is: the seed promises a boundary that rests only on
