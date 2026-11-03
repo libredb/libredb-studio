@@ -63,6 +63,7 @@ describe("declarations", () => {
       keyScan: S3_KEY_SCAN,
       schemaRefreshPattern: "(?!)",
       metadataOnly: S3_METADATA_ONLY,
+      agentCredential: "dedicated-user",
     });
     expect(asked()).toBe(0);
   });

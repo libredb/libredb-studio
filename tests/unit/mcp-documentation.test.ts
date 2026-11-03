@@ -672,7 +672,7 @@ describe("docs/SEED_CONNECTIONS.md", () => {
     const row = seed.split("\n").find((line) => line.startsWith("| `connections[].mcp` |"));
     expect(row).toContain(`${article} ${names} connection refuses \`mcp: true\` when the file loads`);
     expect(seed).toContain(
-      `| \`mcp: true\` on ${article.toLowerCase()} ${names} connection | The whole file fails like any invalid config, and the error names \`mcp\` and the type, such as \`oxia\` or \`s3\` |`,
+      `| \`mcp: true\` on ${article.toLowerCase()} ${names} connection | The whole file fails like any invalid config, and the error names \`mcp\` and the type, such as \`oxia\` or \`netconf\` |`,
     );
   });
 
