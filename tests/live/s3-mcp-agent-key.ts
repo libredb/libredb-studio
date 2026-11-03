@@ -16,9 +16,13 @@
  * a token minted for the run, except the cancel, which drives the tool's own handler with the route's context:
  *
  *   own key    the broad key's raw bucket listing, the positive control: every bucket the run made;
+ *   heads      a raw HeadBucket of each bucket the run made, signed with each agent key: what the server answers a
+ *              key for a bucket it is granted and for one it is not, which the bucket listing's per-bucket check reads;
  *   listing    `aws s3api list-buckets` through the tool on each connection: the unlisted agent key's granted buckets
- *              alone, the proof MCP signed with the agent key; the scoped agent key's answer, which is every bucket name
- *              on a server that applies s3:ListAllMyBuckets as written;
+ *              alone, the proof MCP signed with the agent key; and the scoped agent key's, which the server lists every
+ *              bucket name on Silo and RustFS, s3:ListAllMyBuckets being applied as written: the answer must name only
+ *              the buckets whose raw HeadBucket that key was answered 200, count the rest in a note naming none, and
+ *              have cost one ListBuckets and one HeadBucket per listed bucket;
  *   oracle     every named read of a bucket the agent key is granted nothing on against one that does not exist, and
  *              of a key that exists in such a bucket against one that does not: alike, word for word, once the name
  *              is taken out, and each the one missing-or-unreadable sentence;
@@ -192,6 +196,13 @@ async function seed(): Promise<void> {
     );
 }
 
+/** The status a raw HeadBucket of each bucket the run made answers `who`. */
+async function rawHeadBuckets(who: (typeof KEYS)[keyof typeof KEYS]): Promise<Record<string, number>> {
+  const statuses: Record<string, number> = {};
+  for (const bucket of [...MADE, BUCKETS.missing]) statuses[bucket] = (await raw(who, "HEAD", `/${bucket}`)).status;
+  return statuses;
+}
+
 /** The bucket names a raw ListBuckets signed with `who` answers. */
 async function rawListing(who: (typeof KEYS)[keyof typeof KEYS]): Promise<string[]> {
   const answer = await must(raw(who, "GET", "/"), "ListBuckets");
@@ -315,6 +326,33 @@ async function main(): Promise<void> {
     };
     const namesOf = (record: Record_) =>
       ((record.rows ?? []) as Array<{ bucket: string }>).map((row) => row.bucket).sort();
+    // What the server answers each agent key: its raw listing, and a raw HeadBucket of every bucket the run made.
+    const heads = { unlisted: await rawHeadBuckets(KEYS.unlisted), scoped: await rawHeadBuckets(KEYS.scoped) };
+    const rawListed = { unlisted: await rawListing(KEYS.unlisted), scoped: await rawListing(KEYS.scoped) };
+    const listingCost = Object.fromEntries(
+      (["unlisted", "scoped"] as const).map((who) => [
+        who,
+        {
+          listedByServer: rawListed[who].length,
+          requests: { ListBuckets: 1, HeadBucket: rawListed[who].length },
+          answeredMs: listing[who].ms,
+        },
+      ]),
+    );
+    for (const who of ["unlisted", "scoped"] as const) {
+      const readable = rawListed[who].filter((bucket) => heads[who][bucket] >= 200 && heads[who][bucket] < 300);
+      const withheld = rawListed[who].length - readable.length;
+      check(
+        JSON.stringify(namesOf(listing[who])) === JSON.stringify(readable),
+        `the ${who} agent key's listing names exactly the listed buckets whose HeadBucket it is answered 200`,
+      );
+      check(
+        JSON.stringify(listing[who].notes ?? []) ===
+          JSON.stringify(withheld === 0 ? [] : [S3_AGENT_FAILURE_SENTENCES.withheldBuckets(withheld)]),
+        `the ${who} agent key's listing counts the ${withheld} withheld buckets in a note`,
+      );
+      check(!namesOf(listing[who]).includes(BUCKETS.other), `the ${who} agent key's listing names no ungranted bucket`);
+    }
     const unlistedNames = namesOf(listing.unlisted);
     check(unlistedNames.length > 0, "the unlisted agent key lists its granted buckets");
     check(
@@ -425,7 +463,10 @@ async function main(): Promise<void> {
         "scoped-agent": "the scoped key, holding scoped-policy.json: the same grants with s3:ListAllMyBuckets",
       },
       ownKeyListing,
+      rawListed,
+      heads,
       listing,
+      listingCost,
       oracle,
       reads,
       refused,
@@ -439,7 +480,10 @@ async function main(): Promise<void> {
     }
     writeFileSync(posix.join(OUT.replaceAll("\\", "/"), "mcp.json"), text);
     console.log(`${SERVER}: ${reads.length} reads, ${refused.length} refused, leaks ${leaks.length}`);
-    console.log(JSON.stringify({ ownKeyListing, unlisted: unlistedNames, scoped: namesOf(listing.scoped) }));
+    console.log(
+      JSON.stringify({ ownKeyListing, rawListed, heads, unlisted: unlistedNames, scoped: namesOf(listing.scoped) }),
+    );
+    console.log(JSON.stringify({ notes: listing.scoped.notes, listingCost }));
     for (const failure of failures) console.error(`failed: ${failure}`);
     if (failures.length > 0) process.exitCode = 1;
   } finally {

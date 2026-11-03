@@ -1,7 +1,7 @@
 {
   "server": "garage",
   "image": "dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020",
-  "date": "2026-11-02",
+  "date": "2026-11-03",
   "region": "garage",
   "scoped": "a key made for the run, holding scoped-policy.json beside this server's directory",
   "broad": "a key made for the run, holding tests/fixtures/s3/agent-boundary/reader-policy.json",
@@ -25,15 +25,15 @@
       "rows": [
         {
           "bucket": "scope-granted",
-          "created": "2026-11-02T19:57:16.011Z"
+          "created": "2026-11-03T16:13:19.547Z"
         },
         {
           "bucket": "scope-objects-only",
-          "created": "2026-11-02T19:57:16.215Z"
+          "created": "2026-11-03T16:13:19.781Z"
         },
         {
           "bucket": "scope-versions",
-          "created": "2026-11-02T19:57:16.115Z"
+          "created": "2026-11-03T16:13:19.662Z"
         }
       ]
     },
@@ -114,7 +114,7 @@
           "bucket": "scope-granted",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:16.000Z",
+          "last_modified": "2026-11-03T16:13:20.000Z",
           "storage_class": null
         }
       ]
@@ -201,7 +201,7 @@
           "bucket": "scope-versions",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:16.000Z",
+          "last_modified": "2026-11-03T16:13:20.000Z",
           "storage_class": null
         }
       ]
@@ -288,7 +288,7 @@
           "bucket": "scope-objects-only",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:16.000Z",
+          "last_modified": "2026-11-03T16:13:20.000Z",
           "storage_class": null
         }
       ]
@@ -403,23 +403,23 @@
       "rows": [
         {
           "bucket": "scope-granted",
-          "created": "2026-11-02T19:57:16.011Z"
+          "created": "2026-11-03T16:13:19.547Z"
         },
         {
           "bucket": "scope-objects-only",
-          "created": "2026-11-02T19:57:16.215Z"
+          "created": "2026-11-03T16:13:19.781Z"
         },
         {
           "bucket": "scope-other",
-          "created": "2026-11-02T19:57:16.317Z"
+          "created": "2026-11-03T16:13:19.898Z"
         },
         {
           "bucket": "scope-public",
-          "created": "2026-11-02T19:57:16.376Z"
+          "created": "2026-11-03T16:13:19.964Z"
         },
         {
           "bucket": "scope-versions",
-          "created": "2026-11-02T19:57:16.115Z"
+          "created": "2026-11-03T16:13:19.662Z"
         }
       ]
     },
@@ -500,7 +500,7 @@
           "bucket": "scope-granted",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:16.000Z",
+          "last_modified": "2026-11-03T16:13:20.000Z",
           "storage_class": null
         }
       ]
@@ -587,7 +587,7 @@
           "bucket": "scope-versions",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:16.000Z",
+          "last_modified": "2026-11-03T16:13:20.000Z",
           "storage_class": null
         }
       ]
@@ -674,7 +674,7 @@
           "bucket": "scope-objects-only",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:16.000Z",
+          "last_modified": "2026-11-03T16:13:20.000Z",
           "storage_class": null
         }
       ]
@@ -761,7 +761,7 @@
           "bucket": "scope-other",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:16.000Z",
+          "last_modified": "2026-11-03T16:13:20.000Z",
           "storage_class": null
         }
       ]
@@ -848,7 +848,7 @@
           "bucket": "scope-public",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:16.000Z",
+          "last_modified": "2026-11-03T16:13:20.000Z",
           "storage_class": null
         }
       ]
@@ -903,15 +903,15 @@
       "rows": [
         {
           "bucket": "scope-granted",
-          "created": "2026-11-02T19:57:16.011Z"
+          "created": "2026-11-03T16:13:19.547Z"
         },
         {
           "bucket": "scope-objects-only",
-          "created": "2026-11-02T19:57:16.215Z"
+          "created": "2026-11-03T16:13:19.781Z"
         },
         {
           "bucket": "scope-versions",
-          "created": "2026-11-02T19:57:16.115Z"
+          "created": "2026-11-03T16:13:19.662Z"
         }
       ]
     },

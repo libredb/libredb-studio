@@ -1,7 +1,7 @@
 {
   "server": "silo",
   "image": "pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46",
-  "date": "2026-11-02",
+  "date": "2026-11-03",
   "region": "us-east-1",
   "scoped": "a key made for the run, holding scoped-policy.json beside this server's directory",
   "broad": "a key made for the run, holding tests/fixtures/s3/agent-boundary/reader-policy.json",
@@ -25,24 +25,15 @@
       "rows": [
         {
           "bucket": "scope-granted",
-          "created": "2026-11-02T19:57:31.552Z"
-        },
-        {
-          "bucket": "scope-objects-only",
-          "created": "2026-11-02T19:57:31.575Z"
-        },
-        {
-          "bucket": "scope-other",
-          "created": "2026-11-02T19:57:31.582Z"
-        },
-        {
-          "bucket": "scope-public",
-          "created": "2026-11-02T19:57:31.586Z"
+          "created": "2026-11-03T16:13:05.010Z"
         },
         {
           "bucket": "scope-versions",
-          "created": "2026-11-02T19:57:31.565Z"
+          "created": "2026-11-03T16:13:05.014Z"
         }
+      ],
+      "warnings": [
+        "3 listed buckets are not named: a HEAD of each signed with this connection's key was refused, or answered that it is missing or in another region, so the server's grants do not show this key may read them."
       ]
     },
     {
@@ -122,7 +113,7 @@
           "bucket": "scope-granted",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:31.000Z",
+          "last_modified": "2026-11-03T16:13:05.000Z",
           "storage_class": null
         }
       ]
@@ -209,7 +200,7 @@
           "bucket": "scope-versions",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:31.000Z",
+          "last_modified": "2026-11-03T16:13:05.000Z",
           "storage_class": null
         }
       ]
@@ -254,7 +245,7 @@
           "bucket": "scope-objects-only",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:31.000Z",
+          "last_modified": "2026-11-03T16:13:05.000Z",
           "storage_class": null
         }
       ]
@@ -369,23 +360,23 @@
       "rows": [
         {
           "bucket": "scope-granted",
-          "created": "2026-11-02T19:57:31.552Z"
+          "created": "2026-11-03T16:13:05.010Z"
         },
         {
           "bucket": "scope-objects-only",
-          "created": "2026-11-02T19:57:31.575Z"
+          "created": "2026-11-03T16:13:05.017Z"
         },
         {
           "bucket": "scope-other",
-          "created": "2026-11-02T19:57:31.582Z"
+          "created": "2026-11-03T16:13:05.019Z"
         },
         {
           "bucket": "scope-public",
-          "created": "2026-11-02T19:57:31.586Z"
+          "created": "2026-11-03T16:13:05.022Z"
         },
         {
           "bucket": "scope-versions",
-          "created": "2026-11-02T19:57:31.565Z"
+          "created": "2026-11-03T16:13:05.014Z"
         }
       ]
     },
@@ -466,7 +457,7 @@
           "bucket": "scope-granted",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:31.000Z",
+          "last_modified": "2026-11-03T16:13:05.000Z",
           "storage_class": null
         }
       ]
@@ -553,7 +544,7 @@
           "bucket": "scope-versions",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:31.000Z",
+          "last_modified": "2026-11-03T16:13:05.000Z",
           "storage_class": null
         }
       ]
@@ -640,7 +631,7 @@
           "bucket": "scope-objects-only",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:31.000Z",
+          "last_modified": "2026-11-03T16:13:05.000Z",
           "storage_class": null
         }
       ]
@@ -727,7 +718,7 @@
           "bucket": "scope-other",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:31.000Z",
+          "last_modified": "2026-11-03T16:13:05.000Z",
           "storage_class": null
         }
       ]
@@ -814,7 +805,7 @@
           "bucket": "scope-public",
           "exists": true,
           "size_bytes": 17,
-          "last_modified": "2026-11-02T19:57:31.000Z",
+          "last_modified": "2026-11-03T16:13:05.000Z",
           "storage_class": null
         }
       ]
@@ -869,11 +860,11 @@
       "rows": [
         {
           "bucket": "scope-granted",
-          "created": "2026-11-02T19:57:31.552Z"
+          "created": "2026-11-03T16:13:05.010Z"
         },
         {
           "bucket": "scope-versions",
-          "created": "2026-11-02T19:57:31.565Z"
+          "created": "2026-11-03T16:13:05.014Z"
         }
       ]
     },

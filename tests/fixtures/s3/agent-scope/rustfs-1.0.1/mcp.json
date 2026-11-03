@@ -16,20 +16,51 @@
     "scope-public",
     "scope-versions"
   ],
+  "rawListed": {
+    "unlisted": [
+      "scope-granted",
+      "scope-versions"
+    ],
+    "scoped": [
+      "scope-granted",
+      "scope-objects-only",
+      "scope-other",
+      "scope-public",
+      "scope-versions"
+    ]
+  },
+  "heads": {
+    "unlisted": {
+      "scope-granted": 200,
+      "scope-versions": 200,
+      "scope-objects-only": 403,
+      "scope-other": 403,
+      "scope-public": 200,
+      "scope-missing": 403
+    },
+    "scoped": {
+      "scope-granted": 200,
+      "scope-versions": 200,
+      "scope-objects-only": 403,
+      "scope-other": 403,
+      "scope-public": 200,
+      "scope-missing": 403
+    }
+  },
   "listing": {
     "unlisted": {
       "connection": "unlisted-agent",
       "statement": "aws s3api list-buckets",
       "isError": false,
-      "ms": 49,
+      "ms": 24,
       "rows": [
         {
           "bucket": "scope-granted",
-          "created": "2026-11-03T15:37:04.088Z"
+          "created": "2026-11-03T16:13:15.611Z"
         },
         {
           "bucket": "scope-versions",
-          "created": "2026-11-03T15:37:04.120Z"
+          "created": "2026-11-03T16:13:15.636Z"
         }
       ]
     },
@@ -37,29 +68,42 @@
       "connection": "scoped-agent",
       "statement": "aws s3api list-buckets",
       "isError": false,
-      "ms": 22,
+      "ms": 12,
       "rows": [
         {
           "bucket": "scope-granted",
-          "created": "2026-11-03T15:37:04.088Z"
-        },
-        {
-          "bucket": "scope-objects-only",
-          "created": "2026-11-03T15:37:04.164Z"
-        },
-        {
-          "bucket": "scope-other",
-          "created": "2026-11-03T15:37:04.202Z"
+          "created": "2026-11-03T16:13:15.611Z"
         },
         {
           "bucket": "scope-public",
-          "created": "2026-11-03T15:37:04.241Z"
+          "created": "2026-11-03T16:13:15.714Z"
         },
         {
           "bucket": "scope-versions",
-          "created": "2026-11-03T15:37:04.120Z"
+          "created": "2026-11-03T16:13:15.636Z"
         }
+      ],
+      "notes": [
+        "2 listed buckets are not named: a HEAD of each signed with this connection's key was refused, or answered that it is missing or in another region, so the server's grants do not show this key may read them."
       ]
+    }
+  },
+  "listingCost": {
+    "unlisted": {
+      "listedByServer": 2,
+      "requests": {
+        "ListBuckets": 1,
+        "HeadBucket": 2
+      },
+      "answeredMs": 24
+    },
+    "scoped": {
+      "listedByServer": 5,
+      "requests": {
+        "ListBuckets": 1,
+        "HeadBucket": 5
+      },
+      "answeredMs": 12
     }
   },
   "oracle": {
@@ -76,91 +120,91 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api head-bucket --bucket scope-other",
       "isError": true,
-      "ms": 15,
+      "ms": 5,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-bucket --bucket scope-missing",
       "isError": true,
-      "ms": 22,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-location --bucket scope-other",
       "isError": true,
-      "ms": 17,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-location --bucket scope-missing",
       "isError": true,
-      "ms": 14,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-versioning --bucket scope-other",
       "isError": true,
-      "ms": 20,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-versioning --bucket scope-missing",
       "isError": true,
-      "ms": 13,
+      "ms": 3,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3 ls s3://scope-other --recursive --summarize",
       "isError": true,
-      "ms": 16,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3 ls s3://scope-missing --recursive --summarize",
       "isError": true,
-      "ms": 25,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-other --key present.txt",
       "isError": true,
-      "ms": 19,
+      "ms": 3,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-missing --key present.txt",
       "isError": true,
-      "ms": 37,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-other --key absent.txt",
       "isError": true,
-      "ms": 20,
+      "ms": 3,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-missing --key absent.txt",
       "isError": true,
-      "ms": 22,
+      "ms": 3,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-bucket --bucket scope-granted",
       "isError": false,
-      "ms": 22,
+      "ms": 4,
       "rows": [
         {
           "bucket": "scope-granted",
@@ -173,7 +217,7 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-location --bucket scope-granted",
       "isError": false,
-      "ms": 32,
+      "ms": 5,
       "rows": [
         {
           "bucket": "scope-granted",
@@ -185,7 +229,7 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-versioning --bucket scope-granted",
       "isError": false,
-      "ms": 19,
+      "ms": 6,
       "rows": [
         {
           "bucket": "scope-granted",
@@ -198,7 +242,7 @@
       "connection": "unlisted-agent",
       "statement": "aws s3 ls s3://scope-granted --recursive --summarize",
       "isError": false,
-      "ms": 27,
+      "ms": 6,
       "rows": [
         {
           "bucket": "scope-granted",
@@ -211,13 +255,13 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-granted --key present.txt",
       "isError": false,
-      "ms": 16,
+      "ms": 6,
       "rows": [
         {
           "bucket": "scope-granted",
           "exists": true,
           "size_bytes": 13,
-          "last_modified": "2026-11-03T15:37:04.000Z",
+          "last_modified": "2026-11-03T16:13:15.000Z",
           "storage_class": null
         }
       ]
@@ -226,14 +270,14 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-granted --key absent.txt",
       "isError": true,
-      "ms": 20,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-bucket --bucket scope-public",
       "isError": false,
-      "ms": 26,
+      "ms": 6,
       "rows": [
         {
           "bucket": "scope-public",
@@ -246,7 +290,7 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-location --bucket scope-public",
       "isError": false,
-      "ms": 11,
+      "ms": 4,
       "rows": [
         {
           "bucket": "scope-public",
@@ -258,14 +302,14 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-versioning --bucket scope-public",
       "isError": true,
-      "ms": 19,
+      "ms": 5,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3 ls s3://scope-public --recursive --summarize",
       "isError": false,
-      "ms": 24,
+      "ms": 5,
       "rows": [
         {
           "bucket": "scope-public",
@@ -278,13 +322,13 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-public --key present.txt",
       "isError": false,
-      "ms": 14,
+      "ms": 4,
       "rows": [
         {
           "bucket": "scope-public",
           "exists": true,
           "size_bytes": 13,
-          "last_modified": "2026-11-03T15:37:04.000Z",
+          "last_modified": "2026-11-03T16:13:15.000Z",
           "storage_class": null
         }
       ]
@@ -295,62 +339,62 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api list-objects-v2 --bucket scope-granted",
       "isError": true,
-      "ms": 8,
+      "ms": 3,
       "text": "The command was refused before it reached the server (metadata-only). That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3 ls s3://scope-granted/",
       "isError": true,
-      "ms": 5,
+      "ms": 3,
       "text": "The command was refused before it reached the server (metadata-only). aws s3 ls lists keys, which agent mode never does: it answers only a whole bucket's totals, written aws s3 ls s3://BUCKET --recursive --summarize with no key path. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3 ls s3://scope-granted/p --recursive --summarize",
       "isError": true,
-      "ms": 6,
+      "ms": 2,
       "text": "The command was refused before it reached the server (metadata-only). A listing or count over a prefix, a delimiter level, a name prefix or a start position is withheld, since narrower and narrower counts would reveal key names: agent mode counts only a whole bucket, and lists every bucket name. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api get-object --bucket scope-granted --key present.txt out.txt",
       "isError": true,
-      "ms": 7,
+      "ms": 2,
       "text": "The command was refused before it reached the server (metadata-only). That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api get-object-tagging --bucket scope-granted --key present.txt",
       "isError": true,
-      "ms": 5,
+      "ms": 2,
       "text": "The command was refused before it reached the server (metadata-only). That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api put-object --bucket scope-granted --key written.txt",
       "isError": true,
-      "ms": 6,
+      "ms": 2,
       "text": "The command was refused before it reached the server (metadata-only). That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api list-buckets --endpoint-url http://elsewhere",
       "isError": true,
-      "ms": 7,
+      "ms": 2,
       "text": "The command was refused before it reached the server (arguments). An agent read takes no flag but its --bucket and --key: the endpoint, region, output, paging and every other option are the connection's or Studio's, never the request's. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
     }
   ],
   "limits": {
     "timeout": {
       "timeout_ms": 500,
-      "answered_ms": 516,
+      "answered_ms": 508,
       "text": "The statement did not finish within timeout_ms (500 ms). Narrow it, or raise timeout_ms up to 30000."
     },
     "cancel": {
       "timeout_ms": 3000,
       "cancelled_at_ms": 1000,
-      "answered_ms": 1013
+      "answered_ms": 1001
     }
   },
   "leaks": [],

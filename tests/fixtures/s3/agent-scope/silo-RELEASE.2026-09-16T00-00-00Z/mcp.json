@@ -16,20 +16,51 @@
     "scope-public",
     "scope-versions"
   ],
+  "rawListed": {
+    "unlisted": [
+      "scope-granted",
+      "scope-versions"
+    ],
+    "scoped": [
+      "scope-granted",
+      "scope-objects-only",
+      "scope-other",
+      "scope-public",
+      "scope-versions"
+    ]
+  },
+  "heads": {
+    "unlisted": {
+      "scope-granted": 200,
+      "scope-versions": 200,
+      "scope-objects-only": 403,
+      "scope-other": 403,
+      "scope-public": 403,
+      "scope-missing": 403
+    },
+    "scoped": {
+      "scope-granted": 200,
+      "scope-versions": 200,
+      "scope-objects-only": 403,
+      "scope-other": 403,
+      "scope-public": 403,
+      "scope-missing": 403
+    }
+  },
   "listing": {
     "unlisted": {
       "connection": "unlisted-agent",
       "statement": "aws s3api list-buckets",
       "isError": false,
-      "ms": 23,
+      "ms": 21,
       "rows": [
         {
           "bucket": "scope-granted",
-          "created": "2026-11-03T15:36:52.362Z"
+          "created": "2026-11-03T16:13:07.915Z"
         },
         {
           "bucket": "scope-versions",
-          "created": "2026-11-03T15:36:52.369Z"
+          "created": "2026-11-03T16:13:07.923Z"
         }
       ]
     },
@@ -37,29 +68,38 @@
       "connection": "scoped-agent",
       "statement": "aws s3api list-buckets",
       "isError": false,
-      "ms": 8,
+      "ms": 10,
       "rows": [
         {
           "bucket": "scope-granted",
-          "created": "2026-11-03T15:36:52.362Z"
-        },
-        {
-          "bucket": "scope-objects-only",
-          "created": "2026-11-03T15:36:52.372Z"
-        },
-        {
-          "bucket": "scope-other",
-          "created": "2026-11-03T15:36:52.374Z"
-        },
-        {
-          "bucket": "scope-public",
-          "created": "2026-11-03T15:36:52.377Z"
+          "created": "2026-11-03T16:13:07.915Z"
         },
         {
           "bucket": "scope-versions",
-          "created": "2026-11-03T15:36:52.369Z"
+          "created": "2026-11-03T16:13:07.923Z"
         }
+      ],
+      "notes": [
+        "3 listed buckets are not named: a HEAD of each signed with this connection's key was refused, or answered that it is missing or in another region, so the server's grants do not show this key may read them."
       ]
+    }
+  },
+  "listingCost": {
+    "unlisted": {
+      "listedByServer": 2,
+      "requests": {
+        "ListBuckets": 1,
+        "HeadBucket": 2
+      },
+      "answeredMs": 21
+    },
+    "scoped": {
+      "listedByServer": 5,
+      "requests": {
+        "ListBuckets": 1,
+        "HeadBucket": 5
+      },
+      "answeredMs": 10
     }
   },
   "oracle": {
@@ -76,21 +116,21 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api head-bucket --bucket scope-other",
       "isError": true,
-      "ms": 8,
+      "ms": 7,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-bucket --bucket scope-missing",
       "isError": true,
-      "ms": 4,
+      "ms": 6,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-location --bucket scope-other",
       "isError": true,
-      "ms": 4,
+      "ms": 5,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
@@ -111,7 +151,7 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-versioning --bucket scope-missing",
       "isError": true,
-      "ms": 5,
+      "ms": 6,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
@@ -125,28 +165,28 @@
       "connection": "unlisted-agent",
       "statement": "aws s3 ls s3://scope-missing --recursive --summarize",
       "isError": true,
-      "ms": 6,
+      "ms": 5,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-other --key present.txt",
       "isError": true,
-      "ms": 6,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-missing --key present.txt",
       "isError": true,
-      "ms": 6,
+      "ms": 5,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-other --key absent.txt",
       "isError": true,
-      "ms": 6,
+      "ms": 5,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
@@ -160,7 +200,7 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api head-bucket --bucket scope-granted",
       "isError": false,
-      "ms": 7,
+      "ms": 4,
       "rows": [
         {
           "bucket": "scope-granted",
@@ -198,7 +238,7 @@
       "connection": "unlisted-agent",
       "statement": "aws s3 ls s3://scope-granted --recursive --summarize",
       "isError": false,
-      "ms": 6,
+      "ms": 7,
       "rows": [
         {
           "bucket": "scope-granted",
@@ -211,13 +251,13 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-granted --key present.txt",
       "isError": false,
-      "ms": 5,
+      "ms": 6,
       "rows": [
         {
           "bucket": "scope-granted",
           "exists": true,
           "size_bytes": 13,
-          "last_modified": "2026-11-03T15:36:52.000Z",
+          "last_modified": "2026-11-03T16:13:07.000Z",
           "storage_class": null
         }
       ]
@@ -226,42 +266,42 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-granted --key absent.txt",
       "isError": true,
-      "ms": 6,
+      "ms": 5,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-bucket --bucket scope-public",
       "isError": true,
-      "ms": 5,
+      "ms": 6,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-location --bucket scope-public",
       "isError": true,
-      "ms": 5,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api get-bucket-versioning --bucket scope-public",
       "isError": true,
-      "ms": 4,
+      "ms": 5,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3 ls s3://scope-public --recursive --summarize",
       "isError": true,
-      "ms": 5,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     },
     {
       "connection": "unlisted-agent",
       "statement": "aws s3api head-object --bucket scope-public --key present.txt",
       "isError": true,
-      "ms": 5,
+      "ms": 4,
       "text": "The database refused or failed the call: The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
     }
   ],
@@ -305,7 +345,7 @@
       "connection": "unlisted-agent",
       "statement": "aws s3api put-object --bucket scope-granted --key written.txt",
       "isError": true,
-      "ms": 2,
+      "ms": 1,
       "text": "The command was refused before it reached the server (metadata-only). That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
     },
     {
@@ -319,13 +359,13 @@
   "limits": {
     "timeout": {
       "timeout_ms": 500,
-      "answered_ms": 505,
+      "answered_ms": 504,
       "text": "The statement did not finish within timeout_ms (500 ms). Narrow it, or raise timeout_ms up to 30000."
     },
     "cancel": {
       "timeout_ms": 3000,
       "cancelled_at_ms": 1000,
-      "answered_ms": 1009
+      "answered_ms": 1006
     }
   },
   "leaks": [],
