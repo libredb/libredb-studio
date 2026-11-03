@@ -111,9 +111,10 @@ import { commandResult } from "./results";
 import { declareWriteReach } from "@/lib/db/write-reach";
 
 /**
- * Every write path the provider has is refused while read-only mode holds, before any request: a write command
- * (put, del, lease revoke) by `refuseBeforeSend`, and the value edit and the maintenance operations (compact,
- * defragment, disarm) by `refuseReadOnly`, which `refuseBeforeSend` calls first. There is no transaction route.
+ * Every write path the provider has is refused while read-only mode holds, before any request: every command the
+ * guard classes as a write (put, del, a txn that writes, lease grant, lease keep-alive, lease revoke) by
+ * `refuseBeforeSend`, and the value edit and the maintenance operations (compact, defragment, disarm) by
+ * `refuseReadOnly`, which `refuseBeforeSend` calls first. There is no transaction route.
  */
 const ETCD_WRITE_REACH = declareWriteReach({
   editor: {
