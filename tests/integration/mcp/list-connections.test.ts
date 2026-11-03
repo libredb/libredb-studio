@@ -12,7 +12,8 @@ import { logger } from "@/lib/logger";
 import { MCP_RESULT_CAP_BYTES, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
 import { mcpStatementToolFor, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { resetCache } from "@/lib/seed";
@@ -122,8 +123,10 @@ describe("the answer", () => {
 
   test("names the tool that runs a statement on each connection, and null where inspect_schema is the read", async () => {
     // The expected tool of each row comes from the served-engine resolver, which list_connections also answers from,
-    // so the two independent pins are the wire's own tools/list and the records read directly: Snowflake and InfluxDB
-    // over InfluxQL are the control seeds that no statement tool serves.
+    // so the two independent pins are the wire's own tools/list and the records read directly, in both directions:
+    // a row names a tool exactly when agent mode executes on the engine, MCP offers it, its statement read is open
+    // and its language declares a facet, and then the facet's own tool. Druid is the control seed that only its
+    // statement-read record keeps closed; Snowflake and InfluxDB over InfluxQL are closed by their other records.
     const CLUSTER = {
       id: "cluster",
       type: "kubernetes",
@@ -162,6 +165,7 @@ describe("the answer", () => {
       { id: "broker", type: "rabbitmq", host: "127.0.0.1", port: 15672 },
       { id: "stream", type: "kafka", host: "127.0.0.1", port: 9092 },
       { id: "cache", type: "redis", host: "127.0.0.1", port: 6379 },
+      { id: "olap", type: "druid", host: "127.0.0.1", port: 8888 },
       WAREHOUSE,
     ];
     writeSeedFile(dir, seeds);
@@ -178,14 +182,22 @@ describe("the answer", () => {
         const type = seeds[index].type as DatabaseType;
         if (row.read_tool !== null) expect(listed.has(row.read_tool)).toBe(true);
         expect(row.read_tool === null).toBe(!served.has(type));
-        if (row.read_tool === null) {
-          const language = AGENT_STATEMENT_LANGUAGE[type];
-          expect(language === null || AGENT_LANGUAGE_MCP_FACETS[language] === null || !MCP_STATEMENT_READ[type]).toBe(
-            true,
-          );
-        }
+        const language = AGENT_STATEMENT_LANGUAGE[type];
+        const facet = language === null ? null : AGENT_LANGUAGE_MCP_FACETS[language];
+        const open = AGENT_EXECUTION_ENGINES.includes(type) && MCP_EXPOSABLE[type] && MCP_STATEMENT_READ[type];
+        expect([row.id, row.read_tool]).toEqual([row.id, open && facet !== null ? facet.tool : null]);
       }
-      expect(rows.some((row) => row.read_tool === null)).toBe(true);
+      const closed = new Set(["seed:legacy-metrics", "seed:olap", "seed:warehouse"]);
+      expect(rows.filter((row) => closed.has(row.id)).map((row) => [row.id, row.read_tool])).toEqual([
+        ["seed:legacy-metrics", null],
+        ["seed:olap", null],
+        ["seed:warehouse", null],
+      ]);
+      expect([AGENT_EXECUTION_ENGINES.includes("druid"), MCP_EXPOSABLE.druid, MCP_STATEMENT_READ.druid]).toEqual([
+        true,
+        true,
+        false,
+      ]);
     } finally {
       await session.close();
     }
