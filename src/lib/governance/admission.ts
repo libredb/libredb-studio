@@ -31,6 +31,7 @@
  */
 import type { z } from "zod";
 import {
+  MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
@@ -238,7 +239,8 @@ function mergedRecord({ row, id, engine, definition }: RowContext, secret: Opene
     managed: true,
     roles: ["*"],
     // Only where the product offers the engine to MCP clients (#246): elsewhere the seed schema refuses the opt-in.
-    ...(MCP_EXPOSABLE[engine] ? { mcp: row.mcp_enabled } : {}),
+    // An engine MCP reads only under a seed agent credential is left off too, since a governed record carries none.
+    ...(MCP_EXPOSABLE[engine] && !MCP_AGENT_CREDENTIAL_REQUIRED[engine] ? { mcp: row.mcp_enabled } : {}),
     ...definition,
     ...credential,
     ...(Object.keys(clientTls).length === 0 ? {} : { ssl: { ...tls, ...clientTls } }),
