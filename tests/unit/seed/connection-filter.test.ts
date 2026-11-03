@@ -370,6 +370,37 @@ describe("filterByRoles: the read-only mode (#1089)", () => {
   });
 });
 
+describe("filterByRoles: the agent credential", () => {
+  const pair = { agentUser: "agent_reader", agentPassword: "${AGENT_PASSWORD}" };
+
+  it("carries both fields through, because the mapper is a hand-written field list", () => {
+    const [managed] = filterByRoles([{ ...baseConn, ...pair }], ["admin"]);
+    expect([managed.agentUser, managed.agentPassword]).toEqual(["agent_reader", "${AGENT_PASSWORD}"]);
+  });
+
+  it("leaves both absent for a seed that sets neither", () => {
+    const [managed] = filterByRoles([{ ...baseConn }], ["admin"]);
+    expect([managed.agentUser, managed.agentPassword]).toEqual([undefined, undefined]);
+  });
+
+  it.each([{ agentUser: "agent_reader" }, { agentPassword: "${AGENT_PASSWORD}" }])(
+    "refuses an unmanaged seed built in memory carrying %o, naming the seed",
+    (fields) => {
+      expect(() => projectSeedConnection({ ...baseConn, ...fields, managed: false }, ["admin"])).toThrow(
+        'Seed connection "test" carries an agent credential with managed: false.',
+      );
+    },
+  );
+
+  it("refuses an Elasticsearch seed built in memory with an agent credential beside its API key", () => {
+    const elastic = { ...baseConn, type: "elasticsearch" as const, apiKeyId: "${ELASTIC_API_KEY_ID}", ...pair };
+    expect(() => projectSeedConnection(elastic, ["admin"])).toThrow(
+      'Seed connection "test" carries an agent credential beside apiKeyId, which the elasticsearch provider signs in with in preference to a user and password.',
+    );
+    expect(projectSeedConnection({ ...elastic, apiKeyId: undefined }, ["admin"]).agentUser).toBe("agent_reader");
+  });
+});
+
 describe("the reserved role", () => {
   const CALLERS: string[][] = [
     ["*"],

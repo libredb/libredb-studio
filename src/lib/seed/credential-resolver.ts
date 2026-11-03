@@ -40,6 +40,11 @@ const RESOLVABLE_FIELDS = [
   // the transport will silently fall back from.
   "apiKeyId",
   "apiKeySecret",
+  // The agent credential: the principal the agent execution profiles and MCP sign in as, and its secret, kept in a
+  // deployment's environment or Vault as `user` and `password` are, so a seeded `${AGENT_PASSWORD}` is resolved rather
+  // than sent as a literal password.
+  "agentUser",
+  "agentPassword",
   // The TLS material (#1089), read and written under `ssl` and named by this dotted path in
   // an error. On a Kubernetes control-plane etcd the node's client certificate and key are
   // the only credential, and the chart mounts the seed file from a ConfigMap, so a reference
@@ -80,6 +85,8 @@ interface VaultResolvableConnection {
   role?: string;
   apiKeyId?: string;
   apiKeySecret?: string;
+  agentUser?: string;
+  agentPassword?: string;
   ssl?: ResolvableSsl;
 }
 
@@ -109,6 +116,10 @@ function setFieldValue(target: VaultResolvableConnection, field: ResolvableField
   else target[field] = value;
 }
 
+/** The fields whose literal value is a secret a seed file should not carry, each warned about once per connection. */
+const PLAINTEXT_WARNED_FIELDS: ReadonlySet<string> = new Set(["password", "agentPassword"]);
+
+/** Keyed by the connection id and the field together, so a connection warned for one field is still warned for the other. */
 const warnedPlaintext = new Set<string>();
 
 export function resetPlaintextWarnings(): void {
@@ -221,9 +232,10 @@ function resolveField(value: string | undefined, fieldName: string, connId: stri
 
   const match = value.match(ENV_VAR_PATTERN);
   if (!match) {
-    if (fieldName === "password" && value.length > 0 && !warnedPlaintext.has(connId)) {
-      warnedPlaintext.add(connId);
-      logger.warn("Seed connection has plaintext password, use ${ENV_VAR} syntax", {
+    const warnedKey = JSON.stringify([connId, fieldName]);
+    if (PLAINTEXT_WARNED_FIELDS.has(fieldName) && value.length > 0 && !warnedPlaintext.has(warnedKey)) {
+      warnedPlaintext.add(warnedKey);
+      logger.warn(`Seed connection has plaintext ${fieldName}, use \${ENV_VAR} syntax`, {
         route: "seed/credential-resolver",
         connectionId: connId,
       });

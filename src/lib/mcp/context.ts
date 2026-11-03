@@ -1,6 +1,7 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { Role } from "@/lib/auth";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { MCP_AGENT_CREDENTIAL_REQUIRED } from "@/lib/db/compatibility";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import { acquireExecutionProfileProvider, profiledCacheKey, type ExecutionProfile } from "@/lib/db/factory";
 import type { DatabaseProvider } from "@/lib/db/types";
@@ -87,6 +88,25 @@ async function resolvedSecrets(connection: ManagedConnection): Promise<ManagedCo
   }
 }
 
+/**
+ * Refuses a connection of an engine MCP reads only under an agent credential of the seed's own when it carries
+ * neither `agentUser` nor `agentPassword`, so it is never read under its own login: the seed schema refuses such a
+ * seed at load, and this is the open's own check, for a connection built in memory or loaded past the schema. One
+ * that sets either field is the factory's to hold to the engine's form. Read from the registry by the connection's
+ * type, never a type-id branch; the sentence names no engine.
+ */
+export function assertAgentCredentialWhereRequired(
+  connection: ManagedConnection,
+  required: Readonly<Record<ManagedConnection["type"], boolean>> = MCP_AGENT_CREDENTIAL_REQUIRED,
+): void {
+  if (!required[connection.type]) return;
+  if (connection.agentUser !== undefined || connection.agentPassword !== undefined) return;
+  throw new ExecutionProfileError(
+    `Connection "${connection.id}" is read by MCP only under an agent credential of its own, and it has none: an operator sets agentUser and agentPassword on this seed.`,
+    "AGENT_CREDENTIAL_REQUIRED",
+  );
+}
+
 export class McpConnectionContext {
   private visible: Promise<readonly ManagedConnection[] | typeof MCP_CONNECTIONS_UNREADABLE> | null = null;
 
@@ -104,6 +124,7 @@ export class McpConnectionContext {
   }
 
   async acquire(listed: ManagedConnection, profile: ExecutionProfile): Promise<DatabaseProvider> {
+    assertAgentCredentialWhereRequired(listed);
     const connection = await resolvedSecrets(listed);
     // The caller's editor posture on this connection (non-admin DuckDB file access): it decides whether a
     // SQLite handle opens at all and which open single-writer handle an operations acquisition may

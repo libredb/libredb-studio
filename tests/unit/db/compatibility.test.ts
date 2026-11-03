@@ -17,6 +17,7 @@ import {
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
   isExternalDatabaseType,
+  MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
   MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
@@ -27,6 +28,7 @@ import {
   SINGLE_WRITER_FILE,
 } from "@/lib/db/compatibility";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { isFileBased } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
@@ -694,6 +696,27 @@ describe("MCP_STATEMENT_READ", () => {
   test("is true only for an engine agent mode executes statements on", () => {
     const open = SHIPPED_DATABASE_TYPES.filter((type) => MCP_STATEMENT_READ[type]);
     expect(open.filter((type) => !AGENT_EXECUTION_ENGINES.includes(type))).toEqual([]);
+  });
+});
+
+/**
+ * `MCP_AGENT_CREDENTIAL_REQUIRED`: the engines MCP reads only under a seed's own agent credential, never under the
+ * connection's login. It can only narrow what MCP already offers, and only on an engine a seed can give an agent
+ * credential to, or the seed could never be read at all.
+ */
+describe("MCP_AGENT_CREDENTIAL_REQUIRED", () => {
+  test("answers for every shipped type-id and for nothing else", () => {
+    expect(Object.keys(MCP_AGENT_CREDENTIAL_REQUIRED).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+
+  test("is frozen, so no reader can change what MCP signs in with at run time", () => {
+    expect(Object.isFrozen(MCP_AGENT_CREDENTIAL_REQUIRED)).toBe(true);
+  });
+
+  test("is true only where MCP_EXPOSABLE offers the engine and a seed of it may carry an agent credential", () => {
+    for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => MCP_AGENT_CREDENTIAL_REQUIRED[candidate])) {
+      expect([type, MCP_EXPOSABLE[type], SEED_AGENT_CREDENTIAL[type] !== null]).toEqual([type, true, true]);
+    }
   });
 });
 
