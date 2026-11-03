@@ -18,16 +18,36 @@ const SOURCES = readdirSync(MCP, { recursive: true, encoding: "utf8" })
   .map((name) => name.replaceAll("\\", "/"))
   .filter((name) => /\.(c|m)?(t|j)sx?$/.test(name));
 
+/** A static import, a dynamic import() or a require() of the write-reach module, or a name it exports. */
+const READS_WRITE_REACH = [
+  /(from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*write-reach["']/,
+  /\bWRITE_REACH\b/,
+  /\bsummarizeWriteReach\b/,
+];
+
+const readsWriteReach = (text: string): boolean => READS_WRITE_REACH.some((pattern) => pattern.test(text));
+
 describe("the MCP layer and the write-reach record", () => {
+  test.each([
+    ["a static import", 'import { summarize } from "@/lib/db/write-reach";'],
+    ["a dynamic import", 'const reach = await import("@/lib/db/write-reach");'],
+    ["a require", 'const reach = require("../db/write-reach");'],
+    ["the record's name", "const engines = WRITE_REACH;"],
+    ["the summary's name", "summarizeWriteReach(engine);"],
+  ])("the scan catches %s", (_, text) => {
+    expect(readsWriteReach(text)).toBe(true);
+  });
+
+  test("the scan passes a file that names neither", () => {
+    expect(readsWriteReach('import { MCP_EXPOSABLE } from "@/lib/db/compatibility";')).toBe(false);
+  });
+
   test("the scan reads the MCP sources", () => {
     expect(SOURCES).toContain("server.ts");
   });
 
   test("no file under src/lib/mcp names WRITE_REACH or imports write-reach", () => {
-    const readers = SOURCES.filter((name) => {
-      const text = readFileSync(join(MCP, name), "utf8");
-      return text.includes("WRITE_REACH") || /from\s+["'][^"']*write-reach["']/.test(text);
-    });
+    const readers = SOURCES.filter((name) => readsWriteReach(readFileSync(join(MCP, name), "utf8")));
     expect(readers).toEqual([]);
   });
 });
