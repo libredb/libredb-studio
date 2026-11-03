@@ -14,6 +14,7 @@ import { MCP_NOT_VISIBLE_TEXT } from "@/lib/mcp/output";
 import { resetCache } from "@/lib/seed";
 import { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
 
 pinMcpTestEnvironment();
 
@@ -160,7 +161,7 @@ describe("a seed file that cannot be loaded", () => {
       const session = await connectClient(admin, { negotiation });
       try {
         expect(session.client.getProtocolEra()).toBe(negotiation === "legacy" ? "legacy" : "modern");
-        expect((await session.client.listTools()).tools).toHaveLength(15);
+        expect((await session.client.listTools()).tools).toHaveLength(registeredMcpToolNames().length);
       } finally {
         await session.close();
       }

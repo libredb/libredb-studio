@@ -27,10 +27,13 @@ import {
   MCP_RESULT_CAP_BYTES,
   MCP_UNTRUSTED_NOTICE,
 } from "@/lib/mcp/output";
+import { namedList } from "@/lib/agent/engine-support";
+import { getDBConfig } from "@/lib/db-ui-config";
 import { moreRowsThanPageableHint, ROW_OVER_CAP_TEXT, timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import {
   RUN_READ_QUERY_DESCRIPTION,
   RUN_READ_QUERY_ENGINES,
+  RUN_READ_QUERY_TYPES,
   RunReadQueryInputSchema,
   runReadQuery,
 } from "../../helpers/run-read-query";
@@ -157,7 +160,7 @@ function fakeContext(provider: Partial<DatabaseProvider>, type: DatabaseType = "
 
 /** The answer to a call on an engine the tool does not serve, naming the tool that does serve it. */
 const notServed = (label: string, elsewhere = "inspect_schema") =>
-  `run_read_query cannot run on this connection: this tool does not serve ${label}; use ${elsewhere} there. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase.`;
+  `run_read_query cannot run on this connection: this tool does not serve ${label}; use ${elsewhere} there. It runs on ${RUN_READ_QUERY_ENGINES}.`;
 
 const mcpEvents = () =>
   getServerAuditBuffer()
@@ -995,9 +998,7 @@ describe("the registration", () => {
         expect(tool?.annotations).toEqual({ readOnlyHint: true, openWorldHint: false });
         expect(tool?.outputSchema?.type).toBe("object");
         expect(tool?.description).toBe(RUN_READ_QUERY_DESCRIPTION);
-        expect(RUN_READ_QUERY_ENGINES).toBe(
-          "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase",
-        );
+        expect(RUN_READ_QUERY_ENGINES).toBe(namedList(RUN_READ_QUERY_TYPES.map((type) => getDBConfig(type).label)));
         expect(tool?.description).toContain(`Runs on ${RUN_READ_QUERY_ENGINES};`);
       } finally {
         await session.close();

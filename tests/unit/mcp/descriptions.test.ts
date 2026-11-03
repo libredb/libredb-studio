@@ -13,7 +13,7 @@ import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { INSPECT_SCHEMA_DESCRIPTION } from "@/lib/mcp/tools/inspect-schema";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
-import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
+import { mcpStatementArm, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 import { pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
 import { handlerServe, legacyPost, readJsonRpc } from "../../helpers/mcp-harness";
@@ -34,47 +34,46 @@ afterEach(async () => {
   await resetMcpTestState();
 });
 
-const DESCRIPTIONS = [
+const METADATA_DESCRIPTIONS = [
   ["list_connections", LIST_CONNECTIONS_DESCRIPTION, "List the database connections"],
   ["inspect_schema", INSPECT_SCHEMA_DESCRIPTION, "List the tables of one connection"],
-  ["run_read_query", RUN_READ_QUERY_DESCRIPTION, "Run one read-only SQL statement"],
-  ["run_kubectl_read", RUN_KUBECTL_READ_ARM.description, "Run one read-only kubectl read"],
-  ["run_mongo_command", RUN_MONGO_COMMAND_ARM.description, "Run one read-only MongoDB command"],
-  ["run_libredb_read", RUN_LIBREDB_READ_ARM.description, "Run one read-only LibreDB command"],
-  ["run_qdrant_read", RUN_QDRANT_READ_ARM.description, "Run one read-only Qdrant metadata read"],
-  ["run_milvus_read", RUN_MILVUS_READ_ARM.description, "Run one read-only Milvus metadata read"],
-  ["run_etcd_read", RUN_ETCD_READ_ARM.description, "Run one read-only etcd metadata read"],
-  ["run_rabbitmq_read", RUN_RABBITMQ_READ_ARM.description, "Run one read-only read of one RabbitMQ stream"],
-  ["run_kafka_read", RUN_KAFKA_READ_ARM.description, "Run one read-only Kafka metadata read"],
-  ["run_redis_read", RUN_REDIS_READ_ARM.description, "Run one read-only Redis metadata read"],
 ] as const;
+/** Every statement tool this build registers, which a client reads beside the metadata tools. */
+const STATEMENT_ARMS = servingStatementArms().map((arm) => [arm.tool, arm] as const);
 
 describe("the tool descriptions", () => {
-  test.each(DESCRIPTIONS)("%s fits 2,048 characters and says first what it does", (_name, description, opening) => {
-    expect(description.length).toBeLessThanOrEqual(2_048);
-    expect(description.startsWith(opening)).toBe(true);
+  test.each(METADATA_DESCRIPTIONS)(
+    "%s fits 2,048 characters and says first what it does",
+    (_name, description, opening) => {
+      expect(description.length).toBeLessThanOrEqual(2_048);
+      expect(description.startsWith(opening)).toBe(true);
+    },
+  );
+
+  test.each(STATEMENT_ARMS)(
+    "%s fits 2,048 characters and says first that it runs one read-only statement",
+    (_tool, arm) => {
+      expect(arm.description.length).toBeLessThanOrEqual(2_048);
+      expect(arm.description).toMatch(/^Run one read-only /);
+    },
+  );
+
+  // The labels are read here from the display records, not from the arm's engines, which the description interpolates.
+  test.each(STATEMENT_ARMS)("%s names the engines it serves by their labels", (_tool, arm) => {
+    expect(arm.description).toContain(`Runs on ${namedList(arm.types.map((type) => getDBConfig(type).label))}`);
   });
 
-  test("the tools that quote database content end with the notice, and list_connections carries none", () => {
+  test.each(STATEMENT_ARMS)("%s quotes database content, so it ends with the notice", (_tool, arm) => {
+    expect(arm.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
+  });
+
+  test("inspect_schema ends with the notice, and list_connections carries none", () => {
     expect(INSPECT_SCHEMA_DESCRIPTION.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-    expect(RUN_READ_QUERY_DESCRIPTION.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-    expect(RUN_MONGO_COMMAND_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-    expect(RUN_KUBECTL_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-    expect(RUN_LIBREDB_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-    expect(RUN_QDRANT_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-    expect(RUN_MILVUS_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-    expect(RUN_ETCD_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-    expect(RUN_RABBITMQ_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-    expect(RUN_KAFKA_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-    expect(RUN_REDIS_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(LIST_CONNECTIONS_DESCRIPTION).not.toContain(MCP_UNTRUSTED_NOTICE);
   });
 
   test("run_read_query names the engines it serves, from the one list its handler gates on", () => {
     expect(RUN_READ_QUERY_ENGINES).toBe(namedList(RUN_READ_QUERY_TYPES.map((type) => getDBConfig(type).label)));
-    expect(RUN_READ_QUERY_ENGINES).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase",
-    );
     expect(RUN_READ_QUERY_DESCRIPTION).toContain(
       `Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.`,
     );

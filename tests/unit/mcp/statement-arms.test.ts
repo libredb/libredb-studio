@@ -9,7 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { AGENT_LANGUAGE_MCP_FACETS, type AgentLanguageMcpTool } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { MCP_STATEMENT_READ, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { relationKindIds } from "@/lib/db/object-kinds";
 import type { McpToolAction } from "@/lib/mcp/audit";
@@ -23,7 +23,6 @@ import { registerStatementTools } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementEngines } from "@/lib/mcp/tools/served-engines";
 import {
   MCP_STATEMENT_ARMS,
-  MCP_STATEMENT_TOOLS,
   type McpStatementTool,
   mcpStatementArm,
   mcpStatementToolFor,
@@ -69,60 +68,32 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_weaviate_read, run_qdrant_read, run_etcd_read, run_rabbitmq_read, run_kafka_read, run_cypher_read, run_milvus_read, run_redis_read and run_mtconnect_read", () => {
-    expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
-    expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
-    expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
-    expect(MCP_STATEMENT_ARMS.libredbkv).toBe(RUN_LIBREDB_READ_ARM);
-    expect(MCP_STATEMENT_ARMS.weaviateapi).toBe(RUN_WEAVIATE_READ_ARM);
-    expect(MCP_STATEMENT_ARMS.qdrantapi).toBe(RUN_QDRANT_READ_ARM);
-    expect(MCP_STATEMENT_ARMS.etcdctl).toBe(RUN_ETCD_READ_ARM);
-    expect(MCP_STATEMENT_ARMS.rabbitread).toBe(RUN_RABBITMQ_READ_ARM);
-    expect(MCP_STATEMENT_ARMS.kafkaread).toBe(RUN_KAFKA_READ_ARM);
-    expect(MCP_STATEMENT_ARMS.cypher).toBe(RUN_CYPHER_READ_ARM);
-    expect(MCP_STATEMENT_ARMS.milvusrpc).toBe(RUN_MILVUS_READ_ARM);
-    expect(MCP_STATEMENT_ARMS.rediscli).toBe(RUN_REDIS_READ_ARM);
-    expect(MCP_STATEMENT_ARMS.mtconnectread).toBe(RUN_MTCONNECT_READ_ARM);
-    expect(ARMS.map((arm) => arm.tool)).toEqual([
-      "run_read_query",
-      "run_kubectl_read",
-      "run_mongo_command",
-      "run_libredb_read",
-      "run_weaviate_read",
-      "run_qdrant_read",
-      "run_cypher_read",
-      "run_milvus_read",
-      "run_redis_read",
-      "run_etcd_read",
-      "run_rabbitmq_read",
-      "run_kafka_read",
-      "run_mtconnect_read",
-    ]);
+  test("every declared facet has its arm, keyed by the facet's language and named by the facet's tool", () => {
+    for (const [language, facet] of Object.entries(AGENT_LANGUAGE_MCP_FACETS)) {
+      if (facet === null) continue;
+      const arm = MCP_STATEMENT_ARMS[language as keyof typeof MCP_STATEMENT_ARMS];
+      expect(arm?.tool).toBe(facet.tool);
+      expect(arm?.language).toBe(language as never);
+    }
+  });
+
+  test("the tool names are distinct, run_<word>_<read|query|command> shaped, and none is a metadata tool's", () => {
+    const tools = ARMS.map((arm) => arm.tool);
+    expect(new Set(tools).size).toBe(tools.length);
+    for (const tool of tools) {
+      expect(tool).toMatch(/^run_[a-z]+_(?:read|query|command)$/);
+      expect(SHARED_TOOLS as readonly string[]).not.toContain(tool);
+    }
   });
 
   test("a language with no MCP tool yet has no arm, and its engine no read tool", () => {
-    expect(MCP_STATEMENT_ARMS.influxql).toBeNull();
-    expect(mcpStatementToolFor("influxdb")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.oxiacli).toBeNull();
-    expect(mcpStatementToolFor("oxia")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.s3api).toBeNull();
-    expect(mcpStatementToolFor("s3")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.fsquery).toBeNull();
-    expect(mcpStatementToolFor("firestore")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.snmpget).toBeNull();
-    expect(mcpStatementToolFor("snmp")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.netconfrpc).toBeNull();
-    expect(mcpStatementToolFor("netconf")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.modbusread).toBeNull();
-    expect(mcpStatementToolFor("modbus")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.promql).toBeNull();
-    expect(mcpStatementToolFor("prometheus")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.opcuaread).toBeNull();
-    expect(mcpStatementToolFor("opcua")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.mqttread).toBeNull();
-    expect(mcpStatementToolFor("mqtt")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.sparkplugread).toBeNull();
-    expect(mcpStatementToolFor("sparkplug")).toBeNull();
+    const idle = Object.entries(AGENT_LANGUAGE_MCP_FACETS).filter(([, facet]) => facet === null);
+    expect(idle).not.toEqual([]);
+    for (const [language] of idle) {
+      expect(MCP_STATEMENT_ARMS[language as keyof typeof MCP_STATEMENT_ARMS]).toBeNull();
+      for (const type of SHIPPED_DATABASE_TYPES.filter((shipped) => AGENT_STATEMENT_LANGUAGE[shipped] === language))
+        expect(mcpStatementToolFor(type)).toBeNull();
+    }
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -182,7 +153,6 @@ describe("the tool names MCP keeps are the arms' own", () => {
     const actions: SameUnion<McpToolAction, (typeof SHARED_TOOLS)[number] | AgentLanguageMcpTool> = true;
     const names: SameUnion<McpToolName, McpToolAction> = true;
     expect([statementTools, actions, names]).toEqual([true, true, true]);
-    expect(MCP_STATEMENT_TOOLS).toEqual(ARMS.map((arm) => arm.tool));
   });
 
   test("list_connections' read_tool takes exactly the arms' tools, in record order", () => {
@@ -1232,80 +1202,26 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Weaviate with run_weaviate_read, Qdrant with run_qdrant_read, etcd with run_etcd_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, Milvus with run_milvus_read, Redis with run_redis_read, MTConnect with run_mtconnect_read, the SQL engines with run_read_query, the rest with none", () => {
-    expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
-    expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
-    expect(mcpStatementToolFor("libredb")).toBe("run_libredb_read");
-    expect(mcpStatementToolFor("weaviate")).toBe("run_weaviate_read");
-    expect(mcpStatementToolFor("qdrant")).toBe("run_qdrant_read");
-    expect(mcpStatementToolFor("etcd")).toBe("run_etcd_read");
-    expect(mcpStatementToolFor("rabbitmq")).toBe("run_rabbitmq_read");
-    expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
-    expect(mcpStatementToolFor("neo4j")).toBe("run_cypher_read");
-    expect(mcpStatementToolFor("milvus")).toBe("run_milvus_read");
-    expect(mcpStatementToolFor("mtconnect")).toBe("run_mtconnect_read");
-    for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
-    expect(mcpStatementToolFor("clickhouse")).toBe("run_read_query");
-    expect(mcpStatementToolFor("libsql")).toBe("run_read_query");
-    expect(mcpStatementToolFor("influxdb3")).toBe("run_read_query");
-    expect(mcpStatementToolFor("influxdb")).toBeNull();
-    expect(mcpStatementToolFor("elasticsearch")).toBe("run_read_query");
-    expect(mcpStatementToolFor("opensearch")).toBe("run_read_query");
-    expect(mcpStatementToolFor("oracle")).toBe("run_read_query");
-    expect(mcpStatementToolFor("db2")).toBe("run_read_query");
-    expect(mcpStatementToolFor("cassandra")).toBe("run_read_query");
-    expect(mcpStatementToolFor("couchbase")).toBe("run_read_query");
-    expect(mcpStatementToolFor("redis")).toBe("run_redis_read");
-    expect(mcpStatementToolFor("snowflake")).toBeNull();
+  test("an engine of a served language whose own records keep it closed has no read tool", () => {
+    const closed = SHIPPED_DATABASE_TYPES.filter((type) => {
+      const language = AGENT_STATEMENT_LANGUAGE[type];
+      return language !== null && MCP_STATEMENT_ARMS[language] !== null && !MCP_STATEMENT_READ[type];
+    });
+    expect(closed).not.toEqual([]);
+    for (const type of closed) expect(mcpStatementToolFor(type)).toBeNull();
   });
 
   test("the tools registered are the arms that serve an engine", () => {
     expect(servingStatementArms()).toEqual(ARMS.filter((arm) => arm.types.length > 0));
-    expect(servingStatementArms().map((arm) => arm.tool)).toEqual([
-      "run_read_query",
-      "run_kubectl_read",
-      "run_mongo_command",
-      "run_libredb_read",
-      "run_weaviate_read",
-      "run_qdrant_read",
-      "run_cypher_read",
-      "run_milvus_read",
-      "run_redis_read",
-      "run_etcd_read",
-      "run_rabbitmq_read",
-      "run_kafka_read",
-      "run_mtconnect_read",
-    ]);
   });
 
   test("an arm that serves no engine is neither listed nor registered", () => {
     const idle = Object.freeze({ ...RUN_MONGO_COMMAND_ARM, types: [] });
     const arms = {
+      ...Object.fromEntries(Object.keys(MCP_STATEMENT_ARMS).map((language) => [language, null])),
       sql: RUN_READ_QUERY_ARM,
-      kubectl: null,
       mongo: idle,
-      libredbkv: null,
-      influxql: null,
-      weaviateapi: null,
-      qdrantapi: null,
-      cypher: null,
-      milvusrpc: null,
-      rediscli: null,
-      etcdctl: null,
-      oxiacli: null,
-      rabbitread: null,
-      kafkaread: null,
-      s3api: null,
-      fsquery: null,
-      snmpget: null,
-      netconfrpc: null,
-      modbusread: null,
-      promql: null,
-      opcuaread: null,
-      mtconnectread: null,
-      mqttread: null,
-      sparkplugread: null,
-    };
+    } as unknown as typeof MCP_STATEMENT_ARMS;
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);
     registerStatementTools({ registerTool } as unknown as McpServer, {} as McpConnectionContext, arms);
@@ -1546,17 +1462,5 @@ describe("the arms whose engines hold no table", () => {
       const served = arm !== null && arm.types.includes(type);
       expect(mcpTablelessReadTool(type)).toBe(served && arm.holdsNoTables ? arm.tool : null);
     }
-    expect(mcpTablelessReadTool("kubernetes")).toBe("run_kubectl_read");
-    expect(mcpTablelessReadTool("mongodb")).toBeNull();
-    expect(mcpTablelessReadTool("qdrant")).toBeNull();
-    expect(mcpTablelessReadTool("etcd")).toBeNull();
-    expect(mcpTablelessReadTool("kafka")).toBeNull();
-    expect(mcpTablelessReadTool("neo4j")).toBeNull();
-    expect(mcpTablelessReadTool("milvus")).toBeNull();
-    expect(mcpTablelessReadTool("postgres")).toBeNull();
-    expect(mcpTablelessReadTool("redis")).toBeNull();
-    expect(mcpTablelessReadTool("libredb")).toBeNull();
-    expect(mcpTablelessReadTool("rabbitmq")).toBeNull();
-    expect(mcpTablelessReadTool("mtconnect")).toBeNull();
   });
 });

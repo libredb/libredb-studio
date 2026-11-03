@@ -5,10 +5,11 @@
  * MCP read row is still false, is pinned here rather than waiting for the first joiner.
  */
 import { describe, expect, test } from "bun:test";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { mcpStatementEngines, type McpExposure } from "@/lib/mcp/tools/served-engines";
+import type { DatabaseType } from "@/lib/types";
 import { RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 
 const SHIPPED: McpExposure = {
@@ -17,6 +18,26 @@ const SHIPPED: McpExposure = {
   statementRead: MCP_STATEMENT_READ,
   language: AGENT_STATEMENT_LANGUAGE,
 };
+const SHIPPED_TYPES = Object.keys(MCP_STATEMENT_READ) as DatabaseType[];
+const LANGUAGES = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
+  (language): language is AgentStatementLanguageId => language !== null,
+);
+
+/** The four records, each read on its own: what the resolver must agree with. */
+const servedByRecords = (type: DatabaseType): boolean =>
+  AGENT_EXECUTION_ENGINES.includes(type) &&
+  MCP_EXPOSABLE[type] &&
+  MCP_STATEMENT_READ[type] &&
+  AGENT_STATEMENT_LANGUAGE[type] !== null;
+
+/** A closed engine a flip of its MCP read row alone would open. */
+const opensWhenFlipped = (type: DatabaseType): boolean =>
+  !MCP_STATEMENT_READ[type] && AGENT_EXECUTION_ENGINES.includes(type) && MCP_EXPOSABLE[type];
+
+const symmetricDifference = (a: readonly DatabaseType[], b: readonly DatabaseType[]): DatabaseType[] => [
+  ...a.filter((type) => !b.includes(type)),
+  ...b.filter((type) => !a.includes(type)),
+];
 
 describe("mcpStatementEngines", () => {
   test("RUN_READ_QUERY_TYPES is exactly the SQL engines every exposure record lets through", () => {
@@ -28,109 +49,48 @@ describe("mcpStatementEngines", () => {
     );
   });
 
-  test("serves ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
-    expect(RUN_READ_QUERY_TYPES).toEqual([
-      "postgres",
-      "sqlite",
-      "duckdb",
-      "mssql",
-      "mysql",
-      "clickhouse",
-      "libsql",
-      "influxdb3",
-      "elasticsearch",
-      "opensearch",
-      "oracle",
-      "db2",
-      "cassandra",
-      "couchbase",
-    ]);
-  });
-
-  // Opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra, Couchbase, LibreDB and
-  // RabbitMQ moved no other engine: every other language still serves exactly what it did.
-  test("opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra, Couchbase, LibreDB and RabbitMQ leaves every other language's served set as it was", () => {
-    const languages = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
-      (language): language is NonNullable<typeof language> => language !== null && language !== "sql",
-    );
-    const served = Object.fromEntries(languages.map((language) => [language, mcpStatementEngines(language)]));
-    expect(served).toEqual({
-      ...Object.fromEntries(languages.map((language) => [language, []])),
-      mongo: ["mongodb"],
-      kubectl: ["kubernetes"],
-      cypher: ["neo4j"],
-      rediscli: ["redis"],
-      libredbkv: ["libredb"],
-      qdrantapi: ["qdrant"],
-      etcdctl: ["etcd"],
-      rabbitread: ["rabbitmq"],
-      kafkaread: ["kafka"],
-      weaviateapi: ["weaviate"],
-      mtconnectread: ["mtconnect"],
-      milvusrpc: ["milvus"],
-    });
-  });
+  // A row that opens one engine moves no other: flipping one engine's MCP_STATEMENT_READ row, in a copy of the
+  // shipped records, changes that engine's language's served set alone, and only by that engine.
+  test.each(SHIPPED_TYPES.filter((type) => AGENT_STATEMENT_LANGUAGE[type] !== null))(
+    "flipping %s's MCP read row moves only its own language's served set, and only by it",
+    (type) => {
+      const flipped = { ...SHIPPED, statementRead: { ...MCP_STATEMENT_READ, [type]: !MCP_STATEMENT_READ[type] } };
+      const own = AGENT_STATEMENT_LANGUAGE[type];
+      for (const language of LANGUAGES) {
+        const before = mcpStatementEngines(language);
+        const after = mcpStatementEngines(language, flipped);
+        if (language !== own) expect(after).toEqual(before);
+        else
+          expect(symmetricDifference(before, after)).toEqual(
+            servedByRecords(type) || opensWhenFlipped(type) ? [type] : [],
+          );
+      }
+    },
+  );
 
   test("reads the shipped records when none are passed", () => {
-    for (const language of [
-      "sql",
-      "mongo",
-      "kubectl",
-      "cypher",
-      "libredbkv",
-      "qdrantapi",
-      "etcdctl",
-      "rabbitread",
-      "kafkaread",
-      "rediscli",
-      "weaviateapi",
-      "mtconnectread",
-      "milvusrpc",
-    ] as const) {
+    for (const language of LANGUAGES) {
       expect(mcpStatementEngines(language)).toEqual(mcpStatementEngines(language, SHIPPED));
     }
   });
 
-  test("serves MongoDB, Kubernetes, Neo4j, Redis, LibreDB, Qdrant, etcd, RabbitMQ, Kafka, Weaviate, MTConnect and Milvus each in its own language", () => {
-    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read, offered only machine-redacted, Neo4j
-    // with run_cypher_read, Redis with run_redis_read, metadata only, LibreDB with run_libredb_read, on a read-only
-    // handle per command, Qdrant with run_qdrant_read, metadata only, etcd with run_etcd_read, metadata only, RabbitMQ
-    // with run_rabbitmq_read, metadata only, Kafka with run_kafka_read, answered metadata-only, Weaviate with
-    // run_weaviate_read, metadata only, MTConnect with run_mtconnect_read, its adapter connections withheld, and Milvus
-    // with run_milvus_read, answered metadata-only.
-    expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
-    expect(mcpStatementEngines("kubectl")).toEqual(["kubernetes"]);
-    expect(mcpStatementEngines("cypher")).toEqual(["neo4j"]);
-    expect(mcpStatementEngines("rediscli")).toEqual(["redis"]);
-    expect(mcpStatementEngines("libredbkv")).toEqual(["libredb"]);
-    expect(mcpStatementEngines("qdrantapi")).toEqual(["qdrant"]);
-    expect(mcpStatementEngines("etcdctl")).toEqual(["etcd"]);
-    expect(mcpStatementEngines("rabbitread")).toEqual(["rabbitmq"]);
-    expect(mcpStatementEngines("kafkaread")).toEqual(["kafka"]);
-    expect(mcpStatementEngines("weaviateapi")).toEqual(["weaviate"]);
-    expect(mcpStatementEngines("mtconnectread")).toEqual(["mtconnect"]);
-    expect(mcpStatementEngines("milvusrpc")).toEqual(["milvus"]);
+  // The four records read directly, never through the resolver: an engine is served in its own language exactly when
+  // agent mode executes on it, MCP is offered it and its MCP read row opens it.
+  test("serves each engine in its own language, exactly where the four records allow it", () => {
+    for (const type of SHIPPED_TYPES) {
+      const language = AGENT_STATEMENT_LANGUAGE[type];
+      if (language === null) continue;
+      expect(mcpStatementEngines(language).includes(type)).toBe(servedByRecords(type));
+    }
   });
 
   test("an agent engine whose MCP read row is false is not served, though every other record lets it through", () => {
     const closed = { ...MCP_STATEMENT_READ, duckdb: false };
     expect(MCP_EXPOSABLE.duckdb).toBe(true);
     expect(AGENT_EXECUTION_ENGINES).toContain("duckdb");
-    expect(mcpStatementEngines("sql", { ...SHIPPED, statementRead: closed })).toEqual([
-      "postgres",
-      "sqlite",
-      "mssql",
-      "mysql",
-      "clickhouse",
-      "libsql",
-      "influxdb3",
-      "elasticsearch",
-      "opensearch",
-      "oracle",
-      "db2",
-      "cassandra",
-      "couchbase",
-    ]);
+    expect(mcpStatementEngines("sql", { ...SHIPPED, statementRead: closed })).toEqual(
+      mcpStatementEngines("sql").filter((type) => type !== "duckdb"),
+    );
   });
 
   // InfluxDB 3's SQL shares a provider directory with InfluxDB's InfluxQL, and opening the first left the second shut.

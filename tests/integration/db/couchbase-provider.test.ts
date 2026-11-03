@@ -37,7 +37,7 @@ import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
-import { RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 
 // ============================================================================
 // Connection
@@ -2795,8 +2795,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
       database: BUCKET,
       createdAt: new Date(),
     } as ManagedConnection;
-    const ENGINES =
-      "It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase.";
+    const ENGINES = `It runs on ${RUN_READ_QUERY_ENGINES}.`;
 
     let cluster: AgentCluster;
     let acquired: ExecutionProfile[] = [];

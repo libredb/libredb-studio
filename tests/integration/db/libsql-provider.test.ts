@@ -64,7 +64,7 @@ import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output"
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
-import { RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 
 // ============================================================================
 // Harness
@@ -3579,8 +3579,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
     new RegExp(`^INSERT INTO ${NAME} SELECT 1 WHERE 0$`),
   ];
   const FORBIDDEN = "Authorization forbidden: Current session doesn't not have Write permission to namespace default";
-  const ENGINES =
-    "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase";
+  const ENGINES = RUN_READ_QUERY_ENGINES;
 
   function seed(overrides: Partial<ManagedConnection> = {}): ManagedConnection {
     return {

@@ -5,8 +5,8 @@
  * used (logging, sampling, roots); one source for the server's version; and a handler that still
  * serves after every earlier test has torn down.
  *
- * Servers are counted by McpServer.prototype.registerTool, which the factory calls once per tool,
- * fifteen times per server; providers by the real SQLite provider's connect.
+ * Servers are counted by McpServer.prototype.registerTool, which the factory calls once per tool, per server;
+ * providers by the real SQLite provider's connect.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -38,6 +38,7 @@ import {
   routeServe,
   type ServeRequest,
 } from "../../helpers/mcp-harness";
+import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
 import { mintTestToken, useMcpChannel } from "../../helpers/mcp-token";
 
 pinMcpTestEnvironment();
@@ -83,7 +84,7 @@ async function serversBuiltBy(send: () => Promise<Response>): Promise<number> {
   try {
     const response = await send();
     await response.text();
-    return registrations.calls / 15;
+    return registrations.calls / registeredMcpToolNames().length;
   } finally {
     registrations.restore();
   }
@@ -193,23 +194,7 @@ describe("one server per served request", () => {
         ),
       );
       for (const reply of replies) {
-        expect(reply.result?.tools.map((tool: { name: string }) => tool.name)).toEqual([
-          "list_connections",
-          "inspect_schema",
-          "run_read_query",
-          "run_kubectl_read",
-          "run_mongo_command",
-          "run_libredb_read",
-          "run_weaviate_read",
-          "run_qdrant_read",
-          "run_cypher_read",
-          "run_milvus_read",
-          "run_redis_read",
-          "run_etcd_read",
-          "run_rabbitmq_read",
-          "run_kafka_read",
-          "run_mtconnect_read",
-        ]);
+        expect(reply.result?.tools.map((tool: { name: string }) => tool.name)).toEqual(registeredMcpToolNames());
       }
       expect(connects.calls).toBe(0);
     } finally {
@@ -471,6 +456,6 @@ describe("the module-scope handler", () => {
   test("still serves after every earlier test in this file has torn down its clients", async () => {
     const response = await serve(legacyPost({ jsonrpc: "2.0", id: 99, method: "tools/list" }, { token }));
     expect(response.status).toBe(200);
-    expect((await readJsonRpc(response)).result?.tools).toHaveLength(15);
+    expect((await readJsonRpc(response)).result?.tools).toHaveLength(registeredMcpToolNames().length);
   });
 });

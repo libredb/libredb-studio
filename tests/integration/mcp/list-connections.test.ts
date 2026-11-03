@@ -10,8 +10,13 @@ import { join } from "node:path";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { MCP_RESULT_CAP_BYTES, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
+import { mcpStatementToolFor, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { resetCache } from "@/lib/seed";
+import type { DatabaseType } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile, type SeedEntry } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo, type Negotiation } from "../../helpers/mcp-harness";
 
@@ -116,12 +121,9 @@ describe("the answer", () => {
   });
 
   test("names the tool that runs a statement on each connection, and null where inspect_schema is the read", async () => {
-    // From the one served-engine resolver: ClickHouse's, libSQL's, InfluxDB 3's, Elasticsearch's, OpenSearch's,
-    // Oracle's, Db2 LUW's, Cassandra's and Couchbase's SQL is read by run_read_query, MongoDB's command by
-    // run_mongo_command, a Kubernetes line by run_kubectl_read, a LibreDB command by run_libredb_read, a Qdrant request
-    // by run_qdrant_read, a Milvus metadata request by run_milvus_read, a Redis metadata read by run_redis_read, a
-    // RabbitMQ stream read by run_rabbitmq_read, a Kafka metadata read by run_kafka_read, and an engine no statement
-    // tool serves, such as Snowflake and InfluxDB over InfluxQL, whose agent reads stay closed to MCP, has none.
+    // The expected tool of each row comes from the served-engine resolver, which list_connections also answers from,
+    // so the two independent pins are the wire's own tools/list and the records read directly: Snowflake and InfluxDB
+    // over InfluxQL are the control seeds that no statement tool serves.
     const CLUSTER = {
       id: "cluster",
       type: "kubernetes",
@@ -139,7 +141,7 @@ describe("the answer", () => {
       password: "token",
       authMethod: "pat",
     };
-    writeSeedFile(dir, [
+    const seeds = [
       SHOP,
       { id: "events", type: "clickhouse", host: "127.0.0.1", port: 8123, database: "demo" },
       { id: "edge", type: "libsql", host: "127.0.0.1", port: 8080 },
@@ -161,33 +163,32 @@ describe("the answer", () => {
       { id: "stream", type: "kafka", host: "127.0.0.1", port: 9092 },
       { id: "cache", type: "redis", host: "127.0.0.1", port: 6379 },
       WAREHOUSE,
-    ]);
-    const tools = (await list()).structuredContent?.connections.map(
-      (connection: { id: string; read_tool: string | null }) => [connection.id, connection.read_tool],
-    );
-    expect(tools).toEqual([
-      ["seed:shop", "run_read_query"],
-      ["seed:events", "run_read_query"],
-      ["seed:edge", "run_read_query"],
-      ["seed:metrics", "run_read_query"],
-      ["seed:legacy-metrics", null],
-      ["seed:search", "run_read_query"],
-      ["seed:fork-search", "run_read_query"],
-      ["seed:ledger", "run_read_query"],
-      ["seed:mainframe", "run_read_query"],
-      ["seed:ring", "run_read_query"],
-      ["seed:mongo", "run_mongo_command"],
-      ["seed:travel", "run_read_query"],
-      ["seed:cluster", "run_kubectl_read"],
-      ["seed:kv", "run_libredb_read"],
-      ["seed:semantic", "run_weaviate_read"],
-      ["seed:vectors", "run_qdrant_read"],
-      ["seed:embeddings", "run_milvus_read"],
-      ["seed:broker", "run_rabbitmq_read"],
-      ["seed:stream", "run_kafka_read"],
-      ["seed:cache", "run_redis_read"],
-      ["seed:warehouse", null],
-    ]);
+    ];
+    writeSeedFile(dir, seeds);
+    const session = await connectClient(serve);
+    try {
+      const listed = new Set((await session.client.listTools()).tools.map((tool) => tool.name));
+      const answer = (await session.client.callTool({ name: "list_connections", arguments: {} })) as Listed;
+      const rows: Array<{ id: string; read_tool: string | null }> = answer.structuredContent?.connections;
+      expect(rows.map((row) => [row.id, row.read_tool])).toEqual(
+        seeds.map((seed) => [`seed:${seed.id}`, mcpStatementToolFor(seed.type as DatabaseType)]),
+      );
+      const served = new Set<string>(servingStatementArms().flatMap((arm) => arm.types));
+      for (const [index, row] of rows.entries()) {
+        const type = seeds[index].type as DatabaseType;
+        if (row.read_tool !== null) expect(listed.has(row.read_tool)).toBe(true);
+        expect(row.read_tool === null).toBe(!served.has(type));
+        if (row.read_tool === null) {
+          const language = AGENT_STATEMENT_LANGUAGE[type];
+          expect(language === null || AGENT_LANGUAGE_MCP_FACETS[language] === null || !MCP_STATEMENT_READ[type]).toBe(
+            true,
+          );
+        }
+      }
+      expect(rows.some((row) => row.read_tool === null)).toBe(true);
+    } finally {
+      await session.close();
+    }
   });
 
   test("with no seed file at all is the empty list", async () => {
