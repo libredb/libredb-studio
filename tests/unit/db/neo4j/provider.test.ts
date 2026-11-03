@@ -107,6 +107,15 @@ describe("getCapabilities", () => {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/graph/cypher/read-policy.ts", symbol: "checkCypherRead" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: { reach: "absent" },
+        transaction: { reach: "absent" },
+      },
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,
