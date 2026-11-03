@@ -399,17 +399,19 @@ The seed's community is the only credential, since a seed carries no separate ag
 So the data scope is the agent's view and Studio's withheld set together.
 Give an SNMP seed with `mcp: true` a community whose view holds only what an MCP client should read.
 
-What a community reaches, in two layers, measured on the Net-SNMP 5.9.4 fixture with three communities made per run and markers planted in a running process's arguments, an SNMPv3 user's keys, two notification targets' communities and the `extend`, `exec` and `procfix` directives' commands (`tests/fixtures/snmp/5.9.4/mcp-boundary/boundary.json`):
+What a community reaches, in two layers, measured on the Net-SNMP 5.9.4 fixture with five communities made per run and markers planted in a running process's arguments, an SNMPv3 user's keys, two notification targets' communities and the `extend`, `exec` and `procfix` directives' commands (`tests/fixtures/snmp/5.9.4/mcp-boundary/boundary.json`):
+The raw walk of `1` used a community whose view is the whole tree.
+The tool's reads used one whose view is the whole tree but hrDevice (1.3.6.1.2.1.25.3) and hrSWInstalled (1.3.6.1.2.1.25.6), which hold no withheld subtree, so a walk of the host group stays under the row budget; one whose view is hrSystem, hrSWRun and hrSWRunPerf alone, which the agent answers inside hrSWRun raw, so a walk of the host group crosses the running processes within one page and its answer shows rows on both sides and none inside (`crossing` in the capture); one whose view is the system group alone; and a writer.
 
 | Item | The agent's view | Studio |
 | --- | --- | --- |
 | the system group, under a community whose view is that group alone | answered | answered |
 | an object outside that view, and one that does not exist | `noSuchObject` alike | the same answer for both |
 | a walk of mib-2 under that community | the system group alone | answered as the view answers it |
-| a running process's parameters, under a community whose view is the whole tree | answered raw with the planted marker | withheld: never asked for by name, a `next` landing in it answered `withheld`, a walk stepping over it with its reason in `notes` |
+| a running process's parameters, under a community whose view holds them | answered raw with the planted marker | withheld: never asked for by name, a `next` landing in it answered `withheld`, a walk stepping over it with its reason in `notes` |
 | the `extend` and `exec` directives' commands and output, and the `procfix` command | answered raw with the planted markers | withheld the same way |
 | an SNMPv3 user's name, the notification targets' communities, the access control tables' group names | answered raw with the planted markers | withheld the same way |
-| every other instance of the raw walk of `1`, 2,956 in all | answered | answered; none carried a marker |
+| every other instance of the raw walk of `1`, 3,951 in this capture | answered | answered; none carried a marker |
 
 So the scope of a narrow community is held by the agent's view, which does not depend on parsing the request, and the withheld set, computed on every answer, holds every subtree the probe found a marker in whatever the view grants.
 A `set` sent through the tool with its fence removed, with a community whose view may write, is refused by the provider's reader before anything is sent and leaves `sysContact` as it was, while the same Set sent raw with that community changes it.

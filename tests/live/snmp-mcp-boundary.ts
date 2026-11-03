@@ -1,7 +1,10 @@
 /**
  * Live check of MCP's `run_snmp_read` on the Net-SNMP 5.9.4 agent docker/snmp builds, captured into `boundary.json`
  * beside `tests/fixtures/snmp/5.9.4/mcp-boundary/run.sh`, which starts the agent with a configuration of its own: a
- * broad community reading the whole tree, a narrow one whose view holds the system group alone, a writer, and markers
+ * census community reading the whole tree, a broad one reading it but the device and installed-software tables
+ * (hrDevice and hrSWInstalled, which hold no withheld subtree), so a walk of the host group fits the row budget, a
+ * crossing one whose view is hrSystem, hrSWRun and hrSWRunPerf, so a walk of the host group crosses the running
+ * processes within one page, a narrow one whose view holds the system group alone, a writer, and markers
  * planted where a credential would sit (a running process's arguments, an SNMPv3 user's keys, two notification
  * targets' communities, and the extend, exec and procfix directives' commands).
  *
@@ -11,12 +14,14 @@
  * answer. The MCP fence in front of it, the agent's own admission, is defence in depth. So this script drives the
  * tool's own handler (`runStatement`) with a seed connection, fenced as MCP registers it and with the fence removed:
  *
- *   census     the whole tree read raw with the image's own snmpwalk and the broad community: every identifier whose
+ *   census     the whole tree read raw with the image's own snmpwalk and the census community: every identifier whose
  *              value or instance suffix carries a planted marker lies inside a withheld subtree;
  *   reads      a get, a next, a walk and a table under the broad community, through the tool: rows, and whether the
  *              answer carried a marker or a community;
  *   withheld   a walk of every subtree that holds a marker's root, a get of a marked instance and a next that lands in
  *              one, through the tool: nothing marked answered, and the notes name each withheld subtree;
+ *   crossing   a walk of the host group under the crossing community, which the agent answers raw inside hrSWRun:
+ *              rows on both sides of it through the tool, none inside it, so the step-over is shown on the answer;
  *   scope      the narrow community (layer one, the agent's view): what its view holds answers, an object outside it
  *              and a missing one answer alike;
  *   refused    every form the agent refuses, fenced (nothing acquired) and unfenced (the provider refuses it before
@@ -56,11 +61,13 @@ const PORT = Number(required("SNMP_MCP_PORT"));
 const OUT = required("SNMP_MCP_OUT");
 const CONTAINER = required("SNMP_MCP_CONTAINER");
 const IMAGE = required("SNMP_MCP_IMAGE");
+const CENSUS = required("SNMP_MCP_CENSUS");
 const BROAD = required("SNMP_MCP_BROAD");
+const CROSS = required("SNMP_MCP_CROSS");
 const NARROW = required("SNMP_MCP_NARROW");
 const WRITER = required("SNMP_MCP_WRITER");
 const ENCODE = (value: string) => [...new TextEncoder().encode(value)].join(".");
-const SECRETS = [BROAD, NARROW, WRITER].flatMap((community) => [community, ENCODE(community)]);
+const SECRETS = [CENSUS, BROAD, CROSS, NARROW, WRITER].flatMap((community) => [community, ENCODE(community)]);
 /** Every planted value starts with this word, and so do the SNMPv3 user's and the directives' names. */
 const MARKER = "marker";
 const MARKED = [MARKER, ENCODE(MARKER)];
@@ -194,7 +201,7 @@ async function main(): Promise<void> {
   const writer = seed("writer", WRITER);
 
   // The census: every marked identifier the raw walk answers, by the withheld subtree it lies in.
-  const census = rawWalk(BROAD, ".1");
+  const census = rawWalk(CENSUS, ".1");
   const marked = census.filter((line) => carries(line, MARKED));
   const markedRoots = new Map<string, number>();
   let markedOutside = 0;
@@ -211,7 +218,7 @@ async function main(): Promise<void> {
     "HOST-RESOURCES-MIB::hrSWRun",
     "UCD-SNMP-MIB::prErrFixCmd",
     "UCD-SNMP-MIB::extTable",
-    "NET-SNMP-EXTEND-MIB::nsExtendObjects",
+    "NET-SNMP-AGENT-MIB::nsExtensions",
     "SNMP-TARGET-MIB",
   ]) {
     check((markedRoots.get(name) ?? 0) > 0, `census: a marker lies inside ${name}`);
@@ -241,7 +248,7 @@ async function main(): Promise<void> {
     ["walk 1.3.6.1.6.3", []],
     [`get hrSWRunParameters.${pid} sysName.0`, ["HOST-RESOURCES-MIB::hrSWRun"]],
     ["next 1.3.6.1.2.1.25.3.99", ["HOST-RESOURCES-MIB::hrSWRun"]],
-    ["next 1.3.6.1.4.1.8072.1.2.99999", ["NET-SNMP-EXTEND-MIB::nsExtendObjects"]],
+    ["next 1.3.6.1.4.1.8072.1.2.99999", ["NET-SNMP-AGENT-MIB::nsExtensions"]],
     ["next 1.3.6.1.4.1.2021.8", ["UCD-SNMP-MIB::extTable"]],
   ];
   for (const [statement, modules] of expectNotes) {
@@ -257,6 +264,42 @@ async function main(): Promise<void> {
       `withheld: ${statement} notes name ${modules.join(", ") || "the framework modules"}`,
     );
   }
+
+  // The notes are the request's; the crossing is the answer's. Under the crossing community, whose view is hrSystem,
+  // hrSWRun and hrSWRunPerf alone, the agent answers the running processes raw, and a walk of the host group fits one
+  // page, so its answer has rows on both sides of hrSWRun (hrSWRunPerf after it) and must have none inside it.
+  const HR_SW_RUN = [1, 3, 6, 1, 2, 1, 25, 4];
+  const side = (oid: readonly number[]): number => {
+    const order = oid.slice(0, HR_SW_RUN.length).findIndex((arc, i) => arc !== HR_SW_RUN[i]);
+    return order === -1 ? 0 : oid[order] < HR_SW_RUN[order] ? -1 : 1;
+  };
+  const crossRaw = rawWalk(CROSS, ".1.3.6.1.2.1.25").map((line) =>
+    line.slice(1, line.indexOf(" ")).split(".").map(Number),
+  );
+  const crossRead = await mcp(seed("crossing", CROSS), { statement: "walk host" });
+  const crossRows = rowsOf(crossRead.result).map((row) => String(row.object).split(".").map(Number));
+  const crossing = {
+    ...recorded(crossRead.result),
+    rawInside: crossRaw.filter((oid) => side(oid) === 0).length,
+    truncatedBy: (answerOf(crossRead.result) as unknown as { truncated_by?: string | null }).truncated_by ?? null,
+    before: crossRows.filter((oid) => side(oid) === -1).length,
+    inside: crossRows.filter((oid) => side(oid) === 0).length,
+    after: crossRows.filter((oid) => side(oid) === 1).length,
+    hrSWRunPerf: crossRows.some((oid) => oid.join(".").startsWith("1.3.6.1.2.1.25.5.")),
+  };
+  check(
+    crossing.rawInside > 0,
+    `crossing: the raw walk of host answers ${crossing.rawInside} instances inside hrSWRun`,
+  );
+  check(
+    !crossRead.result.isError &&
+      crossing.truncatedBy === null &&
+      crossing.inside === 0 &&
+      crossing.before > 0 &&
+      crossing.hrSWRunPerf &&
+      !crossing.carriesMarker,
+    `crossing: walk host through the tool (cut: ${crossing.truncatedBy}) answers ${crossing.before} rows before hrSWRun, ${crossing.inside} inside, ${crossing.after} after, hrSWRunPerf among them, no marker`,
+  );
 
   // Layer one: the narrow community's view holds the system group alone.
   const narrowSystem = await mcp(narrow, { statement: "get sysDescr.0" });
@@ -382,7 +425,7 @@ async function main(): Promise<void> {
       date: new Date().toISOString().slice(0, 10),
       runtime: `bun ${Bun.version}`,
       communities:
-        "broad: view of 1; narrow: view of the system group alone; writer: read-write view of 1 (made per run, not recorded)",
+        "census: view of 1; broad: view of 1 but hrDevice (1.3.6.1.2.1.25.3) and hrSWInstalled (1.3.6.1.2.1.25.6); crossing: hrSystem, hrSWRun and hrSWRunPerf (1.3.6.1.2.1.25.1, .4 and .5); narrow: view of the system group alone; writer: read-write view of 1 (made per run, not recorded)",
       markers:
         "a running process's arguments, an SNMPv3 user's keys, two notification targets' communities, and the extend, exec and procfix directives' commands",
     },
@@ -394,6 +437,7 @@ async function main(): Promise<void> {
     },
     reads,
     withheld: withheldReads,
+    crossing,
     scope: {
       narrowSystem: recorded(narrowSystem.result),
       outsideViewType: rowsOf(outsideView.result)[0]?.type ?? null,

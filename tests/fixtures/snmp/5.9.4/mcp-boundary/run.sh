@@ -5,9 +5,11 @@
 #   sh tests/fixtures/snmp/5.9.4/mcp-boundary/run.sh
 #
 # A fresh container of the image docker/snmp builds, on a port Docker picks, removed at the end. Its configuration is
-# written here for this run alone, with three communities made per run and never printed: a broad one reading the
-# whole tree but the device and installed-software tables, so a walk of the host group stays under the row budget, a
-# narrow one whose view holds the system group alone, and a writer, the positive control. Markers are
+# written here for this run alone, with five communities made per run and never printed: a census one reading the
+# whole tree, a broad one reading it but the device and installed-software tables, which hold no withheld subtree, so a
+# walk of the host group stays under the row budget, a crossing one reading hrSystem, the running processes and their
+# figures alone, so a walk of the host group crosses the processes within one page, a narrow one whose view holds the
+# system group alone, and a writer, the positive control. Markers are
 # planted where a credential would sit: a running process's arguments, an SNMPv3 user's keys, two notification
 # targets' communities, and the extend, exec and procfix directives' commands. Run it under the team's docker lock; it
 # touches only the container it names.
@@ -26,16 +28,24 @@ cleanup() {
 trap cleanup EXIT
 
 made() { od -An -N8 -tx1 /dev/urandom | tr -d ' \n'; }
+census="c$(made)"
 broad="b$(made)"
+cross="x$(made)"
 narrow="n$(made)"
 writer="w$(made)"
 
 cat >"$conf/snmpd.conf" <<EOF
+view all included .1
 view everything included .1
 view everything excluded .1.3.6.1.2.1.25.3
 view everything excluded .1.3.6.1.2.1.25.6
+view hostcross included .1.3.6.1.2.1.25.1
+view hostcross included .1.3.6.1.2.1.25.4
+view hostcross included .1.3.6.1.2.1.25.5
 view systemonly included .1.3.6.1.2.1.1
+rocommunity $census default -V all
 rocommunity $broad default -V everything
+rocommunity $cross default -V hostcross
 rocommunity $narrow default -V systemonly
 rwcommunity $writer default -V everything
 createUser markeruser SHA markerauthpass1 AES markerprivpass1
@@ -71,5 +81,5 @@ done
 
 cd "$repo"
 SNMP_MCP_PORT="$port" SNMP_MCP_OUT="$here" SNMP_MCP_CONTAINER="$NAME" SNMP_MCP_IMAGE="$IMAGE" \
-  SNMP_MCP_BROAD="$broad" SNMP_MCP_NARROW="$narrow" SNMP_MCP_WRITER="$writer" \
+  SNMP_MCP_CENSUS="$census" SNMP_MCP_BROAD="$broad" SNMP_MCP_CROSS="$cross" SNMP_MCP_NARROW="$narrow" SNMP_MCP_WRITER="$writer" \
   bun tests/live/snmp-mcp-boundary.ts

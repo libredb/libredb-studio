@@ -17,6 +17,16 @@ const capture = JSON.parse(
 );
 
 describe("the run_snmp_read capture", () => {
+  test("the census read the whole tree, while the tool's reads left out two host tables that hold no withheld subtree", () => {
+    expect(capture.$captured.communities).toStartWith(
+      "census: view of 1; broad: view of 1 but hrDevice (1.3.6.1.2.1.25.3) and hrSWInstalled (1.3.6.1.2.1.25.6); ",
+    );
+    for (const entry of SNMP_WITHHELD_SUBTREES) {
+      for (const left of ["1.3.6.1.2.1.25.3", "1.3.6.1.2.1.25.6"])
+        expect(entry.root.join(".").startsWith(left)).toBe(false);
+    }
+  });
+
   test("every marked instance the raw walk answered lies inside a withheld subtree", () => {
     expect(capture.census.marked).toBeGreaterThan(0);
     expect(capture.census.markedOutsideWithheld).toBe(0);
@@ -24,7 +34,7 @@ describe("the run_snmp_read capture", () => {
     for (const name of Object.keys(capture.census.markedByWithheldSubtree)) expect(modules).toContain(name);
     for (const name of [
       "HOST-RESOURCES-MIB::hrSWRun",
-      "NET-SNMP-EXTEND-MIB::nsExtendObjects",
+      "NET-SNMP-AGENT-MIB::nsExtensions",
       "UCD-SNMP-MIB::extTable",
       "UCD-SNMP-MIB::prErrFixCmd",
       "SNMP-TARGET-MIB",
@@ -40,8 +50,23 @@ describe("the run_snmp_read capture", () => {
     }
     const notes = (statement: string) => capture.withheld[statement].notes.map((note: string) => note.split(" (")[0]);
     expect(notes("walk host")).toEqual(["HOST-RESOURCES-MIB::hrSWRun"]);
+    // The notes are the request's; the crossing is the answer's. Under a view of hrSystem, hrSWRun and hrSWRunPerf
+    // the agent answered the running processes raw, and the walk of the host group through the tool, read whole,
+    // had rows on both sides of 1.3.6.1.2.1.25.4, hrSWRunPerf after it among them, and none inside it.
+    expect(capture.crossing).toMatchObject({
+      isError: false,
+      truncatedBy: null,
+      inside: 0,
+      hrSWRunPerf: true,
+      carriesMarker: false,
+      carriesCommunity: false,
+    });
+    expect(capture.crossing.notes.map((note: string) => note.split(" (")[0])).toEqual(["HOST-RESOURCES-MIB::hrSWRun"]);
+    expect(capture.crossing.rawInside).toBeGreaterThan(0);
+    expect(capture.crossing.before).toBeGreaterThan(0);
+    expect(capture.crossing.after).toBeGreaterThan(0);
     expect(notes("walk 1.3.6.1.4.1.2021")).toEqual(["UCD-SNMP-MIB::prErrFixCmd", "UCD-SNMP-MIB::extTable"]);
-    expect(notes("next 1.3.6.1.4.1.8072.1.2.99999")).toEqual(["NET-SNMP-EXTEND-MIB::nsExtendObjects"]);
+    expect(notes("next 1.3.6.1.4.1.8072.1.2.99999")).toEqual(["NET-SNMP-AGENT-MIB::nsExtensions"]);
     for (const answer of Object.values(capture.reads) as Array<{ notes: string[] }>) expect(answer.notes).toEqual([]);
   });
 
