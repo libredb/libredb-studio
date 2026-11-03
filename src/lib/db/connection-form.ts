@@ -1223,7 +1223,9 @@ export const CONNECTION_FORM: {
     // corrected; BigQuery's key file sits in `password` because that one IS a credential.
     connectionFields: CONNECTION_FIELDS.modbus,
     fieldLabels: { registerMap: "Register map" },
+    // The fixed Read-only label speaks for Studio only, so the device's own posture is said beside its address.
     fieldHints: {
+      host: "The device enforces nothing of its own, so anything else that reaches its port can write to it. Protection is MODBUS/TCP Security or a network path you control.",
       registerMap:
         "A JSON array of points, each naming a unit, a table, a zero-based PDU address and a type. Without it a connection can still read a range by address, but no point has a name. Vendor documentation often counts addresses from one; these are the addresses that go on the wire.",
     },

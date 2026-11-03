@@ -158,7 +158,8 @@ Host, Port and the register map ([section 3.1](#31-the-register-map-is-the-data-
 Modbus TCP defines no authentication: no user, no password, no token. The form offers none because
 there is none to offer. What protects a device is MODBUS/TCP Security or a network path you
 control. The connection dialog's fixed Read-only label says only that Studio has no write path on
-the device: anything else that reaches its port can still write to it.
+the device, and the Host field's hint says the rest: the device enforces nothing of its own, so
+anything else that reaches its port can still write to it.
 
 ### 4.3 Unit ids
 

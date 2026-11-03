@@ -148,7 +148,7 @@ test.describe("Modbus in the connection dialog", () => {
     await expect(dialog).toBeVisible();
   });
 
-  test("says in the dialog that Studio cannot write to a device", async ({ page }) => {
+  test("draws the fixed Read-only label, and says beside Host that the device enforces nothing", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "Modbus", exact: true }).click();
     // A fixed label and no box: Studio has no write path on this engine, so there is no mode to choose.
@@ -161,6 +161,8 @@ test.describe("Modbus in the connection dialog", () => {
       "aria-describedby",
       "readOnly-hint",
     );
+    await expect(dialog.locator("#host-hint")).toContainText("device enforces nothing of its own");
+    await expect(dialog.locator("#host")).toHaveAttribute("aria-describedby", "host-hint");
   });
 });
 

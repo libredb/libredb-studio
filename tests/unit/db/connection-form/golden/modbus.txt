@@ -61,8 +61,9 @@ button "Modbus"
 button "NETCONF"
 button "Weaviate"
 label[for=host] "Host & Instance"
-input#host type=none placeholder="localhost" describedby=none
+input#host type=none placeholder="localhost" describedby="host-hint"
 input#port type=none placeholder=none describedby=none
+p#host-hint "The device enforces nothing of its own, so anything else that reaches its port can write to it. Protection is MODBUS/TCP Security or a network path you control."
 label[for=registerMap] "Register map"
 textarea#registerMap placeholder="[{ \"name\": \"volts\", \"unitId\": 1, \"table\": \"holding_register\", \"address\": 100, \"type\": \"uint16\" }]" describedby="registerMap-hint"
 p#registerMap-hint "A JSON array of points, each naming a unit, a table, a zero-based PDU address and a type. Without it a connection can still read a range by address, but no point has a name. Vendor documentation often counts addresses from one; these are the addresses that go on the wire."
