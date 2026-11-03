@@ -427,8 +427,10 @@ It takes no `offset` and no `database`: every read answers one row.
 Every answer carries `notes`, the provider's warnings: the window it listened for, what it counted and why it stopped, for an exact read what its columns are, what the read could not count, and that an edge node or device not seen in the window may still exist.
 An MCP answer carries no warning on other tools; these are Studio's own sentences, naming no id, so this tool's facet passes them on (`answersWarnings`).
 
-A call opens two broker sessions: the acquisition's handshake, CONNECT and DISCONNECT with no subscription, and the read, each with a client id of its own, `libredb-` and 16 random hex digits; measured on the fixture's Mosquitto 2.0.22, one call logged two new clients with two ids.
+The call that opens the connection opens two broker sessions: the acquisition's handshake, CONNECT and DISCONNECT with no subscription, and the read, each with a client id of its own, `libredb-` and 16 random hex digits; measured on the fixture's Mosquitto 2.0.22, one call logged two new clients with two ids.
+A later call on the same connection reuses that acquisition, which Studio keeps until it has been idle for 30 minutes (`IDLE_TIMEOUT_MS` in `src/lib/db/factory.ts`), and opens one session, the read.
 `timeout_ms` must be at least 5000: the read needs 4,000 ms, its 3,000 ms window and the least dial, and the call leaves the handshake 1,000 ms before that; a smaller one is refused before anything is acquired.
+A broker that accepts the TCP connection and never sends a CONNACK is given up at about 3 s whatever `timeout_ms` is, when the handshake's own 3,000 ms window ends, and the call is answered as an engine error saying no CONNACK arrived, not as the timeout answer.
 A cancel or a timeout ends the wait: the read's session runs on until its own window ends, and its answer is dropped.
 
 `inspect_schema` lists no group, edge node or device and answers an empty page: an agent-mode handle declares no container level and no object kind, since ids are withheld, so the call costs one handshake and reads nothing.

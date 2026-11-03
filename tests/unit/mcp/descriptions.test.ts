@@ -130,7 +130,8 @@ describe("the tool descriptions", () => {
     expect(RUN_MQTT_READ_ARM.description).toContain("answers totals only");
     expect(RUN_MQTT_READ_ARM.description).toContain("never a topic name");
     expect(RUN_MQTT_READ_ARM.description).toContain(MQTT_COMPLETENESS);
-    expect(RUN_MQTT_READ_ARM.description).toContain("A call opens two broker sessions");
+    expect(RUN_MQTT_READ_ARM.description).toContain("The first call on a connection opens two broker sessions");
+    expect(RUN_MQTT_READ_ARM.description).toContain("a later call opens the read alone");
     expect(RUN_MQTT_READ_ARM.description).toContain("timeout_ms must be at least 5000");
     expect(RUN_MQTT_READ_ARM.description).toContain("inspect_schema refuses an MQTT connection");
     expect(RUN_MQTT_READ_ARM.description).toContain("this tool takes no offset");
@@ -143,7 +144,8 @@ describe("the tool descriptions", () => {
     expect(RUN_SPARKPLUG_READ_ARM.description).toContain(
       "an edge node or device not seen in the window may still exist, and no answer says one is online, offline or absent",
     );
-    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("A call opens two broker sessions");
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("The first call on a connection opens two broker sessions");
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("a later call opens the read alone");
     expect(RUN_SPARKPLUG_READ_ARM.description).toContain("timeout_ms must be at least 5000");
     expect(RUN_SPARKPLUG_READ_ARM.description).toContain("inspect_schema lists no group, edge node or device");
     expect(RUN_SPARKPLUG_READ_ARM.description).toContain("this tool takes no offset");

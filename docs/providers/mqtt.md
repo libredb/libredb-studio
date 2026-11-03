@@ -696,9 +696,11 @@ It takes no `offset` and no `database`: every read answers one row.
 Every answer carries `notes`, the provider's warnings: the window it listened for, what it counted and why it stopped, for a topic read what its per-message columns are, a loss the read proved, counted, and that a topic not seen in the window may still exist.
 An MCP answer carries no warning on other tools; these are Studio's own sentences, naming no topic, so this tool's facet passes them on (`answersWarnings`).
 
-A call opens two broker sessions: the acquisition's handshake, CONNECT and DISCONNECT with no subscription, and the read.
+The call that opens the connection opens two broker sessions: the acquisition's handshake, CONNECT and DISCONNECT with no subscription, and the read.
+A later call on the same connection reuses that acquisition, which Studio keeps until it has been idle for 30 minutes (`IDLE_TIMEOUT_MS` in `src/lib/db/factory.ts`), and opens one session, the read.
 Each has a client id of its own, `libredb-` and 16 random hex digits, so a call never takes over a live client's id; measured on Mosquitto 2.1.2, one call logged two new clients with two ids, and a live client holding its own id stayed connected through every call.
 `timeout_ms` must be at least 5000: the read needs 4,000 ms, its 3,000 ms window and the least dial, and the call leaves the handshake 1,000 ms before that; a smaller one is refused before anything is acquired, and a handshake slower than its allowance leaves the read too little, which the provider refuses before the read is sent.
+A broker that accepts the TCP connection and never sends a CONNACK is given up at about 3 s whatever `timeout_ms` is, when the handshake's own 3,000 ms window ends (`MQTT_READ_BUDGET_MS`), and the call is answered as an engine error saying no CONNACK arrived, not as the timeout answer.
 A cancel or a timeout ends the wait: the read's session runs on until its own window ends and leaves, and its answer is dropped (measured: a cancel at 1,000 ms answered at 1,001 ms, and the read ended on its window at 3,002 ms).
 
 The seed's login is the principal, since a seed carries no separate agent login, and no broker tells a client what its ACL grants, so Studio proves nothing about it.
