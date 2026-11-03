@@ -376,11 +376,20 @@ describe("the size of a read", () => {
   test("a get reaches 400 identifiers only with short ones, under the 4,096-character statement limit", async () => {
     const short = `get${" sysName.0".repeat(400)}`;
     expect(short.length).toBeLessThanOrEqual(4_096);
-    const answered = await snmp(short, { max_rows: 500 });
-    expect(answered.isError ?? false).toBe(false);
-    // One Get carried all 400 and the agent's whole answer was read; the 32 KiB result limit then cuts what is shown.
-    expect(agent.requests.at(-1)?.oids).toHaveLength(400);
-    expect(answered.structuredContent).toMatchObject({ truncated: true, truncated_by: "result_bytes" });
+    // An agent whose sysName.0 is short, so its answer to the 400 fits one datagram on every platform: macOS sends no
+    // UDP datagram above net.inet.udp.maxdgram (9,216 bytes by default), and with router-one the answer is 9,633.
+    const small = await startFakeAgent(new Map([...TREE, ["1.3.6.1.2.1.1.5.0", text("box")]]));
+    writeSeedFile(dir, [{ ...SNMP_SEED(), port: small.port }]);
+    try {
+      const answered = await snmp(short, { max_rows: 500 });
+      expect(answered.isError ?? false).toBe(false);
+      // One Get carried all 400 and the agent's whole answer was read; the 32 KiB result limit then cuts what is shown.
+      expect(small.requests.at(-1)?.oids).toHaveLength(400);
+      expect(small.answerBytes.at(-1)).toBeLessThanOrEqual(9_216);
+      expect(answered.structuredContent).toMatchObject({ truncated: true, truncated_by: "result_bytes" });
+    } finally {
+      small.close();
+    }
     const numeric = `get${" 1.3.6.1.2.1.1.5.0".repeat(228)}`;
     expect(numeric.length).toBeGreaterThan(4_096);
     expect(`get${" 1.3.6.1.2.1.1.5.0".repeat(227)}`.length).toBeLessThanOrEqual(4_096);

@@ -203,6 +203,10 @@ matters. Each of these is tested at the value itself and one past it.
 An answer is read up to the same 400 varbinds a request may carry, since one constant holds both ends.
 The reader used to hold 256, so the agent's whole answer to a get naming 257 to 400 objects was refused unread and the read ended as silence at its deadline.
 An answer past 400, which no conforming agent sends to a request this provider builds, ends its request at once as too large, never as silence: the console says the agent answered with more objects than one request asks for, and an agent read is refused as too large.
+An answer to 400 objects can be larger than macOS sends in one UDP datagram, `net.inet.udp.maxdgram`, 9,216 bytes by default.
+On the macos-latest CI runner a test agent on the same host answering 400 `sysName.0` of `router-one` built a 9,633-byte answer, and the read was still waiting for it when the test's 5-second limit ended it; with `box`, 6,833 bytes, the same 400 arrived whole on that runner.
+The limit is on what a host sends, so it bears on an agent running on macOS: nothing reaches Studio, and the read ends in the silence answer, which already names an object too large for one message among its causes.
+Studio on macOS receiving a larger answer from an agent elsewhere was not measured.
 
 The engine id ceiling is worth its own sentence. Nothing exercised a pin between 17 and 32
 octets, so halving it to 16 would have refused every real engine identity without a test
