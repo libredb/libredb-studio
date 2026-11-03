@@ -273,6 +273,8 @@ const PROFILE_REFUSAL_REASON: Readonly<Record<ExecutionProfileDenyCode, AgentRun
   PROFILE_SERVER_UNENFORCED: "server-authorization-off",
   AGENT_CREDENTIAL_UNRESOLVABLE: "agent-credential-unusable",
   AGENT_CREDENTIAL_WITH_CONNECTION_STRING: "agent-credential-unusable",
+  // The seed entry's reference, the same repair as a run whose connection no longer resolves.
+  CONNECTION_SECRET_UNRESOLVABLE: "connection-unresolvable",
 } satisfies Record<ExecutionProfileDenyCode, AgentRunFailureReason>);
 
 /**

@@ -290,7 +290,13 @@ export type ExecutionProfileDenyCode =
    */
   | "PROFILE_SERVER_UNENFORCED"
   | "AGENT_CREDENTIAL_UNRESOLVABLE"
-  | "AGENT_CREDENTIAL_WITH_CONNECTION_STRING";
+  | "AGENT_CREDENTIAL_WITH_CONNECTION_STRING"
+  /**
+   * A secret reference on the connection's seed entry, a `${vault:...}` one, could not be read, so nothing was opened.
+   * Raised by MCP's acquisition, which resolves a seed's references as the editor and agent routes do, and its own
+   * code so both MCP tools answer it in Studio's words rather than as an engine's error.
+   */
+  | "CONNECTION_SECRET_UNRESOLVABLE";
 
 /**
  * Raised when a provider cannot be vended under a requested execution profile.
