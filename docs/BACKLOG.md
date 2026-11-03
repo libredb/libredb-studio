@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 81
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP15 · 15
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP16 · 16
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
 
 ---
@@ -9545,6 +9545,16 @@ Some of those warnings are Studio's own sentences that change how an answer read
 Found 2026-11-02 while opening `run_kafka_read`, `run_rabbitmq_read` and `run_mtconnect_read`.
 
 **Done when:** a provider warning that is Studio's own sentence reaches every statement tool's answer as `notes`, or each served engine's warnings are classified as must-reach or droppable in its facet with the must-reach ones passed, with a handler test per served engine that pins which warnings reach the answer, and `docs/MCP.md` updated to match.
+
+### MCP16. A call joins an acquisition that a timed-out or cancelled call started
+
+`McpConnectionContext.acquire` (`src/lib/mcp/context.ts`) keeps one pending acquisition per connection and profile in `pendingAcquisitions` until it settles, so when the call that started it stops waiting on a timeout or a cancel, the next call on the same connection and profile joins that acquisition: it sends nothing of its own and answers with the first acquisition's outcome.
+On SNMP, a call made at once after a 5,000 ms timeout answered "No SNMP agent answered" about 4.5 s later, although the agent had come back by then.
+Engine-neutral; `docs/providers/snmp.md` section 14 and the SNMP cancel row of `docs/MCP.md` record it, and `tests/integration/mcp/run-snmp-read.test.ts` pins it.
+Dropping the entry when its first caller stops waiting would let two acquisitions for one key run at once and the later one overwrite the cached provider, leaking the earlier one; retrying the join would be a fallback.
+Found 2026-11-03 while opening `run_snmp_read`.
+
+**Done when:** a call that joins an acquisition no caller is still waiting on starts its own after the first settles, or answers that the connection is still opening, without two providers ever held for one key, with a test that times out one call and pins what the next call sends and answers, and the SNMP docs updated to match.
 
 ---
 
