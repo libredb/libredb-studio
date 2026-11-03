@@ -141,14 +141,12 @@ describe("a seed's agent secret", () => {
 
     const session = await connectClient(serve, { token: await mintTestToken() });
     try {
-      for (const [name, args] of [
-        ["list_connections", {}],
-        ["inspect_schema", { connection_id: "seed:warehouse" }],
-        ["run_read_query", { connection_id: "seed:warehouse", sql: "SELECT 1" }],
-      ] as const) {
-        // oxlint-disable-next-line no-await-in-loop -- one tool call at a time on one session.
+      const call = async (name: string, args: Record<string, unknown>) => {
         sent.push(JSON.stringify(await session.client.callTool({ name, arguments: args })));
-      }
+      };
+      await call("list_connections", {});
+      await call("inspect_schema", { connection_id: "seed:warehouse" });
+      await call("run_read_query", { connection_id: "seed:warehouse", sql: "SELECT 1" });
     } finally {
       await session.close();
     }
