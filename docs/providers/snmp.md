@@ -380,7 +380,40 @@ The family offers the investigation workflow, through `run_read_query` with one 
 The workflow classifier offers the model only these two.
 The editor language id stays `snmp`, and the fence alias `snmpget` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs an SNMP statement: the family declares no MCP facet, `MCP_EXPOSABLE.snmp` and `MCP_STATEMENT_READ.snmp` are false ([B158](../BACKLOG.md#b158-snmps-agent-reads-withhold-the-security-and-target-modules-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.snmp` is unchanged.
+MCP clients run an SNMP read with `run_snmp_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/snmpget/mcp.ts`](../../src/lib/agent/languages/snmpget/mcp.ts)), opened by `MCP_EXPOSABLE.snmp` and `MCP_STATEMENT_READ.snmp` ([section 14](#14-mcp-read)); `READ_ONLY_ENFORCED.snmp` is unchanged.
+
+## 14. MCP read
+
+`run_snmp_read` takes one of the console's four commands as `statement` and runs it through `queryReadOnly` under the agent read-only profile, so every rule of [section 13](#13-agent-mode) holds for it unchanged: the agent's client of Get, GetNext and GetBulk alone behind the valve, one exchange per read, and the withheld subtrees of [section 13.3](#133-values-and-what-is-withheld).
+The agent's own reader is the tool's fence, so a command outside the four, and a walk or table inside a withheld subtree, is refused before anything is acquired, in the sentence an agent run reads; with that fence removed the provider's reader refuses it before anything is sent (`tests/live/snmp-mcp-boundary.ts`).
+It takes no `offset` and no `database`: one connection is one agent, and a walk past the 1000-row budget is refused with the way to narrow it, never cut.
+
+Every withheld subtree is decided on the answer, by the prefix of every identifier the agent sent back, not by the command's text alone: a `next` whose answer lands inside one is a row typed `withheld` with no value, and a walk steps over every one its subtree covers, so no request starts inside it.
+An answer carries `notes`, the provider's warnings: each names a withheld subtree the read stepped over or answered withheld, and why.
+An MCP answer carries no warning on most tools; these are Studio's own sentences, naming no value, and a walk that stepped over a subtree would otherwise read as the device's whole subtree, so this tool's facet passes them on (`answersWarnings`).
+`inspect_schema` lists the bundled catalog's tables and scalar groups with their declared columns, which asks the agent nothing past the connection's own probe, and leaves `hrSWRunTable` and the `hrSWRun` group out, as every agent-mode handle does.
+A cancel ends the wait, not the read: the read's exchange keeps asking until the provider's deadline, set to the time left of `timeout_ms`, ends it and closes its socket (measured with the agent paused after the acquisition: a 500 ms `timeout_ms` answered at 503 ms and the read ended at 471 ms; a cancel at 1,000 ms of a 3,000 ms call answered at 1,002 ms and the read ended at 2,966 ms).
+
+A v2c community is no principal.
+The seed's community is the only credential, since a seed carries no separate agent credential, and SNMPv2c gives a client no way to prove what it may read: what a community reaches is the agent's own view (VACM), held in the access control tables Studio withholds.
+So the data scope is the agent's view and Studio's withheld set together.
+Give an SNMP seed with `mcp: true` a community whose view holds only what an MCP client should read.
+
+What a community reaches, in two layers, measured on the Net-SNMP 5.9.4 fixture with three communities made per run and markers planted in a running process's arguments, an SNMPv3 user's keys, two notification targets' communities and the `extend`, `exec` and `procfix` directives' commands (`tests/fixtures/snmp/5.9.4/mcp-boundary/boundary.json`):
+
+| Item | The agent's view | Studio |
+| --- | --- | --- |
+| the system group, under a community whose view is that group alone | answered | answered |
+| an object outside that view, and one that does not exist | `noSuchObject` alike | the same answer for both |
+| a walk of mib-2 under that community | the system group alone | answered as the view answers it |
+| a running process's parameters, under a community whose view is the whole tree | answered raw with the planted marker | withheld: never asked for by name, a `next` landing in it answered `withheld`, a walk stepping over it with its reason in `notes` |
+| the `extend` and `exec` directives' commands and output, and the `procfix` command | answered raw with the planted markers | withheld the same way |
+| an SNMPv3 user's name, the notification targets' communities, the access control tables' group names | answered raw with the planted markers | withheld the same way |
+| every other instance of the raw walk of `1`, 2,956 in all | answered | answered; none carried a marker |
+
+So the scope of a narrow community is held by the agent's view, which does not depend on parsing the request, and the withheld set, computed on every answer, holds every subtree the probe found a marker in whatever the view grants.
+A `set` sent through the tool with its fence removed, with a community whose view may write, is refused by the provider's reader before anything is sent and leaves `sysContact` as it was, while the same Set sent raw with that community changes it.
+What no prefix list holds is written in [section 13.3](#133-values-and-what-is-withheld): a `pass`, `pass_persist` or `proxy` directive's subtree and a vendor MIB the list does not name are read as the agent answers them.
 
 ## Migration DDL
 

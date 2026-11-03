@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 83
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 82
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP15 · 15
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -9078,23 +9078,6 @@ Kept so that record exposure, group and config exposure and a bounded fetch are 
 Found 2026-10-31 when agent mode joined Apache Kafka.
 
 **Done when:** the owner rules on which record values, groups and configs agent mode and MCP may read on Kafka and how they are redacted, a fetch on the agent path is bounded by a decompressed-size cap or an isolated process with memory and termination limits, with compressed-bomb tests, and the `kafkaread` pack offers the workflows that ruling opens, with tests; cited in `docs/AGENT.md`.
-
-### B158. SNMP's agent reads withhold the security and target modules, and it has no MCP surface
-
-Agent mode executes SNMP reads under the `snmpget` statement language, one of the console's four commands per call, `get`, `next`, `walk` and `table`, read with the console's own parser and resolver (`docs/providers/snmp.md`, section 13).
-The boundary is the provider's structural closed table: the agent's client holds the Get, GetNext and GetBulk requests alone, RFC 3411's Read Class, over an exchange whose valve parses every outgoing datagram and refuses any other PDU, so no Set or notification can be sent on the agent path, and a GetBulk keeps the documented max-repetitions cap of 50 and a request the documented bound of 400 identifiers.
-A v2c community cannot be proved read-only from the client: measured on the Net-SNMP 5.9.4 fixture, a raw Set with its read-only community is refused `noAccess`, but the rights of a community live in the access control tables, which are among the withheld modules, so no credential is the boundary.
-Values are the device's own management readings, so they are answered, rendered as the console renders them; withheld instead, by the prefix of the resolved identifier, are `SNMP-TARGET-MIB` (1.3.6.1.6.3.12), `SNMP-NOTIFICATION-MIB` (1.3.6.1.6.3.13), `SNMP-PROXY-MIB` (1.3.6.1.6.3.14), `SNMP-USER-BASED-SM-MIB` (1.3.6.1.6.3.15), `SNMP-VIEW-BASED-ACM-MIB` (1.3.6.1.6.3.16) and `SNMP-COMMUNITY-MIB` (1.3.6.1.6.3.18), the transport security modules `SNMP-SSH-TM-MIB` (1.3.6.1.2.1.189), `SNMP-TSM-MIB` (1.3.6.1.2.1.190) and `SNMP-TLS-TM-MIB` (1.3.6.1.2.1.198), `SNMP-USM-DH-OBJECTS-MIB` (1.3.6.1.3.101) and Net-SNMP's `NET-SNMP-VACM-MIB` (1.3.6.1.4.1.8072.1.9), whose values and instance suffixes can carry community strings, user names, keys, security names and group names: an identifier inside one is never sent, an answer landing inside one is a `withheld` row with no value or instance, a walk or table covering one steps over it, so no request starts inside it, and warns it by name, and a walk or table inside one is refused before anything is sent.
-Every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is read, so `walk 1.3.6.1.6.3` is admitted and steps over the six framework modules.
-On a handle of either agent profile the console is refused, and the overview, performance, storage, session, slow-query, table and index readings answer their reason rather than an empty reading; health is the console's own Get of `sysDescr.0` and `sysUpTime.0`.
-So the language offers the investigation and the operations workflow only: query optimization and database assessment need a plan and a profile an agent does not have, and the data analysis's tools assume a store of records.
-`MCP_EXPOSABLE.snmp` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.snmp` false, so MCP `run_read_query` refuses an SNMP connection, because no MCP surface that withholds the security and target modules is designed yet.
-SNMPv3 has no connection form yet, so no v3 key or passphrase reaches the agent path today; when the form lands, the agent path is to be re-measured with it.
-Kept so that MCP access, and any widening of what agent mode reads on SNMP, are decisions of their own rather than side effects of agent mode joining.
-
-Found 2026-10-31 when agent mode joined SNMP.
-
-**Done when:** a per-engine exposure ruling opens MCP for SNMP, an MCP surface that withholds the same modules by identifier prefix is designed and `MCP_EXPOSABLE.snmp` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/snmpget/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and withholding, and `MCP_STATEMENT_READ.snmp` is true, with tests that no MCP answer carries a community, a key or an instance of a withheld module; cited in `docs/AGENT.md`.
 
 ### B159. NETCONF's agent reads withhold keys, password hashes and access rules, and it has no MCP surface
 
