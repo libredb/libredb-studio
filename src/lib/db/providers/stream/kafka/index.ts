@@ -110,6 +110,31 @@ function unloadableLibrary(error: unknown): KafkaError | undefined {
   );
 }
 
+/**
+ * The connect's probe, failed as a connect timeout once the budget runs out. The probe settles on its
+ * own later, when the client it runs on is closed, and that late answer is dropped.
+ */
+async function withinConnectBudget<T>(probe: Promise<T>, budgetMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new KafkaError("network", "The broker could not be reached (connect-timeout)", {
+            nodeCode: "connect-timeout",
+          }),
+        ),
+      budgetMs,
+    );
+  });
+  probe.catch(() => undefined);
+  try {
+    return await Promise.race([probe, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Every read is held to the same bounds (spec 5.4, K5). */
 const READ_LIMITS: ReadLimits = { resultByteBudget: KAFKA_RESULT_BYTE_BUDGET, cellLimit: KAFKA_CELL_LIMIT };
 
@@ -288,8 +313,10 @@ export class KafkaProvider extends BaseDatabaseProvider {
         throw unloadableLibrary(error) ?? error;
       });
       // One forced read of the brokers proves a broker answers the protocol at this address, with
-      // this credential, while the user is still looking at the connection form.
-      await client.metadata([]);
+      // this credential, while the user is still looking at the connection form. It runs under the
+      // query timeout as a whole: the library retries the read, and the ApiVersions read inside it,
+      // after a delay of its own, which the connect and request timeouts bound one attempt at a time.
+      await withinConnectBudget(client.metadata([]), this.queryTimeout);
     } catch (error) {
       const failure = toDatabaseError(error, this.bootstrap, this.queryTimeout);
       // A client that was built holds sockets, so a connect that fails after it closes them (spec
