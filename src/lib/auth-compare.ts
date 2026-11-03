@@ -12,7 +12,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
  *
  * HMAC with a per-process random key rather than a bare digest, so the digests are unpredictable
  * to an attacker who can submit inputs. The key is a lazy module-level singleton, matching the
- * _jwtSecret pattern in src/proxy.ts:14-20. Unlike that one, the memo here is load-bearing rather
+ * _jwtSecret pattern in `_jwtSecret` in src/proxy.ts. Unlike that one, the memo here is load-bearing rather
  * than an optimization: the key is generated, not read, so re-deriving it per call would make two
  * digests of the same input differ.
  *

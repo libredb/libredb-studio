@@ -511,7 +511,7 @@ describe("QueryToolbar", () => {
   });
 
   test("No transaction, sandbox, edit or import controls for an InfluxQL connection (InfluxDB spec 6.7)", () => {
-    // Correct as is: the group is drawn for `queryLanguage: "sql"` alone (`QueryToolbar.tsx:120`), and an
+    // Correct as is: the group is drawn for `queryLanguage: "sql"` alone (`QueryToolbar` in `QueryToolbar.tsx`), and an
     // InfluxDB (InfluxQL) connection is read-only, with no transaction to open and no row to write.
     const influxqlMetadata: ProviderMetadata = {
       capabilities: { ...sqlMetadata.capabilities, queryLanguage: "influxql" },

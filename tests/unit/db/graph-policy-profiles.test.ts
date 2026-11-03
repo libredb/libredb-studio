@@ -110,7 +110,7 @@ describe("the graph policy profile population", () => {
    * either way: a test that pinned the current answer would bless it, and a test that pinned
    * `undefined` would fail until the source is fixed, which is a shared file and not this change's.
    * Its consequence was measured and is narrow: the only reader is the editor's Cypher completion
-   * provider (`QueryEditor.tsx:647`, behind `language === CYPHER_LANGUAGE_ID`), and the policy that
+   * provider (`QueryEditor` in `QueryEditor.tsx`, behind `language === CYPHER_LANGUAGE_ID`), and the policy that
    * actually refuses a write comes from the provider's own import of `NEO4J_POLICY_PROFILE`, never
    * from this lookup. Reported to the chain rather than fixed in passing.
    */

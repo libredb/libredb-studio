@@ -140,7 +140,7 @@ describe("describeExportScope", () => {
    * generates `SELECT * FROM app.orders;`, the limiter bounds it at the preview page size
    * (`wasLimited: true`, `limit: 50`) and a table of more than 50 rows fills it, and since
    * #1440 the route answers `hasMore: true` only when its probe found a row past the bound
-   * (`src/lib/api/page-probe.ts:32`). Elasticsearch measures identically. Both declare
+   * (`pageOfProbe` in `src/lib/api/page-probe.ts`). Elasticsearch measures identically. Both declare
    * `supportsResultPagination: false` — `prepareQuery` throws on any `offset > 0` — so the
    * grid correctly offers no control.
    *

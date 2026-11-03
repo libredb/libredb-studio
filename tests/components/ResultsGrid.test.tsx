@@ -2138,7 +2138,7 @@ describe("ResultsGrid", () => {
       fireEvent.click(revealButton!);
 
       // After reveal, the cell should show actual email value (not ***)
-      // This confirms the revealed cell branch (lines 328-333) is hit
+      // This confirms the revealed cell branch is hit
       expect(container.textContent).toContain("alice@example.com");
     });
 

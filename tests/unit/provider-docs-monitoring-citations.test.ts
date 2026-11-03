@@ -4,36 +4,29 @@
  * A line number hand-copied into prose has nothing measuring it, so it is true only until the
  * next insertion above it, and nothing goes red when it stops being true.
  *
- * `docs/providers/elasticsearch.md` and `docs/providers/opensearch.md` carried a
- * monitoring-seam table whose eight rows each pinned a method to a line number in
- * `src/lib/db/providers/sql/search/index.ts`. All eight were written in one commit —
- * `git log -S"index.ts:811" -- docs/providers/elasticsearch.md` returns 25712e68 (#429) alone —
- * as 751/811/831/844/860/873/884/898. They were never right: in that same commit the eight
- * declarations sat at 808/868/888/901/917/930/941/955, a uniform +57, so the numbers had been
- * read off the file before something above them grew and were shipped stale. Today the offset is
- * a uniform +65. Being wrong by a constant is what let this survive: the rows stayed in
- * ascending order and went on reading as a consistent, ordered, plausible list, so there was no
- * internal contradiction for a reader to notice and no gate measuring the numbers at all.
+ * `docs/providers/elasticsearch.md` and `docs/providers/opensearch.md` carried a monitoring-seam
+ * table whose eight rows each pinned a method of `src/lib/db/providers/sql/search/index.ts` to a
+ * hand-copied line number. All eight were written in one commit (#429), and they were never right:
+ * in that same commit every declaration sat the same distance below its number, so the numbers had
+ * been read off the file before something above them grew. Being wrong by a constant is what let
+ * this survive: the rows stayed in ascending order and read as a consistent, plausible list.
  *
- * `docs/providers/redis.md` shows what hand-correcting such a number buys. #89 wrote
- * `base-provider.ts:102` for `getMonitoringData()`, true at that commit; #122 corrected it to
- * `:99`, true at that commit; it has since rotted a second time. A method name is greppable and
- * survives an insertion above it, so it needs no correction round at all.
+ * `docs/providers/redis.md` shows what hand-correcting such a number buys: #89 cited a line of
+ * `base-provider.ts` for `getMonitoringData()`, #122 corrected it, and it has since rotted a second
+ * time. A method name is greppable and survives an insertion above it, so it needs no correction
+ * round at all.
  *
  * These tests therefore pin the policy rather than any coordinate: the seam rows name real
- * declarations, they are listed in the order the source declares them, both search docs name the
- * same eight, and the docs in scope carry no `:<line>` suffix.
+ * declarations, they are listed in the order the source declares them, and both search docs name
+ * the same eight. That no tracked file cites a line number at all is held repository-wide by
+ * `tests/unit/no-source-line-citations.test.ts`.
  *
- * SCOPE: every document in `NAMED_CITATIONS`, whole, which as of #1547 is every doc under
- * `docs/providers/` that ever cited a line — the two search docs were the last two, and they are
- * now in the list like the rest rather than guarded only inside their monitoring section. Plus one
- * file across every provider doc: `factory.ts` is cited by its entry point and never by a line.
+ * SCOPE: every document in `NAMED_CITATIONS`, whole, plus one file across every provider doc:
+ * `factory.ts` is cited by its entry point.
  *
- * What is still NOT measured: a doc that cites no line at all is in none of these lists, so a NEW
- * doc could introduce one and only the per-doc assertions above would miss it. Whether the names
- * the uncovered docs cite are the right ones is also not asserted anywhere — these tests measure
- * that a cited name exists and is listed in declaration order, never that it is the name the prose
- * ought to have picked.
+ * What is still NOT measured: whether the names the docs cite are the right ones. These tests
+ * measure that a cited name exists and is listed in declaration order, never that it is the name
+ * the prose ought to have picked.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -481,7 +474,7 @@ const NAMED_CITATIONS = [
   /**
    * The two search docs, whole, and the last two docs under `docs/providers/` that cited by line
    * (#1547). They were also the worst of them: of the 55 unique citations, 14 landed on a
-   * declaration, two named a line past the end of the file they cited, and `index.ts:625` for
+   * declaration, two named a line past the end of the file they cited, and `toTableStats` in `index.ts` for
    * `query()` was 347 lines from the declaration it claimed. So the rewrite worked out what each
    * citation MEANT rather than reading whatever sits on that line today, which is why several now
    * name a module-level helper, a docblock or a table instead of a method on this class.
@@ -714,11 +707,6 @@ describe("measured aggregate helper docs", () => {
 
 describe("provider docs rewritten this round: code cited by name, whole file", () => {
   for (const { doc, source, methods } of NAMED_CITATIONS) {
-    test(`${doc} cites no line number anywhere`, () => {
-      // `.tsx` too: couchbase.md cited `ConnectionModal.tsx:139`, which `\.ts:` cannot see.
-      expect(read(doc)).not.toMatch(/\.tsx?:\d/);
-    });
-
     test(`${doc} names methods that ${source} really declares`, () => {
       const text = read(doc);
       const provider = read(source);
@@ -756,9 +744,6 @@ describe("provider docs rewritten this round: code cited by name, whole file", (
       expect(read(doc)).toMatch(
         /`createDatabaseProvider\(\)`\s*\(\[`factory\.ts`\]\(\.\.\/\.\.\/src\/lib\/db\/factory\.ts\)\)/,
       );
-    }
-    for (const doc of PROVIDER_DOCS) {
-      expect(read(doc), `${doc} cites a line inside factory.ts`).not.toMatch(/factory\.ts:\d/);
     }
     expect(read(FACTORY)).toMatch(/^export async function createDatabaseProvider\(/m);
   });
@@ -866,22 +851,6 @@ describe("search provider docs: the module-level names #1547 introduced", () => 
   });
 });
 
-const TOP_LEVEL_NAMED_CITATION_DOCS = [
-  "docs/AGENT.md",
-  "docs/FEATURES.md",
-  "docs/ADDING_A_PROVIDER.md",
-  "docs/DATABASE_PROVIDERS.md",
-  "docs/SECURITY.md",
-] as const;
-
-describe("top-level docs: code cited by name, whole file", () => {
-  for (const doc of TOP_LEVEL_NAMED_CITATION_DOCS) {
-    test(`${doc} cites no TypeScript line number anywhere`, () => {
-      expect(read(doc)).not.toMatch(/\.tsx?:\d/);
-    });
-  }
-});
-
 /**
  * A quoted VALUE rots exactly the way a line number does, and nothing above measures it.
  *
@@ -923,7 +892,7 @@ describe("provider docs that quote a label value verbatim", () => {
  * #647: `SQLBaseProvider` has no placeholder logic. The real home is
  * `positionalPlaceholder()` in `src/lib/sql/values.ts`. Docs paraphrased the
  * capability onto the base class (or claimed inheritance); #640's `getPlaceholder`
- * grep missed every paraphrase, and a closed phrasing list missed `mysql.md:31`.
+ * grep missed every paraphrase, and a closed phrasing list missed the "1. Overview" section of `mysql.md`.
  *
  * Assert on ATTRIBUTION in the sentence that contains a `placeholder(s)` match:
  * denials ("Not in the list…", "no longer has") clear only that sentence, not a

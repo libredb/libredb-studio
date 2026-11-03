@@ -17,7 +17,7 @@
  *
  * THREE: the guard belongs here, in the module the library is handed, and not in a patch on the
  * socket's own send. The library has one send call site and it is always
- * send(buffer, 0, length, port, host, cb) (`index.js:2579` of 3.29.2). A patched socket
+ * send(buffer, 0, length, port, host, cb) (in the library's `index.js` at 3.29.2). A patched socket
  * nevertheless sees a second shape, send([buffer], port, host, cb), and that shape is the
  * runtime's rather than the library's: a datagram sent before the bind completes is queued, and
  * the queue is flushed by re-entering the same public send. Measured with `node:dgram` alone and
@@ -73,7 +73,7 @@ export interface ClientFacingSocket {
   address(): unknown;
   /**
    * Both of these are called. `unref()` runs right after the socket is made, and `ref()` runs
-   * when the first request is registered (`index.js:2555` of 3.29.2). A facade that offers only
+   * when the first request is registered (in the library's `index.js` at 3.29.2). A facade that offers only
    * `unref` throws there, which is how this interface was found to be short: the first end to end
    * run against the real client failed on `this.dgram.ref is not a function`, and no test written
    * against a reproduction of the call shapes could have caught it.

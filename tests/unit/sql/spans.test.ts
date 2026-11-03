@@ -1153,8 +1153,8 @@ describe("readSqlSpan: optimizer hints read as code", () => {
 });
 
 // `lineCommentBackslashContinues` (Spark's row): a backslash immediately before the line feed continues a `--` comment
-// onto the next line, and one before a carriage return and line feed does not (`SIMPLE_COMMENT`,
-// `SqlBaseLexer.g4:687-689` at v4.2.0). The rule pairs a backslash with nothing else, so the second of two continues it.
+// onto the next line, and one before a carriage return and line feed does not (`SIMPLE_COMMENT` in Spark
+// v4.2.0's `SqlBaseLexer.g4`). The rule pairs a backslash with nothing else, so the second of two continues it.
 describe("readSqlSpan: line comments a backslash continues", () => {
   const CONTINUES: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, lineCommentBackslashContinues: true };
 
@@ -1191,8 +1191,8 @@ describe("readSqlSpan: line comments a backslash continues", () => {
 });
 
 // `lineCommentEndsAtCarriageReturn` (Spark's row): a carriage return ends a `--` comment as a line feed does, a line
-// feed right after it ends the comment with it, and a backslash before it continues nothing (`SIMPLE_COMMENT`,
-// `SqlBaseLexer.g4:687-689` at v4.2.0: the body takes neither `\r` nor `\n`, and `'\r'? '\n'?` closes it).
+// feed right after it ends the comment with it, and a backslash before it continues nothing (`SIMPLE_COMMENT` in
+// Spark v4.2.0's `SqlBaseLexer.g4`: the body takes neither `\r` nor `\n`, and `'\r'? '\n'?` closes it).
 describe("readSqlSpan: line comments a carriage return ends", () => {
   const SPARK = resolveSqlGrammar("spark");
 

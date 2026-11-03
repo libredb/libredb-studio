@@ -41,7 +41,7 @@ const USE_SSL_VALUE = /^(?:true|false)$/i;
 /** A token parameter wherever a refused text holds one: `token=` in any case, with or without a value. */
 const TOKEN_PARAMETER = /token=/i;
 
-// The host and port rules of src/lib/connection-host-uri.ts:37-45, copied because this module imports types only;
+// The host and port rules of `LABEL` in src/lib/connection-host-uri.ts, copied because this module imports types only;
 // tests/unit/db/spark/sc-uri.test.ts holds every host and port it returns to validateHost and validatePort.
 const LABEL = /^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$/i;
 const NUMERIC_LABEL = /^(?:\d+|0x[0-9a-f]*)$/i;

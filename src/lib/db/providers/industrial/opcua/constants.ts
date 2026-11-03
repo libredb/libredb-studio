@@ -135,7 +135,7 @@ export const OPCUA_MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
  *
  * Part 11 6.5.3: in `ReadRawModifiedDetails`, "The default value 0 indicates that there is no
  * maximum" for `numValuesPerNode`, and `node-opcua-client` sends 0 when the caller sets nothing
- * (`options.numValuesPerNode || 0`, `dist/private/client_session_impl.js:328`), so a read that said
+ * (`options.numValuesPerNode || 0`, `ClientSessionImpl.readHistoryValue` in node-opcua-client 2.187.18's `dist/private/client_session_impl.js`), so a read that said
  * nothing got whatever page the server felt like.
  *
  * THE SERVER MAY STILL ANSWER FEWER, and OPC PLC does: asked for 1, 50, 100, 101, 250, 500, 1,000

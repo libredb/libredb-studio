@@ -42,8 +42,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > of the fork and must never be written over the pair. Both refuse `CREATE TABLE` and `UPDATE`
 > with HTTP 400, and the error names the PRODUCT rather than the statement: Elasticsearch answers
 > `parsing_exception` to both, OpenSearch `SQLFeatureNotSupportedException` to both — see the
-> header of `src/lib/db/providers/sql/search/index.ts`, points 2 and the `DELETE` note at
-> line 183. On Druid the true sentence is the one `docs/providers/druid.md` and the README both
+> header of `src/lib/db/providers/sql/search/index.ts`, points 2 and its `DELETE` note. On Druid the true sentence is the one `docs/providers/druid.md` and the README both
 > carry: Druid SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`. "Druid has no `INSERT`" is
 > false — `INSERT` and `REPLACE` exist there through the MSQ task engine, on an endpoint this
 > provider does not use (`docs/providers/druid.md` §5.5). On Db2 LUW a table takes inline edits and

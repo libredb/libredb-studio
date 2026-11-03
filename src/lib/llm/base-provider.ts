@@ -18,7 +18,7 @@ export abstract class BaseLLMProvider implements LLMProvider {
   /**
    * The retry settings every stream of this provider goes through, or none for the defaults.
    *
-   * A SEAM, the way `KubernetesSeams` is one (`platform/kubernetes/client.ts:37`, whose own
+   * A SEAM, the way `KubernetesSeams` is one (`platform/kubernetes/client.ts`, whose own
    * docblock says "a test hands in a recording one"): the backoff is real waiting, and a unit test
    * that asserts how an error is MAPPED should not spend it. MEASURED on main: the four provider
    * test files spend 12,2 to 18,3 s each, and ~20 of their cases take 3.004 ms apiece - 1.000 +

@@ -1165,7 +1165,7 @@ describe("ApplyPreviewDialog", () => {
      * sent nor that no answer came back; the one thing every member shares is the DISPOSITION.
      *
      * The two sentences are verbatim: `httpSourceApplier.apply`'s silent-status sentence
-     * (`source-applier.ts:155`) and Trino's kill message (`http-transport.ts` KILL_MESSAGE path).
+     * (`apply` in `source-applier.ts`) and Trino's kill message (`http-transport.ts` KILL_MESSAGE path).
      */
     draw(
       refusal({

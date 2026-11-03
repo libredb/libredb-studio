@@ -259,7 +259,7 @@ Two components are described below and a claim true of one can be false of the o
 
 ### 19. MCP Server for your own AI client (off by default)
 *   **Your own client:** Claude Code, Codex, Cursor, VS Code or Gemini CLI connect to `/api/mcp` with a token each user mints on the settings screen.
-*   **Fifteen read-only tools:** `list_connections` and `inspect_schema` on every engine, `run_read_query` on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase, `run_kubectl_read` on Kubernetes, `run_mongo_command` on MongoDB, `run_libredb_read` on LibreDB, which opens the file read-only for each command, `run_weaviate_read` on Weaviate, `run_qdrant_read` on Qdrant, `run_cypher_read` on Neo4j Enterprise Edition, `run_milvus_read` on Milvus, metadata only, `run_redis_read` on Redis, `run_etcd_read` on etcd, `run_rabbitmq_read` on RabbitMQ, which answers each stream message's offset and body size only, `run_kafka_read` on Apache Kafka, metadata only, and `run_mtconnect_read` on MTConnect.
+*   **Read-only tools:** `list_connections` and `inspect_schema` on every engine offered to MCP, and one statement tool per statement language, each named with the engines it serves in [docs/MCP.md](./MCP.md#what-it-is).
 *   **Opted-in connections only:** only the seed connections an operator opts in with `mcp: true`, filtered by the token's role; the database credentials stay on the server.
 *   **Bounded and audited:** every result is bounded to 32 KiB and marked as untrusted data, and every call is audited.
 *   **Setup:** client configuration and limits are in [`docs/MCP.md`](MCP.md).

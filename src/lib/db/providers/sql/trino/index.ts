@@ -503,7 +503,7 @@ export class TrinoProvider extends SQLBaseProvider {
       // than derived from the role, because the role is the wrong rule for at least one
       // engine (#789) and the conformance contract checks the literal against this
       // provider's own answer instead. One `describeObject` here is the most expensive
-      // single read in the fleet at 25.8 ms (docs/providers/trino.md:812), which the tree
+      // single read in the fleet at 25.8 ms (the "Hive-native views, and what Phase 1 does with them" section of docs/providers/trino.md), which the tree
       // pays once per row a reader actually expands.
       objectKinds: [
         // A row write reaches whatever the CONNECTOR allows - measured on 476, an INSERT

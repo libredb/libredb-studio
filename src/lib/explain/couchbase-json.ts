@@ -115,7 +115,7 @@ export const couchbaseJsonStrategy: ExplainStrategy = {
   // both modes return the estimate, exactly as the SQLite strategy does for
   // EXPLAIN QUERY PLAN. Declining analyze instead would disable the feature
   // entirely rather than narrow it: the direct Explain action always builds with
-  // mode "analyze" (use-query-execution.ts:165) and refuses the run when the
+  // mode "analyze" (`useQueryExecution` in use-query-execution.ts) and refuses the run when the
   // strategy returns null.
   buildSql(sql) {
     // Couchbase's `EXPLAIN` describes without running, so a `WITH` binding is safe to explain.

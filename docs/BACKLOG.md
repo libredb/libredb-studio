@@ -16,7 +16,7 @@ None of it is a GitHub issue.
   limitations". Recording one here as well made the two roles indistinguishable and the file
   unshrinkable - a limit could not be settled without deleting the only record of it. So state it
   where it bites, then delete the entry. Ten were settled that way on 2026-08-28.
-- Re-verify before acting. Line numbers and behaviour claims age.
+- Re-verify before acting. Behaviour claims age.
 - Promote an entry to an issue when it needs discussion, an outside reporter, or a release note.
 - The reverse happens too. An issue that is understood, breaks nothing today and is not scheduled
   belongs here. Close it with a pointer to its entry. A defect a user can hit stays an issue.
@@ -33,7 +33,7 @@ None of it is a GitHub issue.
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U196 · 182
 - [Dependencies](#dependencies) — P1-P13 · 11
-- [Documentation](#documentation) — DOC3-DOC35 · 31
+- [Documentation](#documentation) — DOC3-DOC35 · 29
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 85
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP13 · 13
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP14 · 14
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -142,7 +142,7 @@ MySQL's `BEGIN` alone is a transaction, as SQLite's is, so its rule is not Oracl
 CQL's batch is one statement whose body holds a `;` after each inner write (`docs/providers/cassandra.md`, "`BEGIN BATCH … APPLY BATCH` is a single statement").
 The `cassandra` grammar row declares no body rule, `script: DEFAULT_SQL_GRAMMAR.script` (`src/lib/db/providers/sql/cassandra/sql-grammar.ts`), so `splitExecutionUnits` in `src/lib/sql/statement-splitter.ts` ends a unit at every code `;`.
 On this tree a two-insert batch comes back as three units: `BEGIN BATCH` with the first `INSERT`, the second `INSERT`, and `APPLY BATCH`.
-The multi-statement route runs those units one by one (`src/app/api/db/multi-query/route.ts:213`), so the first fails with "line 0:-1 mismatched input <EOF> expecting K_APPLY" and the editor reports "Executed 0/81 statements" for a batch the splitter cut into 81 units, where the batch should have run as one statement.
+The multi-statement route runs those units one by one (`POST` in `src/app/api/db/multi-query/route.ts`), so the first fails with "line 0:-1 mismatched input <EOF> expecting K_APPLY" and the editor reports "Executed 0/81 statements" for a batch the splitter cut into 81 units, where the batch should have run as one statement.
 Neither `blocks` value fits: `pl-sql` and `trigger-body` read `BEGIN … END`, and a CQL batch closes with `APPLY BATCH`.
 
 Seen 2026-10-12 in the editor during other provider work; reproduced on this tree by calling `splitExecutionUnits` with the `cassandra` grammar.
@@ -318,7 +318,7 @@ recorded where a reader meets them rather than re-derived by the next sweep.
 ### D25. Couchbase turns an RBAC denial into a zero, which the absence rule now forbids
 
 Found 2026-08-25 by the audit D24 asked for. `degradeTo()`
-(`src/lib/db/providers/document/couchbase/index.ts:196`) swallows a refused management read and
+(`degradeTo` in `src/lib/db/providers/document/couchbase/index.ts`) swallows a refused management read and
 substitutes a fallback VALUE - `{}` for the pools and bucket payloads, and
 `{ tableCount: 0, indexCount: 0 }` for the catalog counts. Its own comment says why the absences are
 ordinary there: an RBAC role that may read documents may not read `/pools`. But the substitute is a
@@ -570,7 +570,7 @@ optional fields are absent rather than 0 on the refusal, each provider's doc and
 `http-transport.ts` resolves the query service from the cluster's own node map, which is right for a
 plain deployment and wrong behind a port mapping. A node advertises its INTERNAL ports there, so a
 container published on other host ports hands back an address only the container can reach, and the
-`DEFAULT_QUERY_PORT = 8093` fallback at `http-transport.ts:484` is unreachable for the same reason.
+`DEFAULT_QUERY_PORT = 8093` fallback at `CouchbaseHttpTransport.pickQueryEndpoint` in `http-transport.ts` is unreachable for the same reason.
 The connection's own port is read for management (`:367`) and never for the query service.
 
 Measured on Couchbase CE 8.0.2 during the object-model epic's live acceptance: a node published on
@@ -651,7 +651,7 @@ terms why this deployment cannot reach it.
 ### D57. MariaDB's `package` and `sequence` folders are never drawn in the standalone tree
 
 `POST /api/db/provider-meta` reads `getCapabilities()` off a provider it never connects
-(`src/app/api/db/provider-meta/route.ts:44`, #457), and `MySQLProvider.objectKinds` is the one
+(`POST` in `src/app/api/db/provider-meta/route.ts`, #457), and `MySQLProvider.objectKinds` is the one
 declaration in the fleet resolved from the server's own `VERSION()` string, so an unconnected
 provider answers the MySQL six and the client's copy of the declaration never gains MariaDB's two.
 The tree draws its folders from that copy (`src/components/object-tree/flatten.ts`), so the two kinds
@@ -835,7 +835,7 @@ trigger, so a real server would join nothing and the Triggers folder would list 
 count beside it kept counting. Nothing in the tree would say so.
 
 The SOURCE statement added by #789 IS pinned as text at
-`tests/integration/db/postgres-provider.test.ts:4393`; this is the Phase 1 LISTING statement beside
+`EXPECTED_TRIGGER_SOURCE_SQL` in `tests/integration/db/postgres-provider.test.ts`; this is the Phase 1 LISTING statement beside
 it, which is not.
 
 **Done when:** the listing statement is pinned as text the way the source statement is, and the
@@ -935,7 +935,7 @@ sentences or its docblock says why a 400 raised before the provider is a differe
 
 `docs/providers/duckdb.md` section 3.11 says a multi-statement string runs the first statement only, that the rest is
 silently discarded, and that there is no error and no second result.
-`src/lib/db/providers/sql/duckdb/index.ts:873-876` says `client.run()` executes only the FIRST statement and that the method guarantees the tail is never executed.
+`DuckDBProvider.queryReadOnly` in `src/lib/db/providers/sql/duckdb/index.ts` says `client.run()` executes only the FIRST statement and that the method guarantees the tail is never executed.
 
 Measured 2026-09-13 on DuckDB v1.5.5 through `@duckdb/node-api` 1.5.5-r.4, while grounding #778 Phase 3.
 `CREATE TABLE probe_c(i INTEGER); CREATE TABLE probe_c(i INTEGER)` answers
@@ -1055,8 +1055,8 @@ reachable at all (`hideOthers` marks the box and installs no observer).
 
 Second, smaller, and in the same surface: `onApplyInFlightChange` on
 `src/components/object-source/ObjectSourceView.tsx` is optional, and the `undefined` arm now has no
-shipped caller. The pane has exactly two mounts in `src` (`Studio.tsx:1127`,
-`StudioWorkspace.tsx:833`) and both pass it; `src/exports/` re-exports the pane from nowhere and
+shipped caller. The pane has exactly two mounts in `src` (`Studio` in `Studio.tsx`,
+`StudioWorkspace` in `StudioWorkspace.tsx`) and both pass it; `src/exports/` re-exports the pane from nowhere and
 `dist/*.d.ts` carries no `ObjectSourceView`, so no adopter can mount it without the prop. The arm
 exists for the 14 mounts in `tests/components/object-source/ObjectSourceView.test.tsx` and for
 nothing else.
@@ -1119,7 +1119,7 @@ superseded one: the provider cache miss that opens the next forward disconnects 
 connection's own teardown - `removeProvider` and the 30-minute idle sweep, both of which close BY
 CONNECTION ID and take every forward with them - so the count is what one id accumulates inside one
 idle window. It is caller-driven, on the same reachability D86 already established:
-`src/lib/seed/resolve-connection.ts:21-23` returns a posted inline connection verbatim, id included,
+`resolveConnection` in `src/lib/seed/resolve-connection.ts` returns a posted inline connection verbatim, id included,
 so the host, the port and the bastion of each request are the caller's to vary.
 
 It is disclosed where a writer will read it (the `activeTunnels` docblock states the count, the
@@ -1243,7 +1243,7 @@ Measured 2026-09-15, while making `bun run test` green on all three platforms. T
 a platform or tool requirement and say so in their own title, and in both cases the requirement comes
 from the script under test rather than from the test:
 
-- `scripts/build-azure-package.mjs:273` builds the marketplace archive with `execFileSync("zip", ...)`.
+- `buildPackage` in `scripts/build-azure-package.mjs` builds the marketplace archive with `execFileSync("zip", ...)`.
   A stock Windows 11 machine has neither `zip` nor `unzip`, so `tests/unit/build-azure-package.test.ts`
   gates its build cases on both binaries. Writing the two-file archive with a pure JavaScript zip
   writer would make the Azure package reproducible everywhere and let the test read the archive back
@@ -1377,7 +1377,7 @@ checker rather than two copies of it.
 ### D103. `noAbstainingKinds` is enforced over the expectation's kinds, not the provider's declarations
 
 `assertColumnDeclarations` builds `abstained` by walking `listings`
-(`tests/helpers/object-surface-conformance.ts:618-626`), and `listings` holds only the kinds the
+(`tests/helpers/object-surface-conformance.ts`), and `listings` holds only the kinds the
 expectation gave a non-zero `want` (`:330-358`). The field's own docblock (`:201-208`) defines it
 over something else: "This provider declares `hasColumns` on EVERY kind it has". A provider that
 declares one kind without `hasColumns` and whose fixture happens to hold none of that kind is
@@ -1438,7 +1438,7 @@ D37's consolidation removes this if the shared TLS path is built on the Promethe
 ### D105. `StorageStats.sizeBytes` and `TableStats.totalSizeBytes` are required, so an engine that measures no size publishes a zero
 
 `StorageStats` in `src/lib/db/types.ts` declares `sizeBytes: number`, so a storage row carries a number even where the engine publishes no byte count for what the row names.
-Trino writes `size: "N/A"` with `sizeBytes: 0` (`src/lib/db/providers/sql/trino/introspect.ts:877-878`), and its per-table "0 B" comes from `readTableStatistics` summing `data_size ?? 0` (`:637-644`), and since #1085 the Prometheus head-block row does the same, because neither its TSDB status nor its runtime information publishes a stored byte count.
+Trino writes `size: "N/A"` with `sizeBytes: 0` (`src/lib/db/providers/sql/trino/introspect.ts`), and its per-table "0 B" comes from `readTableStatistics` summing `data_size ?? 0`, and since #1085 the Prometheus head-block row does the same, because neither its TSDB status nor its runtime information publishes a stored byte count.
 The agent's `storage` reading forwards the field unchanged (`sizeBytes: store.sizeBytes` in `CURATED_READINGS`, `src/lib/agent/tools.ts`), so a model is handed a zero-byte store that nobody measured.
 The search provider takes the other route and emits no storage row for a size it was not given (`toStorageStats` in `src/lib/db/providers/sql/search/index.ts`).
 D44 is the same fabrication on `DatabaseOverview.databaseSizeBytes`, where the type already allows absence; here the type itself forbids it.
@@ -1488,8 +1488,8 @@ Not fixed in #1085: each remedy costs the inventory's read, which every connecti
 
 ### D108. One redirected listing fails the whole Elasticsearch or OpenSearch object count
 
-`countObjects` in `src/lib/db/providers/sql/search/index.ts` reads the five kinds together and turns a failed listing into that kind's `unavailable` answer, but only for the transport's own error: anything that is not a `SearchTransportError` is rethrown (`:1189`).
-Since #1086 the transport refuses a 3xx through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts` (`src/lib/db/providers/sql/search/http-transport.ts:1556`), and that throws a `ConnectionError`, outside the class the count catches.
+`countObjects` in `src/lib/db/providers/sql/search/index.ts` reads the five kinds together and turns a failed listing into that kind's `unavailable` answer, but only for the transport's own error: anything that is not a `SearchTransportError` is rethrown.
+Since #1086 the transport refuses a 3xx through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts` (`src/lib/db/providers/sql/search/http-transport.ts`), and that throws a `ConnectionError`, outside the class the count catches.
 So one listing a proxy redirects rejects the whole count with the redirect's message, where a refusal of the same listing marks only that kind and still counts the other four.
 
 Reproduced 2026-09-23 through the provider's own `countObjects`, with `fetch` replaced and the pipeline listing answering a 302 and then, as the control, a 403, from the repository root:
@@ -1618,7 +1618,7 @@ Not fixed in #1085: the fix that added the notice fixed its text as well, and na
 
 ### D114. Through an SSH tunnel, a verifying TLS mode checks the certificate against `127.0.0.1`
 
-`tunnelledConnection` in `src/lib/db/factory.ts` rewrites a tunnelled connection's host and port to the tunnel's local end, `127.0.0.1` and a local port, and keeps the real server under `TUNNEL_FAR_END` (`:260`).
+`tunnelledConnection` in `src/lib/db/factory.ts` rewrites a tunnelled connection's host and port to the tunnel's local end, `127.0.0.1` and a local port, and keeps the real server under `TUNNEL_FAR_END`.
 No provider hands the far end's name to its TLS layer: nothing in `src/` sets `servername`, `serverName` or `checkServerIdentity`, and the only reader of `TUNNEL_FAR_END` is `src/lib/db/connection-fingerprint.ts`.
 So `verify-system`, `verify-ca` and `verify-full` check the server's certificate against `127.0.0.1`, and a certificate issued to the server's own name fails with `ERR_TLS_CERT_ALTNAME_INVALID`.
 Measured 2026-09-24 through the real tunnel client, factory and providers, against an in-process SSH bastion and a certificate whose only SAN was the server's DNS name: Prometheus, PostgreSQL (the `pg` driver against a TLS endpoint), ClickHouse (`verify-system`, under Bun's `fetch`) and the Couchbase REST helper all failed that way.
@@ -1634,7 +1634,7 @@ Not fixed there: the rewrite and every driver's TLS options are shared by all en
 
 ### D115. A request naming a different query timeout rebuilds a cached provider, and disconnecting the old one ends work still running on it
 
-`getOrCreateProvider` in `src/lib/db/factory.ts` disconnects a cached provider whose `queryTimeout` differs from the request's and builds a new one (`:552`), and the execution-profile cache does the same (`:722`); `src/lib/db/provider-cache-key.ts` records why the timeout is not in the key.
+`getOrCreateProvider` in `src/lib/db/factory.ts` disconnects a cached provider whose `queryTimeout` differs from the request's and builds a new one, and the execution-profile cache does the same; `src/lib/db/provider-cache-key.ts` records why the timeout is not in the key.
 The old provider's `disconnect()` runs while another request may still be using it.
 On Prometheus it aborts every query running or queued on it (`disconnect` in `src/lib/db/providers/timeseries/prometheus/index.ts`), so that query fails as a cancellation nobody asked for.
 Measured 2026-09-24 against the compose Prometheus: a query that takes about 3.5 s, started on a provider opened with 60000 ms, failed after 301 ms with `QueryCancelledError` when the same connection was requested with 30000 ms; with 60000 ms both times it completed.
@@ -1810,19 +1810,19 @@ The editor and agent paths reach this function the same way.
 ### D127. Two seed-loading paths drop a connection without telling the caller
 
 An undefined variable now drops only that connection, and `src/lib/seed/operator-loader.ts` records the skip with a named reason that an admin reads through `GET /api/admin/seed-sources` and the Seed sources card.
-The built-in samples are left out on a filesystem error by an empty `catch` (`src/lib/seed/index.ts:82-84`, `:93-95`).
+The built-in samples are left out on a filesystem error by an empty `catch` (`getManagedConnections` in `src/lib/seed/index.ts`).
 Both reach the caller as a shorter list with no reason: `GET /api/connections/managed` and MCP's `list_connections` show fewer connections and say nothing.
 
-**Done when:** each failure reaches the caller as a named reason, in the shape of `SEED_CONFIG_UNREADABLE_REASON` (`src/app/api/connections/managed/route.ts:36-43`), or a recorded decision says why a partial list is the right answer.
+**Done when:** each failure reaches the caller as a named reason, in the shape of `SEED_CONFIG_UNREADABLE_REASON` (`GET` in `src/app/api/connections/managed/route.ts`), or a recorded decision says why a partial list is the right answer.
 
 ### D128. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
 
 `queryReadOnly` takes no signal (`DatabaseProvider.queryReadOnly` in `src/lib/db/types.ts`), and `cancelQuery` cannot find its statement.
-When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, on SQLite while blocking the process (A1), on ClickHouse until its `max_execution_time`, set to the time left, on libSQL, InfluxDB 3 and Couchbase, and through `run_qdrant_read` on Qdrant, until the provider closes its request at the time left, through `run_etcd_read` on etcd until the provider's gRPC deadline, set to the time left, cancels its call, on Elasticsearch and OpenSearch to its end, on Db2 to its end on the server, and on Oracle until the driver's call timeout, set to the time left, ends the statement's session, and on Apache Cassandra to its end, since the native protocol has no cancel, and `run_kafka_read` on Apache Kafka until the provider's deadline, set to the time left, drops the answer, a request already sent settling under the client's own timers, and `run_libredb_read` on LibreDB to its end, since the read runs on the Studio server's own thread and cannot be stopped midway, and `run_rabbitmq_read` on RabbitMQ until the read reaches its `limit`, finds no message for 1 s, or meets the provider's deadline, set to the time left, keeping the seed's one read slot until then, and `run_cypher_read` on Neo4j until the provider closes its session at the time left, which is also the transaction's timeout, and the server ends it, and on Redis, under `run_redis_read`, until the step of the read's own connection that the server holds, after its TCP connect (the sign-in, the `SELECT` of a database other than 0, the proof's round trip or the command), gives up when the time left passes without an answer, the connect itself waiting up to the provider's query timeout; that connection is the only one the read opens, closed then and never reopened (measured on Redis 8.10.2 and Valkey 9.1.2 on 2026-11-02 with the server held by `DEBUG SLEEP`: a call of 2000 ms cancelled at 300 ms was answered as the cancel at once, and its read settled 2000 to 2001 ms after the call began, when the sign-in gave up, and behind a proxy holding every byte, on database 0 and on database 1, the read opened one connection and settled at the time left), and `run_weaviate_read` on Weaviate until its answer or until the provider closes its request at the time left, and `run_mtconnect_read` on MTConnect until the provider's own time budget, set to the time left, closes its request, and `run_milvus_read` on Milvus until its gRPC calls of the request, the read-only proof's among them, are answered or the provider cancels them at the time left, with no retry or reconnect; a `timeout_ms` on ClickHouse, libSQL, InfluxDB 3, Oracle, Couchbase and Neo4j does end the statement, since the provider closes the request or the session at its deadline, and ClickHouse cancels a read-only query whose client goes away, as sqld, InfluxDB 3 Core and the Couchbase query service stop one (measured on sqld 0.24.33 and on InfluxDB 3 Core 3.12.0 on 2026-11-01, and on Couchbase Server 8.0.2 Enterprise on 2026-11-02), while Elasticsearch runs the statement to its end whether the request is closed at `timeout_ms` or by a cancel, and then holds no search context for it (measured on 9.1.4 on 2026-11-01), as OpenSearch runs the search to its end and then holds none (measured on 3.8.0 on 2026-11-02), Oracle frees the statement within two seconds of the call timeout (measured on 26ai Free 23.26.3 on 2026-11-02), Db2 runs it to its end on the server, its connection closed once it has ended (measured on 12.1.0.0 on 2026-11-02: a statement answered at `timeout_ms`, and one whose client closed the call, each ran 17 to 46 seconds more), and an Apache Cassandra coordinator runs the statement to its end after either (measured on 5.0.9 on 2026-11-02, where over three runs `system_views.queries` listed a filtered count for 875 to 4638 ms past the timeout answer and 721 to 1875 ms past a cancel), and Qdrant's provider closes its request at `timeout_ms` and, after a cancel, only at the time left (measured on 1.19.1 on 2026-11-02 through a proxy that held the request: closed 502 ms after a 500 ms `timeout_ms`, and 3001 ms after a request with a 3000 ms `timeout_ms` cancelled at 200 ms).
+When an MCP client cancels by closing the request, or `timeout_ms` passes, the statement tool stops waiting but the statement runs on; what each served engine does instead is the cancel table in `docs/MCP.md` "Limits".
 A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
 
-**Done when:** `queryReadOnly` accepts an `AbortSignal`, each provider named above stops the statement on abort, their provider docs say so, and `/api/mcp` passes the tool call's signal.
+**Done when:** `queryReadOnly` accepts an `AbortSignal`, every engine a statement tool serves stops the statement on abort, the cancel table and each provider doc say so, and `/api/mcp` passes the tool call's signal.
 
 ### D129. `attachedSegment`, the object-path policy, is still a constant in each provider file rather than part of the declaration
 
@@ -2077,7 +2077,7 @@ Found 2026-10-03 by a browser pass over the Db2 object browser.
 
 ### D161. A PostgreSQL session's duration can read below zero
 
-The sessions query in `src/lib/db/providers/sql/postgres.ts` (lines 1779-1792) reads each session's duration as `now() - query_start`, or `now() - xact_start` for a session in a transaction, and the slow-query list (lines 1752-1753) reads `total_time` and `avg_time` the same way.
+The sessions query in `src/lib/db/providers/sql/postgres.ts` reads each session's duration as `now() - query_start`, or `now() - xact_start` for a session in a transaction, and the slow-query list reads `total_time` and `avg_time` the same way.
 `now()` is the time the reading transaction started, so a statement or transaction that began after it reads below zero.
 Measured 2026-10-03 in the acceptance pass of the vector-family work: with Studio's own monitoring statements in flight on other pooled connections, the Sessions tab of /monitoring showed `-0.002352s`, `-0.001511s`, `-0.001256s` and `-0.000480s` beside four of them.
 
@@ -2087,7 +2087,7 @@ Found by the acceptance pass of the vector-family work; the arithmetic predates 
 
 ### D162. Under Bun, the plaintext path of seven HTTP providers follows proxy variables and sends a PUT twice
 
-`httpTransportFetch` (`src/lib/db/http/egress-policy.ts:123-124`) returns `globalThis.fetch(input, init)` while `DB_HTTP_BLOCK_PRIVATE_HOSTS` is off, so when the server runs under Bun, every plaintext request of ClickHouse, Couchbase, Elasticsearch and OpenSearch, libSQL, Prometheus, Trino and Druid goes through Bun's `fetch`.
+`httpTransportFetch` (`src/lib/db/http/egress-policy.ts`) returns `globalThis.fetch(input, init)` while `DB_HTTP_BLOCK_PRIVATE_HOSTS` is off, so when the server runs under Bun, every plaintext request of ClickHouse, Couchbase, Elasticsearch and OpenSearch, libSQL, Prometheus, Trino and Druid goes through Bun's `fetch`.
 Measured 2026-10-02 on Bun 1.4.2 for the Qdrant provider research, against a counting proxy and a cut-connection proxy: Bun's `fetch` sends the request through `HTTP_PROXY` or `HTTPS_PROXY` and hands the proxy the credential header in clear text for an `http://` target, `127.0.0.1` included, and it sends a PUT a second time when its reused keep-alive connection drops after the server applied it; Node 24.14.0 and 26.10.0 did neither, and `node:http` with an explicit agent did neither on any runtime.
 The production image runs Node 26 (`Dockerfile`, `CMD ["node", "server.js"]`), so today this reaches the test suite and anyone who runs the server under Bun; it was not measured provider by provider.
 Re-read 2026-10-03 on `main` after the vector-family work: the seven transports still call `httpTransportFetch`, and only the Qdrant provider dials through the shared `src/lib/db/http/node-transport.ts`.
@@ -2099,7 +2099,7 @@ Not fixed there: the path serves seven providers.
 
 ### D163. The Prometheus TLS path uses the global https agent while the egress guard is off
 
-`sendOverTls` (`src/lib/db/providers/timeseries/prometheus/request.ts:278-288`) builds its `node:https` request from `...tls` and `...guardedNodeOptions(hostname)`, and with `DB_HTTP_BLOCK_PRIVATE_HOSTS` off `guardedNodeOptions` (`src/lib/db/http/egress-policy.ts:111-116`) returns `{}`, so no `agent` is set and the process-wide global agent carries the request.
+`sendOverTls` (`src/lib/db/providers/timeseries/prometheus/request.ts`) builds its `node:https` request from `...tls` and `...guardedNodeOptions(hostname)`, and with `DB_HTTP_BLOCK_PRIVATE_HOSTS` off `guardedNodeOptions` (`src/lib/db/http/egress-policy.ts`) returns `{}`, so no `agent` is set and the process-wide global agent carries the request.
 Measured 2026-10-03 for `http:` only, on Node 24.14.0, Node 26.10.0 and Bun 1.4.2: with `NODE_USE_ENV_PROXY=1` the global agent sends through `HTTP_PROXY`, while `agent: false` and an explicit agent never do.
 Whether an `https:` request through the global agent goes through a proxy under `NODE_USE_ENV_PROXY=1` was not measured.
 
@@ -2228,7 +2228,7 @@ Found 2026-10-04 while designing the InfluxDB provider (ruling R3: no file under
 
 ### D204. The plaintext consent survives a Host or Port change, for Db2 and both InfluxDB types
 
-`src/hooks/use-connection-form.ts:342,490,707` keeps `allowInsecureAuth` when Host or Port is edited and sends it whenever SSL mode is `disable`, so a consent given for one host carries the password or token to the next one typed, while the InfluxDB hint says the secret crosses the network to this host.
+`src/hooks/use-connection-form.ts` keeps `allowInsecureAuth` when Host or Port is edited and sends it whenever SSL mode is `disable`, so a consent given for one host carries the password or token to the next one typed, while the InfluxDB hint says the secret crosses the network to this host.
 This is existing Db2 behaviour (#786).
 
 Found 2026-10-04 by the security review of the InfluxDB provider design (finding SR1 F8), filed by the review-round rulings rather than fixed there, because the shared form change alters Db2's behaviour inside a provider PR.
@@ -2482,9 +2482,9 @@ Not fixed there: that change touches the transport's `Authorization` header, not
 ### D233. Seven test files leave their temporary directories in `TMPDIR`
 
 Six test files make directories under `os.tmpdir()` with `mkdtempSync` and leave them there.
-`tests/unit/lib/agent/model-tuning.test.ts` (line 83) and `tests/unit/lib/agent/model-profiles.test.ts` (line 52) make `libredb-tuning-*`, and `tests/api/agent/config.test.ts` (line 344) makes `libredb-tuning-route-*`.
-`tests/unit/lib/agent/ledger-compatibility.test.ts` (line 36) makes `agent-ledger-compat-*`, `tests/unit/build-azure-package.test.ts` (lines 243 and 353) makes `azure-package-*` and `azure-package-cli-*`, and `tests/unit/check-appimage-perms.test.ts` (line 28) makes `appdir-perms-*`.
-`ledger-compatibility.test.ts` registers a removal on the process's `exit` event (line 100), and its directories stay all the same when the file runs through `bun tests/run-tests.ts`; the other five remove nothing.
+`tests/unit/lib/agent/model-tuning.test.ts` and `tests/unit/lib/agent/model-profiles.test.ts` make `libredb-tuning-*`, and `tests/api/agent/config.test.ts` makes `libredb-tuning-route-*`.
+`tests/unit/lib/agent/ledger-compatibility.test.ts` makes `agent-ledger-compat-*`, `tests/unit/build-azure-package.test.ts` makes `azure-package-*` and `azure-package-cli-*`, and `tests/unit/check-appimage-perms.test.ts` makes `appdir-perms-*`.
+`ledger-compatibility.test.ts` registers a removal on the process's `exit` event, and its directories stay all the same when the file runs through `bun tests/run-tests.ts`; the other five remove nothing.
 Measured 2026-10-05 on `main` at `d994ad72f`, each file run alone through `bun tests/run-tests.ts` with `TMPDIR` pointed at an empty directory: they left 14, 1, 2, 7, 7 and 5 directories, in that order, 36 in all.
 One passing run of the whole suite on `main` at `6dcc67fd6`, measured 2026-10-04 the same way, left the same 36 and none from any other file.
 Nothing removes them, so every run on a developer machine or a self-hosted runner adds as many again.
@@ -4027,7 +4027,7 @@ Found 2026-10-29 while reviewing the Oracle agent profile.
 
 ### D406. A seed's `createdAt` is the time of the request that listed it
 
-`projectSeedConnection` sets `createdAt: new Date()` (`src/lib/seed/connection-filter.ts:149`), and `GET /api/connections/managed` projects every seed again on each request.
+`projectSeedConnection` sets `createdAt: new Date()` (`src/lib/seed/connection-filter.ts`), and `GET /api/connections/managed` projects every seed again on each request.
 So every read of the managed list, the first load, the pending-seed poll and the refresh #1502 added, hands the browser a different row for a seed that did not change.
 A client that compares rows by value sees every seed as changed on every refresh, and the time a seed reports as its creation is the time of the last read.
 Repro: project the same seed twice and compare `createdAt`.
@@ -4038,7 +4038,7 @@ Found 2026-10-30 in the October PR review; pre-existing.
 
 ### D407. The two managed-list merges disagree about a seed's editable copy
 
-`useAllConnections` (`src/hooks/use-all-connections.ts:35-52`) and `mergeManagedConnections` in `useConnectionManager` (`src/hooks/use-connection-manager.ts:580-613`) each merge the server's managed list with the user's stored connections, and they have drifted apart.
+`useAllConnections` (`src/hooks/use-all-connections.ts`) and `mergeManagedConnections` in `useConnectionManager` (`src/hooks/use-connection-manager.ts`) each merge the server's managed list with the user's stored connections, and they have drifted apart.
 For a `managed: false` seed the editor lists the user's stored copy and saves one when none exists, while `useAllConnections` lists the server's row, skips the stored copy and saves nothing.
 So the admin pages, the monitoring page and the schema diff show an editable seed without the user's edits to it.
 Open PR #2032 is being asked to extract the managed-list refresh lifecycle the two hooks need; that is related and not the same, since two merges would remain.
@@ -4049,9 +4049,9 @@ Found 2026-10-29 in the review of #2032; pre-existing.
 
 ### D408. The explain and query-safety AI routes do not validate their request body
 
-`POST /api/ai/explain` (`src/app/api/ai/explain/route.ts:48-52`) and `POST /api/ai/query-safety` (`src/app/api/ai/query-safety/route.ts:66-70`) check only that `query` is truthy.
+`POST /api/ai/explain` (`POST` in `src/app/api/ai/explain/route.ts`) and `POST /api/ai/query-safety` (`POST` in `src/app/api/ai/query-safety/route.ts`) check only that `query` is truthy.
 Measured on `main` on 2026-10-30 with the provider mocked, on both routes: a `query` and a `schemaContext` sent as JSON objects reach the provider as `[object Object]` and answer 200, a 200,000-character `schemaContext` reaches the provider uncapped and answers 200, and a body that is not JSON answers 500 from the `SyntaxError` that `req.json()` throws.
-`src/app/api/ai/describe-schema/route.ts:14-22` is the pattern for the first two: a `typeof` string check answering 400 and a `MAX_SCHEMA_CONTEXT_CHARS` cap answering 413.
+`POST` in `src/app/api/ai/describe-schema/route.ts` is the pattern for the first two: a `typeof` string check answering 400 and a `MAX_SCHEMA_CONTEXT_CHARS` cap answering 413.
 It answers an unparseable body with 500 as well.
 Under the fence open PR #1950 adds to all three routes, a non-string `query` or `schemaContext` throws a `TypeError` inside the fence and answers 500; the gap itself exists on `main` already.
 
@@ -4061,7 +4061,7 @@ Found 2026-10-29 in the review of #1950; pre-existing.
 
 ### D409. The dangerous-query gate is a pure function tested from a component test file
 
-On `main` the gate, `isDangerousQuery` and `writesUnderGrammar` with the helpers they call, lives in `src/components/QuerySafetyDialog.tsx:604-1295`.
+On `main` the gate, `isDangerousQuery` and `writesUnderGrammar` with the helpers they call, lives in `src/components/QuerySafetyDialog.tsx`.
 Its tests live in `tests/components/QuerySafetyDialog.test.tsx`: the `isDangerousQuery` block and the blocks from Snowflake's confirmation forms to the end of the file, about 1640 of its 3131 lines, render nothing and call the two functions directly.
 The hooks import the gate from the component (`src/hooks/use-query-execution.ts`, `src/workspace/hooks/use-query-adapter.ts`), so the tests that stub it mock the component's module (`tests/hooks/use-query-execution.test.ts`, `tests/hooks/script-cancel-contract.test.ts`, `tests/components/StudioWorkspace.test.tsx`).
 Five unit test files import the gate from the component too: `tests/unit/db/destructive-commands.test.ts` and the BigQuery, Couchbase, Druid and carriage-return comment tests in `tests/unit/sql/`.
@@ -4073,7 +4073,7 @@ Found 2026-10-29 in the review of #1990; pre-existing.
 
 ### D410. `ParsedQueryInfo.isUnion` is read by no production code and answers a narrower question than its name
 
-`analyzeQuery` sets `isUnion` (`src/lib/db/utils/query-limiter.ts:560-564`) from whether `UNION` appears as a code word anywhere after the statement's start.
+`analyzeQuery` sets `isUnion` (`src/lib/db/utils/query-limiter.ts`) from whether `UNION` appears as a code word anywhere after the statement's start.
 Measured on 2026-10-30: `SELECT 1 INTERSECT SELECT 2` and `SELECT 1 EXCEPT SELECT 2` read `false`, and `SELECT * FROM (SELECT 1 AS a UNION SELECT 2) t`, one SELECT over a derived table, reads `true`, because `findCodeWord` does not track parenthesis depth.
 Nothing under `src/` reads the field, the limiter included, and it is not on the package surface (`src/exports/`); only `tests/unit/db/query-limiter.test.ts` reads it.
 
@@ -4106,8 +4106,8 @@ Found 2026-10-30 in the browser verification of the Druid agent read (PR 1.11); 
 
 ### D413. Concurrent first requests open the SQLite sample several times and one fails with "database is locked"
 
-`getOrCreateProvider` in `src/lib/db/factory.ts:1166-1311` checks the provider cache, and on a miss creates and connects a provider and only then caches it, with nothing recording an open in flight.
-So concurrent first requests for one connection each open their own handle on the same file; for the SQLite sample each open also runs the WAL and synchronous pragmas, and one of them can fail with `ConnectionError` "Failed to open SQLite database: database is locked" (`src/lib/db/providers/sql/sqlite.ts:1384`).
+`getOrCreateProvider` in `src/lib/db/factory.ts` checks the provider cache, and on a miss creates and connects a provider and only then caches it, with nothing recording an open in flight.
+So concurrent first requests for one connection each open their own handle on the same file; for the SQLite sample each open also runs the WAL and synchronous pragmas, and one of them can fail with `ConnectionError` "Failed to open SQLite database: database is locked" (`SQLiteProvider.connect` in `src/lib/db/providers/sql/sqlite.ts`).
 Repro: start the server with a fresh data directory, sign in, open `/` with Sample (Employees) active.
 The sidebar shows "The object list could not be read. Failed to open SQLite database: database is locked", and Try again clears it.
 The server log showed five concurrent `[DB] Creating sqlite provider for "Sample (Employees)"` lines, then `/api/db/health` and `/api/db/objects/counts` failing with that error.
@@ -4246,7 +4246,7 @@ Two constraints from #269 that do not go away:
 - **Primary-key detection is heuristic.** The hook picks a result column named `id` or ending in
   `_id`. Acceptable for a control gated on an opt-in capability; per-dialect editing on real tables
   should derive the key from the schema. A table whose key is named otherwise is refused with
-  "No primary key column detected" (`src/hooks/use-inline-editing.ts:854-859`), which reads as if
+  "No primary key column detected" (`useInlineEditing` in `src/hooks/use-inline-editing.ts`), which reads as if
   the table had none (found by the end-to-end test pass of 2026-10-03 and 2026-10-04).
 
 Whether row editing should be universal at all is a product decision. The published
@@ -4414,14 +4414,14 @@ LibreDB's `table` and `collection` stop being refused by a flag that was never a
 
 ### X14. The workspace write that persists every tab has no quota guard
 
-`src/hooks/use-tab-manager.ts:213` writes the whole workspace with
+`useTabManager` in `src/hooks/use-tab-manager.ts` writes the whole workspace with
 `storage.setItem(workspaceKey, JSON.stringify(serialized))` inside a 500 ms `setTimeout`, with no
 `try`/`catch` anywhere between the timer callback and the call. Every other localStorage writer in
-this application already has one: `src/lib/storage/local-storage.ts:64` and `:82` both wrap their
+this application already has one: `writeJSON` and `writeString` in `src/lib/storage/local-storage.ts` both wrap their
 `setItem`, log `Failed to write to localStorage` and answer `false`, so the guard is a pattern this
 writer skipped rather than a pattern nobody has.
 
-The quota it writes against is shared. `STORAGE_COLLECTIONS` (`src/lib/storage/types.ts:28-38`) is
+The quota it writes against is shared. `STORAGE_COLLECTIONS` (`src/lib/storage/types.ts`) is
 ten collections, connections and history and the audit log among them, and all of them plus this
 record live inside one origin quota of about 5 MiB. The record itself is unbounded from the shell's
 point of view because `PersistedTabState.query` copies each tab's editor text verbatim.
@@ -4432,7 +4432,7 @@ the WHOLE workspace, and nothing tells the user; the next tab change schedules t
 throws again. Found while designing #789 and not fixed there, because Phase 2 touches this record
 only to add one address-only field: a Source tab persists its `path` and `kind` and never one
 character of the definition it read, for exactly this reason, which narrows the exposure and closes
-nothing. The reasoning is in the `PersistedTabState` docblock at `use-tab-manager.ts:40-60`.
+nothing. The reasoning is in the `PersistedTabState` docblock at `use-tab-manager.ts`.
 
 **Done when:** the write is guarded the way `local-storage.ts` guards its own, and the failure is
 observable rather than swallowed - a user whose workspace has stopped persisting is told, since a
@@ -4440,19 +4440,19 @@ silent `false` here means the tabs on screen are no longer the tabs that will co
 
 ### X15. The studio tab bar is half the WAI-ARIA tabs pattern
 
-`StudioTabBar.tsx` has the tab half and none of the panel half. Measured 2026-09-13: `:98` is
-`role="tablist"` with `aria-label="Editor tabs"`, `:150-153` gives every tab `role="tab"`,
-`aria-selected` and a roving `tabIndex`, and `:72-79` implements Arrow, Home and End activation. No
+`StudioTabBar.tsx` has the tab half and none of the panel half. Measured 2026-09-13: its tab list is
+`role="tablist"` with `aria-label="Editor tabs"`, every tab gets `role="tab"`,
+`aria-selected` and a roving `tabIndex`, and its key handler implements Arrow, Home and End activation. No
 tab carries `aria-controls`, and no element in either shell carries `role="tabpanel"`: the region
 the tabs actually govern is the bare `<main className="flex-1 overflow-hidden relative">` at
-`src/components/Studio.tsx:777` and at `src/workspace/StudioWorkspace.tsx:494`.
+`Studio` in `src/components/Studio.tsx` and at `StudioWorkspace` in `src/workspace/StudioWorkspace.tsx`.
 
 So a screen reader announces the tab and its selected state and can never say which region the tab
 governs, and there is no way to move from a tab to its content.
 
 The basis for the "nowhere in `src/`" form of this claim has moved and the entry says so rather than
 repeating it: `grep -rn 'tabpanel' src/` now returns exactly one hit,
-`src/components/object-source/ObjectSourceView.tsx:347`, which is the Source view's own part
+`onTabKeyDown` in `src/components/object-source/ObjectSourceView.tsx`, which is the Source view's own part
 switcher added by #789. The pattern is bare on purpose: that role is written as an object property,
 `{ role: "tabpanel", ... }`, and never as a JSX attribute, so grepping the attribute form matches
 nothing, which would read as an absence that is not there. The switcher is the complete pattern,
@@ -4848,7 +4848,7 @@ constant, and a bounded batch and a single read land in one cache shape rather t
 ### U32. A catalog change that lands during an in-flight read is dropped, and the pre-DDL answer stays
 
 `run` refuses a read whose key is already in flight
-(`src/components/object-tree/use-tree-nodes.ts:519`) and `refresh` issues its reads without waiting
+(`src/components/object-tree/use-tree-nodes.ts`) and `refresh` issues its reads without waiting
 for anything (`:698`), so a `refreshToken` bump that arrives while a read is still open issues
 nothing for that slot.
 The answer that lands is the one asked for before the DDL statement ran, `store` writes it as the
@@ -4923,7 +4923,7 @@ than written down as prose.
 
 `ObjectTree` keeps exactly one tabbable row,
 `rows.find((row) => row.id === activeId)?.id ?? rows[0]?.id`
-(`src/components/object-tree/ObjectTree.tsx:174`), and the focus effect below it moves focus only on
+(`ObjectTree` in `src/components/object-tree/ObjectTree.tsx`), and the focus effect below it moves focus only on
 an explicit `focusRequest`. When a catalog refresh removes the focused row from the model, the
 focused element unmounts, the browser hands focus to `document.body`, and the tab stop falls back to
 the first row. Arrow keys then do nothing, because the key handler is on the row, and the reader has
@@ -4967,7 +4967,7 @@ is wrapped and never what it holds, and a reader scanning a table's types learns
 column that needed the annotation most. Degraded rather than lost: the full spelling stays in the
 `title` and in the `sr-only` twin, so the tooltip and the accessible name are correct.
 
-Not the tree's invention. `src/components/schema-explorer/ColumnList.tsx:36` does the identical
+Not the tree's invention. `ColumnList` in `src/components/schema-explorer/ColumnList.tsx` does the identical
 split, so the tree restores behaviour the flat explorer already had on the same engines, which is
 why this is an entry covering both readers rather than a line in the change that added the second.
 There is no second field to fall back to either: the ClickHouse provider publishes the wrapped
@@ -5070,7 +5070,7 @@ Seen 2026-09-23 in the #1085 browser pass on a Prometheus connection with a wron
 None of it is engine-specific: the three lines predate #1085 and none of them reads the connection's type, so every engine takes the same paths.
 
 Measured again 2026-10-02 in the etcd agent pass: a run over 19 key prefixes, 1 member and 2 leases recorded `tableCount` 22 and read "22 key prefixes read" on the answer card, and the prompt header says "22 key prefix(s)" (`t27/outcomes.md`).
-The count is `snapshot.objects.length` named with `noun.singular` near lines 1448 and 1528 of `src/lib/agent/context-snapshot.ts`, and `tableCount` named with `noun.plural` near line 429 of `src/components/agent/AnswerCard.tsx` and 948 and 1368 of `src/components/agent/timeline.ts`.
+The count is `snapshot.objects.length` named with `noun.singular` in the inventory header and the omitted-objects line of `src/lib/agent/context-snapshot.ts` (`packContextForTask`), and `tableCount` named with `noun.plural` in `PlanChips` of `src/components/agent/AnswerCard.tsx` and in the snapshot entries of `src/components/agent/timeline.ts`.
 `origin/main` has the same code, and its providers declare extra inventory kinds too (Druid lookups, Cassandra types, ClickHouse dictionaries, MSSQL synonyms), read from the code and not measured there.
 
 Found 2026-09-23 by the #1085 browser pass.
@@ -5212,7 +5212,7 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec E10).
 ### U58. TablesTab's Vacuum summary card reads 0 and "OK" on an engine that declares no vacuum
 
 `vacuumStateKnown` ignores `vacuumSupported` (`src/components/monitoring/tabs/TablesTab.tsx`, where the card reads it), so on an engine that supports maintenance and declares no `vacuum` the card counts the tables whose `bloatRatio` passes 10 as if the engine had a vacuum.
-The table's "Vacuum" column header (`TablesTab.tsx:443`) is drawn on those engines too.
+The table's "Vacuum" column header (`TablesTab` in `TablesTab.tsx`) is drawn on those engines too.
 Twelve engines declare `supportsMaintenance: true`, set or inherited from `BaseDatabaseProvider.getCapabilities()`, with no `vacuum` among their `maintenanceOperations`: MySQL, libSQL, Oracle, Db2, SQL Server, ClickHouse, Trino, Redis, Couchbase, etcd, Milvus and Databend.
 All but MySQL publish no `bloatRatio`, so their card shows 0 with a green "OK" wherever the tab has table statistics to read; Redis answers none, so its card reads that only while its database is empty, and N/A once the database holds a key.
 MySQL's `bloatRatio` is `DATA_FREE` as a percentage of the table's data and index bytes, so its card counts the tables past 10 percent under the Vacuum title, a count the fix takes off the card too.
@@ -5343,7 +5343,7 @@ Still open: an engine with no dialect record, and every record that leaves the f
 
 ### U70. Admin Overview's Fleet Status prints "timeout" for any endpoint that errored
 
-`OverviewTab` in `src/components/admin/tabs/OverviewTab.tsx` prints "timeout" for a fleet row whose `item.status === "error"` and the latency otherwise (near line 775), so a refused credential, an unreachable host and a real timeout all read "timeout".
+`OverviewTab` in `src/components/admin/tabs/OverviewTab.tsx` prints "timeout" for a fleet row whose `item.status === "error"` and the latency otherwise, so a refused credential, an unreachable host and a real timeout all read "timeout".
 Measured 2026-10-02 in the etcd browser pass: an etcd connection whose user is refused by the server shows "timeout" in Fleet Status (`t26/outcomes.md`, the Fleet line).
 `origin/main` has the same line.
 
@@ -5426,7 +5426,7 @@ Deferred when the Graph tab was added, as outside its first version's scope; the
 
 ### U79. The Charts tab draws a time series over its first tag, not its time column
 
-The default x axis is the first categorical field before any date field (`defaultX` in `src/components/DataCharts.tsx:534`), so a tagged time series, such as an InfluxDB result with a `room` tag beside `time`, is drawn over its tag values; this affects Prometheus today.
+The default x axis is the first categorical field before any date field (`defaultX` in `src/components/DataCharts.tsx`), so a tagged time series, such as an InfluxDB result with a `room` tag beside `time`, is drawn over its tag values; this affects Prometheus today.
 
 Found 2026-10-04 while designing the InfluxDB provider (design decision I25); the InfluxDB provider docs say to pick `time` as the x axis.
 
@@ -5434,7 +5434,7 @@ Found 2026-10-04 while designing the InfluxDB provider (design decision I25); th
 
 ### U80. Charts "Group by hour" reads a `Z` timestamp in local time
 
-`groupByDate` (`src/components/DataCharts.tsx:434`) reads a timestamp ending in `Z` through local-time getters, so on a machine outside UTC the grouped ticks disagree with the ungrouped ones; every InfluxDB and Prometheus timestamp is UTC with a `Z`.
+`groupByDate` (`src/components/DataCharts.tsx`) reads a timestamp ending in `Z` through local-time getters, so on a machine outside UTC the grouped ticks disagree with the ungrouped ones; every InfluxDB and Prometheus timestamp is UTC with a `Z`.
 
 Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
 
@@ -5512,7 +5512,7 @@ Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
 
 The Overview and Storage tabs draw the same SQL-shaped tiles for every engine, so a Redis connection reads "Tables 23 · 0 indexes" (23 is `DBSIZE`), "Buffer Pool", "Deadlocks" and "Checkpoint" as "Not measured", and Storage "Tables 0 B / Indexes 0 B / WAL N/A"; Kafka and Redpanda put every byte of topic data under "Other (unattributed)" beside "Tables 0 B 0.0%".
 Measured on Redis 8.10.2, Kafka 4.3.1 and Redpanda v26.2.3.
-The labels are fixed strings in `src/components/monitoring/tabs/OverviewTab.tsx` (`{overview?.indexCount ?? 0} indexes` at line 210, "Buffer Pool" at 291) and `src/components/monitoring/tabs/StorageTab.tsx` ("Tables" 138, "Indexes" 161, "WAL" 176, "Other (unattributed)" 242).
+The labels are fixed strings in `src/components/monitoring/tabs/OverviewTab.tsx` (`{overview?.indexCount ?? 0} indexes` and "Buffer Pool") and `src/components/monitoring/tabs/StorageTab.tsx` ("Tables", "Indexes", "WAL" and "Other (unattributed)").
 U71 is the same gap on the Tables tab.
 
 Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
@@ -5521,7 +5521,7 @@ Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
 
 ### U88. The result tab strip scrolls with no visible sign, so the last tabs look clipped
 
-`src/components/studio/BottomPanel.tsx:445` makes the result mode tabs a horizontally scrolling strip with its scrollbar hidden, on purpose, so the Export group on the right is never pushed out (comment at `:439-444`).
+`BottomPanel` in `src/components/studio/BottomPanel.tsx` makes the result mode tabs a horizontally scrolling strip with its scrollbar hidden, on purpose, so the Export group on the right is never pushed out (its comment says so).
 At 1440x900 with the Agent panel open, the strip is narrower than its tabs, and "Dashboard" shows as "Dashboar" / "Dashbc" against the Export button; on Neo4j, whose results add a Graph tab, Dashboard is not visible at all (Prometheus 3.15.0, Kafka 4.3.1, Neo4j 2026.09.0).
 Nothing tells the reader the strip scrolls.
 
@@ -5531,8 +5531,8 @@ Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
 
 ### U89. A Prometheus rule group's Source tab is titled with its internal key
 
-A Source tab is titled `Source: ${objectPathLabel(object.path)}` (`src/hooks/use-tab-manager.ts:66`), the qualified path joined by dots, so two same-named objects in different containers stay distinguishable.
-A Prometheus rule group's path segment is the engine's `GroupKey`, `<file>;<group>` (`src/lib/db/providers/timeseries/prometheus/objects.ts:189-193`), so the tab reads `Source: /etc/prometheus/rules.yml;e2e_group`, and a rule's tab adds `.<position>:<name>` (Prometheus 3.15.0).
+A Source tab is titled `Source: ${objectPathLabel(object.path)}` (`sourceTab` in `src/hooks/use-tab-manager.ts`), the qualified path joined by dots, so two same-named objects in different containers stay distinguishable.
+A Prometheus rule group's path segment is the engine's `GroupKey`, `<file>;<group>` (`groupKey` in `src/lib/db/providers/timeseries/prometheus/objects.ts`), so the tab reads `Source: /etc/prometheus/rules.yml;e2e_group`, and a rule's tab adds `.<position>:<name>` (Prometheus 3.15.0).
 The tree already shows the readable `name`.
 
 Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
@@ -6445,7 +6445,7 @@ Seen again 2026-11-01 on Sparkplug B (Mosquitto 2.0.22 and EMQX 5.8.9 by digest,
 
 ### U174. The Query Safety Check is not told which columns are keys or unique
 
-`analyzeQuery` in `src/components/QuerySafetyDialog.tsx:251-268` reduces the schema it sends to `/api/ai/query-safety` to `name (type)` for the first eight columns of the first thirty objects, plus the estimated row count.
+`analyzeQuery` in `src/components/QuerySafetyDialog.tsx` reduces the schema it sends to `/api/ai/query-safety` to `name (type)` for the first eight columns of the first thirty objects, plus the estimated row count.
 The schema it reads has more: each column's `isPrimary`, and each object's `indexes` with their `unique` flag (`DetailedObject` in `src/lib/db/detailed-object.ts`), so the model cannot know that a `WHERE` on a primary or unique key matches at most one row.
 Repro: on PostgreSQL, with `customers.email` declared `UNIQUE`, run `UPDATE customers SET city = 'Ankara' WHERE email = 'e2e.tester@example.com'` in the editor.
 The dialog rates it Low Risk but says "the schema does not indicate that email is unique; up to 10 rows could match", and Execute Query then answers "1 row affected".
@@ -6459,7 +6459,7 @@ Found 2026-10-30 in the pre-release browser E2E; pre-existing.
 ### U175. A Plan run refused for an over-privileged credential ends "succeeded" and asks the user for the schema
 
 When the execution profile refuses the connection's credential as too broad, the grounding capture records a `context-unavailable` event with `reasonCode` `CATALOG_READ_REFUSED`, `profileReasonCode` `PROFILE_PRIVILEGES_TOO_BROAD` and the advice to connect with a least-privilege credential in `detail` (`environmentFailure` in `src/lib/agent/context-snapshot.ts`).
-The timeline renders that event as "Schema not captured" with the bare `reasonCode` inside the collapsed "Run setup" group, and leaves out `detail` and `profileReasonCode` on purpose (`src/components/agent/timeline.ts:1156-1176`).
+The timeline renders that event as "Schema not captured" with the bare `reasonCode` inside the collapsed "Run setup" group, and leaves out `detail` and `profileReasonCode` on purpose (`src/components/agent/timeline.ts`).
 The run goes on ungrounded, ends "succeeded", and the answer card says "No statement drafted" and asks the user for the table and column names.
 The refusal itself is the intended safety property; only the message is the gap.
 Repro: seed a SQL Server connection whose login is `db_owner`, open the agent rail, Plan, objective "Which three customers placed the most orders?", Start.
@@ -6471,8 +6471,8 @@ Found 2026-10-30 in the pre-release browser E2E; pre-existing.
 
 ### U176. The consent card offers auto-execute on engines where the gate can never fire
 
-`handOverLanguage` in `src/components/agent/AgentRail.tsx:1138-1146` offers "Also run the final answer in my editor" whenever the statement language's variant declares `canAutoExecute`, which the SQL variant does for every SQL engine.
-The gate reads only PostgreSQL's and SQLite's plans, so on SQL Server, MySQL and DuckDB `planRefusal` answers `unverified-dialect` for every answer (`src/lib/agent/auto-execute.ts:169`), and the ticked consent can never be honoured.
+`handOverLanguage` in `src/components/agent/AgentRail.tsx` offers "Also run the final answer in my editor" whenever the statement language's variant declares `canAutoExecute`, which the SQL variant does for every SQL engine.
+The gate reads only PostgreSQL's and SQLite's plans, so on SQL Server, MySQL and DuckDB `planRefusal` answers `unverified-dialect` for every answer (`src/lib/agent/auto-execute.ts`), and the ticked consent can never be honoured.
 The answer lands in the editor unrun, and only the timeline says why: "this server has no rule for weighing a plan from this database".
 The behaviour is documented (`docs/AGENT.md`, and A6 for SQL Server); this entry is about the control, which MongoDB already hides (B118).
 Repro: seed a least-privilege SQL Server connection, Agent mode, Advanced, Analyze, Start, tick "Also run the final answer in my editor", Start run.
@@ -6890,35 +6890,6 @@ than a reviewer.
 **Done when:** each listing has been resubmitted through its own channel. Six submissions, five
 channels - the two Azure files travel together.
 
-### DOC4. 62 line citations in the provider docs are stale, and every checkable one is
-
-Found 2026-08-27 while re-anchoring `docs/providers/mssql.md` and `docs/providers/trino.md` to method
-names (PR round 17). The round established the policy - cite code by NAME, not by line - and pinned it
-with `tests/unit/provider-docs-monitoring-citations.test.ts`, whose scope statement says outright which
-files are not measured yet. This entry is that remainder.
-
-**Measured across `docs/providers/*.md`.** 291 `` `file.ts:N` `` citations before the round, 271 after.
-Of those, 69 were machine-checkable - a `` `method()` `` name paired with a line link, so the cited line
-can be compared with the real declaration - and **68 of the 69 were stale**, the single exception being
-Trino's `getCapabilities()`. After the round's 18 fixes, 62 checkable citations remain and **all 62 are
-stale**, spread over 12 docs. The other 209 point at expressions, comments, table rows and SQL fragments
-rather than a named declaration, so no heuristic can judge them and they were not checked by hand; given
-62 of 62, an inference is available but no figure is claimed for them.
-
-**Why they rot invisibly.** Two mechanisms, both measured:
-- **Stale at birth.** The eight seam rows in both search docs entered in one commit (`25712e68`, #429)
-  as 751/811/831/844/860/873/884/898 while the declarations in that same commit sat at
-  808/868/888/901/917/930/941/955 - a uniform +57. Being wrong by a constant is what hid it: the rows
-  stayed in ascending order and read as a consistent, plausible list. Today the offset is +65.
-- **A correction does not hold.** `docs/providers/redis.md` cited `base-provider.ts:102` (#89, true then),
-  was corrected to `:99` (#122, true then), and has rotted a second time since.
-
-**Done when:** each remaining doc cites declarations by name and is added to `NAMED_CITATIONS` in the
-guard, which is what makes the change stick - the guard bans the FORM, so a correct line number fails it
-too. Cheapest per doc, in descending count: `oracle.md` 16, `mongodb.md` 14, then the nine others. Both
-of those two were rewritten in round 17 and are the natural first pair; the round left them out because
-they were another lane's live files at the time, not because they are correct.
-
 ### DOC6. Comments and doc sentences about other providers still count the fleet as it stood before #1085
 
 Four comments inside provider directories, one test comment beside them and eight sentences of other providers' docs count the providers as they stood before #1085 made the shipped type-ids eighteen, served by seventeen provider implementations because `elasticsearch` and `opensearch` share one.
@@ -6964,52 +6935,6 @@ Not fixed in #1085: rewriting one paragraph in four languages is the per-languag
 
 **Done when:** each of the four paragraphs says what `README.md` says about the panel, Oracle's certificate caveat and the libSQL connection string included.
 
-### DOC8. Hand-copied source coordinates across this repository are stale by thousands of lines
-
-Found while re-deriving the two `postgres.ts` citations that this round's two added import lines
-moved. `src/lib/api/object-route.ts` is the ONLY file whose citations are guarded, by
-`tests/unit/lib/api/object-route-edit.test.ts`, which resolves each anchor and compares the number.
-Every other `file.ts:NNNN` in the repository is hand-copied prose, and a sample of nine measured at
-`64ee0e3f^` was wrong before this round touched anything:
-
-| Citation | Cited in | Anchor actually at |
-|---|---|---|
-| `postgres.ts:917` (`queryReadOnly`) | `docs/AGENT_GUIDE.md:925` | 2396 |
-| `postgres.ts:891` (`BEGIN READ ONLY`) | `docs/AGENT_ANALYST_DESIGN.md:400`, `:718` (file later deleted) | 2415 |
-| `postgres.ts:894` (`SET LOCAL statement_timeout`) | `src/lib/agent/tools.ts:1552` | 2418 |
-| `postgres.ts:2070-2074` (`{ ...baseConfig, connectionString }`) | `src/lib/db/connection-fingerprint.ts:67`, `tests/api/db/objects/edit-apply.test.ts:91`, `tests/unit/lib/db/connection-fingerprint.test.ts` x3 | 2256-2262 |
-| `postgres.ts:1241` (`pg_stat_statements extension not enabled`) | `docs/BACKLOG.md:326` | 4001 |
-| `postgres.ts:1287` (`"public." + escapeIdentifier`) | `docs/BACKLOG.md:467` | 4048 |
-| `source-applier.ts:155` (the silent-status sentence) | `tests/components/object-source/ApplyPreviewDialog.test.tsx:1092` | `whenSilent`, elsewhere |
-| `StudioWorkspace.tsx:494` (`<main className="flex-1 overflow-hidden relative">`) | `docs/BACKLOG.md:1360` | 823 |
-| `StudioWorkspace.tsx:833` (the `ObjectSourceView` mount) | `docs/BACKLOG.md:1145` | 919 |
-
-Nine of nine wrong, none of them by this round: the smallest miss is over 500 lines. A reader who
-follows one lands on an unrelated line and cannot tell a moved anchor from a deleted one, and an
-agent that re-derives its own citations after an edit, which this epic has now asked for three
-times, is paying a per-commit tax on coordinates that were never right.
-
-Two halves, and the second is what stops it recurring:
-
-1. Re-derive, or drop, every `file.ts:NNNN` outside `object-route.ts`. Dropping is often the better
-   answer: an anchor quoted as text (`queryReadOnly`, `BEGIN READ ONLY`) is grep-able for ever, while
-   a number is correct only until the next commit.
-2. Generalise the guard. `tests/unit/lib/api/object-route-edit.test.ts` already holds the whole
-   mechanism: a table of `{ as, file, anchor }` and a check that the rendered `as:line` appears in
-   the citing source. Lift it to a repository-wide test that scans for the `file.ts:NNNN` shape,
-   resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
-
-DOC4 is the same class in the provider docs.
-More instances, found stale at `8f2fc5c81` during the PR #1575 review (2026-10-07): `tests/integration/db/mssql-provider.test.ts` (`mssql.ts:1798`), `docs/providers/opensearch.md` (`http-transport.ts` `:806`, `:883-935`, `:913`, `:999`, `:1127`, `:1128`, `:1283`), `docs/providers/elasticsearch.md` (`http-transport.ts:1194`), `docs/BACKLOG.md` (`http-transport.ts:1556`), `tests/components/studio/BottomPanel.test.tsx` (`BottomPanel.tsx:574`), `docs/BACKLOG.md` (`BottomPanel.tsx:445`), and the `oracle/index.ts:1492`, `:2000` and `:2015` citations in `oracle/index.ts`, `tests/integration/db/oracle-provider.test.ts` and `tests/api/db-objects.test.ts`.
-Each should become a symbol anchor rather than a corrected number.
-This entry was first written as a second "D94 (proposed)" block, which reused the id of D94 and was not a heading the structure guard reads.
-
-**Done when:** a test fails on a stale `file.ts:NNNN` anywhere under `src/`, `docs/` and `tests/`,
-and the citations present at that commit all resolve. The test needs one case per shape it must
-accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
-
----
-
 ### DOC9. Two tables of the README and the provider index count a fleet that has since grown
 
 `README.md`'s "Test Architecture" table (and its `README_zh.md` peer) counts 24 integration files where `tests/integration/` holds 36, and lists 13 of the providers; `docs/providers/README.md`'s in-network port table stops at Trino, with no Cassandra, Prometheus, Kafka or etcd.
@@ -7032,9 +6957,9 @@ Not fixed there: the change was English-only, and seven translations of a provid
 
 ### DOC11. Two PostgreSQL-relative caveats no longer hold on the current images: CockroachDB sessions and OrioleDB index sizes
 
-`src/lib/db/compatibility.ts:429` (CockroachDB, probed on v26.2.6) says "Performance metrics, slow queries and active sessions do work: the pg_stat_* views CockroachDB provides are enough for them."
+`WIRE_COMPATIBLE_ENGINES` in `src/lib/db/compatibility.ts` (CockroachDB, probed on v26.2.6) says "Performance metrics, slow queries and active sessions do work: the pg_stat_* views CockroachDB provides are enough for them."
 On v26.3.2 (`cockroachdb/cockroach:latest`, single node, insecure) Monitoring > Sessions reads "No active sessions found", Overview reads "Connections 0" and Queries reads "pg_stat_statements required", while Studio held connections: `pg_stat_activity` returned 0 rows and `crdb_internal.cluster_sessions` returned 3.
-`src/lib/db/compatibility.ts:470` (OrioleDB, probed on beta 16) and the OrioleDB row of `docs/providers/README.md` say "every index reads 0 bytes".
+`WIRE_COMPATIBLE_ENGINES` in `src/lib/db/compatibility.ts` (OrioleDB, probed on beta 16) and the OrioleDB row of `docs/providers/README.md` say "every index reads 0 bytes".
 On beta 19 (`orioledb/orioledb:latest-pg18`, PostgreSQL 18.6) `pg_indexes_size()` is non-zero and Monitoring > Tables reads 48 kB for `orders` and 8192 bytes for `customers`.
 
 Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
@@ -7053,8 +6978,8 @@ Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
 
 ### DOC13. The Elasticsearch and OpenSearch docs say aliases and data streams are not in the tree, and the tree lists them
 
-Section 13 of `docs/providers/elasticsearch.md:1656-1660` and `docs/providers/opensearch.md:1633-1637` still says "Aliases and data streams are not listed in the schema tree", citing `transport.ts:205-219`.
-The same docs' object-kind table (`elasticsearch.md:904`, `opensearch.md:869`) lists the `alias` kind read from `GET /_alias`, and the tree on Elasticsearch 9.5.3 shows Indices, Aliases, Data Streams, Ingest Pipelines and Index Templates.
+Section 13 of the "13. Known limitations & future work" section of `docs/providers/elasticsearch.md` and the "13. Known limitations & future work" section of `docs/providers/opensearch.md` still says "Aliases and data streams are not listed in the schema tree", citing `SearchIndexInfo` in `transport.ts`.
+The same docs' object-kind table (the "The object surface (#789)" section of `elasticsearch.md`, the "The object surface (#789)" section of `opensearch.md`) lists the `alias` kind read from `GET /_alias`, and the tree on Elasticsearch 9.5.3 shows Indices, Aliases, Data Streams, Ingest Pipelines and Index Templates.
 
 Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
 
@@ -7188,7 +7113,7 @@ Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
 ### DOC28. The README newest-engine chain test lost its RabbitMQ to Snowflake link
 
 The README chain case in `tests/unit/db/s3/provider-doc.test.ts` pins each "X came before Y" link of `README.md`'s newest-engine history, and its own comment says each link is pinned at both ends.
-The Snowflake provider (31c3ca8c3) added `expect(readme).toContain("RabbitMQ came before Snowflake: the management API browses")`, and the merge that brought in OPC UA beside it dropped that line: the chain now pins "Snowflake came before OPC UA" and "Firestore came before RabbitMQ" with nothing between, so `README.md:132` can be deleted or reworded and the test stays green.
+The Snowflake provider (31c3ca8c3) added `expect(readme).toContain("RabbitMQ came before Snowflake: the management API browses")`, and the merge that brought in OPC UA beside it dropped that line: the chain now pins "Snowflake came before OPC UA" and "Firestore came before RabbitMQ" with nothing between, so the "Overview" section of `README.md` can be deleted or reworded and the test stays green.
 
 Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
 
@@ -7205,9 +7130,9 @@ No gate reads these lists for completeness, and each misses engines that shipped
 The BigQuery (#1672) and Firestore (#1695) changes never added themselves to the seven files, and the Snowflake change never reached the two metainfo lists.
 `deploy/rancher/CATALOG_LISTING.md` then says three false things about them:
 
-- Lines 111-118 say winget's, chocolatey's and tauri's "exhaustive descriptions still name every engine", and that the claim "was false until a review read them", which reads as true again; it is not.
-- Line 109 says the AUR package "is twelve ahead" and that its `pkgdesc` says thirty, while `packaging/aur/PKGBUILD` pins `pkgver=0.17.0` (eighteen engines) and its `pkgdesc` says thirty-six, so it is eighteen ahead, and the list of engines 0.17.0 lacks stops at MQTT, without BigQuery, Firestore, RabbitMQ, Snowflake, OPC UA or Apache Spark.
-- Line 107's pointer "see BACKLOG D39 - nothing counts these lists" lands on D39, a slow-query entry.
+- The passage on the winget, chocolatey and tauri packages says their "exhaustive descriptions still name every engine", and that the claim "was false until a review read them", which reads as true again; it is not.
+- The AUR passage says the package "is twelve ahead" and that its `pkgdesc` says thirty, while `packaging/aur/PKGBUILD` pins `pkgver=0.17.0` (eighteen engines) and its `pkgdesc` says thirty-six, so it is eighteen ahead, and the list of engines 0.17.0 lacks stops at MQTT, without BigQuery, Firestore, RabbitMQ, Snowflake, OPC UA or Apache Spark.
+- The pointer "see BACKLOG D39 - nothing counts these lists" lands on D39, a slow-query entry.
 
 Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
 
@@ -7424,15 +7349,15 @@ Not fixed there: none of the five files reported on 2026-10-01 is an etcd file.
 
 `playwright.config.ts` signs nearly every spec in as `user@libredb.org` against one server process, whose "query" bucket in `src/lib/api/rate-limit.ts` (120 requests a minute by default, `RATE_LIMIT_QUERY_MAX`) every db-reaching route draws from.
 CI runs Playwright with one worker and two retries, while a local run takes half the cores as workers and retries nothing, so a fast machine spends the budget in the middle of the suite.
-Measured 2026-10-01 on main 4b6aae8e and on the etcd branch alike: `CI=1 bunx playwright test e2e/security-headers.spec.ts e2e/object-edit.spec.ts --project=chromium --repeat-each=5 --retries=0` failed 3 of its 40 runs on each side, `object-edit.spec.ts:621` reading "The source read failed. Too many requests. Try again in 41 seconds.", `:585` timing out after the same refusal, and `security-headers.spec.ts:41` drawing no PNG button on the ERD within 30 s; 4 more did not run, because a failure stops the rest of `object-edit.spec.ts`'s serial group.
-One pass of the suite in CI mode saw `security-headers.spec.ts:41` and `object-edit.spec.ts:621` fail once each and pass on a retry, and a pass with the local defaults failed 7 tests on "Too many requests" in the page.
+Measured 2026-10-01 on main 4b6aae8e and on the etcd branch alike: `CI=1 bunx playwright test e2e/security-headers.spec.ts e2e/object-edit.spec.ts --project=chromium --repeat-each=5 --retries=0` failed 3 of its 40 runs on each side, the test "a refused apply marks the READER's own line, not the engine's line in the assembled batch" in `object-edit.spec.ts` reading "The source read failed. Too many requests. Try again in 41 seconds.", another test of that file timing out after the same refusal, and the test "drives the editor, a query, the diagram and both exports with no policy violation" in `security-headers.spec.ts` drawing no PNG button on the ERD within 30 s; 4 more did not run, because a failure stops the rest of `object-edit.spec.ts`'s serial group.
+One pass of the suite in CI mode saw the test "drives the editor, a query, the diagram and both exports with no policy violation" in `security-headers.spec.ts` and the test "a refused apply marks the READER's own line, not the engine's line in the assembled batch" in `object-edit.spec.ts` fail once each and pass on a retry, and a pass with the local defaults failed 7 tests on "Too many requests" in the page.
 The comments in `playwright.config.ts` and `e2e/offline-editor.spec.ts` record the same cause, and three specs, `offline-editor.spec.ts`, `kafka-provider.spec.ts` and `etcd-provider.spec.ts`, were moved to a second server process for it.
 
 Found while running every local gate for the etcd provider (#1089).
 Not fixed there: the E2E harness is not part of the etcd work, and the fix is a choice about the limiter's test configuration.
 
-Amended 2026-10-05: a functional smoke run without retries on 2026-10-05 failed `object-edit.spec.ts:621` on the same budget, and the wait it failed in has a cause of its own.
-`waitForTheObjectTree` in `e2e/object-edit.spec.ts` (around line 258) clicks only `tree-retry`, while a rate-limited metadata read draws the sidebar's `sidebar-provider-retry` (`src/components/sidebar/Sidebar.tsx`) instead, so a rate-limited run presses no retry and waits out the helper's 120 s before the test fails.
+Amended 2026-10-05: a functional smoke run without retries on 2026-10-05 failed the test "a refused apply marks the READER's own line, not the engine's line in the assembled batch" in `object-edit.spec.ts` on the same budget, and the wait it failed in has a cause of its own.
+`waitForTheObjectTree` in `e2e/object-edit.spec.ts` clicks only `tree-retry`, while a rate-limited metadata read draws the sidebar's `sidebar-provider-retry` (`src/components/sidebar/Sidebar.tsx`) instead, so a rate-limited run presses no retry and waits out the helper's 120 s before the test fails.
 The same test passed on a retry with CI's `--retries=2`.
 
 **Done when:** the E2E servers get a query budget sized for the suite, through `RATE_LIMIT_QUERY_MAX` in their `webServer` env as the passkey server sets `RATE_LIMIT_LOGIN_MAX`, or each spec signs in as an account of its own, and the repeated command above passes all 40 of its runs locally.
@@ -7740,7 +7665,7 @@ CodeQL alerts anchor to a source location, so moving the code re-reports them an
 
 ### SCAN2. CodeQL alert 660, SHA-1 in the OPC UA certificate thumbprint, closed by moving the pin to SHA-256
 
-`js/weak-cryptographic-algorithm`, security severity high, raised against `refs/pull/1719/merge` at `src/lib/db/providers/industrial/opcua/library.ts:78`, and the same line as `typescript:S4790` on SonarCloud.
+`js/weak-cryptographic-algorithm`, security severity high, raised against `refs/pull/1719/merge` at `thumbprintOf` in `src/lib/db/providers/industrial/opcua/library.ts`, and the same line as `typescript:S4790` on SonarCloud.
 CodeQL's text: "A broken or weak cryptographic algorithm depends on sensitive data from an access to serverCertificate."
 
 The line computed the SHA-1 thumbprint of the server's DER certificate, which `session.ts` compares against the operator's pin.
@@ -7761,7 +7686,7 @@ A SonarCloud `typescript:S5332` finding on the same provider ("Using http protoc
 
 ### SCAN1. CodeQL alert 536, polynomial ReDoS in the MCP error redactor, needs a ruling
 
-`js/polynomial-redos`, security severity high, open against `refs/pull/1070/merge` at `src/lib/mcp/serializer.ts:94`.
+`js/polynomial-redos`, security severity high, open against `refs/pull/1070/merge` at `redactErrorMessage` in `src/lib/mcp/serializer.ts`.
 CodeQL's text: "This regular expression that depends on a user-provided value may run slow on strings starting with 'A' and with many repetitions of 'A'."
 
 The rule redacts credentials out of driver error messages before they reach an MCP client:
@@ -8413,7 +8338,7 @@ retains them, with the resource bound that makes that safe.
 
 ### B84. On a large Prometheus server, plan mode grounds metrics and nothing else
 
-The grounding walk, `walkObjectInventory` in `src/lib/agent/tools.ts`, describes each folder with `describeObjects(container, spec.id, listed.length)` (`:2581`), keeps the batch's `truncated` (`:2586`), and ends the whole walk at the first truncated batch (`:2610`, `:2612`).
+The grounding walk, `walkObjectInventory` in `src/lib/agent/tools.ts`, describes each folder with `describeObjects(container, spec.id, listed.length)`, keeps the batch's `truncated`, and ends the whole walk at the first truncated batch.
 The Prometheus provider (#1085) declares its six kinds with metrics first, the order the tree draws its folders in, and its metric batch is truncated on any server with more than `METRIC_LIST_CAP` metric names, because its one series read then names more metrics than the capped listing holds, or with more than `DESCRIBE_SERIES_CAP` series in the hour (`src/lib/db/providers/timeseries/prometheus/objects.ts`).
 So on such a server a plan run's inventory holds metrics and no rule group, rule, scrape pool or target, and a question about alerts or scrape health is drafted over an inventory that lacks what it asks about.
 The inventory's `truncated` does tell the run that the reading is incomplete; what the run cannot reach is the rest.
@@ -8427,7 +8352,7 @@ Not fixed in #1085: each remedy moves something else, because a per-kind share o
 
 `docs/AGENT.md` says every agent acquisition opens with "the same optional least-privilege `agentUser`", and `acquireExecutionProfileProvider` in `src/lib/db/factory.ts` opens a profile as `agentUser` whenever a connection carries it with `agentPassword` (#328).
 No run's connection can carry the pair.
-A run opens on a `seed:` id only: `POST /api/agent/runs` refuses an inline connection (`src/app/api/agent/runs/route.ts:283`), and the run route, the drive in `src/lib/agent/runtime.ts` and the hand-over route `src/app/api/agent/runs/[runId]/handover/route.ts` resolve the id through `resolveConnection` in `src/lib/seed/resolve-connection.ts`, which refuses an id outside that namespace.
+A run opens on a `seed:` id only: `POST /api/agent/runs` refuses an inline connection (`POST` in `src/app/api/agent/runs/route.ts`), and the run route, the drive in `src/lib/agent/runtime.ts` and the hand-over route `src/app/api/agent/runs/[runId]/handover/route.ts` resolve the id through `resolveConnection` in `src/lib/seed/resolve-connection.ts`, which refuses an id outside that namespace.
 `SeedConnectionSchema` in `src/lib/seed/types.ts` declares neither field, and zod strips an unknown key without an error, so a seed file that sets both parses and loses them.
 A browser copy of the seed that carries its own pair no longer resolves to the seed, because `src/hooks/use-connection-payload.ts` classifies both fields as `resolution`, so that copy is browser-only and no run starts on it.
 So an agent runs as a least-privileged role only where the seed's own `user` is that role, which is the only way the dvdrental run of `docs/AGENT_DEMO.md` can read as `libredb_agent`.
@@ -8464,7 +8389,7 @@ Not fixed in #1085: the count and its noun predate it and serve every engine.
 
 ### B88. A kind whose listing is refused ends the grounding walk, so plan mode on VictoriaMetrics reads nothing
 
-`walkObjectInventory` in `src/lib/agent/tools.ts` skips only a kind counted zero (`:2558`) and lists a kind whose count was refused as well, calling `listObjects` with no catch of its own (`:2566`).
+`walkObjectInventory` in `src/lib/agent/tools.ts` skips only a kind counted zero and lists a kind whose count was refused as well, calling `listObjects` with no catch of its own.
 VictoriaMetrics answers `/api/v1/scrape_pools` with HTTP 400, so the Prometheus provider counts scrape pools as unavailable and then throws a `ConnectionError` when the walk lists them.
 The capture is all-or-nothing by design (the module docblock of `src/lib/agent/context-snapshot.ts`), so the run gets no inventory and the refusal `This run could not reach this prometheus database to ask it for its schema, so nothing was read for this run.`, although the server answered three of the four listings.
 Measured 2026-09-24 against VictoriaMetrics v1.152.0, single node: `captureContextSnapshot` and `readObjectInventoryForGrounding` both refused, and the 329 metrics and 5 targets already read were dropped; the same calls against Prometheus 3.13.3 captured.
@@ -8659,11 +8584,11 @@ Found 2026-10-14 while building agent execution on Kubernetes.
 
 ### B113. The agent user guide and the data-flow page cite code by line number and carry em dashes
 
-`docs/AGENT_GUIDE.md` cites code as `file:line` 45 times, on 40 lines (`timeline.ts:499`, `goal-verifier.ts:349-355` and `AgentRail.tsx:401-447` among them), and those numbers have drifted as the files changed, so a reader following one lands on unrelated code.
+`docs/AGENT_GUIDE.md` cites code as `file:line` 45 times, on 40 lines (`FAILURE_SENTENCES` in `timeline.ts`, `verifyPlanningGoal` in `goal-verifier.ts` and `ENGINE_REFUSAL_CONSEQUENCE` in `AgentRail.tsx` among them), and those numbers have drifted as the files changed, so a reader following one lands on unrelated code.
 The same page carries 149 lines with an em dash, against the repository's writing rule.
 Found 2026-10-14 while building agent execution on Kubernetes; counted again on 2026-10-17, after #1790 edited the page.
 
-`docs/AGENT_DATA_FLOW.md` does the same: it cites code as `file:line` 66 times, on 52 lines (`investigation.ts:2540`, `provider-registry.ts:136-150` and `AgentRail.tsx:745-758` among them), and carries 87 lines with an em dash.
+`docs/AGENT_DATA_FLOW.md` does the same: it cites code as `file:line` 66 times, on 52 lines (`DATABASE_TOOL_HANDLERS` in `investigation.ts`, `createGeminiModel` in `provider-registry.ts` and `TimelineEntryBody` in `AgentRail.tsx` among them), and carries 87 lines with an em dash.
 Found 2026-10-17 in the review of #1790 (issue #1614), which moved the page's section 5 table, what each tool result sends to the model, to symbols and left the rest.
 
 **Done when:** every code citation in `docs/AGENT_GUIDE.md` and `docs/AGENT_DATA_FLOW.md` names a file and a symbol instead of a line, no em or en dash remains on either page, and a guard test fails on a new `file:line` citation on either; cited in `docs/AGENT.md`.
@@ -9406,6 +9331,14 @@ Found 2026-11-02 while reviewing `inspect_schema` on Couchbase.
 
 **Done when:** Couchbase's inferred columns are marked sampled, `inspect_schema` and agent grounding leave them out as they do Firestore's, the object tree still shows them with the sampled mark, and a provider test and an `inspect_schema` handler test pin both.
 
+### MCP14. `list_connections` is tested end to end on no Neo4j, etcd or MTConnect seed
+
+The test "names the tool that runs a statement on each connection, and null where inspect_schema is the read" in `tests/integration/mcp/list-connections.test.ts` seeds a connection of most engines a statement tool serves and checks each row's `read_tool` against the same session's `tools/list`.
+It seeds no Neo4j, etcd or MTConnect connection, so the `read_tool` those three connections answer (`run_cypher_read`, `run_etcd_read` and `run_mtconnect_read`) is never read back through the handler.
+Found 2026-11-03 while deriving that test's expectations from the served-engine records.
+
+**Done when:** that test seeds a connection of every engine a served statement tool reads, and a test derives the seeded set from `servingStatementArms()` so a newly served engine without a seed fails it.
+
 ---
 
 ## Governance follow-ups
@@ -9416,7 +9349,7 @@ GOV24 to GOV30 came from an external review of #1785 after it merged, and were v
 
 ### GOV1. Resolving a seed id answers 403 for an existing id and 404 for an unknown one
 
-`resolveConnection` in `src/lib/seed/resolve-connection.ts:84-98` looks the id up again without the role filter when the filtered lookup misses.
+`resolveConnection` in `src/lib/seed/resolve-connection.ts` looks the id up again without the role filter when the filtered lookup misses.
 An id that exists but is not available to the caller's role answers 403 with "Access denied", and an id that does not exist answers 404 with "not found".
 So any signed-in user can learn which seed ids the operator configured, including ids no role of theirs may use.
 The connection's fields are not revealed, so the leak is the id alone.

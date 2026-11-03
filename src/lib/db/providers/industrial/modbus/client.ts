@@ -5,9 +5,9 @@
  * WHY THE EGRESS RULE IS CALLED EXACTLY AS THE SHARED HELPER EXPECTS, AND NOT "CAREFULLY". This is
  * the shape that matters, read from `src/lib/db/http/egress-policy.ts` rather than inferred:
  *
- *   `assertPublicLiteralHost` checks the flag ITSELF and returns early when it is off (line 82).
- *   `assertPublicDnsAnswers` checks NO flag and always enforces (line 91).
- *   `guardedNodeOptions` returns `{}` when the flag is off (line 130), so the lookup is never
+ *   `assertPublicLiteralHost` checks the flag ITSELF and returns early when it is off.
+ *   `assertPublicDnsAnswers` checks NO flag and always enforces.
+ *   `guardedNodeOptions` returns `{}` when the flag is off, so the lookup is never
  *   installed and `assertPublicDnsAnswers` is never reached.
  *
  * So the flag check lives in the CALLER, and the only correct way to use the DNS guard is to let

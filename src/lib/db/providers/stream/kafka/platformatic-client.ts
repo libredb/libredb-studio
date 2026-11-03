@@ -43,7 +43,7 @@ interface AdminLike {
   describeGroups(o: object): Promise<Map<string, LibClassicGroup>>;
   listConsumerGroupOffsets(o: object): Promise<LibGroupOffsets[]>;
   describeLogDirs(o: object): Promise<LibBrokerLogDirs[]>;
-  /** A bare array (dist/clients/admin/admin.d.ts:25), not an object with a coordinators key. */
+  /** A bare array (`Admin.findCoordinator` in @platformatic/kafka 2.14.0's `dist/clients/admin/admin.d.ts`), not an object with a coordinators key. */
   findCoordinator(o: object): Promise<Array<{ key: string; nodeId: number; host: string; port: number }>>;
   listApis(): Promise<Array<{ apiKey: number; name: string; minVersion: number; maxVersion: number }>>;
   close(): Promise<void>;
@@ -294,7 +294,7 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
   const admin = new lib.Admin(base);
   // groupProtocol is pinned rather than left to the library default: Consumer.close()
   // leaves a KIP-848 group with a heartbeat whenever the protocol is "consumer", joined
-  // or not (dist/clients/consumer/consumer.js:134-139).
+  // or not (`Consumer.close` in @platformatic/kafka 2.14.0's `dist/clients/consumer/consumer.js`).
   const consumer = new lib.Consumer({
     ...base,
     groupId: KAFKA_SENTINEL_GROUP_ID,
@@ -657,7 +657,7 @@ function mapMetadata(md: LibMetadata): KafkaClusterMetadata {
   const topics: KafkaTopicMetadata[] = [...md.topics.entries()]
     .map(([name, t]): KafkaTopicMetadata => {
       // The library's metadata cache skips internal topics and answers their names with
-      // undefined (dist/clients/base/base.js:513-531); a missing topic fails before this as
+      // undefined (the metadata cache of `Base` in @platformatic/kafka 2.14.0's `dist/clients/base/base.js`); a missing topic fails before this as
       // "Unknown topic", so undefined here is an internal topic.
       if (t === undefined) throw internalTopic(name);
       return {

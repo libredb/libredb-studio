@@ -255,7 +255,7 @@ const nextConfig: NextConfig = {
   // `node-opcua-crypto` 6.2.3 (node-opcua 2.187.18) after a review found this comment describing
   // an older version of it: removing the two names below and building answers three errors, no
   // more and no fewer.
-  //   `node-opcua-crypto/dist/source_nodejs/read.js:288` computes its certificate store as
+  //   `getCertificateStore` in node-opcua-crypto 6.2.3's `dist/source_nodejs/read.js` computes its certificate store as
   //   `fileURLToPath(new URL("../../certificates/", import.meta.url))`. Turbopack reads that URL as
   //   a module request and answers `Module not found: Can't resolve '../../certificates/'` - and
   //   the directory really is absent from the installed package, so no bundler could resolve it.

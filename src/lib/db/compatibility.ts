@@ -524,30 +524,30 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // the closed table's names, counts and sizes under a user the server proves reads only, on no Kubernetes storage
   // prefix and not on every key.
   etcd: true,
-  // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4), and for
+  // Offered for the metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4), and for
   // `run_cypher_read`, which MCP_STATEMENT_READ opens on it.
   neo4j: true,
-  // Offered for the two metadata tools (vector-family E17), and for `run_milvus_read`, which MCP_STATEMENT_READ opens on
+  // Offered for the metadata tools (vector-family E17), and for `run_milvus_read`, which MCP_STATEMENT_READ opens on
   // it.
   milvus: true,
-  // Offered for the two metadata tools, carrying names and types only (vector-family spec 4.4), and for
+  // Offered for the metadata tools, carrying names and types only (vector-family spec 4.4), and for
   // `run_qdrant_read`, which MCP_STATEMENT_READ opens on it.
   qdrant: true,
-  // As Milvus and Qdrant (#1566 spec 3.5): offered for the two metadata tools, and for `run_weaviate_read`, which reads
+  // As Milvus and Qdrant (#1566 spec 3.5): offered for the metadata tools, and for `run_weaviate_read`, which reads
   // one metadata request under the agent's own boundary; inspect_schema lists a collection's properties and vectors and
   // never its tenants or aliases.
   weaviate: true,
-  // Both offered for the two metadata tools (InfluxDB spec I13). Both providers implement `queryReadOnly` for agent
+  // Both offered for the metadata tools (InfluxDB spec I13). Both providers implement `queryReadOnly` for agent
   // mode; `run_read_query` serves InfluxDB 3's SQL, opened by MCP_STATEMENT_READ, and no MCP statement tool reads
   // InfluxQL, so `influxdb` stays closed there (BACKLOG B94).
   influxdb: true,
   influxdb3: true,
-  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), the
+  // Outside this version: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), the
   // provider's read-only query path is agent mode's alone and reads metadata only, and no MCP surface is decided for
   // it yet (BACKLOG B100).
   oxia: false,
   databend: true,
-  // Closed, as etcd's and Oxia's: agent mode reads S3's metadata, and no MCP surface that lists buckets but never an
+  // Closed, as Oxia's: agent mode reads S3's metadata, and no MCP surface that lists buckets but never an
   // object key is designed yet (BACKLOG B104).
   s3: false,
   // Offered with every answer machine-redacted: `run_kubectl_read` runs the agent's
@@ -558,15 +558,15 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // names and payloads withheld; no MCP surface that reads through the same window, completeness sentence and
   // projection is designed yet (BACKLOG B164).
   mqtt: false,
-  // Closed, as etcd's, Oxia's and S3's: agent mode reads Firestore's metadata within a run's read allowance, every read
+  // Closed, as Oxia's and S3's: agent mode reads Firestore's metadata within a run's read allowance, every read
   // is billed to the user's project, and no MCP surface that lists collections but never a document id is designed yet
   // (BACKLOG B107).
   firestore: false,
-  // Offered for the two metadata tools, carrying stream names and the fixed read columns only, and for
+  // Offered for the metadata tools, carrying stream names and the fixed read columns only, and for
   // `run_rabbitmq_read`, which reads through agent mode's metadata-only path: each message's offset and body size,
   // never a message value (BACKLOG B108).
   rabbitmq: true,
-  // Outside this version, as for etcd, Oxia, S3 and MQTT. Agent mode reads values with their
+  // Outside this version. Agent mode reads values with their
   // engineering units and withholds the server's configuration, role identities and session
   // diagnostics, one session per read; no MCP surface that reads through the same withheld set and
   // units lookup is designed yet (BACKLOG B162).
@@ -602,15 +602,6 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * `MCP_EXPOSABLE` offers it and this record answers true (`src/lib/mcp/tools/served-engines.ts`), so an engine that
  * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
  *
- * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
- * for ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, for Redis, whose metadata read `run_redis_read` reads, for Kubernetes, whose kubectl line `run_kubectl_read` reads
- * under the agent's machine redaction, for LibreDB, whose command `run_libredb_read` reads on a read-only handle, for
- * Qdrant, whose metadata request `run_qdrant_read` reads, for RabbitMQ, whose stream read request `run_rabbitmq_read`
- * reads metadata only, for Kafka, whose metadata read `run_kafka_read` reads,
- * for Neo4j, whose Cypher `run_cypher_read` reads, and for Weaviate, whose request `run_weaviate_read` reads metadata only.
- * True for MTConnect, whose request line `run_mtconnect_read` reads under the agent's closed route table.
- * True for Milvus, whose metadata request `run_milvus_read` reads.
- * True for etcd, whose metadata command `run_etcd_read` reads.
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.

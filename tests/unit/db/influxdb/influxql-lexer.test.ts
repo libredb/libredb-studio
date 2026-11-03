@@ -265,7 +265,7 @@ describe("one case per lexer rule", () => {
   });
 
   test("a word is directly after :: only when nothing separates them, as the parser reads the cast", () => {
-    // parser.go:2588-2589 reads the type with `p.Scan()`, which returns whitespace, so `:: field`
+    // influxql v1.4.1's `parser.go` reads the type with `p.Scan()`, which returns whitespace, so `:: field`
     // is a parse error on the server; here FIELD is an ordinary keyword and the `/` a regex place.
     expect(shape("x:: field /a/")).toEqual(["identifier:x", "operator:::", "keyword:field", "regex:/a/"]);
     expect(shape("x::/* c */field /a/")).toEqual(["identifier:x", "operator:::", "keyword:field", "regex:/a/"]);

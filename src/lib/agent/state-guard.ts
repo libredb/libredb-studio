@@ -51,7 +51,7 @@
  * An array is walked exactly like any other container — its own non-index
  * properties are subject to every rule. That is not a hypothetical: this
  * repository's own SQL Server provider reads `recordset.columns` off the array
- * the driver returned (`src/lib/db/providers/sql/mssql.ts:590`), so a walk that
+ * the driver returned (`MSSQLProvider.query` in `src/lib/db/providers/sql/mssql.ts`), so a walk that
  * stopped at "the elements are clean" would miss what a driver hangs beside
  * them.
  *
@@ -285,7 +285,7 @@ interface WalkState {
 }
 
 // One line, hoisted: bun's line coverage under-counts the continuation lines of a
-// wrapped string literal (same reason as src/lib/config/auth-env.ts:20).
+// wrapped string literal (same reason as `JWT_SECRET_MISSING_MESSAGE` in src/lib/config/auth-env.ts).
 const refusalMessage = (finding: Finding): string =>
   `agent state refused: ${finding.violation} at ${finding.path}${finding.detail === undefined ? "" : ` (${finding.detail})`}`;
 

@@ -849,7 +849,7 @@ describe("a per-table operation with no row to run it on (U22)", () => {
     return { ...base, overview: { ...base.overview, tableCount: 6 }, tables: [] } as MonitoringData;
   }
 
-  // Rendered exactly as `MonitoringDashboard` renders it (src/.../MonitoringDashboard.tsx:305):
+  // Rendered exactly as `MonitoringDashboard` renders it (src/.../MonitoringDashboard.tsx):
   // no `isAdmin` prop at all, so this arm pins the default-prop path every real caller
   // takes. /monitoring is also the route a non-admin is sent to, which is why the note
   // below names no page they cannot open.

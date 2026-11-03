@@ -17,9 +17,9 @@ measured below, because an earlier version of this file said the opposite of bot
 project block, because the second-server projects exist for the rate-limit bucket that **Test
 Connection** spends and this spec never clicks Test Connection. The second half is true and the
 conclusion is still wrong: the dialog has one probe for both buttons.
-`src/hooks/use-connection-form.ts:1321-1343` says so in its own words - *"The one place the
+`useConnectionForm` in `src/hooks/use-connection-form.ts` says so in its own words - *"The one place the
 connection is probed, for both buttons"* - and that place is `POST /api/db/test-connection`,
-which `src/app/api/db/test-connection/route.ts:54` guards on the `query` bucket. So Establish
+which `POST` in `src/app/api/db/test-connection/route.ts` guards on the `query` bucket. So Establish
 Connection spends exactly what Test Connection spends, and the project block is needed for the
 reason `chromium-mtconnect` gives, not in spite of it.
 

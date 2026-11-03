@@ -2179,7 +2179,7 @@ describe("ObjectSourceView edit mode", () => {
   });
 
   test("a draft is written debounced, and the cleanup FLUSHES the pending write", async () => {
-    // The same 500 ms the workspace save effect uses at `use-tab-manager.ts:214`, so the two
+    // The same 500 ms the workspace save effect uses at `useTabManager` in `use-tab-manager.ts`, so the two
     // writers have one rhythm. The READ effect keeps its documented no-cleanup, no-drop shape:
     // this is a SECOND effect and it does not touch that one.
     const { applier } = applierDouble();
@@ -2880,7 +2880,7 @@ describe("ObjectSourceView edit mode", () => {
      *     reachable population, and nothing in this file would then notice it going.
      *
      * WHAT THE UNKILLED MUTATION COSTS A READER, and it is a live population rather than a
-     * theoretical one: `src/app/api/db/objects/edit-apply/route.ts:135` refuses a plan whose
+     * theoretical one: `POST` in `src/app/api/db/objects/edit-apply/route.ts` refuses a plan whose
      * consequence classes are not all in `acknowledged`, so a pane that dropped the tick would
      * make every Redis library of two or more functions permanently unappliable, with the reader
      * looking at a ticked box and a refusal that says they did not tick it.

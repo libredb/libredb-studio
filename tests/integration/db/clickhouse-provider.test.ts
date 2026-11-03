@@ -54,7 +54,7 @@ import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
-import { RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 
 // ============================================================================
 // Connection
@@ -4674,7 +4674,7 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
       content: [
         {
           type: "text",
-          text: 'run_read_query cannot run on this connection: ClickHouse user "agent_ro" holds BACKUP ON demo.*, a grant whose statements readonly does not refuse; the agent read-only profile takes a user holding only SELECT and SHOW on named databases or tables, so it is refused. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase.',
+          text: `run_read_query cannot run on this connection: ClickHouse user "agent_ro" holds BACKUP ON demo.*, a grant whose statements readonly does not refuse; the agent read-only profile takes a user holding only SELECT and SHOW on named databases or tables, so it is refused. It runs on ${RUN_READ_QUERY_ENGINES}.`,
         },
       ],
       isError: true,

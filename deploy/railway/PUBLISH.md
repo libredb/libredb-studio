@@ -108,7 +108,7 @@ On a new Studio release:
 
 1. Bump the image tag in all three files that carry it:
    `deploy/railway/template.json`, `deploy/railway/README.md` and this file
-   (line 16). `distribution/channels.yaml` says these three must move
+   (its Image line in the setup steps). `distribution/channels.yaml` says these three must move
    together, and leaving this one out is how it last went stale.
 2. In the template editor / published template, update the image tag and
    re-publish (Docker-image templates are **not** auto-updated by Railway).

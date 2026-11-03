@@ -1291,10 +1291,10 @@ export const CONNECTION_FORM: {
     // rather than answered with a word the engine does not know.
     showSslPanel: false,
     // The SSH TUNNEL panel stays, and the reason is NOT that this provider reads `sshTunnel`: it
-    // does not, and `open.ts:59` says so in as many words ("`sshTunnel` is NOT where these come
+    // does not, and `NetconfCredential` in `open.ts` says so in as many words ("`sshTunnel` is NOT where these come
     // from"). The tunnel is opened by the shared layer, before the provider is reached.
     //
-    // What justifies the panel is MEASURED, in `hostkey.ts:9-12`: a wrong pin stops the handshake
+    // What justifies the panel is MEASURED, in the header of `hostkey.ts`: a wrong pin stops the handshake
     // with `Host denied (verification failed)` before any authentication packet, AND it does so
     // through an SSH tunnel as well, where the key seen inside the forward was the device's own and
     // not the bastion's - the two fingerprints differed. So a tunnel to an SSH service is not a

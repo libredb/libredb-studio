@@ -81,7 +81,7 @@ describe("how a spawned child failed", () => {
 
   test("a node child that could not run names its error, because it has neither a status nor a signal", () => {
     // What a `timeout` leaves behind: status null, signal null, the reason in `error`.
-    // tests/integration/db/sqlite-provider.test.ts:3800 records meeting this one.
+    // the test "core CRUD, schema, maintenance, and error mapping work under Node" in tests/integration/db/sqlite-provider.test.ts records meeting this one.
     expect(howItFailed({ status: null, signal: null, error: new Error("spawnSync /bin/x ETIMEDOUT") })).toBe(
       "could not run (spawnSync /bin/x ETIMEDOUT)",
     );

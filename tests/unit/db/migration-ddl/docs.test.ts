@@ -71,7 +71,6 @@ function sectionViolations(module: EngineModule, spec: MigrationDdlSpec, text: s
   for (const name of sharedFields(spec)) {
     if (!section.includes(`\`${name}\``)) violations.push(`${module.id}: does not name ${name}`);
   }
-  if (/\.ts:\d/.test(section)) violations.push(`${module.id}: cites a line number`);
   return violations;
 }
 
@@ -142,8 +141,8 @@ describe("the check fails a planted document by name", () => {
     ]);
   });
 
-  test("a missing export, link, reason, building block and a cited line are named", () => {
-    const section = "## Migration DDL\n\nSee `src/lib/db/providers/sql/db2/migration-ddl.ts:12`.\n";
+  test("a missing export, link, reason and building block are named", () => {
+    const section = "## Migration DDL\n\nSee `src/lib/db/providers/sql/db2/migration-ddl.ts`.\n";
     expect(sectionViolations(db2, MIGRATION_DDL.db2, section)).toEqual([
       "db2: does not name DB2_MIGRATION_DDL",
       `db2: does not link ${db2.path}`,
@@ -156,7 +155,6 @@ describe("the check fails a planted document by name", () => {
       "db2: does not name standardDropColumn",
       "db2: does not name standardDropTable",
       "db2: does not name standardPrimaryKey",
-      "db2: cites a line number",
     ]);
   });
 

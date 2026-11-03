@@ -3363,7 +3363,7 @@ function objectRead(sql: string): string {
   if (upper.includes("OBJECT_SCHEMA_NAME(FK.PARENT_OBJECT_ID)")) return "flat-fks";
   // `T.NAME AS TABLE_NAME` is what tells the flat reading's index statement from the
   // SINGLE object's, exactly as the `flat-pk` arm above already guards itself. Without it
-  // this arm swallowed `objectIndexesSql` (`mssql.ts:776-787`), which names no table, and
+  // this arm swallowed `objectIndexesSql` (`mssql.ts`), which names no table, and
   // answered `app_orders_total_ix` for every object described: the canned row was right for
   // `app.orders` and a fabrication for anything else, which only became visible when a
   // second relation kind gained column rows here (#789).
@@ -3828,7 +3828,7 @@ function fixtureRead(read: string, inputs: Record<string, unknown>, sql: string)
     // names, so the read threw through `mapDatabaseError` instead of answering.
     //
     // The rows are the DRIVER'S rows and the naming is left to `mssql.ts`, which spells a
-    // name `schema.table` and strips `dbo` (`mssql.ts:1798`). A fixture that returned
+    // name `schema.table` and strips `dbo` (`mssql.ts`). A fixture that returned
     // finished names would assert its own spelling rather than the engine's.
     //
     // DISCLOSED: the `dbo` strip is not exercised, and inventing a row for it would be

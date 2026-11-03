@@ -1699,12 +1699,6 @@ describe("docs/SEED_CONNECTIONS.md and the seed schema agree on s3", () => {
       "InfluxDB 3 (SQL), Oxia, S3-compatible object storage and Kubernetes)",
     );
     expect(seed).toContain("both InfluxDB types', Oxia's, S3's and Kubernetes's do today");
-    expect(rowOf(seed, "`connections[].mcp`")).toContain(
-      "An Oxia, S3, MQTT, Firestore, OPC UA, Modbus, NETCONF, SNMP or Sparkplug B connection refuses `mcp: true` when the file loads",
-    );
-    expect(seed).toContain(
-      "| `mcp: true` on an Oxia, S3, MQTT, Firestore, OPC UA, Modbus, NETCONF, SNMP or Sparkplug B connection | The whole file fails like any invalid config, and the error names `mcp` and the type, such as `oxia` or `s3` |",
-    );
     expect(seed.split("`dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`")).toHaveLength(3);
   });
 

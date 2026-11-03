@@ -90,9 +90,9 @@ export async function resolveTarget(host: string, port: number): Promise<Resolve
   });
   // The two checks are not applied the same way, and copying the shared transport's shape is
   // the point rather than a detail. `assertPublicLiteralHost` consults the flag itself and
-  // returns when it is off (`egress-policy.ts:82`), but `assertPublicDnsAnswers` does NOT: it
+  // returns when it is off (`egress-policy.ts`), but `assertPublicDnsAnswers` does NOT: it
   // refuses loopback and private answers unconditionally, because the shared transport only
-  // installs it when the flag is on (`guardedNodeOptions`, line 130). Calling it unconditionally
+  // installs it when the flag is on (`guardedNodeOptions`). Calling it unconditionally
   // here refused every agent reached by name on a local network even with the flag off, which
   // is the common case; a test with a name rather than a literal is what found it.
   if (blockPrivateHosts()) assertPublicDnsAnswers(answers);

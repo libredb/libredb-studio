@@ -126,7 +126,7 @@ describe("uriFormRefusal (the URI form of IDENTIFIER, SqlBaseLexer.g4 v4.2.0:655
 
   test("an address is also tried at a non-ASCII letter after an ASCII letter or digit, where Spark ends a decimal", () => {
     // Spark's lexer ends 1.5 before the é, since isValidDecimal refuses a decimal only when A-Z, 0-9 or _ follows it
-    // (SqlBaseLexer-v4.2.0.g4:42-50, :627-646), so Spark reads é://x--y as an address.
+    // (`isValidDecimal` and the number rules of Spark v4.2.0's `SqlBaseLexer.g4`), so Spark reads é://x--y as an address.
     expect(uriFormRefusal("SET k=1.5é://x--y")).toBe(SPARK_STATEMENT_SENTENCES.uriForm);
     // The same after a decimal that ends in a letter: 1.5D is a double, and Spark's lexer ends it before the é.
     expect(uriFormRefusal("SET k=1.5Dé://x--y")).toBe(SPARK_STATEMENT_SENTENCES.uriForm);

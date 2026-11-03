@@ -279,10 +279,10 @@ test("the credential reaches ssh2 only as the connection supplied it", async () 
  * installed the strictest check it could find. The question the provider has to answer is the other
  * one: with the flag off, is a device named by name on a local network still reachable?
  *
- * It has to be. The flag is opt-in, and `egress-policy.ts:63` says why: unset and false preserve
+ * It has to be. The flag is opt-in, and `blockPrivateHttpHosts` in `egress-policy.ts` says why: unset and false preserve
  * local-first connections. A NETCONF device sits on a management network nearly by definition, so a
  * provider that hardened past the flag would refuse the ordinary case. This dial asks `socketEgress`
- * for the rule and installs its answer, and the flag is read inside it (`egress-policy.ts:130`), so
+ * for the rule and installs its answer, and the flag is read inside it (`guardedNodeOptions` in `egress-policy.ts`), so
  * the pair below drives the lookup the dial actually installed and shows the decision follows the
  * flag rather than this provider.
  *

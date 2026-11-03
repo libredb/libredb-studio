@@ -47,7 +47,7 @@ const ROUTE = "api/db/objects/edit-apply";
  * THE TWO EVENTS AND WHY THEY ARE TWO. The DECISION event is emitted BEFORE the provider is called
  * and is NOT wrapped in a try/catch, so any audit-sink failure propagates and the apply never
  * happens: the path fails closed on an unauditable write rather than performing it silently. That
- * is `src/lib/db/operations/execution.ts:11-20`'s rule for the agent path, applied here for the
+ * is the rule the header of `src/lib/db/operations/execution.ts` states for the agent path, applied here for the
  * same reason. The OUTCOME event is emitted after and IS wrapped, which is the rule of the
  * completed-run audit row in `POST` of `src/app/api/db/maintenance/route.ts`, and its stated
  * reason: the engine has

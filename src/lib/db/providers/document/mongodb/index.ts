@@ -1022,7 +1022,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     // The request's deadline closed this connect (#1573). Reached only on the timed
     // out path, outside the catch above so the refusal is not wrapped twice.
     // Draining the selection wait queue with `MongoTopologyClosedError` is what
-    // `Topology.close()` does (`topology.js:246-255`), so the in-flight connect
+    // `Topology.close()` does (`Topology.close` in mongodb 7.7.0's `lib/sdam/topology.js`), so the in-flight connect
     // rejects on its own. The client is closed again once the connect settles
     // (`connecting.then` in the race above), so no client and no socket outlives
     // the request even when the first close lands during the SRV window and is a

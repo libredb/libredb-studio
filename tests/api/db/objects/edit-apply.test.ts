@@ -108,7 +108,7 @@ describe("POST /api/db/objects/edit-apply", () => {
     // `1c7e7b2e9f9ee023a97ad141dd3d3c92923bb03472f6b0ff0c726968c3fe28a5`, this request answered 200
     // and `provider.applyObjectEdit` was called once, which is the apply landing on another server.
     //
-    // Why the URI and not the five fields: `src/lib/db/providers/sql/postgres.ts:2070-2074` returns
+    // Why the URI and not the five fields: `PostgresProvider.getCapabilities` in `src/lib/db/providers/sql/postgres.ts` returns
     // `{ ...baseConfig, connectionString }` and NEVER reaches the host/port/user/database branch
     // below it, so these two records are byte-identical in every field the old frame hashed, `id`
     // included, and reach two different servers.
@@ -257,7 +257,7 @@ describe("POST /api/db/objects/edit-apply", () => {
   });
 
   test("THE DECISION EVENT PRECEDES THE PROVIDER CALL, and an unauditable apply never happens", async () => {
-    // `src/lib/db/operations/execution.ts:11-20` states the rule for the agent path: emission is not
+    // the header of `src/lib/db/operations/execution.ts` states the rule for the agent path: emission is not
     // wrapped in a try/catch, so ANY audit-sink failure propagates and the provider is never invoked.
     const sealed = await mintValidPlan();
     const sink = spyOn(console, "log").mockImplementation(() => {
@@ -361,7 +361,7 @@ describe("POST /api/db/objects/edit-apply", () => {
     //
     // `user`'s own `|| "unknown"` arm is NOT driven here and the reason is MEASURED rather than
     // preferred: `guardRoute` keys the rate limiter on `session.username` BEFORE the handler runs,
-    // and a session without one dies at `truncatedKey` in `src/lib/api/rate-limit.ts:213` with
+    // and a session without one dies at `truncatedKey` in `src/lib/api/rate-limit.ts` with
     // `TypeError: undefined is not an object (evaluating 'key.slice')`, which is what a first draft
     // of this test measured. `SessionPayload.username` is a required `string`; the fallback is an
     // obligation of `ObjectRouteContext`'s looser `username?: string` and has no live population.

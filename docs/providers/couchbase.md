@@ -1205,7 +1205,7 @@ numerator and denominator measure different things is not a share.
 The *Indexes* card reads `N/A` beside a bucket whose disk usage the cluster does publish, and the
 field it is missing belongs to the `TableStats` row rather than to the index listing:
 `getTableStats()` returns the one bucket row and that row carries no `indexSizeBytes`, while
-[`StorageTab.tsx`](../../src/components/monitoring/tabs/StorageTab.tsx):79-80 shows the card only
+[`StorageTab.tsx`](../../src/components/monitoring/tabs/StorageTab.tsx) shows the card only
 when **every** table row carries one (`tables.every((t) => t.indexSizeBytes !== undefined)`).
 `getIndexStats()` omits `IndexStats.indexSizeBytes` for its own reason
 ([§7.1](#71-an-unread-metric-is-absent-not-zero)), and that listing is not the one the card reads.

@@ -1874,7 +1874,7 @@ describe("getOrCreateProvider", () => {
 // Reported privately 2026-09-20 and reproduced here before anything was changed.
 //
 // `getOrCreateProvider` keyed `providerCache` on `connection.id`, and that id arrives in the
-// request body: `resolveConnection` (`src/lib/seed/resolve-connection.ts:22-24`) hands an inline
+// request body: `resolveConnection` (`src/lib/seed/resolve-connection.ts`) hands an inline
 // `connection` back verbatim, id included, so any signed-in caller can name any id. Naming one
 // another session already opened returned THAT session's live provider, still authenticated as
 // them, without ever comparing the credentials the caller sent. A `seed:` id is an operator-chosen

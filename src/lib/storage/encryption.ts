@@ -26,7 +26,7 @@ import { getJwtSecret, JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
  *   otherwise                        -> JWT_SECRET  -> HKDF-SHA256 -> 32 bytes
  *
  * Deriving from JWT_SECRET is what keeps the zero-config promise every distribution channel
- * depends on: no new mandatory variable, and the auth bootstrap (src/lib/auth-bootstrap.ts:199)
+ * depends on: no new mandatory variable, and the auth bootstrap (`bootstrapAuth` in src/lib/auth-bootstrap.ts)
  * already generates and persists a JWT_SECRET on first run, so even an operator who configured
  * nothing has a stable key across restarts. The cost, documented in docs/STORAGE.md, is that
  * rotating JWT_SECRET invalidates every stored credential.

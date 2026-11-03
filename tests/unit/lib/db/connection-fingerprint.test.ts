@@ -69,7 +69,8 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ serviceName: "XEPDB1" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ instanceName: "SQLEXPRESS" }))).not.toBe(base);
     // The tenth, which the four above were audited without and which a review of THAT audit found
-    // one field away: the bastion is the ROUTE, and `factory.ts:1264-1271` rewrites `host` and `port`
+    // one field away: the bastion is the ROUTE, and the `tunnelledConnection` call in `getOrCreateProvider`
+    // (`factory.ts`) rewrites `host` and `port`
     // to the tunnel's local endpoint before the provider is constructed, so the tunnel and not the
     // record decides which machine the sealed statement reaches.
     expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).not.toBe(base);
@@ -95,7 +96,8 @@ describe("connectionFingerprint", () => {
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, port: 2222 } })));
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, username: "mallory" } })));
     // A DISABLED tunnel is not the same route as an enabled one to the same bastion, because
-    // `factory.ts:1264` branches on exactly that flag and only the enabled arm rewrites the endpoint.
+    // the `sshTunnel?.enabled` branch of `getOrCreateProvider` in `factory.ts` tests exactly that flag and only the
+    // enabled arm rewrites the endpoint.
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, enabled: false } })));
     // And the tunnel's SECRETS are out, on the rule the database password already follows: rotating
     // a key changes who may reach the bastion, never which machine it is. `hostKeyFingerprint` is
@@ -180,7 +182,7 @@ describe("connectionFingerprint", () => {
   });
 
   test("the connection's id and name are NOT in it", async () => {
-    // MEASURED, `src/lib/seed/resolve-connection.ts:21-23` returns an inline connection object
+    // MEASURED, `resolveConnection` in `src/lib/seed/resolve-connection.ts` returns an inline connection object
     // verbatim, `id` included, so on the majority path the id is a string the caller typed.
     // Binding a plan to it would be vacuous for exactly the case the binding exists for.
     const base = await connectionFingerprint(BASE);
@@ -321,85 +323,35 @@ describe("the maps the WithTunnelFarEnd docblock calls exhaustive over keyof Dat
 });
 
 /**
- * This test file cites `factory.ts` BY LINE, and that pointer rots in silence: any insertion above
- * the cited line invalidates it from a hand nowhere near this file. It happened here. The X23
- * commit inserted thirty-four lines above the tunnel branch, and the four pointers at line 485 it
- * left behind now name `const cacheKey = connection.id;` and a `@param` line inside a docblock.
- * The module now names `getOrCreateProvider` instead of a line (#1135), and the first test below
- * keeps it that way.
+ * This test file cites `factory.ts`, and a citation by a hand-copied line number rots in silence: any insertion above
+ * the cited line invalidates it from a hand nowhere near this file. It happened here, when a commit inserted
+ * thirty-four lines above the tunnel branch and the pointers left behind named an unrelated line. So the prose names
+ * the code instead, `getOrCreateProvider`, its `sshTunnel?.enabled` branch and its `tunnelledConnection` call, and
+ * these tests hold that each name exists in `factory.ts` and that the prose names it.
  *
- * The guard holds every number in ONE place, the cited file itself: the table names the ANCHOR,
- * the test greps it and derives the number the prose must be writing. A correct renumbering costs
- * no edit here and a stale one fails with the number to write. It is the shape
- * `tests/unit/lib/api/object-route-edit.test.ts` already uses for `src/lib/api/object-route.ts`.
- *
- * `after` exists because the tunnel branch is written three times in `factory.ts` - once in each
- * rewrite site - so the anchor alone is ambiguous and the scope has to say which one.
- *
- * SCOPE IS THE TWO CONNECTION-FINGERPRINT FILES, on purpose. The repository-wide version of this
- * check is `docs/BACKLOG.md` DOC8.
+ * SCOPE IS THE TWO CONNECTION-FINGERPRINT FILES, on purpose; the repository-wide ban on a line-number citation is
+ * `tests/unit/no-source-line-citations.test.ts`.
  */
 const FACTORY = "src/lib/db/factory.ts";
-const GET_OR_CREATE = "export async function getOrCreateProvider(";
-const TUNNEL_BRANCH = "if (connection.sshTunnel?.enabled && connection.host && connection.port) {";
-const TUNNEL_REWRITE = "effectiveConnection = tunnelledConnection(connection, tunnel);";
-
-type CitedFactoryLine = {
-  /** The path exactly as the test prose writes it. */
-  as: string;
-  /** A line that is unique in `factory.ts`, from which the anchors below are searched forward. */
-  after: string;
-  /** The line the citation means, or the first and last line when the citation is a range. */
-  anchor: string | [string, string];
-};
-
-const CITED_FACTORY_LINES: CitedFactoryLine[] = [
-  // `enabled` is framed because this branch tests exactly that flag before anything is rewritten.
-  { as: "factory.ts", after: GET_OR_CREATE, anchor: TUNNEL_BRANCH },
-  // The rewrite itself, cited as a range: the branch through the call that replaces the endpoint.
-  { as: "factory.ts", after: GET_OR_CREATE, anchor: [TUNNEL_BRANCH, TUNNEL_REWRITE] },
-];
+const CITED_FACTORY_NAMES = ["getOrCreateProvider", "sshTunnel?.enabled", "tunnelledConnection"];
 
 describe("the factory.ts citations in the fingerprint module and its test", () => {
   const repoRoot = join(import.meta.dir, "../../../..");
-  const factoryLines = readFileSync(join(repoRoot, FACTORY), "utf8").split("\n");
-  const citing = ["src/lib/db/connection-fingerprint.ts", "tests/unit/lib/db/connection-fingerprint.test.ts"];
+  const factory = readFileSync(join(repoRoot, FACTORY), "utf8");
 
-  const linesOf = (anchor: string, from: number): number[] =>
-    factoryLines.flatMap((line, index) => (index + 1 > from && line.includes(anchor) ? [index + 1] : []));
-  const scopeOf = (site: CitedFactoryLine): number[] => linesOf(site.after, 0);
-  const citationOf = (site: CitedFactoryLine): string => {
-    const from = scopeOf(site)[0] ?? 0;
-    const anchors = Array.isArray(site.anchor) ? site.anchor : [site.anchor];
-    return `${site.as}:${anchors.map((anchor) => linesOf(anchor, from)[0]).join("-")}`;
-  };
-
-  test("the module names the declared function without line numbers", () => {
+  test("the module names the declared function, never a line", () => {
     const source = readFileSync(join(repoRoot, "src/lib/db/connection-fingerprint.ts"), "utf8");
     expect(source.match(/`getOrCreateProvider`/g)?.length).toBe(2);
     expect(source.match(/`src\/lib\/db\/factory\.ts`/g)?.length).toBe(2);
-    expect(source).not.toMatch(/factory\.ts:\d/);
-    expect(linesOf(GET_OR_CREATE, 0)).toHaveLength(1);
   });
 
-  test("every scope anchor sits on exactly one line of factory.ts", () => {
-    const ambiguous = CITED_FACTORY_LINES.filter((site) => scopeOf(site).length !== 1).map((site) => site.after);
-    expect(ambiguous).toEqual([]);
+  test("every name the prose cites exists in factory.ts", () => {
+    expect(factory).toContain("export async function getOrCreateProvider(");
+    for (const name of CITED_FACTORY_NAMES) expect(factory).toContain(name);
   });
 
-  test("every cited factory.ts line is the line its anchor actually sits on", () => {
-    const expected = new Set(CITED_FACTORY_LINES.map(citationOf));
-    const stale = citing.flatMap((file) => {
-      const cited = readFileSync(join(repoRoot, file), "utf8").match(/[A-Za-z0-9_./-]*factory\.ts:\d+(?:-\d+)?/g) ?? [];
-      return [...new Set(cited)].filter((citation) => !expected.has(citation)).map((c) => `${file} :: ${c}`);
-    });
-    expect(stale).toEqual([]);
-  });
-
-  test("the population is not empty, so a guard that certifies nothing goes red", () => {
-    const cited = citing.flatMap(
-      (file) => readFileSync(join(repoRoot, file), "utf8").match(/[A-Za-z0-9_./-]*factory\.ts:\d+(?:-\d+)?/g) ?? [],
-    );
-    expect(cited.length).toBe(CITED_FACTORY_LINES.length);
+  test("this file's prose names each of them", () => {
+    const self = readFileSync(join(repoRoot, "tests/unit/lib/db/connection-fingerprint.test.ts"), "utf8");
+    for (const name of CITED_FACTORY_NAMES) expect(self).toContain(`\`${name}\``);
   });
 });

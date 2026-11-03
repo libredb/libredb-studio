@@ -449,7 +449,7 @@ describe("no citation outlives the entry it names", () => {
  * A `grep` command an entry PRINTS is a claim, and it has to answer what the entry says it answers.
  *
  * `X15` shipped the sentence "`grep -rn 'role="tabpanel"' src/` now returns exactly one hit,
- * `src/components/object-source/ObjectSourceView.tsx:347`". The FACT was true: that file carries the
+ * `onTabKeyDown` in `src/components/object-source/ObjectSourceView.tsx`". The FACT was true: that file carries the
  * only `tabpanel` role in the tree and neither shell carries one. The COMMAND was false, and by two
  * characters: the role is written as an object property, `{ role: "tabpanel", ... }`, not as a JSX
  * attribute, so the quoted form matches zero lines. Whoever ran the printed command got nothing and

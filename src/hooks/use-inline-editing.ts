@@ -402,7 +402,7 @@ async function keyAddressesOneRow(
   /** The database the edited rows were read from, on a server-level connection (#1530). */
   catalog?: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  // The connection is already in hand — the same object line 433 reads its dialect from —
+  // The connection is already in hand — the same object `dialect` is read from below —
   // so the width a declared float means is read from the engine that declared it.
   const column = keyColumnKind(declaredKeyType, connection.type);
   // A key with no value cannot be addressed by `=` at all, and `String(null)` would send

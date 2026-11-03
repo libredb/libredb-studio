@@ -3,7 +3,7 @@
  *
  * THE GAP. This provider declares no `queryDialect`. It cannot: the dialect union is itself a
  * registration surface, a member arrives with three records, and
- * `docs/ADDING_A_PROVIDER.md:1088` says "the build fails until all three exist". Measured:
+ * the "Quick Reference Checklist" section of `docs/ADDING_A_PROVIDER.md` says "the build fails until all three exist". Measured:
  * declaring `queryDialect: "modbus"` before those records exist does not typecheck.
  *
  * The cost is not hidden. A `json` provider with no dialect of its own is given MongoDB's tab
@@ -348,7 +348,7 @@ describe("what the provider refuses rather than fakes", () => {
 describe("a refusal is a QueryError, because the product treats it differently", () => {
   /**
    * Measured rather than assumed: `isQueryError` tests `instanceof QueryError`, and at least one
-   * reader (`platform/kubernetes/objects.ts:348`) turns a `QueryError` into `{ unavailable }` while
+   * reader (`countKind` in `platform/kubernetes/objects.ts`) turns a `QueryError` into `{ unavailable }` while
    * letting anything else propagate as an unexpected failure. A refusal thrown as a plain `Error`
    * therefore reaches the user as a crash instead of as the sentence it carries. The first version
    * of the provider threw plain errors; these tests exist so that cannot come back.

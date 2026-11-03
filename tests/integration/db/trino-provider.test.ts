@@ -4796,7 +4796,7 @@ describe("Trino object edit: the apply", () => {
   });
 
   test("a timeout is INTERRUPTED and never a TimeoutError", async () => {
-    // `trino/index.ts:680` mints a TimeoutError directly, and `src/lib/api/errors.ts:108-120`
+    // `TrinoProvider.query` in `trino/index.ts` mints a TimeoutError directly, and `createErrorResponse` in `src/lib/api/errors.ts`
     // answers that 504 `retryable: true`. A client that retries an apply whose disposition is
     // unknown applies twice.
     const outcome = await applyWithTrinoError(new TimeoutError("Query timed out"));

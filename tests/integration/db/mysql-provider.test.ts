@@ -6965,7 +6965,7 @@ describe("MySQL object listing and detail", () => {
     // The declaration is a CLIENT gate: the tree draws a twisty on a kind that declares it and
     // asks `describeObject` when the row opens, so a kind declaring it and answering nothing is
     // a twisty that opens on nothing. Derived at the declaration from the same `hasColumns()`
-    // predicate both read methods gate on (`mysql.ts:1860-1862`), and asserted here against the
+    // predicate both read methods gate on (`objectDetailFromRows` in `mysql.ts`), and asserted here against the
     // literal set, which is the only thing that can catch the derivation widening.
     //
     // MariaDB, because it is the flavour that has every kind: the MySQL six plus `package` and
