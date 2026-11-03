@@ -474,7 +474,7 @@ worth naming because it is instructions and identifiers rather than data:
 - **The evidence contract, as an example object.** `AGENT_EVIDENCE_CONTRACT` renders
   `{"source":"artifact","correlationId":"…"}` and `{"source":"context-snapshot","fingerprint":"…"}`
   into the run's opening rules and into two tool descriptions (`AgentToolContext` in `tools.ts`,
-  `AGENT_RULES` in `investigation.ts`). Server text, with placeholders where the ids go.
+  `agentRules` in `investigation.ts`). Server text, with placeholders where the ids go.
 - **An artifact id at the moment it changes hands.** Every completed read is now preceded by
   *"Stored as artifact `<id>`. To use it in a claim, cite it as {…}"* (`handoverText` in
   `tools.ts`), and the schema snapshot is preceded by the same sentence for its fingerprint

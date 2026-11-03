@@ -206,8 +206,8 @@ const ENVELOPE_KEYS = [
  * OpenSearch sends `size` alongside `total` on every result and Elasticsearch sends
  * neither (measured), so a page size read off one product's envelope would be a
  * number the other cannot produce. `SearchQueryResult` carries `totalHits` and
- * nothing else, and `TableSchema.size` - which `toTableSchema` in `introspect.ts` sets from
- * `formatBytes` - is a different concept wearing the same word.
+ * nothing else, and `StorageStats.size` - which `toStorageStats` in the provider's `index.ts`
+ * sets from `formatBytes` - is a different concept wearing the same word.
  */
 const UNUSED_ENVELOPE_KEYS = ["size"];
 
