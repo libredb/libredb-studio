@@ -18,10 +18,11 @@
  * wait. Measured on the starved core, the light wave's longest stall is under 200 ms, against the 1,000 ms an idle
  * stop needs, and every idle stop's last byte arrives by 320 ms, leaving 680 ms before the deadline could win. On a
  * starved runner the heavy pair's byte budget can lose to the wall-clock deadline instead (one of ten stretched runs
- * stopped header-heavy-bytes on deadline), so both heavy peers allow that stop. Their sockets always close once the
- * client drops, but a loaded macos runner under Bun can take seconds to see that close (3,540 ms worst across 30
- * probe runs), so the helper's wait is bounded at 5 s and no read-loop change was needed. The
- * file's budget is 20 s: about 3 s per runtime, plus the bundle.
+ * stopped header-heavy-bytes on deadline), so both heavy peers allow that stop. "No socket left" is two facts: the read
+ * has destroyed every socket it dialled when it settles (`clientOpen`, taken with no wait), and the peer has seen that
+ * close (`openAfter`). A loaded runner can take seconds to report the close to the peer (3,540 ms worst across 30
+ * macos probe runs), so the helper awaits the peer's close event for up to PEER_CLOSE_WAIT_MS. The file takes about
+ * 3 s per runtime, plus the bundle.
  */
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -147,9 +148,16 @@ function check(run: RuntimeRun): void {
       label: outcome.label,
       withinDeadline: true,
     });
-    expect({ name: outcome.name, label: outcome.label, openAfter: outcome.openAfter }).toEqual({
+    // clientOpen is the read's own promise, taken the moment it settles; openAfter is the peer seeing that close.
+    expect({
       name: outcome.name,
       label: outcome.label,
+      clientOpen: outcome.clientOpen,
+      openAfter: outcome.openAfter,
+    }).toEqual({
+      name: outcome.name,
+      label: outcome.label,
+      clientOpen: 0,
       openAfter: 0,
     });
   }

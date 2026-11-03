@@ -335,6 +335,8 @@ export interface FakePeer {
   readonly received: readonly ReceivedFrame[];
   /** Accepted sockets not closed yet. */
   openSockets(): number;
+  /** Resolves once every accepted socket has closed, at once when none is open. */
+  allClosed(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -384,12 +386,19 @@ export async function startFakePeer(
 ): Promise<FakePeer> {
   const received: ReceivedFrame[] = [];
   const sockets = new Set<Socket>();
+  let drained: (() => void)[] = [];
   let dials = 0;
   let stopped = false;
   const handle = (socket: Socket): void => {
     dials += 1;
     sockets.add(socket);
-    socket.on("close", () => sockets.delete(socket));
+    socket.on("close", () => {
+      sockets.delete(socket);
+      if (sockets.size > 0) return;
+      const waiting = drained;
+      drained = [];
+      for (const resolve of waiting) resolve();
+    });
     socket.on("error", () => {});
     const own: ReceivedFrame[] = [];
     let wake: (() => void) | null = null;
@@ -465,6 +474,12 @@ export async function startFakePeer(
     },
     received,
     openSockets: () => sockets.size,
+    allClosed: () =>
+      sockets.size === 0
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            drained.push(resolve);
+          }),
     async stop() {
       stopped = true;
       for (const socket of sockets) socket.destroy();
@@ -1014,9 +1029,19 @@ export interface HostileOutcome {
   readonly rows: number;
   /** From the read's start to its settling. */
   readonly ms: number;
+  /** Client sockets the read dialled and had not destroyed when it settled. */
+  readonly clientOpen: number;
   /** Peer sockets still open after the bounded wait that follows the read settling. */
   readonly openAfter: number;
 }
+
+/**
+ * How long the peer may take to see the client's close once the read settled. The read destroys its socket before it
+ * settles (`clientOpen` holds that with no wait), so this bounds only how fast the runtime reports the close to the
+ * peer: under 230 ms in the common case and 3,540 ms worst across 30 loaded macos probe runs. Ten seconds keeps the
+ * four waits a failing file can reach (two waves, under Bun and under Node) inside the file's 60 s beforeAll.
+ */
+export const PEER_CLOSE_WAIT_MS = 10_000;
 
 /**
  * Runs one hostile peer against the real read loop and dial under the system clock with a 2,000 ms deadline, and
@@ -1030,6 +1055,7 @@ export async function runHostilePeer(
     ? null
     : await startFakePeer(peer.steps?.() ?? [], peer.tlsPeer ? { tls: certificate } : {});
   const port = fake?.port ?? (await closedPort());
+  const clients: AmqpSocket[] = [];
   const started = performance.now();
   let label: ReadLabel;
   let rows = 0;
@@ -1050,7 +1076,11 @@ export async function runHostilePeer(
       signal: AbortSignal.timeout(2_000),
       deadlineSeconds: 2,
       replicas: { online: [], members: [] },
-      dial: dialAmqp,
+      dial: async (target, signal) => {
+        const socket = await dialAmqp(target, signal);
+        clients.push(socket);
+        return socket;
+      },
       clock: SYSTEM_CLOCK,
       studioVersion: null,
     });
@@ -1060,13 +1090,19 @@ export async function runHostilePeer(
     label = `error:${(error as Error).name}`;
   }
   const ms = performance.now() - started;
-  // The peer sees the client's socket go once its FIN or RST is read; other peers' floods can delay that by a few ms,
-  // and a loaded macos runner under Bun has been measured at 3,540 ms across 30 probe runs (common case under 230 ms),
-  // so the wait is bounded at 5 s.
-  for (let waited = 0; waited < 5_000 && (fake?.openSockets() ?? 0) > 0; waited += 10) await sleep(10);
+  const clientOpen = clients.filter((socket) => !socket.destroyed).length;
+  if (fake !== null) {
+    let stopWait: () => void = () => {};
+    const bound = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, PEER_CLOSE_WAIT_MS);
+      stopWait = () => clearTimeout(timer);
+    });
+    await Promise.race([fake.allClosed(), bound]);
+    stopWait();
+  }
   const openAfter = fake?.openSockets() ?? 0;
   await fake?.stop();
-  return { name: peer.name, label, rows, ms, openAfter };
+  return { name: peer.name, label, rows, ms, clientOpen, openAfter };
 }
 
 /**
