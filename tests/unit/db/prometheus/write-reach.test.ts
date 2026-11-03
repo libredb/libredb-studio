@@ -10,14 +10,17 @@
  * 2. The transport as it runs: every method the transport object answers is called through a recording sender, and
  *    the set of paths it requested is exactly the set of `PATHS` values, the only POST being the instant query. The
  *    methods are read from the object, not from a list this file keeps, so a new method that is not driven fails.
- * 3. The source: every place `http-transport.ts` hands a path to the URL builder or to its senders passes a member
- *    of `PATHS` or the `path` parameter of a private helper, and every call of those helpers passes a member of
- *    `PATHS`, so no path is spelled or assembled anywhere else in the file.
+ * 3. The source: every place `http-transport.ts` hands a path to the URL builder or to a helper that takes one
+ *    passes a member of `PATHS`, or a private helper's own `path` parameter; no string or template outside the
+ *    table starts with "/"; the global `URL` is never constructed or called; and only `exchange` uses the sender,
+ *    only `probe` and `read` use `exchange`. The same check runs over sample sources that break each rule.
  *
  * 4. The live run: tests/fixtures/prometheus/v3.13.3/write-reach/write-reach.json, written by
  *    tests/live/prometheus-write-reach.ts through its run.sh against a Prometheus 3.13.3 by digest with the admin API,
  *    the remote-write receiver and the lifecycle endpoints on, records the TSDB head's series count unchanged across
  *    every provider surface on a read-only connection and on both agent profiles, and moved by one raw remote write.
+ *    The count sees a new series only: the admin and lifecycle endpoints leave it unchanged, so it is the recorded
+ *    request list, `sentByStudio`, that shows none of them was asked.
  *
  * The network module, `request.ts`, refuses redirects, and the shared endpoint builder sets the path through the URL
  * setter and refuses a URL whose path is not the one it was given; both are held by their own tests.
@@ -142,65 +145,120 @@ function isPathsMember(node: ts.Expression): boolean {
   );
 }
 
-describe("http-transport.ts builds every request path from PATHS", () => {
-  const source = ts.createSourceFile(
-    TRANSPORT_SOURCE,
-    readFileSync(TRANSPORT_SOURCE, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-  );
+/** The calls whose first argument is a path: the URL builder and the three helpers that take one. */
+const PATH_TAKERS = ["url", "call", "probe", "read", "getRequest"];
 
-  /** Every call whose first argument is a path: the URL builder and the three helpers that take one. */
-  function pathCalls(): { callee: string; argument: ts.Expression; inHelper: boolean }[] {
-    const found: { callee: string; argument: ts.Expression; inHelper: boolean }[] = [];
-    const visit = (node: ts.Node, helper: string | null): void => {
-      const inside =
-        ts.isMethodDeclaration(node) && ts.isIdentifier(node.name) && PRIVATE_HELPERS.includes(node.name.text)
-          ? node.name.text
-          : helper;
-      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-        const callee = node.expression.name.text;
-        const argument = node.arguments[0];
-        if (["url", "call", "probe", "read", "getRequest"].includes(callee) && argument !== undefined) {
-          found.push({ callee, argument, inHelper: inside !== null });
-        }
-      }
-      ts.forEachChild(node, (child) => visit(child, inside));
-    };
-    visit(source, null);
-    return found;
+/** The only methods allowed to reach each way out: the sender, and the helper that wraps it. */
+const SENDERS: Readonly<Record<string, readonly string[]>> = { send: ["exchange"], exchange: ["probe", "read"] };
+
+/** Whether a node lies inside the initializer of the `PATHS` declaration. */
+function insidePathsTable(node: ts.Node): boolean {
+  for (let at: ts.Node | undefined = node.parent; at !== undefined; at = at.parent) {
+    if (ts.isVariableDeclaration(at) && ts.isIdentifier(at.name) && at.name.text === "PATHS") return true;
   }
+  return false;
+}
 
-  test("a public method passes only a PATHS member, and a helper only passes on its own path parameter", () => {
-    const calls = pathCalls();
-    expect(calls.length).toBeGreaterThan(0);
-    for (const { callee, argument, inHelper } of calls) {
-      const accepted = isPathsMember(argument) || (inHelper && ts.isIdentifier(argument) && argument.text === "path");
-      expect({ callee, argument: argument.getText(source), accepted }).toEqual({
-        callee,
-        argument: argument.getText(source),
-        accepted: true,
-      });
+/** The text a string or template literal starts with, or null for any other node. */
+function literalStart(node: ts.Node): string | null {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (ts.isTemplateExpression(node)) return node.head.text;
+  return null;
+}
+
+/**
+ * Every way a source could reach a server other than through a `PATHS` member, as one line each:
+ * a path taker handed anything but a `PATHS` member (a helper may pass on its own `path` parameter),
+ * a literal that starts with "/" outside the table, a URL built or parsed by the global `URL`, and a use
+ * of the sender or of `exchange` from any method but the one allowed to use it.
+ */
+function escapes(source: ts.SourceFile): string[] {
+  const found: string[] = [];
+  const visit = (node: ts.Node, method: string | null): void => {
+    const inside = ts.isMethodDeclaration(node) && ts.isIdentifier(node.name) ? node.name.text : method;
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const callee = node.expression.name.text;
+      const argument = node.arguments[0];
+      if (PATH_TAKERS.includes(callee) && argument !== undefined) {
+        const helper = inside !== null && PRIVATE_HELPERS.includes(inside);
+        const passesOwnPath = helper && ts.isIdentifier(argument) && argument.text === "path";
+        if (!isPathsMember(argument) && !passesOwnPath) found.push(`${callee}(${argument.getText(source)})`);
+      }
+    }
+    const start = literalStart(node);
+    if (start !== null && start.startsWith("/") && !insidePathsTable(node)) found.push(`literal ${node.getText(source)}`);
+    if ((ts.isNewExpression(node) || ts.isPropertyAccessExpression(node)) && ts.isIdentifier(node.expression)) {
+      if (node.expression.text === "URL") found.push(`URL in ${inside ?? "module scope"}`);
+    }
+    if (ts.isPropertyAccessExpression(node) && Object.hasOwn(SENDERS, node.name.text)) {
+      const allowed = SENDERS[node.name.text];
+      if (inside === null || !allowed.includes(inside)) found.push(`${node.name.text} from ${inside ?? "module scope"}`);
+    }
+    ts.forEachChild(node, (child) => visit(child, inside));
+  };
+  visit(source, null);
+  return found;
+}
+
+function parse(name: string, text: string): ts.SourceFile {
+  return ts.createSourceFile(name, text, ts.ScriptTarget.Latest, true);
+}
+
+describe("http-transport.ts reaches a server only through PATHS", () => {
+  const source = parse(TRANSPORT_SOURCE, readFileSync(TRANSPORT_SOURCE, "utf8"));
+
+  test("no path, URL or sender escapes the table and the helpers that carry its members", () => {
+    expect(escapes(source)).toEqual([]);
+  });
+
+  test("the file still has the path calls and the senders the check looks for", () => {
+    const text = source.getText(source);
+    for (const needle of ["this.call(PATHS.", "this.probe(PATHS.", "this.exchange(", "this.deps.send("]) {
+      expect({ needle, present: text.includes(needle) }).toEqual({ needle, present: true });
     }
   });
 
-  test("the check above sees a spelled path and a path a public method builds", () => {
-    const sample = ts.createSourceFile(
+  test("the check sees a spelled path and a path a public method builds", () => {
+    const sample = parse(
       "sample.ts",
       'class T { async a() { await this.call("/api/v1/admin/tsdb/snapshot"); } async b(p: string) { await this.probe(p); } }',
-      ts.ScriptTarget.Latest,
-      true,
     );
-    const rejected: string[] = [];
-    const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-        const argument = node.arguments[0];
-        if (argument !== undefined && !isPathsMember(argument)) rejected.push(argument.getText(sample));
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sample);
-    expect(rejected).toEqual(['"/api/v1/admin/tsdb/snapshot"', "p"]);
+    expect(escapes(sample)).toEqual([
+      'call("/api/v1/admin/tsdb/snapshot")',
+      'literal "/api/v1/admin/tsdb/snapshot"',
+      "probe(p)",
+    ]);
+  });
+
+  test("the check sees a literal path outside the table, a spelled or a template one", () => {
+    const sample = parse(
+      "sample.ts",
+      "const PATHS = { READY: \"/-/ready\" }; const a = \"/-/reload\"; const b = `/api/v1/admin/${a}`; const c = `/-/quit`;",
+    );
+    expect(escapes(sample)).toEqual(['literal "/-/reload"', "literal `/api/v1/admin/${a}`", "literal `/-/quit`"]);
+  });
+
+  test("the check sees a URL built or parsed outside the endpoint builder", () => {
+    const sample = parse(
+      "sample.ts",
+      "class T { async health() { const u = new URL(x, base); const v = URL.parse(y); } }",
+    );
+    expect(escapes(sample)).toEqual(["URL in health", "URL in health"]);
+  });
+
+  test("the check sees exchange called past probe and read, and the sender called past exchange", () => {
+    const sample = parse(
+      "sample.ts",
+      [
+        "class T {",
+        "  async health() { await this.exchange(request); await this.deps.send(request); }",
+        "  private async read() { await this.exchange(request); }",
+        "  private async exchange() { await this.deps.send(request); }",
+        "}",
+        "const s = deps.send;",
+      ].join("\n"),
+    );
+    expect(escapes(sample)).toEqual(["exchange from health", "send from health", "send from module scope"]);
   });
 });
 
