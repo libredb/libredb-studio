@@ -563,19 +563,19 @@ describe("admitConnectionRows", () => {
     const offered = admit([connectionRow({ write: WRITE, columns: { mcp_enabled: true } })]);
     expect(offered.admitted.map((connection) => [connection.read.mcp, connection.write?.mcp])).toEqual([[true, true]]);
 
-    // MCP is not offered for etcd, so its flag is left off rather than refused, and the row is served.
-    const etcd = admit(
+    // MCP is not offered for Oxia, so its flag is left off rather than refused, and the row is served.
+    const oxia = admit(
       [
         connectionRow({
-          engine: "etcd",
-          definition: { host: "etcd.example.internal", port: 2379 },
+          engine: "oxia",
+          definition: { host: "oxia.example.internal", port: 6648 },
           columns: { mcp_enabled: true },
         }),
       ],
-      { allowedEngines: ["etcd"] },
+      { allowedEngines: ["oxia"] },
     );
-    expect(itemsOf(etcd)).toEqual([]);
-    expect(etcd.admitted[0].read.mcp).toBeUndefined();
+    expect(itemsOf(oxia)).toEqual([]);
+    expect(oxia.admitted[0].read.mcp).toBeUndefined();
   });
 
   test("an opener failure that carries no envelope code is no row's fault, so admission throws it", () => {

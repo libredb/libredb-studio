@@ -369,6 +369,20 @@ describe("the posture on Oxia", () => {
   });
 });
 
+describe("the posture on etcd", () => {
+  const posture = agentPosture({ mode: "agent", engine: "etcd", engineLabel: "etcd", handover: false });
+
+  test("names the READ-range condition, and never offers a count of every key the server refuses", () => {
+    // The proof refuses a READ range on every key or under a Kubernetes storage prefix, so no admitted user reads
+    // every key: the count of every key may not be claimed as a read the agent runs.
+    expect(posture.body).toContain(
+      "holds READ permissions only, on no range that holds every key or a key under a Kubernetes storage prefix such as /registry/",
+    );
+    expect(posture.body).not.toContain("the count of every key and,");
+    expect(posture.body).toContain("the count of every key is refused by the server");
+  });
+});
+
 describe("the posture on RabbitMQ", () => {
   const posture = agentPosture({ mode: "agent", engine: "rabbitmq", engineLabel: "RabbitMQ", handover: false });
 

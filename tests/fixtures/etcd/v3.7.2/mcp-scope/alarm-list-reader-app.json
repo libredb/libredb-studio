@@ -1,0 +1,41 @@
+{
+  "$captured": {
+    "image": "gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "version": "3.7.2",
+    "date": "2026-11-02",
+    "runtime": "bun 1.4.4"
+  },
+  "principal": "mcp_reader_app",
+  "grants": [
+    {
+      "role": "mcp_read_app",
+      "permissions": [
+        {
+          "type": "READ",
+          "key": {
+            "$text": "/app/"
+          },
+          "end": {
+            "$text": "/app0"
+          }
+        }
+      ]
+    }
+  ],
+  "request": {
+    "rpc": "Maintenance/Alarm",
+    "action": "GET",
+    "memberID": "0",
+    "alarm": "NONE"
+  },
+  "outcome": "ok",
+  "answer": {
+    "alarms": [],
+    "header": {
+      "cluster_id": "3616886245896408318",
+      "member_id": "6789554456591034400",
+      "revision": "10",
+      "raft_term": "2"
+    }
+  }
+}

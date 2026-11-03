@@ -62,6 +62,8 @@ const GENERATOR = "scripts/generate-etcd-descriptor.mjs";
 const HARNESS = "tests/live/etcd-evidence.ts";
 /** The agent boundary capture, which sends every request raw, writes included, past every Studio check. */
 const AGENT_HARNESS = "tests/live/etcd-agent-boundary.ts";
+/** The MCP data-scope check, which seeds the cluster and sends its scope probes raw, past every Studio check. */
+const MCP_HARNESS = "tests/live/etcd-mcp-boundary.ts";
 const ADAPTER_TEST = "tests/unit/db/etcd/grpc-client.test.ts";
 const TLS_TEST = "tests/unit/db/etcd/tls-handshake.test.ts";
 const DESCRIPTOR_TEST = "tests/unit/db/etcd/descriptor.test.ts";
@@ -321,14 +323,14 @@ const IMPORT_RULES: readonly ImportRule[] = [
     name: "@grpc/grpc-js importers",
     what: GRPC_JS,
     verb: "imports",
-    named: [HARNESS, AGENT_HARNESS, ADAPTER_TEST, TLS_TEST],
+    named: [HARNESS, AGENT_HARNESS, MCP_HARNESS, ADAPTER_TEST, TLS_TEST],
     holds: importsPackage(GRPC_JS),
   },
   {
     name: "descriptor importers",
     what: DESCRIPTOR,
     verb: "imports",
-    named: [ADAPTER, AGENT_HARNESS, ADAPTER_TEST, TLS_TEST],
+    named: [ADAPTER, AGENT_HARNESS, MCP_HARNESS, ADAPTER_TEST, TLS_TEST],
     holds: importsFile(DESCRIPTOR),
   },
   {
@@ -343,7 +345,17 @@ const IMPORT_RULES: readonly ImportRule[] = [
     what: PROTO_LOADER,
     verb: "imports",
     // The files allowed @grpc/grpc-js, the descriptor's own type-only import, the generator and its test.
-    named: [ADAPTER, HARNESS, AGENT_HARNESS, ADAPTER_TEST, TLS_TEST, DESCRIPTOR, GENERATOR, DESCRIPTOR_TEST],
+    named: [
+      ADAPTER,
+      HARNESS,
+      AGENT_HARNESS,
+      MCP_HARNESS,
+      ADAPTER_TEST,
+      TLS_TEST,
+      DESCRIPTOR,
+      GENERATOR,
+      DESCRIPTOR_TEST,
+    ],
     holds: importsPackage(PROTO_LOADER),
   },
   {
@@ -1108,12 +1120,16 @@ function inPlantedRepository<T>(
 /** Each import rule's named files, each holding the rule, as a planted repository starts. */
 const HOLDING: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "@grpc/grpc-js importers": Object.fromEntries(
-    [HARNESS, AGENT_HARNESS, ADAPTER_TEST, TLS_TEST].map((path) => [path, `import * as grpc from "${GRPC_JS}";\n`]),
+    [HARNESS, AGENT_HARNESS, MCP_HARNESS, ADAPTER_TEST, TLS_TEST].map((path) => [
+      path,
+      `import * as grpc from "${GRPC_JS}";\n`,
+    ]),
   ),
   "descriptor importers": {
     [DESCRIPTOR]: "export const ETCD_DESCRIPTOR = {};\n",
     [ADAPTER]: 'import { ETCD_DESCRIPTOR } from "./proto/descriptor";\n',
     [AGENT_HARNESS]: 'import { ETCD_DESCRIPTOR } from "@/lib/db/providers/keyvalue/etcd/proto/descriptor";\n',
+    [MCP_HARNESS]: 'import { ETCD_DESCRIPTOR } from "@/lib/db/providers/keyvalue/etcd/proto/descriptor";\n',
     [ADAPTER_TEST]: 'import { ETCD_DESCRIPTOR } from "@/lib/db/providers/keyvalue/etcd/proto/descriptor";\n',
     [TLS_TEST]: 'import { ETCD_DESCRIPTOR } from "@/lib/db/providers/keyvalue/etcd/proto/descriptor";\n',
   },
@@ -1124,10 +1140,9 @@ const HOLDING: Readonly<Record<string, Readonly<Record<string, string>>>> = {
     ]),
   ),
   "@grpc/proto-loader importers": Object.fromEntries(
-    [ADAPTER, HARNESS, AGENT_HARNESS, ADAPTER_TEST, TLS_TEST, DESCRIPTOR, GENERATOR, DESCRIPTOR_TEST].map((path) => [
-      path,
-      `import { fromJSON } from "${PROTO_LOADER}";\n`,
-    ]),
+    [ADAPTER, HARNESS, AGENT_HARNESS, MCP_HARNESS, ADAPTER_TEST, TLS_TEST, DESCRIPTOR, GENERATOR, DESCRIPTOR_TEST].map(
+      (path) => [path, `import { fromJSON } from "${PROTO_LOADER}";\n`],
+    ),
   ),
   "generator importers": {
     [GENERATOR]: "export function loadEtcdDescriptor() {}\n",

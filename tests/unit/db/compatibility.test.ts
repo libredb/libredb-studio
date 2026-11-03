@@ -670,12 +670,11 @@ describe("MCP_EXPOSABLE (#1089)", () => {
     expect(Object.isFrozen(MCP_EXPOSABLE)).toBe(true);
   });
 
-  test("offers MCP for every shipped engine but etcd, oxia, s3, mqtt, firestore, opcua, modbus and netconf", () => {
+  test("offers MCP for every shipped engine but oxia, s3, mqtt, firestore, opcua, modbus, netconf, snmp and sparkplug", () => {
     // An engine MCP is not offered for answers false with its registration, and is named here then.
     // Modbus refuses for a reason of its own, written beside its registration in
     // compatibility.ts rather than repeated here.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual([
-      "etcd",
       "oxia",
       "s3",
       "mqtt",
@@ -714,13 +713,13 @@ describe("MCP_STATEMENT_READ", () => {
     expect(open.filter((type) => !AGENT_EXECUTION_ENGINES.includes(type))).toEqual([]);
   });
 
-  test("opens the five SQL engines run_read_query served before the record existed, ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra, Couchbase, MongoDB, Redis, Kubernetes, LibreDB, Qdrant, Kafka, RabbitMQ, Neo4j, Weaviate, MTConnect, Milvus, and no other", () => {
+  test("opens the five SQL engines run_read_query served before the record existed, ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra, Couchbase, MongoDB, Redis, Kubernetes, LibreDB, Qdrant, Kafka, RabbitMQ, Neo4j, Weaviate, MTConnect, Milvus, etcd, and no other", () => {
     // ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase each opened to
     // run_read_query on their own, MongoDB with run_mongo_command, Redis with run_redis_read, Kubernetes with
     // run_kubectl_read, LibreDB with run_libredb_read, Qdrant with run_qdrant_read, Kafka with run_kafka_read, RabbitMQ
     // with run_rabbitmq_read, Neo4j with run_cypher_read, Weaviate with run_weaviate_read, MTConnect with
-    // run_mtconnect_read, Milvus with run_milvus_read. InfluxDB over InfluxQL, InfluxDB 3's sibling in one provider
-    // directory, stays closed.
+    // run_mtconnect_read, Milvus with run_milvus_read, etcd with run_etcd_read. InfluxDB over InfluxQL, InfluxDB 3's
+    // sibling in one provider directory, stays closed.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_STATEMENT_READ[type])).toEqual([
       "postgres",
       "mysql",
@@ -738,6 +737,7 @@ describe("MCP_STATEMENT_READ", () => {
       "couchbase",
       "redis",
       "kafka",
+      "etcd",
       "neo4j",
       "milvus",
       "qdrant",

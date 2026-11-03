@@ -83,6 +83,7 @@ const TOOL_NAMES = [
   "run_cypher_read",
   "run_milvus_read",
   "run_redis_read",
+  "run_etcd_read",
   "run_rabbitmq_read",
   "run_kafka_read",
   "run_mtconnect_read",
@@ -99,7 +100,7 @@ const legacyInitialize = (protocolVersion: string) =>
   );
 
 describe("the default legacy client", () => {
-  test("connects on 2025-11-25, lists the fourteen tools in registration order and calls one", async () => {
+  test("connects on 2025-11-25, lists the fifteen tools in registration order and calls one", async () => {
     const warn = spyOn(logger, "warn");
     const session = await connectClient(serve);
     try {
@@ -126,7 +127,7 @@ describe("the default legacy client", () => {
     const session = await connectClient(serve, { supportedProtocolVersions: ["2025-06-18"] });
     try {
       expect(session.client.getNegotiatedProtocolVersion()).toBe("2025-06-18");
-      expect((await session.client.listTools()).tools).toHaveLength(14);
+      expect((await session.client.listTools()).tools).toHaveLength(15);
     } finally {
       await session.close();
     }
@@ -197,7 +198,7 @@ describe("the capability objects", () => {
 });
 
 describe("the tool map", () => {
-  test("names the fourteen tools and nothing an object inherits, so no other name reaches a tool's schema", () => {
+  test("names the fifteen tools and nothing an object inherits, so no other name reaches a tool's schema", () => {
     for (const name of TOOL_NAMES) expect(isMcpToolName(name)).toBe(true);
     for (const name of ["toString", "constructor", "__proto__", "no_such_tool", 42, undefined]) {
       expect(isMcpToolName(name)).toBe(false);

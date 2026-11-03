@@ -490,10 +490,10 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
  * product does not honour fails the file instead of listing a connection. Static for the reason
  * `READ_ONLY_ENFORCED` is: the seed file is validated before any provider exists.
  *
- * The etcd provider (#1089) is the engine this record exists for: MCP is outside its first version, so
- * its entry answers false, and that entry lands with the provider's registration, which the compiler
- * forces. Each entry that answers false carries its reason beside it, so the record below is the list; every
- * other engine answers true. An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join
+ * The etcd provider (#1089) is the engine this record was made for, MCP being outside its first version until a
+ * change of its own offered it. An entry lands with its provider's registration, which the compiler forces. Each
+ * entry that answers false carries its reason beside it, so the record below is the list; every other engine answers
+ * true. An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join
  * without someone answering, and frozen like the records above it.
  */
 export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
@@ -519,10 +519,11 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   redis: true,
   prometheus: true,
   kafka: true,
-  // The first engine MCP is not offered for (#1089 E12): key names and values carry secrets, the provider's read-only
-  // query path is agent mode's alone and reads metadata only, and no MCP surface is decided for it yet (BACKLOG B136),
-  // so a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
-  etcd: false,
+  // Offered with every answer metadata only, as agent mode reads it: key names and values carry secrets, so
+  // `inspect_schema` lists no key prefix, since every agent-mode handle withholds them, and `run_etcd_read` answers
+  // the closed table's names, counts and sizes under a user the server proves reads only, on no Kubernetes storage
+  // prefix and not on every key.
+  etcd: true,
   // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4), and for
   // `run_cypher_read`, which MCP_STATEMENT_READ opens on it.
   neo4j: true,
@@ -609,6 +610,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * for Neo4j, whose Cypher `run_cypher_read` reads, and for Weaviate, whose request `run_weaviate_read` reads metadata only.
  * True for MTConnect, whose request line `run_mtconnect_read` reads under the agent's closed route table.
  * True for Milvus, whose metadata request `run_milvus_read` reads.
+ * True for etcd, whose metadata command `run_etcd_read` reads.
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
@@ -668,9 +670,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // ListOffsets reads alone, answered metadata-only with a platform's own topics withheld
   // (docs/providers/kafka.md section 16).
   kafka: true,
-  // Agent mode executes metadata-only reads on etcd, and MCP read stays closed on it until a change of its own opens
-  // it.
-  etcd: false,
+  // Opened on its own: run_etcd_read runs under the boundary agent mode uses, the provider's closed table of metadata
+  // reads and a user the server shows, before every command, to hold no root role and only READ, on no Kubernetes
+  // storage prefix and not on every key, with every answer projected to names, counts and sizes
+  // (docs/providers/etcd.md section 15.7).
+  etcd: true,
   // Opened on its own: run_cypher_read runs under the boundary agent mode uses, on Enterprise Edition only, a user the
   // server proves before every statement to hold only reads, no LOAD and no extension it can execute, and the
   // server's own classification of every statement (docs/providers/neo4j.md section 15).

@@ -639,6 +639,14 @@ export function isUserNameEmpty(error: unknown): boolean {
 }
 
 /**
+ * etcd's FailedPrecondition "authentication is not enabled", its answer to `Authenticate` on a server with
+ * authentication off. Code and message together, as every row of this table is read.
+ */
+export function isAuthNotEnabled(error: unknown): boolean {
+  return error instanceof EtcdError && error.grpcCode === FAILED_PRECONDITION && error.detail === AUTH_NOT_ENABLED;
+}
+
+/**
  * A connect step's refusal, the provider's words first and etcd's after (spec E16). An answer the
  * step does not word, a wrong password or a lost quorum among them, is the table's own.
  */
@@ -657,7 +665,7 @@ export function connectStepError(
   if (error === undefined) {
     throw new TypeError(`The connect step "${step}" words an etcd answer, and none was given`);
   }
-  if (step === "authenticate" && error.grpcCode === FAILED_PRECONDITION && error.detail === AUTH_NOT_ENABLED) {
+  if (step === "authenticate" && isAuthNotEnabled(error)) {
     // etcd's own client drops the token in silence here; this says why the fields are refused (spec 6.1).
     return new DatabaseConfigError(
       `Authentication is not enabled on this etcd, so the User and Password would not be used. Clear them to connect.${answered(error.detail)}`,

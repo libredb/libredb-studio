@@ -14,6 +14,7 @@
 import type { z } from "zod";
 import type { AgentStatementLanguageId } from "../agent-manifest";
 import { CYPHER_MCP_FACET } from "./cypher/mcp";
+import { ETCDCTL_MCP_FACET } from "./etcdctl/mcp";
 import { KAFKAREAD_MCP_FACET } from "./kafkaread/mcp";
 import { KUBECTL_MCP_FACET } from "./kubectl/mcp";
 import { LIBREDBKV_MCP_FACET } from "./libredbkv/mcp";
@@ -91,8 +92,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   cypher: CYPHER_MCP_FACET,
   milvusrpc: MILVUSRPC_MCP_FACET,
   rediscli: REDISCLI_MCP_FACET,
-  // No MCP statement tool yet: MCP read stays closed on etcd until a change of its own declares one and opens it.
-  etcdctl: null,
+  etcdctl: ETCDCTL_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on Oxia until a change of its own declares one and opens it.
   oxiacli: null,
   rabbitread: RABBITREAD_MCP_FACET,

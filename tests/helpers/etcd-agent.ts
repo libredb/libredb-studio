@@ -178,7 +178,7 @@ function capturedAuth(raw: { enabled: boolean; authRevision: string }): EtcdAuth
   return { enabled: raw.enabled, authRevision: raw.authRevision };
 }
 
-function capturedPermissions(raw: {
+export function capturedPermissions(raw: {
   perm: Array<{ permType: string; key: unknown; range_end: unknown }>;
 }): EtcdPermission[] {
   return raw.perm.map((permission) => {
