@@ -1671,7 +1671,7 @@ A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at mo
 A `SELECT` with an `OFFSET` of its own and no `LIMIT` is given a `nextOffset` too, but the call at that offset fails with a syntax error.
 It takes no `database`: the seed reads the bucket it names.
 
-A seed entry carries no separate agent credential, so the seed's own user must be one the check admits: a user whose only roles are `query_select[<bucket>:<scope>]` on named scopes of the seed's bucket, counting the roles of its groups, on Enterprise Edition.
+MCP signs in as the seed's [agent credential](../SEED_CONNECTIONS.md#an-agent-credential) when it sets one, and as the seed's own user otherwise, and that user must be one the check admits: a user whose only roles are `query_select[<bucket>:<scope>]` on named scopes of the seed's bucket, counting the roles of its groups, on Enterprise Edition.
 Any other is refused at open in `run_read_query`'s refusal sentence, naming the role that reaches past those: the administrator, `ro_admin`, `query_system_catalog`, `data_reader`, `data_writer` held directly or through a group, and `query_select` on every scope, on the `_system` scope, on every bucket or on a second bucket among them.
 `inspect_schema` takes the operations profile, which sends no statement, so it opens a Couchbase seed unchecked, as the editor does, with the administrator too.
 

@@ -246,6 +246,7 @@ The connection dialog warns about a token whose payload declares no expiry:
 > This token declares no expiry, so it stays valid until the identity provider's signing key changes, and Oxia has no authorization, so it reads and writes every namespace. Prefer a token with an expiry.
 
 A read-only seed without a token is not refused: no token makes an Oxia server read-only, so the mode is a promise of what Studio sends, with a token or without one.
+An Oxia seed takes no agent credential (`SEED_AGENT_CREDENTIAL.oxia` in `src/lib/db/connection-fields.ts` is null), so a seed that sets `agentUser` or `agentPassword` is refused at load: the provider declares no agent credential form, so the factory would ask for a user, which Oxia refuses, and the server authorizes nothing, so a token of the agent's own would narrow nothing either (D441).
 
 ### 4.3 TLS
 

@@ -1,11 +1,12 @@
 /**
- * Credentials a connection type warns about, declared as data, and the two readers of that data.
+ * Credentials a connection type warns about, declared as data, and the readers of that data.
  *
  * One record, three readers: the connection dialog draws `credentialWarningFor`'s sentence beside the password
  * before Test Connection, through `useConnectionForm`; the seed schema refuses a `readOnly: true` seed at load
  * with `readOnlySeedRefusal` over the literal credential the file shows; and a provider whose type declares an
  * entry runs `readOnlySeedRefusal` again on a seed connection once its `${ENV}` and `${vault:...}` references
- * have resolved, before it dials. `CONNECTION_FORM` (src/lib/db/connection-form.ts) takes each type's array from here
+ * have resolved, before it dials. The seed schema also refuses a seed's agent credential that is a declared pair, with
+ * `publishedDefaultPairWarning`. `CONNECTION_FORM` (src/lib/db/connection-form.ts) takes each type's array from here
  * by reference, so the data exists once.
  *
  * Pure, browser-safe and UI-free: it imports types only. It is not in src/lib/db-ui-config.ts because that
@@ -260,6 +261,17 @@ export function credentialWarningFor(type: DatabaseType, credential: Credential)
   const claims = jwtClaims(credential.password ?? "");
   const warning = claims === undefined ? undefined : jwts.find((entry) => jwtWarns(entry, claims));
   return warning === undefined ? undefined : framed(warning.message);
+}
+
+/**
+ * The dialog's sentence for this credential when it is a declared `pair`, a published default, or undefined. Pairs
+ * only: a `jwt` entry is a caution about a token and a `no-secret` entry a caution about none, and neither is a
+ * credential anyone could know. The seed schema reads it over a seed's agent credential, which exists to narrow the
+ * principal, so a published default is refused there.
+ */
+export function publishedDefaultPairWarning(type: DatabaseType, credential: Credential): string | undefined {
+  const pair = matchingPair(entriesOf(type), credential);
+  return pair === undefined ? undefined : framed(pair.message);
 }
 
 /**

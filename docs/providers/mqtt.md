@@ -708,7 +708,7 @@ Each has a client id of its own, `libredb-` and 16 random hex digits, so a call 
 A broker that accepts the TCP connection and never sends a CONNACK is given up at about 3 s whatever `timeout_ms` is, when the handshake's own 3,000 ms window ends (`MQTT_READ_BUDGET_MS`), and the call is answered as an engine error saying no CONNACK arrived, not as the timeout answer.
 A cancel or a timeout ends the wait: the read's session runs on until its own window ends and leaves, and its answer is dropped (measured: a cancel at 1,000 ms answered at 1,001 ms, and the read ended on its window at 3,002 ms).
 
-The seed's login is the principal, since a seed carries no separate agent login, and no broker tells a client what its ACL grants, so Studio proves nothing about it.
+The principal is the seed's [agent credential](../SEED_CONNECTIONS.md#an-agent-credential) when it sets one, and the seed's own login otherwise, and no broker tells a client what its ACL grants, so Studio proves nothing about it.
 Give an MQTT seed with `mcp: true` a login whose ACL grants read alone on the topics an MCP client should count.
 
 What a login reaches, in two layers, measured on Mosquitto 2.1.2 with an ACL file and on a stock EMQX 5.8.9 (`tests/fixtures/mqtt/mosquitto-2.1.2/mcp-boundary/boundary.json`):

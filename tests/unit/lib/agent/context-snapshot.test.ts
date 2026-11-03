@@ -947,8 +947,8 @@ describe("captureContextSnapshot — an environment failure on the composed path
     expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
     expect(capture.detail).toContain("under the execution profile a grounding read takes");
     expect(capture.detail).toContain("Connect with a least-privilege credential");
-    // No run can carry an agent credential (B85: runs open on seed ids, and a seed declares none), so advice naming
-    // one sends the operator to a field the run never reads.
+    // The advice names the connection's own credential, which every run has, never the agent credential a seed may
+    // or may not set, so it never sends the operator to a field the run does not read.
     expect(capture.detail).not.toContain("agent credential");
     // The generic sentence alone is not what a caller gets, and the advice is not the
     // credential code's: a shared sentence would make both assertions above vacuous.

@@ -30,10 +30,13 @@ export interface SeedFieldRefusal {
 
 /**
  * The fields a load check reads, as the file writes them: every text one may be absent or a `${...}` reference, and
- * `mcp` is the connection's MCP opt-in.
+ * `mcp` is the connection's MCP opt-in. `agentUser` and `agentPassword` are the seed's agent credential, the principal
+ * its agent profiles and MCP sign in as when it carries one.
  */
 export type SeedCheckedFields = Readonly<
-  Partial<Record<"host" | "user" | "authMethod" | "privateKey" | "password" | "role", string>> & {
+  Partial<
+    Record<"host" | "user" | "authMethod" | "privateKey" | "password" | "role" | "agentUser" | "agentPassword", string>
+  > & {
     readonly mcp?: boolean;
   }
 >;

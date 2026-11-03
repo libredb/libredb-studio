@@ -83,12 +83,13 @@ export const REGISTRIES: readonly Listed[] = [
     "SINGLE_WRITER_FILE",
     "MCP_EXPOSABLE",
     "MCP_STATEMENT_READ",
+    "MCP_AGENT_CREDENTIAL_REQUIRED",
     "CONNECTION_FORM_URI_MODE",
     "CONNECTION_STRING_ACCEPTED",
     "OPENS_LOCAL_FILE",
     "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
   ].map((declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY })),
-  ...["CONNECTION_FIELD_ROWS", "CONNECTION_FIELDS", "SEED_ONLY_FIELDS"].map((declaration) => ({
+  ...["CONNECTION_FIELD_ROWS", "CONNECTION_FIELDS", "SEED_ONLY_FIELDS", "SEED_AGENT_CREDENTIAL"].map((declaration) => ({
     path: "src/lib/db/connection-fields.ts",
     declaration,
     count: 1,
@@ -278,6 +279,18 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     declaration: "refuseMcpWhereNotOffered",
     count: 1,
     reason: "the parameter type of the `MCP_EXPOSABLE` registry it is handed, which holds no row here",
+  },
+  {
+    path: "src/lib/seed/types.ts",
+    declaration: "refuseInvalidAgentCredential",
+    count: 1,
+    reason: "the parameter type of the `SEED_AGENT_CREDENTIAL` table it is handed, which holds no row here",
+  },
+  {
+    path: "src/lib/seed/types.ts",
+    declaration: "refuseMcpWithoutAgentCredential",
+    count: 1,
+    reason: "the parameter type of the `MCP_AGENT_CREDENTIAL_REQUIRED` registry it is handed, which holds no row here",
   },
 ];
 

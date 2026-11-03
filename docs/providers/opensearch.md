@@ -843,7 +843,7 @@ Measured on 3.8.0 with security on, through `captureContextSnapshot` in planning
 The agent profile still opens under the wider role.
 
 A connection whose agent credential is a user of its own keeps the two apart: the agent user holds the role above, and the connection's own user holds the wider one.
-A seed connection carries no separate agent user ([B85](../BACKLOG.md)), so its one login serves agent mode, plan mode and the tree, and holds both:
+A seed connection may carry such a user as its [agent credential](../SEED_CONNECTIONS.md#an-agent-credential); one that does not has one login for agent mode, plan mode and the tree, which holds both:
 
 ```bash
 curl -k -u admin -XPUT -H 'content-type: application/json' 'https://<node>:9200/_plugins/_security/api/roles/libredb_seed_read' \

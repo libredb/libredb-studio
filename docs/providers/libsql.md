@@ -353,7 +353,7 @@ LIBREDB_LIVE_LIBSQL_JWT_PORT=18181 LIBREDB_LIVE_LIBSQL_RO_TOKEN=<ro token> LIBRE
 
 MCP's `run_read_query` serves libSQL through the agent's own path: it takes the connection under the agent read-only profile, so the open runs the proof above, and sends the statement through `queryReadOnly`, alone in one request under the token.
 It shares the agent's profiled handle, so the proof runs at the open of that handle, as in agent mode, not before each statement: a token whose rights change after the open is seen at the next open.
-A seed carries no separate agent token, so the seed's own token must be one the open admits: a writable token, a read-only token with any other claim, a user name and password (HTTP Basic), no token, and a server that runs the probes are each refused, in the tool's sentence, before any statement runs.
+The token the open proves is the seed's agent token, `agentPassword` ([an agent credential](../SEED_CONNECTIONS.md#an-agent-credential)), when it sets one, and the seed's own token otherwise, and it must be one the open admits: a writable token, a read-only token with any other claim, a user name and password (HTTP Basic), no token, and a server that runs the probes are each refused, in the tool's sentence, before any statement runs.
 MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth; it also refuses every `PRAGMA`, reads included, and `EXPLAIN` of a write.
 It runs a `SELECT` (a `WITH` is fine), `VALUES`, or `EXPLAIN`: `TABLE` and `EXPLAIN ANALYZE` are syntax errors on sqld 0.24.33, as on SQLite, and `EXPLAIN QUERY PLAN` runs; it pages with `LIMIT n OFFSET m`, and an offset on `VALUES`, `EXPLAIN` or a query with its own `LIMIT` is refused.
 A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.
@@ -1264,7 +1264,7 @@ await provider.disconnect();
 |---|---|---|
 | No transaction controls | The provider closes its Hrana stream with each statement, so it holds no session | Ours. Hrana's `baton` is exactly the feature that would carry one |
 | Agent mode needs a read-only token | `PRAGMA query_only` is refused by the server, so the token is the only lever ([§3.6](#36-the-agent-read-only-profile-rests-on-a-read-only-token)) | The engine's; mint a read-only token |
-| MCP read needs a read-only seed token | A seed carries no separate agent token, so its own token is the one the open proves ("MCP read", §3.6) | The engine's; mint a read-only token for the seed |
+| MCP read needs a read-only seed token | The open proves the seed's agent token, or its own token where it sets none ("MCP read", §3.6) | The engine's; mint a read-only token for the seed, as its agent token or its own |
 | No Vacuum, Analyze or Optimize | Refused by the server's statement allowlist | The engine's |
 | No slow queries, no sessions, no uptime, no cache ratio | libSQL publishes none of them | The engine's |
 | No WAL size on the Storage tab | No statement reports it, and `PRAGMA wal_checkpoint` is refused | The engine's |

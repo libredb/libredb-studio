@@ -275,6 +275,8 @@ const PROFILE_REFUSAL_REASON: Readonly<Record<ExecutionProfileDenyCode, AgentRun
   AGENT_CREDENTIAL_WITH_CONNECTION_STRING: "agent-credential-unusable",
   // The seed entry's reference, the same repair as a run whose connection no longer resolves.
   CONNECTION_SECRET_UNRESOLVABLE: "connection-unresolvable",
+  // Raised by MCP alone, and the repair is the agent credential field, as for the two credential faults above.
+  AGENT_CREDENTIAL_REQUIRED: "agent-credential-unusable",
 } satisfies Record<ExecutionProfileDenyCode, AgentRunFailureReason>);
 
 /**

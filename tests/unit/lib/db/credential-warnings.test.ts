@@ -1,5 +1,10 @@
 import { describe, test, expect, afterEach, spyOn } from "bun:test";
-import { CREDENTIAL_WARNINGS, credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
+import {
+  CREDENTIAL_WARNINGS,
+  credentialWarningFor,
+  publishedDefaultPairWarning,
+  readOnlySeedRefusal,
+} from "@/lib/db/credential-warnings";
 import {
   declareCredentialWarnings,
   SYNTHETIC_JWT,
@@ -7,6 +12,8 @@ import {
   SYNTHETIC_PAIR,
   SYNTHETIC_PASSWORD,
 } from "../../../helpers/synthetic-credential-warnings";
+
+const OTHER_PASSWORD = ["Other", "1"].join("");
 
 const restores: (() => void)[] = [];
 afterEach(() => {
@@ -268,6 +275,22 @@ describe("readOnlySeedRefusal", () => {
 
   test("a type that declares nothing refuses nothing", () => {
     expect(readOnlySeedRefusal("postgres", {})).toBeUndefined();
+  });
+});
+
+/** The pair-only reader the seed schema holds an agent credential to: a published default, never a token caution. */
+describe("publishedDefaultPairWarning", () => {
+  test("answers the declared pair with the dialog's own sentence", () => {
+    restores.push(declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]));
+    const credential = { user: "root", password: SYNTHETIC_PASSWORD };
+    expect(publishedDefaultPairWarning("etcd", credential)).toBe(PAIR_SENTENCE);
+    expect(publishedDefaultPairWarning("etcd", { user: "root", password: OTHER_PASSWORD })).toBeUndefined();
+  });
+
+  test("answers nothing for a jwt or no-secret entry, which are cautions and not a published default", () => {
+    restores.push(declareCredentialWarnings("druid", [SYNTHETIC_JWT, SYNTHETIC_NO_SECRET]));
+    expect(publishedDefaultPairWarning("druid", { password: jwt({ access: "m" }) })).toBeUndefined();
+    expect(publishedDefaultPairWarning("druid", {})).toBeUndefined();
   });
 });
 

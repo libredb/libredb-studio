@@ -6826,7 +6826,7 @@ describe("OracleProvider.queryReadOnly", () => {
  * check of the user on that session, then the statement. The check runs before every statement, not at the open, so a
  * too-broad user is refused from the statement call, in the tool's own sentence. The MCP fence refuses a write-shaped
  * statement before anything is acquired; a write that reaches the server, its fence removed, is the server's
- * ORA-28194. The seed's own user is the credential, since a seed carries no separate agent credential.
+ * ORA-28194. The seed's own user is the credential here, as it is on a seed that sets no agent credential.
  */
 describe("MCP run_read_query on an Oracle connection", () => {
   const CHECKS = Object.values(AGENT_PRINCIPAL_STATEMENTS);

@@ -296,7 +296,13 @@ export type ExecutionProfileDenyCode =
    * Raised by MCP's acquisition, which resolves a seed's references as the editor and agent routes do, and its own
    * code so both MCP tools answer it in Studio's words rather than as an engine's error.
    */
-  | "CONNECTION_SECRET_UNRESOLVABLE";
+  | "CONNECTION_SECRET_UNRESOLVABLE"
+  /**
+   * The engine is one MCP reads only under an agent credential of the seed's own (`MCP_AGENT_CREDENTIAL_REQUIRED` in
+   * src/lib/db/compatibility.ts), and the connection carries none, so it is not read under its own login. Raised by
+   * MCP's acquisition, and its own code so both MCP tools answer it in Studio's words.
+   */
+  | "AGENT_CREDENTIAL_REQUIRED";
 
 /**
  * Raised when a provider cannot be vended under a requested execution profile.

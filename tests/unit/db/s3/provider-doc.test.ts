@@ -501,7 +501,7 @@ describe("docs/providers/s3.md: the connection, as the dialog and the builder st
     expect(machine).toContain("`MCP_STATEMENT_READ.s3` is false");
     expect(machine).toContain("no agent-mode path lists a key");
     expect(machine).toContain(
-      "MCP may read S3 only with an agent read key of its own, beside the connection's key, whose grants hold the buckets it reads ([section 15.5](#155-what-a-keys-grants-reach)), and MCP reads seed connections alone, whose entries carry no agent credential, so no S3 connection can meet that condition yet.",
+      "MCP may read S3 only with an agent read key of its own, beside the connection's key, whose grants hold the buckets it reads ([section 15.5](#155-what-a-keys-grants-reach)); an S3 seed may carry one as its agent credential, `agentUser` the access key ID and `agentPassword` its secret ([an agent credential](../SEED_CONNECTIONS.md#an-agent-credential)), under which agent mode then signs, but MCP does not yet require one on S3, so it stays closed.",
     );
   });
 
@@ -1238,7 +1238,7 @@ describe("the backlog record of the S3 provider", () => {
     expect(b103).toBeGreaterThan(-1);
     expect(b104).toBeGreaterThan(b103);
     expect(AGENT_DOC).toContain(
-      "- **B104**: S3's `s3api` statement language reads metadata only, through six GET and HEAD reads alone, so no object key the request did not name, body, user metadata, tag, ETag, version id, owner, ACL, policy or endpoint reaches an agent answer, a bucket is counted whole and never by prefix, and data analysis, query optimization and database assessment are not offered; MCP is not offered for it (`MCP_EXPOSABLE.s3` is false) and it has no MCP statement tool (`MCP_STATEMENT_READ.s3` is false), so MCP `run_read_query` refuses it, because MCP may read S3 only with an agent read key of its own and a seed entry, the one connection MCP reads, carries no agent credential (`docs/providers/s3.md` sections 3.6 and 15).",
+      "- **B104**: S3's `s3api` statement language reads metadata only, through six GET and HEAD reads alone, so no object key the request did not name, body, user metadata, tag, ETag, version id, owner, ACL, policy or endpoint reaches an agent answer, a bucket is counted whole and never by prefix, and data analysis, query optimization and database assessment are not offered; MCP is not offered for it (`MCP_EXPOSABLE.s3` is false) and it has no MCP statement tool (`MCP_STATEMENT_READ.s3` is false), so MCP `run_read_query` refuses it, because MCP may read S3 only with an agent read key of its own, which nothing yet requires of an S3 seed MCP reads (`docs/providers/s3.md` sections 3.6 and 15).",
     );
   });
 
@@ -1699,7 +1699,7 @@ describe("docs/SEED_CONNECTIONS.md and the seed schema agree on s3", () => {
       "InfluxDB 3 (SQL), Oxia, S3-compatible object storage and Kubernetes)",
     );
     expect(seed).toContain("both InfluxDB types', Oxia's, S3's and Kubernetes's do today");
-    expect(seed.split("`dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`")).toHaveLength(3);
+    expect(seed.split("`dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `amqpPort`")).toHaveLength(3);
   });
 
   test("55. a seed written from the s3 rows loads and resolves, and mcp: true on it is refused", () => {

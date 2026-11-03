@@ -2,15 +2,27 @@ import { describe, it, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { z } from "zod";
 import {
   CONNECTION_STRING_ACCEPTED,
+  MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
   READ_ONLY_ENFORCED,
   SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { ETCD_MCP_ROOT_REFUSAL } from "@/lib/db/providers/keyvalue/etcd/connection-string";
-import { refuseMcpWhereNotOffered, SeedConnectionSchema, SeedConfigSchema, SeedDefaultsSchema } from "@/lib/seed/types";
+import { SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
+import {
+  refuseInvalidAgentCredential,
+  refuseMcpWhereNotOffered,
+  refuseMcpWithoutAgentCredential,
+  SeedConnectionSchema,
+  SeedConfigSchema,
+  SeedDefaultsSchema,
+} from "@/lib/seed/types";
+
+const STAND_IN_MARKER = ["not", "a", "real", "marker"].join("-");
 
 /**
  * The fields a type's own load checks need beyond a generic entry (SF-038): a Snowflake entry is refused without a
@@ -1034,6 +1046,36 @@ describe("SeedConfigSchema: an etcd seed opted into MCP", () => {
   it("parses one that says nothing of mcp", () => {
     expect(SeedConfigSchema.safeParse({ version: "1", connections: [etcd] }).success).toBe(true);
   });
+
+  it("judges the agent user MCP signs in as, so root as the seed's user beside an agent user of its own loads", () => {
+    const owner = { ...etcd, user: "root", password: "${ETCD_ROOT_PASSWORD}", mcp: true };
+    expect(issuesOf({ ...owner, agentUser: "agent_reader", agentPassword: "${ETCD_AGENT_PASSWORD}" })).toEqual([]);
+    // A reference agent user is unknown at load, and the proof refuses root when the connection opens.
+    expect(issuesOf({ ...owner, agentUser: "${ETCD_AGENT_USER}", agentPassword: "${ETCD_AGENT_PASSWORD}" })).toEqual(
+      [],
+    );
+  });
+
+  it("judges the seed's user when the agent user is empty, so root as that user is refused at user", () => {
+    expect(
+      issuesOf({
+        ...etcd,
+        user: "root",
+        password: "${ETCD_ROOT_PASSWORD}",
+        mcp: true,
+        agentUser: "",
+        agentPassword: "",
+      }),
+    ).toEqual([["connections.0.user", `Seed connection "cluster": user is refused: ${ETCD_MCP_ROOT_REFUSAL}`]]);
+  });
+
+  it("refuses root as the agent user, at agentUser", () => {
+    expect(
+      issuesOf({ ...etcd, user: "owner", mcp: true, agentUser: "root", agentPassword: "${ETCD_AGENT_PASSWORD}" }),
+    ).toEqual([
+      ["connections.0.agentUser", `Seed connection "cluster": agentUser is refused: ${ETCD_MCP_ROOT_REFUSAL}`],
+    ]);
+  });
 });
 
 describe("SeedConnectionSchema: an oxia seed (SB2-10, SB3-5.6)", () => {
@@ -1344,5 +1386,294 @@ describe("SeedConnectionSchema: Snowflake's static checks (SF-038)", () => {
     const result = SeedConfigSchema.safeParse({ version: "1", connections: [{ ...valid, role: undefined }] });
     expect(result.success).toBe(false);
     expect(result.error?.issues[0].path.join(".")).toBe("connections.0.role");
+  });
+});
+
+/**
+ * A seed's agent credential, `agentUser` and `agentPassword`: the principal its agent execution profiles and its MCP
+ * calls sign in as. Which fields an engine's seed may carry is `SEED_AGENT_CREDENTIAL`, and every refusal names the
+ * connection and the field, never the value. A reference is unknown at load, so only what the file shows is refused.
+ */
+describe("SeedConnectionSchema: an agent credential", () => {
+  const base = (type: string, fields: Record<string, unknown> = {}) => ({
+    id: "store",
+    name: "Store",
+    type,
+    host: "db.internal",
+    roles: ["admin"],
+    ...completeFor(type),
+    ...fields,
+  });
+  const issues = (type: string, fields: Record<string, unknown> = {}) =>
+    (SeedConnectionSchema.safeParse(base(type, fields)).error?.issues ?? []).map((issue) => [
+      issue.path.join("."),
+      issue.message,
+    ]);
+
+  it.each([
+    ["postgres", { user: "owner", agentUser: "agent_reader", agentPassword: "${AGENT_PASSWORD}" }],
+    ["qdrant", { agentPassword: "${QDRANT_AGENT_KEY}" }],
+    ["kubernetes", { agentPassword: "${KUBERNETES_AGENT_TOKEN}" }],
+    ["bigquery", { agentPassword: "${BIGQUERY_AGENT_KEY}" }],
+  ])("keeps the agent credential on a %s seed through validation", (type, fields) => {
+    const result = SeedConnectionSchema.safeParse(base(type, fields));
+    expect(result.error?.issues ?? []).toEqual([]);
+    expect(result.data?.agentUser).toBe((fields as { agentUser?: string }).agentUser);
+    expect(result.data?.agentPassword).toBe(fields.agentPassword);
+  });
+
+  it("leaves both fields absent when the seed sets neither", () => {
+    const result = SeedConnectionSchema.safeParse(base("postgres"));
+    expect(result.data?.agentUser).toBeUndefined();
+    expect(result.data?.agentPassword).toBeUndefined();
+  });
+
+  it.each(["oxia", "firestore", "snmp", "snowflake", "spark", "sqlite", "libredb"])(
+    "refuses either field on a %s seed, which takes no agent credential",
+    (type) => {
+      expect(issues(type, { agentUser: "agent", agentPassword: "${AGENT_SECRET}" })).toEqual(
+        ["agentUser", "agentPassword"].map((field) => [
+          field,
+          `Seed connection "store": ${field} is refused: a ${type} seed takes no agent credential, so the agent and MCP could not run under one. Remove ${field} from this connection.`,
+        ]),
+      );
+    },
+  );
+
+  it.each(["agentUser", "agentPassword"])(
+    "refuses an empty %s on a seed that takes no agent credential, since the field is present",
+    (field) => {
+      expect(issues("sqlite", { [field]: "" })).toEqual([
+        [
+          field,
+          `Seed connection "store": ${field} is refused: a sqlite seed takes no agent credential, so the agent and MCP could not run under one. Remove ${field} from this connection.`,
+        ],
+      ]);
+    },
+  );
+
+  it("refuses agentUser on an engine that takes the agent's secret alone", () => {
+    expect(issues("qdrant", { agentUser: "agent", agentPassword: "${QDRANT_AGENT_KEY}" })).toEqual([
+      [
+        "agentUser",
+        'Seed connection "store": agentUser is refused: the qdrant provider takes the agent\'s credential as agentPassword alone. Remove agentUser from this connection.',
+      ],
+    ]);
+  });
+
+  it("refuses half a pair at the field that is set, an empty field counting as absent", () => {
+    const userAlone =
+      'Seed connection "store" sets agentUser without agentPassword: an agent credential on postgres is a user and a password together. Set both, or remove agentUser.';
+    const passwordAlone =
+      'Seed connection "store" sets agentPassword without agentUser: an agent credential on postgres is a user and a password together. Set both, or remove agentPassword.';
+    expect(issues("postgres", { agentUser: "agent" })).toEqual([["agentUser", userAlone]]);
+    expect(issues("postgres", { agentUser: "agent", agentPassword: "" })).toEqual([["agentUser", userAlone]]);
+    expect(issues("postgres", { agentPassword: "${AGENT_PASSWORD}" })).toEqual([["agentPassword", passwordAlone]]);
+    expect(issues("postgres", { agentUser: "", agentPassword: "${AGENT_PASSWORD}" })).toEqual([
+      ["agentPassword", passwordAlone],
+    ]);
+  });
+
+  it("refuses an agent credential beside connectionString, naming the fields the engine takes from its own row", () => {
+    expect(issues("libsql", { connectionString: "${LIBSQL_URL}", agentPassword: "${LIBSQL_AGENT_TOKEN}" })).toEqual([
+      [
+        "connectionString",
+        'Seed connection "store" sets an agent credential beside connectionString, which the provider ignores for the agent: move the value into the separate fields a libsql seed takes (host, port, user, password), or remove the agent credential.',
+      ],
+    ]);
+    expect(
+      issues("mongodb", { connectionString: "${MONGO_URL}", agentUser: "agent", agentPassword: "${AGENT_PASSWORD}" }),
+    ).toEqual([
+      [
+        "connectionString",
+        'Seed connection "store" sets an agent credential beside connectionString, which the provider ignores for the agent: move the value into the separate fields a mongodb seed takes (host, port, user, password, database, authSource), or remove the agent credential.',
+      ],
+    ]);
+  });
+
+  it("refuses an agent credential that is a published default pair, at agentPassword and without quoting it", () => {
+    for (const [type, entries] of Object.entries(CREDENTIAL_WARNINGS)) {
+      for (const entry of entries ?? []) {
+        if (entry.kind !== "pair" || entry.password === "") continue;
+        const found = issues(type, { user: "owner", agentUser: entry.user, agentPassword: entry.password });
+        expect(found).toEqual([
+          [
+            "agentPassword",
+            `Seed connection "store": the agent credential is refused: Credential warning: ${entry.message} An agent credential exists to narrow the principal, and a published default narrows nothing. Give the agent a credential of its own.`,
+          ],
+        ]);
+      }
+    }
+    // The seed's own pair is the read-only refusal's to judge, never this one's.
+    expect(
+      issues("rabbitmq", { user: "guest", password: "guest", agentUser: "reader", agentPassword: "${P}" }),
+    ).toEqual([]);
+    // A reference in either field is unknown at load.
+    expect(issues("rabbitmq", { agentUser: "guest", agentPassword: "${RABBITMQ_AGENT_PASSWORD}" })).toEqual([]);
+  });
+
+  it("refuses Databend's empty root password as half a pair, before the published-default check", () => {
+    expect(issues("databend", { agentUser: "root", agentPassword: "" })).toEqual([
+      [
+        "agentUser",
+        'Seed connection "store" sets agentUser without agentPassword: an agent credential on databend is a user and a password together. Set both, or remove agentUser.',
+      ],
+    ]);
+  });
+
+  it("does not refuse a Qdrant agent key that is a token without expiry, a caution and not a published default", () => {
+    const token = `e30.${Buffer.from(JSON.stringify({ access: "r" })).toString("base64url")}.sig`;
+    expect(issues("qdrant", { agentPassword: token })).toEqual([]);
+  });
+
+  it("refuses an agent credential beside a field the provider signs in with in preference, and not without it", () => {
+    const pair = { agentUser: "agent", agentPassword: "${ELASTIC_AGENT_PASSWORD}" };
+    expect(issues("elasticsearch", { ...pair, apiKeyId: "${ELASTIC_API_KEY_ID}" })).toEqual([
+      [
+        "agentUser",
+        'Seed connection "store" sets an agent credential beside apiKeyId, which the elasticsearch provider signs in with in preference to a user and password, so the agent and MCP would run under the connection\'s own credential. Remove apiKeyId or the agent credential.',
+      ],
+    ]);
+    expect(issues("elasticsearch", { ...pair, apiKeySecret: "${ELASTIC_API_KEY_SECRET}" })[0]?.[1]).toContain(
+      "beside apiKeySecret,",
+    );
+    expect(issues("elasticsearch", pair)).toEqual([]);
+  });
+
+  it("refuses an agent secret beside a literal user on an engine that would sign in with both", () => {
+    const refusal =
+      "Seed connection \"store\" sets an agent credential beside user: the libsql provider keeps the connection's user beside the agent's secret and signs in with both, which has no read-only form, so every agent profile would be refused. Remove user from this connection, or remove the agent credential.";
+    expect(issues("libsql", { user: "owner", agentPassword: "${LIBSQL_AGENT_TOKEN}" })).toEqual([
+      ["agentPassword", refusal],
+    ]);
+    expect(issues("libsql", { user: "${LIBSQL_USER}", agentPassword: "${LIBSQL_AGENT_TOKEN}" })).toEqual([]);
+    expect(issues("libsql", { agentPassword: "${LIBSQL_AGENT_TOKEN}" })).toEqual([]);
+  });
+
+  it("never quotes a value in any refusal", () => {
+    const found = JSON.stringify([
+      issues("oxia", { agentPassword: STAND_IN_MARKER }),
+      issues("postgres", { agentPassword: STAND_IN_MARKER }),
+      issues("rabbitmq", { agentUser: "guest", agentPassword: "guest" }),
+      issues("libsql", { user: "not-a-real-marker", agentPassword: STAND_IN_MARKER }),
+    ]);
+    expect(found).toContain("Seed connection");
+    expect(found).not.toContain("not-a-real-marker");
+  });
+});
+
+describe("refuseInvalidAgentCredential: a dedicated agent user", () => {
+  const table = { ...SEED_AGENT_CREDENTIAL, postgres: { form: "dedicated-pair", supersededBy: [] } } as const;
+  const schema = z
+    .object({
+      id: z.string(),
+      type: z.enum(["postgres"]),
+      user: z.string().optional(),
+      agentUser: z.string().optional(),
+      agentPassword: z.string().optional(),
+      connectionString: z.string().optional(),
+    })
+    .superRefine(refuseInvalidAgentCredential(table));
+  const issues = (fields: Record<string, unknown>) =>
+    (schema.safeParse({ id: "store", type: "postgres", ...fields }).error?.issues ?? []).map((issue) => [
+      issue.path.join("."),
+      issue.message,
+    ]);
+
+  it("refuses an agent user that folds onto the connection's own, and admits one of its own", () => {
+    expect(issues({ user: "Owner", agentUser: " owner ", agentPassword: "${P}" })).toEqual([
+      [
+        "agentUser",
+        'Seed connection "store": agentUser is refused: it names the connection\'s own user, and the postgres provider takes only an agent user of its own. Name a dedicated agent user.',
+      ],
+    ]);
+    expect(issues({ user: "owner", agentUser: "agent", agentPassword: "${P}" })).toEqual([]);
+    // A reference on either side is unknown at load; the factory compares the resolved names at open.
+    expect(issues({ user: "${U}", agentUser: "owner", agentPassword: "${P}" })).toEqual([]);
+    expect(issues({ user: "owner", agentUser: "${A}", agentPassword: "${P}" })).toEqual([]);
+  });
+
+  it("refuses half of a dedicated pair as it refuses half of any pair", () => {
+    expect(issues({ agentUser: "agent" })[0]?.[0]).toBe("agentUser");
+  });
+});
+
+describe("refuseMcpWithoutAgentCredential", () => {
+  const required = { ...MCP_AGENT_CREDENTIAL_REQUIRED, postgres: true };
+  const schema = z
+    .object({
+      id: z.string(),
+      type: z.enum(["postgres", "mysql"]),
+      mcp: z.boolean().optional(),
+      agentUser: z.string().optional(),
+      agentPassword: z.string().optional(),
+    })
+    .superRefine(refuseMcpWithoutAgentCredential(required));
+  const issues = (fields: Record<string, unknown>) =>
+    (schema.safeParse({ id: "store", ...fields }).error?.issues ?? []).map((issue) => [
+      issue.path.join("."),
+      issue.message,
+    ]);
+
+  it("refuses mcp: true without an agent credential on an engine the registry names, at mcp", () => {
+    const refusal =
+      'Seed connection "store" sets mcp: true on postgres without an agent credential: MCP reads this engine only under an agent credential of its own, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.';
+    expect(issues({ type: "postgres", mcp: true })).toEqual([["mcp", refusal]]);
+    expect(issues({ type: "postgres", mcp: true, agentUser: "", agentPassword: "" })).toEqual([["mcp", refusal]]);
+  });
+
+  it("admits one with an agent credential, one without mcp, and every engine the registry does not name", () => {
+    expect(issues({ type: "postgres", mcp: true, agentUser: "agent", agentPassword: "${P}" })).toEqual([]);
+    expect(issues({ type: "postgres", mcp: true, agentPassword: "${P}" })).toEqual([]);
+    expect(issues({ type: "postgres" })).toEqual([]);
+    expect(issues({ type: "mysql", mcp: true })).toEqual([]);
+  });
+
+  it("names no engine in the shipped registry, so the shipped seed schema admits an MCP opt-in without one", () => {
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_AGENT_CREDENTIAL_REQUIRED[type])).toEqual([]);
+    expect(
+      SeedConnectionSchema.safeParse({ id: "pg", name: "pg", type: "postgres", roles: ["admin"], mcp: true }).success,
+    ).toBe(true);
+  });
+});
+
+describe("SeedDefaultsSchema and SeedConfigSchema: an agent credential", () => {
+  const conn = {
+    id: "store",
+    name: "Store",
+    type: "postgres",
+    host: "db.internal",
+    roles: ["admin"],
+    agentUser: "agent",
+    agentPassword: "${AGENT_PASSWORD}",
+  };
+  const issuesOf = (config: Record<string, unknown>) =>
+    (SeedConfigSchema.safeParse({ version: "1", ...config }).error?.issues ?? []).map((issue) => [
+      issue.path.join("."),
+      issue.message,
+    ]);
+  const unmanaged = (managed: string) =>
+    `An agent credential needs a managed connection, and this one has ${managed}: an unmanaged seed is copied into the browser of every user its roles admit, with its credentials, and Duplicate turns that copy into a connection of the user's own. Set managed: true on this connection, or remove the agent credential.`;
+
+  it.each(["agentUser", "agentPassword"])("refuses %s in defaults", (field) => {
+    expect(SeedDefaultsSchema.safeParse({ [field]: "x" }).error?.issues.map((issue) => issue.message)).toEqual([
+      "agentUser and agentPassword are set per connection and never in defaults: add the agent credential to each seed connection whose agent and MCP calls should run under it",
+    ]);
+  });
+
+  it("loads a managed seed with an agent credential", () => {
+    expect(issuesOf({ connections: [conn] })).toEqual([]);
+    expect(issuesOf({ defaults: { managed: true }, connections: [conn] })).toEqual([]);
+  });
+
+  it("refuses an unmanaged seed carrying either field, naming defaults.managed when it came from there", () => {
+    expect(issuesOf({ connections: [{ ...conn, managed: false }] })).toEqual([
+      ["connections.0.agentUser", unmanaged("managed: false")],
+    ]);
+    const qdrant = { ...conn, type: "qdrant", agentUser: undefined };
+    expect(issuesOf({ defaults: { managed: false }, connections: [qdrant] })).toEqual([
+      ["connections.0.agentPassword", unmanaged("managed: false from defaults.managed")],
+    ]);
+    expect(issuesOf({ defaults: { managed: false }, connections: [{ ...qdrant, managed: true }] })).toEqual([]);
   });
 });

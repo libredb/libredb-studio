@@ -578,9 +578,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // name Pulsar tenants, namespaces and topics, and no MCP surface that lists no key name is designed (BACKLOG B100).
   oxia: false,
   databend: true,
-  // Closed: MCP may read S3 only with an agent read key beside the connection's, whose grants hold the bucket scope,
-  // and a seed connection, the only kind MCP reads, carries no agent credential; no MCP surface that lists buckets
-  // but never an object key is designed either (BACKLOG B104).
+  // Closed: MCP may read S3 only with an agent read key beside the connection's, whose grants hold the bucket scope;
+  // a seed may carry one as its agent credential, but MCP does not yet require it on S3, and no MCP surface that lists
+  // buckets but never an object key is designed either (BACKLOG B104).
   s3: false,
   // Offered with every answer machine-redacted: `run_kubectl_read` runs the agent's
   // `queryReadOnly`, whose output masks every Secret name, and `inspect_schema` lists relations alone, which no
@@ -731,8 +731,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // so the closed table would be the only layer between an MCP client and every key (BACKLOG B100).
   oxia: false,
   databend: false,
-  // Agent mode executes metadata-only reads on S3, and MCP read stays closed on it: a seed connection carries no agent
-  // read key, the one layer that holds the bucket scope (BACKLOG B104).
+  // Agent mode executes metadata-only reads on S3, and MCP read stays closed on it: the agent read key, the one layer
+  // that holds the bucket scope, is not yet required of an S3 seed MCP reads (BACKLOG B104).
   s3: false,
   kubernetes: true,
   // Opened on its own: run_mqtt_read runs under the boundary agent mode uses, the provider's closed five-packet
@@ -775,6 +775,62 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // one file it reads, Studio's own storage and credential files are refused as a target, and the file's reserved
   // internal namespace is left out of every answer (docs/providers/libredb.md section 15).
   libredb: true,
+});
+/**
+ * Which shipped engines MCP reads only under an agent credential of the seed's own, `agentUser` and `agentPassword`,
+ * never under the connection's login: on such an engine the agent credential's grants are what bound what an MCP
+ * client reads, so a seed opted into MCP without one would be read under the wider principal. Read in two places and
+ * nowhere else: the seed schema refuses `mcp: true` without an agent credential at load, and the MCP context refuses
+ * to acquire such a connection without one at open, with `AGENT_CREDENTIAL_REQUIRED`.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held true only where
+ * `MCP_EXPOSABLE` offers the engine and `SEED_AGENT_CREDENTIAL` (src/lib/db/connection-fields.ts) gives a seed of it an
+ * agent credential, by `tests/unit/db/compatibility.test.ts`. No engine answers true yet.
+ */
+export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
+  snmp: false,
+  sparkplug: false,
+  libredb: false,
 });
 
 /**

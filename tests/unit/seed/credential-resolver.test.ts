@@ -42,6 +42,26 @@ describe("credential-resolver", () => {
     delete process.env.OXIA_DATA_SERVERS;
     delete process.env.DATABEND_WAREHOUSE;
     delete process.env.S3_REGION;
+    delete process.env.AGENT_USER;
+    delete process.env.AGENT_PASSWORD;
+  });
+
+  it("resolves ${VAR} in both halves of an agent credential", () => {
+    process.env.AGENT_USER = "agent_reader";
+    process.env.AGENT_PASSWORD = "not-a-real-agent-password";
+    const resolved = resolveConnectionCredentials({
+      ...baseConn,
+      agentUser: "${AGENT_USER}",
+      agentPassword: "${AGENT_PASSWORD}",
+    });
+    expect([resolved.agentUser, resolved.agentPassword]).toEqual(["agent_reader", "not-a-real-agent-password"]);
+  });
+
+  it("names agentPassword when its variable is not defined, so that one connection is skipped and no other", () => {
+    const error = thrownBy(() => resolveConnectionCredentials({ ...baseConn, agentPassword: "${AGENT_PASSWORD}" }));
+    expect(error).toBeInstanceOf(UndefinedSeedVariableError);
+    expect((error as UndefinedSeedVariableError).field).toBe("agentPassword");
+    expect(resolveConnectionCredentials({ ...baseConn, id: "other" }).id).toBe("other");
   });
 
   it("resolves ${VAR} in password field", () => {

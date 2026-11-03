@@ -17,7 +17,15 @@ import { acquireExecutionProfileProvider, getOrCreateProvider } from "@/lib/db/f
 import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
-import { MCP_CONNECTIONS_UNREADABLE, McpConnectionContext, mcpCaller } from "@/lib/mcp/context";
+import {
+  assertAgentCredentialWhereRequired,
+  MCP_CONNECTIONS_UNREADABLE,
+  McpConnectionContext,
+  mcpCaller,
+} from "@/lib/mcp/context";
+import { MCP_AGENT_CREDENTIAL_REQUIRED } from "@/lib/db/compatibility";
+import type { ManagedConnection } from "@/lib/seed";
+import type { DatabaseType } from "@/lib/types";
 import { resetVaultCache } from "@/lib/seed/vault-client";
 import {
   countMethod,
@@ -30,6 +38,10 @@ import {
   resetMcpTestState,
   writeSeedFile,
 } from "../../helpers/mcp-fixtures";
+
+const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
+const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
+const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
 
 pinMcpTestEnvironment();
 
@@ -493,6 +505,115 @@ describe("a seed's Vault reference", () => {
 
     expect(captured.passwords).toEqual([REFERENCE]);
     expect(vaultCalls).toEqual([]);
+  });
+});
+
+describe("a seed's agent credential", () => {
+  const VAULT_ADDR = "http://127.0.0.1:8200";
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.VAULT_ADDR;
+    delete process.env.VAULT_TOKEN;
+    delete process.env.MCP_CONTEXT_AGENT_USER;
+    resetVaultCache();
+  });
+
+  /** The user and password each Postgres provider was opened with, and the open stopped there, before any socket. */
+  function captureLogins(): { readonly logins: unknown[][]; restore(): void } {
+    const logins: unknown[][] = [];
+    const connect = spyOn(PostgresProvider.prototype, "connect").mockImplementation(async function (
+      this: PostgresProvider,
+    ) {
+      logins.push([this.config.user, this.config.password]);
+      throw new Error("stopped after the open read its login");
+    });
+    return { logins, restore: () => connect.mockRestore() };
+  }
+
+  test("is what MCP signs in with, its references resolved, and never the seed's own login", async () => {
+    process.env.VAULT_ADDR = VAULT_ADDR;
+    process.env.VAULT_TOKEN = "not-a-real-token";
+    process.env.MCP_CONTEXT_AGENT_USER = "agent_reader";
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: { data: { password: STAND_IN_AGENT_PASSWORD } } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    writeSeedFile(dir, [
+      {
+        id: "warehouse",
+        type: "postgres",
+        host: "127.0.0.1",
+        port: 5432,
+        user: "owner",
+        password: STAND_IN_OWNER_PASSWORD,
+        agentUser: "${MCP_CONTEXT_AGENT_USER}",
+        agentPassword: "${vault:secret/data/mcp/agent#password}",
+      },
+    ]);
+    const context = new McpConnectionContext(alice);
+    const connection = await context.resolve("seed:warehouse");
+    if (connection === null || connection === MCP_CONNECTIONS_UNREADABLE)
+      throw new Error("seed:warehouse did not resolve");
+    const captured = captureLogins();
+    try {
+      for (const profile of ["agent-read-only", "agent-operations"] as const) {
+        await expect(context.acquire(connection, profile)).rejects.toThrow("stopped after the open");
+      }
+    } finally {
+      captured.restore();
+    }
+
+    expect(captured.logins).toEqual([
+      ["agent_reader", STAND_IN_AGENT_PASSWORD],
+      ["agent_reader", STAND_IN_AGENT_PASSWORD],
+    ]);
+  });
+});
+
+describe("an engine MCP reads only under an agent credential", () => {
+  const listed = (type: DatabaseType, fields: Record<string, string> = {}): ManagedConnection => ({
+    id: "seed:store",
+    name: "store",
+    type,
+    createdAt: new Date(),
+    managed: true,
+    roles: ["*"],
+    seedId: "store",
+    ...fields,
+  });
+  const required = { ...MCP_AGENT_CREDENTIAL_REQUIRED, postgres: true };
+
+  test("refuses a connection with no agent credential in Studio's words, naming the connection", () => {
+    let refusal: unknown;
+    try {
+      assertAgentCredentialWhereRequired(listed("postgres", { user: "owner", password: STAND_IN_PASSWORD }), required);
+    } catch (error) {
+      refusal = error;
+    }
+
+    expect(refusal).toBeInstanceOf(ExecutionProfileError);
+    expect((refusal as ExecutionProfileError).reasonCode).toBe("AGENT_CREDENTIAL_REQUIRED");
+    expect((refusal as Error).message).toBe(
+      'Connection "seed:store" is read by MCP only under an agent credential of its own, and it has none: an operator sets agentUser and agentPassword on this seed.',
+    );
+    expect((refusal as Error).message).not.toContain(STAND_IN_PASSWORD);
+  });
+
+  test("admits one that sets either field, which the factory then holds to the engine's form", () => {
+    expect(() =>
+      assertAgentCredentialWhereRequired(listed("postgres", { agentUser: "agent" }), required),
+    ).not.toThrow();
+    expect(() =>
+      assertAgentCredentialWhereRequired(listed("postgres", { agentPassword: STAND_IN_PASSWORD }), required),
+    ).not.toThrow();
+  });
+
+  test("admits every connection of an engine the registry does not name", () => {
+    expect(() => assertAgentCredentialWhereRequired(listed("mysql"), required)).not.toThrow();
+    expect(() => assertAgentCredentialWhereRequired(listed("postgres"))).not.toThrow();
   });
 });
 

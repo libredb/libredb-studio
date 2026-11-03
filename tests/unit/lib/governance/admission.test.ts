@@ -162,6 +162,11 @@ describe("admitConnectionRows", () => {
     });
     expect(connection.write).toMatchObject({ id: `seed:${ID}`, literal: true, user: "writer" });
     expect(connection.write?.password).toBe("example-only-write-password");
+    // A governed record carries no agent credential: the envelope has no agent key, and a definition holding one is
+    // refused below, so the seed schema's agent fields never reach a governed connection.
+    for (const record of [connection.read, connection.write]) {
+      expect([record?.agentUser, record?.agentPassword]).toEqual([undefined, undefined]);
+    }
 
     // Each envelope was opened for its own level, with the definition exactly as the row holds it.
     expect(opened).toEqual([bindingOf(ID, "read"), bindingOf(ID, "write")]);

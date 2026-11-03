@@ -366,7 +366,7 @@ connections:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `version` | Yes | — | Must be `"1"` |
-| `defaults` | No | - | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged, and `mcp` and `readOnly` are refused here (see [MCP opt-in](#mcp-opt-in)) |
+| `defaults` | No | - | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged, and `mcp`, `readOnly`, `agentUser` and `agentPassword` are refused here (see [MCP opt-in](#mcp-opt-in) and [An agent credential](#an-agent-credential)) |
 | `defaults.managed` | No | `true` | Default managed state |
 | `defaults.environment` | No | — | Default environment label |
 | `defaults.ssl` | No | — | Default SSL config |
@@ -418,7 +418,9 @@ connections:
 | `connections[].securityPolicyUri` | No | absent | OPC UA only: the policy to insist on, such as `http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256`. An endpoint is a mode **and** a policy, so naming one narrows the choice to that pair and is refused when the server offers no such pair |
 | `connections[].clientCertificatePath` / `connections[].clientPrivateKeyPath` | No | absent | OPC UA only: the client certificate and private key to present, as paths on the host that runs Studio, supplied together or not at all. A server holding a trust list of its own has to be given a STABLE client identity before it will accept a secured channel, which is what a mounted pair is for; absent, the library generates one under the PKI root (`LIBREDB_OPCUA_PKI_ROOT`), which is stable for as long as that directory is. Paths and never keys: the private key stays in the file |
 | `connections[].authSource` | No | - | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error. A seed for MongoDB agent mode names the read user's own database here: [the agent's user](providers/mongodb.md#setting-up-the-agents-user) has the whole entry |
-| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An Oxia, S3, Firestore, OPC UA, Modbus or NETCONF connection refuses `mcp: true` when the file loads: MCP is not offered for it. An etcd connection with `mcp: true` whose `user` is `root` is refused too, since MCP reads etcd only under a user the server proves reads only ([providers/etcd.md](providers/etcd.md), section 15.7) |
+| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An Oxia, S3, Firestore, OPC UA, Modbus or NETCONF connection refuses `mcp: true` when the file loads: MCP is not offered for it. An etcd connection with `mcp: true` whose effective MCP principal is `root`, its `agentUser` where it sets one and its `user` otherwise, is refused too, since MCP reads etcd only under a user the server proves reads only ([providers/etcd.md](providers/etcd.md), section 15.7) |
+| `connections[].agentUser` | No | absent | The principal every agent execution profile and every MCP call on this connection signs in as, in the engine's own user field: a database role, an etcd user, an S3 access key ID. Set with `agentPassword` on an engine that takes a user and a password, and never on one that takes the agent's secret alone. Resolved like `user`. Public, as `user` is ([An agent credential](#an-agent-credential)) |
+| `connections[].agentPassword` | No | absent | That principal's secret, or on an engine that takes the agent's secret alone the whole credential: a bearer token, a service-account key JSON. Resolved like `password`, and stripped from `GET /api/connections/managed` as `password` is. Only on a managed connection, and never in `defaults` ([An agent credential](#an-agent-credential)) |
 
 ### MCP opt-in
 
@@ -427,6 +429,55 @@ The opt-in is per connection: `defaults.mcp` is refused, because a default would
 The built-in sample connections never carry it, so they are never visible to an MCP client.
 A value that is not a boolean fails the whole file, as any invalid field does: `GET /api/connections/managed` then answers 500 with its named reason, and every MCP tool answers that the connection configuration could not be read.
 With no seed file, or with no entry that opts in for the token's role, `list_connections` answers an empty list.
+
+### An agent credential
+
+A seed connection may carry an agent credential of its own, `agentUser` and `agentPassword`, beside its own `user` and `password`.
+Every agent execution profile on the connection, the read-only one, the operations one and the hand-over one, and every MCP call on it then signs in as the agent credential; the editor, the tree and the monitoring panels keep the connection's own login.
+A connection without one runs its agent and MCP calls under its own login, as before.
+So the agent can run as a least-privileged principal while the connection keeps a wider one, which is what an engine's read-only proof asks for (each provider doc says what its proof admits).
+
+Which fields a seed of each engine takes is `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts`, which follows each provider's declared form (`AgentCredentialForm` in `src/lib/db/types.ts`):
+
+- `agentUser` and `agentPassword` together: `postgres`, `mysql`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `influxdb`, `databend`, `s3`, `mqtt`, `rabbitmq`, `opcua`, `netconf`.
+- `agentPassword` alone, the agent's token or key: `libsql`, `qdrant`, `weaviate`, `influxdb3`, `kubernetes`, and `bigquery`, which takes a service-account key JSON.
+- Neither: `sqlite`, `duckdb`, `oxia`, `snowflake`, `spark`, `firestore`, `mtconnect`, `modbus`, `snmp`, `sparkplug`, `libredb`, since the engine has no user or no secret field for an agent to sign in with, or, on Snowflake, an agent user and password would narrow no privilege.
+
+MCP reads under the agent credential on every engine it offers; on `s3`, `opcua` and `netconf`, which MCP does not offer, it narrows agent runs only, and on `druid`, `trino`, `prometheus`, `influxdb`, `databend` and `bigquery`, which have no MCP statement tool, it narrows `inspect_schema` and agent runs.
+
+```yaml
+version: "1"
+connections:
+  - id: "prod-orders"
+    name: "Orders (production)"
+    type: postgres
+    host: db.internal
+    port: 5432
+    database: orders
+    user: "${ORDERS_OWNER_USER}"
+    password: "${ORDERS_OWNER_PASSWORD}"
+    agentUser: "${ORDERS_AGENT_USER}"
+    agentPassword: "${ORDERS_AGENT_PASSWORD}"
+    roles: ["admin"]
+    managed: true
+    mcp: true
+```
+
+Both fields resolve as `user` and `password` do, from `${ENV_VAR}` when the operator cache is filled and from `${vault:...}` when the connection is opened, and a literal `agentPassword` logs the plaintext warning once, naming the field and never the value.
+The load refuses, naming the connection and the field and never the value:
+
+- either field on an engine that takes neither, and `agentUser` on an engine that takes the agent's secret alone;
+- one half of a user and password, an empty string counting as absent;
+- either field beside `connectionString`, which the provider would sign the agent in with instead;
+- either field beside a field the provider signs in with in preference to a user and password, `apiKeyId` or `apiKeySecret` on Elasticsearch;
+- an agent secret beside a literal `user` on an engine that keeps the connection's user beside the agent's secret (libSQL, whose transport would send both, which has no read-only form);
+- an agent user and password that are a published default, such as RabbitMQ's `guest` and `guest`;
+- either field on a connection whose effective `managed` is false, because an unmanaged seed is copied into the browser of every user its roles admit with its credentials, and Duplicate turns that copy into a connection of the user's own;
+- either field in `defaults`, because a default would hand one principal to every later connection of the file.
+
+A refused entry fails the whole file, as any invalid field does, so one such entry takes every connection of that file off the list until it is fixed.
+A reference is unknown at load, so a field written as one passes there, and the factory checks the resolved credential against the engine's form when the connection opens, before it connects.
+One limit of the resolved value: an `agentPassword` whose text before the first colon is `v` and digits, such as `v2:x`, is read as a sealed secret and refused at open with `AGENT_CREDENTIAL_UNRESOLVABLE`, where the same text as `password` opens.
 
 ### A read-only cluster for everyone
 
@@ -533,10 +584,10 @@ connections:
 1. The config file is read from disk (YAML/JSON) and validated as a whole.
 2. `${VARIABLE_NAME}` patterns are resolved from `process.env` when the [operator cache](#the-operator-cache) is filled.
 3. If a variable is undefined, that connection is **skipped**, the others are listed, and the [Seed sources card](#diagnostics) names the variable, with the field in the endpoint's record.
-4. A literal password is used as written and logs a warning once per connection.
+4. A literal `password` or `agentPassword` is used as written and logs a warning once per connection and field, naming the field.
 5. With `SEED_LITERAL_VALUES=true`, steps 2 to 4 do not happen: every value is used as written (see [Literal values written by a platform](#literal-values-written-by-a-platform))
 
-**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`, `apiKeySecret`, `amqpPort`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
+**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `amqpPort`, `authMethod`, `privateKey`, `privateKeyPassphrase`, `role`, `apiKeyId`, `apiKeySecret`, `agentUser`, `agentPassword`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
 
 ### Literal values written by a platform
 
@@ -574,7 +625,7 @@ The part before `#` is the KV v2 path (`<mount>/data/<name>`) and the part after
 
 **Quote the value.** YAML reads an unquoted `#` as the start of a comment, so `password: ${vault:secret/data/prod/postgres#password}` sets the password to the literal text `${vault:secret/data/prod/postgres` and drops the key. The quotes above are not optional.
 
-Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`, `apiKeySecret`, `amqpPort`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
+Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `amqpPort`, `authMethod`, `privateKey`, `privateKeyPassphrase`, `role`, `apiKeyId`, `apiKeySecret`, `agentUser`, `agentPassword`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
 A reference with no `#key` fails when the connection is opened.
 
 A Vault reference is read lazily, one connection at a time:

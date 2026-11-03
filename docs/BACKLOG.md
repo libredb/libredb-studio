@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D434, U17 · 318
+- [Drivers and connections](#drivers-and-connections) — D1-D447, U17 · 331
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U198 · 184
@@ -40,10 +40,10 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 82
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 81
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP15 · 15
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
 
 ---
 
@@ -1178,13 +1178,14 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 56 hits, re-measured on this branch on 2026-10-30: `main` held 55 of them, and the fifty-sixth is this branch's own AI fence test, described below. The breakdown below is the one measured at 54 on 2026-10-17.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 58 hits, re-measured on 2026-11-03. The breakdown below is the one measured at 54 on 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
 The remaining three write a shorter stub of their own, two with two keys and one with a single `getSession`.
 The count moved from 53 to 54 between 2026-10-12 and 2026-10-14: `tests/api/db-test-connection-modbus.test.ts`, added by `1ab0d88ff`, is the fifty-fourth, and it is a five-key copy down to the `mock(async () => "mock-token")` for a token nothing reads. The copying this entry describes continued after the entry was written, which is the argument for the factory rather than against it.
 The count moved from 54 to 55 on 2026-10-29: `tests/api/auth/openshift-callback-role.test.ts` is the fifty-fifth, and it spreads the real module and replaces only `login`, so it adds no copy of the five-key stub.
 The count moved from 55 to 56 with `tests/security/ai-prompt-fence.test.ts`, added with the AI route fence work: it is the fifty-sixth, and it is a copy, carrying one key the other stubs lack, `readSession`, because the AI routes read the session through it.
+The count moved from 56 to 58 on 2026-11-03 with `tests/isolated/agent-run-seed-credential.test.ts` and `tests/security/seed-agent-credential-leak.test.ts`, the seed agent credential's tests: both spread the real module and replace only `getSession` and `readSession`, so neither adds a copy of the five-key stub.
 
 `src/lib/auth.ts` re-exports three names from `src/lib/auth-cookies.ts` that every hand-written stub lacks:
 `resetCookieSecurityWarning`, `readCookieSecureOverride` and `isLoopbackHost`, re-measured 2026-10-30.
@@ -3570,12 +3571,12 @@ Found 2026-10-14 while merging #1759 and #1764; pre-existing since #1518.
 So no agent credential works on a Spark connection: an `agentPassword` alone is refused as an incomplete agent credential, and an `agentUser` beside it is refused by Spark's User check.
 Plan-mode grounding and the operations workflow, which both acquire through the `agent-operations` profile, then meet one of the two refusals instead of reading the schema.
 With no agent credential stored, both run under the connection's own token, and the connection dialog has no input for one, so only a record written through the API or storage reaches this.
-`tests/unit/db/agent-credential-capability.test.ts` pins each engine's form in `DECLARED_FORMS`, where the token engines are Kubernetes, Weaviate and Qdrant, and Spark has no row.
+`tests/unit/db/agent-credential-capability.test.ts` pins each engine's form in `DECLARED_FORMS`, where the token engines are Kubernetes, Qdrant, Weaviate, libSQL and InfluxDB 3, and Spark has no row, so `SEED_AGENT_CREDENTIAL.spark` in `src/lib/db/connection-fields.ts` is null and a Spark seed that sets either agent field is refused at load.
 Verified 2026-10-14 by reading `factory.ts`, `connection-options.ts` and that test on `main` at 59cdfd09b.
 
 Found 2026-10-14 in the integration review of #1759 and #1764; Spark behaved the same before #1764 added the token form.
 
-**Done when:** `SparkProvider.getCapabilities()` declares `agentCredential: "token"`, `DECLARED_FORMS` has a `spark: "token"` row, a factory test shows an `agentPassword` alone becoming the token of the agent's Spark session and an `agentUser` refused, and section 8.3 of `docs/providers/spark.md` says so in one sentence.
+**Done when:** `SparkProvider.getCapabilities()` declares `agentCredential: "token"`, `DECLARED_FORMS` has a `spark: "token"` row, `SEED_AGENT_CREDENTIAL.spark` is `secret`, a factory test shows an `agentPassword` alone becoming the token of the agent's Spark session and an `agentUser` refused, and section 8.3 of `docs/providers/spark.md` says so in one sentence.
 
 ### D363. Snowflake's first result partition is read uncompressed
 
@@ -4308,6 +4309,122 @@ The CI step that starts the OPC UA fixture publishes it on `127.0.0.1:54840` (`.
 Found 2026-11-03 while moving those fixtures.
 
 **Done when:** the OPC UA live step publishes on a port Docker picks and passes it to the probes through `LIBREDB_OPCUA_LIVE_URL`, or on a fixed port below 32768, with `live-environment.test.ts` pinning the new form.
+
+### D435. A discovered connection cannot carry an agent credential
+
+A seed may carry `agentUser` and `agentPassword` (`docs/SEED_CONNECTIONS.md`, "An agent credential"), but only an operator seed file sets them: no discovery source, the CapRover or the Kubernetes one among them, maps an agent credential from what it discovers.
+A discovered connection is `literal`, and each source reads its credential from a place of its own (an app's environment, a Secret), so a mapping is a design per source.
+So agent runs and MCP calls on a discovered connection sign in as the connection's own credential.
+Found 2026-11-03 while adding the seed agent credential, and left out of it by decision.
+
+**Done when:** each discovery source that should offer one maps an agent credential from a documented place, refused where the engine's `SEED_AGENT_CREDENTIAL` row takes none, with a discovery test per source and the source's doc saying where the credential comes from.
+
+### D436. SQLite declares no agent credential form, so only the seed table refuses one
+
+`SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a SQLite seed no agent credential, because the engine has no password field and a file opened by path has no principal, and the seed schema refuses `agentUser` and `agentPassword` on one at load.
+Its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
+So a SQLite connection that reaches the factory with an agent credential by another way, the API or storage, is opened under it instead of refused, and `tests/unit/db/agent-credential-capability.test.ts` has to name the engine as an exception to the census rather than read the form.
+Found 2026-11-03 while adding the seed agent credential.
+
+**Done when:** the SQLite provider declares `agentCredential: "none"`, `DECLARED_FORMS` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
+
+### D437. DuckDB declares no agent credential form, so only the seed table refuses one
+
+`SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a DuckDB seed no agent credential, because the engine has no password field and a file opened by path has no principal, and the seed schema refuses `agentUser` and `agentPassword` on one at load.
+Its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
+So a DuckDB connection that reaches the factory with an agent credential by another way, the API or storage, is opened under it instead of refused, and `tests/unit/db/agent-credential-capability.test.ts` has to name the engine as an exception to the census rather than read the form.
+Found 2026-11-03 while adding the seed agent credential.
+
+**Done when:** the DuckDB provider declares `agentCredential: "none"`, `DECLARED_FORMS` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
+
+### D438. MTConnect declares no agent credential form, so only the seed table refuses one
+
+`SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a MTConnect seed no agent credential, because the engine has no password field and the agent reads an unauthenticated HTTP endpoint, and the seed schema refuses `agentUser` and `agentPassword` on one at load.
+Its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
+So a MTConnect connection that reaches the factory with an agent credential by another way, the API or storage, is opened under it instead of refused, and `tests/unit/db/agent-credential-capability.test.ts` has to name the engine as an exception to the census rather than read the form.
+Found 2026-11-03 while adding the seed agent credential.
+
+**Done when:** the MTConnect provider declares `agentCredential: "none"`, `DECLARED_FORMS` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
+
+### D439. Modbus declares no agent credential form, so only the seed table refuses one
+
+`SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a Modbus seed no agent credential, because the engine has no password field and Modbus TCP defines no authentication, and the seed schema refuses `agentUser` and `agentPassword` on one at load.
+Its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
+So a Modbus connection that reaches the factory with an agent credential by another way, the API or storage, is opened under it instead of refused, and `tests/unit/db/agent-credential-capability.test.ts` has to name the engine as an exception to the census rather than read the form.
+Found 2026-11-03 while adding the seed agent credential.
+
+**Done when:** the Modbus provider declares `agentCredential: "none"`, `DECLARED_FORMS` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
+
+### D440. Sparkplug B declares no agent credential form, so only the seed table refuses one
+
+`SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a Sparkplug B seed no agent credential, because the engine has no password field and the broker connection is anonymous, and the seed schema refuses `agentUser` and `agentPassword` on one at load.
+Its provider declares no `agentCredential`, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` asks it for a user and a password together, as it asks an engine that takes them.
+So a Sparkplug B connection that reaches the factory with an agent credential by another way, the API or storage, is opened under it instead of refused, and `tests/unit/db/agent-credential-capability.test.ts` has to name the engine as an exception to the census rather than read the form.
+Found 2026-11-03 while adding the seed agent credential.
+
+**Done when:** the Sparkplug B provider declares `agentCredential: "none"`, `DECLARED_FORMS` has its row, the census names it no longer as an exception, a factory test shows an agent credential refused at open, and its provider doc says so in one sentence.
+
+### D441. Oxia declares no agent credential form, so its seed cannot carry an agent token
+
+`SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a Oxia seed no agent credential, because its provider declares no `agentCredential` and its connection fields hold a token and no user.
+`assertAgentCredentialForm` in `src/lib/db/factory.ts` asks a provider with no declared form for a user and a password together, which this engine cannot take, so no agent token reaches it, from a seed or from storage.
+A Oxia agent therefore always runs under the connection's own token.
+Found 2026-11-03 while adding the seed agent credential; Spark has the same gap as D362.
+
+**Done when:** the Oxia provider declares a secret-only form, `"token"` or a form of its own, `DECLARED_FORMS` has its row, `SEED_AGENT_CREDENTIAL` gives it `secret`, a factory test shows an `agentPassword` alone becoming the agent's token and an `agentUser` refused, and its provider doc says so in one sentence.
+
+### D442. Firestore declares no agent credential form, so its seed cannot carry an agent service-account key
+
+`SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a Firestore seed no agent credential, because its provider declares no `agentCredential` and its connection fields hold a service-account key and no user.
+`assertAgentCredentialForm` in `src/lib/db/factory.ts` asks a provider with no declared form for a user and a password together, which this engine cannot take, so no agent service-account key reaches it, from a seed or from storage.
+A Firestore agent therefore always runs under the connection's own service-account key.
+Found 2026-11-03 while adding the seed agent credential; Spark has the same gap as D362.
+
+**Done when:** the Firestore provider declares a secret-only form, `"token"` or a form of its own, `DECLARED_FORMS` has its row, `SEED_AGENT_CREDENTIAL` gives it `secret`, a factory test shows an `agentPassword` alone becoming the agent's service-account key and an `agentUser` refused, and its provider doc says so in one sentence.
+
+### D443. SNMP declares no agent credential form, so its seed cannot carry an agent community
+
+`SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts` gives a SNMP seed no agent credential, because its provider declares no `agentCredential` and its connection fields hold a community and no user.
+`assertAgentCredentialForm` in `src/lib/db/factory.ts` asks a provider with no declared form for a user and a password together, which this engine cannot take, so no agent community reaches it, from a seed or from storage.
+A SNMP agent therefore always runs under the connection's own community.
+Found 2026-11-03 while adding the seed agent credential; Spark has the same gap as D362.
+
+**Done when:** the SNMP provider declares a secret-only form, `"token"` or a form of its own, `DECLARED_FORMS` has its row, `SEED_AGENT_CREDENTIAL` gives it `secret`, a factory test shows an `agentPassword` alone becoming the agent's community and an `agentUser` refused, and its provider doc says so in one sentence.
+
+### D444. A Snowflake seed cannot carry an agent credential, since a user and password would narrow nothing
+
+`SEED_AGENT_CREDENTIAL.snowflake` in `src/lib/db/connection-fields.ts` is null, so a Snowflake seed that sets `agentUser` or `agentPassword` is refused at load.
+Under the default `authMethod: keypair` the provider signs `agentUser` with the connection's own `privateKey` and ignores `agentPassword`, and every statement runs as the connection's `role` whatever the user is, so an agent pair would narrow the user name and no privilege.
+D324 gives Snowflake its agent mode and the form its provider declares; this entry is the agent role that form needs and the seed row that follows it.
+Found 2026-11-03 while adding the seed agent credential.
+
+**Done when:** a design gives Snowflake an agent credential of its own, an agent key and an agent role, likely the `"dedicated-user"` form, the provider declares it, the census and `SEED_AGENT_CREDENTIAL` follow, a factory test shows the agent signing with its own key as its own role, and `docs/providers/snowflake.md` says so.
+
+### D445. A seed's plaintext agent password that starts with `v` and digits and a colon is read as a sealed envelope
+
+`resolveAgentCredential` in `src/lib/db/factory.ts` reads `agentPassword` through `readSecret` (`src/lib/storage/encryption.ts`), which takes any value whose text before the first colon matches `/^v\d+$/` for a sealed envelope.
+A seed delivers its agent password as plaintext once resolved, so a plaintext such as `v2:x` is refused at open with `AGENT_CREDENTIAL_UNRESOLVABLE`, or opened as an envelope, while the same text as `password` opens.
+The refusal is explicit and names no value, and `docs/SEED_CONNECTIONS.md` states the limit.
+Found 2026-11-03 while adding the seed agent credential.
+
+**Done when:** a seed-delivered agent password skips `readSecret`, through a marker on the projected connection the factory trusts and nothing a caller can set, with a factory test that a seeded `v2:x` opens and a stored sealed value still opens, and the limit is gone from `docs/SEED_CONNECTIONS.md`.
+
+### D446. The factory runs an agent under an Elasticsearch API key that stands beside its agent credential
+
+The Elasticsearch transport sends the API key pair, `apiKeyId` and `apiKeySecret`, in preference to a user and password (`src/lib/db/providers/sql/search/http-transport.ts`), and `acquireExecutionProfileProvider` in `src/lib/db/factory.ts` overlays only `user` and `password` with the agent credential.
+So a stored connection with an API key pair and an agent credential runs its agent under the connection's API key, the wider principal, with no error.
+A seed with both is refused at load and by the projection (`supersededBy` in `SEED_AGENT_CREDENTIAL`, `src/lib/db/connection-fields.ts`), so only a connection written through the API or storage reaches this; the dialog has no agent input.
+Found 2026-11-03 while adding the seed agent credential.
+
+**Done when:** a provider capability names the fields its provider signs in with in preference to a user and password, `assertAgentCredentialForm` refuses an agent credential beside one before connect, the census holds `SEED_AGENT_CREDENTIAL.supersededBy` to that capability, and a factory test pins the refusal.
+
+### D447. Prometheus and InfluxDB 1.x cannot take an agent token alone
+
+Both transports send a password alone as a credential (`authorizationFor` in `src/lib/db/providers/timeseries/prometheus/http-transport.ts`, `AUTHORIZATION_BY_TYPE.influxdb` in `src/lib/db/providers/timeseries/influxdb/connection-options.ts`), but neither provider declares an `agentCredential` form, so `assertAgentCredentialForm` in `src/lib/db/factory.ts` takes only a user and a password together.
+So an operator whose server takes a token alone cannot give either engine an agent credential: `SEED_AGENT_CREDENTIAL` gives both `pair`, following the factory.
+Found 2026-11-03 while adding the seed agent credential.
+
+**Done when:** an `AgentCredentialForm` member takes a user and a password or a password alone, `assertAgentCredentialForm` supports it, both providers declare it, the census and `SEED_AGENT_CREDENTIAL` follow, and a factory test shows an agent token alone opening each.
 
 ## Value interpolation
 
@@ -8462,20 +8579,6 @@ Not fixed in #1085: each remedy moves something else, because a per-kind share o
 
 **Done when:** a plan run against a Prometheus server past either cap holds its rule groups, rules, scrape pools and targets, with a test that drives the grounding walk over a provider whose first kind's batch is truncated and asserts that the later kinds are still read.
 
-### B85. The least-privilege `agentUser` never reaches an agent run
-
-`docs/AGENT.md` says every agent acquisition opens with "the same optional least-privilege `agentUser`", and `acquireExecutionProfileProvider` in `src/lib/db/factory.ts` opens a profile as `agentUser` whenever a connection carries it with `agentPassword` (#328).
-No run's connection can carry the pair.
-A run opens on a `seed:` id only: `POST /api/agent/runs` refuses an inline connection (`POST` in `src/app/api/agent/runs/route.ts`), and the run route, the drive in `src/lib/agent/runtime.ts` and the hand-over route `src/app/api/agent/runs/[runId]/handover/route.ts` resolve the id through `resolveConnection` in `src/lib/seed/resolve-connection.ts`, which refuses an id outside that namespace.
-`SeedConnectionSchema` in `src/lib/seed/types.ts` declares neither field, and zod strips an unknown key without an error, so a seed file that sets both parses and loses them.
-A browser copy of the seed that carries its own pair no longer resolves to the seed, because `src/hooks/use-connection-payload.ts` classifies both fields as `resolution`, so that copy is browser-only and no run starts on it.
-So an agent runs as a least-privileged role only where the seed's own `user` is that role, which is the only way the dvdrental run of `docs/AGENT_DEMO.md` can read as `libredb_agent`.
-
-Found 2026-09-23 while classifying the agent surfaces the Prometheus provider reaches (#1085, section 3.2).
-Not fixed in #1085: a seed field for the pair changes the operator's seed contract for every engine, and its password needs the `${vault:...}` resolution `password` has (`RESOLVABLE_FIELDS` in `src/lib/seed/credential-resolver.ts`), neither of which that PR touches.
-
-**Done when:** a seed can declare `agentUser` and `agentPassword`, the password resolves as `password` does, a run on that seed opens its execution profiles as `agentUser`, and a test drives a run's acquisition from such a seed.
-
 ### B86. A block tagged `cql` is read as the plan deliverable on every engine, not only Cassandra
 
 `cql` is in `QUERY_FENCE_ALIASES` and not in `ALIAS_ENGINES` (`src/lib/sql/fence-tags.ts`), so `fenceTagEngine("cql")` is `null`, and `fencedBlock` in `src/lib/agent/plan-draft.ts` reads a tag that names no engine as one that cannot contradict the connection.
@@ -8507,7 +8610,7 @@ Not fixed in #1085: the count and its noun predate it and serve every engine.
 VictoriaMetrics answers `/api/v1/scrape_pools` with HTTP 400, so the Prometheus provider counts scrape pools as unavailable and then throws a `ConnectionError` when the walk lists them.
 The capture is all-or-nothing by design (the module docblock of `src/lib/agent/context-snapshot.ts`), so the run gets no inventory and the refusal `This run could not reach this prometheus database to ask it for its schema, so nothing was read for this run.`, although the server answered three of the four listings.
 Measured 2026-09-24 against VictoriaMetrics v1.152.0, single node: `captureContextSnapshot` and `readObjectInventoryForGrounding` both refused, and the 329 metrics and 5 targets already read were dropped; the same calls against Prometheus 3.13.3 captured.
-Only a seeded connection is affected, because a run opens on a `seed:` id only (B85).
+Only a seeded connection is affected, because a run opens on a `seed:` id only.
 On a VictoriaMetrics server past `METRIC_LIST_CAP`, the walk stops at the truncated metric batch first (B84) and grounds metrics only.
 A Redis-wire relative that refuses `FUNCTION LIST` (KeyDB, DragonflyDB, Garnet) may end the walk the same way; that was read, not measured.
 
@@ -8639,13 +8742,13 @@ So the language offers the investigation and the operations workflow only: data 
 `MCP_EXPOSABLE.s3` is false, so a seed with `mcp: true` on an S3 connection fails the whole file, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.s3` false, so no MCP tool reads an S3 connection.
 
 Why MCP stays closed: MCP may read S3 only with an agent read key of its own, beside the connection's key, since the key's grants are the one layer that holds the bucket scope without reading the request (measured with a scoped, an unlisted and a broad key on Silo, RustFS and Garage, `docs/providers/s3.md` section 15.5).
-MCP reads seed connections alone, and a seed entry carries no `agentUser` or `agentPassword`, so no S3 connection MCP can read can carry such a key.
-What would reopen it: a seed connection that can carry an agent read key, with an S3 seed set `mcp: true` and no agent read key refused when the file loads, and an MCP metadata surface that lists buckets and never an object key.
+MCP reads seed connections alone, and an S3 seed may carry such a key as its agent credential (`agentUser` and `agentPassword`, `docs/SEED_CONNECTIONS.md`), but nothing yet requires one of an S3 seed MCP reads.
+What would reopen it: an S3 seed set `mcp: true` and no agent read key refused when the file loads and when the connection opens (`MCP_AGENT_CREDENTIAL_REQUIRED` in `src/lib/db/compatibility.ts`), and an MCP metadata surface that lists buckets and never an object key.
 Kept so that key exposure, object and tag reads and MCP access are decisions of their own rather than side effects of agent mode joining.
 
 Found 2026-10-09 while designing the S3 provider; narrowed 2026-10-31 when agent mode joined S3; the MCP condition measured 2026-11-02.
 
-**Done when:** the owner rules on which object keys and values agent mode may read on S3 and how they are redacted, the `s3api` pack offers the workflows that ruling opens, a seed connection can carry an agent credential, an S3 seed with `mcp: true` and no agent read key is refused when the file loads and when the connection opens, `MCP_EXPOSABLE.s3` turns true with `inspect_schema` refusing S3 by name and pointing at the statement tool, since S3 has no relation kind, a per-engine exposure ruling opens MCP statement read for S3, the pack declares its MCP facet (`src/lib/agent/languages/s3api/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and projection, and `MCP_STATEMENT_READ.s3` is true, with tests that every MCP answer carries no object key or value; cited in `docs/AGENT.md`.
+**Done when:** the owner rules on which object keys and values agent mode may read on S3 and how they are redacted, the `s3api` pack offers the workflows that ruling opens, an S3 seed with `mcp: true` and no agent read key is refused when the file loads and when the connection opens, `MCP_EXPOSABLE.s3` turns true with `inspect_schema` refusing S3 by name and pointing at the statement tool, since S3 has no relation kind, a per-engine exposure ruling opens MCP statement read for S3, the pack declares its MCP facet (`src/lib/agent/languages/s3api/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and projection, and `MCP_STATEMENT_READ.s3` is true, with tests that every MCP answer carries no object key or value; cited in `docs/AGENT.md`.
 
 ### B107. Firestore's agent reads are metadata only, and it has no MCP surface
 
@@ -9762,3 +9865,11 @@ Memory held this way grows with the number of `BEGIN`s in five minutes; without 
 Read from the code, not measured.
 
 **Done when:** ending a transaction clears its watch timer, or the timer holds only the connection id and the transaction id and looks the provider up when it fires, and a test shows no timer left pending after a `COMMIT`.
+
+### GOV31. A governed connection cannot carry an agent credential
+
+A seed may carry `agentUser` and `agentPassword`, but a governed record cannot: a definition holding either is refused as `DEFINITION_HAS_SECRET` (`SECRET_PATHS` in `src/lib/governance/admission.ts`), and the credential envelope has no agent key (`PLAINTEXT_KEYS` in `src/lib/governance/contract.ts`).
+The agent and MCP are off under governance in this contract version, so nothing reaches for one today; when they turn on, a governed connection's agent would run under the grant's credential.
+Found 2026-11-03 while adding the seed agent credential, and left out of it by decision.
+
+**Done when:** the envelope gains an agent credential key, admission merges it into the record and the manifest publishes it, a governed connection's agent signs in under it, and an admission test pins both the merge and the refusal of the pair in the definition.

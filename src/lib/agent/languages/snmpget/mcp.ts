@@ -10,7 +10,7 @@
  * subtree contains. The answer carries the provider's warnings as its notes, since each is Studio's own sentence naming
  * a withheld subtree and why, and a walk that stepped over one would otherwise read as the device's whole subtree.
  *
- * A v2c community is no principal: a seed carries no separate agent credential, and what the community reaches is the
+ * A v2c community is no principal: an SNMP seed takes no agent credential, and what the community reaches is the
  * agent's own view (VACM), which the client cannot read, since the access control tables are among the withheld
  * subtrees. So the boundary is the agent's view and Studio's withheld set together.
  *

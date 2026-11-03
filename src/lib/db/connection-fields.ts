@@ -636,3 +636,78 @@ export const SEED_ONLY_FIELDS: Readonly<Record<DatabaseType, SeedOnlyFields | nu
   sparkplug: null,
   libredb: null,
 });
+
+/**
+ * What an agent credential on a seed of one engine is: `agentUser` and `agentPassword`, the principal every agent
+ * execution profile and every MCP call on that seed signs in as. It mirrors the provider's `AgentCredentialForm`
+ * (src/lib/db/types.ts), which the factory checks again at open: "pair" is a user and a password together, the form a
+ * provider that declares none takes; "dedicated-pair" is the same with a user other than the connection's own; and
+ * "secret" is `agentPassword` alone, a bearer token or a service-account key. A null row takes none.
+ */
+export interface SeedAgentCredential {
+  readonly form: "pair" | "dedicated-pair" | "secret";
+  /** Fields the provider signs in with in preference to user and password; an agent credential beside one is refused. */
+  readonly supersededBy: readonly (keyof DatabaseConnection)[];
+}
+
+const PAIR: SeedAgentCredential = Object.freeze({ form: "pair", supersededBy: Object.freeze([]) });
+const SECRET: SeedAgentCredential = Object.freeze({ form: "secret", supersededBy: Object.freeze([]) });
+
+/**
+ * Which agent credential a seed of each engine may carry, read by the seed schema at load and by the projection's
+ * gates. A hand-written literal and never computed from the providers, because this module imports none;
+ * `tests/unit/db/agent-credential-capability.test.ts` holds each row to its provider's declared form and to the
+ * engine's `CONNECTION_FIELDS` row, so a provider that changes its form fails there until its row here follows.
+ *
+ * A null row where the provider declares no form is a row the factory would ask for a user and a password, on an
+ * engine that has no field to put one in (no password: SQLite, DuckDB, MTConnect, Modbus, Sparkplug B), signs in with
+ * a secret and no user (Spark, Oxia, Firestore, SNMP), or would not be narrowed by one (Snowflake, whose key-pair
+ * sign-in ignores the password and whose statements all run as the connection's role).
+ */
+export const SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCredential | null>> = Object.freeze({
+  postgres: PAIR,
+  mysql: PAIR,
+  sqlite: null,
+  duckdb: null,
+  libsql: SECRET,
+  mongodb: PAIR,
+  redis: PAIR,
+  oracle: PAIR,
+  db2: PAIR,
+  mssql: PAIR,
+  couchbase: PAIR,
+  clickhouse: PAIR,
+  druid: PAIR,
+  // The transport sends the API key pair in preference to user and password
+  // (src/lib/db/providers/sql/search/http-transport.ts), so an agent pair beside it would run under the key.
+  elasticsearch: Object.freeze({ form: "pair", supersededBy: Object.freeze(["apiKeyId", "apiKeySecret"] as const) }),
+  opensearch: PAIR,
+  trino: PAIR,
+  cassandra: PAIR,
+  prometheus: PAIR,
+  kafka: PAIR,
+  etcd: PAIR,
+  neo4j: PAIR,
+  milvus: PAIR,
+  qdrant: SECRET,
+  weaviate: SECRET,
+  influxdb: PAIR,
+  influxdb3: SECRET,
+  oxia: null,
+  databend: PAIR,
+  bigquery: SECRET,
+  snowflake: null,
+  spark: null,
+  s3: PAIR,
+  kubernetes: SECRET,
+  mqtt: PAIR,
+  firestore: null,
+  rabbitmq: PAIR,
+  opcua: PAIR,
+  mtconnect: null,
+  modbus: null,
+  netconf: PAIR,
+  snmp: null,
+  sparkplug: null,
+  libredb: null,
+});
