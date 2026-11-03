@@ -4,10 +4,12 @@
  * handle an execution profile opened, refused as every editor command is there; nothing is sent but the connect's
  * snapshot read.
  *
- * The dialog says the same before a connection exists: its read-only hint (`DB_UI_CONFIG.oxia.readOnlyHint`, SB2-9.4).
+ * The dialog says the same before a connection exists: a fixed Read-only label and no box, since `WRITE_REACH.oxia` is
+ * `none`, with the sentence every such engine shares.
  */
 import { describe, expect, test } from "bun:test";
-import { getDBConfig, readOnlyHint } from "@/lib/db-ui-config";
+import { READ_ONLY_FIXED_HINT } from "@/lib/db-ui-config";
+import { WRITE_REACH } from "@/lib/db/compatibility";
 import { QueryError } from "@/lib/db/errors";
 import { writeCommandSentence } from "@/lib/db/providers/keyvalue/oxia/commands";
 import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
@@ -65,10 +67,11 @@ describe("a write through query", () => {
   });
 });
 
-describe("the dialog's read-only hint", () => {
-  test("says that an Oxia connection is read-only whether or not the box is ticked (SB2-9.4)", () => {
-    expect(readOnlyHint(getDBConfig("oxia"))).toBe(
-      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
+describe("the dialog's read-only label", () => {
+  test("says that an Oxia connection is read-only, with no box to tick (SB2-9.4)", () => {
+    expect(WRITE_REACH.oxia).toBe("none");
+    expect(READ_ONLY_FIXED_HINT).toBe(
+      "Studio has no write path on this engine, so every connection to it is read-only.",
     );
   });
 });

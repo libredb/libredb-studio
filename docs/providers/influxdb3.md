@@ -68,7 +68,7 @@ The transport never goes through an `http_proxy` or `https_proxy` variable and n
 ### 3.1 Read-only
 
 Studio sends no write to InfluxDB 3: no line protocol write, no database, table, token, cache, plugin or trigger route exists in the route table, and no maintenance operation is offered.
-The read-only mode is declared (`READ_ONLY_ENFORCED`, `enforcesReadOnly`), and every statement passes the read policy before any request whether the connection's Read-only box is ticked or not.
+The read-only mode is declared (`READ_ONLY_ENFORCED`, `enforcesReadOnly`), and every statement passes the read policy before any request whatever the connection's `readOnly` says.
 
 ### 3.2 Defence in depth
 
@@ -199,7 +199,7 @@ MCP's `run_read_query` runs a statement on InfluxDB 3 (`MCP_STATEMENT_READ.influ
 | Token | Empty only for a server started with --without-auth. On InfluxDB 3 Core every token is an admin token. |
 | Database | The one InfluxDB 3 database this connection reads. Empty: the only database the token can list; with more than one, set it here. |
 | Send the password without TLS | Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked. |
-| Read-only | InfluxDB connections are read-only whether or not this is ticked: Studio sends no write. |
+| Read-only | Studio has no write path on this engine, so every connection to it is read-only. |
 
 There is no User field: InfluxDB 3 has no user name.
 The connection-string box is not offered, because it reads `http://` and `https://` as ClickHouse; paste the address into Host.

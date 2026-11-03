@@ -16,8 +16,14 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import {
+  connectionFieldHint,
+  DB_UI_CONFIG,
+  hostUriSchemes,
+  offersSshTunnel,
+  READ_ONLY_FIXED_HINT,
+} from "@/lib/db-ui-config";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED, WRITE_REACH } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS, credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
@@ -891,8 +897,9 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
     expect(config.defaultPort).toBe(String(OXIA_DEFAULT_PORT));
   });
 
-  test("P2. the read-only hint in section 3.5 is the dialog's", () => {
-    expect(flat(sectionOf(DOC, "### 3.5 The read-only mode"))).toContain(readOnlyHint(DB_UI_CONFIG.oxia));
+  test("P2. the sentence under the fixed Read-only label in section 3.5 is the dialog's", () => {
+    expect(WRITE_REACH.oxia).toBe("none");
+    expect(flat(sectionOf(DOC, "### 3.5 The read-only mode"))).toContain(READ_ONLY_FIXED_HINT);
   });
 
   test("P3. the credential warning is the record's, and a seed without a token is not refused", () => {

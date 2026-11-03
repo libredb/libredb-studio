@@ -162,9 +162,9 @@ Plan mode drafts InfluxQL in the language of `statementLanguage` (section 5.1) a
 
 The connection-string box is not offered, because Studio reads `http://` and `https://` there as ClickHouse; a pasted address belongs in the Host box.
 The consent box is drawn only while SSL Mode is disable.
-The dialog's read-only box says:
+The dialog draws no read-only box, only a fixed Read-only label, and says under it:
 
-> InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.
+> Studio has no write path on this engine, so every connection to it is read-only.
 
 An empty Host is refused before anything else:
 

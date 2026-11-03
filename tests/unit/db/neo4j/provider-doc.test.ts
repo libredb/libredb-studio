@@ -16,8 +16,8 @@ import path from "node:path";
 import { parse as parseYAML } from "yaml";
 import { MAX_GRAPH_NODES, capNotice, droppedNotice, graphAriaLabel } from "@/components/results-graph/graph-canvas";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { DB_UI_CONFIG, readOnlyHint } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { DB_UI_CONFIG, READ_ONLY_FIXED_HINT } from "@/lib/db-ui-config";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED, WRITE_REACH } from "@/lib/db/compatibility";
 import { type GraphClient, GraphClientError, type GraphRunResult } from "@/lib/db/graph/bolt/client";
 import { MAX_CELL_DEPTH, MAX_CELL_JSON_BYTES } from "@/lib/db/graph/bolt/record-values";
 import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";
@@ -462,11 +462,12 @@ describe("docs/providers/neo4j.md section 4.1 states the dialog's fields", () =>
     expect(FIELDS).toContain("There is no connection string");
   });
 
-  test("the read-only toggle keeps the promise: the provider keeps the mode", () => {
+  test("the read-only label keeps the promise: the provider has no write path, so the dialog draws no box", () => {
     expect(READ_ONLY_ENFORCED.neo4j).toBe(true);
-    expect(rowOf(FIELDS, "Read-only")).toContain("read-only either way");
-    // The sentence the dialog draws under the toggle, quoted from the declaration (spec A7).
-    expect(rowOf(FIELDS, "Read-only")).toContain(`"${readOnlyHint(neo4j)}"`);
+    expect(WRITE_REACH.neo4j).toBe("none");
+    expect(rowOf(FIELDS, "Read-only")).toContain("fixed Read-only label");
+    // The sentence the dialog draws under the fixed label, the one every such engine shares.
+    expect(rowOf(FIELDS, "Read-only")).toContain(`"${READ_ONLY_FIXED_HINT}"`);
   });
 });
 

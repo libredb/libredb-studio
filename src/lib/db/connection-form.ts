@@ -21,7 +21,6 @@ import {
 } from "@/lib/db/connection-fields";
 import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
-import { MODBUS_READ_ONLY_HINT } from "@/lib/db/providers/industrial/modbus/constants";
 import {
   SNOWFLAKE_FIELD_SENTENCES,
   snowflakeAccountRefusal,
@@ -90,12 +89,6 @@ export interface ConnectionFormSpec {
    * lower-cased.
    */
   hostIdentity?: (host: string) => string;
-  /**
-   * The sentence under the connection dialog's Read-only toggle, where this engine's mode differs from
-   * the dialog's own sentence, which says the mode can be turned off. Neo4j declares one because its
-   * connections are read-only whether or not the box is ticked (spec A7). Read through `readOnlyHint`.
-   */
-  readOnlyHint?: string;
   /**
    * The checks the connection dialog runs on a field before Test Connection and Save send anything, each refusal a
    * sentence that names the field and never repeats its value. Read through `connectionFieldRefusal`. The provider
@@ -788,9 +781,6 @@ export const CONNECTION_FORM: {
     // routing neo4j:// URI, which this provider never builds. An empty database is the server's home database.
     connectionFields: CONNECTION_FIELDS.neo4j,
     fieldHints: { database: "Leave empty to use the server's home database." },
-    // The dialog's own sentence says the mode can be turned off, which is false here (spec A7).
-    readOnlyHint:
-      "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
   },
   milvus: {
     label: "Milvus",
@@ -868,8 +858,6 @@ export const CONNECTION_FORM: {
       allowInsecureAuth:
         "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
     },
-    // The dialog's own sentence says the mode can be turned off, which is false here: Studio sends no write.
-    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
     hostAcceptsUri: ["http", "https"],
   },
   influxdb3: {
@@ -890,7 +878,6 @@ export const CONNECTION_FORM: {
       allowInsecureAuth:
         "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
     },
-    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
     hostAcceptsUri: ["http", "https"],
   },
   oxia: {
@@ -914,8 +901,6 @@ export const CONNECTION_FORM: {
       allowInsecureAuth:
         "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
     },
-    readOnlyHint:
-      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
   },
   databend: {
     label: "Databend",
@@ -1054,9 +1039,6 @@ export const CONNECTION_FORM: {
     fieldPlaceholders: { database: "all buckets", region: "us-east-1" },
     fieldHints: S3_FIELD_HINTS,
     fieldRules: S3_FIELD_RULES,
-    // The dialog's own sentence says the mode can be turned off, which is false here.
-    readOnlyHint:
-      "S3-compatible connections are read-only in this version, whether or not this is ticked: Studio sends no write.",
     hostAcceptsUri: ["http", "https"],
   },
   kubernetes: {
@@ -1080,9 +1062,6 @@ export const CONNECTION_FORM: {
     fieldPlaceholders: { database: "default" },
     fieldHints: KUBERNETES_FIELD_HINTS,
     fieldRules: KUBERNETES_FIELD_RULES,
-    // The dialog's own sentence says the mode can be turned off, which is false here: Studio sends no write.
-    readOnlyHint:
-      "Kubernetes connections are read-only in this version, whether or not this is ticked: Studio sends the cluster no write.",
     hostAcceptsUri: ["https", "http"],
     // The dialog loads the importer, and the yaml parser it reads with, only when the import opens.
     connectionImport: {
@@ -1110,8 +1089,6 @@ export const CONNECTION_FORM: {
       allowInsecureAuth:
         "With no SSL mode the username and password cross the network in cleartext. A password sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the broker offers one.",
     },
-    readOnlyHint:
-      "MQTT connections are read-only whether or not this is ticked, and not by a setting: this provider has no code that can write a PUBLISH, and its CONNECT carries no Will.",
   },
   firestore: {
     label: "Firestore",
@@ -1139,8 +1116,6 @@ export const CONNECTION_FORM: {
     // (the API, the token endpoint, the metadata server), so neither panel would be read.
     showSshTunnel: false,
     showSslPanel: false,
-    readOnlyHint:
-      "Firestore connections are read-only whether or not this is ticked, and not by a setting: this provider builds only the read requests of its closed request table, and none of them writes.",
   },
   rabbitmq: {
     label: "RabbitMQ",
@@ -1163,9 +1138,6 @@ export const CONNECTION_FORM: {
     fieldPlaceholders: { amqpPort: "Empty: browse only" },
     fieldHints: RABBITMQ_FIELD_HINTS,
     fieldRules: RABBITMQ_FIELD_RULES,
-    // The dialog's own sentence says the mode can be turned off, which is false here.
-    readOnlyHint:
-      "RabbitMQ connections are read-only whether or not this is ticked: Studio sends the broker GET requests and stream reads only, never a publish or a take.",
   },
   opcua: {
     label: "OPC UA",
@@ -1212,10 +1184,6 @@ export const CONNECTION_FORM: {
         "The SHA-256 thumbprint this server's certificate must present, as 64 hexadecimal characters; " +
         "colons and spaces are ignored. Without it any certificate the trust list accepts is accepted.",
     },
-    readOnlyHint:
-      "OPC UA connections are read-only whether or not this is ticked, and not by a setting: this " +
-      "provider's client exposes Browse, BrowseNext, Read, HistoryRead and the session calls, and has no " +
-      "code that can Write, Call a method, or subscribe.",
   },
   mtconnect: {
     label: "MTConnect",
@@ -1236,9 +1204,6 @@ export const CONNECTION_FORM: {
       host: "Host",
       apiPath: "Path prefix",
     },
-    // The dialog's own sentence says the mode can be turned off, which is false here.
-    readOnlyHint:
-      "MTConnect connections are read-only whether or not this is ticked: Studio sends the agent GET requests from a closed table and nothing else.",
   },
   modbus: {
     label: "Modbus",
@@ -1265,8 +1230,6 @@ export const CONNECTION_FORM: {
     fieldPlaceholders: {
       registerMap: '[{ "name": "volts", "unitId": 1, "table": "holding_register", "address": 100, "type": "uint16" }]',
     },
-    // The dialog's own sentence says the mode can be turned off, which is false here.
-    readOnlyHint: MODBUS_READ_ONLY_HINT,
   },
   netconf: {
     label: "NETCONF",
@@ -1367,8 +1330,6 @@ export const CONNECTION_FORM: {
       allowInsecureAuth:
         "Ticked, the community travels in clear in every datagram to an agent that is not on this machine. SNMPv2c has no authentication either: an answer can be forged by anything that can reach this connection.",
     },
-    readOnlyHint:
-      "SNMP connections are read-only whether or not this is ticked, and not by a setting: the outgoing valve parses every datagram and refuses any PDU that is not a Get, GetNext or GetBulk, so a Set never reaches the socket.",
   },
 
   sparkplug: {
@@ -1391,8 +1352,6 @@ export const CONNECTION_FORM: {
       database:
         "One Sparkplug group id, or empty for every group. A group is a level of the topic and nothing else: it is not a thing on the broker that can be subscribed to on its own, so an empty field reads every group under spBv1.0 and a filled one reads that group alone.",
     },
-    readOnlyHint:
-      "Sparkplug connections are read-only whether or not this is ticked, and not by a setting: this provider's encoder has no function that writes a PUBLISH, and its CONNECT carries no Will, which is how a death certificate would be registered.",
   },
   libredb: {
     label: "LibreDB",
@@ -1563,10 +1522,15 @@ export function connectionFieldRefusal(config: ConnectionFormSpec, connection: D
   return undefined;
 }
 
-/** The sentence under the Read-only toggle: the engine's own where it declares one, else the dialog's. */
-export function readOnlyHint(config: ConnectionFormSpec): string {
-  return (
-    config.readOnlyHint ??
-    "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission."
-  );
-}
+/**
+ * The sentence under the Read-only toggle, which the dialog draws where every write path of the engine is gated
+ * (`WRITE_REACH` `guarded`): there the mode changes what the connection may send, and it can be turned off.
+ */
+export const READ_ONLY_TOGGLE_HINT =
+  "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.";
+
+/**
+ * The sentence under the fixed Read-only label, one for every engine Studio has no write path on (`WRITE_REACH`
+ * `none`): there is no box, because no setting is what keeps such a connection read-only.
+ */
+export const READ_ONLY_FIXED_HINT = "Studio has no write path on this engine, so every connection to it is read-only.";

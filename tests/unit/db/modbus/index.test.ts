@@ -17,7 +17,6 @@ import {
   atBoundary,
   MODBUS_NO_MAP_INVENTORY_SENTENCE,
   MODBUS_NO_REVOCATION_SENTENCE,
-  MODBUS_READ_ONLY_HINT,
   ModbusProvider,
 } from "@/lib/db/providers/industrial/modbus/index";
 import { ModbusMapError } from "@/lib/db/providers/industrial/modbus/register-map";
@@ -415,11 +414,6 @@ describe("every capability this provider does not have, asserted on the real cla
 });
 
 describe("the sentences the product has to say out loud", () => {
-  test("the read only hint says the device enforces nothing", () => {
-    expect(MODBUS_READ_ONLY_HINT).toContain("device enforces nothing");
-    expect(MODBUS_READ_ONLY_HINT).toContain("can write to it");
-  });
-
   test("the mbaps sentence says revocation is not checked, and names both runtimes", () => {
     expect(MODBUS_NO_REVOCATION_SENTENCE).toContain("does not check revocation");
     expect(MODBUS_NO_REVOCATION_SENTENCE).toContain("Node");

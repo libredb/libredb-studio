@@ -35,7 +35,8 @@ import {
   isFileBased,
   offersSshTunnel,
   offersSslPanel,
-  readOnlyHint,
+  READ_ONLY_FIXED_HINT,
+  READ_ONLY_TOGGLE_HINT,
   type ConnectionField,
 } from "@/lib/db-ui-config";
 import type { BodyConnectionField } from "@/lib/db/connection-fields";
@@ -219,7 +220,7 @@ export function ConnectionModal({
 
     // Derived data
     dbTypes,
-    readOnlyOffered,
+    readOnlyControl,
     credentialWarning,
   } = useConnectionForm({
     isOpen,
@@ -428,12 +429,13 @@ export function ConnectionModal({
           </div>
 
           {/*
-            The read-only mode (#1089), drawn only where the form offers it: an engine whose provider
-            enforces the mode, and never a copy of a seed, whose mode the server re-resolves from the
-            operator's file. Beside the no-scan choice, because it too is about what this connection
-            does rather than how it is reached.
+            The read-only mode (#1089), drawn as the form's `readOnlyControl` names it: a box where every write path
+            of the engine is gated, and never on a copy of a seed, whose mode the server re-resolves from the
+            operator's file; a fixed label where Studio has no write path, since there is nothing to choose; nothing
+            where a path is open. Beside the no-scan choice, because it too is about what this connection does rather
+            than how it is reached.
           */}
-          {readOnlyOffered && (
+          {readOnlyControl === "toggle" && (
             <div className="space-y-2">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -447,9 +449,19 @@ export function ConnectionModal({
                 <span className="text-xs font-medium text-fg-muted">Read-only</span>
               </label>
               <p id="readOnly-hint" className="text-xs text-fg-muted">
-                {readOnlyHint(uiConfig)}
+                {READ_ONLY_TOGGLE_HINT}
               </p>
             </div>
+          )}
+          {readOnlyControl === "fixed" && (
+            <fieldset aria-labelledby="readOnly-label" aria-describedby="readOnly-hint" className="space-y-2">
+              <p id="readOnly-label" className="text-xs font-medium text-fg-muted">
+                Read-only
+              </p>
+              <p id="readOnly-hint" className="text-xs text-fg-muted">
+                {READ_ONLY_FIXED_HINT}
+              </p>
+            </fieldset>
           )}
 
           {/* Environment Selector */}
