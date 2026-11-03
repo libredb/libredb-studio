@@ -54,6 +54,7 @@ describe("countFindings", () => {
     ["tests/integration/mcp/protocol.test.ts", 'test("lists the fifteen tools in registration order", () => {});'],
     ["tests/integration/mcp/protocol.test.ts", "expect(tools).toHaveLength(15);"],
     ["tests/integration/mcp/http-route.test.ts", "expect(registrations.calls).toBe(15);"],
+    ["tests/integration/mcp/lifecycle.test.ts", "return registrations.calls / 15;"],
     ["tests/unit/agent-documentation.test.ts", "const MCP_CLAIM = /\\bMCP\\b|Five read-only tools/;"],
     ["tests/integration/db/x-provider.test.ts", 'const engines = "It runs on PostgreSQL, SQLite and DuckDB.";'],
     [

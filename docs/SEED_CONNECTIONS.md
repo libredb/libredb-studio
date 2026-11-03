@@ -489,7 +489,7 @@ An empty `user` with a password of the form `user:password` is read as that pair
 ### A read-only Neo4j graph
 
 A Neo4j connection is read-only whatever `readOnly` says, because its provider refuses every write before it is sent ([providers/neo4j.md](providers/neo4j.md), section 3.1), so `readOnly: true` loads on a managed Neo4j seed and states what the connection does.
-One seed every role reaches is enough, and `mcp: true` lets an MCP client list the connection and inspect its schema; `run_read_query` does not serve Neo4j.
+One seed every role reaches is enough, and `mcp: true` lets an MCP client list the connection, inspect its schema and read it with `run_cypher_read`.
 
 ```yaml
 version: "1"

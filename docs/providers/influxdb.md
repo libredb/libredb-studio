@@ -139,7 +139,7 @@ No InfluxQL statement does what `pivot()`, `join()` or `map()` do, and a stateme
 
 ### 3.6 Machine access
 
-The type is offered to MCP clients for the two metadata tools (`MCP_EXPOSABLE`), which see database, measurement and column names and types only.
+The type is offered to MCP clients for the metadata tools, `list_connections` and `inspect_schema` (`MCP_EXPOSABLE`), which see database, measurement and column names and types only.
 Agent mode executes InfluxQL on 1.x and 2.x for a principal the server proves read-only before every statement (section 15); no MCP tool runs InfluxQL (B94).
 Plan mode drafts InfluxQL in the language of `statementLanguage` (section 5.1) and runs nothing.
 

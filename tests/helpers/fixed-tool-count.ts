@@ -55,7 +55,11 @@ export const TOOL_COUNT =
   /\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty[a-z-]*|thirty[a-z-]*|\d{1,3})\s+(?:read-only\s+|MCP\s+|metadata\s+|statement\s+|shared\s+)*tools\b/i;
 
 /** A literal length or call count on the tool list, in test code; zero is "none", which no flip changes. */
-const FIXED_LENGTH = [/tools\)?\??\.?\)?\s*\.toHaveLength\(\s*[1-9]/, /registrations\.calls\)\.toBe\(\s*[1-9]/];
+const FIXED_LENGTH = [
+  /tools\)?\??\.?\)?\s*\.toHaveLength\(\s*[1-9]/,
+  /registrations\.calls\)\.toBe\(\s*[1-9]/,
+  /registrations\.calls\s*\/\s*[1-9]/,
+];
 
 /** A test that pins a tool to its neighbour's position. */
 const NEIGHBOUR_ORDER = /indexOf\(\s*"run_[a-z_]+"\s*\)\s*\+\s*1/;
@@ -68,7 +72,7 @@ const STATEMENT_TOOL_NAME = /^run_/;
 
 /**
  * An array literal holding this many distinct tool names, this many of them statement tools, is a hand-written tool
- * list. A case table that calls the two metadata tools and one statement tool is a test of each, not a list a new
+ * list. A case table that calls the metadata tools and one statement tool is a test of each, not a list a new
  * tool has to join.
  */
 const TOOL_LIST_SIZE = 3;

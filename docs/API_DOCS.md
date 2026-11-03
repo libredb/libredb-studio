@@ -2099,7 +2099,7 @@ The answers, in the order they are checked:
 | 404 | JSON-RPC `-32601`, `Method not found` | `subscriptions/listen`, which this server does not implement |
 | 200, 202 | The SDK's JSON-RPC answer, as JSON or as an event stream; 202 for a notification | Everything else |
 
-The tools it serves are `list_connections`, `inspect_schema`, `run_read_query` (SQL), `run_kubectl_read` (a kubectl read), `run_mongo_command` (a MongoDB command envelope), `run_libredb_read` (a LibreDB command), `run_weaviate_read` (a Weaviate metadata request), `run_qdrant_read` (a Qdrant metadata request), `run_cypher_read` (a Cypher statement), `run_milvus_read` (a Milvus metadata request), `run_redis_read` (a Redis metadata read), `run_etcd_read` (an etcd metadata command), `run_rabbitmq_read` (a RabbitMQ stream read request), `run_kafka_read` (a Kafka metadata read) and `run_mtconnect_read` (an MTConnect request line); `list_connections` names each connection's `read_tool`, and [`docs/MCP.md`](MCP.md) documents each tool's arguments and limits.
+The tools it serves are `list_connections`, `inspect_schema` and one statement tool per statement language, listed with their engines in [docs/MCP.md](./MCP.md#what-it-is); `list_connections` names each connection's `read_tool`, and [`docs/MCP.md`](MCP.md) documents each tool's arguments and limits.
 
 #### `GET /api/mcp`, `DELETE /api/mcp`
 

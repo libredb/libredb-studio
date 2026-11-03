@@ -10,7 +10,7 @@ Studio reads a Neo4j database through Cypher typed in the editor, shows its node
 It writes nothing: every statement passes a read policy before anything is sent, then the server's own classification (an allowlisted SHOW form skips it, and an allowlisted procedure call classified `s` runs, section 3.5), and then runs in a READ session, so a write has to defeat three layers (section 3.1).
 Nodes, relationships and paths reach the grid as tagged JSON cells, and the column header names the graph type (section 5.2); a Graph tab beside the grid draws them (section 5.6).
 Plan mode drafts Cypher, and the MCP metadata tools list Neo4j connections and their shape.
-Agent execution runs Cypher on Enterprise Edition for a user the server proves read-only before every statement, while MCP `run_read_query` does not serve Neo4j (section 3.6).
+Agent execution runs Cypher on Enterprise Edition for a user the server proves read-only before every statement, while MCP reads it with `run_cypher_read` (section 3.6).
 
 ### Concept mapping
 
