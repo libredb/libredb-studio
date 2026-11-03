@@ -108,7 +108,7 @@ const ESCAPES = /^(?:%[0-9A-Fa-f]{2})+$/;
 /** `text`, read from `from` to `to` of the value, in its Unicode compatibility form (NFKC), one unit per code unit. */
 function pushNormalized(units: ViewUnit[], text: string, from: number, to: number): void {
   const normal = text.normalize("NFKC");
-  for (let at = 0; at < normal.length; at += 1) units.push({ c: normal[at], from, to });
+  for (const c of normal.split("")) units.push({ c, from, to });
 }
 
 /** The value one code point at a time in its NFKC form, so a fullwidth or other compatibility spelling reads as ASCII. */
@@ -124,6 +124,14 @@ function normalizedUnits(text: string): ViewUnit[] {
   return units;
 }
 
+/** How many bytes the UTF-8 sequence a lead byte opens takes: one for ASCII, else two to four. */
+function sequenceLength(lead: number): number {
+  if (lead < 0x80) return 1;
+  if (lead >= 0xf0) return 4;
+  if (lead >= 0xe0) return 3;
+  return 2;
+}
+
 /**
  * The character the valid escape at `at` stands for, in its NFKC form, and how many units the escape takes: one `%XX`
  * for an ASCII byte, or the two to four of one UTF-8 sequence. Undefined where no valid escape starts there.
@@ -137,8 +145,7 @@ function escapeAt(
     .map((unit) => unit.c)
     .join("");
   if (!ESCAPES.test(head)) return undefined;
-  const lead = Number.parseInt(head.slice(1), 16);
-  const bytes = lead < 0x80 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : 2;
+  const bytes = sequenceLength(Number.parseInt(head.slice(1), 16));
   const escapes = units
     .slice(at, at + 3 * bytes)
     .map((unit) => unit.c)
@@ -196,14 +203,18 @@ function urlStart(text: string): number {
   for (let at = 0; at < text.length; at += 1) {
     const c = text[at];
     if (c === ":" && scheme) return pastSlashes(text, at + 1);
-    if (isSlash(c)) {
-      let next = at + 1;
-      while (next < text.length && isDropped(text[next])) next += 1;
-      if (next < text.length && isSlash(text[next])) return pastSlashes(text, next + 1);
-    }
+    const second = isSlash(c) ? secondSlash(text, at) : -1;
+    if (second !== -1) return pastSlashes(text, second + 1);
     scheme = isSchemeTail(c) ? scheme || isLetter(c) : false;
   }
   return -1;
+}
+
+/** Where a second slash or backslash follows the one at `at`, past any tab or line break between them, or -1. */
+function secondSlash(text: string, at: number): number {
+  let next = at + 1;
+  while (next < text.length && isDropped(text[next])) next += 1;
+  return next < text.length && isSlash(text[next]) ? next : -1;
 }
 
 function pastSlashes(text: string, from: number): number {
@@ -225,35 +236,48 @@ function queryAt(text: string, from: number, to: number): number {
  */
 const KEPT_PREFIX = /^["'(<[{]*(?:[A-Za-z][A-Za-z0-9+.\-\t\n\r]*:|:)?[\t\n\r]*[/\\](?:[\t\n\r]*[/\\])+[\t\n\r]*/;
 
+/** The scheme rule's ranges over the whole view: the user information of its first URL, then its query and fragment. */
+function schemeRanges(view: string, ranges: Range[]): void {
+  const start = urlStart(view);
+  if (start === -1) return;
+  const at = view.lastIndexOf("@");
+  const userinfo = at >= start;
+  if (userinfo) ranges.push({ from: start, to: at });
+  const query = queryAt(view, userinfo ? at + 1 : start, view.length);
+  if (query !== -1) ranges.push({ from: query + 1, to: view.length });
+}
+
+/** Where the word starting at `from` ends, its first `:` and its last `@`, each -1 when it has none. */
+function wordAt(view: string, from: number): { readonly to: number; readonly colon: number; readonly at: number } {
+  let to = from;
+  let colon = -1;
+  let at = -1;
+  for (; to < view.length && !endsWord(view[to]); to += 1) {
+    if (view[to] === ":" && colon === -1) colon = to;
+    if (view[to] === "@") at = to;
+  }
+  return { to, colon, at };
+}
+
+/** The word rules' ranges over the word from `from`: its user information, then its query after a slash. */
+function wordRanges(view: string, from: number, ranges: Range[]): number {
+  const { to, colon, at } = wordAt(view, from);
+  // The prefix holds no @, so it ends before the word's last @ whenever the word has one.
+  const kept = from + (KEPT_PREFIX.exec(view.slice(from, to))?.[0].length ?? 0);
+  if (colon !== -1 && colon < at) ranges.push({ from: kept, to: at });
+  let slash = kept;
+  while (slash < to && !isSlash(view[slash])) slash += 1;
+  // From the first ? or # after a slash, whether or not an @ follows it: a query may hold an @ of its own.
+  const query = queryAt(view, slash + 1, to);
+  if (slash < to && query !== -1) ranges.push({ from: query + 1, to });
+  return to;
+}
+
 /** The ranges of the view to withhold: the scheme rule over the whole value, then the word rules over each word. */
 function viewRanges(view: string): Range[] {
   const ranges: Range[] = [];
-  const start = urlStart(view);
-  if (start !== -1) {
-    const at = view.lastIndexOf("@");
-    const userinfo = at >= start;
-    if (userinfo) ranges.push({ from: start, to: at });
-    const query = queryAt(view, userinfo ? at + 1 : start, view.length);
-    if (query !== -1) ranges.push({ from: query + 1, to: view.length });
-  }
-  for (let from = 0; from < view.length; ) {
-    let to = from;
-    let colon = -1;
-    let at = -1;
-    for (; to < view.length && !endsWord(view[to]); to += 1) {
-      if (view[to] === ":" && colon === -1) colon = to;
-      if (view[to] === "@") at = to;
-    }
-    // The prefix holds no @, so it ends before the word's last @ whenever the word has one.
-    const kept = from + (KEPT_PREFIX.exec(view.slice(from, to))?.[0].length ?? 0);
-    if (colon !== -1 && colon < at) ranges.push({ from: kept, to: at });
-    let slash = kept;
-    while (slash < to && !isSlash(view[slash])) slash += 1;
-    // From the first ? or # after a slash, whether or not an @ follows it: a query may hold an @ of its own.
-    const query = queryAt(view, slash + 1, to);
-    if (slash < to && query !== -1) ranges.push({ from: query + 1, to });
-    from = to + 1;
-  }
+  schemeRanges(view, ranges);
+  for (let from = 0; from < view.length; ) from = wordRanges(view, from, ranges) + 1;
   return ranges;
 }
 
@@ -261,7 +285,7 @@ function viewRanges(view: string): Range[] {
 function merged(ranges: readonly Range[]): Range[] {
   const out: Range[] = [];
   for (const range of [...ranges].sort((a, b) => a.from - b.from || a.to - b.to)) {
-    const last = out[out.length - 1];
+    const last = out.at(-1);
     if (last !== undefined && range.from <= last.to)
       out[out.length - 1] = { from: last.from, to: Math.max(last.to, range.to) };
     else out.push(range);
@@ -331,10 +355,10 @@ export function withoutUrlSecrets(text: string): { readonly text: string; readon
 }
 
 /** The two bases a reference without a scheme is read against: one with its own authority reads the same host on both. */
-const URL_BASES = ["http://a.invalid/", "http://b.invalid/"] as const;
+const URL_BASES = ["https://a.invalid/", "https://b.invalid/"] as const;
 
 /** A host and port a URL field keeps: a bracketed IP address or a run of the characters a host name is spelled in. */
-const KEPT_HOST = /^(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~-]*)(?::[0-9]+)?$/;
+const KEPT_HOST = /^(?:\[[\dA-Fa-f:.]+\]|[A-Za-z\d._~-]*)(?::\d+)?$/;
 
 /**
  * Whether an attribute is one the standard types as a URI, so its value is read as one URL by a WHATWG URL parser rather
@@ -391,8 +415,10 @@ export function withoutUrlFieldSecrets(value: string): { readonly text: string; 
   const href = schemeRelative ? kept.href.slice(kept.protocol.length) : kept.href;
   // With an authority the user information marker stands after the slashes.
   const start = href.indexOf("//") + 2;
+  const authority = userinfo ? `${href.slice(0, start)}[withheld]@${href.slice(start)}` : href;
+  const marker = tail === "" ? "" : `${tail[0]}[withheld]`;
   return {
-    text: `${userinfo ? `${href.slice(0, start)}[withheld]@${href.slice(start)}` : href}${tail === "" ? "" : `${tail[0]}[withheld]`}`,
+    text: `${authority}${marker}`,
     withheld:
       read.withheld +
       (userinfo && holdsMore(`${url.username}:${url.password}`) ? 1 : 0) +

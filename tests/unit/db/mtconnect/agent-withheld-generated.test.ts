@@ -210,7 +210,7 @@ describe(`${CASES} generated URL spellings, seed ${SEED}`, () => {
       const answer = capture("assets").replace(/<Assets>[\s\S]*<\/Assets>/, `<Assets>${assets}</Assets>`);
       for (const built of cases) for (const piece of built.pieces) expect(answer).toContain(piece);
       const rows = await read("/assets", answer);
-      expect(rows.length).toBe(cases.length);
+      expect(rows).toHaveLength(cases.length);
       rows.forEach((row, index) => {
         const text = JSON.stringify(row);
         for (const piece of cases[index].pieces) expect(text, cases[index].value).not.toContain(piece);
@@ -230,7 +230,7 @@ describe(`${CASES} generated URL spellings, seed ${SEED}`, () => {
       const answer = capture("assets").replace(/<Assets>[\s\S]*<\/Assets>/, `<Assets>${assets}</Assets>`);
       for (const built of cases) for (const piece of built.pieces) expect(answer).toContain(piece);
       const rows = await read("/assets", answer);
-      expect(rows.length).toBe(cases.length);
+      expect(rows).toHaveLength(cases.length);
       rows.forEach((row, index) => {
         const text = JSON.stringify(row);
         for (const piece of cases[index].pieces) expect(text, cases[index].value).not.toContain(piece);

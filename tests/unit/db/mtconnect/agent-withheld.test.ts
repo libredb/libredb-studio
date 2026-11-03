@@ -485,6 +485,16 @@ describe("a URL-typed field, withheld by its structure whatever its spelling", (
     expect(kept).not.toContain("not-a-real");
   });
 
+  test.each([
+    ["two slashes", "//not-a-real-user:not-a-real-password@h.example/x"],
+    ["two backslashes", "\\\\not-a-real-user:not-a-real-password@h.example/x"],
+  ])("a scheme-relative reference with %s reads its credentials against an https base, and loses them", (_, value) => {
+    // An https base is a special scheme as http is, so the parser reads the reference's own authority the same way.
+    const url = new URL(value, "https://a.invalid/");
+    expect([url.username, url.password, url.host]).toEqual(["not-a-real-user", "not-a-real-password", "h.example"]);
+    expect(withoutUrlFieldSecrets(value)).toEqual({ text: "//[withheld]@h.example/x", withheld: 1 });
+  });
+
   test("an attribute that is not URL-typed keeps the text rule", () => {
     expect(withoutAttributeSecrets("source", "see https://not-a-real-user:x@h.example/x")).toEqual({
       text: "see https://[withheld]@h.example/x",

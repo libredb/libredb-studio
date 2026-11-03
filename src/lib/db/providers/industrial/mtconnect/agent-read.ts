@@ -226,12 +226,11 @@ function assetReference(row: MtcRow, observation: MtcObservation, count: (withhe
   };
   if (observation.children.length === 0) return { ...row, value: kept(row.value) };
   // Every key and string value at every depth: a TABLE entry is an object of cells, and its cells are read too.
-  const deep = (value: unknown): unknown =>
-    typeof value === "string"
-      ? kept(value)
-      : value === null || typeof value !== "object"
-        ? value
-        : Object.fromEntries(Object.entries(value).map(([key, inner]) => [kept(key), deep(inner)]));
+  const deep = (value: unknown): unknown => {
+    if (typeof value === "string") return kept(value);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [kept(key), deep(inner)]));
+  };
   return { ...row, value: JSON.stringify(deep(JSON.parse(row.value))) };
 }
 
@@ -339,8 +338,9 @@ function withUrlsKept(document: MtcElement, count: (withheld: number) => void): 
     const childOffsets: number[] = [];
     let length = 0;
     element.children.forEach((child) => {
-      own.push(text.texts[next++]);
-      length += own[own.length - 1].length;
+      const ownText = text.texts[next++];
+      own.push(ownText);
+      length += ownText.length;
       childOffsets.push(length);
       children.push(rebuild(child));
     });
