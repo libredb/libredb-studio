@@ -15,7 +15,13 @@
  *   stored property, vector or payload, and no description, module setting or base URL, reaches a row, a column name
  *   or a nested cell.
  * - **Failures without the server's words.** A refusal is worded by its HTTP status and category alone, since the
- *   server's message can echo what a request carried.
+ *   server's message can echo what a request carried, and a named collection, alias, tenant or shard the key may not
+ *   read is worded as one that does not exist (`data-scope/alias-docs-scoped`, `alias-missing-scoped`).
+ * - **A name in a collection's place.** Weaviate resolves an alias there and checks the target's grants alone
+ *   (`data-scope/collection-alias-scoped` and the other `*-alias-*` captures), so a name is sent there only when the
+ *   key's own collection list or alias list, which the server filters by its grants, holds it, and an alias is sent
+ *   as the collection its list entry names: the server resolves an alias when the request arrives, so an alias
+ *   repointed after the list was read would otherwise be answered as a collection the list never showed.
  *
  * Pure: it receives the answers and never a client.
  */
@@ -36,7 +42,8 @@ import {
 } from "@/lib/db/redaction/metadata-only";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
-import { type WeaviateAnswer, WeaviateError, type WeaviateRequest } from "./client";
+import { type WeaviateAnswer, WeaviateError, type WeaviateErrorCategory, type WeaviateRequest } from "./client";
+import { answerFailure } from "./errors";
 import type { WeaviateAnswered } from "./execute";
 import type { WeaviatePlan } from "./request";
 
@@ -141,6 +148,83 @@ export async function proveWeaviateViewer(
   readWeaviateViewerProof(await send(WEAVIATE_OWN_INFO_REQUEST, signal));
 }
 
+/**
+ * The agent's one sentence for a named collection, alias, tenant or shard it cannot read. Measured on 1.40.2, an alias
+ * outside the key's grants is answered 403 and one that does not exist 404 in any case (`data-scope/alias-docs-scoped`,
+ * `alias-missing-scoped`, `alias-docs-lower-scoped`), and a missing collection or tenant 404 to a key that may read
+ * them all and 403 to one that may not, so two sentences would tell a name the key cannot read apart from a missing
+ * one. Studio's own refusal of a name the key's lists do not hold is the same sentence.
+ */
+export const WEAVIATE_AGENT_UNREADABLE =
+  "The request names a collection, alias, tenant or shard that does not exist or that this key may not read, and agent mode answers both alike. GET /v1/schema, GET /v1/aliases and a collection's tenants list the names this key may read.";
+
+const SCHEMA_REQUEST: WeaviateRequest = Object.freeze({
+  op: "schema",
+  params: Object.freeze({}),
+  query: Object.freeze({}),
+});
+const ALIASES_REQUEST: WeaviateRequest = Object.freeze({
+  op: "aliases",
+  params: Object.freeze({}),
+  query: Object.freeze({}),
+});
+
+/**
+ * The agent's refusal of a count through an alias that the server answers over GraphQL alone: the GraphQL document
+ * names the collection as the request was written, so it would name the alias, which the server resolves when the
+ * request arrives rather than as the key's alias list named it.
+ */
+export const WEAVIATE_AGENT_ALIAS_GRAPHQL =
+  "This server answers the count over GraphQL, whose request would name the alias, and agent mode sends an alias only as the collection the key's alias list names. Name that collection, which GET /v1/aliases lists, instead. Nothing was counted.";
+
+/** The entries of one of the key's own lists, from the list under `field`. */
+async function listEntries(
+  send: (request: WeaviateRequest, signal: AbortSignal) => Promise<WeaviateAnswer>,
+  request: WeaviateRequest,
+  field: "classes" | "aliases",
+  signal: AbortSignal,
+): Promise<readonly Json[]> {
+  const answer = await send(request, signal);
+  const failure = answerFailure(answer);
+  if (failure !== undefined) throw failure;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(answer.text);
+  } catch {
+    throw shapeError();
+  }
+  return objects(object(parsed)[field] ?? []);
+}
+
+/** An entry's name under `key`, which must be a string. */
+function entryName(entry: Json, key: "class" | "alias"): string {
+  const name = entry[key];
+  if (typeof name !== "string") throw shapeError();
+  return name;
+}
+
+/**
+ * The collection the key's own lists name for `name`, exactly as spelled, or undefined when neither holds it: its
+ * collection list, `GET /v1/schema`, answers a collection as itself, and its alias list, `GET /v1/aliases`, read only
+ * when the first does not hold the name, answers an alias as the collection its entry names. The server filters both
+ * by the key's grants (`data-scope/schema-scoped`, `aliases-scoped`), so a name held by neither is one the key may not
+ * read or one that does not exist. A list the server refuses throws its failure, and one Studio cannot read is
+ * withheld.
+ */
+export async function weaviateListedCollection(
+  send: (request: WeaviateRequest, signal: AbortSignal) => Promise<WeaviateAnswer>,
+  name: string,
+  signal: AbortSignal,
+): Promise<string | undefined> {
+  const classes = await listEntries(send, SCHEMA_REQUEST, "classes", signal);
+  if (classes.some((entry) => entryName(entry, "class") === name)) return name;
+  const aliases = await listEntries(send, ALIASES_REQUEST, "aliases", signal);
+  for (const entry of aliases) {
+    if (entryName(entry, "alias") === name) return entryName(entry, "class");
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // The metadata-only projections
 // ---------------------------------------------------------------------------------------------------------------------
@@ -237,24 +321,21 @@ const NODES: MetadataProjection<Json> = [
   { column: "shards", kind: "count", read: (node) => at(node, "stats", "shardCount"), optional: true },
 ];
 
-/** One shard of a verbose node read, beside the name of the node that holds it. */
-interface NodeShard {
+/**
+ * One collection a node holds, read from a verbose node read. A multi-tenant collection's shard is named after its
+ * tenant, and 1.40.2 lists every tenant of a collection the key may read nodes of, whatever tenants the key may read
+ * (`data-scope/collection-nodes-tenanted-scoped`). So a shard is neither named nor counted here: the shard count is
+ * the collection's tenant count, and the summed objects less the count of the one tenant a key may count would be the
+ * count of a tenant it may not. A count is read through an aggregate, which the server checks against the tenant.
+ */
+interface NodeCollection {
   readonly node: unknown;
-  readonly shard: Json;
+  readonly collection: unknown;
 }
 
-const NODE_SHARDS: MetadataProjection<NodeShard> = [
+const NODE_SHARDS: MetadataProjection<NodeCollection> = [
   { column: "node", kind: "name", read: (row) => row.node },
-  { column: "collection", kind: "name", read: (row) => row.shard.class },
-  { column: "shard", kind: "name", read: (row) => row.shard.name },
-  { column: "objects", kind: "count", read: (row) => row.shard.objectCount, optional: true },
-  {
-    column: "vector_indexing_status",
-    kind: "name",
-    read: (row) => row.shard.vectorIndexingStatus,
-    optional: true,
-  },
-  { column: "loaded", kind: "flag", read: (row) => row.shard.loaded, optional: true },
+  { column: "collection", kind: "name", read: (row) => row.collection },
 ];
 
 const AGGREGATE: MetadataProjection<Json> = [
@@ -356,9 +437,10 @@ function sourcesOf(id: WeaviateProjectionId, answer: unknown, answered: Weaviate
     case "nodes":
       return objects(object(answer).nodes);
     case "node-shards":
-      return objects(object(answer).nodes).flatMap((node) =>
-        objects(node.shards ?? []).map((shard): NodeShard => ({ node: node.name, shard })),
-      );
+      return objects(object(answer).nodes).flatMap((node) => {
+        const collections = new Set(objects(node.shards ?? []).map((shard) => shard.class));
+        return [...collections].map((collection): NodeCollection => ({ node: node.name, collection }));
+      });
     case "aggregate":
       return [
         {
@@ -408,16 +490,33 @@ export function shapeWeaviateAgentAnswer(
   };
 }
 
+/** The answers that mean a name the key cannot read, whether it does not exist or the key may not read it. */
+const UNREADABLE_CATEGORIES: ReadonlySet<WeaviateErrorCategory> = new Set<WeaviateErrorCategory>([
+  "forbidden",
+  "not-found",
+  "collection-not-found",
+]);
+
+/** Whether a request names a collection, an alias or a tenant: every read but meta, the lists and the cluster's nodes. */
+function namesAnObject(plan: WeaviatePlan): boolean {
+  return plan.collection !== null || plan.route.op === "alias";
+}
+
 /**
  * The agent's wording of a failure, or undefined for one the provider's own table words. A server refusal is worded
- * by its status and category alone, never its message; a transport timeout is the time budget's refusal.
+ * by its status and category alone, never its message, and of a request that names a collection, alias, tenant or
+ * shard, a refusal and a not-found are one sentence; a transport timeout is the time budget's refusal.
  */
 export function weaviateAgentFailure(
   error: unknown,
   budget: ReadOnlyStatementBudget,
   statement: string,
+  plan: WeaviatePlan,
 ): QueryError | undefined {
   if (error instanceof WeaviateError) {
+    if (namesAnObject(plan) && UNREADABLE_CATEGORIES.has(error.category)) {
+      return new QueryError(WEAVIATE_AGENT_UNREADABLE, "weaviate", statement);
+    }
     return new QueryError(
       `${error.message}. The server's own words are not passed on to agent mode, whose answers carry metadata only.`,
       "weaviate",

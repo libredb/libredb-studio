@@ -64,6 +64,7 @@ describe("mcpStatementEngines", () => {
       qdrantapi: ["qdrant"],
       rabbitread: ["rabbitmq"],
       kafkaread: ["kafka"],
+      weaviateapi: ["weaviate"],
     });
   });
 
@@ -78,16 +79,17 @@ describe("mcpStatementEngines", () => {
       "rabbitread",
       "kafkaread",
       "rediscli",
+      "weaviateapi",
     ] as const) {
       expect(mcpStatementEngines(language)).toEqual(mcpStatementEngines(language, SHIPPED));
     }
   });
 
-  test("serves MongoDB, Kubernetes, Neo4j, Redis, LibreDB, Qdrant, RabbitMQ and Kafka each in its own language", () => {
+  test("serves MongoDB, Kubernetes, Neo4j, Redis, LibreDB, Qdrant, RabbitMQ, Kafka and Weaviate each in its own language", () => {
     // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read, offered only machine-redacted, Neo4j
     // with run_cypher_read, Redis with run_redis_read, metadata only, LibreDB with run_libredb_read, on a read-only
     // handle per command, Qdrant with run_qdrant_read, metadata only, RabbitMQ with run_rabbitmq_read, metadata only,
-    // and Kafka with run_kafka_read, answered metadata-only.
+    // Kafka with run_kafka_read, answered metadata-only, and Weaviate with run_weaviate_read, metadata only.
     expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
     expect(mcpStatementEngines("kubectl")).toEqual(["kubernetes"]);
     expect(mcpStatementEngines("cypher")).toEqual(["neo4j"]);
@@ -96,6 +98,7 @@ describe("mcpStatementEngines", () => {
     expect(mcpStatementEngines("qdrantapi")).toEqual(["qdrant"]);
     expect(mcpStatementEngines("rabbitread")).toEqual(["rabbitmq"]);
     expect(mcpStatementEngines("kafkaread")).toEqual(["kafka"]);
+    expect(mcpStatementEngines("weaviateapi")).toEqual(["weaviate"]);
   });
 
   test("an agent engine whose MCP read row is false is not served, though every other record lets it through", () => {

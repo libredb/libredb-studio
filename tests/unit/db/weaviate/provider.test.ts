@@ -104,6 +104,7 @@ function contextOf(
     version: version(serverVersion),
     paths: { get: (kind) => known.get(kind), set: (kind, path) => void known.set(kind, path) },
     scoped,
+    readsObjects: true,
   };
 }
 

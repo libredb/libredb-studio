@@ -17,6 +17,7 @@ import type { DatabaseType } from "@/lib/types";
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
+const RUN_WEAVIATE_READ_ARM = mcpStatementArm("run_weaviate_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
@@ -109,6 +110,7 @@ describe("docs/MCP.md", () => {
       "Nine",
       "Ten",
       "Eleven",
+      "Twelve",
     ];
     expect(MCP_DOC).toContain(`- ${COUNT_WORDS[tools.length]} tools, each annotated read-only and closed-world:`);
     for (const tool of tools) expect(MCP_DOC).toMatch(new RegExp(`^ {2}- \`${tool}\` `, "m"));
@@ -217,6 +219,21 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain(
       "every key read of the table but `OBJECT ENCODING` and `MEMORY USAGE` publishes a `keymiss` event naming that key",
     );
+  });
+
+  test("carries run_weaviate_read's engine sentence, and says which Weaviate names each tool returns", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_WEAVIATE_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toContain(
+      "On Weaviate it lists each collection's declared properties and vectors and never its tenants or aliases, which `run_weaviate_read` reads as far as the key's grants reach; it reads no stored object, so a vector's dimension, which the schema does not declare, reads `?`, and a call wakes no tenant.",
+    );
+    expect(MCP_DOC).toContain(
+      "a name in a collection's place is sent only when the key's own collection or alias list holds it, and an alias as the collection its list entry names, because the server reads an alias there as whatever collection it names when the request arrives, and a name that does not exist and one outside the grants are one answer",
+    );
+    expect(MCP_DOC).not.toContain("a collection's tenants and aliases are never returned");
+    expect(MCP_DOC).toContain(
+      "a verbose node read names the collections on each node and neither names nor counts their shards",
+    );
+    expect(MCP_DOC).not.toContain("counts each collection's shards");
   });
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {

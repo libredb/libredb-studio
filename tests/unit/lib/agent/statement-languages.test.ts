@@ -6,6 +6,7 @@ import { fingerprintKubectl, kubectlRowCapAdvice } from "@/lib/agent/languages/k
 import { fingerprintLibredbkv, libredbkvRowCapAdvice } from "@/lib/agent/languages/libredbkv/adapter";
 import { fingerprintMongo, mongoRowCapAdvice } from "@/lib/agent/languages/mongo/adapter";
 import { fingerprintWeaviateapi, weaviateapiRowCapAdvice } from "@/lib/agent/languages/weaviateapi/adapter";
+import { WEAVIATEAPI_MCP_FACET } from "@/lib/agent/languages/weaviateapi/mcp";
 import { fingerprintQdrantapi, qdrantapiRowCapAdvice } from "@/lib/agent/languages/qdrantapi/adapter";
 import { fingerprintMilvusrpc, milvusrpcRowCapAdvice } from "@/lib/agent/languages/milvusrpc/adapter";
 import { fingerprintRediscli, rediscliRowCapAdvice } from "@/lib/agent/languages/rediscli/adapter";
@@ -489,6 +490,16 @@ describe("the weaviateapi language's server adapter and admission", () => {
     expect(fingerprintWeaviateapi('POST /v1/aggregate/Note {"tenant": "a"}')).not.toBe(
       fingerprintWeaviateapi('POST /v1/aggregate/Note {"tenant": "b"}'),
     );
+  });
+
+  test("the agent's statement tool and the MCP tool describe a verbose node read alike, as the collections on each node", () => {
+    const verbose = "?output=verbose for the collections on each node";
+    const agent = languageServerPack("weaviateapi").toolOverrides.investigation?.run_read_query?.description ?? "";
+    const mcp = WEAVIATEAPI_MCP_FACET.describe({ engines: "Weaviate", limits: "Limits" });
+    for (const description of [agent, mcp]) {
+      expect(description).toContain(verbose);
+      expect(description).not.toMatch(/shard rows|shard and object counts/);
+    }
   });
 
   test("the fingerprint is total: a refused request is identified by its raw text, so it is refused again", () => {
