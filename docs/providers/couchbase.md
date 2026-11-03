@@ -24,6 +24,7 @@
 | **Source** | [`src/lib/db/providers/document/couchbase/`](../../src/lib/db/providers/document/couchbase/) |
 | **Tests** | [`tests/integration/db/couchbase-provider.test.ts`](../../tests/integration/db/couchbase-provider.test.ts) + [`tests/unit/db/couchbase/`](../../tests/unit/db/couchbase/) |
 | **Tracking issue** | [#262 — Add Couchbase provider (SQL++ over Query REST, no native dependency)](https://github.com/libredb/libredb-studio/issues/262) |
+| **Write reach** | open: the editor, Import and maintenance (`analyze`, `reindex`, `kill`) send writes |
 
 ---
 

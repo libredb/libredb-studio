@@ -7,6 +7,10 @@ Every number in this document was measured on 13 October 2026 against net-snmp 3
 macOS 27 with Bun 1.4.2, or against datagrams captured from it. Where something was not
 measured, the document says so instead of estimating.
 
+| | |
+|---|---|
+| **Write reach** | none: the statement grammar, `parseStatement`, holds four read commands, and the valve refuses a Set PDU on every datagram it can read; there is no object edit, maintenance or transaction route |
+
 ## 1. What it does
 
 `connect` checks the connection record, resolves the host through the repository's shared egress

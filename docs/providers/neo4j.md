@@ -4,6 +4,10 @@ The `neo4j` type-id: read-only graph browsing over Bolt, tested and claimed on N
 Source: [`src/lib/db/providers/graph/neo4j/`](../../src/lib/db/providers/graph/neo4j/), on the shared graph layer [`src/lib/db/graph/`](../../src/lib/db/graph/).
 Tests: [`tests/unit/db/neo4j/`](../../tests/unit/db/neo4j/), [`tests/unit/db/graph/`](../../tests/unit/db/graph/), [`tests/integration/db/neo4j-provider.test.ts`](../../tests/integration/db/neo4j-provider.test.ts) and [`tests/integration/db/neo4j-bolt-composed.test.ts`](../../tests/integration/db/neo4j-bolt-composed.test.ts).
 
+| | |
+|---|---|
+| **Write reach** | none: the shared Cypher read policy, `checkCypherRead`, refuses every statement that is not a read before any Bolt request; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 Studio reads a Neo4j database through Cypher typed in the editor, shows its node labels, relationship types, indexes and constraints in the object tree, and reads the monitoring panels Community serves.

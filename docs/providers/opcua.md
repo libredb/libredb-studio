@@ -6,6 +6,10 @@
 Issue: [#1677](https://github.com/libredb/libredb-studio/issues/1677).
 Source: [`src/lib/db/providers/industrial/opcua/`](../../src/lib/db/providers/industrial/opcua/).
 
+| | |
+|---|---|
+| **Write reach** | none: the editor's request, read by `readRequest`, is a value or history read, and the client seam names eight read services only; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 OPC UA (IEC 62541, the OPC 10000 series) is how plant equipment publishes what it is doing. A

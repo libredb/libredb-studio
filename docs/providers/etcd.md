@@ -5,6 +5,10 @@ Source: [`src/lib/db/providers/keyvalue/etcd/`](../../src/lib/db/providers/keyva
 Tests: [`tests/unit/db/etcd/`](../../tests/unit/db/etcd/) and [`tests/integration/db/etcd-provider.test.ts`](../../tests/integration/db/etcd-provider.test.ts).
 Tracking issue: [#1089](https://github.com/libredb/libredb-studio/issues/1089), under [#424](https://github.com/libredb/libredb-studio/issues/424).
 
+| | |
+|---|---|
+| **Write reach** | guarded: while read-only mode holds, a write command (`put`, `del`, lease revoke) is refused by `refuseBeforeSend`, and the value edit and compact, defragment and disarm by `refuseReadOnly`, both in `write-policy.ts` and before any request; there is no transaction route |
+
 ## 1. Overview
 
 Studio reads and writes an etcd cluster through a subset of `etcdctl`'s command line, shows its keys as prefix groups in the object tree and every key in the Keys panel, edits a key's value through a guarded transaction, and offers compaction, defragmentation and alarm disarm to an admin.

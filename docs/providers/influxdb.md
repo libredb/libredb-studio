@@ -4,6 +4,10 @@ The `influxdb` type-id: read-only time-series browsing and querying in InfluxQL 
 Source: [`src/lib/db/providers/timeseries/influxdb/`](../../src/lib/db/providers/timeseries/influxdb/).
 Tests: [`tests/unit/db/influxdb/`](../../tests/unit/db/influxdb/) and [`tests/integration/db/influxdb-provider.test.ts`](../../tests/integration/db/influxdb-provider.test.ts).
 
+| | |
+|---|---|
+| **Write reach** | none: the InfluxQL policy, `evaluateInfluxql`, refuses every statement that is not one `SELECT`, `SHOW` or `EXPLAIN` before any request, and the route table reaches no write endpoint; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 The dialog names this type "InfluxDB (InfluxQL)".

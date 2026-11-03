@@ -5,6 +5,10 @@ Source: [`src/lib/db/providers/keyvalue/oxia/`](../../src/lib/db/providers/keyva
 Tests: [`tests/unit/db/oxia/`](../../tests/unit/db/oxia/) and [`tests/integration/db/oxia-provider.test.ts`](../../tests/integration/db/oxia-provider.test.ts).
 Tracking issue: [#424](https://github.com/libredb/libredb-studio/issues/424).
 
+| | |
+|---|---|
+| **Write reach** | none: the gRPC stub, built from `allowlistedServices`, holds only the read RPCs, so no write RPC can be called; there is no object edit, maintenance or transaction route |
+
 ## Before you connect
 
 Six facts decide whether the first connection works.

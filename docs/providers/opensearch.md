@@ -21,7 +21,7 @@
 | **Connection pooling** | None — each statement is one stateless HTTP request |
 | **Connection string** | **Not supported** — addressed by host and port like Druid, and `http(s)://` is already ClickHouse's in the shared parser ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | **EXPLAIN** | **None.** `supportsExplain: false` and no `explainFormat`. `EXPLAIN <select>` as a *statement* is refused here; a plan exists only behind a second endpoint this seam does not carry ([§3.10](#310-no-explain-the-statement-form-is-refused)) |
-| **Writes** | **None reach documents.** Every mutation is refused outright; the `DELETE` the grammar names is gone on 3.8.0 and off by default on 2.19.4 ([§5.6](#56-this-grammar-has-delete-and-it-is-off)) |
+| **Write reach** | open: Studio sends the SQL the editor holds, and every mutation is refused by the server, not by Studio; the `DELETE` the grammar names is gone on 3.8.0 and off by default on 2.19.4 ([§5.6](#56-this-grammar-has-delete-and-it-is-off)) |
 | **Agent mode** | Executes read-only statements on 3.8, after the open proves the `DELETE` off ([§5.9](#59-the-agent-read-only-profile-rests-on-the-plugins-refusals)) |
 | **Transactions** | Not exposed (the engine has none) |
 | **Maintenance** | None — nothing in `MaintenanceType` has a SQL-reachable analogue ([§8](#8-maintenance)) |

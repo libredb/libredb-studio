@@ -6,6 +6,10 @@ Every rule below is followed by its evidence: a measurement we ran, a source lin
 of the OASIS MQTT 5.0 specification, or a cited line in a third-party implementation at a named version. Where
 a rule is a choice rather than a measurement, it is marked CHOICE and its cost is stated.
 
+| | |
+|---|---|
+| **Write reach** | none: the encoder has no PUBLISH function, and the valve, `guardOutboundPacket`, refuses any other packet on the bytes; there is no object edit, maintenance or transaction route |
+
 ## Before you connect
 
 Read this section first. It explains the one thing about this provider that differs from every other engine

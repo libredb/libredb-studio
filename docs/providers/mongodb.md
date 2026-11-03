@@ -23,6 +23,7 @@
 | **SSL** | Yes — `connection.ssl` → `tls` + Node's `ca`/`cert`/`key` ([§4.1](#41-ssl--tls)) |
 | **Source** | [`src/lib/db/providers/document/mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts) |
 | **Tests** | [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts) |
+| **Write reach** | open: the editor's write operations, Import, Generate Test Data and maintenance (`vacuum`, `analyze`, `check`, `kill`) send writes |
 
 ---
 

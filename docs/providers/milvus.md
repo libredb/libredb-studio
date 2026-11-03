@@ -5,6 +5,10 @@ Source: [`src/lib/db/providers/vector/milvus/`](../../src/lib/db/providers/vecto
 Tests: [`tests/unit/db/milvus/`](../../tests/unit/db/milvus/) and [`tests/integration/db/milvus-provider.test.ts`](../../tests/integration/db/milvus-provider.test.ts).
 Tracking issues: [#424](https://github.com/libredb/libredb-studio/issues/424) and [#1089](https://github.com/libredb/libredb-studio/issues/1089).
 
+| | |
+|---|---|
+| **Write reach** | guarded: while read-only mode holds, Load and Release are refused by `refuseReadOnly` in `write-policy.ts` before any request; every console route in `MILVUS_ROUTES` is a read, and there is no object edit or transaction route |
+
 ## 1. Overview
 
 Studio reads a Milvus server through a gRPC client of its own, shows its databases and collections in the object tree, and runs one Milvus request per run in the editor, written as Milvus's own REST v2 request: one `POST /v2/vectordb/<route>` line and one JSON body.

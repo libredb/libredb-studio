@@ -14,7 +14,7 @@
 | **Default port**       | None: the endpoint is always the account host on 443                                                |
 | **Connection string**  | Not stored: a pasted Snowflake URL is decomposed into fields                                        |
 | **EXPLAIN**            | `snowflake-json`: `EXPLAIN USING JSON`, which compiles the statement; never sent for a `SYSTEM$` call |
-| **Writes**             | Whatever the role allows; the confirmation gate asks before Snowflake's destructive forms            |
+| **Write reach** | open: the editor sends every statement as written, and the role is the boundary; the confirmation gate asks before Snowflake's destructive forms |
 | **Transactions**       | None across statements; a transaction runs inside one `EXECUTE IMMEDIATE $$ ... $$` block           |
 | **Maintenance**        | None                                                                                                |
 | **Query parameters**   | Not supported: v1 sends no bindings                                                                 |

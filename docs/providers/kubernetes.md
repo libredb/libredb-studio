@@ -4,6 +4,10 @@ The `kubernetes` type-id: a read-only browser and kubectl-subset console for one
 Source: [`src/lib/db/providers/platform/kubernetes/`](../../src/lib/db/providers/platform/kubernetes/), and the browser-side kubeconfig import in [`src/lib/kubernetes/kubeconfig-import.ts`](../../src/lib/kubernetes/kubeconfig-import.ts).
 Tests: [`tests/unit/db/kubernetes/`](../../tests/unit/db/kubernetes/), [`tests/integration/db/kubernetes-provider.test.ts`](../../tests/integration/db/kubernetes-provider.test.ts) and [`e2e/kubernetes-provider.spec.ts`](../../e2e/kubernetes-provider.spec.ts).
 
+| | |
+|---|---|
+| **Write reach** | none: the request policy, `admitRequest`, admits `GET` and the three self reviews only, before any socket; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 Studio reads one Kubernetes cluster: a tree of the `Cluster` pseudo-container and the namespaces, a YAML view of every built-in object, Describe and Logs on a row, and a console that speaks a subset of kubectl.

@@ -5,6 +5,10 @@ Source: [`src/lib/db/providers/vector/qdrant/`](../../src/lib/db/providers/vecto
 Tests: [`tests/unit/db/qdrant/`](../../tests/unit/db/qdrant/) and [`tests/integration/db/qdrant-provider.test.ts`](../../tests/integration/db/qdrant-provider.test.ts).
 Tracking issue: [#424](https://github.com/libredb/libredb-studio/issues/424), with [#1089](https://github.com/libredb/libredb-studio/issues/1089).
 
+| | |
+|---|---|
+| **Write reach** | none: every route of the closed console route table, `QDRANT_ROUTES`, is a read, and any other route is refused before any request; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 Studio reads a Qdrant server through Qdrant's own REST requests, written in the editor as one `METHOD /path` line and one JSON body, the form Qdrant's documentation prints.

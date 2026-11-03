@@ -18,6 +18,7 @@
 | **Source** | [`src/lib/db/providers/keyvalue/redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts) |
 | **Tests** | [`tests/integration/db/redis-provider.test.ts`](../../tests/integration/db/redis-provider.test.ts) |
 | **Tracking issue** | [#7 — Implement Redis Provider](https://github.com/libredb/libredb-studio/issues/7) |
+| **Write reach** | open: the editor's write commands, the function object edit and maintenance (`analyze`) send writes |
 
 ---
 

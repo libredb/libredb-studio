@@ -4,6 +4,10 @@ The `influxdb3` type-id: read-only browsing and querying of InfluxDB 3 in SQL, o
 Source: [`src/lib/db/providers/timeseries/influxdb/`](../../src/lib/db/providers/timeseries/influxdb/), the `sql-*` modules and the shared connection layer.
 Tests: [`tests/unit/db/influxdb/`](../../tests/unit/db/influxdb/) and [`tests/integration/db/influxdb3-provider.test.ts`](../../tests/integration/db/influxdb3-provider.test.ts).
 
+| | |
+|---|---|
+| **Write reach** | none: the SQL policy, `evaluateInfluxSql`, refuses every statement that does not lead with a read keyword before any request, and the route table reaches no write endpoint; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 The connection type is labelled "InfluxDB 3 (SQL)" in the dialog, and it reads InfluxDB 3 through the SQL its server runs, Apache DataFusion.

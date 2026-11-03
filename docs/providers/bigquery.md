@@ -14,7 +14,7 @@
 | **Default port**       | None: the endpoint is always `bigquery.googleapis.com:443`                                           |
 | **Connection string**  | Not supported                                                                                        |
 | **EXPLAIN**            | `bigquery-dryrun`: a dry run that reports the bytes the statement would process, and bills nothing   |
-| **Writes**             | Whatever the credentials allow; DML returns `numDmlAffectedRows` as the row count                    |
+| **Write reach** | open: the editor sends every statement as written, DML included, which returns `numDmlAffectedRows` as the row count, and the credentials are the boundary |
 | **Transactions**       | Not exposed                                                                                          |
 | **Maintenance**        | None                                                                                                 |
 | **Query parameters**   | Not supported yet: a parameterized call is refused with a message                                    |

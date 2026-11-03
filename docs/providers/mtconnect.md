@@ -9,6 +9,10 @@ The pinned agent for every measurement below is `mtconnect/agent:2.8.0.3`, and t
 answers are in `tests/fixtures/mtconnect/2.8.0.3/`, taken from `https://demo.mtconnect.org` with
 the date, the URL and the agent version recorded beside them.
 
+| | |
+|---|---|
+| **Write reach** | none: every route of the closed route table, `MTC_ROUTES`, is a `GET`; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 An MTConnect agent stands in front of machine tools. It publishes a device model and a stream of

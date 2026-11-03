@@ -17,6 +17,7 @@
 | **Connection pooling** | None — single in-process file handle |
 | **Source** | [`src/lib/db/providers/embedded/libredb.ts`](../../src/lib/db/providers/embedded/libredb.ts) |
 | **Tests** | [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts) |
+| **Write reach** | open: the editor sends `put` and `delete`, and no gate refuses them on a connection |
 
 ---
 
