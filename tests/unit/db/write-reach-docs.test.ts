@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SHIPPED_DATABASE_TYPES, WRITE_REACH } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -122,5 +122,42 @@ describe("docs/SECURITY.md row 3.8", () => {
     expect(security).toContain(
       "**3.8.** Partial for one precondition: the mode is a boundary only on a managed seed, which `resolveConnection` re-resolves from the operator's file whatever a caller sends",
     );
+  });
+});
+
+describe("the engine tables of the READMEs and the Docker Hub listing", () => {
+  // Druid, Elasticsearch and OpenSearch refuse a write only in their own grammar, and the editor sends the
+  // statement it holds, so no listing may call their IDE read-only while their write reach is open.
+  const ROOT = join(import.meta.dir, "..", "..", "..");
+  const LISTINGS = readdirSync(ROOT)
+    .filter((name) => /^README(_[a-z-]+)?\.md$/i.test(name) || name === "DOCKERHUB.md")
+    .sort();
+  const LABELS = { druid: "Apache Druid", elasticsearch: "Elasticsearch", opensearch: "OpenSearch" } as const;
+  // "Read-only" as each translation writes it.
+  const READ_ONLY = [
+    "read-only",
+    "solo lectura",
+    "somente leitura",
+    "読み取り専用",
+    "읽기 전용",
+    "только для чтения",
+    "只读",
+  ];
+
+  test("covers the English README, at least one translation and the listing", () => {
+    expect(LISTINGS).toContain("README.md");
+    expect(LISTINGS).toContain("DOCKERHUB.md");
+    expect(LISTINGS.length).toBeGreaterThan(2);
+  });
+
+  test.each(LISTINGS)("%s: no Druid, Elasticsearch or OpenSearch row says read-only", (name) => {
+    const lines = readFileSync(join(ROOT, name), "utf8").split("\n");
+    for (const [type, label] of Object.entries(LABELS)) {
+      expect(WRITE_REACH[type as keyof typeof LABELS]).toBe("open");
+      // The first row of that engine is its row in the engine table; padded cells are allowed.
+      const row = lines.find((line) => new RegExp(`^\\| \\*\\*${label}\\*\\* *\\|`).test(line));
+      expect(row).toBeDefined();
+      for (const term of READ_ONLY) expect(row?.toLowerCase()).not.toContain(term);
+    }
   });
 });

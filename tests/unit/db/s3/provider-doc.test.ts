@@ -1571,7 +1571,7 @@ describe("DOCKERHUB.md", () => {
     expect(SHIPPED_DATABASE_TYPES).toHaveLength(EXTERNAL_DATABASE_TYPES.length + 1);
     expect(hub).toContain(`The ${ordinal(SHIPPED_DATABASE_TYPES.length)} row is the embedded LibreDB store`);
     expect(hub).toContain(
-      "Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, SNMP, Oxia, S3-compatible object storage and Kubernetes are read-only too",
+      "Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, SNMP, Oxia, S3-compatible object storage and Kubernetes are read-only: Studio calls only read APIs",
     );
     expect(hub).toContain(`of one of the ${word(EXTERNAL_DATABASE_TYPES.length)} drivers above`);
   });
@@ -1723,7 +1723,7 @@ describe("docs/SEED_CONNECTIONS.md and the seed schema agree on s3", () => {
     expect(rowOf(seed, "`connections[].password`")).toContain("S3: the secret access key");
     // The readOnly row names no engine: it points at the Write reach table, whose S3 row the record holds.
     expect(rowOf(seed, "`connections[].readOnly`")).toContain("[write reach](DATABASE_PROVIDERS.md#write-reach)");
-    expect(seed).toContain("both InfluxDB types', Oxia's, S3's and Kubernetes's (");
+    expect(seed).toContain("both InfluxDB types, Oxia, S3 and Kubernetes keep it (");
     expect(seed.split("`dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `amqpPort`")).toHaveLength(3);
   });
 
