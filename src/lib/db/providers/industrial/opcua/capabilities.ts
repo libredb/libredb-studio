@@ -23,8 +23,7 @@ const OPCUA_WRITE_REACH = noWritePath({
 export const OPCUA_CAPABILITIES: ProviderCapabilities = Object.freeze({
   /**
    * Read-only, and structurally so: the client seam in `client.ts` names eight services and none of
-   * them writes. The connection's read-only checkbox cannot turn writing on, because there is
-   * nothing to turn on.
+   * them writes. No setting can turn writing on, because there is nothing to turn on.
    *
    * On a plant floor this is not a nicety. Measured on the issue's first fixture, an anonymous
    * session wrote a variable with status Good and 448 of 460 methods reported UserExecutable true
