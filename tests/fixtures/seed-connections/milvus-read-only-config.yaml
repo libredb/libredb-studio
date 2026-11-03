@@ -1,0 +1,18 @@
+version: "1"
+
+# A read-only Milvus seed every role reaches, over TLS verified against the system trust store, signing in as a user
+# of its own with a password read from the environment, since the load refuses a read-only seed on the default root
+# credential or with no password. managed: true is written out because the load refuses readOnly: true on a
+# connection that is not managed.
+connections:
+  - id: "vectors-read"
+    name: "Vectors"
+    type: milvus
+    host: milvus.internal
+    port: 19530
+    user: "reader"
+    password: "${MILVUS_READER_PASSWORD}"
+    ssl: { mode: verify-full }
+    roles: ["*"]
+    managed: true
+    readOnly: true
