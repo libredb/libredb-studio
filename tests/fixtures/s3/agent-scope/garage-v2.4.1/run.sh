@@ -4,20 +4,19 @@
 #
 #   sh tests/fixtures/s3/agent-scope/garage-v2.4.1/run.sh
 #
-# A fresh digest-pinned single node on its own network and port, with docker/s3/garage.toml, its RPC secret, admin
-# and metrics tokens and four keys made for the run and kept in this shell's environment only. Garage has no users or
+# A fresh digest-pinned single node on its own network and a port Docker picks, with docker/s3/garage.toml, its RPC
+# secret, admin and metrics tokens and four keys made for the run and kept in this shell's environment only. Garage has no users or
 # policies, only per-key grants on a bucket, so a one-shot applies the layout, creates the buckets through the admin
 # API and grants root read, write and owner on each, the broad key read on each, and the scoped and the unlisted key
 # read on scope-granted, scope-versions and scope-objects-only alone. Everything is removed at the end. Run it under
-# the team's docker lock; it touches only the containers and the network it names.
+# the team's docker lock; it touches only the containers and the network it names, S3_SCOPE_NAME when set.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../../../.." && pwd)"
 IMAGE="dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020"
 CURL_IMAGE="alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067"
-NAME="prc2-scope-garage"
-NET="prc2-scope-garage-net"
-PORT=19430
+NAME="${S3_SCOPE_NAME:-prc2-scope-garage}"
+NET="$NAME-net"
 
 GARAGE_RPC_SECRET="$(openssl rand -hex 32)"
 GARAGE_ADMIN_TOKEN="$(openssl rand -hex 24)"
@@ -43,9 +42,10 @@ cleanup
 
 docker network create "$NET" >/dev/null
 # The values reach the container through the environment by name only, so no secret is on a command line.
-docker run -d --name "$NAME" --network "$NET" -p "127.0.0.1:$PORT:3900" \
+docker run -d --name "$NAME" --network "$NET" -p "127.0.0.1::3900" \
   -e GARAGE_RPC_SECRET -e GARAGE_ADMIN_TOKEN -e GARAGE_METRICS_TOKEN \
   -v "$repo/docker/s3/garage.toml:/etc/garage.toml:ro" "$IMAGE" >/dev/null
+PORT="$(docker port "$NAME" 3900/tcp | head -n 1 | sed 's/.*://')"
 
 T="$GARAGE_ADMIN_TOKEN" RK="$S3_SCOPE_ROOT_KEY" RS="$S3_SCOPE_ROOT_SECRET" SK="$S3_SCOPE_SCOPED_KEY" \
   SS="$S3_SCOPE_SCOPED_SECRET" BK="$S3_SCOPE_BROAD_KEY" BS="$S3_SCOPE_BROAD_SECRET" UK="$S3_SCOPE_UNLISTED_KEY" \
@@ -80,5 +80,5 @@ T="$GARAGE_ADMIN_TOKEN" RK="$S3_SCOPE_ROOT_KEY" RS="$S3_SCOPE_ROOT_SECRET" SK="$
   '
 
 cd "$repo"
-S3_SCOPE_SERVER=garage S3_SCOPE_IMAGE="$IMAGE" S3_SCOPE_PORT="$PORT" S3_SCOPE_OUT="$here" \
-  bun tests/live/s3-agent-scope.ts
+S3_SCOPE_SERVER=garage S3_SCOPE_IMAGE="$IMAGE" S3_SCOPE_PORT="$PORT" S3_SCOPE_OUT="$here" S3_SCOPE_CONTAINER="$NAME" \
+  bun "${S3_SCOPE_LIVE:-tests/live/s3-agent-scope.ts}"

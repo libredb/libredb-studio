@@ -1,5 +1,6 @@
-# Sourced by each run.sh beside it, which sets IMAGE, MC_IMAGE, NAME, NET, PORT, SERVER, READY, START, here and repo:
-# makes the run's four keys, starts the server, gives the three read keys their policies and runs the measurement.
+# Sourced by each run.sh beside it, which sets IMAGE, MC_IMAGE, NAME, NET, SERVER, READY, START, here and repo:
+# makes the run's four keys, starts the server (START sets PORT, the S3 port Docker picked on 127.0.0.1), gives the
+# three read keys their policies and runs the measurement, S3_SCOPE_LIVE (tests/live/s3-agent-scope.ts by default).
 S3_SCOPE_ROOT_KEY="root$(openssl rand -hex 6)"
 S3_SCOPE_ROOT_SECRET="$(openssl rand -hex 20)"
 S3_SCOPE_SCOPED_KEY="scoped$(openssl rand -hex 6)"
@@ -48,5 +49,5 @@ R="$S3_SCOPE_ROOT_KEY" S="$S3_SCOPE_ROOT_SECRET" SK="$S3_SCOPE_SCOPED_KEY" SS="$
   '
 
 cd "$repo"
-S3_SCOPE_SERVER="$SERVER" S3_SCOPE_IMAGE="$IMAGE" S3_SCOPE_PORT="$PORT" S3_SCOPE_OUT="$here" \
-  bun tests/live/s3-agent-scope.ts
+S3_SCOPE_SERVER="$SERVER" S3_SCOPE_IMAGE="$IMAGE" S3_SCOPE_PORT="$PORT" S3_SCOPE_OUT="$here" S3_SCOPE_CONTAINER="$NAME" \
+  bun "${S3_SCOPE_LIVE:-tests/live/s3-agent-scope.ts}"
