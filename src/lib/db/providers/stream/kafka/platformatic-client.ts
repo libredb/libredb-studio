@@ -31,6 +31,28 @@ import {
 import type { KafkaConnectionOptions } from "./connection-options";
 
 export const KAFKA_SENTINEL_GROUP_ID = "libredb-studio-never-joined";
+
+/**
+ * Every Kafka API this client sends a broker, by name and protocol key: each one a read, or the connection's own
+ * version and authentication exchange. It is the whole of the provider's reach, since this file is the only one that
+ * reaches the library, so it names no API that produces, creates, deletes, alters, commits or joins a group;
+ * tests/unit/db/kafka/write-reach.test.ts holds the real library, driven through every method below, to it.
+ */
+export const KAFKA_READ_APIS = Object.freeze({
+  Fetch: 1,
+  ListOffsets: 2,
+  Metadata: 3,
+  OffsetFetch: 9,
+  FindCoordinator: 10,
+  DescribeGroups: 15,
+  ListGroups: 16,
+  SaslHandshake: 17,
+  ApiVersions: 18,
+  DescribeConfigs: 32,
+  DescribeLogDirs: 35,
+  SaslAuthenticate: 36,
+  ConsumerGroupDescribe: 69,
+});
 const KAFKA_FETCH_MAX_WAIT_MS = 250;
 const KAFKA_FETCH_MAX_BYTES = 1024 * 1024;
 
@@ -257,7 +279,7 @@ const READ_COMMITTED = 1;
  * The Fetch API, and the one version this adapter sends: the first that names a topic by id
  * (KIP-516), which every broker from Apache Kafka 3.1 on answers, and where Redpanda v26.2.2 stops.
  */
-const FETCH_API_KEY = 1;
+const FETCH_API_KEY = KAFKA_READ_APIS.Fetch;
 const FETCH_VERSION = 13;
 /** Session id 0 with epoch -1 asks for a full answer and opens no fetch session (KIP-227). */
 const SESSIONLESS_ID = 0;
