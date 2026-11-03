@@ -43,6 +43,7 @@ const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_CYPHER_READ_ARM = mcpStatementArm("run_cypher_read");
 const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
 const RUN_WEAVIATE_READ_ARM = mcpStatementArm("run_weaviate_read");
+const RUN_MTCONNECT_READ_ARM = mcpStatementArm("run_mtconnect_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
@@ -51,6 +52,7 @@ const RunQdrantReadInputSchema = RUN_QDRANT_READ_ARM.inputSchema;
 const RunRabbitmqReadInputSchema = RUN_RABBITMQ_READ_ARM.inputSchema;
 const RunCypherReadInputSchema = RUN_CYPHER_READ_ARM.inputSchema;
 const RunRedisReadInputSchema = RUN_REDIS_READ_ARM.inputSchema;
+const RunMtconnectReadInputSchema = RUN_MTCONNECT_READ_ARM.inputSchema;
 
 /** True only when `A` and `B` are the same union, member for member. */
 type SameUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -65,7 +67,7 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_weaviate_read, run_qdrant_read, run_rabbitmq_read, run_kafka_read, run_cypher_read and run_redis_read", () => {
+  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_weaviate_read, run_qdrant_read, run_rabbitmq_read, run_kafka_read, run_cypher_read, run_redis_read and run_mtconnect_read", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
@@ -76,6 +78,7 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(MCP_STATEMENT_ARMS.kafkaread).toBe(RUN_KAFKA_READ_ARM);
     expect(MCP_STATEMENT_ARMS.cypher).toBe(RUN_CYPHER_READ_ARM);
     expect(MCP_STATEMENT_ARMS.rediscli).toBe(RUN_REDIS_READ_ARM);
+    expect(MCP_STATEMENT_ARMS.mtconnectread).toBe(RUN_MTCONNECT_READ_ARM);
     expect(ARMS.map((arm) => arm.tool)).toEqual([
       "run_read_query",
       "run_kubectl_read",
@@ -87,6 +90,7 @@ describe("MCP_STATEMENT_ARMS", () => {
       "run_redis_read",
       "run_rabbitmq_read",
       "run_kafka_read",
+      "run_mtconnect_read",
     ]);
   });
 
@@ -113,8 +117,6 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("prometheus")).toBeNull();
     expect(MCP_STATEMENT_ARMS.opcuaread).toBeNull();
     expect(mcpStatementToolFor("opcua")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.mtconnectread).toBeNull();
-    expect(mcpStatementToolFor("mtconnect")).toBeNull();
     expect(MCP_STATEMENT_ARMS.mqttread).toBeNull();
     expect(mcpStatementToolFor("mqtt")).toBeNull();
     expect(MCP_STATEMENT_ARMS.sparkplugread).toBeNull();
@@ -919,6 +921,121 @@ describe("the Redis arm", () => {
   });
 });
 
+describe("the mtconnectread arm", () => {
+  const server = languageServer("mtconnectread");
+
+  test("takes one request line, no offset and no database, and sends it as written", () => {
+    expect(RUN_MTCONNECT_READ_ARM.title).toBe("Run a read-only MTConnect read");
+    expect(RUN_MTCONNECT_READ_ARM.argument).toBe("statement");
+    expect(RUN_MTCONNECT_READ_ARM.paging).toBe("none");
+    expect(RUN_MTCONNECT_READ_ARM.types).toEqual(["mtconnect"]);
+    expect(RUN_MTCONNECT_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    expect(RUN_MTCONNECT_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "LATHE" }, { sql: "SELECT 1" }]) {
+      expect(
+        RunMtconnectReadInputSchema.safeParse({ connection_id: "seed:m", statement: "/current", ...extra }).success,
+      ).toBe(false);
+    }
+    expect(RunMtconnectReadInputSchema.safeParse({ connection_id: "seed:m", statement: "" }).success).toBe(false);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_MTCONNECT_READ_ARM.canonicalize("/current")).toBe(server.canonicalize("/current"));
+    expect(RUN_MTCONNECT_READ_ARM.canonicalize({ statement: "/current" })).toBeNull();
+  });
+
+  test.each([
+    ["a PUT", "PUT /probe"],
+    ["a POST", "POST /LATHE?x=1"],
+    ["/cancel", "/cancel/id=1"],
+    ["a streaming parameter", "/sample?interval=1000"],
+    ["a second request line", "/current\n/sample"],
+    ["a path outside agent mode's subset", '/current?path=//DataItem[starts-with(@id,"_")]'],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, line) => {
+    const refusal = server.admit?.(line);
+    expect(refusal).not.toBeNull();
+    expect(RUN_MTCONNECT_READ_ARM.fence(line, "mtconnect")).toBe(
+      `The request was refused before it reached the agent (${refusal?.code}). ${refusal?.message}`,
+    );
+  });
+
+  test("admits a read of each route", () => {
+    for (const line of ["/probe", "/LATHE/current", "/sample?count=-5", "/assets", "/asset/TOOL-1"]) {
+      expect(RUN_MTCONNECT_READ_ARM.fence(line, "mtconnect")).toBeNull();
+    }
+  });
+
+  test("answers a row refusal with the request language's own row-cap advice", () => {
+    const rows = classifyReadQueryFailure(
+      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      1,
+      2,
+      RUN_MTCONNECT_READ_ARM.tooLarge("/current", "mtconnect"),
+    );
+    expect(rows).toEqual({
+      kind: "too-large",
+      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice("/current", "1000")}`,
+    });
+  });
+
+  test("names neither a MongoDB stage nor a SQL clause where more rows exist, and says a read is never paged", () => {
+    const hint = RUN_MTCONNECT_READ_ARM.moreRows("/current", "mtconnect", {
+      maxRows: 100,
+      shown: 100,
+      cut: "max_rows",
+    });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("/current", "100")} To read past the 100 rows returned, read /sample from the sequence after the last one returned, or split the read by device or path, since an MTConnect read is never paged.`,
+    );
+    const bytes = RUN_MTCONNECT_READ_ARM.moreRows("/assets", "mtconnect", {
+      maxRows: 100,
+      shown: 4,
+      cut: "result_bytes",
+    });
+    expect(bytes).toBe(
+      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Name one device, narrow the path or give /sample or /assets a smaller count to fit more rows, and to read past the 4 rows returned, read the assets by type with /assets?type=..., by device with /{device}/assets or by id with /asset/{assetIds}, since an MTConnect read is never paged.",
+    );
+    // An asset row carries no sequence, so an asset read is never pointed at /sample; every other read is.
+    for (const line of ["/assets", "/LATHE/assets?type=CuttingTool", "/asset/TOOL-1;TOOL-2"]) {
+      for (const cut of ["max_rows", "result_bytes"] as const) {
+        const text = RUN_MTCONNECT_READ_ARM.moreRows(line, "mtconnect", { maxRows: 100, shown: 4, cut });
+        expect(text).toContain(
+          "read the assets by type with /assets?type=..., by device with /{device}/assets or by id with /asset/{assetIds}",
+        );
+        expect(text).not.toContain("/sample from");
+      }
+    }
+    for (const line of ["/current", "/sample?count=-5", "/probe", "/assets/TOOL-1"]) {
+      const text = RUN_MTCONNECT_READ_ARM.moreRows(line, "mtconnect", { maxRows: 100, shown: 4, cut: "result_bytes" });
+      expect(text).toContain("read /sample from the sequence after the last one returned");
+    }
+    for (const text of [hint, bytes, RUN_MTCONNECT_READ_ARM.rowOverCap]) {
+      expect(text).not.toContain("$skip");
+      expect(text).not.toContain("LIMIT");
+    }
+    expect(RUN_MTCONNECT_READ_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit, as an asset with a long document can be, and a row is never cut. Read other rows, with a narrower path or other asset ids, and run it again.",
+    );
+  });
+
+  test("describes the routes it takes, the refusals, what is withheld and its engine", () => {
+    const description = RUN_MTCONNECT_READ_ARM.description;
+    expect(description.startsWith("Run one read-only MTConnect read")).toBe(true);
+    expect(description).toContain("Runs on MTConnect; other engines refuse it.");
+    expect(description).toContain("this tool takes no offset");
+    expect(description).toContain("/cancel");
+    expect(description).toContain("adapter connections");
+    expect(description).toContain(
+      "after a URL's start (a scheme and its colon in any case, or two slashes or backslashes) and the slashes or backslashes that follow, up to the last @ in the value",
+    );
+    expect(description).toContain("its user name, password, query string and fragment never reach the answer");
+    expect(description).toContain(
+      "Values are read after NFKC and percent-decoding: a word with a : before an @ is withheld from its start, past a scheme and //, to its last @",
+    );
+    expect(description).toContain("asset ids in observations alike");
+  });
+});
+
 describe("the tool each engine is read with", () => {
   test("is the tool whose arm serves it, and null where none does", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
@@ -928,7 +1045,7 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Weaviate with run_weaviate_read, Qdrant with run_qdrant_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, Redis with run_redis_read, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Weaviate with run_weaviate_read, Qdrant with run_qdrant_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, Redis with run_redis_read, MTConnect with run_mtconnect_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
     expect(mcpStatementToolFor("libredb")).toBe("run_libredb_read");
@@ -937,6 +1054,7 @@ describe("the tool each engine is read with", () => {
     expect(mcpStatementToolFor("rabbitmq")).toBe("run_rabbitmq_read");
     expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
     expect(mcpStatementToolFor("neo4j")).toBe("run_cypher_read");
+    expect(mcpStatementToolFor("mtconnect")).toBe("run_mtconnect_read");
     for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
     expect(mcpStatementToolFor("clickhouse")).toBe("run_read_query");
     expect(mcpStatementToolFor("libsql")).toBe("run_read_query");
@@ -965,6 +1083,7 @@ describe("the tool each engine is read with", () => {
       "run_redis_read",
       "run_rabbitmq_read",
       "run_kafka_read",
+      "run_mtconnect_read",
     ]);
   });
 
@@ -1201,7 +1320,7 @@ describe("the rabbitread arm", () => {
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, rabbitread, Kafka, Cypher and Redis do not", () => {
+  test("kubectl declares it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, rabbitread, Kafka, Cypher, Redis and MTConnect do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
@@ -1215,6 +1334,7 @@ describe("the arms whose engines hold no table", () => {
     expect(RUN_CYPHER_READ_ARM.holdsNoTables).toBe(false);
     // A Redis key grouping is a `keyspace` relation, which inspect_schema lists.
     expect(RUN_REDIS_READ_ARM.holdsNoTables).toBe(false);
+    expect(RUN_MTCONNECT_READ_ARM.holdsNoTables).toBe(false);
   });
 
   test.each(ARMS.flatMap((arm) => arm.types.map((type) => [arm.tool, type, arm] as const)))(
@@ -1241,5 +1361,6 @@ describe("the arms whose engines hold no table", () => {
     expect(mcpTablelessReadTool("redis")).toBeNull();
     expect(mcpTablelessReadTool("libredb")).toBeNull();
     expect(mcpTablelessReadTool("rabbitmq")).toBeNull();
+    expect(mcpTablelessReadTool("mtconnect")).toBeNull();
   });
 });

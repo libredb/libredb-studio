@@ -252,7 +252,9 @@ the guard drops. Two request lines in one text are refused as two rather than ru
 | `starts-with` and `contains` only | The two functions measured to work |
 | No `/` or `|` inside a quoted value | MEASURED: the agent rewrites the inside of the quotes, so what runs is not what was written |
 | Six parameters refused by name | `interval`, `heartbeat` and `frequency` are streaming; `format` and `pretty` are not in the standard; `device` belongs in the path, and MEASURED `/assets?device=<unknown>` answered 200 with every asset in the buffer |
-| A `%` that starts no valid escape | Refused by name with the pair it sits in; before this rule it left as a bare `URIError` with no sentence |
+| A `%` that starts no valid escape in a query key or value | Refused by name with the pair it sits in; before this rule it left as a bare `URIError` with no sentence |
+
+A path parameter, a device or an asset id, is read as written and never percent-decoded, so a `%` in it is a character and not an escape: `/asset/%ZZ` is admitted and sent as `/asset/%25ZZ`, and `/asset/%41` asks for the asset whose id is `%41`, sent as `%2541`.
 
 ### 5.3 The path subset, measured against the live agent
 
@@ -393,8 +395,8 @@ So the provider withholds them itself, on every handle opened for an agent-mode 
 the handle the MCP metadata tools acquire as well as agent mode's own: every data item inside an
 `Adapter` component is left out of the tree, the device model and every observation answer, and
 an answer counts what it left out ([section 14.3](#143-what-is-withheld-and-why)). The editor's
-handles show them, as they always have. MCP's `run_read_query` does not serve this engine
-(`MCP_STATEMENT_READ.mtconnect` is false).
+handles show them, as they always have. MCP's `run_mtconnect_read` reads through agent mode's own
+`queryReadOnly`, so it withholds them too ([section 14.5](#145-mcp-run_mtconnect_read)).
 
 ## 11. Testing
 
@@ -423,7 +425,7 @@ stand-in, and no local copy of a rule the shared modules own.
 - The `path` subset is narrower than XPath, and each exclusion is a measurement rather than a
   preference (5.2).
 - The Agent device's adapter addresses are shown on an editor handle; every agent-mode handle, the
-  MCP metadata tools' included, withholds them (10.2).
+  MCP tools' included, withholds them (10.2).
 - A composition's own name is carried where the observation has one; MEASURED on 6 of 478.
 
 ## Migration DDL
@@ -473,7 +475,7 @@ One request line, the statement, written as the console writes it with GET impli
 | `/assets`, `/{device}/assets` | the assets, one row per asset with its document |
 | `/asset/{assetIds}` | assets by id, one row per asset with its document |
 
-Everything [section 5.2](#52-what-phase-0-refuses-before-a-socket-opens) refuses is refused here too, before anything is sent, in agent mode's words: the guard's sentence followed by the list of the nine routes and their keys, and "Nothing was sent." (`refusedBeforeSend`: a PUT, a POST, a DELETE, `/cancel/id=1`, `/assets/{id}`, `/swagger`, `interval`, `heartbeat`, `frequency`, a second request line, a `path` function outside the subset, `//Adapter` and `starts-with()` each sent no request).
+Everything [section 5.2](#52-what-phase-0-refuses-before-a-socket-opens) refuses is refused here too, before anything is sent (a path parameter's `%` is a character there, so `/asset/%ZZ` is sent as `/asset/%25ZZ`), in agent mode's words: the guard's sentence followed by the list of the nine routes and their keys, and "Nothing was sent." (`refusedBeforeSend`: a PUT, a POST, a DELETE, `/cancel/id=1`, `/assets/{id}`, `/swagger`, `interval`, `heartbeat`, `frequency`, a second request line, a `path` function outside the subset, `//Adapter` and `starts-with()` each sent no request).
 Two rules are agent mode's own.
 A path parameter written `.` or `..` is refused as a dot segment, since a URL resolves it to another path.
 And a `path` is narrower than the console's: one or more `//DataItem` alternatives joined by `|`, each with at most one predicate of equality tests `@attribute="value"` on `@id`, `@name`, `@type`, `@subType` or `@category`, joined by `and` or `or`, and every value one that a data item agent mode reads holds, as `/probe` lists it.
@@ -501,11 +503,42 @@ The agent writes an `Adapters` component under its Agent device and one `Adapter
 No column of such an observation can be shown without the address, so every data item the model places inside an `Adapters` or `Adapter` component, and every observation whose component stream is one, is left out, and the answer warns how many it left out with the reason (`reads`: `/current` answered 16 rows and withheld 6, `/current?path=//DataItem[@category="EVENT"]` answered 13 and withheld 4, and no answer carried the adapter's address).
 The agent's other items (its availability, the devices it added, changed or removed, its asset counts) are answered, and so is every other device.
 
+Withheld from every asset on an agent-mode handle are the secrets a URL in it can carry.
+Measured on the pinned image with `AllowPut = true` ([`mcp-boundary/boundary.json`](../../tests/fixtures/mtconnect/2.8.0.4/mcp-boundary/boundary.json), `assets`): a File asset put with a `FileLocation href` carrying a user name, a password and a query string is stored and served by `/assets` exactly as written, so an asset can carry whatever credential the system that wrote it put in a URL.
+So every URL in an asset's document and columns keeps its scheme, host, port and path, which say where a file is, and its user name and password, its query string and its fragment, where a credential, a signature or a token travels, read `[withheld]`; the answer warns how many it withheld.
+An asset's id can be such a URL too, and the agent names it whole in the `AssetChanged` observation of `/current` and `/sample`, and in `AssetRemoved` once the asset is removed (`spellings` in the same capture).
+So an observation that names assets, one whose data item's type or own type starts `ASSET_` or whose element name starts `Asset`, has its value, and each key and value of its data set, read by the same rule and counted in the same warning.
+An attribute the standard types as a URI, `href` and `xlink:href` on any element of an asset, and an asset column of that name, is the credential channel the standard defines, and is withheld by its structure, whatever its spelling.
+Its value is read by the text rule below first, and what that leaves is parsed by the WHATWG URL parser (`new URL`, and against a base for a value that starts with its own `//` authority): when it parses, it keeps its scheme, host, port and path as the parser serializes them, so `HTTP:\/u:p@host/p.nc` reads `http://[withheld]@host/p.nc`, and its user name and password, query string and fragment read `[withheld]`.
+When it does not parse, is a reference with neither a scheme nor an authority, or names a host outside the characters of a host name or a bracketed address, the whole value reads `[withheld]`: `https://USER:PASS&#64;host/x`, with the `@` written as a character reference the agent stores as text, does not parse, and neither does a value whose colon or slashes are lookalike characters.
+In any other text of an asset, an element's text or an attribute of another name, the rule is a best-effort one.
+The cut is made by position, never by parsing the URL, and leans to withholding more: the values are decoded text, in which a password may hold an `@`, a quote, a slash, a `#`, a `?` or a space that a URL client still sends.
+A URL starts at the first scheme and colon in the value, in any case, or at its first two slashes or backslashes, because a WHATWG URL parser (a browser, Node's `new URL`, `fetch`) reads `http:\\u:p@h`, `http:/u:p@h`, `http:u:p@h` and `HTTP:\/u:p@h` all as `http://u:p@h`, does the same for `https`, `ws`, `wss` and `ftp`, drops a tab or a line break anywhere, and against such a base reads `//u:p@h` and `\\u:p@h` as an authority too.
+Everything after that start and the slashes or backslashes that follow it, up to the last `@` in the value, is withheld, and so is everything from the first `?` or `#` after that to the end of the value.
+Two word rules add to it, a word being a run of the value between spaces, a tab or a line break being part of a word since a URL parser drops it.
+A word holding an `@` with a `:` before it is withheld from its start to its last `@`, keeping only an opening quote or bracket, a scheme and its colon and two or more slashes or backslashes it starts with: `login USER:PASS@host` reads `login [withheld]@host`, and since `ftp:USER:PASS@host` cannot be told from it, so does a scheme with fewer than two slashes after its colon, `http:u:p@h` and `mailto:operator@plant.example` reading `[withheld]@h` and `[withheld]@plant.example`.
+A word holding a slash or backslash before a `?` or `#` is withheld from that `?` or `#` to the word's end, so a schemeless `files.example/x.nc?token=T` reads `files.example/x.nc?[withheld]`; a `?` and a `#` in prose with no slash before them, such as `tool #4`, are kept.
+A mail address with no `:` before its `@` and a path with no query are left as written, while a label and a colon before a mail address loses what lies between them: `Contact: operator@plant.example` reads `Contact:[withheld]@plant.example`.
+Every rule reads the value through a view of it: its Unicode compatibility form (NFKC), so `ｈｔｔｐｓ：／／USER:PASS@host` reads as `https://USER:PASS@host`, then percent-decoded wherever an escape is valid, and again until no valid escape is left, so `https%3A%2F%2FUSER%3APASS%40host` reads as its URL and `%2540` as an `@`.
+Each character of the view remembers the characters of the value it was read from, and a withheld part is cut from the value as written over all of them, so `https%3A%2F%2FUSER%3APASS%40host` reads `https%3A%2F%2F[withheld]%40host`; a value still holding a valid escape after eight rounds of decoding is withheld whole.
+An asset document's text is read as one string, as a consumer reads it: each element's own text, CDATA sections and character references included, with its children's text in the place each child holds, in document order.
+So a URL whose user name and password are split between an element's text and a child's, across nested children, or into a following sibling's text is read whole, and each withheld part is cut out of every element's text it lands in and counted once.
+An attribute value is one string with its references resolved and is read on its own.
+The document is rendered in the same order, each element's text and children where the agent wrote them.
+Measured on the same image ([`mcp-boundary/boundary.json`](../../tests/fixtures/mtconnect/2.8.0.4/mcp-boundary/boundary.json), `assets`): an extension asset whose element holds `https://` and a user name, then a child holding part of the password, then the rest of it and the `@`, is stored and served with the child in place, and the tool answers it as `https://[withheld]<b>[withheld]</b>[withheld]@` and the host and path; a CuttingTool's description put the same way is stored only up to its first child, so the password never reaches the agent's answer, and what is left, `https://` and the user name with no `@` after it, is answered as written, read as a host.
+A value holding a mail address after a URL, or two URLs, therefore loses more than the secrets: `see https://a.example/x and s3://u:p@bucket/key` reads `see https://[withheld]@bucket/key`.
+Since the document is one text, an `@`, a `?` or a `#` in a later element's text after a URL widens the cut into that element too.
+A path with no scheme and no query, such as a `file:` location's path or a UNC path in a tool's description, is answered as written, and so is every observation value but those that name assets.
+The best-effort rule does not cover, in free text: Unicode lookalikes NFKC does not fold, such as a modifier letter colon or a division slash; escapes that are not percent-escapes, such as `%u0040`, a backslash escape such as `\u0040` or `\x40`, and an overlong UTF-8 sequence; an `@` written as a character reference in text, which the agent stores as text; a user name and password split across separate attributes; a credential with no URL start and a space inside it; and a schemeless host with a query and no path, such as `files.example?token=T`.
+URL-typed fields are withheld by their structure whatever their spelling, so none of these reaches an answer through an `href` or an `xlink:href`.
+The same capture configures an agent with an MQTT sink: the broker's address reached none of the routes of the table, so nothing more is withheld for it.
+
 | Path | Handle | What it reads |
 | --- | --- | --- |
 | Investigation reads | agent read-only profile | `GET /probe`, then one request of [section 14.2](#142-what-an-agent-request-may-be) |
 | Investigation grounding and plan-mode grounding | either agent profile | the device model the handle read when it opened: devices, data items and conditions by name, the adapter connections left out, no value and no asset; the asset count answers its reason and no asset is listed |
 | Connect | either agent profile | one `GET /probe`, and nothing else (`connect.sent`) |
+| MCP `run_mtconnect_read` | agent read-only profile | the same reads as an investigation, through the same withheld set ([section 14.5](#145-mcp-run_mtconnect_read)) |
 | MCP metadata tools | either agent profile | the same device model, through the same withheld set |
 | Console, overview, health, performance, slow-query, session, table, index and storage readings | either agent profile | nothing: each is refused with its reason, never answered with Studio's own figures or an empty reading |
 
@@ -522,4 +555,29 @@ The investigation rule tells the model to read what the question names directly,
 Plan mode's safety strip is the shared one, which is true here: an agent-mode handle reads only the device model when it opens, and that one read grounds the plan; plan mode follows the provider's `statementLanguage` label, which names the console's request line, its routes and what is never drafted.
 The editor language id stays `mtconnect`, and the fence alias `mtconnectread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs an MTConnect request: the family declares no MCP facet and `MCP_STATEMENT_READ.mtconnect` is false ([B163](../BACKLOG.md#b163-mtconnects-agent-reads-withhold-the-adapter-connections-and-it-has-no-mcp-statement-read)), `MCP_EXPOSABLE.mtconnect` stays true for the metadata tools, and `READ_ONLY_ENFORCED.mtconnect` is unchanged.
+MCP runs an MTConnect request with `run_mtconnect_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/mtconnectread/mcp.ts`](../../src/lib/agent/languages/mtconnectread/mcp.ts)), and `MCP_STATEMENT_READ.mtconnect` is true ([section 14.5](#145-mcp-run_mtconnect_read)); `MCP_EXPOSABLE.mtconnect` is true, and `READ_ONLY_ENFORCED.mtconnect` is unchanged.
+
+### 14.5 MCP: `run_mtconnect_read`
+
+`run_mtconnect_read` takes one request line as `statement`, read and admitted by agent mode's own reader, acquires the connection under the agent read-only profile and runs it through the same `queryReadOnly` as an investigation's read, so it sends `GET /probe` and then one GET of a route of [section 14.2](#142-what-an-agent-request-may-be), and answers with the same withheld set.
+It takes no `offset` and no `database`.
+Every claim below cites [`tests/fixtures/mtconnect/2.8.0.4/mcp-boundary/boundary.json`](../../tests/fixtures/mtconnect/2.8.0.4/mcp-boundary/boundary.json), recorded by its `run.sh` against the compose fixture's adapter, an eclipse-mosquitto broker and three agents of the pinned image (`AllowPut = false`, `AllowPut = true`, and an MQTT sink), and written by [`tests/live/mtconnect-mcp-boundary.ts`](../../tests/live/mtconnect-mcp-boundary.ts), which drives the tool's handler as MCP registers it and with its fence removed.
+
+The boundary is the provider's closed route table, not the tool's fence (`writes`, `positiveControl`, `refused`).
+Each write-shaped line, a PUT, a POST and a DELETE, is refused by the fence before anything is acquired, and with the fence removed by the provider before anything is sent; the same PUT sent raw to the `AllowPut = true` agent set the value it named, while the unfenced tool on that agent sent nothing and changed nothing.
+`/cancel`, `/swagger`, every streaming parameter, a second line, a dot segment, a path function, `//Adapter` and a `count` past the 1000-row budget sent nothing either way.
+A path testing a withheld adapter id and one testing an id no item holds were refused in the same words after the model read alone (`pathOracle`), and the fixture agent's buffer did not move across the run (`state`).
+
+What a call reads, in two layers.
+Layer 1, what the server grants: nothing, because an MTConnect agent authenticates nothing; a seed carries no credential, whoever reaches the agent's port reads what it serves, and an agent set `AllowPut = true` accepts writes from anyone, which is why the route table is the boundary and no login can be.
+Layer 2, what Studio withholds whatever the request says, decided on the agent's answer rather than by reading the request: the agent's own adapter connections ([section 14.3](#143-what-is-withheld-and-why), `reads`: no answer carried the adapter's address), and the user name, password, query string and fragment of every URL in an asset (`assets`: the agent served the planted user information as written, and the tool's answer carried none of them, not even a password holding an `@` and a quote, a location written `http:\\user:password@host` with backslashes, an `href` whose `@` is written as a character reference the agent stores as text, withheld whole as a value that does not parse, or a user name and password split across an extension asset's child element, while it kept the host, the path and a `file:` location).
+The same capture puts two assets whose ids are URLs, one of them percent-encoded, removes one, and puts four assets whose notes carry a percent-encoded URL, a schemeless path with a token, `login USER:PASS@host` and a fullwidth scheme (`spellings`): the agent named both URL ids whole in `AssetChanged` and the removed one in `AssetRemoved`, and neither `/assets` nor `/current` nor `/sample` through the tool carried any of their user names, passwords or tokens, while each note kept its host and path.
+The MQTT sink's broker address reached no route of the table and no answer (`sink`), so it needs no withholding.
+
+A result is held to the shared MCP limits ([docs/MCP.md](../MCP.md)): at most `max_rows` rows and 32 KiB, and a result past either is cut to the rows that fit, with `truncated` and `pagination.hasMore` saying so, and a hint naming how to read past them, by device, path or `/sample` sequence for an observation read and by type, device or id for an asset read, since the tool takes no `offset`.
+A row larger than 32 KiB on its own, as an asset with a long document can be, is never cut, and the call answers that it does not fit.
+URL-typed fields are withheld by their structure, and other asset text by the best-effort rule, whose gaps [section 14.3](#143-what-is-withheld-and-why) lists.
+An MCP answer carries no warning text, so the count of what a read withheld, the warning an agent read answers with, does not reach an MCP client: the withheld rows and the `[withheld]` markers in a row are all a client sees of it.
+
+A cancel or a timeout ends the wait, not the request (`limits`, with the agent paused): at the minimum `timeout_ms` of 500 the client got the timeout answer and the provider's own request had ended; a client cancel 200 ms into a call with `timeout_ms` 3000 was answered at once while the provider's request stayed open until its own time budget, the time left, closed it near 3000 ms.
+An agent route answers one document, so nothing runs on the agent after its request closes.

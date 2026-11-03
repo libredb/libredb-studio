@@ -570,9 +570,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // diagnostics, one session per read; no MCP surface that reads through the same withheld set and
   // units lookup is designed yet (BACKLOG B162).
   opcua: false,
-  // Offered for the metadata tools, which acquire an agent-mode handle and so read the device model with the agent's
-  // adapter connections withheld; `run_read_query` does not serve it: MCP_STATEMENT_READ keeps MCP read closed on it
-  // (BACKLOG B163).
+  // Offered for the metadata tools and run_mtconnect_read, which acquire an agent-mode handle and so read the device
+  // model with the agent's adapter connections withheld.
   mtconnect: true,
   // MCP is outside this provider's first version. A read also needs the register map kept with
   // the connection, because Modbus has no discovery and a name means only what that document
@@ -608,6 +607,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * Qdrant, whose metadata request `run_qdrant_read` reads, for RabbitMQ, whose stream read request `run_rabbitmq_read`
  * reads metadata only, for Kafka, whose metadata read `run_kafka_read` reads,
  * for Neo4j, whose Cypher `run_cypher_read` reads, and for Weaviate, whose request `run_weaviate_read` reads metadata only.
+ * True for MTConnect, whose request line `run_mtconnect_read` reads under the agent's closed route table.
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
@@ -714,9 +714,9 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes reads with engineering units on OPC UA, and MCP read stays closed on it until a change of its
   // own opens it (BACKLOG B162).
   opcua: false,
-  // Agent mode executes request lines of nine GET routes on MTConnect, and MCP read stays closed on it until a change of
-  // its own opens it (BACKLOG B163).
-  mtconnect: false,
+  // Opened on its own: run_mtconnect_read runs under the boundary agent mode uses, the provider's closed table of nine
+  // GET routes, with the agent's adapter connections withheld from every answer (docs/providers/mtconnect.md section 14).
+  mtconnect: true,
   // Agent mode executes paced reads on Modbus, and MCP read stays closed on it until a change of its own opens it
   // (BACKLOG B160).
   modbus: false,

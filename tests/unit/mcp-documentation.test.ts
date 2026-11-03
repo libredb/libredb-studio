@@ -22,6 +22,7 @@ const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
+const RUN_MTCONNECT_READ_ARM = mcpStatementArm("run_mtconnect_read");
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const MCP_DOC = read("docs/MCP.md");
@@ -83,7 +84,7 @@ describe("the docs say a language's MCP tool is a facet in its pack", () => {
 
   test("docs/BACKLOG.md names the facet where a future language's MCP tool lives", () => {
     expect(read("docs/BACKLOG.md")).toContain(
-      "its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`)",
+      "a language's MCP words belong to its facet (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`)",
     );
   });
 });
@@ -111,6 +112,7 @@ describe("docs/MCP.md", () => {
       "Ten",
       "Eleven",
       "Twelve",
+      "Thirteen",
     ];
     expect(MCP_DOC).toContain(`- ${COUNT_WORDS[tools.length]} tools, each annotated read-only and closed-world:`);
     for (const tool of tools) expect(MCP_DOC).toMatch(new RegExp(`^ {2}- \`${tool}\` `, "m"));
@@ -234,6 +236,11 @@ describe("docs/MCP.md", () => {
       "a verbose node read names the collections on each node and neither names nor counts their shards",
     );
     expect(MCP_DOC).not.toContain("counts each collection's shards");
+  });
+
+  test("carries run_mtconnect_read's engine sentence, derived from its arm, and its row in the cancel table", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_MTCONNECT_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toMatch(/^\| MTConnect \| /m);
   });
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {

@@ -41,12 +41,21 @@ import {
   readMtconnectAgentStatement,
   type MtconnectAgentPathTest,
 } from "./agent-statement";
-import { itemWithheld, observationWithheld, withheldWarning } from "./agent-withheld";
+import {
+  itemWithheld,
+  observationNamesAssets,
+  observationWithheld,
+  withheldUrlWarning,
+  withheldWarning,
+  withoutAttributeSecrets,
+  withoutUrlSecrets,
+  withoutUrlSecretsAcross,
+} from "./agent-withheld";
 import { MtcClientError, type MtcAnswer } from "./client";
 import { guardRequestLine, type MtcRequest } from "./guard";
 import { indexMtconnectModel, type MtcModel } from "./model";
 import { buildRow, rowsFromAssets, rowsFromModel, sortRows, type MtcRow } from "./rows";
-import type { MtcElement, MtcObservation } from "./xml";
+import { type MtcElement, type MtcObservation, textPieces } from "./xml";
 
 const MTCONNECT_TYPE = "mtconnect";
 const STUDIO = "This is Studio's refusal, not the agent's answer.";
@@ -176,14 +185,20 @@ function escapeXml(text: string): string {
 
 /**
  * One element rendered back to XML text from the parsed tree: attributes in the order the agent wrote them, values and
- * text escaped, an element's own text before its children. Never the agent's bytes: a CDATA section is text here and
- * an entity is the character it stood for, so nothing the agent wrote is handed on as markup.
+ * text escaped, an element's own text and its children in the order the document holds them. Never the agent's bytes:
+ * a CDATA section is text here and an entity is the character it stood for, so nothing the agent wrote is handed on as
+ * markup.
  */
 export function renderXmlElement(element: MtcElement): string {
   const attributes = Object.entries(element.attributes)
     .map(([name, value]) => ` ${name}="${escapeXml(value)}"`)
     .join("");
-  const inner = escapeXml(element.text) + element.children.map(renderXmlElement).join("");
+  const inner = textPieces(element)
+    .map((piece, index) => {
+      const child = element.children[index];
+      return escapeXml(piece) + (child === undefined ? "" : renderXmlElement(child));
+    })
+    .join("");
   return inner === "" ? `<${element.name}${attributes}/>` : `<${element.name}${attributes}>${inner}</${element.name}>`;
 }
 
@@ -193,6 +208,30 @@ function refuseRows(rows: number, budget: ReadOnlyStatementBudget): never {
 
 function warningsOf(withheld: number, noun: "observation" | "data item"): QueryWarning[] {
   return withheld === 0 ? [] : [{ message: withheldWarning(withheld, noun) }];
+}
+
+function urlWarningsOf(withheld: number): QueryWarning[] {
+  return withheld === 0 ? [] : [{ message: withheldUrlWarning(withheld) }];
+}
+
+/**
+ * An observation that names assets, its value read as an asset's text is: an asset id or type in its value, or in the
+ * keys and values of its data set, keeps no URL secret (`observationNamesAssets`).
+ */
+function assetReference(row: MtcRow, observation: MtcObservation, count: (withheld: number) => void): MtcRow {
+  const kept = (text: string): string => {
+    const url = withoutUrlSecrets(text);
+    count(url.withheld);
+    return url.text;
+  };
+  if (observation.children.length === 0) return { ...row, value: kept(row.value) };
+  // Every key and string value at every depth: a TABLE entry is an object of cells, and its cells are read too.
+  const deep = (value: unknown): unknown => {
+    if (typeof value === "string") return kept(value);
+    if (value === null || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [kept(key), deep(inner)]));
+  };
+  return { ...row, value: JSON.stringify(deep(JSON.parse(row.value))) };
 }
 
 /** The device model the read is decided under, read fresh: nothing of an earlier read is kept. */
@@ -214,6 +253,7 @@ async function observations(
 ): Promise<MtconnectAgentAnswer> {
   const rows: MtcRow[] = [];
   let withheld = 0;
+  let urls = 0;
   let over = false;
   const walk = await reader.stream(request, (observation) => {
     const item = model.items.get(observation.attributes.dataItemId ?? "");
@@ -223,7 +263,13 @@ async function observations(
     }
     const row = buildRow(observation, model);
     if (row === undefined) return true;
-    rows.push(row);
+    rows.push(
+      observationNamesAssets(observation, item)
+        ? assetReference(row, observation, (count) => {
+            urls += count;
+          })
+        : row,
+    );
     if (rows.length > budget.maxResultRows) {
       over = true;
       return false;
@@ -240,7 +286,7 @@ async function observations(
   return {
     rows: sorted.map((row) => ({ ...row })),
     fields: sorted.length === 0 ? OBSERVATION_FIELDS : Object.keys(sorted[0]),
-    warnings: warningsOf(withheld, "observation"),
+    warnings: [...warningsOf(withheld, "observation"), ...urlWarningsOf(urls)],
   };
 }
 
@@ -262,21 +308,93 @@ function modelRows(answer: MtcAnswer, request: MtcRequest, budget: ReadOnlyState
   return { rows, fields: rows.length === 0 ? [] : Object.keys(rows[0]), warnings: warningsOf(withheld, "data item") };
 }
 
-/** An asset route: one row per asset, its document beside its attributes. */
+/**
+ * An asset document with every URL in its attribute values and text kept to what `withoutUrlSecrets` keeps, and every
+ * URL-typed attribute to what `withoutUrlFieldSecrets` keeps. Its text is read as one string in document order, each
+ * element's own text with its children's text in place, so a URL split by the markup is read whole; each attribute
+ * value is read on its own.
+ */
+function withUrlsKept(document: MtcElement, count: (withheld: number) => void): MtcElement {
+  const pieces: string[] = [];
+  const collect = (element: MtcElement): void => {
+    textPieces(element).forEach((piece, index) => {
+      pieces.push(piece);
+      const child = element.children[index];
+      if (child !== undefined) collect(child);
+    });
+  };
+  collect(document);
+  const text = withoutUrlSecretsAcross(pieces);
+  count(text.withheld);
+  let next = 0;
+  const kept = (name: string, value: string): string => {
+    const url = withoutAttributeSecrets(name, value);
+    count(url.withheld);
+    return url.text;
+  };
+  const rebuild = (element: MtcElement): MtcElement => {
+    const own: string[] = [];
+    const children: MtcElement[] = [];
+    const childOffsets: number[] = [];
+    let length = 0;
+    element.children.forEach((child) => {
+      const ownText = text.texts[next++];
+      own.push(ownText);
+      length += ownText.length;
+      childOffsets.push(length);
+      children.push(rebuild(child));
+    });
+    own.push(text.texts[next++]);
+    return {
+      ...element,
+      attributes: Object.fromEntries(
+        Object.entries(element.attributes).map(([name, value]) => [name, kept(name, value)]),
+      ),
+      text: own.join(""),
+      children,
+      childOffsets,
+    };
+  };
+  return rebuild(document);
+}
+
+/**
+ * An asset route: one row per asset, its document beside its attributes, every URL in either with its user name,
+ * password and query string withheld (`agent-withheld.ts`). Every column but the document is one of the document's
+ * own attributes, so each withheld part is counted once, in the document.
+ */
 function assetRows(answer: MtcAnswer, budget: ReadOnlyStatementBudget): MtconnectAgentAnswer {
   const assets = rowsFromAssets(answer.root);
   if (assets.length > budget.maxResultRows) refuseRows(assets.length, budget);
-  const rows = assets.map((row) => ({
-    assetId: row.assetId,
-    type: row.type,
-    deviceUuid: row.deviceUuid,
-    timestamp: row.timestamp,
-    removed: row.removed,
-    hash: row.hash,
-    ...row.attributes,
-    document: renderXmlElement(row.document),
-  }));
-  return { rows, fields: rows.length === 0 ? [] : Object.keys(rows[0]), warnings: [] };
+  let withheld = 0;
+  const rows = assets.map((row) => {
+    const columns: Record<string, unknown> = {
+      assetId: row.assetId,
+      type: row.type,
+      deviceUuid: row.deviceUuid,
+      timestamp: row.timestamp,
+      removed: row.removed,
+      hash: row.hash,
+      ...row.attributes,
+    };
+    const document = withUrlsKept(row.document, (count) => {
+      withheld += count;
+    });
+    return {
+      ...Object.fromEntries(
+        Object.entries(columns).map(([name, value]) => [
+          name,
+          typeof value === "string" ? withoutAttributeSecrets(name, value).text : value,
+        ]),
+      ),
+      document: renderXmlElement(document),
+    };
+  });
+  return {
+    rows,
+    fields: rows.length === 0 ? [] : Object.keys(rows[0]),
+    warnings: urlWarningsOf(withheld),
+  };
 }
 
 /**

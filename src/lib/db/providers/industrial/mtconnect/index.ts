@@ -18,7 +18,7 @@
  * then run by `agent-read.ts` against the agent's device model read fresh for that read, with the agent's adapter
  * connections withheld (`agent-withheld.ts`). On a handle opened for any agent-mode profile the console is refused,
  * the connection reads only the device model, and every reading the agent does not report answers its reason
- * (`agent-surface.ts`). MCP read stays closed on this engine.
+ * (`agent-surface.ts`). MCP's `run_mtconnect_read` reads through the same `queryReadOnly`.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";

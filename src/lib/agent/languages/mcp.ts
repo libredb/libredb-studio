@@ -18,6 +18,7 @@ import { KAFKAREAD_MCP_FACET } from "./kafkaread/mcp";
 import { KUBECTL_MCP_FACET } from "./kubectl/mcp";
 import { LIBREDBKV_MCP_FACET } from "./libredbkv/mcp";
 import { MONGO_MCP_FACET } from "./mongo/mcp";
+import { MTCONNECTREAD_MCP_FACET } from "./mtconnectread/mcp";
 import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
 import { RABBITREAD_MCP_FACET } from "./rabbitread/mcp";
 import { REDISCLI_MCP_FACET } from "./rediscli/mcp";
@@ -36,10 +37,11 @@ export interface AgentLanguageMcpWords {
   /** How a byte-cut result fits more rows, as the opening of a clause: "Project fewer fields". */
   readonly fewerFields: string;
   /**
-   * How to read past the `shown` rows a cut result returned, as the end of a sentence that starts "To ". `cut` names
-   * the cap that cut it, so advice that only a row cut can take, such as a higher max_rows, is left out of a byte cut.
+   * How to read past the `shown` rows a cut result of `statement` returned, as the end of a sentence that starts "To ".
+   * `cut` names the cap that cut it, so advice that only a row cut can take, such as a higher max_rows, is left out of a
+   * byte cut.
    */
-  readonly readPast: (shown: number, cut: "max_rows" | "result_bytes") => string;
+  readonly readPast: (shown: number, cut: "max_rows" | "result_bytes", statement: string) => string;
   /** The answer when even the first row does not fit the result cap. */
   readonly rowOverCap: string;
   /** What a refused statement never reached, as a noun phrase: "the cluster", "the database". */
@@ -109,8 +111,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   promql: null,
   // No MCP statement tool yet: MCP read stays closed on OPC UA until a change of its own declares one and opens it.
   opcuaread: null,
-  // No MCP statement tool yet: MCP read stays closed on MTConnect until a change of its own declares one and opens it.
-  mtconnectread: null,
+  mtconnectread: MTCONNECTREAD_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on MQTT until a change of its own declares one and opens it.
   mqttread: null,
   // No MCP statement tool yet: MCP read stays closed on Sparkplug until a change of its own declares one and opens it.
