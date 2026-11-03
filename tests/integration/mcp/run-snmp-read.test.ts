@@ -203,7 +203,7 @@ describe("a read", () => {
       { object: "1.3.6.1.4.1.8072.1.5.1.0", value: "1", type: "number" },
     ]);
     expect(result.structuredContent?.notes).toEqual([
-      withheldReason(at("NET-SNMP-EXTEND-MIB::nsExtendObjects")),
+      withheldReason(at("NET-SNMP-AGENT-MIB::nsExtensions")),
       withheldReason(at("NET-SNMP-VACM-MIB")),
     ]);
     expectNoWithheld(result);

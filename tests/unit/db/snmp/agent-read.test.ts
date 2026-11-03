@@ -341,7 +341,7 @@ describe("walk and table", () => {
       "CISCO-CONFIG-COPY-MIB",
       "UCD-SNMP-MIB::prErrFixCmd",
       "UCD-SNMP-MIB::extTable",
-      "NET-SNMP-EXTEND-MIB::nsExtendObjects",
+      "NET-SNMP-AGENT-MIB::nsExtensions",
       "NET-SNMP-VACM-MIB",
     ]);
     expect(JSON.stringify(answer)).not.toMatch(MARKER);

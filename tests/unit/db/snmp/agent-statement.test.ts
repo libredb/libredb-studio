@@ -35,7 +35,7 @@ describe("the withheld subtrees", () => {
       ["CISCO-CONFIG-COPY-MIB", "1.3.6.1.4.1.9.9.96"],
       ["UCD-SNMP-MIB::prErrFixCmd", "1.3.6.1.4.1.2021.2.1.103"],
       ["UCD-SNMP-MIB::extTable", "1.3.6.1.4.1.2021.8"],
-      ["NET-SNMP-EXTEND-MIB::nsExtendObjects", "1.3.6.1.4.1.8072.1.3"],
+      ["NET-SNMP-AGENT-MIB::nsExtensions", "1.3.6.1.4.1.8072.1.3"],
       ["NET-SNMP-VACM-MIB", "1.3.6.1.4.1.8072.1.9"],
       ["SNMP-TARGET-MIB", "1.3.6.1.6.3.12"],
       ["SNMP-NOTIFICATION-MIB", "1.3.6.1.6.3.13"],
@@ -82,7 +82,7 @@ describe("the withheld subtrees", () => {
     expect(at("1.3.6.1.4.1.2021.8.1.101.1")).toBe("UCD-SNMP-MIB::extTable");
     expect(at("1.3.6.1.4.1.2021.9.1.2.1")).toBeUndefined();
     expect(at("1.3.6.1.4.1.8072.1.3.2.3.1.1.8.112.114.111.98.101.101.120.116")).toBe(
-      "NET-SNMP-EXTEND-MIB::nsExtendObjects",
+      "NET-SNMP-AGENT-MIB::nsExtensions",
     );
     expect(at("1.3.6.1.4.1.8072.1.2.1.1.4.0")).toBeUndefined();
     expect(at("1.3.6.1.4.1.8072.1.5.1")).toBeUndefined();
@@ -115,7 +115,7 @@ describe("the withheld subtrees", () => {
       "CISCO-CONFIG-COPY-MIB",
       "UCD-SNMP-MIB::prErrFixCmd",
       "UCD-SNMP-MIB::extTable",
-      "NET-SNMP-EXTEND-MIB::nsExtendObjects",
+      "NET-SNMP-AGENT-MIB::nsExtensions",
       "NET-SNMP-VACM-MIB",
     ]);
     expect(withheldWithin([1, 3, 6, 1, 2, 1])).toHaveLength(4);
@@ -132,7 +132,7 @@ describe("the withheld subtrees", () => {
     expect(resumeAfter(at("HOST-RESOURCES-MIB::hrSWRun")).join(".")).toBe("1.3.6.1.2.1.25.5");
     expect(resumeAfter(at("UCD-SNMP-MIB::prErrFixCmd")).join(".")).toBe("1.3.6.1.4.1.2021.2.1.104");
     expect(resumeAfter(at("UCD-SNMP-MIB::extTable")).join(".")).toBe("1.3.6.1.4.1.2021.9");
-    expect(resumeAfter(at("NET-SNMP-EXTEND-MIB::nsExtendObjects")).join(".")).toBe("1.3.6.1.4.1.8072.1.4");
+    expect(resumeAfter(at("NET-SNMP-AGENT-MIB::nsExtensions")).join(".")).toBe("1.3.6.1.4.1.8072.1.4");
     expect(resumeAfter(at("CISCO-CONFIG-COPY-MIB")).join(".")).toBe("1.3.6.1.4.1.9.9.97");
     expect(resumeAfter(at("CISCO-FLASH-MIB::ciscoFlashCopyTable")).join(".")).toBe("1.3.6.1.4.1.9.9.10.1.2.2");
   });
@@ -268,7 +268,7 @@ describe("what is refused before anything is sent", () => {
       ["table hrSWRunTable", "HOST-RESOURCES-MIB::hrSWRun"],
       ["walk hrSWRunParameters", "HOST-RESOURCES-MIB::hrSWRun"],
       ["walk 1.3.6.1.2.1.25.4", "HOST-RESOURCES-MIB::hrSWRun"],
-      ["walk 1.3.6.1.4.1.8072.1.3", "NET-SNMP-EXTEND-MIB::nsExtendObjects"],
+      ["walk 1.3.6.1.4.1.8072.1.3", "NET-SNMP-AGENT-MIB::nsExtensions"],
       ["walk 1.3.6.1.4.1.2021.8.1.101", "UCD-SNMP-MIB::extTable"],
       ["walk 1.3.6.1.4.1.2021.2.1.103", "UCD-SNMP-MIB::prErrFixCmd"],
       ["table 1.3.6.1.4.1.9.9.96.1.1.1", "CISCO-CONFIG-COPY-MIB"],

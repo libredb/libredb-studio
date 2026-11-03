@@ -756,7 +756,7 @@ const SNMPGET_READ_BOUNDARY =
   "(1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB " +
   "(1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's " +
   "NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), and, since a command line, a script's output and a copy's login can " +
-  "carry credentials, HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4), NET-SNMP-EXTEND-MIB::nsExtendObjects " +
+  "carry credentials, HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4), NET-SNMP-AGENT-MIB::nsExtensions " +
   "(1.3.6.1.4.1.8072.1.3), UCD-SNMP-MIB::extTable (1.3.6.1.4.1.2021.8), UCD-SNMP-MIB::prErrFixCmd " +
   "(1.3.6.1.4.1.2021.2.1.103), CISCO-CONFIG-COPY-MIB (1.3.6.1.4.1.9.9.96) and CISCO-FLASH-MIB::ciscoFlashCopyTable " +
   "(1.3.6.1.4.1.9.9.10.1.2.1) are withheld by identifier prefix: an identifier inside one is never " +

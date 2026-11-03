@@ -1,6 +1,6 @@
 /**
  * Runs the SNMP agent's own reads through the provider against the snmpd 5.9.4 fixture that
- * tests/fixtures/snmp/5.9.4/agent-boundary/run.sh started, reads the withheld security and target subtrees raw, and
+ * tests/fixtures/snmp/5.9.4/agent-boundary/run.sh started, reads every subtree the reader withholds raw, and
  * writes what the agent answered into that run.sh's directory as boundary.json.
  *
  *   bun tests/live/snmp-agent-boundary.ts
@@ -118,9 +118,20 @@ async function agentRead(statement: string, budget: ReadOnlyStatementBudget = BU
 
 const setsAtStart = await counter(IN_SETS);
 const withheld = [];
-// The framework's modules hold their tables one node down (vacmObjects, usmMIBObjects); Net-SNMP's extension holds
-// nsVacmAccessTable at its root, so its column is one sub-identifier nearer, and the next is the group name's length.
-const COLUMN_DEPTH: Readonly<Record<string, number>> = { "NET-SNMP-VACM-MIB": 3 };
+// The framework's modules hold their tables one node down (vacmObjects, usmMIBObjects), and so does nsExtensions
+// (nsExtendObjects, then its tables). Net-SNMP's access extension holds nsVacmAccessTable at its root, so its column is
+// one sub-identifier nearer, and the next is the group name's length; so does hrSWRun (hrSWRunTable, entry, column)
+// and CISCO-FLASH-MIB's copy table is an entry and a column below its root. The other roots are a table (extTable,
+// entry and column), a column (prErrFixCmd, whose next sub-identifier is the index), or a module whose copy table
+// sits three nodes down (ccCopyTable), then its entry and column.
+const COLUMN_DEPTH: Readonly<Record<string, number>> = {
+  "HOST-RESOURCES-MIB::hrSWRun": 3,
+  "CISCO-FLASH-MIB::ciscoFlashCopyTable": 2,
+  "CISCO-CONFIG-COPY-MIB": 5,
+  "UCD-SNMP-MIB::prErrFixCmd": 0,
+  "UCD-SNMP-MIB::extTable": 2,
+  "NET-SNMP-VACM-MIB": 3,
+};
 for (const entry of SNMP_WITHHELD_SUBTREES) {
   const depth = COLUMN_DEPTH[entry.module] ?? 4;
   withheld.push({ module: entry.module, root: entry.root.join("."), raw: await rawSubtree(entry.root, depth) });

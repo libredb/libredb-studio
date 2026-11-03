@@ -21,8 +21,8 @@
  *
  * Beside them, the subtrees whose values carry a command line, a command's output or a login, any of which can hold a
  * credential: HOST-RESOURCES-MIB's running processes (`hrSWRun`, each process's name, path and parameters), the
- * commands Net-SNMP runs and what they print (NET-SNMP-EXTEND-MIB's `nsExtendObjects`, UCD-SNMP-MIB's `extTable` and
- * its `prErrFixCmd` column), and the file copies Cisco's CISCO-CONFIG-COPY-MIB and CISCO-FLASH-MIB's
+ * commands Net-SNMP runs and what they print (NET-SNMP-AGENT-MIB's `nsExtensions`, under which NET-SNMP-EXTEND-MIB
+ * defines its objects and nothing else sits, UCD-SNMP-MIB's `extTable` and its `prErrFixCmd` column), and the file copies Cisco's CISCO-CONFIG-COPY-MIB and CISCO-FLASH-MIB's
  * `ciscoFlashCopyTable` hold, with the user name and password of the server each copies to or from. The first four
  * were measured on the Net-SNMP 5.9.4 fixture with markers planted in a process's arguments and in the `extend`,
  * `exec` and `procfix` directives: a raw walk of 1.3 answered them under these roots and nowhere else outside the
@@ -106,7 +106,7 @@ export const SNMP_WITHHELD_SUBTREES: readonly SnmpWithheldSubtree[] = Object.fre
       "the commands the agent runs for its exec directives and what they print, either of which can carry credentials",
   },
   {
-    module: "NET-SNMP-EXTEND-MIB::nsExtendObjects",
+    module: "NET-SNMP-AGENT-MIB::nsExtensions",
     root: [1, 3, 6, 1, 4, 1, 8072, 1, 3],
     holds:
       "the commands the agent runs for its extend directives, their arguments and what they print, any of which can carry credentials",
@@ -198,7 +198,7 @@ const NOTHING_SENT = "Nothing was sent.";
  * walk of it, which steps over the six and answers the engine and MPD objects.
  */
 export const SNMP_WITHHELD_MODULES_TEXT =
-  "Withheld from agent mode are SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules, and HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4), the running processes, NET-SNMP-EXTEND-MIB::nsExtendObjects (1.3.6.1.4.1.8072.1.3), UCD-SNMP-MIB::extTable (1.3.6.1.4.1.2021.8) and UCD-SNMP-MIB::prErrFixCmd (1.3.6.1.4.1.2021.2.1.103), the commands the agent runs and what they print, and CISCO-CONFIG-COPY-MIB (1.3.6.1.4.1.9.9.96) and CISCO-FLASH-MIB::ciscoFlashCopyTable (1.3.6.1.4.1.9.9.10.1.2.1), the file copies and their servers' logins, since a command line, a script's output and a copy's login can carry credentials; every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable, and a walk that covers a withheld module steps over that module and answers the rest.";
+  "Withheld from agent mode are SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules, and HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4), the running processes, NET-SNMP-AGENT-MIB::nsExtensions (1.3.6.1.4.1.8072.1.3), UCD-SNMP-MIB::extTable (1.3.6.1.4.1.2021.8) and UCD-SNMP-MIB::prErrFixCmd (1.3.6.1.4.1.2021.2.1.103), the commands the agent runs and what they print, and CISCO-CONFIG-COPY-MIB (1.3.6.1.4.1.9.9.96) and CISCO-FLASH-MIB::ciscoFlashCopyTable (1.3.6.1.4.1.9.9.10.1.2.1), the file copies and their servers' logins, since a command line, a script's output and a copy's login can carry credentials; every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable, and a walk that covers a withheld module steps over that module and answers the rest.";
 
 const AGENT_READS = `Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry). ${SNMP_WITHHELD_MODULES_TEXT}`;
 
