@@ -843,6 +843,67 @@ describe("connect and disconnect", () => {
     expect(error).toMatchObject({ provider: "kafka", host: "127.0.0.1", port: 1 });
     expect(provider.isConnected()).toBe(false);
   }, 20_000);
+
+  test("a connect the client never settles is a ConnectionError at the query timeout, and the client it built is closed", async () => {
+    const { provider, recorded } = unconnected(
+      { "admin.metadata": () => new Promise(() => undefined) },
+      { queryTimeout: 300 },
+    );
+    const started = performance.now();
+    const error = await provider.connect().catch((e) => e);
+    const elapsed = performance.now() - started;
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error).toMatchObject({ provider: "kafka", host: "localhost", port: 9092 });
+    expect(error.message).toBe("The broker could not be reached (connect-timeout)");
+    expect(elapsed).toBeGreaterThanOrEqual(290);
+    expect(elapsed).toBeLessThan(1_000);
+    expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a connect that settles inside the query timeout leaves no deadline behind to fail it later", async () => {
+    const { provider } = await connected({}, 200);
+    await sleep(300);
+    expect(provider.isConnected()).toBe(true);
+    await provider.disconnect();
+  });
+
+  test("with the real library, a host that accepts and never answers fails the connect within its query timeout, retries included", async () => {
+    // The library retries the forced metadata read and, inside it, the ApiVersions read, each after a
+    // one-second delay, so without the provider's own bound this connect took about 11 s.
+    let accepted = 0;
+    let open = 0;
+    const silent = net.createServer((socket) => {
+      accepted++;
+      open++;
+      socket.on("error", () => undefined);
+      socket.on("close", () => open--);
+      // Read and drop what the client sends, so its close reaches this side as an end.
+      socket.resume();
+    });
+    await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", resolve));
+    const port = (silent.address() as net.AddressInfo).port;
+    try {
+      const provider = new KafkaProvider({ ...CONNECTION, host: "127.0.0.1", port } as DatabaseConnection, {
+        queryTimeout: 1_000,
+      });
+      const started = performance.now();
+      const error = await provider.connect().catch((e) => e);
+      const elapsed = performance.now() - started;
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect(error).toMatchObject({ provider: "kafka", host: "127.0.0.1", port });
+      expect(elapsed).toBeLessThan(1_900);
+      expect(provider.isConnected()).toBe(false);
+      // Closed on the way out: the connection it opened is closed, and no retry the library had
+      // scheduled opens another one afterwards.
+      const afterConnect = accepted;
+      await sleep(1_500);
+      expect(accepted).toBe(afterConnect);
+      expect(open).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => silent.close(() => resolve()));
+    }
+  }, 20_000);
 });
 
 describe("reads over captured payloads", () => {

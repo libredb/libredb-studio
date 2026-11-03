@@ -97,7 +97,10 @@ The factory builds it through `createDatabaseProvider()` ([`factory.ts`](../../s
 Its `DB_UI_CONFIG` entry draws it in `text-hue-green`, because Kafka's own mark is black, which is no identity hue, and `SHOWCASE_RANK` places it on the login showcase behind Prometheus and ahead of libSQL.
 The constructor validates nothing and opens nothing, so a provider built only to read its declarations touches no socket.
 `connect()` validates the connection ([§4](#4-connection)) before any client exists, builds the client, and reads the brokers once, forced past the client's cache, which proves a broker answers the protocol at that address with that credential.
-A connect that fails after the client was built closes it again.
+That read runs under the connection's query timeout as a whole, retries included: the client retries it once, and the ApiVersions read inside it once, each after a one-second delay, and its connect and request timeouts bound only one attempt.
+Unbounded, a host that accepts and never answers held a connect with a 2 s query timeout for about 11 s, and a Windows runner, where a refused connect takes about 2 s of SYN retries, held a connect to a closed port for over 20 s.
+A connect still unanswered when the query timeout runs out fails as a `ConnectionError` with `connect-timeout` ([§10](#10-error-handling)), on every platform.
+A connect that fails after the client was built closes it again, which also stops the retries the client had scheduled.
 `disconnect()` closes the `Admin`, the `Consumer` and the fetch pool, and so does the factory's idle eviction.
 
 ### 2.5 The client, and why
@@ -416,6 +419,7 @@ A decompressed-size cap is requested upstream as a draft recorded in `docs/BACKL
 ### 5.5 Timeout and cancellation
 
 A read runs under the connection's query timeout through an `AbortSignal`, and every other client call is bounded by the client's connect and request timeouts, set to the same value; a timeout is a `TimeoutError`.
+The connect's broker read is the exception: it runs under the query timeout as a whole, the client's retries included, and fails as a `ConnectionError` with `connect-timeout` when that runs out ([§2.4](#24-registration--lifecycle)).
 Each step of a read also waits on the read's signal, the metadata and offsets it plans from as well as each fetch, so a read its timeout stops is answered at once, whatever it waited on, and makes no further call; a read whose timeout ran out before it started makes none at all.
 There is no `cancelQuery`: both routes detect cancellation by presence, a presence-detected method exists only where it does its job, and a read is bounded by its limit, its budgets and its timeout, with no long server-side evaluation to stop.
 
@@ -615,6 +619,7 @@ Mapped from the protocol error name, the client's error code and the Node error 
 | SASL authentication failure | `AuthenticationError`, never echoing the credential |
 | TLS handshake or verification failure | `ConnectionError` carrying the Node error code |
 | a bootstrap address that refuses, does not answer the connect in time, or closes the connection | `ConnectionError` carrying the Node error code, or `connect-timeout` or `connection-lost` where there is none |
+| a `connect()` whose broker read, retries included, has not settled when the query timeout runs out ([§2.4](#24-registration--lifecycle)) | `ConnectionError` with `connect-timeout` |
 | an advertised broker address Studio cannot reach after the bootstrap succeeded | `ConnectionError` naming the advertised host and port ([§4.4](#44-the-broker-chooses-where-studio-connects-next)) |
 | a request the broker accepted and did not answer in time, and a read past the query timeout | `TimeoutError` |
 | any other protocol error | `QueryError` naming the protocol error name, or the client's code where there is none, never the client's message, which can carry a host and port |
