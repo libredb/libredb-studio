@@ -232,7 +232,6 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       defaultPort: WEAVIATE_DEFAULT_PORT,
       containerLevels: [],
       objectKinds: WEAVIATE_OBJECT_KINDS,
-      enforcesReadOnly: true,
       writeReach: WEAVIATE_WRITE_REACH,
       // The secret alone signs in, so the agent's own key is `agentPassword` alone; a user is refused here as it is
       // on the connection.

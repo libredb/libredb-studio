@@ -122,8 +122,8 @@ function assertConnectionIdPresent(connection: DatabaseConnection): void {
  * absent on another is two modes. The message names the field and never echoes the value.
  *
  * It reads the static map rather than `getCapabilities()` because it runs before a provider exists,
- * and `tests/unit/db/read-only-enforced-capability.test.ts` holds the map equal to every provider's
- * `enforcesReadOnly`.
+ * and `tests/unit/db/read-only-enforced-capability.test.ts` holds the map equal to the summary of every
+ * provider's `writeReach`.
  *
  * WHERE IT RUNS. The first statement of `createDatabaseProvider` and `withOneShotTunnel`, and of
  * `getOrCreateProvider` and `acquireExecutionProfileProvider`, ahead of their cache lookup and of

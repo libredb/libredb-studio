@@ -193,7 +193,7 @@ test.describe("a read of the fixture, as a reader sees it", () => {
 
   test("a write is refused on screen, in the provider's own words", async ({ page }) => {
     // The refusal a user actually meets. It is this provider's own and costs the device nothing:
-    // `enforcesReadOnly` is structural here, there being no code in the provider that builds a
+    // its `none` write reach is structural here, there being no code in the provider that builds a
     // write, and the sentence says which five operations it does send.
     await run(page, WRITE);
     /*

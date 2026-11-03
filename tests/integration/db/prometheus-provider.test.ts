@@ -1831,7 +1831,6 @@ describe("the query deadline, end to end (section 5.2)", () => {
 describe("write reach: no surface of a read-only connection requests anything but a PATHS value", () => {
   test("the provider declares no write path, with the closed endpoint table as the editor's proof", () => {
     const capabilities = new PrometheusProvider(makeConnection()).getCapabilities();
-    expect(capabilities.enforcesReadOnly).toBe(true);
     expect(capabilities.writeReach).toEqual(
       noWritePath({ module: "src/lib/db/providers/timeseries/prometheus/http-transport.ts", symbol: "PATHS" }),
     );

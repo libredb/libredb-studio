@@ -1656,7 +1656,6 @@ describe("declarations", () => {
       containerLevels: kafkaObjects.KAFKA_CONTAINER_LEVELS,
       objectKinds: kafkaObjects.KAFKA_OBJECT_KINDS,
       metadataOnly: KAFKA_METADATA_ONLY,
-      enforcesReadOnly: true,
       writeReach: noWritePath({
         module: "src/lib/db/providers/stream/kafka/platformatic-client.ts",
         symbol: "KAFKA_READ_APIS",
@@ -2516,7 +2515,6 @@ describe("write reach: every surface of a read-only connection reaches the broke
 
   test("the provider declares no write path, with the client's API key set as the editor's proof", () => {
     const capabilities = new KafkaProvider(CONNECTION).getCapabilities();
-    expect(capabilities.enforcesReadOnly).toBe(true);
     expect(capabilities.writeReach).toEqual(
       noWritePath({ module: "src/lib/db/providers/stream/kafka/platformatic-client.ts", symbol: "KAFKA_READ_APIS" }),
     );

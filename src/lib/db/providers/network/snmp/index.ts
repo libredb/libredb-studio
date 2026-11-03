@@ -231,7 +231,6 @@ export class SnmpProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: true,
       // Structural rather than configured: the outgoing valve parses every datagram and refuses
       // any PDU that is not a Get, GetNext or GetBulk, so no code path here can build a write.
-      enforcesReadOnly: true,
       writeReach: SNMP_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

@@ -62,7 +62,6 @@ describe("declarations", () => {
       supportsResultPagination: false,
       supportsTransactions: false,
       declaresForeignKeys: false,
-      enforcesReadOnly: true,
       writeReach: {
         editor: {
           reach: "absent",

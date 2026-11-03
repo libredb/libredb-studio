@@ -367,7 +367,7 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 
 ## 9. Capabilities, AI and MCP
 
-- `enforcesReadOnly`; the dialog draws a fixed Read-only label and no box, because nothing writes.
+- `writeReach` of `none`; the dialog draws a fixed Read-only label and no box, because nothing writes.
 
 Plan mode:
 - Plan mode sees the namespaces it walked, the kinds, their counts and object names; it walks the Default namespace and `Cluster` only and is told how many other namespaces it did not read.

@@ -568,7 +568,7 @@ A direct call of `runMaintenance` is refused with a `QueryError`.
 ### `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/stream/kafka/index.ts))
 
 - `queryLanguage: "json"`, `queryDialect: "kafka"`.
-- `enforcesReadOnly: true` and `writeReach`, which declares the editor absent with the API key set `KAFKA_READ_APIS` in [`platformatic-client.ts`](../../src/lib/db/providers/stream/kafka/platformatic-client.ts) as its proof, and object edit, maintenance and transactions absent ([§11.5](#115-write-reach-measured-live)).
+- `writeReach`, which declares the editor absent with the API key set `KAFKA_READ_APIS` in [`platformatic-client.ts`](../../src/lib/db/providers/stream/kafka/platformatic-client.ts) as its proof, and object edit, maintenance and transactions absent ([§11.5](#115-write-reach-measured-live)).
 - `createTable`: absent; the provider declares no `createTable`.
 - `supportsExplain`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
 - `tablesAreDerivedGroupings: false`: a topic is a relation the broker holds, unlike a Redis key prefix.

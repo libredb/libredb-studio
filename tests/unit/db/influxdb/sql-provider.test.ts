@@ -232,7 +232,6 @@ describe("declarations (spec 6.3)", () => {
       supportsTransactions: false,
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
-      enforcesReadOnly: true,
       writeReach: {
         editor: {
           reach: "absent",

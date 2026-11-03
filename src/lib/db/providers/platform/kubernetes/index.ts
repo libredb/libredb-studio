@@ -153,7 +153,6 @@ export class KubernetesProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Read-only whatever the flag says: the request policy admits GET and the three self reviews only.
-      enforcesReadOnly: true,
       writeReach: KUBERNETES_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

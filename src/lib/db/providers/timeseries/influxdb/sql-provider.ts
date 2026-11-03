@@ -271,7 +271,6 @@ export class InfluxDB3Provider extends SQLBaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // The route table plus the engine (I8).
-      enforcesReadOnly: true,
       writeReach: INFLUX_SQL_WRITE_REACH,
       // The agent's own credential is a token alone, as the connection's is: this type takes no user.
       agentCredential: "token",

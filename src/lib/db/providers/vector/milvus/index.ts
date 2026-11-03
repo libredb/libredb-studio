@@ -225,7 +225,6 @@ export class MilvusProvider extends BaseDatabaseProvider {
       // One level, the database, and every address names it: the shape assertContainerPathShape checks (#1147).
       containerPathShapes: "exact",
       objectKinds: MILVUS_OBJECT_KINDS,
-      enforcesReadOnly: true,
       writeReach: MILVUS_WRITE_REACH,
       // Scalar, vector and dynamic field values are stored values: the agent's answers carry names, counts and flags.
       metadataOnly: MILVUS_METADATA_ONLY,

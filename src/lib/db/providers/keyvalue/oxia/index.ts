@@ -208,7 +208,6 @@ export class OxiaProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Read-only whatever the flag says: the stub holds only reads, and the parser refuses every write verb (O1).
-      enforcesReadOnly: true,
       writeReach: OXIA_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

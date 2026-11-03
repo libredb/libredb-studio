@@ -231,7 +231,6 @@ export class NetconfProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Structural: this provider has no code that can write to a device.
-      enforcesReadOnly: true,
       writeReach: NETCONF_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

@@ -12,6 +12,7 @@
  * argument and reads no connection field.
  */
 import { describe, expect, test } from "bun:test";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect";
@@ -46,9 +47,9 @@ describe("every flag by name", () => {
 
   test("read-only is declared as a structural fact, not as a mode", () => {
     // MEASURED on the pinned agent: with `AllowPut = true` the agent's own Swagger grows from 15
-    // operations to 39. So the guarantee cannot rest on an agent setting, and this flag says it
-    // rests on the client's shape instead.
-    expect(capabilities.enforcesReadOnly).toBe(true);
+    // operations to 39. So the guarantee cannot rest on an agent setting, and the write reach says
+    // it rests on the client's shape instead.
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("none");
     expect(capabilities.maintenanceOperations).toEqual([]);
   });
 
@@ -111,7 +112,6 @@ describe("the declaration is a closed set", () => {
     "containerPathShapes",
     "declaresForeignKeys",
     "defaultPort",
-    "enforcesReadOnly",
     "maintenanceOperations",
     "objectKinds",
     "queryDialect",
@@ -173,7 +173,8 @@ describe("the declaration is a closed set", () => {
     const values = Object.values(capabilities);
     expect(new Set(values.map((value) => typeof value)).size).toBeGreaterThan(1);
     expect(values.filter((value) => value === false).length).toBeGreaterThan(1);
-    expect(values.filter((value) => value === true).length).toBe(1);
+    // No flag is true: what the provider can write is the write reach, an object, not a flag.
+    expect(values.filter((value) => value === true).length).toBe(0);
   });
 });
 

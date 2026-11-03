@@ -303,7 +303,6 @@ export class SparkplugProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Structural: this class has no code that can write to a broker.
-      enforcesReadOnly: true,
       writeReach: SPARKPLUG_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

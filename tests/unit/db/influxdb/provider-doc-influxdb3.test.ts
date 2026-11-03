@@ -447,7 +447,6 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
     for (const key of [
       "queryLanguage",
       "defaultPort",
-      "enforcesReadOnly",
       "supportsResultPagination",
       "supportsExternalQueryLimiting",
       "supportsExplain",

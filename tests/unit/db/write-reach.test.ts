@@ -19,7 +19,7 @@ function paths(overrides: Partial<Record<WritePath, WritePathReach>>): Record<Wr
 }
 
 describe("summarizeWriteReach", () => {
-  test("an absent declaration is open, the meaning an absent enforcesReadOnly has", () => {
+  test("an absent declaration is open", () => {
     expect(summarizeWriteReach(undefined)).toBe("open");
   });
 

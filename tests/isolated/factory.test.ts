@@ -60,6 +60,7 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
@@ -583,7 +584,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("firestore");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("firestore");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1216,7 +1217,7 @@ describe("createDatabaseProvider", () => {
     const capabilities = provider.getCapabilities();
     expect(capabilities.queryLanguage).toBe("sql");
     expect(capabilities.explainFormat).toBe("databend-text");
-    expect(capabilities.enforcesReadOnly).toBeUndefined();
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("open");
     expect(capabilities.resumesBilledCompute).toBeUndefined();
     expect(provider.isConnected()).toBe(false);
   });
@@ -1278,7 +1279,7 @@ describe("createDatabaseProvider", () => {
     const capabilities = provider.getCapabilities();
     expect(capabilities.queryLanguage).toBe("influxql");
     expect(capabilities.queryDialect).toBeUndefined();
-    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("none");
     expect(capabilities.supportsMaintenance).toBe(false);
     expect(provider.isConnected()).toBe(false);
   });
@@ -1299,7 +1300,7 @@ describe("createDatabaseProvider", () => {
     const capabilities = provider.getCapabilities();
     expect(capabilities.queryLanguage).toBe("sql");
     expect(capabilities.queryDialect).toBeUndefined();
-    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("none");
     expect(capabilities.supportsMaintenance).toBe(false);
     expect(provider.isConnected()).toBe(false);
   });
@@ -1343,7 +1344,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("etcd");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("etcd");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("guarded");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1372,7 +1373,7 @@ describe("createDatabaseProvider", () => {
     expect(provider).toBeDefined();
     expect(provider.type).toBe("neo4j");
     expect(provider.getCapabilities().queryLanguage).toBe("cypher");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1392,7 +1393,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("qdrant");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("qdrant");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.getCapabilities().supportsMaintenance).toBe(false);
     expect(provider.isConnected()).toBe(false);
   });
@@ -1411,7 +1412,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("weaviate");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("weaviate");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.getCapabilities().supportsMaintenance).toBe(false);
     expect(provider.isConnected()).toBe(false);
   });
@@ -1434,7 +1435,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("oxia");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("oxia");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1443,7 +1444,7 @@ describe("createDatabaseProvider", () => {
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     const provider = await createDatabaseProvider(conn);
     expect(provider.type).toBe("oxia");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
   });
 
   test("the factory error lists oxia among the supported types, after etcd and before prometheus", async () => {
@@ -1459,7 +1460,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("milvus");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("milvus");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("guarded");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1482,7 +1483,7 @@ describe("createDatabaseProvider", () => {
     const provider = await createDatabaseProvider(conn);
     expect(provider.type).toBe("kubernetes");
     expect(provider.getCapabilities().queryDialect).toBe("kubectl");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1529,7 +1530,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("s3");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("s3");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.isConnected()).toBe(false);
   });
 

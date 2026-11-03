@@ -10,6 +10,7 @@
  * sentence is checked by its fixed parts.
  */
 import { describe, expect, test } from "bun:test";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import {
   INFLUXQL_AGENT_ENVELOPE_ALLOWANCE_BYTES,
   INFLUXQL_AGENT_PROBED_DATABASES,
@@ -502,7 +503,7 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
       if (typeof value === "object") continue;
       expect(rowOf(table, `\`${key}\``)).toBe(`| \`${key}\` | \`${JSON.stringify(value)}\` |`);
     }
-    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("none");
     expect(capabilities.supportsResultPagination).toBe(false);
     expect(capabilities.supportsExternalQueryLimiting).toBe(false);
   });

@@ -124,7 +124,6 @@ describe("the declarations, with no client", () => {
       containerLevels: MILVUS_CONTAINER_LEVELS,
       containerPathShapes: "exact",
       objectKinds: MILVUS_OBJECT_KINDS,
-      enforcesReadOnly: true,
       writeReach: {
         editor: {
           reach: "absent",

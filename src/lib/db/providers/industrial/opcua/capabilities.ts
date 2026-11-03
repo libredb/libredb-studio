@@ -29,7 +29,6 @@ export const OPCUA_CAPABILITIES: ProviderCapabilities = Object.freeze({
    * session wrote a variable with status Good and 448 of 460 methods reported UserExecutable true
    * to it, among them ResetToServerDefaults. The server will not stop a client; this does.
    */
-  enforcesReadOnly: true,
   writeReach: OPCUA_WRITE_REACH,
 
   /** One JSON read request, the Kafka shape, in its own dialect so no connection falls through. */

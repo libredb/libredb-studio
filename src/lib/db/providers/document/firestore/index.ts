@@ -294,7 +294,6 @@ export class FirestoreProvider extends BaseDatabaseProvider {
       supportsResultPagination: false,
       supportsTransactions: false,
       declaresForeignKeys: false,
-      enforcesReadOnly: true,
       writeReach: FIRESTORE_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

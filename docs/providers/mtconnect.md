@@ -347,7 +347,7 @@ writes.
 ## 9. Capabilities and labels
 
 Declared: one container level, `containerPathShapes: "exact"`, the three object kinds, the dialect,
-the default port, a schema refresh pattern that matches nothing, and `enforcesReadOnly: true`.
+the default port, a schema refresh pattern that matches nothing, and a `writeReach` of `none`.
 
 Not declared, each for a measured reason: `keyScan` (6.3), `agentWalkScope` (10.2),
 `explainFormat`, `identifierQuoting`, `readsFileAccessPosture`, `rowActions`, `supportsSchemas`,

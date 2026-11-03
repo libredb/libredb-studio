@@ -253,7 +253,7 @@ None. There is no packet this provider can send that writes.
 
 ## 9. Capabilities and labels
 
-`enforcesReadOnly` is true, the provider declares no `createTable`, and `supportsMaintenance`, `supportsExplain`,
+The `writeReach` is `none`, the provider declares no `createTable`, and `supportsMaintenance`, `supportsExplain`,
 `supportsTestDataGeneration`, `supportsResultPagination` and `supportsTransactions` are false. The
 dialect record declares `offersCountQuery: false`: a broker publishes no count, and a metric is not a
 table.

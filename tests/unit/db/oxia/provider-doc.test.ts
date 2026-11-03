@@ -24,6 +24,7 @@ import {
   READ_ONLY_FIXED_HINT,
 } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED, WRITE_REACH } from "@/lib/db/compatibility";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { CREDENTIAL_WARNINGS, credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
@@ -916,7 +917,7 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
     const built = await createDatabaseProvider(oxiaConnection());
     expect(built).toBeInstanceOf(OxiaProvider);
     expect(built.getCapabilities()).toEqual(provider.getCapabilities());
-    expect(READ_ONLY_ENFORCED.oxia).toBe(provider.getCapabilities().enforcesReadOnly === true);
+    expect(READ_ONLY_ENFORCED.oxia).toBe(summarizeWriteReach(provider.getCapabilities().writeReach) !== "open");
     expect(offersSshTunnel("oxia")).toBe(true);
     expect(flat(sectionOf(DOC, "### 4.5 SSH tunnel"))).toContain(
       "The dialog offers the SSH tunnel on every Oxia connection",

@@ -26,7 +26,7 @@
  *   bun build tests/live/modbus-live-check.ts --target=node --outfile "$OUT/live.mjs" && node "$OUT/live.mjs"
  *
  * It never writes, and there is no way for it to: the provider builds four read function codes and
- * the identification request and nothing else, which is what `enforcesReadOnly` claims. The last
+ * the identification request and nothing else, which is what its `none` write reach claims. The last
  * check reads all four tables again and fails on any difference, so a run that somehow wrote
  * would say so rather than being believed.
  *

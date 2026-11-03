@@ -3,8 +3,8 @@
  *
  * READ-ONLY IS STRUCTURAL HERE, NOT A MODE. The encoder has five packets and no function that writes a PUBLISH;
  * CONNECT has no parameter for a Will; and the valve re-checks every outbound byte before it reaches the socket.
- * `enforcesReadOnly` is therefore true whatever the connection's flag says, and there is no path that could make
- * it false.
+ * Its write reach is therefore `none` whatever the connection's flag says, and there is no path that could make
+ * it anything else.
  *
  * ONE READ FILLS THE PANEL. A session subscribes once, collects what the broker delivers until one of our own
  * budgets ends it, and leaves. The panel's tree is drawn from that read; a refresh replaces it with a new one,
@@ -159,7 +159,6 @@ export class MqttProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Structural: this provider has no code that can write to a broker.
-      enforcesReadOnly: true,
       writeReach: MQTT_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

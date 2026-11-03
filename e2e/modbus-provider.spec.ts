@@ -258,7 +258,7 @@ test.describe("a read of the fixture, as a reader sees it", () => {
   });
 
   test("no cell opens an editor, because nothing here can be written", async ({ page }) => {
-    // ABSENCE, tied to `supportsInlineRowEdit: false` and to `enforcesReadOnly: true`, which is
+    // ABSENCE, tied to `supportsInlineRowEdit: false` and to its `none` write reach, which is
     // structural here rather than configured: there is no code in the provider that builds a write.
     const cell = page.getByText(String(holding(0)), { exact: false }).first();
     await cell.dblclick();

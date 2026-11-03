@@ -143,7 +143,6 @@ export class Neo4jProvider extends GraphBaseProvider {
       declaresForeignKeys: false,
       // A label is a name the server holds, not a grouping this server derived.
       tablesAreDerivedGroupings: false,
-      enforcesReadOnly: true,
       writeReach: NEO4J_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

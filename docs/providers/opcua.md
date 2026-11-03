@@ -189,7 +189,7 @@ here is measured against.
 
 ### 3.4 The read-only mode
 
-`enforcesReadOnly` is true and no setting can turn writing on, because there is nothing to turn
+The `writeReach` is `none` and no setting can turn writing on, because there is nothing to turn
 on ([2.4](#24-the-client-and-why)). The dialog draws a fixed Read-only label with no checkbox,
 rather than a control whose reason is invisible.
 
@@ -961,8 +961,7 @@ than drawn disabled with no explanation.
 
 | Declaration | Value |
 |---|---|
-| `enforcesReadOnly` | true, structurally |
-| `writeReach` | none: the editor absent with its proof, `readRequest`, and object edit, maintenance and transactions absent |
+| `writeReach` | none, structurally: the editor absent with its proof, `readRequest`, and object edit, maintenance and transactions absent |
 | `queryLanguage` / `queryDialect` | `json` / `opcua` |
 | `defaultPort` | 4840 |
 | `supportsResultPagination` | false |

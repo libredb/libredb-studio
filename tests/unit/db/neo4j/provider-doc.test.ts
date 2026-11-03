@@ -680,7 +680,6 @@ describe("docs/providers/neo4j.md section 9 states the declarations", () => {
     ["queryLanguage", `\`queryLanguage: "${capabilities.queryLanguage}"\``],
     ["defaultPort", `\`defaultPort: ${capabilities.defaultPort}\``],
     ["schemaRefreshPattern", `\`schemaRefreshPattern: "${capabilities.schemaRefreshPattern}"\``],
-    ["enforcesReadOnly", `\`enforcesReadOnly: ${capabilities.enforcesReadOnly}\``],
     ["supportsMaintenance", `\`supportsMaintenance: ${capabilities.supportsMaintenance}\``],
   ])("%s", (_name, quoted) => {
     expect(CAPABILITIES).toContain(quoted);
