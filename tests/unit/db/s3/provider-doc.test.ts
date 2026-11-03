@@ -15,7 +15,13 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
+import {
+  connectionFieldHint,
+  DB_UI_CONFIG,
+  hostUriSchemes,
+  offersSshTunnel,
+  READ_ONLY_FIXED_HINT,
+} from "@/lib/db-ui-config";
 import {
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
@@ -490,7 +496,7 @@ describe("docs/providers/s3.md: the connection, as the dialog and the builder st
   test("12. the read-only mode and machine access are what the records say", () => {
     expect(READ_ONLY_ENFORCED.s3).toBe(true);
     const mode = flat(sectionOf(DOC, "### 3.5 The read-only mode"));
-    expect(mode).toContain(readOnlyHint(DB_UI_CONFIG.s3));
+    expect(mode).toContain(READ_ONLY_FIXED_HINT);
     expect(mode).toContain("`READ_ONLY_ENFORCED.s3` is true");
     expect(MCP_EXPOSABLE.s3).toBe(false);
     expect(MCP_STATEMENT_READ.s3).toBe(false);

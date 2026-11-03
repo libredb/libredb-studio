@@ -20,7 +20,7 @@ import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { DB_UI_CONFIG, READ_ONLY_FIXED_HINT } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import type { InfluxAnswer, InfluxClientFactory, InfluxRequest } from "@/lib/db/providers/timeseries/influxdb/client";
@@ -205,7 +205,7 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
       `| Send the password without TLS | ${hints.allowInsecureAuth} |`,
     );
     expect(INFLUX_CONNECTION_SENTENCES.plaintext).toContain("tick Send the password without TLS");
-    expect(fields).toContain(`> ${UI.readOnlyHint}`);
+    expect(fields).toContain(`> ${READ_ONLY_FIXED_HINT}`);
     expect(UI.connectionFields).toEqual(["host", "port", "user", "password", "database", "allowInsecureAuth"]);
   });
 

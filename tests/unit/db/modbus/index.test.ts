@@ -17,10 +17,10 @@ import {
   atBoundary,
   MODBUS_NO_MAP_INVENTORY_SENTENCE,
   MODBUS_NO_REVOCATION_SENTENCE,
-  MODBUS_READ_ONLY_HINT,
   ModbusProvider,
 } from "@/lib/db/providers/industrial/modbus/index";
 import { ModbusMapError } from "@/lib/db/providers/industrial/modbus/register-map";
+import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { ModbusRequestError } from "@/lib/db/providers/industrial/modbus/pdu";
 import { ModbusDecodeError } from "@/lib/db/providers/industrial/modbus/values";
 import { ModbusValveDefect } from "@/lib/db/providers/industrial/modbus/valve";
@@ -415,9 +415,10 @@ describe("every capability this provider does not have, asserted on the real cla
 });
 
 describe("the sentences the product has to say out loud", () => {
-  test("the read only hint says the device enforces nothing", () => {
-    expect(MODBUS_READ_ONLY_HINT).toContain("device enforces nothing");
-    expect(MODBUS_READ_ONLY_HINT).toContain("can write to it");
+  test("the dialog's Host hint says the device enforces nothing, beside the fixed Read-only label", () => {
+    const hint = CONNECTION_FORM.modbus.fieldHints?.host;
+    expect(hint).toContain("device enforces nothing");
+    expect(hint).toContain("can write to it");
   });
 
   test("the mbaps sentence says revocation is not checked, and names both runtimes", () => {

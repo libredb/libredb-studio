@@ -191,7 +191,7 @@ function getDefaultForm() {
     setPrivateKeyPassphrase: mockSetPrivateKeyPassphrase,
     role: "",
     setRole: mockSetRole,
-    readOnlyOffered: false,
+    readOnlyControl: "none" as "toggle" | "fixed" | "none",
     credentialWarning: undefined as string | undefined,
     host: "localhost",
     setHost: mockSetHost,
@@ -371,7 +371,6 @@ interface MockFieldCopy {
   readonly fieldOptions?: Readonly<Record<string, readonly { readonly value: string; readonly label: string }[]>>;
   readonly showSshTunnel?: false;
   readonly showSslPanel?: false;
-  readonly readOnlyHint?: string;
   readonly fieldShownWhen?: Readonly<Record<string, { readonly field: string; readonly equals: string }>>;
   readonly hostHint?: (host: string) => string | undefined;
 }
@@ -474,8 +473,6 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
   // Mirrored from the real entry (Neo4j spec A7); tests/unit/lib/db-ui-config.test.ts pins the real one.
   neo4j: {
     fieldHints: { database: "Leave empty to use the server's home database." },
-    readOnlyHint:
-      "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
   },
   // Mirrored from the real entry (vector-family spec 5.2); tests/unit/lib/db-ui-config.test.ts pins the real one.
   milvus: {
@@ -508,7 +505,6 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       allowInsecureAuth:
         "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
     },
-    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
   },
   influxdb3: {
     fieldLabels: { password: "Token" },
@@ -521,7 +517,6 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       allowInsecureAuth:
         "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
     },
-    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
   },
   // Mirrored from the real entry (SB3-1.5); tests/unit/lib/db-ui-config.test.ts pins the real one.
   oxia: {
@@ -538,8 +533,6 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       allowInsecureAuth:
         "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
     },
-    readOnlyHint:
-      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
   },
   // Mirrored from the real entry (Databend design 6.1); tests/unit/lib/db-ui-config.test.ts pins the real one.
   databend: {
@@ -578,8 +571,6 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       allowInsecureAuth:
         "Ticked, Studio connects to this host over plain HTTP. The secret access key is never sent to this server, but bucket and object names, listings and previewed contents travel in the clear, readable by anyone on the path, and a captured request can be replayed for several minutes. Choose an SSL mode under SSL / TLS, or an SSH tunnel, wherever the server offers one.",
     },
-    readOnlyHint:
-      "S3-compatible connections are read-only in this version, whether or not this is ticked: Studio sends no write.",
   },
   // Mirrored from the real entry; tests/unit/lib/db-ui-config.test.ts pins the real one.
   kubernetes: {
@@ -606,8 +597,6 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       tlsServerName:
         "Optional: the name the API server's certificate is checked against, when it differs from Host (kubeconfig tls-server-name).",
     },
-    readOnlyHint:
-      "Kubernetes connections are read-only in this version, whether or not this is ticked: Studio sends the cluster no write.",
   },
   // Mirrored from the real entry; tests/unit/lib/db-ui-config.test.ts pins the real one.
   rabbitmq: {
@@ -732,9 +721,9 @@ mock.module("@/lib/db-ui-config", () => ({
     const value = connection[condition.field] ?? config.fieldOptions?.[condition.field]?.[0]?.value;
     return value !== undefined && String(value) === condition.equals;
   },
-  readOnlyHint: (config: MockFieldCopy) =>
-    config.readOnlyHint ??
+  READ_ONLY_TOGGLE_HINT:
     "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
+  READ_ONLY_FIXED_HINT: "Studio has no write path on this engine, so every connection to it is read-only.",
   getDBIcon: () => () => null,
   getDBColor: () => "text-hue-blue",
   // `isFileBased` must be mocked now that `DB_UI_CONFIG` is an exported binding (#425 made
@@ -840,30 +829,39 @@ describe("ConnectionModal", () => {
     expect((getByLabelText("Do not read the object list on connect") as HTMLInputElement).checked).toBe(true);
   });
 
-  // #1089: the read-only mode is offered only where the form says so, which is an engine whose
-  // provider enforces it and never a copy of a seed. tests/hooks/use-connection-form.test.ts pins where
-  // that is, so the dialog is exercised here through the form's answer alone.
-  test("draws no Read-only toggle where the form does not offer one", () => {
-    const { queryByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+  // #1089: the read-only control is the one the form names: a toggle where every write path is gated, a fixed label
+  // where Studio has no write path, and nothing where a path is open. tests/hooks/use-connection-form.test.ts pins
+  // which engine gets which, so the dialog is exercised here through the form's answer alone.
+  test("draws no read-only control where the form names none", () => {
+    const { container, queryByLabelText, queryByText } = render(
+      React.createElement(ConnectionModal, createDefaultProps()),
+    );
     expect(queryByLabelText("Read-only")).toBeNull();
+    expect(queryByText("Read-only")).toBeNull();
+    expect(container.querySelector("#readOnly-hint")).toBeNull();
   });
 
-  // A Neo4j connection is read-only whether or not the box is ticked (spec A7), so the default sentence,
-  // which says the mode can be turned off, would be false there: the engine declares its own.
-  test("draws the engine's own Read-only sentence where its config declares one", () => {
-    mockFormOverrides = { readOnlyOffered: true, type: "neo4j" };
-    const { getByText, queryByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
-    expect(
-      getByText(
-        "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
-      ).id,
-    ).toBe("readOnly-hint");
+  test("draws the fixed Read-only label and the one shared sentence, with no box, where the form says fixed", () => {
+    mockFormOverrides = { readOnlyControl: "fixed", type: "neo4j" };
+    const { container, getByRole, getByText, queryByText } = render(
+      React.createElement(ConnectionModal, createDefaultProps()),
+    );
+    expect(container.querySelector("#readOnly")).toBeNull();
+    expect(getByText("Read-only").id).toBe("readOnly-label");
+    expect(getByText("Studio has no write path on this engine, so every connection to it is read-only.").id).toBe(
+      "readOnly-hint",
+    );
+    // One group a screen reader reads as the label and its sentence.
+    const group = getByRole("group", { name: "Read-only" });
+    expect(group.getAttribute("aria-describedby")).toBe("readOnly-hint");
     expect(queryByText(/You can turn this off here/)).toBeNull();
   });
 
-  test("offers the Read-only toggle where the form does, says what it refuses, and forwards it", () => {
-    mockFormOverrides = { readOnlyOffered: true };
-    const { getByLabelText, getByText, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+  test("offers the Read-only toggle where the form says toggle, says what it refuses, and forwards it", () => {
+    mockFormOverrides = { readOnlyControl: "toggle" };
+    const { getByLabelText, getByText, queryByText, rerender } = render(
+      React.createElement(ConnectionModal, createDefaultProps()),
+    );
     const box = getByLabelText("Read-only") as HTMLInputElement;
 
     expect(box.checked).toBe(false);
@@ -873,11 +871,12 @@ describe("ConnectionModal", () => {
         "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
       ).id,
     ).toBe("readOnly-hint");
+    expect(queryByText(/Studio has no write path/)).toBeNull();
 
     fireEvent.click(box);
     expect(mockSetReadOnly).toHaveBeenCalledWith(true);
 
-    mockFormOverrides = { readOnlyOffered: true, readOnly: true };
+    mockFormOverrides = { readOnlyControl: "toggle", readOnly: true };
     rerender(React.createElement(ConnectionModal, createDefaultProps()));
     expect((getByLabelText("Read-only") as HTMLInputElement).checked).toBe(true);
 

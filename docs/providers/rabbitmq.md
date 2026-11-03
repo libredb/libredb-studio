@@ -68,7 +68,7 @@ Two endpoints serve one connection, on one host and one TLS setting:
 The read client has encoders for the protocol header, `connection.start-ok`, `tune-ok`, `open`, `close`, `close-ok`, `channel.open`, `channel.close-ok`, `basic.qos`, `basic.consume`, `basic.ack`, `basic.cancel-ok` and the heartbeat frame, and for nothing else.
 No encoder exists for `basic.get`, `basic.reject`, `basic.nack`, `basic.recover`, `basic.publish`, or any `queue.*`, `exchange.*`, `tx.*` or `confirm.*` method, and a unit test holds the encoder table to that list and finds exactly one socket write site.
 The management route table is GET only and has no route that takes a message.
-A connection is read-only whether or not its read-only box is ticked.
+A connection is read-only whatever its `readOnly` says, and the dialog draws a fixed Read-only label with no box.
 
 ### 3.2 An own read client, with no way to write
 

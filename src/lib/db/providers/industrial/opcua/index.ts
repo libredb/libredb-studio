@@ -3,8 +3,8 @@
  *
  * READ-ONLY BY CONSTRUCTION, and the construction is three files deep: `client.ts` names eight
  * services and none writes, `library.ts` is the only module allowed to import the library, and
- * `tests/unit/db/opcua/seam.test.ts` asserts both across every module in the directory. The
- * connection's read-only checkbox cannot turn writing on, because there is nothing to turn on.
+ * `tests/unit/db/opcua/seam.test.ts` asserts both across every module in the directory. No
+ * setting can turn writing on, because there is nothing to turn on.
  *
  * ONE SESSION PER CONNECTION, closed on every path out. A server's session table is shared with the
  * plant's own SCADA clients: measured, OPC PLC allows 100 and the in-process server 10.

@@ -174,7 +174,8 @@ describe("useConnectionForm: applyImported fills a new connection", () => {
 
   test("the choices about how to connect are kept: read-only, the object scan and the query timeout", async () => {
     const { result, onConnect } = renderForm();
-    act(() => result.current.setType("neo4j"));
+    // etcd, whose write paths are gated, so the form writes the mode it keeps.
+    act(() => result.current.setType("etcd"));
     act(() => result.current.setReadOnly(true));
     act(() => result.current.setSkipObjectScan(true));
     act(() => result.current.setQueryTimeout("30000"));

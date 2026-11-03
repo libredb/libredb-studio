@@ -1,5 +1,6 @@
 import { connect } from "node:net";
 import { expect, test } from "@playwright/test";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * Sparkplug B in the browser (#1720).
@@ -31,11 +32,6 @@ const EMPTY_GROUP_HINT =
   "One Sparkplug group id, or empty for every group. A group is a level of the topic and nothing else: " +
   "it is not a thing on the broker that can be subscribed to on its own, so an empty field reads every " +
   "group under spBv1.0 and a filled one reads that group alone.";
-
-const READ_ONLY_HINT =
-  "Sparkplug connections are read-only whether or not this is ticked, and not by a setting: this " +
-  "provider's encoder has no function that writes a PUBLISH, and its CONNECT carries no Will, which is " +
-  "how a death certificate would be registered.";
 
 const BROKER = { host: "127.0.0.1", port: 1884 } as const;
 
@@ -162,15 +158,14 @@ test.describe("Sparkplug B in the connection dialog", () => {
     await expect(dialog.locator("#database")).toHaveAttribute("placeholder", "");
   });
 
-  test("draws the Read-only toggle, whose hint says the mode is not what makes it read-only", async ({ page }) => {
+  test("draws the fixed Read-only label, since no setting is what makes it read-only", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "Sparkplug B", exact: true }).click();
 
-    const box = dialog.getByLabel("Read-only", { exact: true });
-    await expect(box).toBeVisible();
-    await expect(box).not.toBeChecked();
-    await expect(dialog.locator("#readOnly")).toHaveAttribute("aria-describedby", "readOnly-hint");
-    await expect(dialog.getByText(READ_ONLY_HINT, { exact: true })).toBeVisible();
+    // A fixed label and no box: Studio has no write path on this engine, so there is no mode to choose.
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
   });
 
   test("a group holding an MQTT filter character is refused before any socket opens", async ({ page }) => {

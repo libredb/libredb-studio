@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { INFLUX_CONNECTION_SENTENCES } from "../src/lib/db/providers/timeseries/influxdb/connection-options";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * Gate 5 for the two InfluxDB connection types (InfluxDB spec, SPEC-delivery D), one spec for the pair as
@@ -42,7 +43,6 @@ const HOST_HINT =
   "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.";
 const CONSENT_HINT =
   "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.";
-const READ_ONLY_HINT = "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.";
 const TEST_HOST = "influx-e2e.invalid";
 // Not "password": the refusal itself says "password or token", so the not-repeated check needs a word it never holds.
 const TEST_SECRET = "standin-not-a-token";
@@ -129,14 +129,16 @@ test.describe("InfluxDB (InfluxQL) and InfluxDB 3 (SQL) in the connection dialog
   });
 
   for (const type of TYPES) {
-    test(`${type.label} draws the TLS and SSH panels and the Read-only hint`, async ({ page }) => {
+    test(`${type.label} draws the TLS and SSH panels and the fixed Read-only label`, async ({ page }) => {
       const dialog = dialogOf(page);
       await typeButton(page, type.label).click();
 
       await expect(dialog.getByText("SSL / TLS", { exact: true })).toBeVisible();
       await expect(dialog.getByText("SSH Tunnel", { exact: true })).toBeVisible();
-      await expect(dialog.getByLabel("Read-only", { exact: true })).toBeVisible();
-      await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_HINT);
+      // A fixed label and no box: Studio has no write path on this engine, so there is no mode to choose.
+      await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+      await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+      await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
     });
 
     test(`${type.label} draws the consent box with the InfluxDB hint only while SSL mode is disable`, async ({

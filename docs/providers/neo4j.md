@@ -195,9 +195,9 @@ The cancel, the READ-mode refusal and every capture of section 11 were measured 
 | Database | Leave empty to use the server's home database. |
 | SSL / TLS | The mode and the CA (section 4.3) |
 | SSH Tunnel | A bastion that forwards the one Bolt endpoint |
-| Read-only | Accepted, and read-only either way: the provider refuses every write whatever the toggle says. The dialog says so under the toggle: "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used." |
+| Read-only | No box: the dialog draws a fixed Read-only label, because the provider refuses every write whatever the connection's `readOnly` says. The sentence under it: "Studio has no write path on this engine, so every connection to it is read-only." |
 
-The Database row is the hint the connection dialog shows under that field, and the Read-only row quotes the sentence under the toggle.
+The Database row is the hint the connection dialog shows under that field, and the Read-only row quotes the sentence under the fixed label.
 There is no connection string: no `bolt://` or `neo4j://` URI is parsed, so a scheme typed into Host is refused rather than read.
 A user name or password written into the host is refused with "Invalid host: a user name or password belongs in the connection's user and password fields, not in the host".
 The host and port go through the shared validators of `src/lib/db/http/endpoint.ts`, and the built URI is parsed back and must name the same host and port.

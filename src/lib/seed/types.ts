@@ -78,7 +78,7 @@ function refuseSeedOnlyFields(conn: { readonly type: DatabaseType }, ctx: z.Refi
  * it is handed, `MCP_EXPOSABLE` in `SeedConnectionSchema`, never a type-id branch, so an engine is
  * admitted by its own entry. Refused rather than stripped, because a stripped opt-in would load a file
  * that asks for something the product will not do. A factory over the record, the way
- * `offersReadOnlyToggle` takes its engine's answer, so the refusal is tested before any shipped engine
+ * `readOnlyControl` takes its engine's answer, so the refusal is tested before any shipped engine
  * answers false.
  */
 export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType, boolean>>) {

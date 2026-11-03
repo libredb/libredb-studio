@@ -189,9 +189,9 @@ here is measured against.
 
 ### 3.4 The read-only mode
 
-`enforcesReadOnly` is true and the connection's read-only checkbox cannot turn writing on, because
-there is nothing to turn on ([2.4](#24-the-client-and-why)). The dialog says so in those words
-rather than drawing a control whose reason is invisible.
+`enforcesReadOnly` is true and no setting can turn writing on, because there is nothing to turn
+on ([2.4](#24-the-client-and-why)). The dialog draws a fixed Read-only label with no checkbox,
+rather than a control whose reason is invisible.
 
 ### 3.5 Methods are listed and never called
 

@@ -550,6 +550,14 @@ describe("StudioMobileHeader", () => {
       expect(marker.nextElementSibling).toBe(getByText("Online"));
     });
 
+    test("renders for a connection to an engine Studio has no write path on, without the field", () => {
+      const { getByText } = render(<StudioMobileHeader {...defaults} activeConnection={{ ...conn, type: "s3" }} />);
+
+      expect(getByText("Read-only").getAttribute("title")).toBe(
+        "Writes, value edits and maintenance are refused on this connection",
+      );
+    });
+
     test("renders nothing for a read-write connection or for no connection", () => {
       const view = render(<StudioMobileHeader {...defaults} />);
       expect(view.queryByText("Read-only")).toBeNull();

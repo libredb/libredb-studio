@@ -38,7 +38,8 @@ import { databendNotAppliedNotice, parseConnectionString } from "@/lib/connectio
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { parseHostUri, tlsModeAfterScheme, type HostUriResult } from "@/lib/connection-host-uri";
 import { newLocalId } from "@/lib/ids";
-import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { WRITE_REACH } from "@/lib/db/compatibility";
+import type { WriteReach } from "@/lib/db/write-reach";
 import { credentialWarningFor } from "@/lib/db/credential-warnings";
 
 /**
@@ -341,16 +342,20 @@ function cautionSentence(result: TestOutcome): string | null {
 type TestResultTone = "success" | "warning" | "error";
 
 /**
- * Whether the connection dialog draws the Read-only toggle (#1089): only where the engine's provider
- * enforces the mode (`enforced`, the engine's `READ_ONLY_ENFORCED` entry), and never on a copy of a
- * seed. A seed copy keeps `id: "seed:<id>"`, and the server re-resolves that id from the operator's
- * file and discards the copy's fields, so a toggle there would change nothing it claims to.
+ * Which read-only control the connection dialog draws (#1089), from the engine's `WRITE_REACH` entry:
+ * - `toggle` where every write path is gated (`guarded`), so the mode changes what the connection may send; never on a
+ *   copy of a seed, which keeps `id: "seed:<id>"` and whose fields the server re-resolves from the operator's file and
+ *   discards, so a toggle there would change nothing it claims to;
+ * - `fixed` where Studio has no write path (`none`): a label stating the fact, seed copy included, since there is no
+ *   choice to offer;
+ * - `none` where a write path is open: the factory refuses `readOnly: true` there.
  */
-export function offersReadOnlyToggle(
-  enforced: boolean,
+export function readOnlyControl(
+  reach: WriteReach,
   editConnection: DatabaseConnection | null | undefined,
-): boolean {
-  return enforced && editConnection?.seedId === undefined;
+): "toggle" | "fixed" | "none" {
+  if (reach === "none") return "fixed";
+  return reach === "guarded" && editConnection?.seedId === undefined ? "toggle" : "none";
 }
 
 /**
@@ -551,10 +556,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
    */
   const [skipObjectScan, setSkipObjectScan] = useState(D.skipObjectScan);
   /**
-   * Refuse every write on this connection (#1089). Drawn only where `offersReadOnlyToggle` says so, and
-   * written by `buildConnection` only where the engine's provider enforces it, so a type switch with
-   * the box ticked cannot produce a connection the factory refuses while the box that clears it is
-   * hidden.
+   * Refuse every write on this connection (#1089). Drawn as a box only where `readOnlyControl` says `toggle`, and
+   * written by `buildConnection` only where the engine's write paths are gated, so a type switch with the box ticked
+   * cannot produce a connection the factory refuses while the box that clears it is hidden, nor carry a field that
+   * changes no write onto an engine Studio has no write path on.
    */
   const [readOnly, setReadOnly] = useState(D.readOnly);
   /**
@@ -1001,10 +1006,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Written only when it says something, like every other optional field here: a
       // stored `false` is noise on every connection ever saved.
       ...(skipObjectScan ? { skipObjectScan } : {}),
-      // Only for an engine whose provider enforces it (#1089), the rule the tunnel follows above: a type
-      // switch keeps the box's state, and the factory refuses `readOnly: true` on every other engine.
-      // Written only when true, like the no-scan choice: `false` and absent are one mode.
-      ...(readOnly && READ_ONLY_ENFORCED[type] ? { readOnly: true } : {}),
+      // Only for an engine whose write paths are gated (#1089), the rule the tunnel follows above: a type switch keeps
+      // the box's state, the factory refuses `readOnly: true` where a path is open, and where Studio has no write
+      // path the field changes no write. Written only when true, like the no-scan choice: `false` and absent are one
+      // mode.
+      ...(readOnly && WRITE_REACH[type] === "guarded" ? { readOnly: true } : {}),
       // Only for an engine that takes it, and only while no TLS is chosen, which is the only state the
       // box is drawn in (#786): consent left over from a type switch or a TLS mode is not sent.
       ...(allowInsecureAuth && addressedFields.has("allowInsecureAuth") && sslMode === "disable"
@@ -1449,7 +1455,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   });
   // The refusal of the Host box's address, drawn under the box as well as in the result banner; an edit clears both.
   const hostError = testResult !== null && testResult === hostRefusal ? testResult.message : undefined;
-  const readOnlyOffered = offersReadOnlyToggle(READ_ONLY_ENFORCED[type], editConnection);
+  const readOnlyShown = readOnlyControl(WRITE_REACH[type], editConnection);
   // The warning reads the credential `buildConnection` would send: a user left in state by another engine is not
   // this engine's, so it does not count where this engine takes no user name. It blocks nothing.
   const credentialWarning = credentialWarningFor(type, {
@@ -1554,7 +1560,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
     // Derived data
     dbTypes,
-    readOnlyOffered,
+    readOnlyControl: readOnlyShown,
     credentialWarning,
   };
 }

@@ -12,7 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYAML } from "yaml";
-import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { DB_UI_CONFIG, READ_ONLY_FIXED_HINT } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { createInfluxClient, type InfluxAnswer } from "@/lib/db/providers/timeseries/influxdb/client";
@@ -196,7 +196,7 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
     expect(rowOf(fields, "Send the password without TLS")).toBe(
       `| Send the password without TLS | ${hints.allowInsecureAuth} |`,
     );
-    expect(rowOf(fields, "Read-only")).toBe(`| Read-only | ${UI.readOnlyHint} |`);
+    expect(rowOf(fields, "Read-only")).toBe(`| Read-only | ${READ_ONLY_FIXED_HINT} |`);
     expect(UI.connectionFields).not.toContain("user");
   });
 

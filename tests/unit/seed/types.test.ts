@@ -438,7 +438,7 @@ describe("SeedDefaultsSchema and the MCP opt-in", () => {
 /**
  * The MCP opt-in on an engine MCP is not offered for (#1089): refused at load, read from
  * `MCP_EXPOSABLE` and never from a type-id. The rule is pinned here through `refuseMcpWhereNotOffered`
- * handed a copy of the record that answers false for another shipped type, the way `offersReadOnlyToggle`
+ * handed a copy of the record that answers false for another shipped type, the way `readOnlyControl`
  * is handed its engine's answer, so no case depends on which engine the record refuses.
  */
 describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)", () => {

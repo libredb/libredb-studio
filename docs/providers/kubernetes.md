@@ -11,7 +11,7 @@ Tests: [`tests/unit/db/kubernetes/`](../../tests/unit/db/kubernetes/), [`tests/i
 ## 1. Overview
 
 Studio reads one Kubernetes cluster: a tree of the `Cluster` pseudo-container and the namespaces, a YAML view of every built-in object, Describe and Logs on a row, and a console that speaks a subset of kubectl.
-It is read-only in this version, whatever the connection's read-only box says: no request it can send writes, runs a program or opens a stream, and no Secret value reaches any surface.
+It is read-only in this version, whatever the connection's `readOnly` says: no request it can send writes, runs a program or opens a stream, and no Secret value reaches any surface.
 It needs no driver and no Kubernetes library: requests go over Studio's shared `node:https` transport, and the kubeconfig import reads YAML in the browser with the `yaml` package Studio already ships.
 
 ### Concept mapping
@@ -367,7 +367,7 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 
 ## 9. Capabilities, AI and MCP
 
-- `enforcesReadOnly`; the read-only box changes nothing, because nothing writes.
+- `enforcesReadOnly`; the dialog draws a fixed Read-only label and no box, because nothing writes.
 
 Plan mode:
 - Plan mode sees the namespaces it walked, the kinds, their counts and object names; it walks the Default namespace and `Cluster` only and is told how many other namespaces it did not read.

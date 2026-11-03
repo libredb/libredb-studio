@@ -34,7 +34,6 @@ const MOVED_READERS = [
   "connectionFieldPlacement",
   "connectionFieldShown",
   "connectionFieldRefusal",
-  "readOnlyHint",
 ] as const;
 
 // The picker order must cover the whole DatabaseType union, because this form is also the EDIT
@@ -259,6 +258,11 @@ describe("src/lib/db/connection-form.ts", () => {
         same: true,
       });
     }
+    // The read-only control's two sentences are re-exported the same way: one string, never a copy.
+    expect([uiConfig.READ_ONLY_TOGGLE_HINT, uiConfig.READ_ONLY_FIXED_HINT]).toEqual([
+      form.READ_ONLY_TOGGLE_HINT,
+      form.READ_ONLY_FIXED_HINT,
+    ]);
   });
 
   test("offersSslPanel reads CONNECTION_FORM", () => {

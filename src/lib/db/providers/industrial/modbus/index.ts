@@ -67,7 +67,6 @@ import {
   MODBUS_ADDRESS_MASKING_REASON,
   MODBUS_DEFAULT_PORT,
   MODBUS_NO_REVOCATION_SENTENCE,
-  MODBUS_READ_ONLY_HINT,
   UNIT_ID_MIN,
 } from "./constants";
 import { dialModbus, socketWire, type Endpoint } from "./client";
@@ -752,4 +751,4 @@ export class ModbusProvider extends BaseDatabaseProvider {
   }
 }
 
-export { MODBUS_NO_REVOCATION_SENTENCE, MODBUS_READ_ONLY_HINT };
+export { MODBUS_NO_REVOCATION_SENTENCE };
