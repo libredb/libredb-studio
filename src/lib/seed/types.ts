@@ -3,8 +3,9 @@ import {
   CONNECTION_STRING_ACCEPTED,
   MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
-  READ_ONLY_ENFORCED,
+  WRITE_REACH,
 } from "@/lib/db/compatibility";
+import type { WriteReach } from "@/lib/db/write-reach";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { publishedDefaultPairWarning, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import {
@@ -88,6 +89,26 @@ export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType
       code: z.ZodIssueCode.custom,
       message: `mcp is not offered for ${conn.type}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`,
       path: ["mcp"],
+    });
+  };
+}
+
+/**
+ * The load's refusal of `readOnly: true` on an engine whose write reach is `open` (#1089): some path there sends a
+ * write no Studio gate refuses, so the seed would be listed as read-only and still write. Accepted wherever the reach
+ * is `guarded` or `none`; on a `none` engine the flag changes no write, and a policy that marks every seed read-only
+ * still loads. Read from the record it is handed, `WRITE_REACH` in `SeedConnectionSchema`, never a type-id branch,
+ * and a factory over it for the reason `refuseMcpWhereNotOffered` gives. The credential refusal and the `managed`
+ * refusal below apply on every engine this admits, `none` included, because a read-only seed promises a boundary on
+ * the host as well as in Studio's code.
+ */
+export function refuseReadOnlyWhereOpen(reach: Readonly<Record<DatabaseType, WriteReach>>) {
+  return (conn: { type: DatabaseType; readOnly?: boolean }, ctx: z.RefinementCtx): void => {
+    if (conn.readOnly !== true || reach[conn.type] !== "open") return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `readOnly is not offered for ${conn.type}: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.`,
+      path: ["readOnly"],
     });
   };
 }
@@ -475,17 +496,8 @@ export const SeedConnectionSchema = z
   .superRefine(refuseMcpWithoutAgentCredential(MCP_AGENT_CREDENTIAL_REQUIRED))
   // An agent credential the engine's row does not take, read from SEED_AGENT_CREDENTIAL.
   .superRefine(refuseInvalidAgentCredential(SEED_AGENT_CREDENTIAL))
-  // A read-only mode the engine's provider ignores would be a promise nobody keeps: the seed would be
-  // listed as read-only and still write (#1089). Read from READ_ONLY_ENFORCED, never a type-id branch,
-  // so an engine is admitted by its own declaration.
-  .superRefine((conn, ctx) => {
-    if (conn.readOnly !== true || READ_ONLY_ENFORCED[conn.type]) return;
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `readOnly is not offered for ${conn.type}: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.`,
-      path: ["readOnly"],
-    });
-  })
+  // A read-only mode on an engine Studio can write unguarded, read from WRITE_REACH.
+  .superRefine(refuseReadOnlyWhereOpen(WRITE_REACH))
   // A read-only seed whose credential its type declares unsafe to rely on (src/lib/db/credential-warnings.ts): a
   // published default pair, or no secret where the type accepts none, so the mode would promise a boundary the
   // server does not keep. The file shows only literals, so a pair with a `${ENV}` or `${vault:...}` reference in

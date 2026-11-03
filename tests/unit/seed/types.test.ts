@@ -7,8 +7,8 @@ import {
   CONNECTION_STRING_ACCEPTED,
   MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
-  READ_ONLY_ENFORCED,
   SHIPPED_DATABASE_TYPES,
+  WRITE_REACH,
 } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { ETCD_MCP_ROOT_REFUSAL } from "@/lib/db/providers/keyvalue/etcd/connection-string";
@@ -17,6 +17,7 @@ import {
   refuseInvalidAgentCredential,
   refuseMcpWhereNotOffered,
   refuseMcpWithoutAgentCredential,
+  refuseReadOnlyWhereOpen,
   SeedConnectionSchema,
   SeedConfigSchema,
   SeedDefaultsSchema,
@@ -877,8 +878,8 @@ describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
     expect(result.data?.readOnly).toBeUndefined();
   });
 
-  it("refuses readOnly: true on every engine whose provider does not enforce it, naming the type and the field", () => {
-    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]);
+  it("refuses readOnly: true on every engine whose write reach is open, naming the type and the field", () => {
+    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "open");
     // Vacuity, by name: an empty population would refuse nothing and pass.
     expect(refusing).toContain("postgres");
     for (const type of refusing) {
@@ -886,6 +887,82 @@ describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
       expect({ type, issues: result.error?.issues.map((issue) => [issue.path.join("."), issue.message]) }).toEqual({
         type,
         issues: [["readOnly", unenforced(type)]],
+      });
+    }
+  });
+
+  it("accepts readOnly: true on every engine whose write reach is not open, none and guarded alike", () => {
+    const keeping = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] !== "open");
+    // Vacuity, by name: one engine of each value, so an empty or one-sided population fails.
+    expect(keeping).toContain("etcd");
+    expect(keeping).toContain("qdrant");
+    // A secret reference, so the credential refusal below, which judges only what the file shows, stays out of it.
+    const secret = ["${SEED", "SECRET}"].join("_");
+    const refused = keeping.filter(
+      (type) =>
+        SeedConnectionSchema.safeParse({ ...validConn, type, ...completeFor(type), password: secret, readOnly: true })
+          .data?.readOnly !== true,
+    );
+    expect(refused).toEqual([]);
+  });
+
+  /**
+   * The rule is pinned through `refuseReadOnlyWhereOpen` handed a copy of `WRITE_REACH` that answers otherwise for
+   * one engine each way, so the refusal is read from the record it is handed and from no other answer.
+   */
+  it("reads the record it is handed: an engine recorded open is refused, and one recorded none is admitted", () => {
+    const schema = (reach: typeof WRITE_REACH) => SeedConnectionSchema.superRefine(refuseReadOnlyWhereOpen(reach));
+    const issuesOf = (reach: typeof WRITE_REACH, type: string) =>
+      schema(reach)
+        .safeParse({ ...validConn, type, password: ["${SEED", "SECRET}"].join("_"), readOnly: true })
+        .error?.issues.map((issue) => [issue.path.join("."), issue.message]);
+    expect(issuesOf({ ...WRITE_REACH, qdrant: "open" }, "qdrant")).toEqual([["readOnly", unenforced("qdrant")]]);
+    expect(issuesOf({ ...WRITE_REACH, etcd: "open" }, "etcd")).toEqual([["readOnly", unenforced("etcd")]]);
+    expect(
+      schema({ ...WRITE_REACH, postgres: "none" }).safeParse({ ...validConn, readOnly: true }).error?.issues.length,
+    ).toBe(1);
+  });
+
+  /**
+   * A read-only seed is a promise about the host as much as about Studio's code, so an engine with no write path
+   * does not discharge the credential refusal: a keyless read-only seed stays refused wherever the type declares
+   * that no secret leaves the server open, the vector engines included.
+   */
+  it("keeps the no-secret refusal on every engine whose write reach is none and that declares one", () => {
+    const declaring = SHIPPED_DATABASE_TYPES.filter(
+      (type) => WRITE_REACH[type] === "none" && CREDENTIAL_WARNINGS[type]?.some((entry) => entry.kind === "no-secret"),
+    );
+    expect(declaring).toContain("qdrant");
+    expect(declaring).toContain("weaviate");
+    for (const type of declaring) {
+      const result = SeedConnectionSchema.safeParse({ ...validConn, type, readOnly: true });
+      expect({ type, paths: result.error?.issues.map((issue) => issue.path.join(".")) }).toEqual({
+        type,
+        paths: ["password"],
+      });
+    }
+  });
+
+  it("keeps the managed: false refusal on every engine whose write reach is not open", () => {
+    const keeping = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] !== "open");
+    expect(keeping).toContain("qdrant");
+    for (const type of keeping) {
+      const result = SeedConfigSchema.safeParse({
+        version: "1",
+        connections: [
+          {
+            ...validConn,
+            type,
+            ...completeFor(type),
+            password: ["${SEED", "SECRET}"].join("_"),
+            readOnly: true,
+            managed: false,
+          },
+        ],
+      });
+      expect({ type, paths: result.error?.issues.map((issue) => issue.path.join(".")) }).toEqual({
+        type,
+        paths: ["connections.0.readOnly"],
       });
     }
   });

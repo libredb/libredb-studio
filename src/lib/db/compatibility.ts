@@ -376,11 +376,11 @@ export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.fr
  * object edit and maintenance operation before any request while the connection's `readOnly` is true
  * (#1089). The static answer `ProviderCapabilities.enforcesReadOnly` gives once a provider is built.
  *
- * Static because every reader decides before a provider exists: the seed schema refuses
- * `readOnly: true` at load where this answers false, `assertReadOnlyHonoured` in
- * `src/lib/db/factory.ts` refuses it before anything is built or dialled, and the connection form
- * draws its toggle, and writes the field, only where this answers true. Refused rather than ignored,
- * because a mode an engine ignores lists a connection as read-only and sends its writes.
+ * Static because its reader decides before a provider exists: `assertReadOnlyHonoured` in
+ * `src/lib/db/factory.ts` refuses `readOnly: true` before anything is built or dialled where this answers
+ * false. The seed schema and the connection form read `WRITE_REACH` itself, which gives the same answer.
+ * Refused rather than ignored, because a mode an engine ignores lists a connection as read-only and sends its
+ * writes.
  *
  * Derived from `WRITE_REACH`, so there is one hand-written answer: true wherever the reach is not `open`.
  * `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to what that engine's provider

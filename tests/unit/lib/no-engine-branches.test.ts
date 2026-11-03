@@ -292,6 +292,12 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     count: 1,
     reason: "the parameter type of the `MCP_AGENT_CREDENTIAL_REQUIRED` registry it is handed, which holds no row here",
   },
+  {
+    path: "src/lib/seed/types.ts",
+    declaration: "refuseReadOnlyWhereOpen",
+    count: 1,
+    reason: "the parameter type of the `WRITE_REACH` registry it is handed, which holds no row here",
+  },
 ];
 
 /** Every branch of spec 2.6 not yet moved, with the PR that moves it. */
