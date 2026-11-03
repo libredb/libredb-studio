@@ -498,7 +498,7 @@ So tenant and alias names reach an answer only where the server filters them by 
 ### 15.9 MCP read
 
 `run_weaviate_read` takes one request in the agent's own words, reads and admits it with the agent's reader, acquires the connection under the agent read-only profile and runs it through the same `queryReadOnly`, so everything in sections 15.1 to 15.8 holds for an MCP client too: the viewer proof at the open and before every read, the metadata-only projection, a server refusal worded by its status alone and a `COLD` tenant refused rather than woken.
-A seed's `password` is the key every call reads as, since a seed carries no separate agent credential; give it a viewer's key, or a role of viewer actions scoped to what the client may read.
+Every call reads as the seed's agent key, `agentPassword` ([an agent credential](../SEED_CONNECTIONS.md#an-agent-credential)), when it sets one, and as its `password` otherwise; give that key a viewer's key, or a role of viewer actions scoped to what the client may read.
 `inspect_schema` takes the operations profile, which proves nothing, so it lists each collection's properties and vectors with any key that may read the collections' definitions, never its tenants or aliases.
 It reads `GET /v1/schema` and each collection's own record and no stored object, so a key that may read a collection's definition and none of its objects is listed all the same, and the vectors' dimension, which the schema does not declare, reads `?` (`data-scope/objects-note-sample-nodata`).
 A failure under either profile is worded by Studio's sentence alone, without the server's words, which name the key's user.

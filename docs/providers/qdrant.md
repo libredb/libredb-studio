@@ -604,7 +604,7 @@ Under the agent profile `GET /collections` never lists more than 32 collections,
 
 A seed opts in with a key the proof admits: the read-only API key, or a JWT whose access is `r`, globally or on the collections it should read.
 The API key, a JWT whose access is `m` or names none, a JWT that writes a collection or an alias, any key on a server with no key configured, no key, and a key listing more than 32 collections are refused at the open, in the tool's sentence, before the read is sent.
-A seed carries no separate agent key, so the seed's own key is the one proved.
+The key proved is the seed's agent key, `agentPassword` ([an agent credential](../SEED_CONNECTIONS.md#an-agent-credential)), when it sets one, and the seed's own key otherwise.
 
 What a key reaches beyond the collections it is meant to read, in two layers:
 

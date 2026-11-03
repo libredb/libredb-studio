@@ -269,9 +269,9 @@ describe("foldLedgerEntries", () => {
   );
 
   test("no sentence a MongoDB run can reach names an agent credential or the plan that admits a statement", () => {
-    // A run opens on a seed id and no seed declares an agent credential (B85), so a MongoDB run cannot reach the
-    // credential reason, and every other sentence must give advice it can follow: no credential field and no
-    // SQL Server SHOWPLAN step, neither of which a MongoDB connection has.
+    // Only the credential reason names an agent credential, which a MongoDB run reaches only on a seed that sets one,
+    // and every other sentence must give advice any MongoDB run can follow: no credential field and no SQL Server
+    // SHOWPLAN step, neither of which a MongoDB connection without an agent credential has.
     const reachable = (Object.keys(FAILURE_SENTENCE_OF) as AgentRunFailureReason[]).filter(
       (reason) => reason !== "agent-credential-unusable",
     );

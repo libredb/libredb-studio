@@ -3564,7 +3564,7 @@ describe("LibSQLProvider agent read-only profile", () => {
  * `queryReadOnly`, the path agent mode uses: the open proves the token read-only (its claims, then three writes the
  * server must refuse), and every statement then goes alone in one request under that token. The MCP fence refuses a
  * write-shaped statement before anything is acquired; a write that reaches the server, its fence removed, is the
- * server's 403. The seed's own token is the credential, since a seed carries no separate agent token.
+ * server's 403. The seed's own token is the credential here, as it is on a seed that sets no agent token.
  */
 describe("MCP run_read_query on a libSQL connection", () => {
   const fakeToken = (claims: unknown): string => {

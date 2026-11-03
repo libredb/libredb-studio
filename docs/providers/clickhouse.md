@@ -1000,7 +1000,7 @@ LIBREDB_LIVE_CLICKHOUSE_PORT=8123 LIBREDB_LIVE_CLICKHOUSE_USER=<admin> LIBREDB_L
 
 MCP's `run_read_query` serves ClickHouse through the agent's own path: it takes the connection under the agent read-only profile, so the open runs the proof above, and sends the statement through `queryReadOnly`, so every request carries `readonly = 1` and a table function that reaches another server is refused before it is sent.
 It shares the agent's profiled handle, so the proof runs at the open of that handle, as in agent mode, and a grant added after it is seen at the next open.
-A seed carries no separate agent credential, so the seed's own user must be one the open admits; the writable admin is refused, in the tool's sentence, before any statement runs.
+MCP signs in as the seed's [an agent credential](../SEED_CONNECTIONS.md#an-agent-credential) when it sets one, and as the seed's own user otherwise, and that user must be one the open admits; the writable admin is refused, in the tool's sentence, before any statement runs.
 MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth; a source table function such as `url()` or `file()` is a `SELECT`, which the fence admits and the server refuses the agent user (`497`).
 It runs a `SELECT` (a `WITH` is fine), or `EXPLAIN` without `ANALYZE`: a bare `VALUES` and `TABLE` are syntax errors (code `62`) on 26.7.1.1315, and it pages with `LIMIT n OFFSET m`.
 A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.

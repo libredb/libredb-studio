@@ -282,8 +282,9 @@ async function setAgentRole(cluster: readonly string[], indexPrivileges: readonl
 }
 
 /**
- * Plan mode grounds through the provider's object surface with the connection's own login, and a seed carries one
- * login only (B85), so on a seed that login holds the agent's role and plan mode's additions together.
+ * Plan mode grounds through the provider's object surface with the connection's own login, and a seed that sets no
+ * agent credential has one login only, so on such a seed that login holds the agent's role and plan mode's additions
+ * together.
  */
 async function checkPlanGrounding(): Promise<void> {
   if (!SECURED) return;

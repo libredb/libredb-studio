@@ -414,7 +414,7 @@ Such a call sends no datagram and answers the probe's outcome, so it can fail fo
 The joined acquisition is MCP's own (`McpConnectionContext.acquire`), shared by every engine, and is a backlog item; [`run-snmp-read.test.ts`](../../tests/integration/mcp/run-snmp-read.test.ts) holds the behaviour as it stands.
 
 A v2c community is no principal.
-The seed's community is the only credential, since a seed carries no separate agent credential, and SNMPv2c gives a client no way to prove what it may read: what a community reaches is the agent's own view (VACM), held in the access control tables Studio withholds.
+The seed's community is the only credential, since an SNMP seed takes no agent credential (its row in `SEED_AGENT_CREDENTIAL` is null: the community is the whole credential and there is no user to sign an agent in as), and SNMPv2c gives a client no way to prove what it may read: what a community reaches is the agent's own view (VACM), held in the access control tables Studio withholds.
 So the data scope is the agent's view and Studio's withheld set together.
 Give an SNMP seed with `mcp: true` a community whose view holds only what an MCP client should read.
 

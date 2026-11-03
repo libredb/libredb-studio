@@ -343,8 +343,8 @@ async function planGrounding(): Promise<Awaited<ReturnType<typeof captureContext
 /**
  * Plan mode grounds through the provider's object surface with the connection's own login, and the cluster-wide
  * listings it reads (indices, aliases, data streams) answer 403 to a role that does not cover every index they list,
- * so plan mode's index privileges are on every index. A seed carries one login only (B85), so on a seed that login
- * holds the agent's role and plan mode's additions together.
+ * so plan mode's index privileges are on every index. A seed that sets no agent credential has one login only, so on
+ * such a seed that login holds the agent's role and plan mode's additions together.
  */
 async function checkPlanGrounding(): Promise<void> {
   if (!SECURED) return;

@@ -792,8 +792,9 @@ function displayName(object: AgentInventoryObject): string {
  * silently missing sentence.
  */
 const PROFILE_REFUSAL_ADVICE: Readonly<Record<ExecutionProfileDenyCode, string>> = Object.freeze({
-  // No run can carry an agent credential (B85: a run opens on a seed id, and a seed declares none), so the way out is
-  // the connection's own credential, a database user or a token depending on the engine.
+  // The way out is a narrower credential, a database user or a token depending on the engine. Named as the
+  // connection's own, which every run has: a run signs in as its seed's agent credential where the seed sets one, and a
+  // seed without one, the usual case, runs under the connection's own credential.
   PROFILE_PRIVILEGES_TOO_BROAD:
     "The connection's own credential, a database user or a token, holds privileges no read-only boundary can contain, so the profile refused it rather than run as that credential. Connect with a least-privilege credential, one that holds read privileges and nothing more.",
   PROFILE_PRIVILEGES_TOO_NARROW:

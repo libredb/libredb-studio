@@ -487,8 +487,8 @@ describe("docs/MCP.md", () => {
     );
   });
 
-  // A seed carries no agent user, so the seed's own role is the one checked, and the provider's read scope is part of
-  // the boundary the doc names.
+  // The role checked is the seed's agent credential where it sets one and its own role otherwise, and the provider's
+  // read scope is part of the boundary the doc names.
   test("says what Apache Cassandra needs of a seed, what the boundary is, that inspect_schema opens it unchecked, and how it pages without OFFSET", () => {
     expect(MCP_DOC).toContain(
       "  - Apache Cassandra: by a role checked at open and again before every statement, on that statement's own session, to be no superuser and to hold only `SELECT` on the connection's keyspace, on an Apache Cassandra 5.0 server that enforces its grants, while the provider sends one `SELECT` of a table of that keyspace or of `system_schema` and nothing else, and refuses a login that could do more than read ([cassandra.md](./providers/cassandra.md)).",
@@ -593,7 +593,7 @@ describe("docs/MCP.md", () => {
   test("says run_read_query on PostgreSQL and SQL Server needs a least-privilege seed principal", () => {
     expect(MCP_DOC).toContain("On PostgreSQL the seed's role must not be a superuser");
     expect(MCP_DOC).toContain("and it must be granted `SHOWPLAN`");
-    expect(MCP_DOC).toContain("A seed entry cannot carry a separate agent credential");
+    expect(MCP_DOC).toContain("A seed entry may carry an agent credential, `agentUser` and `agentPassword`");
   });
 
   // #1462: inspect_schema acquires under agent-operations, which carries the same

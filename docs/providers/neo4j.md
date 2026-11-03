@@ -637,7 +637,7 @@ It acquires the connection under the agent read-only profile and runs the statem
 It takes no `database`: the connection reads the one database it names, and `USE` is refused.
 It takes no `offset`: a result cut at `max_rows` or at the 32 KiB result limit says to page inside the statement with `ORDER BY`, `SKIP` and `LIMIT`, and a read past the 1000-row provider budget is refused with the language's own advice, never cut.
 
-**The seed's user.** A seed carries no separate agent credential, so the seed's own `user` is the one the proof must admit, on Enterprise Edition: a copy of `reader` with `LOAD` revoked from `PUBLIC` or denied to one of its roles, as section 15.1 says.
+**The seed's user.** MCP signs in as the seed's [an agent credential](../SEED_CONNECTIONS.md#an-agent-credential), `agentUser` and `agentPassword`, when it sets one, and as the seed's own `user` otherwise; that user is the one the proof must admit, on Enterprise Edition: a copy of `reader` with `LOAD` revoked from `PUBLIC` or denied to one of its roles, as section 15.1 says.
 The administrator, a user with the `editor` role, a reader also granted `LOAD` and Community Edition are refused at the open, before any statement is sent, in the tool's sentence.
 `inspect_schema` opens the connection under the operations profile, which proves nothing, so it lists, as the editor does, the labels and relationship types the seed's user may traverse, with the properties it may read, for any user with `ACCESS` on the database.
 A user without `SHOW INDEX` is listed the same, and with `include_indexes` each object's indexes are answered unavailable, in the sentence of section 6.1, rather than the call refused.

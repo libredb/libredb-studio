@@ -136,6 +136,7 @@ The Explain panel's AI tab sends the statement and the plan, which names indexed
 There is no host, port, SSL panel, SSH tunnel or connection string.
 Collection and document ids are non-empty, at most 1,500 bytes of UTF-8, hold no `/`, are not `.` or `..`, and do not match `__.*__`, except that a document id `__id<digits>__` from a Datastore import is accepted; every id an answer carries is checked the same way before it is shown or reused.
 A custom connection keeps its credential in the browser's local storage in plain text by design, so a shared deployment should use an operator seed ([SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md)).
+A Firestore seed takes no agent credential (`SEED_AGENT_CREDENTIAL.firestore` in `src/lib/db/connection-fields.ts` is null), so a seed that sets `agentUser` or `agentPassword` is refused at load: the service-account key is the whole credential, with no user beside it, and the provider declares no form that takes an agent key alone (D442).
 
 ### 4.2 Credentials
 

@@ -382,6 +382,8 @@ like any other fault and carries the engine's reason; one with no body, a text b
 
 ### 3.7a API key auth (#708)
 
+A seed connection that sets an agent credential, `agentUser` and `agentPassword`, beside `apiKeyId` or `apiKeySecret` is refused at load, and by the projection for one built in memory, because the transport signs with the key pair in preference to a user and password, so the agent would run under the connection's own key (`supersededBy` in `SEED_AGENT_CREDENTIAL`, `src/lib/db/connection-fields.ts`); the factory does not yet refuse the same pair on a stored connection (D446).
+
 An `apiKeyId`/`apiKeySecret` pair on the connection is sent as `Authorization: ApiKey
 base64(apiKeyId:apiKeySecret)`, Elasticsearch's own published scheme for its REST API
 ([elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys](https://www.elastic.co/docs/deploy-manage/api-keys/elasticsearch-api-keys)).
@@ -895,7 +897,7 @@ Cluster and index `monitor` also serve the monitoring tab's health read, which a
 Cluster `monitor` includes `cluster:monitor/main`, so the agent profile's version read still opens under the wider role.
 
 A connection whose agent credential is a user of its own keeps the two apart: the agent user holds the role above, and the connection's own user holds the wider one.
-A seed connection carries no separate agent user ([B85](../BACKLOG.md)), so its one login serves agent mode, plan mode and the tree, and holds both:
+A seed connection may carry such a user as its [an agent credential](../SEED_CONNECTIONS.md#an-agent-credential); one that does not has one login for agent mode, plan mode and the tree, which holds both:
 
 ```bash
 curl -u elastic -XPUT -H 'content-type: application/json' 'https://<node>:9200/_security/role/libredb_seed_read' \
@@ -955,7 +957,7 @@ The deadline is the budget's and the client's alone, refused in the shared time-
 
 MCP's `run_read_query` serves Elasticsearch through the agent's own path: it takes the connection under the agent read-only profile, so the open reads the server's version and admits only the 9.1 release line, and sends the statement through `queryReadOnly` on the SQL endpoint, never through `query()`.
 It shares the agent's profiled handle, so the version check runs at the open of that handle, as in agent mode, not before each statement.
-A seed carries no separate agent user, so the seed's own login is the one sent, and the open's login check applies to it as in agent mode: with security on, a seed signed in as a superuser, or as any login the check above refuses (the cluster privilege `all`, read on the restricted indices it asks about, or a listed grant with `allow_restricted_indices`, on this cluster or a remote one), is refused at open in the tool's sentence before any statement runs, and a login it cannot refuse, such as an API key whose own role descriptors grant a restricted index by a name the check does not ask, opens; with security on or off, the statement check above refuses a statement it cannot read with certainty, or whose index the server resolves to a hidden or system target, before anything is sent.
+The login sent is the seed's [an agent credential](../SEED_CONNECTIONS.md#an-agent-credential) when it sets one, and the seed's own login otherwise, and the open's login check applies to it as in agent mode: with security on, a seed signed in as a superuser, or as any login the check above refuses (the cluster privilege `all`, read on the restricted indices it asks about, or a listed grant with `allow_restricted_indices`, on this cluster or a remote one), is refused at open in the tool's sentence before any statement runs, and a login it cannot refuse, such as an API key whose own role descriptors grant a restricted index by a name the check does not ask, opens; with security on or off, the statement check above refuses a statement it cannot read with certainty, or whose index the server resolves to a hidden or system target, before anything is sent.
 So opt in a seed signed in with `libredb_seed_read` above: measured on 9.1.4 on 2026-11-01, `run_read_query` needs only `cluster:monitor/main` and `read` and `view_index_metadata` on the indices, and `inspect_schema`, which lists through the object surface, answers 403 without the plan-mode privileges.
 A login that cannot read the version is refused at open, in the tool's sentence, before any statement runs, and an OpenSearch node behind an Elasticsearch connection fails the open's connect probe, so nothing runs there either.
 MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth; it also refuses `SHOW`, `DESCRIBE`, `SYS` and `DEBUG`, which the endpoint answers, so the agent's composed catalog read is not an MCP statement.

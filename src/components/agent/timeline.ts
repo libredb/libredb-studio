@@ -519,8 +519,8 @@ const FAILURE_SENTENCES = {
   // applied: the profile refused the principal it opened as. Folded into the engine
   // sentence, an operator connected as `sa` was told to change engines. The principal
   // is a database user or a token depending on the engine, so the sentence names both
-  // and the repair is a narrower credential on the connection itself, since no run can
-  // carry an agent credential (B85).
+  // and the repair is a narrower credential: the connection's own, or the agent credential
+  // its seed sets, which the run signs in as whenever there is one.
   "agent-principal-refused":
     "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain, so the profile refused it. Connect with a credential that holds only read privileges.",
   // The opposite repair to the sentence above: one more privilege, never a narrower credential.

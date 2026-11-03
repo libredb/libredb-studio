@@ -2438,8 +2438,8 @@ interface DatabaseConnection {
   readOnly?: boolean;      // refuse writes, value edits and maintenance before any request (#1089). Accepted only where the engine's provider enforces it: true anywhere else is refused at seed load and before any provider is built, and a value that is not a boolean is refused everywhere
   managed?: boolean;       // true = admin-controlled: not editable in the UI, secrets kept on the server
   seedId?: string;         // stable reference to seed config ID
-  agentUser?: string;      // optional least-privilege role for the agent read-only execution profile (#328)
-  agentPassword?: string;  // password for agentUser; secret-classified, sealed at rest by connection-secrets
+  agentUser?: string;      // optional least-privilege principal every agent execution profile and MCP call signs in as (#328); a seed may set it, on a managed seed only (docs/SEED_CONNECTIONS.md)
+  agentPassword?: string;  // that principal's secret, or the agent's whole token or key; secret-classified, sealed at rest by connection-secrets; a seed may set it, on a managed seed only
   apiKeyId?: string;       // Elasticsearch only (#708): API key pair, sent in preference to user/password when both halves are set (trimmed). Secret-classified like agentPassword, not public like user. OpenSearch refuses the pair
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
   registerMap?: string;    // Modbus only: the register map, as the JSON document the provider parses - a list of points, each naming a unit, a table, a zero-based PDU address and a type. Bounded at 65536 bytes, checked before the parse; public-classified, because Modbus TCP defines no authentication and the document carries nothing to leak
