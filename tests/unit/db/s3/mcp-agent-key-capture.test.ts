@@ -9,10 +9,10 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { posix } from "node:path";
+import { join, resolve } from "node:path";
 import { S3_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
 
-const ROOT = posix.resolve(import.meta.dir.replaceAll("\\", "/"), "../../../..");
+const ROOT = resolve(import.meta.dir, "../../../..");
 const SETS = ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"] as const;
 const GRANTED = ["scope-granted", "scope-objects-only", "scope-versions"];
 
@@ -53,7 +53,7 @@ interface Capture {
 }
 
 const load = (set: string): Capture =>
-  JSON.parse(readFileSync(posix.join(ROOT, "tests/fixtures/s3/agent-scope", set, "mcp.json"), "utf8")) as Capture;
+  JSON.parse(readFileSync(join(ROOT, "tests/fixtures/s3/agent-scope", set, "mcp.json"), "utf8")) as Capture;
 
 const names = (read: Read) => (read.rows ?? []).map((row) => String(row.bucket)).sort();
 
