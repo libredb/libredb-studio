@@ -127,6 +127,7 @@ describe("the declaration is a closed set", () => {
     "supportsTestDataGeneration",
     "supportsTransactions",
     "tablesAreDerivedGroupings",
+    "writeReach",
   ] as const;
 
   test("the key set is exactly this, so a new key cannot enter unreviewed", () => {

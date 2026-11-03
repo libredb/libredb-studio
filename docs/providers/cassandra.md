@@ -22,7 +22,7 @@
 | **Connection pooling** | The driver's own, one session per connection: core 1 connection per local host, 2048 requests in flight per connection |
 | **Connection string** | Not supported — no URI convention carries `localDataCenter`, which the driver requires ([§4.2](#42-there-is-no-connection-string-and-why-that-is-not-fixable-by-inventing-one)) |
 | **EXPLAIN** | **None.** `EXPLAIN` is not in the grammar at all ([§5.6](#56-there-is-no-explain-and-tracing-is-not-a-plan)) |
-| **Writes** | `INSERT` / `UPDATE` / `DELETE` (all upserts, all primary-key-restricted), `TRUNCATE`, `BATCH` |
+| **Write reach** | open: the editor and Import send `INSERT`, `UPDATE`, `DELETE` (all upserts, all primary-key-restricted), `TRUNCATE` and `BATCH` |
 | **Transactions** | None. Lightweight transactions (`IF NOT EXISTS`, `IF <condition>`) are per-partition compare-and-set, not sessions |
 | **Maintenance** | **None** — every operation is a `nodetool`/JMX action on a node ([§8](#8-maintenance)) |
 | **Query cancellation** | **None** — the protocol has no cancel frame and `cancelQuery` is deliberately not implemented ([§3.7](#37-there-is-no-cancellation-so-none-is-offered)) |

@@ -115,6 +115,16 @@ import {
   pingNeedsHealth,
   readPing,
 } from "./versions";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the InfluxQL policy refuses every statement that is not one SELECT, SHOW or EXPLAIN
+ * before any request.
+ */
+const INFLUXQL_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/timeseries/influxdb/influxql-policy.ts",
+  symbol: "evaluateInfluxql",
+});
 
 const INFLUXDB: InfluxType = "influxdb";
 
@@ -250,6 +260,7 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: false,
       // On 1.x and 2.x the read policy is the boundary (I8).
       enforcesReadOnly: true,
+      writeReach: INFLUXQL_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       // `http://` and `https://` already parse as ClickHouse; Host takes the URI.

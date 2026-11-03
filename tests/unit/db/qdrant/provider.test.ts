@@ -99,6 +99,15 @@ describe("declarations", () => {
       containerLevels: [],
       objectKinds: QDRANT_OBJECT_KINDS,
       enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/providers/vector/qdrant/routes.ts", symbol: "QDRANT_ROUTES" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: { reach: "absent" },
+        transaction: { reach: "absent" },
+      },
       agentCredential: "token",
       metadataOnly: QDRANT_METADATA_ONLY,
       schemaRefreshPattern: "(?!)",

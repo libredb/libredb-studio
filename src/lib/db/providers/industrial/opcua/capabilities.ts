@@ -9,6 +9,16 @@ import type { ProviderCapabilities } from "@/lib/db/types";
 import { OPCUA_DEFAULT_PORT } from "./constants";
 import { OPCUA_KEY_SCAN } from "./key-scan";
 import { OPCUA_OBJECT_KIND_SPECS } from "./objects";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the editor's request is a value or history read, and the client seam names eight read
+ * services only.
+ */
+const OPCUA_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/industrial/opcua/read-request.ts",
+  symbol: "readRequest",
+});
 
 export const OPCUA_CAPABILITIES: ProviderCapabilities = Object.freeze({
   /**
@@ -21,6 +31,7 @@ export const OPCUA_CAPABILITIES: ProviderCapabilities = Object.freeze({
    * to it, among them ResetToServerDefaults. The server will not stop a client; this does.
    */
   enforcesReadOnly: true,
+  writeReach: OPCUA_WRITE_REACH,
 
   /** One JSON read request, the Kafka shape, in its own dialect so no connection falls through. */
   queryLanguage: "json",

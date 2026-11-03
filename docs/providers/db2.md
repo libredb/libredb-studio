@@ -8,6 +8,10 @@ Tracking issue: [#786](https://github.com/libredb/libredb-studio/issues/786).
 Every measured fact on this page was measured against the `icr.io/db2_community/db2` 12.1.0.0 and 11.5.9.0 containers, first on 2026-10-03 through `db2-node` 1.0.22 on Node 24 and Bun 1.4.2, again on 2026-10-04 through 1.0.24 on Bun 1.4.2, and a third time on 2026-10-04 through 1.0.25 on Bun 1.4.2, unless the sentence names another basis.
 A sentence that names 1.0.22 or 1.0.24 describes that version and is kept for the reason it gives.
 
+| | |
+|---|---|
+| **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, maintenance (`analyze`, `optimize`) and the transaction route all send writes; there is no Create Table |
+
 ## 1. Overview
 
 Studio connects to a Db2 LUW database, lists its schemas and their objects, describes tables, views and materialized query tables, shows the stored definition of views, routines and triggers, runs SQL with server-side paging, and offers RUNSTATS and REORG on one table at a time.

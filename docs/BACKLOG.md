@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D434, U17 · 318
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U196 · 182
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U198 · 184
 - [Dependencies](#dependencies) — P1-P13 · 11
 - [Documentation](#documentation) — DOC3-DOC35 · 29
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6770,6 +6770,23 @@ A fixed breakpoint goes stale whenever a tab is added, so hiding the span whenev
 Found 2026-11-02 in the browser smoke pass of the Dependabot sweep on `main` (fc54d4c86), a 1440x900 window with the sidebar dragged to 436 px, on a SQLite `SELECT` of 2000 rows; the same with #2167 applied, so not a dependency regression.
 
 **Done when:** at every results-pane width the duplicate stats span is hidden before any result tab is clipped, with the Graph tab offered and not, and a browser check at the widths above shows the whole tab strip and the Export button with no clipped label.
+
+### U197. Import is offered on Elasticsearch and OpenSearch indices, and the statements it builds have no spelling in either grammar
+
+The index kind in `src/lib/db/providers/sql/search/index.ts` declares `acceptsRowWrites: true`, and `DataImportModal.tsx` offers Import on any kind that declares it.
+The modal builds SQL `INSERT INTO ... VALUES` statements in groups of 100 rows and runs them through the editor route, and neither the Elasticsearch nor the OpenSearch SQL grammar has an `INSERT`, so every import fails at the engine after the user has mapped the file.
+The kind's comment calls an import into an index "an ordinary bulk document write", but no code in the provider sends a bulk document request.
+Found 2026-11-03 while recording what each engine can write.
+
+**Done when:** the index kind no longer declares `acceptsRowWrites`, so neither row menu offers Import on an Elasticsearch or OpenSearch index, with a component test on each engine and the kind's comment and both provider docs saying so.
+
+### U198. The destructive-statement confirmation does not fire on a LibreDB `put`
+
+`readsSqlText` is true for LibreDB in `src/lib/db/providers/embedded/libredb-sql-grammar.ts`, so the engine has no row in `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/destructive-commands.ts`) and `isDangerousQuery` reads its text for SQL write keywords.
+`put` is not one, so a `put` that overwrites a key runs with no confirmation, while a SQL `UPDATE` on any SQL engine asks.
+Found 2026-11-03 while recording what each engine can write.
+
+**Done when:** a LibreDB `put` asks for the same confirmation a `delete` does, read from a row the provider declares rather than a type-id branch in the gate, with a test that drives `put` and `delete` through the gate.
 
 ## Dependencies
 

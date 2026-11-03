@@ -23,6 +23,7 @@
 | **Source** | [`src/lib/db/providers/sql/oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts) |
+| **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, maintenance (`analyze`, `optimize`, `kill`) and the transaction route all send writes |
 
 ---
 

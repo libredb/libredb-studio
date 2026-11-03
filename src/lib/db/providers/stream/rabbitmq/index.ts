@@ -106,6 +106,16 @@ import {
 import { type ReadDependencies, rabbitmqReadLimiter, runAgentRead, runRead } from "./read";
 import { readSource } from "./source";
 import { createTrackingProbe, type TrackingProbe } from "./tracking-probe";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the AMQP codec admits no publish, get, reject or queue or exchange method, and the
+ * management routes are GET only.
+ */
+const RABBITMQ_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/stream/rabbitmq/amqp/codec.ts",
+  symbol: "isAllowedOutbound",
+});
 
 /** The test seams; the factory passes none, so a built provider always runs on these defaults. */
 export interface RabbitMQSeams {
@@ -221,6 +231,7 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       // Read-only whatever the flag says: the management client sends GET only, and the AMQP client cannot publish.
       enforcesReadOnly: true,
+      writeReach: RABBITMQ_WRITE_REACH,
       statementTerminator: "none",
       maintenanceOperations: [],
       // No read request changes what the tree shows.

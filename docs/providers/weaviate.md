@@ -5,6 +5,10 @@ Source: [`src/lib/db/providers/vector/weaviate/`](../../src/lib/db/providers/vec
 Tests: [`tests/unit/db/weaviate/`](../../tests/unit/db/weaviate/) and [`tests/integration/db/weaviate-provider.test.ts`](../../tests/integration/db/weaviate-provider.test.ts).
 Tracking issue: [#1566](https://github.com/libredb/libredb-studio/issues/1566), with [#1089](https://github.com/libredb/libredb-studio/issues/1089) and [#424](https://github.com/libredb/libredb-studio/issues/424).
 
+| | |
+|---|---|
+| **Write reach** | none: every route of the closed console route table, `WEAVIATE_ROUTES`, is a read, and any other route is refused before any request; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 Studio reads a Weaviate server through Weaviate's own REST requests, written in the editor as one `METHOD /v1/path` line and one JSON body, the form Weaviate's REST reference prints.

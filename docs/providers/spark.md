@@ -17,7 +17,7 @@ LibreDB Studio has no affiliation with and is not endorsed by The Apache Softwar
 | **Default port**       | 15002                                                                                            |
 | **Connection string**  | Not stored: a pasted `sc://` address is decomposed into fields                                   |
 | **EXPLAIN**            | `spark-text`: `EXPLAIN FORMATTED`, which plans the statement and runs nothing                    |
-| **Writes**             | Whatever the server allows; the confirmation gate asks before Spark's replacing and code-loading forms |
+| **Write reach** | open: the editor sends every statement as written, and the server is the boundary; the confirmation gate asks before Spark's replacing and code-loading forms |
 | **Transactions**       | None                                                                                             |
 | **Maintenance**        | None                                                                                             |
 | **Query parameters**   | Not supported: Studio sends no bound parameters                                                  |

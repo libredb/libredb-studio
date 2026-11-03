@@ -18,7 +18,7 @@
 | **Connection pooling** | None. Each call is one stateless request; queries share a per-connection limit instead ([§3.4](#34-the-servers-query-slots-are-shared)) |
 | **Connection string** | Not supported. `http://` and `https://` already parse as ClickHouse ([§4.5](#45-no-connection-string)) |
 | **EXPLAIN** | None. `/api/v1/parse_query` is experimental upstream, so no plan view is offered |
-| **Writes** | None, and none are offered. Studio calls only the read endpoints listed in [§6.1](#every-endpoint-call-with-its-parameters) |
+| **Write reach** | open: Studio calls only the read endpoints listed in [§6.1](#every-endpoint-call-with-its-parameters) and builds no write endpoint, and the record keeps the value open until a test holds that endpoint table to reads, so a read-only connection is still refused |
 | **Transactions** | Not applicable |
 | **Maintenance** | None. The admin API (series deletion, snapshots, tombstones) and the lifecycle endpoints (`/-/quit`, `/-/reload`) are never called |
 | **Query cancellation** | Yes: `cancelQuery(queryId)` aborts that query's request, and the server ends the evaluation at its next checkpoint; a query still waiting for one of the connection's query slots leaves the queue without reaching the server (M1, [§5.5](#55-timeout-and-cancellation)) |

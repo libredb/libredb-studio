@@ -23,6 +23,7 @@
 | **Agent read-only profile** | Yes — separate read-only OPEN (no file create) + verified `query_only` (#328, §12) |
 | **Source** | [`src/lib/db/providers/sql/sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts) |
 | **Tests** | [`tests/integration/db/sqlite-provider.test.ts`](../../tests/integration/db/sqlite-provider.test.ts) |
+| **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table and maintenance (`vacuum`, `analyze`, `reindex`, `check`) all write the file |
 
 ---
 

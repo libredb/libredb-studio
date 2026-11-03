@@ -10,6 +10,10 @@ This document describes what the provider does TODAY. Where a part is built and 
 from the product, the section says so in those words rather than describing the intention as if it
 were behaviour.
 
+| | |
+|---|---|
+| **Write reach** | none: the valve, `assertOutboundAllowed`, admits only the read function codes and device identification on every outbound frame; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 Modbus is a register protocol, not a database protocol. A device holds four tables of 65,536 items

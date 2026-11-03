@@ -44,6 +44,15 @@ describe("declarations", () => {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/providers/objectstore/s3/console/commands.ts", symbol: "S3_COMMAND_TABLE" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: { reach: "absent" },
+        transaction: { reach: "absent" },
+      },
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

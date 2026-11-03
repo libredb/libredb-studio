@@ -117,6 +117,16 @@ import { previewObject } from "./preview";
 import { rangeReader, toPreviewHead } from "./preview-adapter";
 import { previewSourceParts } from "./preview-render";
 import { s3Signer } from "./sigv4";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the console's closed command table holds reads only, and the client sends only GET and
+ * HEAD.
+ */
+const S3_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/objectstore/s3/console/commands.ts",
+  symbol: "S3_COMMAND_TABLE",
+});
 
 export type { S3Surface } from "./client";
 
@@ -247,6 +257,7 @@ export class S3Provider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: false,
       // Read-only whatever the flag says: the client has only GET and HEAD operations.
       enforcesReadOnly: true,
+      writeReach: S3_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

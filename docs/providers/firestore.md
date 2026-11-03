@@ -14,7 +14,7 @@
 | **Default port**       | None: the endpoint is always `firestore.googleapis.com:443`                                       |
 | **Connection string**  | Not supported                                                                                     |
 | **EXPLAIN**            | `firestore-explain`: Query Explain, plan only from the button; not offered on an emulator server  |
-| **Writes**             | None: the provider can send no write request                                                      |
+| **Write reach** | none: the request builder, `buildRequest`, builds only the read requests of its closed table, before any socket; there is no object edit, maintenance or transaction route |
 | **Transactions**       | None                                                                                              |
 | **Maintenance**        | None                                                                                              |
 | **Query cancellation** | Supported: the request is aborted                                                                 |
@@ -462,6 +462,7 @@ Health and pulse reuse the connect probe; the overview and the monitoring panels
 | `createTable` | absent |
 | `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsTransactions`, `supportsMaintenance` | false |
 | `enforcesReadOnly` | true |
+| `writeReach` | none: the editor absent with its proof, `buildRequest`, and object edit, maintenance and transactions absent |
 | `containerLevels` | none |
 | `objectKinds` | `collection` (relation), `document` (Keys panel, Source tab, JSON) |
 | `keyScan` | separator `/`, opaque cursor, prefix pattern, no total, levels rooted at `collection`, 100 by default and 1,000 at most |

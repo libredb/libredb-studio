@@ -72,6 +72,16 @@ import { runSnmpAgentReadWithin, snmpAgentResult } from "./agent-read";
 import { readSnmpAgentStatement, withheldReason, withheldSubtreeOf } from "./agent-statement";
 import { MIB_NAMES } from "./mib-names";
 import { SNMP_AGENT_WITHHELD } from "./agent-surface";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the statement grammar holds four read commands, and the valve refuses a Set PDU on every
+ * datagram it can read.
+ */
+const SNMP_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/network/snmp/statement.ts",
+  symbol: "parseStatement",
+});
 
 /** Studio's own refusals on the agent's statement path, made before anything is sent. */
 export const SNMP_PROVIDER_SENTENCES = Object.freeze({
@@ -222,6 +232,7 @@ export class SnmpProvider extends BaseDatabaseProvider {
       // Structural rather than configured: the outgoing valve parses every datagram and refuses
       // any PDU that is not a Get, GetNext or GetBulk, so no code path here can build a write.
       enforcesReadOnly: true,
+      writeReach: SNMP_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       // No URI form. `snmp://` is not in `ENGINE_URI_SCHEMES`, and inventing one would be ours.

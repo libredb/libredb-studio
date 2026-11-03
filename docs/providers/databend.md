@@ -17,7 +17,7 @@ This document is the single reference point for the provider: design, architectu
 | **Connection pooling** | One keep-alive agent per connection, three sockets; every statement runs in a session of its own ([3.4](#34-every-statement-runs-in-a-session-of-its-own)) |
 | **Connection string** | Not offered: a pasted `https://` address goes into Host, which splits it, and a `databend://` DSN into Paste URL of a new connection, which fills the fields ([4.1](#41-configuration-fields)) |
 | **EXPLAIN** | `databend-text`: plain `EXPLAIN` in both modes, never `EXPLAIN ANALYZE`, and no plan for the shapes that run while binding ([5.6](#56-explain-is-the-planning-form-only)) |
-| **Writes** | Every statement Databend accepts runs as written; no inline row edit, no object edit ([6.3](#63-object-edit-789-not-in-this-version)) |
+| **Write reach** | open: every statement Databend accepts runs as written, and maintenance (`kill`) sends a kill; no inline row edit, no object edit ([6.3](#63-object-edit-789-not-in-this-version)) |
 | **Transactions** | Not exposed: a transaction a statement leaves open is rolled back when the statement ends ([3.5](#35-what-a-statement-leaves-open-is-closed)) |
 | **Maintenance** | `kill` only: `KILL QUERY` on a session id from the Sessions panel ([8](#8-maintenance)) |
 | **Query cancellation** | Yes: Stop sends the statement's kill link and reports a cancel only when the kill answered ([5.8](#58-cancellation-and-deadlines)) |

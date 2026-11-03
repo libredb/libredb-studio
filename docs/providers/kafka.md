@@ -17,7 +17,7 @@
 | **Connection string** | Not supported: a Kafka client takes a bootstrap address, and no URI convention is read |
 | **SSH tunnel** | Refused: a tunnel forwards one address, and a Kafka client reaches every broker at the address the broker advertises ([§4.5](#45-no-ssh-tunnel)) |
 | **EXPLAIN** | None |
-| **Writes** | None, and none are offered ([§6.3](#63-object-edit-789)) |
+| **Write reach** | open: Studio offers no write ([§6.3](#63-object-edit-789)), and the record keeps the value open until a test holds the client's request set to reads, so a read-only connection is still refused |
 | **Transactions** | Not applicable; reads are read-committed ([§5.2](#52-result-shape)) |
 | **Maintenance** | None |
 | **Query cancellation** | None: a read is bounded by its limit, its budgets and its timeout, and there is no server-side evaluation to stop ([§5.5](#55-timeout-and-cancellation)) |

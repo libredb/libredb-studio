@@ -96,6 +96,13 @@ import { buildRows, describeResult, RESULT_FIELDS } from "./results";
 import { readOnce, type ReceivedMessage, type TransportFactory } from "./session";
 import { type EdgeNodeState, ReadState } from "./state";
 import { groupIdIsFilterSafe, readFilters } from "./topics";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/** No write path on any route: the encoder produces five packet types and no PUBLISH, and its CONNECT takes no will. */
+const SPARKPLUG_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/industrial/sparkplug/encoder.ts",
+  symbol: "PACKET",
+});
 
 export { SPARKPLUG_DEFAULT_PORT };
 
@@ -297,6 +304,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: false,
       // Structural: this class has no code that can write to a broker.
       enforcesReadOnly: true,
+      writeReach: SPARKPLUG_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

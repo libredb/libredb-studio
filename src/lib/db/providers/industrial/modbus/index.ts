@@ -91,6 +91,16 @@ import type { Table } from "./pdu";
 import { ModbusMapError, parseRegisterMap } from "./register-map";
 import { ModbusRequestError } from "./pdu";
 import { ModbusDecodeError } from "./values";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the valve admits only the read function codes and device identification on every
+ * outbound frame.
+ */
+const MODBUS_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/industrial/modbus/valve.ts",
+  symbol: "assertOutboundAllowed",
+});
 
 /**
  * WHY EVERY REFUSAL HERE IS A `QueryError` AND NOT A PLAIN `Error`. Measured on `90881379`: the
@@ -319,6 +329,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: false,
       // Structural rather than configured: there is no code here that can build a write.
       enforcesReadOnly: true,
+      writeReach: MODBUS_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       // Modbus TCP has no connection string form, and inventing one would be ours.

@@ -20,7 +20,7 @@
 | **Connection pooling** | None — each statement is one stateless exchange of HTTP requests |
 | **Connection string** | Not supported. `jdbc:trino://host:port/catalog/schema` exists; the shared parser does not accept it ([§4.2](#42-there-is-no-connection-string--yet)) |
 | **EXPLAIN** | `trino-json` — estimate only. `EXPLAIN (FORMAT JSON)` plans and never runs; `EXPLAIN ANALYZE` executes the statement, so it is deliberately never emitted ([§5.6](#56-explain-is-the-planning-form-only)) |
-| **Writes** | Whatever the connector allows. The grammar has `INSERT`, `UPDATE`, `DELETE`, `MERGE` and `CREATE TABLE`; each catalog's connector decides for itself ([§5.5](#55-writes-belong-to-the-connector-not-to-the-engine)) |
+| **Write reach** | open: the editor, Create Table, Import, the function object edit and maintenance (`kill`) send writes, and each catalog's connector decides for itself what it accepts ([§5.5](#55-writes-belong-to-the-connector-not-to-the-engine)) |
 | **Transactions** | Not exposed |
 | **Maintenance** | `kill` only, via `CALL system.runtime.kill_query` ([§8](#8-maintenance)) |
 | **Query cancellation** | Yes — `cancelQuery()` over `DELETE /v1/query/{id}` ([§3.7](#37-abandoning-a-request-does-not-stop-the-work)) |

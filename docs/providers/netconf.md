@@ -11,6 +11,10 @@ The pinned server for every measurement below is Netopeer2 2.8.7 with sysrepo, b
 run as `libredb-1724-live`. Two servers were measured in all: Netopeer2 and a second NETCONF
 server used only to check that a rule was not one implementation's habit.
 
+| | |
+|---|---|
+| **Write reach** | none: the request builder, `buildRpc`, writes four read operations and `<close-session>`, and no `<edit-config>`; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 A NETCONF server stands in front of a router, a switch or any device that keeps its configuration

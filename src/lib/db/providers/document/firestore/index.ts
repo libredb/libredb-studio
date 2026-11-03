@@ -97,6 +97,13 @@ import {
 } from "./objects";
 import { type FirestoreSeams, resolveSeams } from "./seams";
 import { createFirestoreClient, type FirestoreClient } from "./transport";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/** No write path on any route: the request builder builds only the read requests of its closed table. */
+const FIRESTORE_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/document/firestore/requests.ts",
+  symbol: "buildRequest",
+});
 
 export const FIRESTORE_PROVIDER_SENTENCES = Object.freeze({
   emulator: (display: string): string =>
@@ -288,6 +295,7 @@ export class FirestoreProvider extends BaseDatabaseProvider {
       supportsTransactions: false,
       declaresForeignKeys: false,
       enforcesReadOnly: true,
+      writeReach: FIRESTORE_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

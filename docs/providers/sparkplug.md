@@ -9,6 +9,10 @@ The brokers behind the measurements are Eclipse Mosquitto 2.1.2 and HiveMQ CE 20
 Sparkplug Aware extension, and Eclipse Mosquitto 1.5.11 where an MQTT 3.1.1 broker was needed. The
 reference encoder is Eclipse Tahu `sparkplug-payload` 1.0.3.
 
+| | |
+|---|---|
+| **Write reach** | none: the encoder's packet table, `PACKET`, holds five packet types and no PUBLISH, and its CONNECT takes no will; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 One subscription reads a plant's own published structure: the groups and edge nodes a broker

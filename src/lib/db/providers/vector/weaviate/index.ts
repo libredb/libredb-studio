@@ -105,6 +105,16 @@ import {
   type WeaviatePathKind,
   type WeaviateVersion,
 } from "./versions";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: every route of the closed console route table is a read, and any other route is refused
+ * before any request.
+ */
+const WEAVIATE_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/vector/weaviate/routes.ts",
+  symbol: "WEAVIATE_ROUTES",
+});
 
 /** The in-flight bounds: four per provider, the transport's sockets, sixteen per process, a queue of 64. */
 export const WEAVIATE_LIMITER_OPTIONS = { perProvider: WEAVIATE_MAX_IN_FLIGHT, perEngine: 16, queueDepth: 64 } as const;
@@ -223,6 +233,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       containerLevels: [],
       objectKinds: WEAVIATE_OBJECT_KINDS,
       enforcesReadOnly: true,
+      writeReach: WEAVIATE_WRITE_REACH,
       // The secret alone signs in, so the agent's own key is `agentPassword` alone; a user is refused here as it is
       // on the connection.
       agentCredential: "token",

@@ -708,6 +708,7 @@ describe("docs/providers/oxia.md quotes what the provider's modules say", () => 
       objectKinds: "`OXIA_OBJECT_KINDS`",
       keyScan: "`OXIA_KEY_SCAN`",
       metadataOnly: "`OXIA_METADATA_ONLY`",
+      writeReach: "`OXIA_WRITE_REACH`",
     };
     for (const [key, value] of Object.entries(capabilities)) {
       let cell = written[key];
