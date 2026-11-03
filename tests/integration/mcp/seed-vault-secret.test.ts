@@ -119,11 +119,10 @@ describe("a secret a seed reads from Vault", () => {
     vaultAnswers(200, { data: { data: { password: MARKER } } });
     seedWarehouse("${vault:secret/data/mcp/warehouse#password}");
 
-    const answers = [
-      await call("list_connections", {}),
-      await call("inspect_schema", { connection_id: "seed:warehouse" }),
-      await call("run_read_query", { connection_id: "seed:warehouse", sql: "SELECT 1" }),
-    ];
+    const listed = await call("list_connections", {});
+    const inspected = await call("inspect_schema", { connection_id: "seed:warehouse" });
+    const read = await call("run_read_query", { connection_id: "seed:warehouse", sql: "SELECT 1" });
+    const answers = [listed, inspected, read];
 
     // The control: both opens were handed the secret, so a leak would have had it to leak.
     expect(opened).toEqual([MARKER, MARKER]);
@@ -157,13 +156,12 @@ describe("a Vault reference that cannot be read", () => {
     vaultAnswers(200, {});
     seedWarehouse(`\${vault:${MARKER}`);
 
-    const answers = [
-      await call("inspect_schema", { connection_id: "seed:warehouse" }),
-      await call("run_read_query", { connection_id: "seed:warehouse", sql: "SELECT 1" }),
-    ];
+    const inspected = await call("inspect_schema", { connection_id: "seed:warehouse" });
+    const read = await call("run_read_query", { connection_id: "seed:warehouse", sql: "SELECT 1" });
+    const answers = [inspected, read];
 
     expect(answers.map((answer) => answer.isError)).toEqual([true, true]);
-    expect(answers[0]?.content[0]?.text).toBe(REFUSAL);
+    expect(inspected.content[0]?.text).toBe(REFUSAL);
     expect(opened).toEqual([]);
     // The server log may quote a malformed reference, as it does for every seed route; a caller never reads it.
     expect(everythingSent(answers)).not.toContain(MARKER);
