@@ -286,6 +286,8 @@ connections:
 The opt-in is per connection, so `defaults.mcp` is refused.
 A SQLite seed's `database` is an absolute path on the machine running Studio, and under Docker a path inside the container, so mount the file there.
 The built-in sample connections are never visible to an MCP client.
+A `${vault:...}` reference in an opted-in seed is read from Vault when a tool opens the connection, as the editor reads it, and never when `list_connections` lists it ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#vault-references)).
+A reference Vault cannot answer refuses the call with an error that names the connection and nothing else; the cause goes to the server log.
 An empty `list_connections` answer means no connection is opted in for your token's role: an operator adds `mcp: true` to a seed connection.
 
 Where an engine's line under "Read-only is the database's own enforcement" above says it refuses a login that could do more than read, an opted-in seed for that engine needs a least-privilege principal.

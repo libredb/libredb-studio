@@ -581,7 +581,9 @@ A Vault reference is read lazily, one connection at a time:
 
 1. Listing connections (`GET /api/connections/managed`) makes **zero** Vault requests. The reference is handed back unresolved, and for a `managed: false` connection it is the reference — not a secret — that reaches the browser.
 2. Opening a connection reads the referenced path once, then caches the result per path for `VAULT_CACHE_TTL_MS` (default 60000). A second connection to the same path within that TTL makes no request.
+   An MCP tool reads it the same way when it opens an opted-in connection ([MCP.md](MCP.md)), and `list_connections` reads none.
 3. A failure — Vault unreachable, the path or key missing, the token refused — fails that one connection with an explicit error. There is no fallback to an empty password, no retry loop and no fallback to an environment variable, and the failure never affects the boot or another connection.
+   On MCP the tool's answer names the connection and says its secret reference could not be read from Vault; the cause goes to the server log only, because it may quote the reference.
 4. The resolved value is never logged, never written to an error message and never reaches the audit log. The reference string may be logged; it is not a secret.
 
 `${ENV_VAR}` resolution is unchanged: synchronous on the list path, and a dictionary lookup. Only `${vault:...}` is deferred.
