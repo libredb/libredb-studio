@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * The Modbus provider in a browser, against the compose fixture on 127.0.0.1:1502
@@ -150,9 +151,16 @@ test.describe("Modbus in the connection dialog", () => {
   test("says in the dialog that Studio cannot write to a device", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "Modbus", exact: true }).click();
-    // By its id rather than by its text: the hint is the checkbox's own description
-    // (`aria-describedby="readOnly-hint"`), so this also asserts the pair a screen reader reads.
-    await expect(dialog.locator("#readOnly-hint")).toContainText("Studio cannot write to a Modbus device");
+    // A fixed label and no box: Studio has no write path on this engine, so there is no mode to choose.
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
+    // By its role rather than by its text: the label and the sentence are one group's name and description, so
+    // this also asserts the pair a screen reader reads.
+    await expect(dialog.getByRole("group", { name: "Read-only", exact: true })).toHaveAttribute(
+      "aria-describedby",
+      "readOnly-hint",
+    );
   });
 });
 

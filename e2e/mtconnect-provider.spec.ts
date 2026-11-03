@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * The MTConnect provider in a browser: its dialog, a real agent behind it, and a read of the past.
@@ -105,7 +106,10 @@ test.describe("MTConnect in the connection dialog", () => {
   test("says the read-only mode cannot be turned off for this engine", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "MTConnect", exact: true }).click();
-    await expect(dialog.getByText(/read-only whether or not this is ticked/)).toBeVisible();
+    // A fixed label and no box: Studio has no write path on this engine, so there is no mode to choose.
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
   });
 });
 

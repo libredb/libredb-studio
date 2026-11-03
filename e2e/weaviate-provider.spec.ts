@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * Gate 2 and gate 5 for the Weaviate provider (#1566 spec 8.3), the Qdrant shape (e2e/qdrant-provider.spec.ts).
@@ -34,7 +35,7 @@ test.describe("Weaviate in the connection dialog", () => {
     await expect(dialog.getByText("Connection String", { exact: true })).toHaveCount(0);
   });
 
-  test("draws Host, Port and API key or token, no User and no Database, and the TLS, SSH and Read-only controls", async ({
+  test("draws Host, Port and API key or token, no User and no Database, and the TLS and SSH controls and the fixed Read-only label", async ({
     page,
   }) => {
     const dialog = page.locator('[role="dialog"]');
@@ -46,7 +47,10 @@ test.describe("Weaviate in the connection dialog", () => {
     await expect(dialog.getByText("API key or token", { exact: true })).toBeVisible();
     await expect(dialog.getByText("SSL / TLS", { exact: true })).toBeVisible();
     await expect(dialog.getByText("SSH Tunnel", { exact: true })).toBeVisible();
-    await expect(dialog.getByLabel("Read-only", { exact: true })).toBeVisible();
+    // A fixed label and no box: Studio has no write path on this engine, so there is no mode to choose.
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
   });
 
   test("draws the field hints of spec 6.1", async ({ page }) => {
