@@ -47,7 +47,7 @@ const AGENT_SECRET = ["not", "a", "real", "agent", "secret"].join("-");
 const KEY_NAME = "tenant-acme/payroll-2026.csv";
 const MARKER = "planted-metadata-marker";
 
-/** What each key may read: the connection's own key every bucket, the agent key `sales` alone. */
+/** What each key may read: the connection's own key every bucket, the agent key every bucket but `payroll`. */
 const GRANTS: Readonly<Record<string, readonly string[]>> = {
   [OWN_KEY]: ["sales", "payroll", "slow", "big"],
   [AGENT_KEY]: ["sales", "slow", "big"],
