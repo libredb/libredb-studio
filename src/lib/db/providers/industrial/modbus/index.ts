@@ -327,7 +327,6 @@ export class ModbusProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Structural rather than configured: there is no code here that can build a write.
-      enforcesReadOnly: true,
       writeReach: MODBUS_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

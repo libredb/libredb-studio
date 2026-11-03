@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 
 import { CENSUS_CONNECTION } from "@/../tests/helpers/census-connection";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -31,6 +32,6 @@ describe("the factory can actually build this provider", () => {
     const provider = await createDatabaseProvider(CENSUS_CONNECTION.sparkplug);
     const capabilities = provider.getCapabilities();
     expect(capabilities.queryLanguage).toBe("json");
-    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("none");
   });
 });

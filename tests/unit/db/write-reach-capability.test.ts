@@ -140,14 +140,6 @@ describe("WRITE_REACH against each provider's own declaration", () => {
   );
 
   test.each([...SHIPPED_DATABASE_TYPES])(
-    "%s: enforcesReadOnly holds exactly where the reach is not open",
-    async (type) => {
-      const capabilities = await capabilitiesOf(type);
-      expect(capabilities.enforcesReadOnly === true).toBe(summarizeWriteReach(capabilities.writeReach) !== "open");
-    },
-  );
-
-  test.each([...SHIPPED_DATABASE_TYPES])(
     "%s: a declaration names all four paths and is one frozen constant, whatever the connection holds",
     async (type) => {
       const declared = (await capabilitiesOf(type)).writeReach;

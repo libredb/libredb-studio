@@ -376,7 +376,7 @@ export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.fr
 /**
  * Which shipped engines keep a read-only connection's promise: their provider refuses every write,
  * object edit and maintenance operation before any request while the connection's `readOnly` is true
- * (#1089). The static answer `ProviderCapabilities.enforcesReadOnly` gives once a provider is built.
+ * (#1089). The static answer `summarizeWriteReach` gives from a built provider's `writeReach`.
  *
  * Static because its reader decides before a provider exists: `assertReadOnlyHonoured` in
  * `src/lib/db/factory.ts` refuses `readOnly: true` before anything is built or dialled where this answers
@@ -385,8 +385,8 @@ export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.fr
  * writes.
  *
  * Derived from `WRITE_REACH`, so there is one hand-written answer: true wherever the reach is not `open`.
- * `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to what that engine's provider
- * declares, so the two cannot drift. Frozen like the records above it.
+ * `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to the summary of that engine's
+ * provider's `writeReach`, so the two cannot drift. Frozen like the records above it.
  */
 export const READ_ONLY_ENFORCED = Object.freeze(mapEntries(WRITE_REACH, (reach) => reach !== "open"));
 

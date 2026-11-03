@@ -259,7 +259,6 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
       // A measurement is addressable by its name.
       tablesAreDerivedGroupings: false,
       // On 1.x and 2.x the read policy is the boundary (I8).
-      enforcesReadOnly: true,
       writeReach: INFLUXQL_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

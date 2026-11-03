@@ -615,7 +615,7 @@ A direct call of `runMaintenance` is refused with a `QueryError` saying that com
 ### `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/timeseries/prometheus/index.ts))
 
 - `queryLanguage: "promql"`, no `queryDialect`.
-- `enforcesReadOnly: true` and `writeReach`, which declares the editor absent with the closed endpoint table `PATHS` in [`http-transport.ts`](../../src/lib/db/providers/timeseries/prometheus/http-transport.ts) as its proof, and object edit, maintenance and transactions absent ([§11.4](#114-write-reach-measured-live)).
+- `writeReach`, which declares the editor absent with the closed endpoint table `PATHS` in [`http-transport.ts`](../../src/lib/db/providers/timeseries/prometheus/http-transport.ts) as its proof, and object edit, maintenance and transactions absent ([§11.4](#114-write-reach-measured-live)).
 - `createTable`: absent; the provider declares no `createTable`.
 - `supportsExplain`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
 - `declaresForeignKeys: false`, `statementTerminator: "none"`, `defaultPort: 9090`, `containerLevels: []`, `maintenanceOperations: []`, and the six object kinds of [§6.1](#61-the-object-surface-789).

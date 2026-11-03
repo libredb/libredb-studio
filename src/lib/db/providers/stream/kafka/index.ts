@@ -252,7 +252,6 @@ export class KafkaProvider extends BaseDatabaseProvider {
       supportsMaintenance: false,
       // Nothing this product offers writes to Kafka, so a connection is read-only whatever its flag says, and the
       // flag is accepted.
-      enforcesReadOnly: true,
       writeReach: KAFKA_WRITE_REACH,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

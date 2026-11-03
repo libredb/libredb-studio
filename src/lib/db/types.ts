@@ -1405,27 +1405,6 @@ export interface ProviderCapabilities {
    */
   singleWriterFile?: boolean;
   /**
-   * True when this engine's provider refuses every write before any request while the connection's
-   * `readOnly` is true, or while it was opened with `ProviderExecutionContext.readOnly`, naming the
-   * read-only mode in the refusal (#1089).
-   *
-   * A mode a provider ignores would be a promise nobody keeps: the connection would be listed as
-   * read-only and send its writes. So `readOnly: true` is accepted only where this holds, and refused
-   * everywhere else: by the seed schema at load, by `assertReadOnlyHonoured` in
-   * `src/lib/db/factory.ts` before anything is built or dialled, and by the connection form, which
-   * draws its toggle only here. `assertReadOnlyHonoured` reads `READ_ONLY_ENFORCED` in
-   * `src/lib/db/compatibility.ts`, and the seed schema and the form read `WRITE_REACH`, from which that map is
-   * derived, rather than this field, because each decides before a provider exists, and
-   * `tests/unit/db/read-only-enforced-capability.test.ts` holds that map equal to this declaration
-   * for every shipped type-id.
-   *
-   * Optional for the same published-interface reason as `supportsInlineRowEdit`
-   * (`src/exports/types.ts`): a required field added after the fact stops every external implementer
-   * compiling. Only the literal `true` is declared, so an absent flag reads as "a read-only connection
-   * is refused here", the answer for every engine whose provider does not refuse writes itself.
-   */
-  readonly enforcesReadOnly?: true;
-  /**
    * What this provider can write, per write path: whether each Studio route that can change the engine has no code
    * here that sends a write (`absent`), is refused by a named gate while read-only mode holds (`gated`), or sends
    * writes no Studio gate refuses (`open`). `summarizeWriteReach` in `src/lib/db/write-reach.ts` folds it into one
@@ -1435,8 +1414,15 @@ export interface ProviderCapabilities {
    * A frozen module constant of static strings, never built from the connection: `GET /api/db/provider-meta` sends
    * the capabilities to the browser, so nothing a connection supplies may reach this field.
    *
-   * Absent means open on every path, as an absent `enforcesReadOnly` does; every provider whose reach is not open
-   * declares all four paths. Optional for the same published-interface reason as `enforcesReadOnly`.
+   * A read-only mode a provider ignores would be a promise nobody keeps: the connection would be listed as read-only
+   * and send its writes (#1089). So `readOnly: true` is accepted only where the summary is not `open`, and refused
+   * everywhere else: by `assertReadOnlyHonoured` in `src/lib/db/factory.ts`, which reads `READ_ONLY_ENFORCED`, and by
+   * the seed schema and the connection form, which read `WRITE_REACH`, each before a provider exists.
+   * `tests/unit/db/read-only-enforced-capability.test.ts` holds that map equal to this declaration as well.
+   *
+   * Absent means open on every path; every provider whose reach is not open declares all four paths. Optional for the
+   * same published-interface reason as `supportsInlineRowEdit` (`src/exports/types.ts`): a required field added after
+   * the fact stops every external implementer compiling.
    */
   readonly writeReach?: Readonly<Record<WritePath, WritePathReach>>;
   /**
@@ -1446,7 +1432,7 @@ export interface ProviderCapabilities {
    * `connection.type` branch is needed (forbidden by `CLAUDE.md`), and
    * `tests/unit/db/agent-credential-capability.test.ts` pins which engines declare which form.
    *
-   * Optional for the same published-interface reason as `enforcesReadOnly`.
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`.
    */
   readonly agentCredential?: AgentCredentialForm;
   /**
@@ -1456,7 +1442,7 @@ export interface ProviderCapabilities {
    * refuses one that is not; the masking itself is the provider's own, proved by its redaction test. Kubernetes
    * declares `["secrets"]`.
    *
-   * Optional for the same published-interface reason as `enforcesReadOnly`.
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`.
    */
   readonly machineRedaction?: { readonly maskedNameKinds: readonly string[] };
   /**
@@ -1468,7 +1454,7 @@ export interface ProviderCapabilities {
    * declaration from the provider's projections, so the two cannot differ. Separate from `machineRedaction`, which
    * masks names and neither names nor withholds a value.
    *
-   * Optional for the same published-interface reason as `enforcesReadOnly`.
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`.
    */
   readonly metadataOnly?: MetadataOnlyDeclaration;
   /**
@@ -1478,7 +1464,7 @@ export interface ProviderCapabilities {
    * `AGENT_REQUIREMENT_ENGINES` in `src/lib/agent/agent-manifest.ts` mirrors it per engine type, and
    * `agent-manifest.test.ts` holds the mirror to this declaration.
    *
-   * Optional for the same published-interface reason as `enforcesReadOnly`.
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`.
    */
   readonly agentReadings?: readonly ("usage" | "workloads")[];
   /**
@@ -1498,7 +1484,7 @@ export interface ProviderCapabilities {
    * declaration for every shipped type-id, so the two cannot drift and no `connection.type` branch is
    * needed in `src/lib/db` (forbidden by `CLAUDE.md`).
    *
-   * Optional for the same published-interface reason as `enforcesReadOnly`: a required field added
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`: a required field added
    * after the fact stops every external implementer compiling. Only the literal `true` is declared, so
    * an absent flag reads as "this engine has no file-access posture", the answer for every engine but
    * DuckDB and SQLite.
@@ -1516,7 +1502,7 @@ export interface ProviderCapabilities {
    * makes still runs and still resumes the compute.
    * Read from an unconnected provider, so the declaration answers before any connect.
    *
-   * Optional for the same published-interface reason as `enforcesReadOnly`: a required field added
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`: a required field added
    * after the fact stops every external implementer compiling. Only the literal `true` is declared,
    * so an absent flag reads as "a request costs nothing to send", the answer for every engine whose
    * compute is not suspended and billed per resume.

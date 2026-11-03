@@ -241,7 +241,6 @@ export class MTConnectProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Read-only whatever the connection's flag says: the client has one operation and it is a GET.
-      enforcesReadOnly: true,
       writeReach: MTCONNECT_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

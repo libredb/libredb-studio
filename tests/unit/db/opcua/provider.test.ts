@@ -6,6 +6,7 @@
  * cannot write, would be lying by omission.
  */
 import { describe, expect, test } from "bun:test";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { isAbsolute } from "node:path";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type {
@@ -99,7 +100,7 @@ describe("the declarations", () => {
   const provider = new OpcuaProvider(connection(), {}, {}, undefined, ENV);
 
   test("read-only is declared true, and it is structural rather than a setting", () => {
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
   });
 
   test("its own dialect, so a connection never falls through to another engine's tab", () => {

@@ -98,7 +98,6 @@ describe("declarations", () => {
       defaultPort: 6333,
       containerLevels: [],
       objectKinds: QDRANT_OBJECT_KINDS,
-      enforcesReadOnly: true,
       writeReach: {
         editor: {
           reach: "absent",

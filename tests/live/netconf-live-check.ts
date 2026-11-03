@@ -54,7 +54,7 @@
  *
  * It never writes to the device, and there is no code here that could: the provider sends get,
  * get-config, get-data, get-schema and close-session and nothing else, which is what
- * `enforcesReadOnly` claims. The last checks read the list again and compare it to the first read,
+ * its `none` write reach claims. The last checks read the list again and compare it to the first read,
  * so a run that somehow changed the device would say so rather than be believed.
  *
  * `--external cpu-features` IS REQUIRED and is not a precaution. MEASURED 2026-10-15: without it

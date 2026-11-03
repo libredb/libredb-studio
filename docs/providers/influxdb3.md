@@ -68,7 +68,7 @@ The transport never goes through an `http_proxy` or `https_proxy` variable and n
 ### 3.1 Read-only
 
 Studio sends no write to InfluxDB 3: no line protocol write, no database, table, token, cache, plugin or trigger route exists in the route table, and no maintenance operation is offered.
-The read-only mode is declared (`READ_ONLY_ENFORCED`, `enforcesReadOnly`), and every statement passes the read policy before any request whatever the connection's `readOnly` says.
+The read-only mode is declared (`READ_ONLY_ENFORCED`, and a `writeReach` of `none`), and every statement passes the read policy before any request whatever the connection's `readOnly` says.
 
 ### 3.2 Defence in depth
 
@@ -530,7 +530,6 @@ None: no Admin > Operations card and no tree control is offered, because InfluxD
 |---|---|
 | `queryLanguage` | `"sql"` |
 | `defaultPort` | `8181` |
-| `enforcesReadOnly` | `true` |
 | `writeReach` | the editor absent with its proof, `evaluateInfluxSql`, and object edit, maintenance and transactions absent |
 | `supportsResultPagination` | `true` |
 | `supportsExternalQueryLimiting` | `true` |

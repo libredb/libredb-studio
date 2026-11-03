@@ -17,6 +17,7 @@ import { NETCONF_LABELS } from "@/lib/db/providers/network/netconf/labels";
 import { ALLOWED_OPERATIONS } from "@/lib/db/providers/network/netconf/requests";
 import { encodeSegment } from "@/lib/db/providers/network/netconf/keypath";
 import { buildRpc } from "@/lib/db/providers/network/netconf/requests";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 
 const facts = {
   datastores: ["running", "candidate", "startup", "operational"],
@@ -71,7 +72,7 @@ test("the engine declares its own query dialect, so it does not inherit MongoDB'
   // and a count query offered on a read-only device that has neither.
   expectBe(capabilities.queryDialect, "netconf");
   expectBe(capabilities.queryLanguage, "json");
-  expectBe(capabilities.enforcesReadOnly, true);
+  expectBe(summarizeWriteReach(capabilities.writeReach), "none");
   expectBe(capabilities.supportsMaintenance, false);
 });
 

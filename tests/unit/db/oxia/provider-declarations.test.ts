@@ -35,7 +35,6 @@ describe("getCapabilities (SB2-9.1)", () => {
       supportsTransactions: false,
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
-      enforcesReadOnly: true,
       writeReach: {
         editor: {
           reach: "absent",

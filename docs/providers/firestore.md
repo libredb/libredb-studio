@@ -97,7 +97,7 @@ Source tab: one `get` and one subcollection listing.
 
 The transport admits seven requests and refuses everything else before any socket: the database resource (`GET`), `documents.get`, `documents.listDocuments`, `listCollectionIds`, `runQuery`, `runAggregationQuery` and `batchGet`.
 Each is matched on method, path shape, verb, query parameter names and top-level body keys, so `transaction`, `newTransaction`, `readTime`, `recursive` and `requestOptions` never leave Studio, and no transaction is opened.
-`READ_ONLY_ENFORCED.firestore` is true and the provider declares `enforcesReadOnly`.
+`READ_ONLY_ENFORCED.firestore` is true and the provider's `writeReach` is `none`.
 A `batchGet` mask may name no field, which asks for each document's name and times alone; agent mode's document read sends that form and no other mask ([section 15](#15-agent-mode)).
 
 ### 3.2 REST, no SDK
@@ -462,7 +462,6 @@ Health and pulse reuse the connect probe; the overview and the monitoring panels
 | `supportsResultPagination`, `supportsExternalQueryLimiting` | false |
 | `createTable` | absent |
 | `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsTransactions`, `supportsMaintenance` | false |
-| `enforcesReadOnly` | true |
 | `writeReach` | none: the editor absent with its proof, `buildRequest`, and object edit, maintenance and transactions absent |
 | `containerLevels` | none |
 | `objectKinds` | `collection` (relation), `document` (Keys panel, Source tab, JSON) |

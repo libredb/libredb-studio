@@ -1,7 +1,7 @@
 /**
  * What the provider declares about itself.
  *
- * Every `supports*` is false and `enforcesReadOnly` is true, following the RabbitMQ provider, and
+ * Every `supports*` is false and the write reach is `none`, following the RabbitMQ provider, and
  * for the same reason stated the same way: read only whatever the connection's flag says, because
  * the client has one operation, a GET of a route from a closed table (MT-S1). No agent setting can
  * change that, which matters here more than it does for a database. MEASURED on the pinned agent:

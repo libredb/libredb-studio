@@ -111,7 +111,7 @@ On the 1.37 line (1.37.4 and 1.37.17), `GET /v1/schema/{collection}/shards?tenan
 
 ### 3.5 The read-only mode
 
-`enforcesReadOnly` is true: every console request is a read and the provider has no maintenance operation.
+The `writeReach` is `none`: every console request is a read and the provider has no maintenance operation.
 A read-only seed connection with no key is refused, because a server with anonymous access on, its default, grants a request with no key every write, so the mode would promise a boundary the server does not keep.
 
 ### 3.6 Integers
@@ -298,7 +298,7 @@ None: Weaviate has no maintenance operation in v1, so no Admin > Operations card
 
 ## 9. Capabilities & labels
 
-`queryLanguage` `json` with `queryDialect` `weaviate`, `containerLevels` empty, `enforcesReadOnly` true, every `supports*` false, `defaultPort` 8080.
+`queryLanguage` `json` with `queryDialect` `weaviate`, `containerLevels` empty, `writeReach` `none`, every `supports*` false, `defaultPort` 8080.
 `agentCredential` is `"token"` and `metadataOnly` states the agent's nine projections (section 15.5); `queryReadOnly` answers on a handle opened for the agent read-only profile only (section 15).
 The labels name a Collection and an Object, "Read Objects" and "Generate Request", and the statement language plan mode states is generated from the route table.
 

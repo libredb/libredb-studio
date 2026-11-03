@@ -111,7 +111,7 @@ applies to 9.0.2. The encoder, the connection manager and the valve are this rep
 
 `encoder.ts` exports functions for CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT. There is no function
 that writes a PUBLISH, and `encodeConnect` takes no Will parameter, so neither can be produced by a caller, a
-configuration mistake or a later edit that forgets the rule. `enforcesReadOnly` is therefore true whatever the
+configuration mistake or a later edit that forgets the rule. The write reach is therefore `none` whatever the
 connection's `readOnly` says, and the dialog draws a fixed Read-only label with no checkbox.
 
 ### 3.2 The one-way valve
@@ -413,8 +413,7 @@ by name rather than left to a default.
 
 | Capability | Value | Why |
 |---|---|---|
-| `enforcesReadOnly` | `true` | Structural, not a setting: see 3.1 |
-| `writeReach` | none | The editor absent with its proof, `guardOutboundPacket`, and object edit, maintenance and transactions absent |
+| `writeReach` | none | Structural, not a setting (see 3.1): the editor absent with its proof, `guardOutboundPacket`, and object edit, maintenance and transactions absent |
 | `queryLanguage` | `json` | The tab's editor language, shared with Kafka |
 | `queryDialect` | `mqtt` | Its own, so a connection never falls through to MongoDB's tab (#427) |
 | `defaultPort` | `1883` | The IANA assignment |

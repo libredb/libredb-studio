@@ -1299,7 +1299,6 @@ describe("the declarations", () => {
       queryLanguage: "promql",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
-      enforcesReadOnly: true,
       writeReach: noWritePath({
         module: "src/lib/db/providers/timeseries/prometheus/http-transport.ts",
         symbol: "PATHS",

@@ -230,7 +230,6 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: false,
       declaresForeignKeys: false,
       // Read-only whatever the flag says: the management client sends GET only, and the AMQP client cannot publish.
-      enforcesReadOnly: true,
       writeReach: RABBITMQ_WRITE_REACH,
       statementTerminator: "none",
       maintenanceOperations: [],

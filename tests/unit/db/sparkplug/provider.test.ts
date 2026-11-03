@@ -6,6 +6,7 @@
  * the same class the product does and no broker is involved.
  */
 import { describe, expect, test } from "bun:test";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
 import {
   SPARKPLUG_DEFAULT_PORT,
@@ -60,7 +61,7 @@ const openProvider = async (over: Partial<DatabaseConnection> = {}) => {
 describe("what it declares without connecting", () => {
   test("read-only is declared, and no maintenance is offered", () => {
     const declared = new SparkplugProvider(connection()).getCapabilities();
-    expect(declared.enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(declared.writeReach)).toBe("none");
     expect(declared.supportsMaintenance).toBe(false);
     expect(declared.maintenanceOperations).toEqual([]);
     expect(declared.createTable).toBeUndefined();

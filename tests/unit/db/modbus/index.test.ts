@@ -13,6 +13,7 @@
  * look at is a gap that ships.
  */
 import { describe, expect, test } from "bun:test";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import {
   atBoundary,
   MODBUS_NO_MAP_INVENTORY_SENTENCE,
@@ -122,7 +123,7 @@ describe("the dialect, and the gap it closed", () => {
 describe("the declarations", () => {
   test("read only is enforced and no maintenance is offered", () => {
     const caps = provider().getCapabilities();
-    expect(caps.enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(caps.writeReach)).toBe("none");
     expect(caps.supportsMaintenance).toBe(false);
     expect(caps.maintenanceOperations).toEqual([]);
   });

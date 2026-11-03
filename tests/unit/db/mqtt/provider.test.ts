@@ -30,6 +30,7 @@ import {
   type MqttTransport,
   type MqttTransportFactory,
 } from "@/lib/db/providers/keyvalue/mqtt/session";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import type { DatabaseConnection, SSLMode } from "@/lib/types";
 
 const CONNACK = Buffer.from([0x20, 0x03, 0x00, 0x00, 0x00]);
@@ -105,10 +106,10 @@ describe("the declarations, every member written out", () => {
     expect(capabilities.defaultPort).toBe(MQTT_DEFAULT_PORT);
   });
 
-  test("read-only is declared true, and it is structural rather than a mode", () => {
-    expect(capabilities.enforcesReadOnly).toBe(true);
+  test("no write path is declared, and it is structural rather than a mode", () => {
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("none");
     // A connection that ticked the box off would still write nothing: there is no code that can.
-    expect(openProvider({ readOnly: false }).getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(openProvider({ readOnly: false }).getCapabilities().writeReach)).toBe("none");
   });
 
   test("every surface a broker does not have is declared false, not left to a default", () => {

@@ -270,7 +270,6 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       supportsExternalQueryLimiting: false,
       // Nothing this product offers writes to Prometheus (#1085 sections 2 and 4.5), so a connection is read-only
       // whatever its flag says, and the flag is accepted.
-      enforcesReadOnly: true,
       writeReach: PROMETHEUS_WRITE_REACH,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,

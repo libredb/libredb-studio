@@ -365,7 +365,6 @@ export class EtcdProvider extends BaseDatabaseProvider {
       containerLevels: [],
       objectKinds: ETCD_OBJECT_KINDS,
       keyScan: ETCD_KEY_SCAN,
-      enforcesReadOnly: true,
       writeReach: ETCD_WRITE_REACH,
       // Key names and values are stored values: the agent's answers carry the cluster's metadata, counts and sizes.
       metadataOnly: ETCD_METADATA_ONLY,

@@ -256,7 +256,6 @@ export class S3Provider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Read-only whatever the flag says: the client has only GET and HEAD operations.
-      enforcesReadOnly: true,
       writeReach: S3_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],

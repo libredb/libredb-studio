@@ -376,7 +376,6 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
       containerLevels: [],
       objectKinds: ETCD_OBJECT_KINDS,
       keyScan: ETCD_KEY_SCAN,
-      enforcesReadOnly: true,
       writeReach: {
         editor: {
           reach: "gated",

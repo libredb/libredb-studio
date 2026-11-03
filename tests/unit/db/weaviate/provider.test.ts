@@ -134,7 +134,6 @@ describe("declarations", () => {
       defaultPort: 8080,
       containerLevels: [],
       objectKinds: WEAVIATE_OBJECT_KINDS,
-      enforcesReadOnly: true,
       writeReach: {
         editor: {
           reach: "absent",

@@ -41,6 +41,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { SparkplugProvider } from "@/lib/db/providers/industrial/sparkplug";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 
 const HOST = argument("host", "127.0.0.1");
@@ -283,7 +284,7 @@ const ITEMS: { readonly name: string; readonly run: () => Promise<void> }[] = [
       const provider = await open();
       try {
         const capabilities = provider.getCapabilities();
-        same(capabilities.enforcesReadOnly, true, "enforcesReadOnly");
+        same(summarizeWriteReach(capabilities.writeReach), "none", "write reach");
         same(capabilities.supportsTransactions, false, "supportsTransactions");
       } finally {
         await provider.disconnect();

@@ -227,7 +227,6 @@ export class QdrantProvider extends BaseDatabaseProvider {
       defaultPort: QDRANT_DEFAULT_PORT,
       containerLevels: [],
       objectKinds: QDRANT_OBJECT_KINDS,
-      enforcesReadOnly: true,
       writeReach: QDRANT_WRITE_REACH,
       // The secret alone signs in, so the agent's own key is `agentPassword` alone; a user is refused here as it is
       // on the connection.
