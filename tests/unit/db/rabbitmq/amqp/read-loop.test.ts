@@ -74,6 +74,10 @@ interface Run {
   settled: boolean;
   /** Advances the clock, then lets the pushed answers and continuations run. */
   advance(ms: number): Promise<void>;
+  /** Moves the read's clock forward by `ms` without running a timer: a deadline timer the loop has not run yet. */
+  jump(ms: number): void;
+  /** Called on every stepped-over body span, inside the walk. */
+  onSkip: () => void;
   names(): string[];
 }
 
@@ -88,6 +92,8 @@ async function start(
 ): Promise<Run> {
   const socket = createMemorySocket(brokerAnswers(options.answers, options.tune));
   const clock = createManualClock();
+  let jumped = 0;
+  const readClock = { now: () => clock.now() + jumped, setTimer: clock.setTimer };
   const controller = new AbortController();
   if (options.abortFirst !== undefined) controller.abort(options.abortFirst);
   const skipped: Uint8Array[] = [];
@@ -103,6 +109,10 @@ async function start(
       clock.advance(ms);
       await settle();
     },
+    jump(ms) {
+      jumped += ms;
+    },
+    onSkip: () => {},
     names: () => frameNames(socket.received),
   };
   const result = readStream({
@@ -113,14 +123,18 @@ async function start(
     limit: options.limit ?? 50,
     signal: controller.signal,
     deadlineSeconds: 30,
+    deadlineAt: 30_000,
     replicas,
     dial: async () => {
       run.dials += 1;
       return socket;
     },
-    clock,
+    clock: readClock,
     studioVersion: null,
-    onSkippedBytes: (view) => skipped.push(view),
+    onSkippedBytes: (view) => {
+      skipped.push(view);
+      run.onSkip();
+    },
   });
   result.then(
     () => {
@@ -392,6 +406,31 @@ describe("hard stops", () => {
     cancel.controller.abort(new QueryCancelledError("stopped"));
     expect(await cancel.result).toMatchObject({ stop: { kind: "cancel" }, messages: [] });
   });
+
+  // A runtime hands a socket's reads over in batches before it runs a due timer (32 reads per batch in Node), so the
+  // deadline signal can fire chunks late; the clock is read at every frame event instead.
+  test("a chunk arriving after the deadline instant is not walked, though the deadline signal has not fired", async () => {
+    const run = await start();
+    run.socket.push(messages(2));
+    run.jump(30_000);
+    run.socket.push(messages(3, 2));
+    expect(await run.result).toMatchObject({ stop: { kind: "deadline" } });
+    expect((await run.result).messages.map((row) => row.offset)).toEqual([BigInt(0), BigInt(1)]);
+    expect(ackTags(run)).toEqual([BigInt(1), BigInt(2)]);
+    expect(run.controller.signal.aborted).toBe(false);
+    expect(run.socket.destroyed).toBe(true);
+    expect(run.names().at(-1)).toBe("10.50");
+  });
+
+  test("the deadline instant passing inside a chunk's walk stops the read at the next frame of that chunk", async () => {
+    const run = await start();
+    run.onSkip = () => run.jump(30_000);
+    const big = new Uint8Array(RABBITMQ_BODY_PREFIX_BYTES + 16);
+    run.socket.push(bytesOf(messages(1, 0, big), messages(2, 1)));
+    expect(await run.result).toMatchObject({ stop: { kind: "deadline" }, messages: [] });
+    expect(ackTags(run)).toEqual([]);
+    expect(run.socket.destroyed).toBe(true);
+  });
 });
 
 describe("541", () => {
@@ -488,6 +527,7 @@ describe("before consume-ok", () => {
           limit: 1,
           signal: new AbortController().signal,
           deadlineSeconds: 30,
+          deadlineAt: 30_000,
           replicas,
           dial: async () => {
             dials += 1;
@@ -596,6 +636,7 @@ describe("before consume-ok", () => {
         limit: 1,
         signal: new AbortController().signal,
         deadlineSeconds: 30,
+        deadlineAt: 30_000,
         replicas,
         dial: async () => socket,
         clock: createManualClock(),

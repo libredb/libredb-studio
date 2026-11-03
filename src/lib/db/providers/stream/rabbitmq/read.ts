@@ -110,7 +110,7 @@ async function read(
   const run = beginRun(deps.runs, queryId, AbortSignal.any([deps.deadlineSignal(deadlineMs), deps.lifetime]));
   try {
     const request = parseReadRequest(text);
-    const outcome = await readRequest(request, run.signal, deadlineMs, deps);
+    const outcome = await readRequest(request, run.signal, { ms: deadlineMs, at: startedAt + deadlineMs }, deps);
     return buildReadResult(outcome, request, deps.clock.now() - startedAt, deadlineMs / 1000);
   } finally {
     run.end();
@@ -138,7 +138,7 @@ export async function runAgentRead(request: ReadRequest, deps: ReadDependencies)
     const signal = AbortSignal.any([deps.deadlineSignal(deadlineMs), deps.lifetime]);
     let outcome: StreamReadOutcome;
     try {
-      outcome = await readRequest(request, signal, deadlineMs, deps);
+      outcome = await readRequest(request, signal, { ms: deadlineMs, at: startedAt + deadlineMs }, deps);
     } catch (error) {
       throw await exchangeOfTheName(error, request, signal, deadlineMs / 1000, deps);
     }
@@ -171,16 +171,19 @@ async function exchangeOfTheName(
   return notAStream(request.stream, "");
 }
 
-/** Steps 2 to 6 of a validated request under `signal`: the AMQP port, the type check, the read slot and the read. */
+/**
+ * Steps 2 to 6 of a validated request under `signal`: the AMQP port, the type check, the read slot and the read.
+ * `deadline.at` is the instant on `deps.clock` at which the signal's deadline of `deadline.ms` falls.
+ */
 async function readRequest(
   request: ReadRequest,
   signal: AbortSignal,
-  deadlineMs: number,
+  deadline: { readonly ms: number; readonly at: number },
   deps: ReadDependencies,
 ): Promise<StreamReadOutcome> {
   const amqp = deps.endpoints.amqp;
   if (amqp === null) throw configError(AMQP_PORT_REQUIRED);
-  const seconds = deadlineMs / 1000;
+  const seconds = deadline.ms / 1000;
   const checked = await checkStreamType(deps, request, signal, seconds);
   if (checked.type !== "stream") throw notAStream(request.stream, checked.type);
   const ticket = await acquireReadSlot(deps.readLimiter, signal, {
@@ -197,6 +200,7 @@ async function readRequest(
       limit: request.limit,
       signal,
       deadlineSeconds: seconds,
+      deadlineAt: deadline.at,
       replicas: { online: checked.online, members: checked.members },
       dial: deps.dial,
       clock: deps.clock,

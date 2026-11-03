@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D423, U17 · 310
+- [Drivers and connections](#drivers-and-connections) — D1-D423, U17 · 308
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U196 · 182
@@ -3552,20 +3552,10 @@ Found 2026-10-14 in the final review of the Apache Spark provider (#1759).
 
 **Done when:** each stream is pre-checked once (`readIpcColumns` takes the result of the check its caller ran, or one entry point checks and reads), a stream with more than one record batch is still refused before apache-arrow reads it, and a case in `tests/unit/db/spark/arrow.test.ts` counts one `checkIpcStream` pass per stream.
 
-### D360. The RabbitMQ hostile-peer test can fail on a loaded machine while the ignores-close peer still holds its socket
-
-`tests/unit/db/rabbitmq/hostile-peers.test.ts` (R-S10) asserts `openAfter: 0` for every hostile peer, where `openAfter` counts the accepted sockets of the fake peer in `tests/helpers/rabbitmq-fake-peer.ts` that have not seen their close yet.
-In a full local run of all 1,478 test files at 20 jobs on a loaded machine (326 s, against 108 s for the same suite unloaded), the "ignores-close" peer under Bun ended with `openAfter: 1` and the file failed; run alone right after, the file passed 6 of 6 (2026-10-14, on the #1764 branch with `main` at 5b77948ee merged in).
-The file's docblock already records a loaded macOS runner taking up to 3,540 ms to see that close and bounds the helper's wait at 5 s, so a heavier load uses up that margin.
-
-Found 2026-10-14 while merging #1759 and #1764; pre-existing since #1703.
-
-**Done when:** the assertion no longer depends on how fast the peer observes the close (for example it checks that the client destroyed its socket and awaits the peer's close under the file's own budget), and the file passes ten full runs at twice the core count in jobs.
-
 ### D361. The MongoDB server-selection test waits out the driver's real 30 s bound and ran past the 300 s file budget on a loaded machine
 
 `tests/integration/db/mongodb-server-selection.test.ts` drives the real driver against a closed port and measures the driver's 30 s server-selection bound on the wall clock, so the file takes about 40 s alone.
-In the same loaded run as D360 the runner stopped it at `DEFAULT_FILE_TIMEOUT_MS` (300 s, `tests/runner/options.ts`); run alone right after, it passed 2 of 2 in 40.5 s.
+In a full local run of all 1,478 test files at 20 jobs on a loaded machine (2026-10-14) the runner stopped it at `DEFAULT_FILE_TIMEOUT_MS` (300 s, `tests/runner/options.ts`); run alone right after, it passed 2 of 2 in 40.5 s.
 Why the load stretched it past seven times its own duration was not measured.
 
 Found 2026-10-14 while merging #1759 and #1764; pre-existing since #1518.
@@ -4015,17 +4005,6 @@ Other tests may reuse an expected object inside one call the same way.
 Found 2026-10-28 on Bun 1.4.2 and re-measured on 1.4.4.
 
 **Done when:** the RabbitMQ case gives each outcome its own expected object, a sweep of `tests/` splits every other expected object reused inside one `toMatchObject` call, and the behaviour is reported to Bun with the one-line repro above.
-
-### D403. The RabbitMQ hostile-peer runtimes disagree on Windows about which bound stopped one peer
-
-`both runtimes come to the same outcome for every peer` in `tests/unit/db/rabbitmq/hostile-peers.test.ts` holds Node's label for each peer equal to Bun's.
-On `Cross-platform Tests (windows-latest)` the `header-heavy-bytes` peer ended `stop:deadline` under Bun and `stop:budget` under Node, twice: run 40731517642 on 2026-10-28 and attempt 1 of run 40803313969 on 2026-10-29, each passing on its rerun.
-The peer's own expectation in `tests/helpers/rabbitmq-fake-peer.ts` admits `stop:budget`, `stop:limit` and `stop:deadline`, so both outcomes are legitimate and only the equality fails: which bound trips first is a race on a slow runner.
-D360 is the same file's other load failure.
-
-Found 2026-10-29 while reading Windows job failures on `main` and its branches.
-
-**Done when:** the cross-runtime comparison treats a peer's admitted set as one outcome, or the peer is built so that only one bound can trip, and the file passes repeated runs on the Windows job.
 
 ### D404. The Oracle Thin driver keeps a pooled session that `close({ drop: true })` asks it to drop
 

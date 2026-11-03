@@ -20,6 +20,7 @@ import {
   cancelWarning,
   conversionAfter,
   conversionNoRowNumeric,
+  deadlineWarning,
   lastIdleWarning,
   managementTimeout,
   notAStream,
@@ -520,6 +521,39 @@ function peerHarness(
 
 const frames = (target: FakePeer, method: { readonly classId: number; readonly methodId: number }) =>
   target.received.filter((frame) => frame.classId === method.classId && frame.methodId === method.methodId);
+
+describe("the deadline D on the provider's clock", () => {
+  // The read fixes D's instant on deps.clock as it starts; the clock is moved on once the dial runs, as a deadline
+  // timer the event loop has not run yet would leave it.
+  test.each([
+    [30_000 - 5_000, "idle"],
+    [30_000, "deadline"],
+  ])("a delivery taken %d ms of clock after the start ends the read on %s", async (skew, stop) => {
+    const target = await peer([
+      ...handshakeSteps(),
+      { send: concat(delivery(1, BigInt(7), "orders"), delivery(2, BigInt(8), "orders")) },
+      { waitMs: 60_000 },
+    ]);
+    const h = peerHarness(target);
+    let moved = 0;
+    const result = await runRead(READ, undefined, undefined, {
+      ...h.deps,
+      clock: { now: () => SYSTEM_CLOCK.now() + moved, setTimer: SYSTEM_CLOCK.setTimer },
+      dial: (endpoint, signal) => {
+        moved = skew;
+        return h.deps.dial(endpoint, signal);
+      },
+    });
+    expect(h.deadlines.asked.map((each) => each.controller.signal.aborted)).toEqual([false]);
+    if (stop === "deadline") {
+      expect(result.rowCount).toBe(0);
+      expect(result.warnings?.[0]?.message).toBe(deadlineWarning(30, null));
+    } else {
+      expect(result.rowCount).toBe(2);
+      expect(result.warnings?.[0]?.message).not.toBe(deadlineWarning(30, null));
+    }
+  });
+});
 
 describe("names that look like syntax, through the whole read", () => {
   const RLO = String.fromCodePoint(0x202e);
