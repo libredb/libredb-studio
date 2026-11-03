@@ -298,7 +298,7 @@ describe("docs/SECURITY.md states Qdrant's control, its limits and its plaintext
     expect(bullet).toContain(
       "A Qdrant API key or JWT over no TLS is refused unless the host is a loopback address or `localhost`, or an SSH tunnel carries the connection.",
     );
-    expect(SECURITY).toContain("etcd's, Neo4j's, Milvus's, Qdrant's and Weaviate's providers keep the mode today");
+    expect(SECURITY).toContain("Qdrant's runs reads only, so the mode changes nothing a request can do today");
   });
 });
 

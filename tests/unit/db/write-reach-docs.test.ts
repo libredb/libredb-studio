@@ -108,3 +108,19 @@ describe("the Write reach table in docs/DATABASE_PROVIDERS.md", () => {
     },
   );
 });
+
+describe("docs/SECURITY.md row 3.8", () => {
+  const security = readFileSync(join(import.meta.dir, "..", "..", "..", "docs", "SECURITY.md"), "utf8");
+  const row = security.split("\n").find((line) => line.startsWith("| 3.8 |")) ?? "";
+
+  test("states its rule by the record and points at the Write reach table rather than naming engines", () => {
+    expect(row).toContain("on every engine whose `WRITE_REACH` is `open`");
+    expect(row).toContain("](./DATABASE_PROVIDERS.md#write-reach)");
+  });
+
+  test("keeps its precondition: the mode is a boundary only on a managed seed whose secret stays on the server", () => {
+    expect(security).toContain(
+      "**3.8.** Partial for one precondition: the mode is a boundary only on a managed seed, which `resolveConnection` re-resolves from the operator's file whatever a caller sends",
+    );
+  });
+});
