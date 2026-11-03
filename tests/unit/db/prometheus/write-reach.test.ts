@@ -186,13 +186,15 @@ function escapes(source: ts.SourceFile): string[] {
       }
     }
     const start = literalStart(node);
-    if (start !== null && start.startsWith("/") && !insidePathsTable(node)) found.push(`literal ${node.getText(source)}`);
+    if (start !== null && start.startsWith("/") && !insidePathsTable(node))
+      found.push(`literal ${node.getText(source)}`);
     if ((ts.isNewExpression(node) || ts.isPropertyAccessExpression(node)) && ts.isIdentifier(node.expression)) {
       if (node.expression.text === "URL") found.push(`URL in ${inside ?? "module scope"}`);
     }
     if (ts.isPropertyAccessExpression(node) && Object.hasOwn(SENDERS, node.name.text)) {
       const allowed = SENDERS[node.name.text];
-      if (inside === null || !allowed.includes(inside)) found.push(`${node.name.text} from ${inside ?? "module scope"}`);
+      if (inside === null || !allowed.includes(inside))
+        found.push(`${node.name.text} from ${inside ?? "module scope"}`);
     }
     ts.forEachChild(node, (child) => visit(child, inside));
   };
@@ -233,7 +235,7 @@ describe("http-transport.ts reaches a server only through PATHS", () => {
   test("the check sees a literal path outside the table, a spelled or a template one", () => {
     const sample = parse(
       "sample.ts",
-      "const PATHS = { READY: \"/-/ready\" }; const a = \"/-/reload\"; const b = `/api/v1/admin/${a}`; const c = `/-/quit`;",
+      'const PATHS = { READY: "/-/ready" }; const a = "/-/reload"; const b = `/api/v1/admin/${a}`; const c = `/-/quit`;',
     );
     expect(escapes(sample)).toEqual(['literal "/-/reload"', "literal `/api/v1/admin/${a}`", "literal `/-/quit`"]);
   });
