@@ -11,9 +11,16 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { BerError } from "@/lib/db/providers/network/snmp/ber";
+import { BerError, writeInteger, writeOctetString, writeOid, writeSequence } from "@/lib/db/providers/network/snmp/ber";
 import { ERROR_STATUS } from "@/lib/db/providers/network/snmp/errors";
-import { communityOf, decodeResponse, encodeRequest, VERSION_V2C } from "@/lib/db/providers/network/snmp/message";
+import {
+  communityOf,
+  decodeResponse,
+  encodeRequest,
+  SnmpAnswerTooLargeError,
+  VERSION_V2C,
+} from "@/lib/db/providers/network/snmp/message";
+import { MAX_VARBINDS_PER_REQUEST } from "@/lib/db/providers/network/snmp/statement";
 import { PDU_GET, PDU_GET_BULK, PDU_GET_NEXT, PDU_SET } from "@/lib/db/providers/network/snmp/valve";
 
 const CAPTURED: Record<string, number[]> = JSON.parse(
@@ -143,6 +150,47 @@ describe("a response is read, and an unreadable one is refused rather than halve
   });
   test("SNMPv2c is version 1 on the wire, which is the kind of thing a constant should say once", () => {
     expect(VERSION_V2C).toBe(1);
+  });
+});
+
+/** A v2c Response of `count` copies of sysName.0, as an agent answers a get naming it `count` times. */
+function answerOf(requestId: number, count: number): Uint8Array {
+  const varbind = writeSequence([
+    writeOid([1, 3, 6, 1, 2, 1, 1, 5, 0]),
+    writeOctetString(new TextEncoder().encode("box")),
+  ]);
+  return writeSequence([
+    writeInteger(VERSION_V2C),
+    writeOctetString(new TextEncoder().encode("public")),
+    writeSequence(
+      [writeInteger(requestId), writeInteger(0), writeInteger(0), writeSequence(Array(count).fill(varbind))],
+      0xa2,
+    ),
+  ]);
+}
+
+describe("an answer is read up to the most objects one request asks for, and refused as too large past it", () => {
+  // The reader held 256 while a request carries up to MAX_VARBINDS_PER_REQUEST, so an agent's answer to a get naming
+  // 257 to 400 objects was dropped as unreadable and the read ended in silence.
+  for (const count of [257, MAX_VARBINDS_PER_REQUEST]) {
+    test(`an answer of ${count} objects is read whole`, () => {
+      const decoded = decodeResponse(answerOf(31, count));
+      expect(decoded.varbinds).toHaveLength(count);
+      expect(decoded.requestId).toBe(31);
+    });
+  }
+  test("one object more is refused as too large, naming the request it answers and the cap", () => {
+    const run = () => decodeResponse(answerOf(77, MAX_VARBINDS_PER_REQUEST + 1));
+    expect(run).toThrow(SnmpAnswerTooLargeError);
+    expect(run).toThrow(BerError);
+    try {
+      run();
+    } catch (error) {
+      expect((error as SnmpAnswerTooLargeError).requestId).toBe(77);
+      expect((error as Error).message).toBe(
+        `the answer carried more than ${MAX_VARBINDS_PER_REQUEST} objects, more than one request here asks for`,
+      );
+    }
   });
 });
 

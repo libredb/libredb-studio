@@ -198,6 +198,11 @@ matters. Each of these is tested at the value itself and one past it.
 | privacy salt | 8 octets | RFC 3826 section 3.1.2.1 |
 | max repetitions | 50 | an unbounded GetBulk killed the fixture agent |
 | varbinds per request | 400 | 500 carried, 600 raised EMSGSIZE |
+| varbinds per answer | 400 | the same constant as per request (`MAX_VARBINDS_PER_REQUEST`) |
+
+An answer is read up to the same 400 varbinds a request may carry, since one constant holds both ends.
+The reader used to hold 256, so the agent's whole answer to a get naming 257 to 400 objects was refused unread and the read ended as silence at its deadline.
+An answer past 400, which no conforming agent sends to a request this provider builds, ends its request at once as too large, never as silence: the console says the agent answered with more objects than one request asks for, and an agent read is refused as too large.
 
 The engine id ceiling is worth its own sentence. Nothing exercised a pin between 17 and 32
 octets, so halving it to 16 would have refused every real engine identity without a test

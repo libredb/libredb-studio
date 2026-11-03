@@ -49,6 +49,15 @@ export class BerError extends QueryError {
   }
 }
 
+/** A SEQUENCE holding more fields than its reader allows. Its own class, so a reader can tell "too many" from "broken". */
+export class BerTooManyFieldsError extends BerError {
+  constructor(readonly limit: number) {
+    super(`more than ${limit} fields in one SEQUENCE`);
+    this.name = "BerTooManyFieldsError";
+    Object.setPrototypeOf(this, BerTooManyFieldsError.prototype);
+  }
+}
+
 /**
  * Reads the length octets at `offset`, returning the length and the offset of the first
  * content byte. Refuses the indefinite form (0x80) and any length that does not fit the
@@ -82,7 +91,7 @@ export function readChildren(buf: Uint8Array, parent: BerField, limit = 8): BerF
   const out: BerField[] = [];
   let at = parent.start;
   while (at < parent.end) {
-    if (out.length >= limit) throw new BerError(`more than ${limit} fields in one SEQUENCE`);
+    if (out.length >= limit) throw new BerTooManyFieldsError(limit);
     const field = readField(buf, at);
     if (field.end > parent.end) throw new BerError("field runs past its parent");
     out.push(field);

@@ -551,6 +551,10 @@ describe("failures are worded by category, quoting nothing the agent sent", () =
     [{ kind: "silence", reason: "x", causes: [], retryable: true }, F.silence(2_000)],
     [{ kind: "tooLarge", reason: "x", retryable: false }, F.tooBig],
     [{ kind: "requestTooLarge", reason: "x", retryable: false }, F.requestTooLarge],
+    [
+      { kind: "answerTooLarge", reason: "x", retryable: false },
+      "The agent answered with more objects than one request asks for, so Studio refused the answer as too large rather than read it: ask for fewer objects in one get or next. SNMP carries no error text of its own, and Studio quotes nothing the agent sent back.",
+    ],
     [{ kind: "credential", reason: "x", retryable: false }, F.credential],
     [{ kind: "transport", reason: "x", retryable: false }, F.unreachable],
     [

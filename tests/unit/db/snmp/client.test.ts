@@ -25,6 +25,7 @@ import {
   readUsmParameters,
 } from "@/lib/db/providers/network/snmp/v3-message";
 import { decodeResponse, encodeRequest } from "@/lib/db/providers/network/snmp/message";
+import { MAX_VARBINDS_PER_REQUEST } from "@/lib/db/providers/network/snmp/statement";
 import { PDU_GET, PDU_SET } from "@/lib/db/providers/network/snmp/valve";
 
 const SYS_DESCR = [1, 3, 6, 1, 2, 1, 1, 1, 0];
@@ -173,6 +174,40 @@ describe("a request goes out and its answer comes back", () => {
     });
     opened = exchange;
     expect(await exchange.send(PDU_GET, 909, [SYS_DESCR])).toMatchObject({ requestId: 909 });
+  });
+
+  test("an answer past the most objects one request asks for ends its request at once as too large, not as silence", async () => {
+    agent = createSocket("udp4");
+    agent.on("message", (datagram, from) => {
+      const asked = decodeResponse(Uint8Array.from(datagram)).requestId;
+      const varbind = writeSequence([writeOid(SYS_DESCR), writeOctetString(new TextEncoder().encode("x"))]);
+      const answer = writeSequence([
+        writeInteger(1),
+        writeOctetString(new TextEncoder().encode("public")),
+        writeSequence(
+          [
+            writeInteger(asked),
+            writeInteger(0),
+            writeInteger(0),
+            writeSequence(Array(MAX_VARBINDS_PER_REQUEST + 1).fill(varbind)),
+          ],
+          0xa2,
+        ),
+      ]);
+      agent?.send(answer, from.port, from.address);
+    });
+    await new Promise<void>((resolve) => agent?.bind(0, "127.0.0.1", () => resolve()));
+    const port = (agent.address() as { port: number }).port;
+    const exchange = await openExchange({
+      target: await resolveTarget("127.0.0.1", port),
+      community: "public",
+      deadlineMs: 5_000,
+    });
+    opened = exchange;
+    const started = Date.now();
+    const answer = await exchange.send(PDU_GET, 4242, [SYS_DESCR]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(answer).toMatchObject({ kind: "answerTooLarge", retryable: false });
   });
 
   test("no answer ends at the deadline, as silence with its causes", async () => {
