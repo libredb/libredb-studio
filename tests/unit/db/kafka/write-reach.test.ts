@@ -15,12 +15,13 @@
  *    method that is not driven fails.
  * 3. The source: every call `platformatic-client.ts` makes on a library object is a member this file maps to the
  *    table's APIs, every raw protocol call is one of the two the table covers, and only the clients the table covers
- *    are built. The check is a parse, so it sees a call in a branch the run above never drives; the same check runs
- *    over sample sources that plant a write in such a branch.
+ *    are built. The check is a parse of the direct calls on the adapter's named library objects, so it sees such a
+ *    call in a branch the run above never drives, and the same check runs over sample sources that plant a write in
+ *    such a branch; an alias or a cast of a library object is refused by the seam guard (seam-guard.test.ts).
  * 4. The live run: tests/fixtures/kafka/4.3.1/write-reach/write-reach.json, written by tests/live/kafka-write-reach.ts
  *    through its run.sh against a fresh Apache Kafka 4.3.1, records the topic list, every partition's end offset and
- *    every group's committed offsets unchanged across every provider surface, every request frame Studio sent through
- *    a recording forwarder, and a control write by the script that moved them.
+ *    every group's committed offsets unchanged across every provider surface, every request the library sent, read at
+ *    Connection.prototype.send, and a control write by the script that moved them.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -531,7 +532,8 @@ function dotted(node: ts.Expression): string | null {
  * Every way a source could send a library request that `MEMBER_APIS` does not map, as one line each: a call of a
  * member on a library object that the map does not hold, a raw protocol call other than the two it holds, and a read
  * of a library member other than the clients, the two raw modules and the loggers. Branches are read like any other
- * code, so a call in a branch no test drives is found.
+ * code, so a direct call in a branch no test drives is found; a call through an alias or a cast of a library object
+ * is not, and the seam guard refuses those.
  */
 function unmappedCalls(source: ts.SourceFile): string[] {
   const found: string[] = [];

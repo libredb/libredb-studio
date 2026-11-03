@@ -35,7 +35,7 @@ const OTHER_PASSWORD = ["not", "a", "real", "password"].join("-");
 const ROOT = join(import.meta.dir, "..", "..", "..");
 
 /**
- * The map `READ_ONLY_ENFORCED` held before it was derived from the record, so deriving it changes no answer, with one
+ * The map `READ_ONLY_ENFORCED` held before it was derived from the record, so deriving it changes no answer, with
  * two entries flipped since: Prometheus, once a test held its closed endpoint table to reads, and Kafka, once a test
  * held its client's API key set to reads.
  */

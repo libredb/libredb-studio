@@ -729,7 +729,8 @@ Kafka's write reach is `none`: every request the client sends is one of the read
 [`write-reach.test.ts`](../../tests/unit/db/kafka/write-reach.test.ts) holds that four ways.
 The table itself: frozen, every entry a read API under its own protocol key, and none of the protocol's write, group-membership or admin APIs.
 The real `@platformatic/kafka`, loaded through `loadPlatformatic()`, driven through every method of the client against a local listener that records the API key of every request frame: the keys recorded are exactly the table's, every Metadata request carries `allow_auto_topic_creation` false, and each method that names a topic refuses `__consumer_offsets`, `__transaction_state` and `__share_group_state` before any frame is sent.
-A parse of `platformatic-client.ts` that finds no call on a library object outside a map of the read calls to the table's APIs, no raw protocol call but the Fetch and ConsumerGroupDescribe ones, and no library client but the four it builds, so a write in a branch no run drives fails it too.
+A parse of `platformatic-client.ts` that finds no call on a library object outside a map of the read calls to the table's APIs, no raw protocol call but the Fetch and ConsumerGroupDescribe ones, and no library client but the four it builds, so a direct call on one of the adapter's named library objects in a branch no run drives fails it too.
+An alias or a cast of a library object is outside that parse, and the seam guard, [`seam-guard.test.ts`](../../tests/unit/db/kafka/seam-guard.test.ts), refuses it.
 And the replay of the live capture below.
 The integration test opens a `readOnly: true` connection, which the factory accepts, drives every surface over the captured broker, and holds each library call to those read calls.
 

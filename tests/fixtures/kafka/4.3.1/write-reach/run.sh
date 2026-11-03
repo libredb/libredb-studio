@@ -6,15 +6,16 @@
 #
 # One combined KRaft node named write-reach-kafka-4.3.1, with no authentication, no authorizer and automatic topic
 # creation on, so a produce, a topic creation, an offset commit or a config change from Studio would land. Studio
-# connects to the plaintext listener on 127.0.0.1:KAFKA_WRITE_REACH_PORT (default 29096); the port is fixed rather
-# than picked by Docker because the broker advertises it, and a client follows the advertised address. The broker's
-# own tools read and write through a second listener inside the container. Run it under the team's docker lock; it
-# touches only the container it names, which is removed when the run ends.
+# connects to the plaintext listener on 127.0.0.1:KAFKA_WRITE_REACH_PORT, a free port the script picks before the
+# container starts unless the variable names one. Docker cannot pick it, because the broker advertises the port and a
+# client follows the advertised address, so the port must be known before the broker starts. The broker's own tools
+# read and write through a second listener inside the container. Run it under the team's docker lock; it touches only
+# the container it names, which is removed when the run ends.
 set -euo pipefail
 dir="$(cd "$(dirname "$0")" && pwd)"
 image="apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837"
 name="write-reach-kafka-4.3.1"
-port="${KAFKA_WRITE_REACH_PORT:-29096}"
+port="${KAFKA_WRITE_REACH_PORT:-$(bun -e 'const s = require("node:net").createServer(); s.listen(0, "127.0.0.1", () => { console.log(s.address().port); s.close(); });')}"
 cleanup() {
   docker rm -f -v "$name" >/dev/null 2>&1 || true
 }
