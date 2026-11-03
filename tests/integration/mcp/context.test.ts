@@ -449,6 +449,34 @@ describe("a seed's Vault reference", () => {
     expect(vaultCalls).toEqual([]);
   });
 
+  test("that fails for a reason other than Vault rethrows that error, so its cause is not hidden behind the refusal", async () => {
+    // A fetch that answers no Response makes the Vault read throw a plain TypeError, the shape of a programming error.
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      vaultCalls.push(String(input));
+      return null;
+    }) as unknown as typeof fetch;
+    seedWarehouse();
+    const context = new McpConnectionContext(alice);
+    const connection = await warehouse(context);
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    const captured = capturePasswords();
+    let refusal: unknown;
+    let logged: unknown[][] = [];
+    try {
+      refusal = await context.acquire(connection, "agent-read-only").catch((error: unknown) => error);
+      logged = [...errors.mock.calls];
+    } finally {
+      captured.restore();
+      errors.mockRestore();
+    }
+
+    expect(vaultCalls).toEqual([`${VAULT_ADDR}/v1/secret/data/mcp/warehouse`]);
+    expect(refusal).toBeInstanceOf(TypeError);
+    expect(refusal).not.toBeInstanceOf(ExecutionProfileError);
+    expect(logged).toEqual([]);
+    expect(captured.passwords).toEqual([]);
+  });
+
   test("on a literal connection is the text it is, and Vault is never asked", async () => {
     process.env.SEED_LITERAL_VALUES = "true";
     vaultAnswers(200, { data: { data: { password: "not-a-real-password" } } });
