@@ -537,18 +537,19 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // one metadata request under the agent's own boundary; inspect_schema lists a collection's properties and vectors and
   // never its tenants or aliases.
   weaviate: true,
-  // Both offered for the metadata tools (InfluxDB spec I13). Both providers implement `queryReadOnly` for agent
-  // mode; `run_read_query` serves InfluxDB 3's SQL, opened by MCP_STATEMENT_READ, and no MCP statement tool reads
-  // InfluxQL, so `influxdb` stays closed there (BACKLOG B94).
+  // Both offered for the metadata tools, which list database, measurement and column names and types only. Both
+  // providers implement `queryReadOnly` for agent mode; `run_read_query` serves InfluxDB 3's SQL, opened by
+  // MCP_STATEMENT_READ, and no MCP statement tool reads InfluxQL, so `influxdb` stays closed there (BACKLOG B94).
   influxdb: true,
   influxdb3: true,
-  // Outside this version: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), the
-  // provider's read-only query path is agent mode's alone and reads metadata only, and no MCP surface is decided for
-  // it yet (BACKLOG B100).
+  // Closed: the 0.18.0 server authorizes nothing, so a token reads, writes and deletes every key of every namespace
+  // and the provider's closed table would be the only layer between an MCP client and the cluster; Oxia key paths
+  // name Pulsar tenants, namespaces and topics, and no MCP surface that lists no key name is designed (BACKLOG B100).
   oxia: false,
   databend: true,
-  // Closed, as Oxia's: agent mode reads S3's metadata, and no MCP surface that lists buckets but never an
-  // object key is designed yet (BACKLOG B104).
+  // Closed: MCP may read S3 only with an agent read key beside the connection's, whose grants hold the bucket scope,
+  // and a seed connection, the only kind MCP reads, carries no agent credential; no MCP surface that lists buckets
+  // but never an object key is designed either (BACKLOG B104).
   s3: false,
   // Offered with every answer machine-redacted: `run_kubectl_read` runs the agent's
   // `queryReadOnly`, whose output masks every Secret name, and `inspect_schema` lists relations alone, which no
@@ -558,9 +559,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // `inspect_schema` refuses an MQTT connection by name, since a broker declares no relation kind, and `run_mqtt_read`
   // answers one window's totals or one named topic's counts and flags, with its window and the completeness sentence.
   mqtt: true,
-  // Closed, as Oxia's and S3's: agent mode reads Firestore's metadata within a run's read allowance, every read
-  // is billed to the user's project, and no MCP surface that lists collections but never a document id is designed yet
-  // (BACKLOG B107).
+  // Closed: every read is billed to the user's project, an MCP call has an allowance of its own and nothing bounds
+  // billed reads across calls, `inspect_schema` carries no allowance, so no collection listing reaches it, and a
+  // production viewer role is not measured (BACKLOG B107).
   firestore: false,
   // Offered for the metadata tools, carrying stream names and the fixed read columns only, and for
   // `run_rabbitmq_read`, which reads through agent mode's metadata-only path: each message's offset and body size,
@@ -574,16 +575,15 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Offered for the metadata tools and run_mtconnect_read, which acquire an agent-mode handle and so read the device
   // model with the agent's adapter connections withheld.
   mtconnect: true,
-  // MCP is outside this provider's first version. A read also needs the register map kept with
-  // the connection, because Modbus has no discovery and a name means only what that document
-  // says it means, so an MCP client has nothing to form a read from on its own. Agent mode reads
-  // the device paced and counted per run, and no MCP surface that paces a device is designed yet
-  // (BACKLOG B160).
+  // Closed: agent mode reads the device paced per device and counted per run, and MCP has no run, so nothing would
+  // bound a client's device requests across calls; a cancelled call keeps the device's lane until its read's own
+  // deadline; and no MCP surface lists the register map's points, so a client could form only a block read whose
+  // decoding it guesses (BACKLOG B160).
   modbus: false,
   // Closed: agent mode reads NETCONF configuration and state with keys, password hashes, access rules and every node
-  // the device's own YANG marks nacm:default-deny-all withheld, and no MCP surface that withholds them is designed yet;
-  // a read-only account still reads password hashes and keystore entries, which is why the catalog carries names only
-  // (docs/providers/netconf.md 6.3, BACKLOG B159).
+  // the device's own YANG marks nacm:default-deny-all withheld by Studio alone, since a read-only account still reads
+  // password hashes and keystore entries (docs/providers/netconf.md 6.3), and nothing on the device is proved to hold
+  // them out; the rest is the device's whole configuration (BACKLOG B159).
   netconf: false,
   // Closed: agent mode reads SNMP values with the SNMP security modules withheld, and no MCP surface that
   // withholds them is designed yet (BACKLOG B158).
@@ -631,7 +631,9 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it: a
   // LOOKUP of a literal key is kept out by the statement fence alone (BACKLOG B151).
   druid: false,
-  // Agent mode executes statements on Trino, and MCP read stays closed on it until a change of its own opens it.
+  // Agent mode executes statements on Trino, and MCP read stays closed on it: the read-only access control lets every
+  // identity read other users' query text in `system.runtime.queries`, and only the statement fence keeps it out
+  // (BACKLOG B166).
   trino: false,
   // Opened on its own: run_read_query runs under the boundary agent mode uses, a role proven before every statement to
   // hold only SELECT on the connection's keyspace, on a server that enforces it, and a provider check that sends one
@@ -654,8 +656,9 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // an ACL user the server refuses every write probe before every command, on that command's own connection, with
   // every answer projected to counts, types and sizes (docs/providers/redis.md section 16).
   redis: true,
-  // Agent mode executes PromQL reads on Prometheus, with the flags and every URL's userinfo and query string withheld,
-  // and MCP read stays closed on it until a change of its own opens it (BACKLOG B161).
+  // Closed: Prometheus has no principal that narrows a read, so the connection's credential reaches every series the
+  // TSDB stores, and no layer independent of reading the expression narrows it; agent mode reads under that reach with
+  // the flags and every URL's userinfo and query string withheld (BACKLOG B161).
   prometheus: false,
   // Opened on its own: run_kafka_read runs under the boundary agent mode uses, a client that holds the Metadata and
   // ListOffsets reads alone, answered metadata-only with a platform's own topics withheld
@@ -684,18 +687,19 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // requests and a key the server proves before every read to hold the viewer role's read actions only, answered
   // through the metadata-only projection (docs/providers/weaviate.md section 15).
   weaviate: true,
-  // Agent mode executes statements on InfluxDB, and MCP read stays closed on it until a change of its own opens it.
+  // Agent mode executes InfluxQL on InfluxDB, and MCP read stays closed on it: on 1.x a catalog SHOW's database scope
+  // rests on the agent's statement reader alone, and no layer that reads the answer can hold it (BACKLOG B94).
   influxdb: false,
   // Opened on its own: run_read_query runs under the boundary agent mode uses, the 3.12 Core planner's write refusals
   // on a server checked at open to be that line, behind the read policy and the system schema fence
   // (docs/providers/influxdb3.md section 3.5).
   influxdb3: true,
-  // Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it until a change of its own opens
-  // it.
+  // Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it: the server authorizes nothing,
+  // so the closed table would be the only layer between an MCP client and every key (BACKLOG B100).
   oxia: false,
   databend: false,
-  // Agent mode executes metadata-only reads on S3, and MCP read stays closed on it until a change of its own opens it
-  // (BACKLOG B104).
+  // Agent mode executes metadata-only reads on S3, and MCP read stays closed on it: a seed connection carries no agent
+  // read key, the one layer that holds the bucket scope (BACKLOG B104).
   s3: false,
   kubernetes: true,
   // Opened on its own: run_mqtt_read runs under the boundary agent mode uses, the provider's closed five-packet
@@ -703,8 +707,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // never a topic name or a payload, and carrying its window and the completeness sentence as notes
   // (docs/providers/mqtt.md section 15).
   mqtt: true,
-  // Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it until a change of its own
-  // opens it (BACKLOG B107).
+  // Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it: every read is billed and
+  // nothing bounds billed reads across MCP calls (BACKLOG B107).
   firestore: false,
   // Opened on its own: run_rabbitmq_read runs under the boundary agent mode uses, the provider's structural closed
   // table (a read client that encodes no take, publish, purge or declare, the stream-only type check before any frame
@@ -717,11 +721,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Opened on its own: run_mtconnect_read runs under the boundary agent mode uses, the provider's closed table of nine
   // GET routes, with the agent's adapter connections withheld from every answer (docs/providers/mtconnect.md section 14).
   mtconnect: true,
-  // Agent mode executes paced reads on Modbus, and MCP read stays closed on it until a change of its own opens it
-  // (BACKLOG B160).
+  // Agent mode executes paced reads on Modbus, and MCP read stays closed on it: no bound on device requests across
+  // calls, no lane release on cancel and no register-map surface exist for MCP yet (BACKLOG B160).
   modbus: false,
-  // Agent mode executes reads on NETCONF with the withheld nodes pruned, and MCP read stays closed on it until a
-  // change of its own opens it (BACKLOG B159).
+  // Agent mode executes reads on NETCONF with the withheld nodes pruned, and MCP read stays closed on it: the pruning
+  // is Studio's alone, with no device layer proved to hold the secrets out (BACKLOG B159).
   netconf: false,
   // Agent mode executes reads on SNMP with the SNMP security modules withheld, and MCP read stays closed on it
   // until a change of its own opens it (BACKLOG B158).
