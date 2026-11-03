@@ -71,7 +71,7 @@ const READ_API_KEYS: Readonly<Record<string, number>> = {
 
 /**
  * The APIs that write a record, a topic, a config, an offset, a group's membership or a producer's state, by key. The
- * table may hold none of them; every one the design names is here, and the rest of the protocol's writes besides.
+ * table may hold none of them; the list holds the protocol's record, topic, config, offset, group and producer writes.
  */
 const WRITE_API_KEYS: Readonly<Record<string, number>> = {
   Produce: 0,
