@@ -98,12 +98,13 @@ const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 const IMPORTERS = ["docker/kafka/seed-binary.ts", "src/lib/db/providers/stream/kafka/platformatic-client.ts"];
 /**
  * The files outside the provider that take the adapter's loader, loadPlatformatic(), and so the
- * real library: the adapter's own tests, the real TLS handshakes, and the provider's integration
- * test. Another file that imports loadPlatformatic, or the whole adapter module, fails the guard,
- * and so does a file listed here that no longer takes it.
+ * real library: the adapter's own tests, the real TLS handshakes, the write-reach live run, and
+ * the provider's integration test. Another file that imports loadPlatformatic, or the whole
+ * adapter module, fails the guard, and so does a file listed here that no longer takes it.
  */
 const LOADER_TAKERS = [
   "tests/integration/db/kafka-provider.test.ts",
+  "tests/live/kafka-write-reach.ts",
   "tests/unit/db/kafka/platformatic-client.test.ts",
   "tests/unit/db/kafka/tls-handshake.test.ts",
 ];
