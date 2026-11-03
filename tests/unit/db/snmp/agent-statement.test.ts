@@ -24,12 +24,18 @@ const refusedWith = (text: string) => {
 };
 
 describe("the withheld subtrees", () => {
-  test("are the security, target and transport security modules' roots, and Net-SNMP's access extension, in agent order", () => {
+  test("are the security, target and transport security modules' roots, Net-SNMP's access extension, and the process, command and copy subtrees that carry credentials, in agent order", () => {
     expect(SNMP_WITHHELD_SUBTREES.map((entry) => [entry.module, entry.root.join(".")])).toEqual([
+      ["HOST-RESOURCES-MIB::hrSWRun", "1.3.6.1.2.1.25.4"],
       ["SNMP-SSH-TM-MIB", "1.3.6.1.2.1.189"],
       ["SNMP-TSM-MIB", "1.3.6.1.2.1.190"],
       ["SNMP-TLS-TM-MIB", "1.3.6.1.2.1.198"],
       ["SNMP-USM-DH-OBJECTS-MIB", "1.3.6.1.3.101"],
+      ["CISCO-FLASH-MIB::ciscoFlashCopyTable", "1.3.6.1.4.1.9.9.10.1.2.1"],
+      ["CISCO-CONFIG-COPY-MIB", "1.3.6.1.4.1.9.9.96"],
+      ["UCD-SNMP-MIB::prErrFixCmd", "1.3.6.1.4.1.2021.2.1.103"],
+      ["UCD-SNMP-MIB::extTable", "1.3.6.1.4.1.2021.8"],
+      ["NET-SNMP-AGENT-MIB::nsExtensions", "1.3.6.1.4.1.8072.1.3"],
       ["NET-SNMP-VACM-MIB", "1.3.6.1.4.1.8072.1.9"],
       ["SNMP-TARGET-MIB", "1.3.6.1.6.3.12"],
       ["SNMP-NOTIFICATION-MIB", "1.3.6.1.6.3.13"],
@@ -40,9 +46,50 @@ describe("the withheld subtrees", () => {
     ]);
   });
 
-  test("no name the bundled modules define resolves inside one, so only a numeric identifier reaches them", () => {
+  test("the only names the bundled modules define inside one are hrSWRun's, so a numeric identifier reaches the rest", () => {
     const inside = [...MIB_NAMES.entries()].filter(([, oid]) => withheldSubtreeOf(oid) !== undefined);
-    expect(inside).toEqual([]);
+    expect(inside.map(([name]) => name).sort()).toEqual([
+      "hrSWOSIndex",
+      "hrSWRun",
+      "hrSWRunEntry",
+      "hrSWRunID",
+      "hrSWRunIndex",
+      "hrSWRunName",
+      "hrSWRunParameters",
+      "hrSWRunPath",
+      "hrSWRunStatus",
+      "hrSWRunTable",
+      "hrSWRunType",
+    ]);
+    expect(inside.every(([, oid]) => withheldSubtreeOf(oid)?.module === "HOST-RESOURCES-MIB::hrSWRun")).toBe(true);
+  });
+
+  // Measured on the Net-SNMP 5.9.4 fixture with markers planted in a running process's arguments and in the extend,
+  // exec and procfix directives: a raw walk of 1.3 answered them under these four roots and nowhere else outside the
+  // framework modules. The two Cisco roots are from the vendor's own MIB text, whose copy tables hold a server's user
+  // name and password.
+  test("a process's command line, a command the agent runs and its output, and a copy's login are inside one", () => {
+    const at = (oid: string) => withheldSubtreeOf(oid.split(".").map(Number))?.module;
+    expect(at("1.3.6.1.2.1.25.4.2.1.5.6")).toBe("HOST-RESOURCES-MIB::hrSWRun");
+    expect(at("1.3.6.1.2.1.25.4.2.1.4.6")).toBe("HOST-RESOURCES-MIB::hrSWRun");
+    expect(at("1.3.6.1.2.1.25.4.1.0")).toBe("HOST-RESOURCES-MIB::hrSWRun");
+    expect(at("1.3.6.1.2.1.25.5.1.1.1.6")).toBeUndefined();
+    expect(at("1.3.6.1.2.1.25.6.3.1.2.1")).toBeUndefined();
+    expect(at("1.3.6.1.4.1.2021.2.1.103.1")).toBe("UCD-SNMP-MIB::prErrFixCmd");
+    expect(at("1.3.6.1.4.1.2021.2.1.2.1")).toBeUndefined();
+    expect(at("1.3.6.1.4.1.2021.2.1.102.1")).toBeUndefined();
+    expect(at("1.3.6.1.4.1.2021.8.1.3.1")).toBe("UCD-SNMP-MIB::extTable");
+    expect(at("1.3.6.1.4.1.2021.8.1.101.1")).toBe("UCD-SNMP-MIB::extTable");
+    expect(at("1.3.6.1.4.1.2021.9.1.2.1")).toBeUndefined();
+    expect(at("1.3.6.1.4.1.8072.1.3.2.3.1.1.8.112.114.111.98.101.101.120.116")).toBe(
+      "NET-SNMP-AGENT-MIB::nsExtensions",
+    );
+    expect(at("1.3.6.1.4.1.8072.1.2.1.1.4.0")).toBeUndefined();
+    expect(at("1.3.6.1.4.1.8072.1.5.1")).toBeUndefined();
+    expect(at("1.3.6.1.4.1.9.9.96.1.1.1.1.8.7")).toBe("CISCO-CONFIG-COPY-MIB");
+    expect(at("1.3.6.1.4.1.9.9.10.1.2.1.1.15.3")).toBe("CISCO-FLASH-MIB::ciscoFlashCopyTable");
+    expect(at("1.3.6.1.4.1.9.9.10.1.1.4.1.1.2.1")).toBeUndefined();
+    expect(at("1.3.6.1.4.1.9.9.10.1.2.2")).toBeUndefined();
   });
 
   test("an identifier is inside one by its prefix, from the root down, and the neighbours are not", () => {
@@ -63,8 +110,18 @@ describe("the withheld subtrees", () => {
   });
 
   test("a walk steps over every root it contains and resumes past it, past adjacent roots together", () => {
-    expect(withheldWithin([1, 3, 6, 1, 4, 1]).map((entry) => entry.module)).toEqual(["NET-SNMP-VACM-MIB"]);
-    expect(withheldWithin([1, 3, 6, 1, 2, 1])).toHaveLength(3);
+    expect(withheldWithin([1, 3, 6, 1, 4, 1]).map((entry) => entry.module)).toEqual([
+      "CISCO-FLASH-MIB::ciscoFlashCopyTable",
+      "CISCO-CONFIG-COPY-MIB",
+      "UCD-SNMP-MIB::prErrFixCmd",
+      "UCD-SNMP-MIB::extTable",
+      "NET-SNMP-AGENT-MIB::nsExtensions",
+      "NET-SNMP-VACM-MIB",
+    ]);
+    expect(withheldWithin([1, 3, 6, 1, 2, 1])).toHaveLength(4);
+    expect(withheldWithin([1, 3, 6, 1, 2, 1, 25]).map((entry) => entry.module)).toEqual([
+      "HOST-RESOURCES-MIB::hrSWRun",
+    ]);
     expect(withheldWithin([1])).toEqual(SNMP_WITHHELD_SUBTREES);
     expect(withheldWithin([1, 3, 6, 1, 2, 1, 2])).toEqual([]);
     const at = (module: string) => SNMP_WITHHELD_SUBTREES.find((entry) => entry.module === module)!;
@@ -72,10 +129,16 @@ describe("the withheld subtrees", () => {
     expect(resumeAfter(at("SNMP-TARGET-MIB")).join(".")).toBe("1.3.6.1.6.3.17");
     expect(resumeAfter(at("SNMP-COMMUNITY-MIB")).join(".")).toBe("1.3.6.1.6.3.19");
     expect(resumeAfter(at("SNMP-SSH-TM-MIB")).join(".")).toBe("1.3.6.1.2.1.191");
+    expect(resumeAfter(at("HOST-RESOURCES-MIB::hrSWRun")).join(".")).toBe("1.3.6.1.2.1.25.5");
+    expect(resumeAfter(at("UCD-SNMP-MIB::prErrFixCmd")).join(".")).toBe("1.3.6.1.4.1.2021.2.1.104");
+    expect(resumeAfter(at("UCD-SNMP-MIB::extTable")).join(".")).toBe("1.3.6.1.4.1.2021.9");
+    expect(resumeAfter(at("NET-SNMP-AGENT-MIB::nsExtensions")).join(".")).toBe("1.3.6.1.4.1.8072.1.4");
+    expect(resumeAfter(at("CISCO-CONFIG-COPY-MIB")).join(".")).toBe("1.3.6.1.4.1.9.9.97");
+    expect(resumeAfter(at("CISCO-FLASH-MIB::ciscoFlashCopyTable")).join(".")).toBe("1.3.6.1.4.1.9.9.10.1.2.2");
   });
 
   test("a withheld row's reason names the module and its root and nothing below it", () => {
-    const community = SNMP_WITHHELD_SUBTREES[10];
+    const community = SNMP_WITHHELD_SUBTREES.at(-1)!;
     expect(withheldReason(community)).toBe(
       "SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18) is withheld from agent mode: it holds the community strings and the security names they map to, so no value or instance of it is read or answered.",
     );
@@ -124,7 +187,17 @@ describe("what is admitted", () => {
       ok: true,
       plan: { command: "table", table: [1, 3, 6, 1, 2, 1, 2, 2], maxRepetitions: MAX_REPETITIONS_CAP },
     });
-    const beside = ["1.3.6.1.6.3.10", "1.3.6.1.6.3.17", "1.3.6.1.6.3.1", "1.3.6.1.6.3.180", "1.3.6.1.4.1.8072.1.10"];
+    const beside = [
+      "1.3.6.1.6.3.10",
+      "1.3.6.1.6.3.17",
+      "1.3.6.1.6.3.1",
+      "1.3.6.1.6.3.180",
+      "1.3.6.1.4.1.8072.1.10",
+      "hrSWRunPerfTable",
+      "hrSWInstalledTable",
+      "1.3.6.1.4.1.2021.2",
+      "1.3.6.1.4.1.8072.1.2",
+    ];
     const covering = [
       "1.3",
       ".1.3.6",
@@ -134,6 +207,9 @@ describe("what is admitted", () => {
       "1.3.6.1.4.1",
       "1.3.6.1.2.1",
       "mib-2",
+      "host",
+      "1.3.6.1.4.1.2021",
+      "1.3.6.1.4.1.9",
     ];
     for (const subtree of [...beside, ...covering]) {
       expect(readSnmpAgentStatement(`walk ${subtree}`).ok).toBe(true);
@@ -189,6 +265,14 @@ describe("what is refused before anything is sent", () => {
       ["table .1.3.6.1.4.1.8072.1.9.1.1", "NET-SNMP-VACM-MIB"],
       ["walk 1.3.6.1.2.1.198.2", "SNMP-TLS-TM-MIB"],
       ["walk 1.3.6.1.3.101", "SNMP-USM-DH-OBJECTS-MIB"],
+      ["table hrSWRunTable", "HOST-RESOURCES-MIB::hrSWRun"],
+      ["walk hrSWRunParameters", "HOST-RESOURCES-MIB::hrSWRun"],
+      ["walk 1.3.6.1.2.1.25.4", "HOST-RESOURCES-MIB::hrSWRun"],
+      ["walk 1.3.6.1.4.1.8072.1.3", "NET-SNMP-AGENT-MIB::nsExtensions"],
+      ["walk 1.3.6.1.4.1.2021.8.1.101", "UCD-SNMP-MIB::extTable"],
+      ["walk 1.3.6.1.4.1.2021.2.1.103", "UCD-SNMP-MIB::prErrFixCmd"],
+      ["table 1.3.6.1.4.1.9.9.96.1.1.1", "CISCO-CONFIG-COPY-MIB"],
+      ["walk 1.3.6.1.4.1.9.9.10.1.2.1", "CISCO-FLASH-MIB::ciscoFlashCopyTable"],
     ];
     for (const [text, module] of cases) {
       const reading = refusedWith(text);
@@ -212,6 +296,9 @@ describe("what is refused before anything is sent", () => {
       expect(SNMP_WITHHELD_MODULES_TEXT).toContain(`${entry.module} (${entry.root.join(".")})`);
     }
     expect(SNMP_WITHHELD_MODULES_TEXT).not.toContain("modules under 1.3.6.1.6.3");
+    expect(SNMP_WITHHELD_MODULES_TEXT).toContain(
+      "since a command line, a script's output and a copy's login can carry credentials",
+    );
     expect(SNMP_WITHHELD_MODULES_TEXT).toContain(
       "every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable",
     );

@@ -30,11 +30,11 @@ const connection = {
 } as unknown as DatabaseConnection;
 
 describe("the registries", () => {
-  test("snmp speaks snmpget, executes agent reads, and MCP stays closed with the read-only flag untouched", () => {
+  test("snmp speaks snmpget, executes agent reads, and MCP reads it with the read-only flag untouched", () => {
     expect(AGENT_STATEMENT_LANGUAGE.snmp).toBe("snmpget");
     expect(AGENT_EXECUTION_ENGINES).toContain("snmp");
-    expect(MCP_EXPOSABLE.snmp).toBe(false);
-    expect(MCP_STATEMENT_READ.snmp).toBe(false);
+    expect(MCP_EXPOSABLE.snmp).toBe(true);
+    expect(MCP_STATEMENT_READ.snmp).toBe(true);
     expect(READ_ONLY_ENFORCED.snmp).toBe(true);
   });
 
@@ -58,16 +58,13 @@ describe("what plan mode is told", () => {
   });
 });
 
-describe("the B entry, both ways", () => {
-  test("BACKLOG holds it, docs/AGENT.md cites it, and the provider document links it", () => {
-    expect(read("docs/BACKLOG.md")).toContain(
-      "### B158. SNMP's agent reads withhold the security and target modules, and it has no MCP surface",
-    );
-    expect(read("docs/AGENT.md")).toContain(
-      "- **B158**: SNMP's `snmpget` statement language reads the device's values",
-    );
-    expect(read("docs/providers/snmp.md")).toContain(
-      "(../BACKLOG.md#b158-snmps-agent-reads-withhold-the-security-and-target-modules-and-it-has-no-mcp-surface)",
-    );
+describe("the B entry, closed with MCP read", () => {
+  test("BACKLOG holds no entry for it, docs/AGENT.md cites none, and the provider document points at its MCP section", () => {
+    expect(read("docs/BACKLOG.md")).not.toContain("### B158.");
+    expect(read("docs/AGENT.md")).not.toContain("- **B158**:");
+    const doc = read("docs/providers/snmp.md");
+    expect(doc).not.toContain("BACKLOG.md#b158");
+    expect(doc).toContain("## 14. MCP read");
+    expect(doc).toContain("A v2c community is no principal.");
   });
 });

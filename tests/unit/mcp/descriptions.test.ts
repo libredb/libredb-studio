@@ -28,6 +28,7 @@ const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_MILVUS_READ_ARM = mcpStatementArm("run_milvus_read");
 const RUN_MQTT_READ_ARM = mcpStatementArm("run_mqtt_read");
 const RUN_SPARKPLUG_READ_ARM = mcpStatementArm("run_sparkplug_read");
+const RUN_SNMP_READ_ARM = mcpStatementArm("run_snmp_read");
 const RUN_ETCD_READ_ARM = mcpStatementArm("run_etcd_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
@@ -149,6 +150,21 @@ describe("the tool descriptions", () => {
     expect(RUN_SPARKPLUG_READ_ARM.description).toContain("timeout_ms must be at least 5000");
     expect(RUN_SPARKPLUG_READ_ARM.description).toContain("inspect_schema lists no group, edge node or device");
     expect(RUN_SPARKPLUG_READ_ARM.description).toContain("this tool takes no offset");
+  });
+
+  test("run_snmp_read names SNMP, says what it withholds and why its notes say so, that the community is no principal, and takes no offset", () => {
+    expect(RUN_SNMP_READ_ARM.description).toContain("Runs on SNMP; other engines refuse it.");
+    expect(RUN_SNMP_READ_ARM.description).toContain("the running processes (hrSWRun, 1.3.6.1.2.1.25.4)");
+    expect(RUN_SNMP_READ_ARM.description).toContain(
+      "the commands the agent runs and what they print (1.3.6.1.4.1.8072.1.3, 1.3.6.1.4.1.2021.8 and 1.3.6.1.4.1.2021.2.1.103)",
+    );
+    expect(RUN_SNMP_READ_ARM.description).toContain(
+      "Cisco's copy tables (1.3.6.1.4.1.9.9.96 and 1.3.6.1.4.1.9.9.10.1.2.1)",
+    );
+    expect(RUN_SNMP_READ_ARM.description).toContain("the answer's notes name each and why");
+    expect(RUN_SNMP_READ_ARM.description).toContain("The community is no principal");
+    expect(RUN_SNMP_READ_ARM.description).toContain("none inside a withheld subtree");
+    expect(RUN_SNMP_READ_ARM.description).toContain("this tool takes no offset");
   });
 
   test("run_milvus_read names Milvus, the one engine its handler gates on, says what it never reads, and takes no offset", () => {

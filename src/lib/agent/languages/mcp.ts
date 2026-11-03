@@ -26,6 +26,7 @@ import { MTCONNECTREAD_MCP_FACET } from "./mtconnectread/mcp";
 import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
 import { RABBITREAD_MCP_FACET } from "./rabbitread/mcp";
 import { REDISCLI_MCP_FACET } from "./rediscli/mcp";
+import { SNMPGET_MCP_FACET } from "./snmpget/mcp";
 import { SPARKPLUGREAD_MCP_FACET } from "./sparkplugread/mcp";
 import { SQL_MCP_FACET } from "./sql/mcp";
 import { WEAVIATEAPI_MCP_FACET } from "./weaviateapi/mcp";
@@ -121,8 +122,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   s3api: null,
   // No MCP statement tool yet: MCP read stays closed on Firestore until a change of its own declares one and opens it.
   fsquery: null,
-  // No MCP statement tool yet: MCP read stays closed on SNMP until a change of its own declares one and opens it.
-  snmpget: null,
+  snmpget: SNMPGET_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on NETCONF until a change of its own declares one and opens it.
   netconfrpc: null,
   // No MCP statement tool yet: MCP read stays closed on Modbus until a change of its own declares one and opens it.

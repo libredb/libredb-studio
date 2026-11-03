@@ -17,6 +17,7 @@
 import {
   type BerField,
   BerError,
+  BerTooManyFieldsError,
   readChildren,
   readField,
   TAG_INTEGER,
@@ -27,6 +28,7 @@ import {
   writeOid,
   writeSequence,
 } from "./ber";
+import { MAX_VARBINDS_PER_REQUEST } from "./statement";
 import { PDU_GET, PDU_GET_BULK, PDU_GET_NEXT } from "./valve";
 
 /** SNMPv2c on the wire is version 1 (RFC 3416 section 3). Not a typo, and worth stating once. */
@@ -162,7 +164,8 @@ export function decodePdu(buf: Uint8Array, pduField: BerField): Response {
   const pduParts = readChildren(buf, pduField);
   if (pduParts.length !== 4) throw new BerError("a response PDU holds four fields");
   const [idField, statusField, indexField, listField] = pduParts;
-  const varbinds = readChildren(buf, listField, 256).map((entry) => {
+  const requestId = readInteger(buf.subarray(idField.start, idField.end));
+  const varbinds = varbindFields(buf, listField, requestId).map((entry) => {
     const [oidField, valueField] = readChildren(buf, entry);
     if (oidField === undefined || valueField === undefined) throw new BerError("a varbind holds a name and a value");
     return {
@@ -172,11 +175,40 @@ export function decodePdu(buf: Uint8Array, pduField: BerField): Response {
     };
   });
   return {
-    requestId: readInteger(buf.subarray(idField.start, idField.end)),
+    requestId,
     errorStatus: readInteger(buf.subarray(statusField.start, statusField.end)),
     errorIndex: readInteger(buf.subarray(indexField.start, indexField.end)),
     varbinds,
   };
+}
+
+/**
+ * An answer carrying more varbinds than any request this provider sends asks for.
+ *
+ * It names the request it answers, so the exchange can end that request as too large at once. Dropping it as an
+ * unreadable datagram, which is what every other refusal of the reader leads to, left the request to end as silence
+ * at its deadline, which says the agent did not answer when it did.
+ */
+export class SnmpAnswerTooLargeError extends BerError {
+  constructor(readonly requestId: number) {
+    super(`the answer carried more than ${MAX_VARBINDS_PER_REQUEST} objects, more than one request here asks for`);
+    this.name = "SnmpAnswerTooLargeError";
+    Object.setPrototypeOf(this, SnmpAnswerTooLargeError.prototype);
+  }
+}
+
+/**
+ * The varbind list, read up to the most objects one request carries (`MAX_VARBINDS_PER_REQUEST`). One constant for
+ * both ends: the reader held 256 while a request carried 400, so an agent's whole answer to a get naming 257 to 400
+ * objects was refused unread.
+ */
+function varbindFields(buf: Uint8Array, listField: BerField, requestId: number): BerField[] {
+  try {
+    return readChildren(buf, listField, MAX_VARBINDS_PER_REQUEST);
+  } catch (error) {
+    if (error instanceof BerTooManyFieldsError) throw new SnmpAnswerTooLargeError(requestId);
+    throw error;
+  }
 }
 
 /** The community out of a message, read without decoding the rest. Used by the valve's tests. */

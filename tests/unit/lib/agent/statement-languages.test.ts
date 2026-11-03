@@ -1321,7 +1321,7 @@ describe("the fsquery language's server adapter and admission", () => {
 describe("the snmpget language's server adapter and admission", () => {
   const READ = "get sysDescr.0";
   const WITHHELD =
-    "Withheld from agent mode are SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules; every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable, and a walk that covers a withheld module steps over that module and answers the rest. Nothing of a withheld module is read or answered.";
+    "Withheld from agent mode are SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules, and HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4), the running processes, NET-SNMP-AGENT-MIB::nsExtensions (1.3.6.1.4.1.8072.1.3), UCD-SNMP-MIB::extTable (1.3.6.1.4.1.2021.8) and UCD-SNMP-MIB::prErrFixCmd (1.3.6.1.4.1.2021.2.1.103), the commands the agent runs and what they print, and CISCO-CONFIG-COPY-MIB (1.3.6.1.4.1.9.9.96) and CISCO-FLASH-MIB::ciscoFlashCopyTable (1.3.6.1.4.1.9.9.10.1.2.1), the file copies and their servers' logins, since a command line, a script's output and a copy's login can carry credentials; every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable, and a walk that covers a withheld module steps over that module and answers the rest. Nothing of a withheld module is read or answered.";
 
   test("the fingerprint is the plan the reader sends, so one read written two ways is one identity", () => {
     const one = fingerprintSnmpget(READ);
@@ -1341,6 +1341,9 @@ describe("the snmpget language's server adapter and admission", () => {
     expect(AGENT_LANGUAGE_COPY.snmpget.adviceKeys).toEqual([]);
     expect(snmpgetRowCapAdvice(READ, "2")).toBe(
       "Ask for at most 2 rows: get and next answer one row per object they name, walk one row per instance under its subtree and table one row per index, so walk a narrower subtree (one column, such as ifDescr, rather than ifEntry) or name the instances with get.",
+    );
+    expect(snmpgetRowCapAdvice(READ, "1")).toBe(
+      "Ask for at most 1 row: get and next answer one row per object they name, walk one row per instance under its subtree and table one row per index, so walk a narrower subtree (one column, such as ifDescr, rather than ifEntry) or name the instances with get.",
     );
     expect(languageServer("snmpget").shapeAdvice).toContain("a valid console command");
   });

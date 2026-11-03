@@ -13,8 +13,9 @@ import {
 import { SnmpProvider } from "@/lib/db/providers/network/snmp";
 import { SNMP_NO_COUNT } from "@/lib/db/providers/network/snmp/labels";
 import { MIB_TABLES } from "@/lib/db/providers/network/snmp/mib-objects";
-import { StatementError } from "@/lib/db/providers/network/snmp/statement";
+import { MAX_VARBINDS_PER_REQUEST, StatementError } from "@/lib/db/providers/network/snmp/statement";
 import type { DatabaseConnection } from "@/lib/types";
+import { startFakeAgent, text } from "../../../helpers/snmp-fake-agent";
 
 /**
  * The provider against an agent, both ends asserted.
@@ -638,4 +639,37 @@ describe("health is read from the agent, and claims nothing the agent did not sa
     agent = undefined;
     await expect(opened.getHealth()).rejects.toThrow(/did not answer the health read/);
   });
+});
+
+describe("a get naming more objects than 256 is answered whole, on the console and on an agent read", () => {
+  // The reader used to hold 256 varbinds while a request carries up to MAX_VARBINDS_PER_REQUEST, so the agent's
+  // answer to a get naming 257 to 400 objects was dropped as unreadable and the read ended as silence.
+  for (const count of [257, MAX_VARBINDS_PER_REQUEST]) {
+    test(`${count} objects`, async () => {
+      const fake = await startFakeAgent(new Map([["1.3.6.1.2.1.1.5.0", text("box")]]));
+      const config = { id: "big", name: "big", type: "snmp", host: "127.0.0.1", port: fake.port, password: "c" };
+      const editor = new SnmpProvider({ ...config, queryTimeout: 2_000 } as unknown as DatabaseConnection);
+      const reader = new SnmpProvider(
+        config as unknown as DatabaseConnection,
+        { queryTimeout: 2_000 },
+        { readOnly: true, sendsStatements: true },
+      );
+      try {
+        await editor.connect();
+        await reader.connect();
+        const statement = `get${" sysName.0".repeat(count)}`;
+        expect((await editor.query(statement)).rows).toHaveLength(count);
+        const read = await reader.queryReadOnly(statement, {
+          statementTimeoutMs: 2_000,
+          maxResultRows: 1_000,
+          maxResultBytes: 10_000_000,
+        });
+        expect(read.rows).toHaveLength(count);
+      } finally {
+        await editor.disconnect();
+        await reader.disconnect();
+        fake.close();
+      }
+    });
+  }
 });

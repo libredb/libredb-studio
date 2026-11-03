@@ -336,9 +336,66 @@ describe("walk and table", () => {
       { object: "1.3.6.1.4.1.8072.1.10.1.0", value: "7", type: "number" },
       { object: "1.3.6.1.4.1.8072.9.1.0", value: "9", type: "number" },
     ]);
-    expect(answer.withheld.map((entry) => entry.module)).toEqual(["NET-SNMP-VACM-MIB"]);
+    expect(answer.withheld.map((entry) => entry.module)).toEqual([
+      "CISCO-FLASH-MIB::ciscoFlashCopyTable",
+      "CISCO-CONFIG-COPY-MIB",
+      "UCD-SNMP-MIB::prErrFixCmd",
+      "UCD-SNMP-MIB::extTable",
+      "NET-SNMP-AGENT-MIB::nsExtensions",
+      "NET-SNMP-VACM-MIB",
+    ]);
     expect(JSON.stringify(answer)).not.toMatch(MARKER);
     expect(calls.every((call) => withheldSubtreeOf(oid(call.oids[0])) === undefined)).toBe(true);
+  });
+
+  // The shapes measured on the Net-SNMP 5.9.4 fixture: a process's parameters, the extend and exec directives' commands
+  // and output, and the procfix command, each carrying a planted marker, beside the readable objects around them.
+  test("a walk steps over the running processes and the commands the agent runs, and answers what lies beside them", async () => {
+    const host = treeClient([
+      ["1.3.6.1.2.1.25.1.1.0", 0x43, Uint8Array.of(5)],
+      ["1.3.6.1.2.1.25.4.1.0", 0x02, Uint8Array.of(0)],
+      ["1.3.6.1.2.1.25.4.2.1.2.6", 0x04, enc("sh")],
+      ["1.3.6.1.2.1.25.4.2.1.5.6", 0x04, enc("-c sleep 100000 marker-cmdline")],
+      ["1.3.6.1.2.1.25.5.1.1.1.6", 0x02, Uint8Array.of(3)],
+    ]);
+    const processes = await runSnmpAgentRead(host.client, plan("walk host"), BUDGET);
+    expect(processes.rows.map((row) => row.object)).toEqual(["1.3.6.1.2.1.25.1.1.0", "1.3.6.1.2.1.25.5.1.1.1.6"]);
+    expect(processes.withheld.map((entry) => entry.module)).toEqual(["HOST-RESOURCES-MIB::hrSWRun"]);
+    expect(host.calls.map((call) => call.oids[0])).toEqual(["1.3.6.1.2.1.25", "1.3.6.1.2.1.25.5"]);
+    expect(JSON.stringify(processes)).not.toMatch(MARKER);
+    const ucd = treeClient([
+      ["1.3.6.1.4.1.2021.2.1.2.1", 0x04, enc("snmpd")],
+      ["1.3.6.1.4.1.2021.2.1.103.1", 0x04, enc("/bin/echo marker-procfix")],
+      ["1.3.6.1.4.1.2021.8.1.3.1", 0x04, enc("/bin/echo marker-exec")],
+      ["1.3.6.1.4.1.2021.8.1.101.1", 0x04, enc("marker-exec")],
+      ["1.3.6.1.4.1.2021.10.1.3.1", 0x04, enc("0.10")],
+      ["1.3.6.1.4.1.8072.1.3.2.3.1.1.8.112.114.111.98.101.101.120.116", 0x04, enc("marker-extend")],
+      ["1.3.6.1.4.1.8072.1.5.1.0", 0x02, Uint8Array.of(1)],
+    ]);
+    const commands = await runSnmpAgentRead(ucd.client, plan("walk 1.3.6.1.4.1"), { ...BUDGET, maxResultRows: 10 });
+    expect(commands.rows.map((row) => row.object)).toEqual([
+      "1.3.6.1.4.1.2021.2.1.2.1",
+      "1.3.6.1.4.1.2021.10.1.3.1",
+      "1.3.6.1.4.1.8072.1.5.1.0",
+    ]);
+    expect(JSON.stringify(commands)).not.toMatch(MARKER);
+    expect(ucd.calls.every((call) => withheldSubtreeOf(oid(call.oids[0])) === undefined)).toBe(true);
+  });
+
+  test("a get or a next of a running process's parameters is answered withheld, and the next is never sent inside it", async () => {
+    const tree: Array<[string, number, Uint8Array]> = [
+      ["1.3.6.1.2.1.25.4.2.1.5.6", 0x04, enc("-c sleep 100000 marker-cmdline")],
+      ["1.3.6.1.2.1.25.5.1.1.1.6", 0x02, Uint8Array.of(3)],
+    ];
+    const got = treeClient(tree);
+    const named = await runSnmpAgentRead(got.client, plan("get hrSWRunParameters.6"), BUDGET);
+    expect(named.rows).toEqual([{ object: "1.3.6.1.2.1.25.4", value: null, type: "withheld" }]);
+    expect(got.calls).toEqual([]);
+    const landed = treeClient(tree);
+    const next = await runSnmpAgentRead(landed.client, plan("next 1.3.6.1.2.1.25.3"), BUDGET);
+    expect(next.rows).toEqual([{ object: "1.3.6.1.2.1.25.4", value: null, type: "withheld" }]);
+    expect(next.withheld.map((entry) => entry.module)).toEqual(["HOST-RESOURCES-MIB::hrSWRun"]);
+    expect(JSON.stringify([named, next])).not.toMatch(MARKER);
   });
 
   test("a walk whose first answer lands inside a withheld subtree resumes past it, and adjacent roots are stepped together", async () => {
@@ -373,7 +430,7 @@ describe("walk and table", () => {
     expect(JSON.stringify(answer)).not.toMatch(MARKER);
   });
 
-  test("walk 1.3 answers what lies outside the eleven withheld subtrees and warns every one, whether or not the agent holds it", async () => {
+  test("walk 1.3 answers what lies outside every withheld subtree and warns every one, whether or not the agent holds it", async () => {
     const { client, calls } = treeClient(IF_TABLE);
     const answer = await runSnmpAgentRead(client, plan("walk 1.3"), { ...BUDGET, maxResultRows: 20 });
     expect(answer.rows.map((row) => row.object)).toEqual(IF_TABLE.slice(0, 8).map(([dotted]) => dotted));
@@ -494,6 +551,10 @@ describe("failures are worded by category, quoting nothing the agent sent", () =
     [{ kind: "silence", reason: "x", causes: [], retryable: true }, F.silence(2_000)],
     [{ kind: "tooLarge", reason: "x", retryable: false }, F.tooBig],
     [{ kind: "requestTooLarge", reason: "x", retryable: false }, F.requestTooLarge],
+    [
+      { kind: "answerTooLarge", reason: "x", retryable: false },
+      "The agent answered with more objects than one request asks for, so Studio refused the answer as too large rather than read it: ask for fewer objects in one get or next. SNMP carries no error text of its own, and Studio quotes nothing the agent sent back.",
+    ],
     [{ kind: "credential", reason: "x", retryable: false }, F.credential],
     [{ kind: "transport", reason: "x", retryable: false }, F.unreachable],
     [

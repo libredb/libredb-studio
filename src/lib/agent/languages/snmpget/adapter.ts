@@ -27,7 +27,7 @@ export function fingerprintSnmpget(text: string): string {
  * narrower subtree.
  */
 export function snmpgetRowCapAdvice(_statement: string, allowed: string): string {
-  return `Ask for at most ${allowed} rows: get and next answer one row per object they name, walk one row per instance under its subtree and table one row per index, so walk a narrower subtree (one column, such as ifDescr, rather than ifEntry) or name the instances with get.`;
+  return `Ask for at most ${allowed} row${allowed === "1" ? "" : "s"}: get and next answer one row per object they name, walk one row per instance under its subtree and table one row per index, so walk a narrower subtree (one column, such as ifDescr, rather than ifEntry) or name the instances with get.`;
 }
 
 export const SNMPGET_ADAPTER: AgentLanguageServerAdapter = Object.freeze({

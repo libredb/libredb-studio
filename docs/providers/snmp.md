@@ -198,6 +198,15 @@ matters. Each of these is tested at the value itself and one past it.
 | privacy salt | 8 octets | RFC 3826 section 3.1.2.1 |
 | max repetitions | 50 | an unbounded GetBulk killed the fixture agent |
 | varbinds per request | 400 | 500 carried, 600 raised EMSGSIZE |
+| varbinds per answer | 400 | the same constant as per request (`MAX_VARBINDS_PER_REQUEST`) |
+
+An answer is read up to the same 400 varbinds a request may carry, since one constant holds both ends.
+The reader used to hold 256, so the agent's whole answer to a get naming 257 to 400 objects was refused unread and the read ended as silence at its deadline.
+An answer past 400, which no conforming agent sends to a request this provider builds, ends its request at once as too large, never as silence: the console says the agent answered with more objects than one request asks for, and an agent read is refused as too large.
+An answer to 400 objects can be larger than macOS sends in one UDP datagram, `net.inet.udp.maxdgram`, 9,216 bytes by default.
+On the macos-latest CI runner a test agent on the same host answering 400 `sysName.0` of `router-one` built a 9,633-byte answer, and the read was still waiting for it when the test's 5-second limit ended it; with `box`, 6,833 bytes, the same 400 arrived whole on that runner.
+The limit is on what a host sends, so it bears on an agent running on macOS: nothing reaches Studio, and the read ends in the silence answer, which already names an object too large for one message among its causes.
+Studio on macOS receiving a larger answer from an agent elsewhere was not measured.
 
 The engine id ceiling is worth its own sentence. Nothing exercised a pin between 17 and 32
 octets, so halving it to 16 would have refused every real engine identity without a test
@@ -315,14 +324,20 @@ Studio's own refusals (the row, byte and time budgets, the closed table) are wor
 Values are the device's own management readings, so agent mode reads and answers them, rendered exactly as the console renders them ([`rows.ts`](../../src/lib/db/providers/network/snmp/rows.ts) and [`values.ts`](../../src/lib/db/providers/network/snmp/values.ts)): an octet string is text only when the bytes are showable text and hex otherwise, so no control byte reaches an answer, and every result reaches the model inside the untrusted-content fence.
 A `get` or `next` answers an exception (`noSuchObject`, `noSuchInstance`, `endOfMibView`) as the row's type with no value, since it is the agent's answer; a walk drops them, as the console does.
 
-Withheld, by the prefix of the parsed and resolved identifier and never by the text written, are the SNMP framework's security and target modules, the transport security modules, the USM Diffie-Hellman objects and Net-SNMP's access control extension:
+Withheld, by the prefix of the parsed and resolved identifier and never by the text written, are the SNMP framework's security and target modules, the transport security modules, the USM Diffie-Hellman objects and Net-SNMP's access control extension, and the subtrees whose values carry a command line, a command's output or a copy's login, any of which can hold a credential:
 
 | Module | Root | Holds |
 | --- | --- | --- |
+| `HOST-RESOURCES-MIB::hrSWRun` (RFC 2790) | 1.3.6.1.2.1.25.4 | the running processes' names, paths and parameters, whose command lines can carry credentials |
 | `SNMP-SSH-TM-MIB` (RFC 5592) | 1.3.6.1.2.1.189 | the SSH transport's session counters and the security names its sessions map to |
 | `SNMP-TSM-MIB` (RFC 5591) | 1.3.6.1.2.1.190 | the transport security model's settings for how a security name is formed |
 | `SNMP-TLS-TM-MIB` (RFC 6353) | 1.3.6.1.2.1.198 | the certificate fingerprints and the security names they map to, for the TLS and DTLS transports |
 | `SNMP-USM-DH-OBJECTS-MIB` (RFC 2786) | 1.3.6.1.3.101 | the Diffie-Hellman key-change objects of SNMPv3 users and their public values |
+| `CISCO-FLASH-MIB::ciscoFlashCopyTable` (Cisco) | 1.3.6.1.4.1.9.9.10.1.2.1 | the flash file copies, with the server each copies to or from and the user name and password it logs in with |
+| `CISCO-CONFIG-COPY-MIB` (Cisco) | 1.3.6.1.4.1.9.9.96 | the configuration copies, with the server each copies to or from and the user name and password it logs in with |
+| `UCD-SNMP-MIB::prErrFixCmd` (Net-SNMP) | 1.3.6.1.4.1.2021.2.1.103 | the command line the agent runs to fix a missing process |
+| `UCD-SNMP-MIB::extTable` (Net-SNMP) | 1.3.6.1.4.1.2021.8 | the commands the agent runs for its `exec` directives and what they print |
+| `NET-SNMP-AGENT-MIB::nsExtensions` (Net-SNMP) | 1.3.6.1.4.1.8072.1.3 | the commands the agent runs for its `extend` directives, their arguments and what they print (NET-SNMP-EXTEND-MIB's objects, the only ones under it) |
 | `NET-SNMP-VACM-MIB` (Net-SNMP) | 1.3.6.1.4.1.8072.1.9 | Net-SNMP's access control extension, indexed by the group names that may read or write each view |
 | `SNMP-TARGET-MIB` (RFC 3413) | 1.3.6.1.6.3.12 | the addresses notifications and proxied requests are sent to, and the security names that reach them |
 | `SNMP-NOTIFICATION-MIB` (RFC 3413) | 1.3.6.1.6.3.13 | the notification filters and the targets they name |
@@ -332,8 +347,16 @@ Withheld, by the prefix of the parsed and resolved identifier and never by the t
 | `SNMP-COMMUNITY-MIB` (RFC 3584) | 1.3.6.1.6.3.18 | the community strings and the security names they map to |
 
 Every other identifier under 1.3.6.1.6.3, the SNMP engine and MPD objects among them, is read: only the six framework roots above are withheld, never the subtree that holds them, and `walk 1.3.6.1.6.3` is admitted and steps over the six.
-The sentence agent mode repeats in its tool description, its investigation rule, its grounding and every refusal (`SNMP_WITHHELD_MODULES_TEXT` in [`agent-statement.ts`](../../src/lib/db/providers/network/snmp/agent-statement.ts)), and the plan-mode label, name each of the eleven modules by its own root, never as the modules under 1.3.6.1.6.3, since a model read that wording as the whole subtree withheld and refused the admitted walk.
-The bundled modules define none of the eleven, so no name resolves into them and only a numeric identifier reaches them; the roots are the module identities those RFCs assign, and `netSnmpVacmMIB` (`netSnmpObjects 9`) in the image's own `NET-SNMP-VACM-MIB.txt`.
+A name in `MODULE::object` form withholds that object's subtree alone: `hrSWRunPerf` (the per-process CPU and memory figures, indexed by process number) and `hrSWInstalled` beside `hrSWRun`, the rest of `prTable` beside `prErrFixCmd`, and the rest of CISCO-FLASH-MIB beside its copy table stay readable.
+The sentence agent mode repeats in its tool description, its investigation rule, its grounding and every refusal (`SNMP_WITHHELD_MODULES_TEXT` in [`agent-statement.ts`](../../src/lib/db/providers/network/snmp/agent-statement.ts)), and the plan-mode label, name each withheld module by its own root, never as the modules under 1.3.6.1.6.3, since a model read that wording as the whole subtree withheld and refused the admitted walk.
+The bundled modules define none of the framework, transport, Net-SNMP or Cisco modules, so no name resolves into them and only a numeric identifier reaches them; the roots are the module identities those RFCs assign, `netSnmpVacmMIB` (`netSnmpObjects 9`) in the image's own `NET-SNMP-VACM-MIB.txt`, `nsExtensions` (`netSnmpObjects 3`) in its `NET-SNMP-AGENT-MIB.txt`, under which its `NET-SNMP-EXTEND-MIB.txt` defines `nsExtendObjects` (`nsExtensions 2`) and the rest of that module, and `extTable` and `prErrFixCmd` in its `UCD-SNMP-MIB.txt`.
+The two Cisco roots are read from the vendor's own MIB text in Cisco's `cisco-mibs` repository: `ciscoConfigCopyMIB` is `ciscoMgmt 96`, and `ciscoFlashCopyTable` is `ciscoFlashOps 1`, each a table whose rows name a server address, a file name, a user name and a password (the MIB text says a read of the password answers a zero-length string, which Studio does not rely on).
+HOST-RESOURCES-MIB is bundled, so `hrSWRun`'s names (`hrSWRunTable`, `hrSWRunParameters` and the rest) resolve, and meet the same rule as a number would; on an agent-mode handle the catalog leaves `hrSWRunTable` and the `hrSWRun` scalar group out of every listing, and refuses a description of either asked for by name (`describeObject`) with its reason, so the grounding walk offers no read the reader withholds.
+MCP's `inspect_schema` describes only what the listing holds, so `table: hrSWRunTable` answers an empty listing with no reason, as a table that does not exist does ([section 14](#14-mcp-read)).
+
+The process, command and copy subtrees were found by a probe, not guessed.
+On the Net-SNMP 5.9.4 fixture, markers were planted in a running process's arguments, an SNMPv3 user's keys, two notification targets' communities and the `extend`, `exec` and `procfix` directives' commands, and a raw walk of `1` with a community whose view is the whole tree answered the markers under `hrSWRun` (a process's `hrSWRunParameters`), `prErrFixCmd`, `extTable`, `nsExtensions` and the framework modules already withheld, and nowhere else ([section 14](#14-mcp-read), `census` in `tests/fixtures/snmp/5.9.4/mcp-boundary/boundary.json`).
+What no prefix list can hold: a `pass` or `pass_persist` script and a `proxy` directive answer under any identifier the operator chose, and a vendor MIB this list does not name may carry a login of its own, so a device whose configuration puts a secret in either is read as it answers; SNMPv3 has no connection form yet, and its re-measurement is due when it lands.
 An instance suffix there can spell a name (the access control tables are indexed by security name, Net-SNMP's by group name), so a value is not the only thing withheld:
 
 - a `get` or `next` naming an identifier inside one does not send it, so not even a `noSuchInstance` tells whether a guessed community exists, and answers a row naming the module's root, typed `withheld`, with no value, and a warning naming the module and why;
@@ -351,7 +374,7 @@ Each agent-mode path reads this much:
 | Path | Handle | What it reads |
 | --- | --- | --- |
 | Investigation reads | agent read-only profile | one command of [section 13.2](#132-what-an-agent-statement-may-be), its values as the console renders them, the withheld modules above stepped over or answered withheld |
-| Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | the bundled catalog's tables and scalar groups with their declared columns, which sends nothing and holds none of the withheld modules, even on a handle that never connected; the reason they are withheld reaches the run through `run_read_query`'s description, the investigation rule and the grounding advice in agent mode, and through the `statementLanguage` label in plan mode |
+| Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | the bundled catalog's tables and scalar groups with their declared columns, which sends nothing, with `hrSWRunTable` and the `hrSWRun` group left out since they lie inside a withheld subtree, even on a handle that never connected; the reason they are withheld reaches the run through `run_read_query`'s description, the investigation rule and the grounding advice in agent mode, and through the `statementLanguage` label in plan mode |
 | Health | either agent profile | the console's own Get of `sysDescr.0` and `sysUpTime.0` ([section 6.3](#63-health-is-a-real-read)) |
 | Console, overview, performance, storage, session, slow-query, table and index readings | either agent profile | nothing: each is refused with its reason, never answered with an empty reading or a zero |
 
@@ -367,7 +390,47 @@ The family offers the investigation workflow, through `run_read_query` with one 
 The workflow classifier offers the model only these two.
 The editor language id stays `snmp`, and the fence alias `snmpget` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs an SNMP statement: the family declares no MCP facet, `MCP_EXPOSABLE.snmp` and `MCP_STATEMENT_READ.snmp` are false ([B158](../BACKLOG.md#b158-snmps-agent-reads-withhold-the-security-and-target-modules-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.snmp` is unchanged.
+MCP clients run an SNMP read with `run_snmp_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/snmpget/mcp.ts`](../../src/lib/agent/languages/snmpget/mcp.ts)), opened by `MCP_EXPOSABLE.snmp` and `MCP_STATEMENT_READ.snmp` ([section 14](#14-mcp-read)); `READ_ONLY_ENFORCED.snmp` is unchanged.
+
+## 14. MCP read
+
+`run_snmp_read` takes one of the console's four commands as `statement` and runs it through `queryReadOnly` under the agent read-only profile, so every rule of [section 13](#13-agent-mode) holds for it unchanged: the agent's client of Get, GetNext and GetBulk alone behind the valve, one exchange per read, and the withheld subtrees of [section 13.3](#133-values-and-what-is-withheld).
+The agent's own reader is the tool's fence, so a command outside the four, and a walk or table inside a withheld subtree, is refused before anything is acquired, in the sentence an agent run reads; with that fence removed the provider's reader refuses it before anything is sent (`tests/live/snmp-mcp-boundary.ts`).
+It takes no `offset` and no `database`: one connection is one agent.
+A read of more rows than `max_rows` (default 100, at most 500) and at most 1,000 is cut to `max_rows` and says so with `truncated_by: "max_rows"`, and one past the 32 KiB result limit with `truncated_by: "result_bytes"`; a walk or table past the 1,000-row budget is refused with the way to narrow it, never cut.
+A `get` or `next` carries at most 400 identifiers, the request cap of [section 7](#7-limits-and-both-sides-of-each), and the 4,096-character statement limit reaches that cap only with short identifiers: 400 of `sysName.0` fit in 4,003 characters, while a full numeric identifier such as `1.3.6.1.2.1.1.5.0` fits 227 times.
+
+Every withheld subtree is decided on the answer, by the prefix of every identifier the agent sent back, not by the command's text alone: a `next` whose answer lands inside one is a row typed `withheld` with no value, and a walk steps over every one its subtree covers, so no request starts inside it.
+An answer carries `notes`, the provider's warnings: each names a withheld subtree the read stepped over or answered withheld, and why.
+An MCP answer carries no warning on most tools; these are Studio's own sentences, naming no value, and a walk that stepped over a subtree would otherwise read as the device's whole subtree, so this tool's facet passes them on (`answersWarnings`).
+`inspect_schema` lists the bundled catalog's tables and scalar groups with their declared columns, which asks the agent nothing past the connection's own probe, and leaves `hrSWRunTable` and the `hrSWRun` group out, as every agent-mode handle does; it names no reason for them, so `table: hrSWRunTable` answers an empty listing, exactly as a table that does not exist does, and the reason reaches a client through `run_snmp_read`'s description and the `notes` of a read that meets the subtree.
+A cancel ends the wait, not the read: the read's exchange keeps asking until the provider's deadline, set to the time left of `timeout_ms`, ends it and closes its socket (measured with the agent paused after the acquisition: a 500 ms `timeout_ms` answered at 503 ms and the read ended at 471 ms; a cancel at 1,000 ms of a 3,000 ms call answered at 1,002 ms and the read ended at 2,966 ms).
+A cancel or a `timeout_ms` that passes while the connection is still being opened ends the wait, not the open: the acquisition's connect probe, a Get of `sysUpTime.0`, waits for the provider's silence deadline of 5,000 ms, since a seed sets no query timeout and the acquisition carries no deadline of its own, and a call on the same connection made before that probe ends joins the acquisition rather than opening its own.
+Such a call sends no datagram and answers the probe's outcome, so it can fail for an agent that answers by then: measured on Net-SNMP 5.9.4 with the agent dropping every datagram, a `get sysName.0` at a 500 ms `timeout_ms` answered the timeout at 504 ms, and a call made at once after the agent was restored sent no datagram and failed after about 4.5 s with `No SNMP agent answered`, the earlier probe's failure; a call 7 s later succeeded.
+The joined acquisition is MCP's own (`McpConnectionContext.acquire`), shared by every engine, and is a backlog item; [`run-snmp-read.test.ts`](../../tests/integration/mcp/run-snmp-read.test.ts) holds the behaviour as it stands.
+
+A v2c community is no principal.
+The seed's community is the only credential, since a seed carries no separate agent credential, and SNMPv2c gives a client no way to prove what it may read: what a community reaches is the agent's own view (VACM), held in the access control tables Studio withholds.
+So the data scope is the agent's view and Studio's withheld set together.
+Give an SNMP seed with `mcp: true` a community whose view holds only what an MCP client should read.
+
+What a community reaches, in two layers, measured on the Net-SNMP 5.9.4 fixture with five communities made per run and markers planted in a running process's arguments, an SNMPv3 user's keys, two notification targets' communities and the `extend`, `exec` and `procfix` directives' commands (`tests/fixtures/snmp/5.9.4/mcp-boundary/boundary.json`):
+The raw walk of `1` used a community whose view is the whole tree.
+The tool's reads used one whose view is the whole tree but hrDevice (1.3.6.1.2.1.25.3) and hrSWInstalled (1.3.6.1.2.1.25.6), which hold no withheld subtree, so a walk of the host group stays under the row budget; one whose view is hrSystem, hrSWRun and hrSWRunPerf alone, which the agent answers inside hrSWRun raw, so a walk of the host group crosses the running processes within one page and its answer shows rows on both sides and none inside (`crossing` in the capture); one whose view is the system group alone; and a writer.
+
+| Item | The agent's view | Studio |
+| --- | --- | --- |
+| the system group, under a community whose view is that group alone | answered | answered |
+| an object outside that view, and one that does not exist | `noSuchObject` alike | the same answer for both |
+| a walk of mib-2 under that community | the system group alone | answered as the view answers it |
+| a running process's parameters, under a community whose view holds them | answered raw with the planted marker | withheld: never asked for by name, a `next` landing in it answered `withheld`, a walk stepping over it with its reason in `notes` |
+| the `extend` and `exec` directives' commands and output, and the `procfix` command | answered raw with the planted markers | withheld the same way |
+| an SNMPv3 user's name, the notification targets' communities, the access control tables' group names | answered raw with the planted markers | withheld the same way |
+| every other instance of the raw walk of `1`, 3,951 in this capture | answered | answered; none carried a marker |
+
+So the scope of a narrow community is held by the agent's view, which does not depend on parsing the request, and the withheld set, computed on every answer, holds every subtree the probe found a marker in whatever the view grants.
+A `set` sent through the tool with its fence removed, with a community whose view may write, is refused by the provider's reader before anything is sent and leaves `sysContact` as it was, while the same Set sent raw with that community changes it.
+What no prefix list holds is written in [section 13.3](#133-values-and-what-is-withheld): a `pass`, `pass_persist` or `proxy` directive's subtree and a vendor MIB the list does not name are read as the agent answers them.
 
 ## Migration DDL
 

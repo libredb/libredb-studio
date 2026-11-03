@@ -8,13 +8,13 @@
  * docker/snmp fixture), what the agent answered: a raw Set with the read-only community is refused by the agent with
  * noAccess, the agent path sent no Set (the agent's own snmpInSetRequests did not move), every statement the reader
  * refuses or answers withheld reached the agent not at all (snmpInPkts moved by the one raw read after them), the
- * withheld subtrees answered raw carry no community in a value or an instance suffix on this fixture, and no
- * credential value is anywhere in the capture.
+ * withheld subtrees, every one the reader withholds, answered raw carry no community in a value or an instance suffix
+ * on this fixture, and no credential value is anywhere in the capture.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { readSnmpAgentStatement } from "@/lib/db/providers/network/snmp/agent-statement";
+import { readSnmpAgentStatement, SNMP_WITHHELD_SUBTREES } from "@/lib/db/providers/network/snmp/agent-statement";
 import { FIXTURE_COMMUNITY } from "../../../fixtures/snmp/identity";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -115,19 +115,14 @@ describe("the capture", () => {
   });
 
   test("the withheld subtrees answered raw, and on this fixture none carries the community", () => {
-    expect(CAPTURE.withheld.map((entry) => entry.root)).toEqual([
-      "1.3.6.1.2.1.189",
-      "1.3.6.1.2.1.190",
-      "1.3.6.1.2.1.198",
-      "1.3.6.1.3.101",
-      "1.3.6.1.4.1.8072.1.9",
-      "1.3.6.1.6.3.12",
-      "1.3.6.1.6.3.13",
-      "1.3.6.1.6.3.14",
-      "1.3.6.1.6.3.15",
-      "1.3.6.1.6.3.16",
-      "1.3.6.1.6.3.18",
-    ]);
+    // Every subtree the reader withholds, so a change to the list fails here until the capture is recorded again.
+    expect(CAPTURE.withheld.map((entry) => [entry.module, entry.root])).toEqual(
+      SNMP_WITHHELD_SUBTREES.map((entry) => [entry.module, entry.root.join(".")]),
+    );
+    // The running processes answer raw on any agent: the fixture's own snmpd is one.
+    expect(
+      CAPTURE.withheld.find((entry) => entry.module === "HOST-RESOURCES-MIB::hrSWRun")?.raw.instances,
+    ).toBeGreaterThan(0);
     // The access control tables answer under `view everything`: their instances are indexed by security names.
     expect(CAPTURE.withheld.find((entry) => entry.module === "SNMP-VIEW-BASED-ACM-MIB")?.raw.instances).toBeGreaterThan(
       0,
@@ -148,12 +143,24 @@ describe("the capture", () => {
     expect(framework?.rowCount).toBeGreaterThan(0);
   });
 
-  test("a walk of the enterprise subtree steps over Net-SNMP's access table: none of it answered, its reason warned", () => {
+  test("a walk of the enterprise subtree steps over every withheld subtree under it: none of it answered, each reason warned", () => {
     expect(
       CAPTURE.steppedOver.map((entry) => [entry.statement, entry.refused, entry.warned, entry.insideWithheld]),
     ).toEqual([
-      ["walk 1.3.6.1.4.1.8072.1", undefined, ["NET-SNMP-VACM-MIB"], 0],
-      ["walk 1.3.6.1.4.1", undefined, ["NET-SNMP-VACM-MIB"], 0],
+      ["walk 1.3.6.1.4.1.8072.1", undefined, ["NET-SNMP-AGENT-MIB::nsExtensions", "NET-SNMP-VACM-MIB"], 0],
+      [
+        "walk 1.3.6.1.4.1",
+        undefined,
+        [
+          "CISCO-FLASH-MIB::ciscoFlashCopyTable",
+          "CISCO-CONFIG-COPY-MIB",
+          "UCD-SNMP-MIB::prErrFixCmd",
+          "UCD-SNMP-MIB::extTable",
+          "NET-SNMP-AGENT-MIB::nsExtensions",
+          "NET-SNMP-VACM-MIB",
+        ],
+        0,
+      ],
     ]);
     for (const entry of CAPTURE.steppedOver) expect(entry.rowCount).toBeGreaterThan(0);
     expect(CAPTURE.overBudget.message).toStartWith("Read-only execution exceeded the row budget: ");

@@ -45,6 +45,7 @@ export type SnmpFailure =
   | { readonly kind: "refused"; readonly reason: string; readonly retryable: false }
   | { readonly kind: "tooLarge"; readonly reason: string; readonly retryable: false }
   | { readonly kind: "requestTooLarge"; readonly reason: string; readonly retryable: false }
+  | { readonly kind: "answerTooLarge"; readonly reason: string; readonly retryable: false }
   | { readonly kind: "silence"; readonly reason: string; readonly causes: readonly string[]; readonly retryable: true }
   | { readonly kind: "transport"; readonly reason: string; readonly retryable: false };
 
@@ -88,6 +89,15 @@ export function failureFromReport(oid: string): SnmpFailure {
         retryable: false,
       };
   }
+}
+
+/** An answer carrying more varbinds than one request here asks for: read by no one, and never a smaller answer. */
+export function failureFromOversizedAnswer(): SnmpFailure {
+  return {
+    kind: "answerTooLarge",
+    reason: "the agent answered with more objects than one request here asks for, so the answer was refused unread",
+    retryable: false,
+  };
 }
 
 /** A response PDU that carried a non-zero error-status. */
