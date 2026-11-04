@@ -1091,7 +1091,7 @@ Offsets are UTF-16 code units into `text`, the unit of a JavaScript and a Dart s
 ```
 
 Every field a decision lists is present, and no other field is; a client that reads any other `decision` treats the analysis as failed.
-`statement` is the exact text to send; it is not always the text `range` covers, because a one-statement selection on an engine with no statement terminator (Oracle, Trino, Elasticsearch, OpenSearch, InfluxDB 3) is sent without its `;` and the blanks around it.
+`statement` is the exact text to send; it is not always the text `range` covers, because a one-statement selection on an engine whose editor language is SQL and whose `statementTerminator` capability is `none` is sent without its `;` and the blanks around it.
 `range` is where the target sits in `text`: the selection, the caret's statement, or the whole text where the connection's editor language is not SQL and nothing is selected.
 `route` is `query` (`POST /api/db/query`) or `multi-query` (`POST /api/db/multi-query`), the route of a run outside a transaction, without bound params and not an explain; inside a transaction the statement goes to `POST /api/db/transaction` whatever `route` says, and a connection whose query language is not SQL always answers `query`.
 `refusal` is the connection type's own sentence, shown as it is; it may quote a word of the text, so a client does not log it.
