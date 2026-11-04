@@ -186,6 +186,7 @@ describe("the tool descriptions", () => {
     expect(description).toContain("a value whose units property lies outside answers that its units were not read");
     expect(description).toContain("The session's identity is no boundary");
     expect(description).toContain("inspect_schema refuses an OPC UA connection");
+    expect(description).toContain("Only Browse, BrowseNext, Read and HistoryRead are sent");
     expect(description).toContain("this tool takes no offset");
     expect(description).not.toContain("ithheld");
   });
