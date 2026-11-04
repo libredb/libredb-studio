@@ -861,6 +861,10 @@ These are real, current, and not oversights. Each is a decision with a reason.
   on a proxy and lumps everyone behind it into one bucket. The same derived address is the `ip`
   field in the audit log, so a wrong value also makes that field unreliable. Both are documented in
   [`.env.example`](../.env.example) under Forwarded Headers.
+- **One signed-in user can keep the server's event loop busy with statement analyses.**
+  `POST /api/db/statement/analyze` reads a text of up to 1,000,000 UTF-16 code units on the event loop, and charges one slot of the `query` budget for it whatever its length.
+  Measured on 2026-11-04 under Node 24, a text of that length took about 165 ms on PostgreSQL and up to about 1.2 s on Snowflake, almost all of it in the confirmation gate, so the default 120 slots a minute buy one user more CPU time than the minute holds, and every other request of the process waits behind it.
+  The bound is the LibreDB Mobile editor's own; a charge that grows with the text, or a faster gate, is a backlog entry (U202).
 - **The CapRover auto-connect variant runs a companion with the Docker socket, which is root on the host.**
   It is an operator decision, made by choosing the separate `libredb-studio-autoconnect` template; the plain CapRover template, the chart and every other channel never mount the socket.
   The exporter, `docker/discover.mjs`, sends GET requests to two Docker Engine API paths only, but that is a property of its code and not of the socket: whoever controls the companion's image tag or process controls the host.

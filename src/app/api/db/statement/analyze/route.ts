@@ -13,11 +13,17 @@ export const dynamic = "force-dynamic";
 /**
  * The longest text this route analyses, in UTF-16 code units, the unit of its offsets (#2204, decision 1).
  *
- * The analysis is CPU on the event loop, and every reader in it is linear in the text: measured under Bun 1.4.4, a
- * 1,000,000-unit PostgreSQL script took about 150 ms with the whole text selected, and dense PL/SQL blocks about
- * 400 ms. The proxy truncates a body at 10 MB rather than refusing it, so without a bound of its own one request could
- * hold every other request of the process for seconds. It is the LibreDB Mobile editor's own cap, so that client never
+ * The analysis is CPU on the event loop, and every reader in it is linear in the text. Measured on 2026-11-04 with the
+ * whole text selected, through this route under Node 24 and on `analyzeStatement` under Bun 1.4.4: a 1,000,000-unit
+ * PostgreSQL script took about 165 ms, and the slowest text found, 166,666 words `BEGIN ` on Snowflake, about 1.2 s
+ * under Node and 1.6 s under Bun, almost all of it in the confirmation gate; Spark's slowest took about 0.85 s. The
+ * proxy truncates a body at 10 MB rather than refusing it, so without a bound of its own one request could hold every
+ * other request of the process for ten times as long. It is the LibreDB Mobile editor's own cap, so that client never
  * meets it; the web editor and the VS Code extension analyse their text locally and never send it here.
+ *
+ * The bound does not stop one signed-in user from filling the event loop: at one slot per request, the `query`
+ * bucket's default 120 a minute buy more CPU time than the minute holds. That is a known limit in docs/SECURITY.md,
+ * and a charge that grows with the text, or a faster gate, is `docs/BACKLOG.md` U202.
  */
 const MAX_TEXT_LENGTH = 1_000_000;
 
