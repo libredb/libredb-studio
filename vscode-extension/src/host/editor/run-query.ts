@@ -195,7 +195,8 @@ async function prepare(
   }
   const entry = deps.store.get(connectionId);
   if (entry === undefined) throw new UnknownConnectionError(connectionId);
-  if (dangerous) {
+  // Fail closed: only an explicit false skips the question, so an answer that leaves the verdict out still asks.
+  if (dangerous !== false) {
     const answer = await untilCancelled(confirmDangerous(deps, entry.name, statement), token);
     if (answer.cancelled || !answer.value) return undefined;
   }

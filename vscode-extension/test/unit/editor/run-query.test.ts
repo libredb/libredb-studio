@@ -600,6 +600,17 @@ describe("runQuery", () => {
       assert.deepEqual(runs.running(), []);
     });
 
+    it("asks when the child answer leaves the verdict out, and sends nothing when declined", async () => {
+      const env = bound(DELETE);
+      // A stale or hand-swapped child can answer without the field; the type cannot stop that at runtime.
+      env.scripts.runTarget = () => Promise.resolve({ statement: DELETE } as unknown as RunTargetResult);
+      await runQuery(env.deps);
+      assert.equal(shownMessages.length, 1);
+      assert.equal(shownMessages[0].options?.modal, true);
+      assert.deepEqual(env.executed, []);
+      assert.deepEqual(env.runs.running(), []);
+    });
+
     it("asks nothing for a target the child did not flag", async () => {
       const { deps, executed } = bound("select 1;");
       await runQuery(deps);
