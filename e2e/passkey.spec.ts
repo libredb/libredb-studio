@@ -86,6 +86,11 @@ async function passwordContext(browser: Browser, origin: string, email: string) 
   const context = await browser.newContext({ baseURL: origin });
   const page = await context.newPage();
   await signInWithPassword(page, email);
+  // Off the editor, so this tab sends nothing until the test navigates it. A request the editor
+  // was still making when the test ended the session would get the 401 that clears the cookie,
+  // and the test's goto("/") would then meet the proxy's bare /login instead of the tab's own
+  // redirect with its return path.
+  await page.goto("about:blank");
   return { context, page };
 }
 
