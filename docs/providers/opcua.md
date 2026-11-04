@@ -685,16 +685,15 @@ read from the declaration rather than from a type-id:
    workspace, which ships no API routes and therefore no key walk, it says they are not listed there
    at all rather than naming a tab that is not drawn.
 
-**No MCP tool meets any of this**, and that is worth saying where a reader would otherwise wonder what
-`inspect_schema` answers for such an engine: `MCP_EXPOSABLE.opcua` is `false`
-([`src/lib/db/compatibility.ts`](../../src/lib/db/compatibility.ts)), a seed file naming `mcp: true`
-on this engine is refused when it loads, and no OPC UA connection is ever visible to an MCP tool.
+**No MCP tool lists any of this**, and that is worth saying where a reader would otherwise wonder what
+`inspect_schema` answers for such an engine: it refuses an OPC UA connection by name, naming
+`run_opcua_read`, which reads only beneath the seed's read roots ([section 15](#15-mcp-read)).
 Measured over all 33 shipped declarations: every engine that enumerates a kind in the Keys panel —
 etcd, Oxia, S3, MQTT and OPC UA — is `false` there, so this round wrote a sentence for
 `inspect_schema` to answer with, found no caller that could ever read it, and took it out again.
 An agent run meets the same declaration: with no kind the grounding walk lists, the run is ungrounded and is told to
-read a node id the question names as it is written and to browse from the Objects folder with its own read for any
-other ([section 14.4](#144-values-units-and-what-each-path-reads)).
+read a node id the question names as it is written and to browse the read roots, which a browse of the Objects folder
+lists, for any other ([section 14.4](#144-values-units-and-what-each-path-reads)).
 
 `countObjects()` answers `{}`. A server publishes no count of its nodes, and a number produced from
 whatever one Browse returned would be a total with nothing behind it: 6,769 nodes on the measured
@@ -1237,6 +1236,11 @@ and the ones that disagreed with it were replaced ([3.3](#33-more-rows-than-node
     already handles (it falls back to `os.hostname()`), and the factory imports the library when a
     session is opened rather than when a provider is built, so nothing that merely constructs a
     connection loads it.
+15. **Agent and MCP reads load the plant server.** One read proves its read roots before it answers,
+    so it can send up to 150 walk requests (`OPCUA_READ_SET_MAX_REQUESTS`) and 100 answer requests
+    (`OPCUA_AGENT_MAX_REQUESTS`) on one session. Across calls, MCP reads are bounded only by the MCP
+    query rate limit and agent reads by the run's own budgets, so the load a client can put on a
+    plant server is the product of the two; declare narrow roots on a server the plant depends on.
 
 ## Migration DDL
 
@@ -1392,4 +1396,25 @@ Plan mode's safety strip is the family's own (`posture.plan` in [`client.ts`](..
 Since no inventory ever grounds it, the family declares `ungroundedPlanning` in [`server.ts`](../../src/lib/agent/languages/opcuaread/server.ts): an ungrounded plan is given the statement contract with the node ids its question names as its only names, in place of the no-inventory refusal, and drafts `NO STATEMENT:` when the question names none (measured: asked for the values of two named nodes, it drafted `{"read": [...]}` of both, which the editor ran).
 The editor language id stays `opcua`, and the fence alias `opcuaread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs an OPC UA read: the family declares no MCP facet, `MCP_EXPOSABLE.opcua` and `MCP_STATEMENT_READ.opcua` are false ([B162](../BACKLOG.md#b162-opc-uas-agent-reads-withhold-the-servers-configuration-roles-and-sessions-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.opcua` is unchanged.
+The family's MCP facet is `run_opcua_read` ([section 15](#15-mcp-read)).
+
+## 15. MCP read
+
+`run_opcua_read` ([`mcp.ts`](../../src/lib/agent/languages/opcuaread/mcp.ts)) runs one request of [section 14.2](#142-what-an-agent-request-may-be) through `queryReadOnly` under the agent read-only profile, so a call reads exactly what an agent read reads: one session opened for it, the read roots proved first, and every node outside them answered as one the server does not hold.
+`MCP_EXPOSABLE.opcua` and `MCP_STATEMENT_READ.opcua` are true, and `READ_ROOTS_REQUIRED.opcua` holds MCP to the roots ([`compatibility.ts`](../../src/lib/db/compatibility.ts)):
+
+- a seed with `mcp: true` and no `agentReadRoots` is refused when the file loads, naming `mcp`;
+- a connection that reaches MCP without roots, built in memory or loaded past the schema, is refused when a tool opens it, with `READ_ROOTS_REQUIRED` (`assertReadRootsWhereRequired` in [`context.ts`](../../src/lib/mcp/context.ts));
+- a governed connection carries no roots, so it is never opted in to MCP.
+
+The agent credential stays optional: the identity decides only what the server shows, which narrows the walk further, so opt in the least identity the server serves the plant data to.
+`inspect_schema` refuses an OPC UA connection by name, naming `run_opcua_read`, because a server declares no relation kind.
+
+What an answer reveals about nodes outside the roots, and the MCP description says so: a browse of a member carries a note counting its references that lead outside, naming none, and a value whose units property lies outside answers that its units were not read.
+Both are decided by the walk alone, the same for every request.
+
+A changed root list reaches MCP after the seed cache's time to live, `SEED_CACHE_TTL_MS`, and an agent run from its next drive; an operator who must stop reads at once removes `mcp` or stops the run.
+
+A call cancelled or past its `timeout_ms` is answered at once; the read runs on until its next request meets the provider's deadline, set to the time left of `timeout_ms`, and its session is closed when the request in flight returns.
+
+The residuals of [section 14.3](#143-what-agent-mode-reads-the-read-roots) hold for MCP as they do for agent mode, and the plant load of [section 12](#12-known-limitations) item 15 is the product of the walk's bound and the MCP query rate limit.

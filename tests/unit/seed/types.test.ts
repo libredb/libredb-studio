@@ -7,6 +7,7 @@ import {
   CONNECTION_STRING_ACCEPTED,
   MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
+  READ_ROOTS_REQUIRED,
   SHIPPED_DATABASE_TYPES,
   WRITE_REACH,
 } from "@/lib/db/compatibility";
@@ -17,6 +18,7 @@ import {
   refuseInvalidAgentCredential,
   refuseMcpWhereNotOffered,
   refuseMcpWithoutAgentCredential,
+  refuseMcpWithoutReadRoots,
   refuseReadOnlyWhereOpen,
   SeedConnectionSchema,
   SeedConfigSchema,
@@ -456,10 +458,19 @@ describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)"
     // An engine MCP reads only under an agent credential is given one, which its own describe block covers.
     const agentKey = (type: (typeof offered)[number]) =>
       MCP_AGENT_CREDENTIAL_REQUIRED[type] ? { agentUser: "agent", agentPassword: "${AGENT_SECRET}" } : {};
+    // An engine MCP reads only beneath read roots is given one, which its own describe block covers.
+    const roots = (type: (typeof offered)[number]) =>
+      READ_ROOTS_REQUIRED[type] ? { agentReadRoots: ["nsu=urn:plant;s=Line1"] } : {};
     const refused = offered.filter(
       (type) =>
-        SeedConnectionSchema.safeParse({ ...connection, type, ...completeFor(type), ...agentKey(type), mcp: true }).data
-          ?.mcp !== true,
+        SeedConnectionSchema.safeParse({
+          ...connection,
+          type,
+          ...completeFor(type),
+          ...agentKey(type),
+          ...roots(type),
+          mcp: true,
+        }).data?.mcp !== true,
     );
     expect(refused).toEqual([]);
   });
@@ -864,6 +875,22 @@ describe("SeedConnectionSchema: OPC UA's read roots", () => {
     expect(result.success).toBe(false);
     expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["agentReadRoots"]);
     expect(result.error?.issues[0]?.message).toStartWith("agentReadRoots is OPC UA only");
+  });
+
+  it("refuses mcp: true without read roots, at the mcp field, and loads it with them", () => {
+    const refused = SeedConnectionSchema.safeParse({ ...opcua, mcp: true });
+    expect(refused.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+      [
+        "mcp",
+        'Seed connection "plant" sets mcp: true on opcua without agentReadRoots: MCP reads this engine only beneath read roots its seed declares. Add agentReadRoots, or remove mcp from this connection.',
+      ],
+    ]);
+    const loaded = SeedConnectionSchema.safeParse({ ...opcua, mcp: true, agentReadRoots: ["i=2256"] });
+    expect(loaded.data?.mcp).toBe(true);
+    const offered = refuseMcpWithoutReadRoots({ ...READ_ROOTS_REQUIRED, opcua: false });
+    const issues: unknown[] = [];
+    offered({ id: "plant", type: "opcua", mcp: true }, { addIssue: (issue: unknown) => issues.push(issue) } as never);
+    expect(issues).toEqual([]);
   });
 
   it("refuses the field in defaults", () => {

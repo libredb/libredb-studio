@@ -601,11 +601,10 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // `run_rabbitmq_read`, which reads through agent mode's metadata-only path: each message's offset and body size,
   // never a message value (BACKLOG B108).
   rabbitmq: true,
-  // Outside this version. Agent mode reads values with their
-  // engineering units and withholds the server's configuration, role identities and session
-  // diagnostics, one session per read; no MCP surface that reads through the same withheld set and
-  // units lookup is designed yet (BACKLOG B162).
-  opcua: false,
+  // Offered only beneath the read roots its seed declares, which READ_ROOTS_REQUIRED holds MCP to: an OPC UA server
+  // declares no relation kind, so `inspect_schema` refuses an OPC UA connection by name, and `run_opcua_read` answers
+  // every node outside the roots exactly as a missing one.
+  opcua: true,
   // Offered for the metadata tools and run_mtconnect_read, which acquire an agent-mode handle and so read the device
   // model with the agent's adapter connections withheld.
   mtconnect: true,
@@ -753,9 +752,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // and the `x-stream-offset` 406 backstop), answered metadata only, each message's offset and body size; message values
   // stay withheld (docs/providers/rabbitmq.md section 17, BACKLOG B108).
   rabbitmq: true,
-  // Agent mode executes reads with engineering units on OPC UA, and MCP read stays closed on it until a change of its
-  // own opens it (BACKLOG B162).
-  opcua: false,
+  // Opened on its own: run_opcua_read runs under the boundary agent mode uses, the provider's read-only client over a
+  // session opened per read, reading only beneath the seed's read roots, proved by a walk down from them on that
+  // session, with every other node id answered as a missing one and nothing sent for it (docs/providers/opcua.md
+  // section 15).
+  opcua: true,
   // Opened on its own: run_mtconnect_read runs under the boundary agent mode uses, the provider's closed table of nine
   // GET routes, with the agent's adapter connections withheld from every answer (docs/providers/mtconnect.md section 14).
   mtconnect: true,

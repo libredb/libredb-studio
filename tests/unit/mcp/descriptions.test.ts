@@ -29,6 +29,7 @@ const RUN_MILVUS_READ_ARM = mcpStatementArm("run_milvus_read");
 const RUN_MQTT_READ_ARM = mcpStatementArm("run_mqtt_read");
 const RUN_SPARKPLUG_READ_ARM = mcpStatementArm("run_sparkplug_read");
 const RUN_SNMP_READ_ARM = mcpStatementArm("run_snmp_read");
+const RUN_OPCUA_READ_ARM = mcpStatementArm("run_opcua_read");
 const RUN_ETCD_READ_ARM = mcpStatementArm("run_etcd_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
@@ -165,6 +166,28 @@ describe("the tool descriptions", () => {
     expect(RUN_SNMP_READ_ARM.description).toContain("The community is no principal");
     expect(RUN_SNMP_READ_ARM.description).toContain("none inside a withheld subtree");
     expect(RUN_SNMP_READ_ARM.description).toContain("this tool takes no offset");
+  });
+
+  test("run_opcua_read names OPC UA, its three reads, the units, the read roots and the two facts an answer reveals", () => {
+    const description = RUN_OPCUA_READ_ARM.description;
+    expect(description.length).toBeLessThanOrEqual(2_048);
+    expect(description).toContain("Runs on OPC UA; other engines refuse it.");
+    expect(description).toContain('{"read": ["ns=3;s=SlowUInt1", ...]}');
+    expect(description).toContain('{"history": "<node id>"');
+    expect(description).toContain('{"browse": "<node id>"}');
+    expect(description).toContain("Each value carries its engineering units and EU range, or no units published");
+    expect(description).toContain("never assume a unit");
+    expect(description).toContain("It reads only beneath the read roots the connection's operator declared");
+    expect(description).toContain('{"browse": "i=85"} lists them');
+    expect(description).toContain(
+      "answers exactly as a node the server does not hold (statusCode BadNodeIdUnknown, no value), and nothing is sent for it",
+    );
+    expect(description).toContain("a browse of a node says how many of its references lead outside, naming none");
+    expect(description).toContain("a value whose units property lies outside answers that its units were not read");
+    expect(description).toContain("The session's identity is no boundary");
+    expect(description).toContain("inspect_schema refuses an OPC UA connection");
+    expect(description).toContain("this tool takes no offset");
+    expect(description).not.toContain("ithheld");
   });
 
   test("run_milvus_read names Milvus, the one engine its handler gates on, says what it never reads, and takes no offset", () => {

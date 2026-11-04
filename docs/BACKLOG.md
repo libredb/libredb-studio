@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 81
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 80
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP16 · 16
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
@@ -9303,26 +9303,6 @@ Kept so that MCP statement reads, and any widening of what agent mode reads on P
 Found 2026-10-31 when agent mode joined Prometheus; the MCP reason recorded 2026-11-03.
 
 **Done when:** a change of its own opens MCP statement reads on Prometheus once one of the two conditions above holds: the pack declares its MCP facet (`src/lib/agent/languages/promql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same closed table, budgets and projection, and `MCP_STATEMENT_READ.prometheus` is true, with tests that an MCP read sends only the instant query's form, that no MCP answer carries the flags or a URL's userinfo or query string, and, where a narrowing layer is the condition, that a connection which bypasses it is refused at open; cited in `docs/AGENT.md`.
-
-### B162. OPC UA's agent reads withhold the server's configuration, roles and sessions, and it has no MCP surface
-
-Agent mode executes OPC UA reads under the `opcuaread` request language, one JSON request per call: a value read or a history read written as the console writes it, or a one-level browse of one node (`docs/providers/opcua.md`, section 14).
-The boundary is the provider's structural closed seam: an agent read reaches the server only through a session opened for that read alone, through a client that holds Browse, BrowseNext, Read and HistoryRead and nothing else, with the reference type, result mask, attribute list and history details fixed by the provider and the browse direction forward but where the provider reads a node's parents, so no Write, Call, HistoryUpdate, node or reference change, RegisterNodes, TranslateBrowsePathsToNodeIds or subscription can be sent on the agent path.
-No principal can be the boundary: the pinned fixture took a raw anonymous Write with status Good, and `ResetToServerDefaults` reported UserExecutable true to an anonymous session.
-Values are the server's process data, so they are answered as the console renders them, each with its node's engineering units and EU range read from its own `EngineeringUnits` and `EURange` properties through the same two services, or "no units published" and "no range published" where it has none, never a unit derived from a name; the units lookup counts against the read's request bound, so a value is never answered without it.
-Withheld on every agent-mode path, decided by node id before every read on the read's own session: `Server.ServerConfiguration` (i=12637), `RoleSet` (i=15606), the session diagnostics (i=3706, i=3707, i=3708) and the PubSub security groups and key push targets (i=15443, i=25440), with every node the server answers beneath them, so no trust list, account name, role identity mapping or open session's client, user identity or endpoint reaches an agent answer.
-In namespace 0 agent mode reads only a list of standard nodes (the Root and Objects folders, the Server object, its state, its capabilities but `RoleSet`, and its diagnostics summary counters), so every standard descendant of a withheld root is refused by id even where the server will not let a walk see it; where the server refuses this identity the browse of a withheld node, each node the read answers outside namespace 0 is placed by its parents through an inverse Browse, and refused when they cannot be read.
-Node ids are compared as one key: a GUID in lower case, an opaque id as its bytes, and an `nsu=` URI through the server's NamespaceArray, read on the read's session; an id with no key refuses the read.
-An aggregating server that exposes another server's configuration under a namespace of its own is not recognised by these ids.
-A browse or a history read past the row budget, any read past the byte or time budget, and a read needing more than 100 requests are refused, never cut, and one session is opened and closed per read, so nothing is held between reads.
-On a handle of either agent profile the console and the Keys panel are refused, and the overview, health, performance, slow-query, session, table, index and storage readings answer their reason rather than an empty reading; the provider declares no kind the grounding walk lists, so an agent run is ungrounded and is told to read a node id the question names as it is written and to browse from the Objects folder only for any other.
-So the language offers the investigation and the operations workflow only.
-`MCP_EXPOSABLE.opcua` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.opcua` false, so MCP `run_read_query` refuses an OPC UA connection, because no MCP surface that reads through the same withheld set and units lookup is designed yet; `READ_ONLY_ENFORCED.opcua` is unchanged.
-Kept so that MCP access, and any widening of what agent mode reads on an OPC UA server, are decisions of their own rather than side effects of agent mode joining.
-
-Found 2026-11-01 when agent mode joined OPC UA.
-
-**Done when:** a per-engine exposure ruling opens MCP for OPC UA, an MCP surface that reads through the same seam, withheld set, units lookup and request bound is designed and `MCP_EXPOSABLE.opcua` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/opcuaread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.opcua` is true, with tests that no MCP read reaches a withheld node or answers a value without its units; cited in `docs/AGENT.md`.
 
 ### B166. Trino composes no estimating plan, profile, statistics reading or grounding capture, and has no MCP statement read
 

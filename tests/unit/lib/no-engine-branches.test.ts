@@ -295,6 +295,12 @@ export const FALSE_POSITIVES: readonly Listed[] = [
   },
   {
     path: "src/lib/seed/types.ts",
+    declaration: "refuseMcpWithoutReadRoots",
+    count: 1,
+    reason: "the parameter type of the `READ_ROOTS_REQUIRED` registry it is handed, which holds no row here",
+  },
+  {
+    path: "src/lib/seed/types.ts",
     declaration: "refuseReadOnlyWhereOpen",
     count: 1,
     reason: "the parameter type of the `WRITE_REACH` registry it is handed, which holds no row here",

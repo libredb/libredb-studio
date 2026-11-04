@@ -16,8 +16,8 @@
  * connection's seed entry declares (`agent-roots.ts`): every other node id answers as an id the server does not hold,
  * with nothing sent for it, and a statement-sending profile on a connection that declares no roots is refused when it
  * opens, before any socket. On a handle opened for any agent-mode profile no session is held, the console and the Keys
- * panel are refused, and every reading the agent does not report answers its reason (`agent-surface.ts`). MCP read
- * stays closed on this engine.
+ * panel are refused, and every reading the agent does not report answers its reason (`agent-surface.ts`). MCP reads
+ * through the same `queryReadOnly`, beneath the same roots.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";

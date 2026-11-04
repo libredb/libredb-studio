@@ -3,6 +3,7 @@ import {
   CONNECTION_STRING_ACCEPTED,
   MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
+  READ_ROOTS_REQUIRED,
   WRITE_REACH,
 } from "@/lib/db/compatibility";
 import type { WriteReach } from "@/lib/db/write-reach";
@@ -227,6 +228,30 @@ export function refuseMcpWithoutAgentCredential(required: Readonly<Record<Databa
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: `Seed connection "${conn.id}" sets mcp: true on ${conn.type} without an agent credential: MCP reads this engine only under an agent credential of its own, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.`,
+      path: ["mcp"],
+    });
+  };
+}
+
+/**
+ * The load's refusal of an MCP opt-in without read roots on an engine MCP reads only beneath roots its seed declares,
+ * read from the record it is handed, `READ_ROOTS_REQUIRED` in `SeedConnectionSchema`, never a type-id branch. The MCP
+ * context refuses the same connection again at open (`assertReadRootsWhereRequired` in src/lib/mcp/context.ts).
+ */
+export function refuseMcpWithoutReadRoots(required: Readonly<Record<DatabaseType, boolean>>) {
+  return (
+    conn: {
+      readonly id: string;
+      readonly type: DatabaseType;
+      readonly mcp?: boolean;
+      readonly agentReadRoots?: unknown;
+    },
+    ctx: z.RefinementCtx,
+  ): void => {
+    if (conn.mcp !== true || !required[conn.type] || conn.agentReadRoots !== undefined) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Seed connection "${conn.id}" sets mcp: true on ${conn.type} without agentReadRoots: MCP reads this engine only beneath read roots its seed declares. Add agentReadRoots, or remove mcp from this connection.`,
       path: ["mcp"],
     });
   };
@@ -509,6 +534,8 @@ export const SeedConnectionSchema = z
   // An MCP opt-in without an agent credential on an engine MCP reads only under one, read from
   // MCP_AGENT_CREDENTIAL_REQUIRED.
   .superRefine(refuseMcpWithoutAgentCredential(MCP_AGENT_CREDENTIAL_REQUIRED))
+  // An MCP opt-in without read roots on an engine MCP reads only beneath them, read from READ_ROOTS_REQUIRED.
+  .superRefine(refuseMcpWithoutReadRoots(READ_ROOTS_REQUIRED))
   // An agent credential the engine's row does not take, read from SEED_AGENT_CREDENTIAL.
   .superRefine(refuseInvalidAgentCredential(SEED_AGENT_CREDENTIAL))
   // A read-only mode on an engine Studio can write unguarded, read from WRITE_REACH.
