@@ -35,6 +35,9 @@ export class SeedConnectionError extends Error {
  */
 const CONNECTION_NOT_FOUND_MESSAGE = "Connection not found: it does not exist or is not granted to you";
 
+/** The refusal of a connection record the caller supplied that names no provider, or a name that is not text. */
+const INVALID_CONNECTION_MESSAGE = "Valid connection configuration is required";
+
 /** Where a uniform miss is recorded: a phase of the request, as the MCP audit names its phases, never a URL. */
 const GOVERNED_MISS_TARGET = "governance/connection";
 const REVIEWED_MISS_TARGET = "kubernetes-access/connection";
@@ -149,6 +152,20 @@ export async function resolveConnection(
         "agentReadRoots is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot declare what agent mode and MCP read. Remove agentReadRoots from this connection.",
         400,
       );
+    }
+    /*
+     * A record whose `type` is missing, empty or not a string names no provider, and one whose `name` is present and
+     * not a string, `null` included, names nothing a person can read; a connection that is not an object names no type
+     * either. The factory logs both fields with a string method and the cache key frames the type, so a route that
+     * handed such a record on answered 500 with the runtime's own TypeError, or built a `null` name as an empty one.
+     * Refused here instead, in the sentence `POST /api/db/provider-meta` refused a missing type with, so every route
+     * that resolves a caller's connection answers it with one 400 before any provider is built. A seed's record never
+     * reaches this check: the seed schema requires both fields as text, and a claimed seed id is resolved below.
+     */
+    const type: unknown = connection.type;
+    const name: unknown = connection.name;
+    if (typeof type !== "string" || type === "" || (name !== undefined && typeof name !== "string")) {
+      throw new SeedConnectionError(INVALID_CONNECTION_MESSAGE, 400);
     }
     // `managed` is the operator's grant (BigQuery and Firestore read it to use server credentials).
     return { ...connection, managed: false };

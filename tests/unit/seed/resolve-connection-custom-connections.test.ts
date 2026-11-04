@@ -72,6 +72,22 @@ describe("resolve-connection with custom connections switched off", () => {
     }
   });
 
+  // The switch is answered before the record is read: a caller learns nothing about which records would be accepted.
+  it.each([
+    ["no type", { name: "Platform database" }],
+    ["a type that is not a string", { name: "Platform database", type: 5 }],
+    ["a name that is not a string", { name: null, type: "postgres" }],
+  ])("refuses a connection of the caller's own with %s with the same 403", async (_label, fields) => {
+    const own = { id: "user-conn", host: "platform-postgres", ...fields } as unknown as DatabaseConnection;
+
+    await expect(resolveConnection({ connection: own }, { role: "admin", username: "test" })).rejects.toMatchObject({
+      name: "SeedConnectionError",
+      message: "Custom connections are disabled on this server",
+      statusCode: 403,
+      code: "CUSTOM_CONNECTIONS_DISABLED",
+    });
+  });
+
   it("still resolves a seed named by connectionId", async () => {
     const result = await resolveConnection({ connectionId: "seed:everyone" }, { role: "user", username: "test" });
 

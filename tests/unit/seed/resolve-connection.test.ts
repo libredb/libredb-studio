@@ -145,6 +145,73 @@ describe("resolve-connection", () => {
     });
   });
 
+  /*
+   * An inline record whose `type` is missing, empty or not a string names no provider, and one whose `name` is present
+   * and not a string, `null` included, names no connection a person could type. The factory logs both with a string
+   * method, so a route that handed such a record on answered 500 with the runtime's TypeError, or built a provider
+   * under an empty name for a `null` one. Refused here, before any route reaches the factory.
+   */
+  it.each([
+    ["no type", {}],
+    ["an empty type", { type: "" }],
+    ["a type that is a number", { type: 5 }],
+    ["a type that is null", { type: null }],
+    ["a type that is an object", { type: { id: "postgres" } }],
+    ["a name that is a number", { type: "postgres", name: 5 }],
+    ["a name that is null", { type: "postgres", name: null }],
+    ["a name that is an object", { type: "postgres", name: { first: "orders" } }],
+  ])("refuses an inline connection with %s", async (_label, fields) => {
+    const inline = {
+      id: "user-conn",
+      name: "User DB",
+      host: "db.example.com",
+      createdAt: new Date(),
+      ...fields,
+    } as unknown as DatabaseConnection;
+
+    await expect(resolveConnection({ connection: inline }, { role: "user", username: "test" })).rejects.toMatchObject({
+      name: "SeedConnectionError",
+      message: "Valid connection configuration is required",
+      statusCode: 400,
+    });
+  });
+
+  // A connection that is not an object names no type either.
+  it.each([["postgres"], [5], [true], [[{ type: "postgres" }]]])(
+    "refuses an inline connection that is %p",
+    async (connection) => {
+      await expect(
+        resolveConnection(
+          { connection: connection as unknown as DatabaseConnection },
+          { role: "user", username: "test" },
+        ),
+      ).rejects.toMatchObject({
+        name: "SeedConnectionError",
+        message: "Valid connection configuration is required",
+        statusCode: 400,
+      });
+    },
+  );
+
+  it("resolves an inline connection that names no name, as a connection without one", async () => {
+    const inline = { id: "user-conn", type: "postgres", host: "db.example.com" } as unknown as DatabaseConnection;
+
+    const result = await resolveConnection({ connection: inline }, { role: "user", username: "test" });
+
+    expect(result as unknown).toEqual({ id: "user-conn", type: "postgres", host: "db.example.com", managed: false });
+  });
+
+  it("resolves a seed id claim from the file, whatever type and name the caller's copy carries", async () => {
+    const claimed = { id: "seed:everyone", type: 5, name: null } as unknown as DatabaseConnection;
+
+    const result = await resolveConnection({ connection: claimed }, { role: "user", username: "test" });
+
+    expect(result.id).toBe("seed:everyone");
+    expect(result.type).toBe("postgres");
+    expect(result.name).toBe("Everyone DB");
+    expect(result.password).toBe("shared-secret");
+  });
+
   it("resolves an inline connection that claims a seed id the role may reach", async () => {
     const claimed: DatabaseConnection = {
       id: "seed:everyone",
