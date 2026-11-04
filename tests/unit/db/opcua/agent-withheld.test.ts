@@ -170,6 +170,20 @@ describe("namesCredential", () => {
     ])
       expect([name, namesCredential(name)]).toEqual([name, false]);
   });
+
+  test("a name the size of a whole server reply is split in linear time, since the server writes it", () => {
+    // A reply may carry a name of hundreds of thousands of characters. A split that backtracks over a run of capitals
+    // needs tens of seconds for these, far past the test's own timeout; a linear one needs milliseconds.
+    const run = "A".repeat(200_000);
+    expect(namesCredential(run)).toBe(false);
+    expect(namesCredential(`${run}b`)).toBe(false);
+    expect(namesCredential(`${run}Password`)).toBe(true);
+    expect(namesCredential(`${"AB".repeat(100_000)}Key`)).toBe(true);
+    // The capitals before a capitalised word still split from it, as before.
+    for (const name of ["APIKey", "DBPassword", "HTTPToken"])
+      expect([name, namesCredential(name)]).toEqual([name, true]);
+    expect(namesCredential("PLCKeyPressure")).toBe(false);
+  });
 });
 
 /** The namespace-0 type definitions and data types the read roots walk prunes, each by its id in the published nodeset. */

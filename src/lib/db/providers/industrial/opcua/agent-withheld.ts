@@ -197,12 +197,14 @@ const forms = (word: string): readonly string[] => (word.endsWith("s") ? [word, 
  * `password1`, `ApiKeys`, `Secret_2`, `EncryptionKey2`, `MqttPass`, `Passwort`, `Passcode`, `DevicePIN`, `DbConnStr`
  * and `DSN` are named, and so are `Tokenizer` and `Secretary`, which hold `token` and `secret`; `KeyPressure`,
  * `Keyboard`, `PassCount`, `PinCount`, `Bypass` and `Passage` are not. The read roots walk prunes a node so named, as
- * defence in depth: the words are frozen, and a credential name they miss inside a declared root is answered.
+ * defence in depth: the words are frozen, and a credential name they miss inside a declared root is answered. The
+ * server writes the name, and a reply may carry one of hundreds of thousands of characters, so every pattern here is
+ * linear in its length and none backtracks over a run of capitals.
  */
 export function namesCredential(name: string): boolean {
   const words = name
     .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([A-Z])(?=[A-Z][a-z])/g, "$1 ")
     .replace(/([A-Za-z])(\d)/g, "$1 $2")
     .replace(/(\d)([A-Za-z])/g, "$1 $2")
     .split(/[^A-Za-z0-9]+/)
