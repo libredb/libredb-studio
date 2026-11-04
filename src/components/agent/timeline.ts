@@ -515,7 +515,7 @@ const FAILURE_SENTENCES = {
   // not at fault: this refusal reaches PostgreSQL and SQLite too (B47).
   // Names the seed entry's field, because that is the only thing to fix: the engine and the credential are not at fault.
   "read-roots-required":
-    "This OPC UA connection declares no read roots, so agent mode cannot read it: an operator adds agentReadRoots to its seed entry. Plan mode still drafts requests for the editor.",
+    "This connection declares no read roots, so agent mode cannot read it: an operator adds agentReadRoots to its seed entry. Plan mode still drafts requests for the editor.",
   "agent-credential-unusable":
     "This connection's agent credential cannot be used: check that it has the form its database takes (an agent user and password; an agent token or service-account key alone where the database takes one; an agent user other than the connection's own where it asks for one; none where it takes none), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
   // Names the principal, because the engine is supported and the credential was

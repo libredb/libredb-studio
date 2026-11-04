@@ -899,6 +899,14 @@ export const READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Obje
 });
 
 /**
+ * The refusal of an agent-mode Start whose workflow sends statements, on a connection of an engine `READ_ROOTS_REQUIRED`
+ * names that declares no read roots. Worded without naming an engine, since the runs route answers it for every engine
+ * the record names.
+ */
+export const READ_ROOTS_REQUIRED_SENTENCE =
+  "This connection declares no read roots: agent mode reads its engine only beneath read roots an operator declares on its seed entry (agentReadRoots). Nothing was sent.";
+
+/**
  * Which shipped engines' connection form offers a URI mode (Spec A section 7): the answer
  * `DB_UI_CONFIG[type].showConnectionStringToggle` gives in `src/lib/db-ui-config.ts`. Kept here because the seed
  * layer must not load `db-ui-config.ts`: it value-imports the React icon components, the reason

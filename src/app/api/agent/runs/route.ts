@@ -30,8 +30,7 @@ import {
 import { createErrorResponse } from "@/lib/api/errors";
 import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
-import { READ_ROOTS_REQUIRED } from "@/lib/db/compatibility";
-import { OPCUA_READ_ROOTS_REQUIRED_SENTENCE } from "@/lib/db/providers/industrial/opcua/agent-roots";
+import { READ_ROOTS_REQUIRED, READ_ROOTS_REQUIRED_SENTENCE } from "@/lib/db/compatibility";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { resolveConfig } from "@/lib/llm/utils/config";
 import { guardRoute } from "@/lib/api/require-session";
@@ -396,7 +395,7 @@ export async function POST(req: Request) {
       READ_ROOTS_REQUIRED[connection.type] &&
       connection.agentReadRoots === undefined
     ) {
-      return badRequest(OPCUA_READ_ROOTS_REQUIRED_SENTENCE, "read-roots-required");
+      return badRequest(READ_ROOTS_REQUIRED_SENTENCE, "read-roots-required");
     }
     // The hand-over replays the answer's statement in the user's editor; a variant that cannot auto-execute (every
     // kubectl variant: a kubectl answer is never run on the editor's terms) refuses the setting rather than persisting

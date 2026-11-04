@@ -932,7 +932,7 @@ describe("captureContextSnapshot — an environment failure on the composed path
     expect(capture.kind).toBe("unavailable");
     if (capture.kind !== "unavailable") throw new Error("unreachable");
     expect(capture.detail).toContain(
-      "This OPC UA connection declares no read roots, so agent mode cannot read it. An operator adds agentReadRoots to its seed entry; plan mode still drafts requests for the editor.",
+      "This connection declares no read roots, so agent mode cannot read it. An operator adds agentReadRoots to its seed entry; plan mode still drafts requests for the editor.",
     );
     expect(capture.detail).not.toContain("refused before any socket");
   });

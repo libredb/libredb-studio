@@ -253,7 +253,7 @@ describe("foldLedgerEntries", () => {
       "Agent mode runs on this engine, but not against this server or target: a compatible server whose read-only enforcement is not measured, such as FerretDB on the MongoDB wire or Percona on the MySQL wire, or an in-memory database. Plan mode and the operations workflow still work.",
     "connection-unresolvable": "This run's database connection no longer resolves on the server.",
     "read-roots-required":
-      "This OPC UA connection declares no read roots, so agent mode cannot read it: an operator adds agentReadRoots to its seed entry. Plan mode still drafts requests for the editor.",
+      "This connection declares no read roots, so agent mode cannot read it: an operator adds agentReadRoots to its seed entry. Plan mode still drafts requests for the editor.",
     internal: "The server could not carry this run. The reason is in the server log.",
   } as const satisfies Record<AgentRunFailureReason, string>;
 

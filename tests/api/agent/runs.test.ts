@@ -8,6 +8,8 @@
  */
 
 import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-model-env";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
@@ -769,11 +771,19 @@ describe("POST /api/agent/runs", () => {
 
     expect(res.status).toBe(400);
     expect(body.error).toBe(
-      "This OPC UA connection declares no read roots: agent mode reads OPC UA only beneath read roots an operator declares on its seed entry (agentReadRoots). Nothing was sent.",
+      "This connection declares no read roots: agent mode reads its engine only beneath read roots an operator declares on its seed entry (agentReadRoots). Nothing was sent.",
     );
     expect(body.refused).toBe("read-roots-required");
     expect(mockStart).not.toHaveBeenCalled();
     expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+  });
+
+  test("the refusal is the registry's engine-neutral sentence: the shared route imports nothing of a provider", () => {
+    const source = readFileSync(
+      join(import.meta.dir, "..", "..", "..", "src", "app", "api", "agent", "runs", "route.ts"),
+      "utf8",
+    );
+    expect(source.includes("@/lib/db/providers/")).toBe(false);
   });
 
   test("plan mode and the operations workflow open on the same connection, and roots open the investigation", async () => {
