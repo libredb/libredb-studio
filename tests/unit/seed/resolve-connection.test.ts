@@ -247,6 +247,23 @@ describe("resolve-connection", () => {
     });
   });
 
+  // The read roots refusal names the one field to remove, so it is answered before the record's type and name are read.
+  it("refuses read roots before a missing type, in the read roots sentence", async () => {
+    const conn = {
+      id: "user-plant",
+      name: "User Plant",
+      host: "opc.tcp://plc.ornek.net:4840/",
+      agentReadRoots: ["nsu=urn:plant;s=Line1"],
+      createdAt: new Date(),
+    } as unknown as DatabaseConnection;
+    await expect(resolveConnection({ connection: conn }, { role: "admin", username: "test" })).rejects.toMatchObject({
+      name: "SeedConnectionError",
+      statusCode: 400,
+      message:
+        "agentReadRoots is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot declare what agent mode and MCP read. Remove agentReadRoots from this connection.",
+    });
+  });
+
   it("resolves a seed id claim from the file, discarding read roots the caller's copy carries", async () => {
     const claimed = {
       id: "seed:everyone",
