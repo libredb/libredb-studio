@@ -77,9 +77,11 @@ function readAnalysisFields(body: Record<string, unknown>): AnalysisFields {
  * does not require it.
  *
  * THE ORDER IS THE SECURITY CENSUSES': the session, the body, the connection, then the fields. A connection the caller
- * may not open answers its own refusal whatever the body holds, which tests/security/custom-connections.test.ts,
- * governance-grants.test.ts and kubernetes-access-review.test.ts send every connection route, and which
- * `POST /api/db/query` answers the same way.
+ * may not resolve, refused with 403, 404 or 503, answers that refusal whatever the body holds, which
+ * tests/security/custom-connections.test.ts, governance-grants.test.ts and kubernetes-access-review.test.ts send every
+ * connection route, and which `POST /api/db/query` answers the same way. A type the server cannot build, a provider
+ * `LIBREDB_ENABLED_PROVIDERS` leaves out, an unknown type or a `readOnly` the provider does not enforce, is the
+ * factory's refusal, so it comes after the field checks.
  *
  * Metered on the `query` bucket, one slot per request: the analysis is CPU on the event loop, and the provider is
  * built as on `POST /api/db/provider-meta`, which that bucket meters too.

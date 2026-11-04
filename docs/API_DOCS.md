@@ -1099,7 +1099,8 @@ Every field a decision lists is present, and no other field is; a client that re
 `typedConfirmation` is `null`, or `{ "type": "text", "expected": "..." }`, or `{ "type": "connection-name", "expected": "<the connection's name>", "targets": ["..."] }`, whose `targets` name what the statement reaches, for display; the user types `expected` exactly, case and whitespace included.
 A statement confirmed by typing the connection's name answers `refuse` on a connection with no name, because an empty expected value would let an empty field confirm it.
 
-**Errors:** the connection is resolved before any field is read, so a connection the caller may not open answers its refusal whatever the body holds.
+**Errors:** the connection is resolved before any field is read, so a connection the caller may not resolve answers its `403`, `404` or `503` whatever the body holds.
+A type the server cannot build, one `LIBREDB_ENABLED_PROVIDERS` leaves out, an unknown type or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
 
 | Status | When |
 |--------|------|
