@@ -311,7 +311,7 @@ export const OPCUA_READ_ROOTS_SENTENCES = {
   unreadable: (root: string, status: string): string =>
     `Read root ${root} could not be read on this server: it answered ${status}. ${NOTHING}`,
   pruned: (root: string): string =>
-    `Read root ${root} is of a kind agent mode never reads (its class, type, data type or name), so nothing beneath it is read: an operator declares another root.`,
+    `Read root ${root} is of a kind agent mode never reads (its class, data type or name), so nothing beneath it is read: an operator declares another root.`,
   stopped: (status: string): string =>
     `The server stopped listing the read roots part way (${status}), so the set cannot be proved. ${NOTHING}`,
   nodes: `The read roots of this connection hold more than ${OPCUA_READ_SET_MAX_NODES.toLocaleString("en-US")} nodes, past what one read proves: an operator declares narrower read roots. ${NOTHING}`,

@@ -479,11 +479,11 @@ describe("proveReadSet", () => {
       ],
       [
         { "ns=2;s=Line": { name: "AdminPassword" } },
-        "Read root nsu=urn:plant;s=Line is of a kind agent mode never reads (its class, type, data type or name), so nothing beneath it is read: an operator declares another root.",
+        "Read root nsu=urn:plant;s=Line is of a kind agent mode never reads (its class, data type or name), so nothing beneath it is read: an operator declares another root.",
       ],
       [
         { "ns=2;s=Line": { name: "Line", nameStatus: "BadUserAccessDenied" } },
-        "Read root nsu=urn:plant;s=Line is of a kind agent mode never reads (its class, type, data type or name), so nothing beneath it is read: an operator declares another root.",
+        "Read root nsu=urn:plant;s=Line is of a kind agent mode never reads (its class, data type or name), so nothing beneath it is read: an operator declares another root.",
       ],
     ] as const) {
       const { set, server } = prove(nodes as Record<string, FakeNode>);
