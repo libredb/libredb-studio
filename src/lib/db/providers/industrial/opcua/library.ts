@@ -232,7 +232,13 @@ export const OPCUA_LIBRARY_BRIDGE: OpcuaLibraryBridge = {
     }
     return {
       browse: async (nodesToBrowse) => client_browse(session, nodesToBrowse),
-      browseNext: async (points, release) => session.browseNext(points as Buffer[], release),
+      // The library takes a continuation point only as a Buffer and throws on the Uint8Array this provider carries,
+      // so each is handed back as a Buffer, as the history read does with its own point.
+      browseNext: async (points, release) =>
+        session.browseNext(
+          points.map((point) => Buffer.from(point)),
+          release,
+        ),
       // `read` is overloaded on a single node, so the answer is always read back as the list it is.
       read: async (nodesToRead) => (await session.read(nodesToRead as never)) as unknown as readonly unknown[],
       // HistoryRead itself: the library's `readHistoryValue` convenience takes no

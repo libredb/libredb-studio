@@ -790,9 +790,10 @@ widest level in its whole address space answers its 100 children in one response
 real one, re-measured by walking the server bounded by nodes rather than by requests: 6,769 nodes
 over 6,769 browses, one per node, the widest level `ReferenceTest/Scalar/Scalar_Static/Scalar_Static_Mass/Scalar_Static_Mass_Boolean`
 with 100 children. This sentence used to say 37, which is the widest level a shallow walk reaches
-(`Server/ServerCapabilities/AggregateFunctions`) and not the widest there is. So the following and
-releasing of a browse point is covered by the unit suite's own paging server rather than by a live
-measurement, and this sentence says so rather than implying otherwise.
+(`Server/ServerCapabilities/AggregateFunctions`) and not the widest there is.
+So following a browse point is covered by the in-process node-opcua server of `tests/integration/db/opcua-vendor-namespaces.test.ts`, which lists one folder two references at a time: the Keys panel and the agent read roots walk both follow every point to its end, and a point the server refuses stops the agent read whole.
+The library takes a continuation point only as a Buffer and throws on any other byte array before anything is sent, so the bridge in `library.ts` hands each point back as a Buffer, for a continued browse and for a release alike.
+Releasing a point is covered by the unit suite's own paging server, not by a live measurement.
 
 A level follows `HierarchicalReferences` (`i=33`) **with its subtypes**, which is what reaches
 6,769 nodes over 6,865 references on OPC PLC. Naming `Organizes`, `HasComponent` and `HasProperty` one by

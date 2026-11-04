@@ -6,7 +6,8 @@
  * NodeClass or DataType the server refuses to read, nodes whose NodeClass attribute disagrees with their browse, and
  * one whose DataType changes between the walk and the answer; identity nodes whose BrowseName the server refuses to
  * read, and a value of an identity data type whose NodeClass attribute says Object, with a child; outside every root, a
- * folder of its own; and a clean process folder declared as the root of a second connection.
+ * folder of its own; a clean process folder declared as the root of a second connection; and a folder the server lists
+ * a few references at a time, declared as the root of a third.
  *
  * A stand-in session would agree with whatever the provider assumed about a server's answers, so this drives the
  * provider's own `queryReadOnly`, over the library, against `node-opcua-server` started here on a port the system
@@ -42,6 +43,12 @@ let server: OPCUAServer;
 let provider: OpcuaProvider;
 /** A second connection, whose one root is a clean process folder that holds none of the shapes. */
 let clean: OpcuaProvider;
+/** A third connection, whose one root is a folder the server lists two references at a time. */
+let paged: OpcuaProvider;
+/** Whether the server refuses every continuation point a BrowseNext hands back, as one it no longer holds. */
+let refuseNext = false;
+/** The in-process server's endpoint, once it listens. */
+let endpointOf = (): string => "";
 /** How many times the shifting node's DataType has been read in the current read: the walk's first, the answer's next. */
 let shifts = 0;
 /** Every node id each request of the current read named, by service. */
@@ -62,6 +69,10 @@ async function recordedSession(options: Parameters<typeof openLibrarySession>[0]
     browse: async (nodeIds) => {
       requests.push(`browse ${nodeIds.join(",")}`);
       return session.browse(nodeIds);
+    },
+    browseNext: async (points) => {
+      requests.push(`browseNext ${points.length}`);
+      return session.browseNext(points);
     },
     read: async (nodeIds, list) => {
       requests.push(`read${list === "facts" ? ":facts" : ""} ${nodeIds.join(",")}`);
@@ -251,8 +262,43 @@ beforeAll(async () => {
       value: { get: () => new Variant({ dataType: DataType.Double, value: 3.5 }) },
     })
     .nodeId.toString();
+  // A folder the server lists two references at a time, so every Browse of it hands back a continuation point.
+  const pagedFolder = namespace.addFolder("ObjectsFolder", { browseName: "Paged" });
+  ids.paged = pagedFolder.nodeId.toString();
+  for (let at = 0; at < 7; at += 1)
+    ids[`paged${at}`] = namespace
+      .addVariable({
+        componentOf: pagedFolder,
+        browseName: `Level${at}`,
+        dataType: "Double",
+        value: { get: () => new Variant({ dataType: DataType.Double, value: at + 0.5 }) },
+      })
+      .nodeId.toString();
+  // The page size is the client's to ask for, and node-opcua's client asks for far more than this folder holds, so
+  // the server's own Browse and BrowseNext handlers are wrapped: a Browse of the folder asks for two references, and
+  // with `refuseNext` set a BrowseNext names a point the server never handed out, which the server itself refuses.
+  const handlers = server as unknown as Record<
+    string,
+    (message: { request: Record<string, unknown> }, channel: unknown) => void
+  >;
+  const onBrowse = handlers._on_BrowseRequest?.bind(server);
+  const onBrowseNext = handlers._on_BrowseNextRequest?.bind(server);
+  if (onBrowse === undefined || onBrowseNext === undefined) throw new Error("the server has no Browse handlers");
+  handlers._on_BrowseRequest = (message, channel) => {
+    const asked = (message.request.nodesToBrowse ?? []) as readonly { nodeId: { toString(): string } }[];
+    if (asked.some((entry) => entry.nodeId.toString() === ids.paged)) message.request.requestedMaxReferencesPerNode = 2;
+    onBrowse(message, channel);
+  };
+  handlers._on_BrowseNextRequest = (message, channel) => {
+    if (refuseNext && message.request.releaseContinuationPoints !== true)
+      message.request.continuationPoints = ((message.request.continuationPoints ?? []) as unknown[]).map(() =>
+        Buffer.from("not-a-real-point"),
+      );
+    onBrowseNext(message, channel);
+  };
   await server.start();
   const endpoint = `opc.tcp://127.0.0.1:${server.endpoints[0]?.port}/libredb-vendor`;
+  endpointOf = () => endpoint;
   const rootOf = (id: string): string => `nsu=${namespace.namespaceUri};${id.slice(id.indexOf(";") + 1)}`;
   const connection = (root: string) =>
     ({
@@ -267,11 +313,14 @@ beforeAll(async () => {
   await provider.connect();
   clean = new OpcuaProvider(connection(rootOf(ids.process)), {}, AGENT, recordedSession);
   await clean.connect();
+  paged = new OpcuaProvider(connection(rootOf(ids.paged)), {}, AGENT, recordedSession);
+  await paged.connect();
 });
 
 afterAll(async () => {
   await provider?.disconnect();
   await clean?.disconnect();
+  await paged?.disconnect();
   await server?.shutdown();
   if (PKI_BEFORE === undefined) delete process.env[OPCUA_PKI_ROOT_ENV];
   else process.env[OPCUA_PKI_ROOT_ENV] = PKI_BEFORE;
@@ -387,6 +436,51 @@ describe("beneath a clean declared root", () => {
         expect([name, outside.requests]).toEqual([name, missing.requests]);
         expect(outside.requests.some((request) => request.includes(ids[name] as string))).toBe(false);
       }
+    }
+  });
+});
+
+describe("beneath a root the server lists a few references at a time", () => {
+  test("the walk follows every continuation point to its end, so a node on a later page is read", async () => {
+    refuseNext = false;
+    const browsed = await read({ browse: ids.paged }, ids.paged, paged);
+    expect(browsed.requests.filter((request) => request.startsWith("browseNext"))).toEqual([
+      "browseNext 1",
+      "browseNext 1",
+      "browseNext 1",
+    ]);
+    const result = await paged.queryReadOnly(JSON.stringify({ browse: ids.paged }), BUDGET);
+    expect(result.rows.map((row) => row.browseName)).toEqual([0, 1, 2, 3, 4, 5, 6].map((at) => `Level${at}`));
+    const last = await read({ read: [ids.paged6] }, ids.paged6 as string, paged);
+    expect(last.answer).toContain('"value":"6.5"');
+  });
+
+  test("the editor's Keys panel follows the same continuation points, through the same session", async () => {
+    const editor = new OpcuaProvider(
+      { id: "editor", name: "editor", type: "opcua", host: endpointOf(), securityMode: "None" } as DatabaseConnection,
+      {},
+      undefined,
+      openLibrarySession,
+    );
+    await editor.connect();
+    try {
+      const page = await editor.scanKeysPage?.({ cursor: "0", count: 50, pattern: "Paged/", level: true });
+      expect(page?.keys).toEqual([0, 1, 2, 3, 4, 5, 6].map((at) => `Paged/Level${at}`));
+    } finally {
+      await editor.disconnect();
+    }
+  });
+
+  test("a continuation point the server refuses stops the read whole, naming the status", async () => {
+    refuseNext = true;
+    try {
+      const refused = await read({ read: [ids.paged0] }, ids.paged0 as string, paged);
+      expect(refused.answer).toBe(
+        "OpcuaAgentError: The server stopped listing the read roots part way (BadContinuationPointInvalid), so the set cannot be proved. Nothing was answered.",
+      );
+      expect(refused.requests.at(-1)).toBe("browseNext 1");
+    } finally {
+      refuseNext = false;
     }
   });
 });
