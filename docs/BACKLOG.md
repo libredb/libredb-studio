@@ -27,7 +27,7 @@ None of it is a GitHub issue.
 
 **Sections**
 
-- [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
+- [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
 - [Drivers and connections](#drivers-and-connections) — D1-D457, U17 · 336
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
@@ -169,6 +169,15 @@ So MCP's `run_read_query` refuses such a read before it reaches the database, "T
 Found 2026-11-02 while reviewing the shared statement guard.
 
 **Done when:** the reader reads through the leading parentheses of a query expression to the keyword inside, the guard answers a parenthesised `SELECT` and a parenthesised compound query as a read and still refuses one whose body carries a side-effect word, the limiter's reading of the same text is decided in that change, and unit tests pin each shape in the guard's and the limiter's test files.
+
+### S12. The row limiter's CTE body reader costs the square of nested bodies and a call per level
+
+`readCteBodyWrite` in `src/lib/sql/operative-keyword.ts`, which `src/lib/db/utils/query-limiter.ts` asks of every statement that leads with `WITH`, reads the CTE list of each `WITH` nested in a body from scratch, so every level crosses each body inside it again, and it goes one call deeper per level through `readBodyWrite` and `readListWrite`.
+Measured on 2026-11-05 on PostgreSQL's grammar with `WITH a AS (` nested and closed: under Bun 1.4.4 it took 22 ms at 10,000 UTF-16 code units, 249 ms at 40,000 and 1.8 s at 100,000, and under Node 24 a nest of 5,000 levels (105,000 units) ended in `RangeError: Maximum call stack size exceeded`.
+The confirmation gate reads nested lists through `readOperativeKeywordAt` with a `CteListRuns`, which remembers where each run closes, since 2026-11-05; this reader shares nothing between its lists.
+Found 2026-11-05 while measuring the confirmation gate's cost on the statement analysis route.
+
+**Done when:** `readCteBodyWrite` hands one `CteListRuns` to every list it reads and walks nested bodies without a call per level, and tests pin its growth between two sizes and a nest of 60,000 levels under Node, as the gate's tests do.
 
 ---
 
@@ -6998,9 +7007,11 @@ Found 2026-11-03 while designing the statement analysis for #2204.
 ### U202. One signed-in user can keep the event loop busy with statement analyses
 
 `POST /api/db/statement/analyze` (`src/app/api/db/statement/analyze/route.ts`) runs `analyzeStatement` on the event loop for a text of up to 1,000,000 UTF-16 code units and charges one `query` slot whatever the length.
-Measured on 2026-11-04 with the whole text selected: under Node 24 through the route, a PostgreSQL script of that length took about 165 ms, 166,666 words `BEGIN ` on Snowflake about 1.2 s and 500,000 words `x` on Spark about 0.85 s; under Bun 1.4.4 the Snowflake text took 1.6 s, `isDangerousQuery` alone 1.08 s, and the statement splitter 14 ms.
-At the bucket's default of 120 a minute, one user can therefore ask for more than a minute of CPU in every minute, and every other request of the process waits behind it; docs/SECURITY.md states it as a known limit.
-The 1,000,000-unit bound and the single slot are #2204's decisions, so either change is a change of that contract.
+The confirmation gate, `isDangerousQuery`, reads that length in linear time since 2026-11-05, where nested CTE bodies, nested Spark computed calls, Snowflake `CREATE STAGE` and `FOR UPDATE` lock clauses in a block had cost it the square of the text (65 s for 250,000 units of nested CTE bodies on PostgreSQL).
+Measured on 2026-11-05 on `analyzeStatement` under Bun 1.4.4 with the whole text selected, a PostgreSQL script of that length takes about 45 ms and the slowest texts found about 0.22 s, a SQL Server script of 100,000 short statements and CTE bodies nested 83,000 deep; the gate alone takes up to about 0.2 s, against about 14 ms for the splitter.
+At the bucket's default of 120 a minute, one user can therefore still ask for about 26 s of CPU in every minute, and every other request of the process waits behind each analysis; docs/SECURITY.md states it as a known limit.
+Going further in the gate means rewriting the basic lexer (`readSqlSpan` and `readSqlWord` are about half of the cost) or merging the gate's walks of the text.
+The 1,000,000-unit bound and the single slot are #2204's decisions, so a charge that grows with the text is a change of that contract.
 Found 2026-11-04 by the review of #2204's route.
 
 **Done when:** a text near the bound costs its caller in proportion to its length, by a charge that grows with the text or a gate whose worst case is near the splitter's, and the known limit in docs/SECURITY.md is removed or restated with the new measurement.
