@@ -399,8 +399,22 @@ function readAlternateQuoted(sql: string, index: number, tagLength: number): Sql
  * one-unit read.
  */
 function continuesWord(sql: string, index: number, wholeCodePoint = false): boolean {
-  const before = wholeCodePoint ? Array.from(sql.slice(Math.max(0, index - 2), index)).pop() : sql[index - 1];
+  const before = wholeCodePoint ? codePointBefore(sql, index) : sql[index - 1];
   return before !== undefined && (IDENTIFIER_PART.test(before) || before === "$");
+}
+
+/**
+ * The code point that ends at `index`: a surrogate pair whole, any other code unit alone, `undefined` at the start.
+ * Read off the two code units rather than by splitting the text before `index` into code points, which allocated an
+ * array at every `r` of a Spark text and was most of the cost of reading one.
+ */
+function codePointBefore(sql: string, index: number): string | undefined {
+  const last = sql.charCodeAt(index - 1);
+  if (index >= 2 && last >= 0xdc00 && last <= 0xdfff) {
+    const first = sql.charCodeAt(index - 2);
+    if (first >= 0xd800 && first <= 0xdbff) return sql.slice(index - 2, index);
+  }
+  return sql[index - 1];
 }
 
 /**
