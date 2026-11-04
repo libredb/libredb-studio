@@ -63,3 +63,13 @@ export function editorLanguageForTabType(type: QueryTab["type"]): EditorLanguage
     ? DIALECT_EDITORS[stored as QueryTab["type"]].monacoId
     : "sql";
 }
+
+/**
+ * The editor language a provider's text is written in, read from its capabilities as a query tab reads it: the tab
+ * type `resolveTabType` gives, rendered in its `DIALECT_EDITORS` language.
+ *
+ * For a caller that holds the capabilities and no tab, such as the VS Code extension's child.
+ */
+export function editorLanguageOf(capabilities: ProviderCapabilities): EditorLanguage {
+  return editorLanguageForTabType(resolveTabType(capabilities));
+}

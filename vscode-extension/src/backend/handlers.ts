@@ -15,15 +15,8 @@ import { executionUiFor } from "@/lib/db/execution-ui";
 import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
 import { findKind, kindHasColumns } from "@/lib/db/object-kinds";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
-import type {
-  Container,
-  DatabaseObject,
-  KindCount,
-  ObjectDetail,
-  ProviderCapabilities,
-  QueryPrepareOptions,
-} from "@/lib/db/types";
-import { type EditorLanguage, editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
+import type { Container, DatabaseObject, KindCount, ObjectDetail, QueryPrepareOptions } from "@/lib/db/types";
+import { editorLanguageOf } from "@/lib/editor/tab-language";
 import { generateTableQuery } from "@/lib/query-generators";
 import { isDangerousQuery } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -190,11 +183,6 @@ function readConnectionParams(params: unknown): OpenRecord {
   // The other fields are the provider's to check, as they are behind the routes.
   const connection = { ...wire, createdAt } as unknown as DatabaseConnection;
   return { connection, posture: { allowExternalFileAccess } };
-}
-
-/** The editor language a provider's text is written in, as the web's query tab reads it from the same capabilities. */
-function editorLanguageOf(capabilities: ProviderCapabilities): EditorLanguage {
-  return editorLanguageForTabType(resolveTabType(capabilities));
 }
 
 export function createHandlers(
