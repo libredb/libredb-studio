@@ -1079,8 +1079,12 @@ function refuseOptions(body: TaggedObject): void {
   const pending: TaggedJson[] = [body];
   while (pending.length > 0) {
     const value = pending.pop() as TaggedJson;
-    if (Array.isArray(value)) pending.push(...value);
-    else if (isObject(value)) {
+    // Item by item, never as the arguments of one call: a list may hold the console's 262,144 numbers, and Node takes
+    // fewer arguments than that (measured: 130,000 overflowed the stack under Node 24.22.1, where Bun 1.4.4 took all
+    // 262,144).
+    if (Array.isArray(value)) {
+      for (const item of value) pending.push(item);
+    } else if (isObject(value)) {
       if (Object.hasOwn(value, "options")) {
         refuse(`A request holds no key "options", at any depth. ${INFERENCE_RULE}`, "options");
       }

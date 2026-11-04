@@ -3,6 +3,12 @@
  * request rules run under Bun, then in a Node child process from a bundle of tests/helpers/qdrant-request-outcomes.ts,
  * and the two answers must be equal, refusals and accepted bodies alike. CI's Node is 24; PR 4q's completion
  * sequence runs this file a second time with Node 26 first on PATH.
+ *
+ * The longest list a text can carry, a vector of the console's 262,144 numbers, is accepted on both. The walk that
+ * refuses an `options` key once took a list's items as the arguments of one call, and Node takes fewer than that:
+ * measured on 2026-11-04, it overflowed its stack at 130,000 numbers under Node 24.22.1, where Bun 1.4.4 took the
+ * whole bound, and `POST /api/db/statement/analyze` on the production server answered 130,000 with 500 (120,000
+ * with 200). The gate and the provider run the same walk first.
  */
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -61,6 +67,7 @@ const CASES: readonly RequestCase[] = [
     ),
   },
   { name: "accepted scroll", text: "POST /collections/docs/points/scroll" },
+  { name: "the longest list of numbers", text: query(`{"query": [${Array(262_144).fill("0").join(",")}]}`) },
 ];
 
 const inBun = requestOutcomes(CASES);
@@ -111,6 +118,7 @@ describe("the request rules on Bun and on Node", () => {
     expect(inBun.filter((outcome) => outcome.verdict === "accepted").map((outcome) => outcome.name)).toEqual([
       "accepted query",
       "accepted scroll",
+      "the longest list of numbers",
     ]);
     expect(underNode.outcomes).toEqual(inBun);
   });
