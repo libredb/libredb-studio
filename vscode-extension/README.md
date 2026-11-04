@@ -40,6 +40,7 @@ Rows live only in the window's memory, so reloading the window empties the view.
 
 **Run Query** sends the selected text, or the statement at the cursor when nothing is selected.
 A statement that changes data, database objects or permissions asks for confirmation first, as it does in the web editor.
+The question is one modal dialog: the web editor's AI risk analysis, and the typed confirmation it asks for before an etcd range delete or lease revoke, are not offered.
 **Cancel Query** stops a running statement on an engine that can cancel one, such as PostgreSQL, SQL Server and MySQL.
 A MongoDB command cannot be cancelled once it is sent.
 

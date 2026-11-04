@@ -586,8 +586,9 @@ elsewhere unchanged — which it is worth knowing means every row, with no cap, 
 ## Destructive-Statement Confirmation
 
 Before a destructive statement runs, studio opens a confirmation dialog carrying an AI risk
-analysis (`src/components/QuerySafetyDialog.tsx`). Which statements reach it is decided by the
-same reading the auto-limiter uses, so the two cannot disagree about where a statement begins.
+analysis (`src/components/QuerySafetyDialog.tsx`). Which statements reach it is decided by
+`isDangerousQuery` (`src/lib/sql/dangerous-query.ts`), with the same reading the auto-limiter
+uses, so the two cannot disagree about where a statement begins.
 
 | Statement | Confirmation |
 |-----------|--------------|

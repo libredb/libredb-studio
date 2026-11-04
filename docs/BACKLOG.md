@@ -4059,11 +4059,11 @@ Found 2026-10-29 in the review of #1950; pre-existing.
 
 ### D409. The dangerous-query gate is a pure function tested from a component test file
 
-On `main` the gate, `isDangerousQuery` and `writesUnderGrammar` with the helpers they call, lives in `src/components/QuerySafetyDialog.tsx`.
+The gate, `isDangerousQuery` and `writesUnderGrammar` with the helpers they call, lives in `src/lib/sql/dangerous-query.ts` since #1990, and `src/components/QuerySafetyDialog.tsx` re-exports both.
 Its tests live in `tests/components/QuerySafetyDialog.test.tsx`: the `isDangerousQuery` block and the blocks from Snowflake's confirmation forms to the end of the file, about 1640 of its 3131 lines, render nothing and call the two functions directly.
-The hooks import the gate from the component (`src/hooks/use-query-execution.ts`, `src/workspace/hooks/use-query-adapter.ts`), so the tests that stub it mock the component's module (`tests/hooks/use-query-execution.test.ts`, `tests/hooks/script-cancel-contract.test.ts`, `tests/components/StudioWorkspace.test.tsx`).
+The hooks still import the gate through that re-export (`src/hooks/use-query-execution.ts`, `src/workspace/hooks/use-query-adapter.ts`), so the tests that stub it mock the component's module (`tests/hooks/use-query-execution.test.ts`, `tests/hooks/script-cancel-contract.test.ts`, `tests/components/StudioWorkspace.test.tsx`).
 Five unit test files import the gate from the component too: `tests/unit/db/destructive-commands.test.ts` and the BigQuery, Couchbase, Druid and carriage-return comment tests in `tests/unit/sql/`.
-Open PR #1990 moves the gate to `src/lib/sql/dangerous-query.ts` and leaves its tests where they are.
+#1990 moved the gate's code only: its tests, its imports and its stub seams stayed where they were.
 
 Found 2026-10-29 in the review of #1990; pre-existing.
 
