@@ -305,7 +305,7 @@ const TABLE = [
 
 function fakeServer(
   nodes: Readonly<Record<string, FakeNode>>,
-  options: { readonly page?: number; readonly nextStatus?: string } = {},
+  options: { readonly page?: number; readonly nextStatus?: string; readonly endless?: boolean } = {},
 ) {
   const log: string[] = [];
   const pending = new Map<string, OpcuaReference[]>();
@@ -343,9 +343,16 @@ function fakeServer(
     },
     browseNext: async (list: readonly Uint8Array[]) => {
       log.push("browseNext");
+      if (options.endless === true) {
+        points += 1;
+        return [{ nodeId: "", references: [], statusCode: "Good", continuationPoint: new Uint8Array([points]) }];
+      }
       const rest = pending.get(String(list[0]?.[0])) ?? [];
       if (options.nextStatus !== undefined) return [{ nodeId: "", references: [], statusCode: options.nextStatus }];
       return [{ nodeId: "", statusCode: "Good", ...page(rest) }];
+    },
+    releaseBrowseContinuationPoints: async (list: readonly Uint8Array[]) => {
+      log.push(`release ${list.map((point) => point[0]).join(",")}`);
     },
     read: async (ids: readonly string[], list?: string) => {
       log.push(`read:${list} ${ids.join(",")}`);
@@ -758,6 +765,20 @@ describe("proveReadSet", () => {
       expect([count, proved.requests]).toEqual([count, 3 + Math.ceil(count / CHUNKS.browse)]);
       expect(server.log).toHaveLength(proved.requests);
     }
+  });
+
+  test("a server that never stops paging meets the request bound, and the point it holds is handed back", async () => {
+    const { set, server } = prove(
+      { "ns=2;s=Line": { name: "Line", children: [{ target: "ns=2;s=A" }, { target: "ns=2;s=B" }] } },
+      [ROOT],
+      { page: 1, endless: true },
+    );
+    const refused = await set.catch((error: Error) => error);
+    expect((refused as Error).message).toBe(OPCUA_READ_ROOTS_SENTENCES.requests);
+    const sent = server.log.filter((line) => !line.startsWith("release"));
+    expect(sent.length).toBe(OPCUA_READ_SET_MAX_REQUESTS);
+    // The last point the server handed out, released once the bound stopped the walk, and nothing after it.
+    expect(server.log.at(-1)).toBe(`release ${OPCUA_READ_SET_MAX_REQUESTS - 1}`);
   });
 
   test("the request bound answers a walk of exactly its size and refuses one request more", async () => {

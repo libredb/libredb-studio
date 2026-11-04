@@ -178,8 +178,8 @@ export type OpcuaAgentClient = Pick<
 /**
  * The agent's client over one session: the read members of the seam an answer needs, the limits, Read and HistoryRead,
  * each counted against the request bound and checked against the deadline before it is sent, and beside them the
- * walk's client, forward Browse, BrowseNext and the facts Read, checked against the same deadline and counted apart
- * by the walk itself.
+ * walk's client, forward Browse, BrowseNext, the facts Read and the release of a browse point, checked against the
+ * same deadline and counted apart by the walk itself.
  * GetEndpoints and CloseSession are the provider's, not the read's, and are not in it.
  */
 export function boundedAgentClient(
@@ -201,6 +201,8 @@ export function boundedAgentClient(
       return session.browse(nodeIds);
     },
     browseNext: async (points: readonly Uint8Array[]) => {
+      // A point the deadline stops is handed back before the refusal, so the server's slot is not held.
+      if (bounds.now() >= bounds.deadlineAt) await session.releaseBrowseContinuationPoints(points);
       due();
       return session.browseNext(points);
     },
@@ -208,6 +210,8 @@ export function boundedAgentClient(
       due();
       return session.read(nodeIds, "facts");
     },
+    releaseBrowseContinuationPoints: async (points: readonly Uint8Array[]) =>
+      session.releaseBrowseContinuationPoints(points),
   });
   return Object.freeze({
     requests: () => sent,

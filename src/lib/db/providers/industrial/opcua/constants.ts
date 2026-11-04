@@ -119,6 +119,24 @@ export const OPCUA_MAX_NODES_PER_READ = 200;
 export const OPCUA_MAX_NODES_PER_BROWSE = 20;
 
 /**
+ * The most continued pages one browsed level follows before it stops, the server's continuation point handed back.
+ *
+ * A server may answer every BrowseNext with a continuation point and never an end, and nothing else bounds the loop:
+ * the references a page carries can be none. No server measured here paged a Browse at all, so this is a bound on a
+ * misbehaving server, not on a real level.
+ */
+export const OPCUA_BROWSE_LEVEL_MAX_CONTINUATIONS = 100;
+
+/**
+ * The most references one browsed level gathers across its pages before it stops, the server's continuation point
+ * handed back.
+ *
+ * Twice the widest level measured: Milo answered a level of 10,000 children in one Browse. A level past it is refused,
+ * never shown in part.
+ */
+export const OPCUA_BROWSE_LEVEL_MAX_REFERENCES = 20_000;
+
+/**
  * The client's own message ceiling, and what crossing it costs - which is not the same on every
  * server.
  *

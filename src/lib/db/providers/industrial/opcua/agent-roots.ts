@@ -415,8 +415,14 @@ export interface OpcuaReadSet {
   readonly requests: number;
 }
 
-/** The services the walk calls: forward Browse, BrowseNext and the facts Read. */
-export type OpcuaWalkClient = Pick<OpcuaReadOnlyClient, "browse" | "browseNext" | "read">;
+/**
+ * The services the walk calls: forward Browse, BrowseNext, the facts Read, and BrowseNext's release, which hands back
+ * a continuation point the walk holds when a bound stops it before the point is followed.
+ */
+export type OpcuaWalkClient = Pick<
+  OpcuaReadOnlyClient,
+  "browse" | "browseNext" | "read" | "releaseBrowseContinuationPoints"
+>;
 
 const isGood = (status: string): boolean => status.startsWith("Good");
 const isListed = (status: string): boolean => status.startsWith("Good") || status.startsWith("Uncertain");
@@ -470,7 +476,10 @@ const factsOf = (facts: OpcuaDataValue): OpcuaMemberFacts => ({
   ...(facts.displayName === undefined ? {} : { displayName: facts.displayName }),
 });
 
-/** The walk's client, each request counted against `OPCUA_READ_SET_MAX_REQUESTS` before it is sent. */
+/**
+ * The walk's client, each request counted against `OPCUA_READ_SET_MAX_REQUESTS` before it is sent. A BrowseNext the
+ * bound stops hands its points back first, uncounted, so the server's slot is not held until the session closes.
+ */
 function countedWalk(client: OpcuaWalkClient): OpcuaWalkClient & { readonly requests: () => number } {
   let sent = 0;
   const charge = (): void => {
@@ -484,9 +493,11 @@ function countedWalk(client: OpcuaWalkClient): OpcuaWalkClient & { readonly requ
       return client.browse(nodeIds);
     },
     browseNext: async (points) => {
+      if (sent >= OPCUA_READ_SET_MAX_REQUESTS) await client.releaseBrowseContinuationPoints(points);
       charge();
       return client.browseNext(points);
     },
+    releaseBrowseContinuationPoints: async (points) => client.releaseBrowseContinuationPoints(points),
     read: async (nodeIds) => {
       charge();
       return client.read(nodeIds, "facts");

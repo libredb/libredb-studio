@@ -188,12 +188,17 @@ describe("the agent's client", () => {
       ].sort(),
     );
     expect(Object.isFrozen(client)).toBe(true);
-    // The read roots walk's client: forward Browse, BrowseNext and the facts Read, and nothing else.
-    expect(Object.keys(client.walk).sort()).toEqual(["browse", "browseNext", "read"]);
+    // The read roots walk's client: forward Browse, BrowseNext, the facts Read and the release of a browse point.
+    expect(Object.keys(client.walk).sort()).toEqual([
+      "browse",
+      "browseNext",
+      "read",
+      "releaseBrowseContinuationPoints",
+    ]);
     expect(Object.isFrozen(client.walk)).toBe(true);
   });
 
-  test("refuses a request at or past its deadline before the session is asked anything", async () => {
+  test("refuses a request at or past its deadline before the session is asked anything but a release", async () => {
     const asked: string[] = [];
     const session = new Proxy({} as OpcuaReadOnlyClient, {
       get: (_target, member) => async () => {
@@ -217,15 +222,18 @@ describe("the agent's client", () => {
     await client.walk.browse(["ns=3;s=A"]);
     await client.walk.browseNext([new Uint8Array([1])]);
     await client.walk.read(["ns=3;s=A"]);
-    expect(asked).toEqual(["limits", "browse", "browseNext", "read"]);
+    await client.walk.releaseBrowseContinuationPoints([new Uint8Array([1])]);
+    expect(asked).toEqual(["limits", "browse", "browseNext", "read", "releaseBrowseContinuationPoints"]);
     expect(client.requests()).toBe(1);
+    asked.length = 0;
     now = 10;
     await expect(client.walk.read(["ns=3;s=A"])).rejects.toThrow("Read-only execution exceeded the time budget");
     await expect(client.walk.browse(["ns=3;s=A"])).rejects.toThrow("Read-only execution exceeded the time budget");
     await expect(client.walk.browseNext([new Uint8Array([1])])).rejects.toThrow(
       "Read-only execution exceeded the time budget",
     );
-    expect(asked).toEqual(["limits", "browse", "browseNext", "read"]);
+    // The one thing the deadline still sends is the release of the point a stopped BrowseNext held.
+    expect(asked).toEqual(["releaseBrowseContinuationPoints"]);
   });
 
   test("asks the walk's Read for the facts list and Browse forward only, with no direction", async () => {

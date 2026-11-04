@@ -82,7 +82,6 @@ does not install. Three errors, and no others.
 | `node-id.ts` | Node-id grammar; the escaped browse path the Keys panel walks |
 | `limits.ts` | Chunk sizes: ours first, the server's only when smaller and real |
 | `key-scan.ts` | One level is one Browse; the capability the panel reads |
-| `walk.ts` | The bounded whole-tree walk, which no UI action calls |
 | `read-request.ts` | The JSON read request, parsed strictly |
 | `history.ts` | Raw history, two paging strategies, bounded by a value cap |
 | `results.ts` | Rows: one per node, or one per historical value |
@@ -172,8 +171,8 @@ its extra paths — so the extra rows are not 41 but 215, over 6,769 nodes. Each
 server publishes; a tree that showed a node once would have to privilege a parent the server does
 not. No cycles were found — an exhaustive enumeration with no visited set
 terminates at 7,040 paths, a memoised count over each node's parents agrees, and the
-deepest node sits at depth 7 — but the walk keeps a visited set anyway
-([5.5](#55-the-bounded-walk)): without one, those 41 nodes' subtrees are browsed again for every
+deepest node sits at depth 7, but the read roots walk keeps a visited set anyway
+([14.3](#143-what-agent-mode-reads-the-read-roots)): without one, those 41 nodes' subtrees are browsed again for every
 path into them.
 
 **These figures replaced larger ones that could not be reproduced**, and the replacement is worth
@@ -613,18 +612,11 @@ library replaces a `maxChunkCount` of 0 with its own default of 0, which means n
 sizes stay inside the ceiling for the server that enforces it, and both codes are in the error
 table.
 
-### 5.5 The bounded walk
+### 5.5 No whole-tree walk
 
-[`walk.ts`](../../src/lib/db/providers/industrial/opcua/walk.ts) walks the address space breadth
-first under a node budget and a depth budget, and reports which it spent. **No UI action calls it**:
-the documented fixture holds 6,769 nodes, the deepest at depth 7, and the Milo demo holds at least 60,000 with one
-level of 10,000 children in a single Browse answer, where an unbounded walk is unbounded in the
-literal sense.
-
-The visited set is not an optimisation. Without it the same subtree is re-browsed for every path
-into it — 7,040 browses instead of 6,769, which is 4.0% wasted on the documented fixture and 25.7%
-on the same image started with `--alm` (11,000 instead of 8,753) — and unterminating on a server
-with a genuine cycle.
+The editor never walks the address space: the Keys panel browses one level per request, and a level stops at `OPCUA_BROWSE_LEVEL_MAX_CONTINUATIONS` continued pages or `OPCUA_BROWSE_LEVEL_MAX_REFERENCES` references with a point still to follow, handing the server's continuation point back and refusing the level rather than showing part of it.
+The documented fixture holds 6,769 nodes, the deepest at depth 7, and the Milo demo holds at least 60,000 with one level of 10,000 children in a single Browse answer, where an unbounded walk is unbounded in the literal sense.
+The one walk on the provider is agent mode's proof of its read roots ([section 14.3](#143-what-agent-mode-reads-the-read-roots)), bounded by nodes and requests.
 
 ### 5.6 Cancellation
 
@@ -1203,8 +1195,8 @@ and the ones that disagreed with it were replaced ([3.3](#33-more-rows-than-node
 8. **`LIBREDB_OPCUA_PKI_ROOT` overrides a default rather than being required.** The default is
    `<data directory>/opcua-pki`; the LIBRARY's own default is still never used, deliberately
    ([4.4](#44-the-pki-directory)).
-9. **No whole-tree walk from the UI.** The walk exists, bounded, and nothing in the interface calls
-   it ([5.5](#55-the-bounded-walk)).
+9. **No whole-tree walk from the UI.** The Keys panel browses one level at a time
+   ([5.5](#55-no-whole-tree-walk)).
 10. **A node id saved with `ns=` may address a different node later.** A namespace index is a
     position in the server's table, supplied per session; this provider sends what the reader typed
     and rewrites nothing, so a request kept in query history and run after a server restart can
@@ -1339,6 +1331,7 @@ On every read's own session, before anything the request names is sent, Studio r
 
 Bounds (all in `agent-roots.ts`): at most 2,000 members (`OPCUA_READ_SET_MAX_NODES`) and 150 walk requests (`OPCUA_READ_SET_MAX_REQUESTS`), each refusing the read whole past it, since a partial set would make an answer depend on where the walk stopped; and members down to 8 levels below a root (`OPCUA_READ_SET_MAX_DEPTH`), a stop and never a refusal: a member at the last level is browsed, its references are counted outward, and its targets are not added.
 A member whose own Browse the server refuses becomes a leaf, answered with no rows and the note `The server did not list this node's references to this connection's identity.`; a BrowseNext refused, or a continuation point the server will not give or honour, refuses the read whole.
+A walk that the request bound or the time budget stops while it holds a continuation point hands that point back before it refuses, so the server's slot is not held until the session closes.
 The set lives in the read's scope and is dropped with its session; nothing is cached between reads.
 Measured (`agent` and `walks` in the capture): the walk over the three roots took 32 requests (26 Browses and 6 facts Reads) for the anonymous, the non-privileged and the administrator identity alike, the Telemetry folder alone 7 and the DataAccess folder alone 31, and a browse of the Objects folder, the walk with the limits and the namespace table, answered within 101 ms on loopback.
 A namespace-0 root the identity may not read refuses the read whole: with every root of the table declared, the anonymous identity's read was refused because the server answered `BadUserAccessDenied` for `Server.ServerDiagnostics.ServerDiagnosticsSummary` (i=2275).
