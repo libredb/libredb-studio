@@ -120,12 +120,13 @@ export interface RunTargetParams extends ConnectionIdParams {
 
 /**
  * range is absent when the statement is the whole text; statement is "" when the target holds no code; dangerous is
- * present, as true, when the web editor would ask before running it (isDangerousQuery under the connection's type).
+ * true when the web editor would ask before running it (isDangerousQuery under the connection's type). It is required,
+ * so the compiler refuses a child answer that leaves the verdict out instead of letting it read as safe.
  */
 export interface RunTargetResult {
   statement: string;
   range?: OffsetRange;
-  dangerous?: true;
+  dangerous: boolean;
 }
 
 export interface RunQueryParams {

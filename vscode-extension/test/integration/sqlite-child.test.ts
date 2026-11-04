@@ -103,7 +103,7 @@ describe("SQLite in the backend child", () => {
         cursor: 0,
       });
     assert.equal((await target("DELETE FROM t")).dangerous, true);
-    assert.equal((await target("SELECT 1")).dangerous, undefined);
+    assert.equal((await target("SELECT 1")).dangerous, false);
   });
 
   it("refuses a relative path before the provider builds, and leaves no file in the extension's folder", async () => {

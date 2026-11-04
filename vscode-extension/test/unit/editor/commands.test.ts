@@ -108,7 +108,8 @@ function setup() {
     ensureOpen: (connectionId: string): Promise<ProviderDescription> => Promise.resolve(descriptions[connectionId]),
     selectStatement: (): Promise<SelectStatementResult> =>
       Promise.resolve({ statement: 'SELECT * FROM "public"."orders";' }),
-    runTarget: (params: RunTargetParams): Promise<RunTargetResult> => Promise.resolve({ statement: params.text }),
+    runTarget: (params: RunTargetParams): Promise<RunTargetResult> =>
+      Promise.resolve({ statement: params.text, dangerous: false }),
     listContainers: (): Promise<Container[]> => Promise.resolve([SHOP]),
     cancel: (): Promise<CancelResult | undefined> => Promise.resolve(undefined),
   };

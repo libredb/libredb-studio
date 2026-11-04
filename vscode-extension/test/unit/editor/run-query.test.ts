@@ -69,7 +69,8 @@ function setup(text = "select 1;") {
   const entries: Record<string, ProfileEntry | undefined> = { [PG.id]: PG, [MONGO.id]: MONGO };
   const scripts = {
     ensureOpen: (connectionId: string): Promise<ProviderDescription> => Promise.resolve(descriptions[connectionId]),
-    runTarget: (params: RunTargetParams): Promise<RunTargetResult> => Promise.resolve({ statement: params.text }),
+    runTarget: (params: RunTargetParams): Promise<RunTargetResult> =>
+      Promise.resolve({ statement: params.text, dangerous: false }),
     listContainers: (): Promise<Container[]> => Promise.resolve([SHOP]),
     execute: (): Promise<void> => Promise.resolve(),
   };
@@ -500,7 +501,7 @@ describe("runQuery", () => {
 
   it("step 10: a target with no code answers Nothing to run. and starts no run", async () => {
     const { deps, scripts, runs, executed } = bound("-- only a comment");
-    scripts.runTarget = () => Promise.resolve({ statement: "" });
+    scripts.runTarget = () => Promise.resolve({ statement: "", dangerous: false });
     await runQuery(deps);
     assert.deepEqual(messages(), [{ level: "info", message: "Nothing to run.", items: [] }]);
     assert.deepEqual(executed, []);
@@ -510,7 +511,8 @@ describe("runQuery", () => {
   describe("step 11: the highlight", () => {
     it("highlights the target's range and disposes the decoration after HIGHLIGHT_MS", async () => {
       const { deps, editor, scripts, timers } = bound("select 1;\nselect 2;");
-      scripts.runTarget = () => Promise.resolve({ statement: "select 2;", range: { start: 10, end: 19 } });
+      scripts.runTarget = () =>
+        Promise.resolve({ statement: "select 2;", range: { start: 10, end: 19 }, dangerous: false });
       await runQuery(deps);
       assert.equal(decorationTypes.length, 1);
       const [type] = decorationTypes;
@@ -533,7 +535,8 @@ describe("runQuery", () => {
       const { deps, document, editor, scripts, timers, executed } = bound("select 1;");
       const open = deferred<ProviderDescription>();
       scripts.ensureOpen = () => open.promise;
-      scripts.runTarget = () => Promise.resolve({ statement: "select 1;", range: { start: 0, end: 9 } });
+      scripts.runTarget = () =>
+        Promise.resolve({ statement: "select 1;", range: { start: 0, end: 9 }, dangerous: false });
       const run = runQuery(deps);
       await settle();
       document.edit("delete from t;\nselect 1;");

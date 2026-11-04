@@ -27,7 +27,7 @@ import { type EditorLanguage, editorLanguageForTabType, resolveTabType } from "@
 import { generateTableQuery } from "@/lib/query-generators";
 import { isDangerousQuery } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
-import { runTarget } from "@/lib/sql/run-target";
+import { type RunTarget, runTarget } from "@/lib/sql/run-target";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
 import {
@@ -468,7 +468,7 @@ export function createHandlers(
         statementTerminator: capabilities.statementTerminator,
         grammar: resolveSqlGrammar(record.connection.type),
       };
-      let target: RunTargetResult;
+      let target: RunTarget;
       try {
         target = runTarget({ text, selection, cursor, ...rule });
       } catch (error) {
@@ -476,9 +476,9 @@ export function createHandlers(
         throw error instanceof RangeError ? invalidParams(error.message) : error;
       }
       if (rule.editorLanguage === "sql" && countCodeStatements(target.statement, rule.grammar) === 0) {
-        return { statement: "" };
+        return { statement: "", dangerous: false };
       }
-      return isDangerousQuery(target.statement, record.connection.type) ? { ...target, dangerous: true } : target;
+      return { ...target, dangerous: isDangerousQuery(target.statement, record.connection.type) };
     },
   };
 }

@@ -923,8 +923,8 @@ describe("query/target", () => {
 
   it("answers the cursor's statement, without its terminator, and where it sits", async () => {
     const { handlers } = await on();
-    const first = { statement: "select 1", range: { start: 0, end: 8 } };
-    const second = { statement: "select 2", range: { start: 10, end: 18 } };
+    const first = { statement: "select 1", range: { start: 0, end: 8 }, dangerous: false };
+    const second = { statement: "select 2", range: { start: 10, end: 18 }, dangerous: false };
     assert.deepEqual(await target(handlers, TEXT, 3), first);
     // At the end of the first statement, and on the newline after its terminator, the first is the one before.
     assert.deepEqual(await target(handlers, TEXT, 8), first);
@@ -939,31 +939,37 @@ describe("query/target", () => {
     assert.deepEqual(await target(handlers, TEXT, 0, { start: 10, end: 18 }), {
       statement: "select 2",
       range: { start: 10, end: 18 },
+      dangerous: false,
     });
     const spaced = "select 1;\n   \nselect 2;";
     assert.deepEqual(await target(handlers, spaced, 3, { start: 10, end: 13 }), {
       statement: "select 1",
       range: { start: 0, end: 8 },
+      dangerous: false,
     });
   });
 
   it("answers an empty statement with no range for a text that holds no code", async () => {
     const { handlers } = await on();
-    assert.deepEqual(await target(handlers, "-- only a note\n/* and this */", 0), { statement: "" });
-    assert.deepEqual(await target(handlers, "", 0), { statement: "" });
+    assert.deepEqual(await target(handlers, "-- only a note\n/* and this */", 0), { statement: "", dangerous: false });
+    assert.deepEqual(await target(handlers, "", 0), { statement: "", dangerous: false });
   });
 
   it("answers the whole text with no range in an editor language other than sql, whatever the cursor", async () => {
     const { handlers } = await on({ ...SQL_CAPS, queryLanguage: "json" } as ProviderCapabilities);
     const text = '{ "collection": "orders" }';
-    assert.deepEqual(await target(handlers, text, 0), { statement: text });
-    assert.deepEqual(await target(handlers, text, 12), { statement: text });
+    assert.deepEqual(await target(handlers, text, 0), { statement: text, dangerous: false });
+    assert.deepEqual(await target(handlers, text, 12), { statement: text, dangerous: false });
   });
 
   it("flags a target the web editor would ask about, and only that one", async () => {
     const { handlers } = await on();
     const text = "select 1;\ndelete from t;";
-    assert.deepEqual(await target(handlers, text, 3), { statement: "select 1", range: { start: 0, end: 8 } });
+    assert.deepEqual(await target(handlers, text, 3), {
+      statement: "select 1",
+      range: { start: 0, end: 8 },
+      dangerous: false,
+    });
     assert.deepEqual(await target(handlers, text, 12), {
       statement: "delete from t",
       range: { start: 10, end: 23 },
@@ -987,7 +993,7 @@ describe("query/target", () => {
     const postgres = await on();
     const mysql = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), { ...WIRE, type: "mysql" });
     assert.equal((await target(postgres.handlers, text, 0, whole)).dangerous, true);
-    assert.equal((await target(mysql.handlers, text, 0, whole)).dangerous, undefined);
+    assert.equal((await target(mysql.handlers, text, 0, whole)).dangerous, false);
   });
 
   it("flags a non-SQL target by its engine's own vocabulary", async () => {
@@ -998,7 +1004,7 @@ describe("query/target", () => {
     const drop = '{ "collection": "orders", "operation": "deleteMany", "filter": {} }';
     assert.deepEqual(await target(mongo.handlers, drop, 0), { statement: drop, dangerous: true });
     const find = '{ "collection": "orders", "operation": "find" }';
-    assert.deepEqual(await target(mongo.handlers, find, 0), { statement: find });
+    assert.deepEqual(await target(mongo.handlers, find, 0), { statement: find, dangerous: false });
   });
 
   it("answers runTarget's RangeError as InvalidParams with its sentence", async () => {

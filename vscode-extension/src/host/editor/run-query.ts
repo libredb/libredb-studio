@@ -195,7 +195,7 @@ async function prepare(
   }
   const entry = deps.store.get(connectionId);
   if (entry === undefined) throw new UnknownConnectionError(connectionId);
-  if (dangerous === true) {
+  if (dangerous) {
     const answer = await untilCancelled(confirmDangerous(deps, entry.name, statement), token);
     if (answer.cancelled || !answer.value) return undefined;
   }
