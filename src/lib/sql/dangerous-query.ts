@@ -10,7 +10,12 @@ import {
 } from "@/lib/sql/confirm-forms";
 import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
-import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
+import {
+  type CteListRuns,
+  cteListRuns,
+  readOperativeKeyword,
+  readOperativeKeywordAt,
+} from "@/lib/sql/operative-keyword";
 import {
   hasLoneCarriageReturnInLineComment,
   hasUnterminatedSpan,
@@ -247,6 +252,24 @@ function exemptFormAt(text: string, keyword: string, end: number, grammar: SqlGr
   );
 }
 
+/** One character of white space, as the `\s` of a pattern reads it. */
+const WHITE_SPACE = /\s/;
+
+/** A cursor's lock clause right before an `UPDATE`: the word `FOR` and white space. */
+const FOR_LOCK_CLAUSE = /\bFOR\s+$/i;
+
+/**
+ * Where the text before `start` has to be read from for `FOR_LOCK_CLAUSE` to answer what it answers for all of it: the
+ * white space right before `start`, and the four characters before that, which hold the word `FOR` and the one that
+ * bounds it. Testing the pattern against the whole text before every `UPDATE` cost a block of lock clauses the square
+ * of its length.
+ */
+function lockClauseFrom(text: string, start: number): number {
+  let i = start;
+  while (i > 0 && WHITE_SPACE.test(text[i - 1])) i--;
+  return Math.max(0, i - 4);
+}
+
 /**
  * Whether a procedural block's code writes, as far as its words can say.
  *
@@ -268,9 +291,9 @@ function blockWrites(text: string, grammar: SqlGrammar): boolean {
   for (const word of DANGEROUS_KEYWORDS) {
     let found = findCodeWord(text, word, 0, grammar);
     while (found !== null) {
-      const before = text.slice(0, found.start);
-      const variable = before.endsWith("@");
-      const lockClause = word === "UPDATE" && /\bFOR\s+$/i.test(before);
+      const variable = text[found.start - 1] === "@";
+      const lockClause =
+        word === "UPDATE" && FOR_LOCK_CLAUSE.test(text.slice(lockClauseFrom(text, found.start), found.start));
       if (!variable && !lockClause && !exemptFormAt(text, word, found.end, grammar)) return true;
       found = findCodeWord(text, word, found.end, grammar);
     }
@@ -493,8 +516,13 @@ function cteBodyAt(text: string, afterAs: number, grammar: SqlGrammar): number |
   return pastHiddenText(text, at + 1, grammar);
 }
 
-/** Whether `INSERT`, `DELETE` or `MERGE` opens a CTE body, or operates one that itself opens with `WITH`. */
+/**
+ * Whether `INSERT`, `DELETE` or `MERGE` opens a CTE body, or operates one that itself opens with `WITH`. The CTE lists
+ * read for bodies that open with `WITH` share where the runs of `text` close, so lists nested in each other cross each
+ * run once between them.
+ */
 function cteBodyWrites(text: string, grammar: SqlGrammar): boolean {
+  let runs: CteListRuns | undefined;
   let i = 0;
   while (i < text.length) {
     const span = readSqlSpan(text, i, grammar);
@@ -503,13 +531,16 @@ function cteBodyWrites(text: string, grammar: SqlGrammar): boolean {
       continue;
     }
     const word = readSqlWord(text, i);
-    if (word !== null && word.text === "AS" && cteBodyOpensWithWrite(text, word.end, grammar)) return true;
+    if (word !== null && word.text === "AS") {
+      runs ??= cteListRuns(text, grammar);
+      if (cteBodyOpensWithWrite(text, word.end, grammar, runs)) return true;
+    }
     i = word?.end ?? i + 1;
   }
   return false;
 }
 
-function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGrammar): boolean {
+function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGrammar, runs: CteListRuns): boolean {
   const bodyAt = cteBodyAt(text, afterAs, grammar);
   if (bodyAt === null) return false;
   const body = readSqlWord(text, bodyAt);
@@ -517,8 +548,8 @@ function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGramma
   // `WITH x AS (WITH y AS (…) DELETE …)` : the body is a statement, and the write is the
   // keyword that operates it, not the first word.
   if (body?.text !== "WITH") return false;
-  const operative = readOperativeKeyword(text.slice(bodyAt), grammar);
-  return operative !== null && CTE_DATA_MODIFYING.has(operative.keyword);
+  const operative = readOperativeKeywordAt(text, bodyAt, grammar, runs);
+  return operative !== null && CTE_DATA_MODIFYING.has(operative);
 }
 
 /**

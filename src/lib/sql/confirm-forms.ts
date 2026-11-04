@@ -9,6 +9,7 @@
  */
 
 import type { ConfirmCodeForm, ConfirmFormWhen, SqlGrammar } from "@/lib/sql/grammar";
+import { ParenthesisedRuns } from "@/lib/sql/parenthesised";
 import { readSqlSpan } from "@/lib/sql/spans";
 import { findCodeWord, readSqlWord } from "@/lib/sql/words";
 
@@ -50,14 +51,19 @@ export function sequenceInCode(text: string, form: readonly string[], grammar: S
   return false;
 }
 
-/** Whether the next code after `from`, past whitespace and comments, is `(`. */
-function callFollows(text: string, from: number, grammar: SqlGrammar): boolean {
+/** The index of the `(` that the next code after `from` is, past whitespace and comments, or -1 when it is none. */
+function callOpenAt(text: string, from: number, grammar: SqlGrammar): number {
   let i = from;
   for (let span = readSqlSpan(text, i, grammar); span !== null; span = readSqlSpan(text, i, grammar)) {
-    if (span.kind !== "whitespace" && span.kind !== "line-comment" && span.kind !== "block-comment") return false;
+    if (span.kind !== "whitespace" && span.kind !== "line-comment" && span.kind !== "block-comment") return -1;
     i = span.end;
   }
-  return text[i] === "(";
+  return text[i] === "(" ? i : -1;
+}
+
+/** Whether the next code after `from`, past whitespace and comments, is `(`. */
+function callFollows(text: string, from: number, grammar: SqlGrammar): boolean {
+  return callOpenAt(text, from, grammar) !== -1;
 }
 
 /**
@@ -166,39 +172,21 @@ function quotedCallInCode(text: string, name: string, grammar: SqlGrammar): bool
 }
 
 /**
- * The index past the parenthesised run that opens at the next code after `from`, past whitespace and comments, or -1
- * when that code is not a `(` or the run never closes. Literals, quoted names and comments inside it are read whole,
- * so a `)` written in one closes nothing.
- */
-function pastParenthesised(text: string, from: number, grammar: SqlGrammar): number {
-  if (!callFollows(text, from, grammar)) return -1;
-  let depth = 0;
-  let i = from;
-  while (i < text.length) {
-    const span = readSqlSpan(text, i, grammar);
-    if (span !== null) {
-      i = span.end;
-      continue;
-    }
-    if (text[i] === "(") depth++;
-    else if (text[i] === ")") {
-      depth--;
-      if (depth === 0) return i + 1;
-    }
-    i++;
-  }
-  return -1;
-}
-
-/**
  * Whether a code occurrence of `word` is followed, past whitespace and comments, by a parenthesised run and then a `(`:
  * a call whose function name the run computes, as Spark's `IDENTIFIER('f')(1)` is, which the gate cannot read.
+ * Literals, quoted names and comments inside the run are read whole, so a `)` written in one closes nothing. Where each
+ * run closes is remembered, so a run nested in another one's is crossed once.
  */
 function computedCallInCode(text: string, word: string, grammar: SqlGrammar): boolean {
+  let runs: ParenthesisedRuns | undefined;
   let found = findCodeWord(text, word, 0, grammar);
   while (found !== null) {
-    const end = pastParenthesised(text, found.end, grammar);
-    if (end !== -1 && callFollows(text, end, grammar)) return true;
+    const open = callOpenAt(text, found.end, grammar);
+    if (open !== -1) {
+      runs ??= new ParenthesisedRuns(text, grammar, "characters");
+      const end = runs.closeOf(open);
+      if (end !== -1 && callFollows(text, end, grammar)) return true;
+    }
     found = findCodeWord(text, word, found.end, grammar);
   }
   return false;
@@ -253,11 +241,17 @@ export function conditionalFormOperates(
   );
 }
 
-/** Whether a `confirmFormsWhen` form appears anywhere in the code of `text` with its `when` word after it. */
+/**
+ * Whether a `confirmFormsWhen` form appears anywhere in the code of `text` with its `when` word after it. The first
+ * occurrence its words follow decides: every later one ends further along the same walk, so a `when` word missing
+ * after the first is missing after them too.
+ */
 export function conditionalFormInCode(text: string, form: ConfirmFormWhen, grammar: SqlGrammar): boolean {
   let found = findCodeWord(text, form.form[0], 0, grammar);
   while (found !== null) {
-    if (conditionalFormOperates(text, form.form[0].toUpperCase(), found.end, form, grammar)) return true;
+    if (wordsFollow(text, found.end, form.form.slice(1), grammar)) {
+      return findCodeWord(text, form.when, found.end, grammar) !== null;
+    }
     found = findCodeWord(text, form.form[0], found.end, grammar);
   }
   return false;

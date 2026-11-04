@@ -33,8 +33,26 @@
 
 import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "./grammar";
 import { readLeadingKeyword, type LeadingKeyword } from "./leading-keyword";
+import { ParenthesisedRuns } from "./parenthesised";
 import { readSqlSpan } from "./spans";
 import { readSqlWord } from "./words";
+
+/**
+ * Where the parenthesised runs of one text close, for each of the two walks a CTE list is read with, remembered across
+ * the lists a caller reads of that text (`readOperativeKeywordAt`). A reader handed none crosses every run it meets.
+ */
+export interface CteListRuns {
+  readonly characters: ParenthesisedRuns;
+  readonly words: ParenthesisedRuns;
+}
+
+/** A `CteListRuns` for `sql` read under `grammar`, which nothing has walked yet. */
+export function cteListRuns(sql: string, grammar: SqlGrammar): CteListRuns {
+  return {
+    characters: new ParenthesisedRuns(sql, grammar, "characters"),
+    words: new ParenthesisedRuns(sql, grammar, "words"),
+  };
+}
 
 /**
  * The next index at which the statement's own code resumes, or `-1` when it never
@@ -65,7 +83,8 @@ function skipTrivia(sql: string, from: number, grammar: SqlGrammar): number {
  * at the first `)` inside a definition would put the reader in the middle of the
  * CTE body and let a `SELECT` there answer for the whole statement.
  */
-function skipParenthesised(sql: string, open: number, grammar: SqlGrammar): number {
+function skipParenthesised(sql: string, open: number, grammar: SqlGrammar, runs?: CteListRuns): number {
+  if (runs !== undefined) return runs.characters.closeOf(open);
   let depth = 0;
   let i = open;
 
@@ -128,7 +147,7 @@ function skipCteName(sql: string, index: number, grammar: SqlGrammar): number {
  */
 type StandardElement = { kind: "element"; body: number; end: number } | { kind: "other-shape" } | { kind: "malformed" };
 
-function readStandardElement(sql: string, index: number, grammar: SqlGrammar): StandardElement {
+function readStandardElement(sql: string, index: number, grammar: SqlGrammar, runs?: CteListRuns): StandardElement {
   const afterName = skipCteName(sql, index, grammar);
   if (afterName < 0) return { kind: "other-shape" };
 
@@ -141,7 +160,7 @@ function readStandardElement(sql: string, index: number, grammar: SqlGrammar): S
   // argument list (`now()`) is consumed here too and reaches the same index, so the
   // two need no telling apart: what follows the `AS` decides the shape.
   if (sql[i] === "(") {
-    const afterColumns = skipParenthesised(sql, i, grammar);
+    const afterColumns = skipParenthesised(sql, i, grammar, runs);
     if (afterColumns < 0) return { kind: "malformed" };
     i = skipTrivia(sql, afterColumns, grammar);
     if (i < 0) return { kind: "malformed" };
@@ -170,7 +189,7 @@ function readStandardElement(sql: string, index: number, grammar: SqlGrammar): S
 
   if (sql[i] !== "(") return { kind: committed ? "malformed" : "other-shape" };
 
-  const afterBody = skipParenthesised(sql, i, grammar);
+  const afterBody = skipParenthesised(sql, i, grammar, runs);
   if (afterBody < 0) return { kind: "malformed" };
 
   return { kind: "element", body: i, end: afterBody };
@@ -185,7 +204,7 @@ function readStandardElement(sql: string, index: number, grammar: SqlGrammar): S
  * is not - which is all this module needs, since it never has to understand the
  * expression, only find where it stops.
  */
-function skipExpressionElement(sql: string, index: number, grammar: SqlGrammar): number {
+function skipExpressionElement(sql: string, index: number, grammar: SqlGrammar, runs?: CteListRuns): number {
   let depth = 0;
   let i = index;
 
@@ -199,6 +218,13 @@ function skipExpressionElement(sql: string, index: number, grammar: SqlGrammar):
 
     const ch = sql[i];
     if (ch === "(") {
+      // Inside a run the depth is above 0, where only the run's close counts, so a run crossed before is crossed at once.
+      if (runs !== undefined) {
+        const close = runs.words.closeOf(i);
+        if (close < 0) return -1;
+        i = close;
+        continue;
+      }
       depth++;
       i++;
       continue;
@@ -257,12 +283,12 @@ interface CteElement {
  *   the standard shape already reads - which is what keeps #287's writing CTEs
  *   answering their own write keyword.
  */
-function readCteElement(sql: string, index: number, grammar: SqlGrammar): CteElement | null {
-  const standard = readStandardElement(sql, index, grammar);
+function readCteElement(sql: string, index: number, grammar: SqlGrammar, runs?: CteListRuns): CteElement | null {
+  const standard = readStandardElement(sql, index, grammar, runs);
   if (standard.kind === "element") return { body: standard.body, end: standard.end };
   if (standard.kind === "malformed") return null;
 
-  const end = skipExpressionElement(sql, index, grammar);
+  const end = skipExpressionElement(sql, index, grammar, runs);
   return end < 0 ? null : { body: -1, end };
 }
 
@@ -283,7 +309,7 @@ interface CteList {
  * CTE's own body. Anything that does not match answers `null`: see the bias note
  * on `readOperativeKeyword`. A list with nothing after it is `null` as well.
  */
-function readCteList(sql: string, afterWith: number, grammar: SqlGrammar): CteList | null {
+function readCteList(sql: string, afterWith: number, grammar: SqlGrammar, runs?: CteListRuns): CteList | null {
   const bodies: number[] = [];
   let i = skipTrivia(sql, afterWith, grammar);
   if (i < 0) return null;
@@ -295,7 +321,7 @@ function readCteList(sql: string, afterWith: number, grammar: SqlGrammar): CteLi
   }
 
   for (;;) {
-    const element = readCteElement(sql, i, grammar);
+    const element = readCteElement(sql, i, grammar, runs);
     if (element === null) return null;
     if (element.body >= 0) bodies.push(element.body);
     i = skipTrivia(sql, element.end, grammar);
@@ -310,8 +336,13 @@ function readCteList(sql: string, afterWith: number, grammar: SqlGrammar): CteLi
 }
 
 /** The keyword after a `WITH` statement's CTE list, or `null` when there is none to read. */
-function readKeywordAfterCteList(sql: string, afterWith: number, grammar: SqlGrammar): LeadingKeyword | null {
-  const list = readCteList(sql, afterWith, grammar);
+function readKeywordAfterCteList(
+  sql: string,
+  afterWith: number,
+  grammar: SqlGrammar,
+  runs?: CteListRuns,
+): LeadingKeyword | null {
+  const list = readCteList(sql, afterWith, grammar, runs);
   if (list === null) return null;
 
   const operative = readSqlWord(sql, list.after);
@@ -430,6 +461,29 @@ export function readOperativeKeyword(sql: string, grammar: SqlGrammar = DEFAULT_
   if (leading === null || leading.keyword !== "WITH") return leading;
 
   return readKeywordAfterCteList(sql, leading.end, grammar);
+}
+
+/**
+ * The keyword `readOperativeKeyword(sql.slice(start), grammar)` answers, for a caller that asks it of many statements
+ * nested in one text: the confirmation gate asks it of every CTE body that opens with `WITH`.
+ *
+ * The leading keyword is read on the slice, as there. The CTE list after a `WITH` is read where it stands instead, with
+ * `runs` (`cteListRuns(sql, grammar)`) remembering where every parenthesised run it crossed closes, so the lists of
+ * statements nested in each other cross each run once between them rather than once each. Read in place, the list
+ * reads the same: every index it reads lies past the four letters of `WITH`, and the readers look back two characters
+ * at most, so no reading reaches the text before `start`. Only the keyword is answered, since the two readings count
+ * their offsets from different places.
+ */
+export function readOperativeKeywordAt(
+  sql: string,
+  start: number,
+  grammar: SqlGrammar,
+  runs: CteListRuns,
+): string | null {
+  const leading = readLeadingKeyword(sql.slice(start), grammar);
+  if (leading === null || leading.keyword !== "WITH") return leading?.keyword ?? null;
+
+  return readKeywordAfterCteList(sql, start + leading.end, grammar, runs)?.keyword ?? null;
 }
 
 /**
