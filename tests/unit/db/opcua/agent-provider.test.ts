@@ -473,6 +473,35 @@ describe("a value read", () => {
     expect(result.rows[0]).toMatchObject({ units: OPCUA_UNITS_OUTSIDE, euRange: OPCUA_NO_RANGE });
   });
 
+  test("a units property the walk pruned by its own facts is never read, and its units answer as not read", async () => {
+    const nodes = plant();
+    nodes["ns=6;s=Guarded"] = {
+      nodeClass: "Variable",
+      dataType: "ns=0;i=6",
+      name: "Guarded",
+      ns: 6,
+      value: 9,
+      children: [{ target: "ns=6;s=Guarded_EU", ref: "ns=0;i=46", name: "EngineeringUnits" }],
+    };
+    // The property's own facts carry a session diagnostics data type, which the walk prunes.
+    nodes["ns=6;s=Guarded_EU"] = {
+      nodeClass: "Variable",
+      dataType: "ns=0;i=865",
+      name: "EngineeringUnits",
+      ns: 0,
+      value: EU,
+    };
+    nodes["ns=6;s=DataAccess"] = {
+      ...nodes["ns=6;s=DataAccess"],
+      children: [...(nodes["ns=6;s=DataAccess"]?.children ?? []), { target: "ns=6;s=Guarded" }],
+    };
+    const { provider, record } = await agentHandle(nodes);
+    const result = await provider.queryReadOnly('{"read": ["ns=6;s=Guarded"]}', BUDGET);
+    expect(result.rows[0]).toMatchObject({ value: "9", units: OPCUA_UNITS_OUTSIDE, euRange: OPCUA_NO_RANGE });
+    expect(record.calls.filter((call) => call.startsWith("read ")).join(" ")).not.toContain("Guarded_EU");
+    expect(record.calls.at(-1)).toBe("read ns=6;s=Guarded");
+  });
+
   test("a member with no value is not looked up for units, and answers none", async () => {
     const walk = await walkOf();
     const { provider, record } = await agentHandle();
@@ -536,6 +565,14 @@ describe("a value read", () => {
       answering("ns=3;s=SlowUInt1", { value: 7, nodeClass: "Variable", dataTypeId: "ns=0;i=865", statusCode: "Good" }),
     );
     expect((await typed.provider.queryReadOnly('{"read": ["ns=3;s=SlowUInt1"]}', BUDGET)).rows[0]).toMatchObject(
+      outside,
+    );
+    // The walk admitted the Variable on a DataType answered Good; a Read that answers none no longer matches it.
+    const untyped = await agentHandle(
+      plant(),
+      answering("ns=3;s=SlowUInt1", { value: 7, nodeClass: "Variable", statusCode: "Good" }),
+    );
+    expect((await untyped.provider.queryReadOnly('{"read": ["ns=3;s=SlowUInt1"]}', BUDGET)).rows[0]).toMatchObject(
       outside,
     );
   });
@@ -644,6 +681,30 @@ describe("a history read", () => {
       expect([outside, a.answer, a.requests]).toEqual([outside, missing.answer, missing.requests]);
     }
   });
+
+  test("a member the walk classed as anything but a Variable is refused as missing, with nothing sent for it", async () => {
+    const walk = await walkOf();
+    const missing = await answerAndRequests('{"history": "ns=3;s=Missing"}', "ns=3;s=Missing");
+    const nodes = plant();
+    // The facts class it as an Object, so no data type was checked, and the server still keeps history for it.
+    nodes["ns=3;s=Who"] = { name: "Who", ns: 3, value: "not-a-real-history-value" };
+    nodes["ns=3;s=Telemetry"] = {
+      ...nodes["ns=3;s=Telemetry"],
+      children: [...(nodes["ns=3;s=Telemetry"]?.children ?? []), { target: "ns=3;s=Who" }],
+    };
+    for (const member of ["ns=3;s=Who", "ns=3;s=Telemetry", "ns=6;s=Folder"]) {
+      const { provider, record } = await agentHandle(nodes, {
+        history: async (options) => ({ ...page(3), nodeId: options.nodeId }),
+      });
+      const answer = await provider.queryReadOnly(`{"history": "${member}"}`, BUDGET).then(
+        (result) => JSON.stringify(result),
+        (error: Error) => `${error.name}: ${error.message}`,
+      );
+      expect([member, answer]).toEqual([member, missing.answer]);
+      expect(record.calls.some((call) => call.startsWith("historyRead"))).toBe(false);
+      expect(record.calls.length).toBe(walk.length);
+    }
+  });
 });
 
 describe("a browse", () => {
@@ -676,6 +737,18 @@ describe("a browse", () => {
     ]);
     expect(result.warnings?.map((w) => w.message)).toEqual([outwardNote(2)]);
     expect(record.calls).toEqual(walk);
+  });
+
+  test("of the Objects folder answers the read roots in every spelling of its id, sending nothing more", async () => {
+    const walk = await walkOf();
+    const answers = new Set<string>();
+    for (const spelling of ["i=85", "ns=0;i=85", "nsu=http://opcfoundation.org/UA/;i=85"]) {
+      const { provider, record } = await agentHandle();
+      const result = await provider.queryReadOnly(`{"browse": "${spelling}"}`, BUDGET);
+      answers.add(JSON.stringify({ ...result, executionTime: 0 }));
+      expect([spelling, record.calls]).toEqual([spelling, walk]);
+    }
+    expect(answers.size).toBe(1);
   });
 
   test("of the Objects folder answers the read roots, with the warning that names them", async () => {

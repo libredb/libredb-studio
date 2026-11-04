@@ -2,7 +2,10 @@
  * The OPC UA agent read against a REAL server whose own namespace hangs, beneath a declared read root, the kinds of
  * node a vendor or a companion model hangs beside its process data: a DI device's locking object with the client and
  * user that hold it, a condition's `ClientUserId`, a session object of the standard type, a node named for a
- * credential, and a reference out to the Server object; and, outside every root, a folder of its own.
+ * credential, a reference out to the Server object, a units property of a session diagnostics data type, nodes whose
+ * NodeClass or DataType the server refuses to read, nodes whose NodeClass attribute disagrees with their browse, and
+ * one whose DataType changes between the walk and the answer; outside every root, a folder of its own; and a clean
+ * process folder declared as the root of a second connection.
  *
  * A stand-in session would agree with whatever the provider assumed about a server's answers, so this drives the
  * provider's own `queryReadOnly`, over the library, against `node-opcua-server` started here on a port the system
@@ -16,10 +19,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OPCUACertificateManager } from "node-opcua-certificate-manager";
-import { DataType, Variant } from "node-opcua-client";
+import { AttributeIds, DataType, DataValue, resolveNodeId, StatusCodes, Variant } from "node-opcua-client";
 import { OPCUAServer } from "node-opcua-server";
 import { OPCUA_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/industrial/opcua/agent-read";
 import { outwardNote } from "@/lib/db/providers/industrial/opcua/agent-roots";
+import { OPCUA_UNITS_OUTSIDE } from "@/lib/db/providers/industrial/opcua/agent-units";
 import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
 import { openLibrarySession } from "@/lib/db/providers/industrial/opcua/library";
@@ -35,6 +39,10 @@ const PKI_BEFORE = process.env[OPCUA_PKI_ROOT_ENV];
 
 let server: OPCUAServer;
 let provider: OpcuaProvider;
+/** A second connection, whose one root is a clean process folder that holds none of the shapes. */
+let clean: OpcuaProvider;
+/** How many times the shifting node's DataType has been read in the current read: the walk's first, the answer's next. */
+let shifts = 0;
 /** Every node id each request of the current read named, by service. */
 let requests: string[] = [];
 const ids: Record<string, string> = {};
@@ -127,6 +135,55 @@ beforeAll(async () => {
   ids.password = namespace
     .addVariable({ componentOf: line, browseName: "DB_Password", dataType: "String", value: text(`${PLANTED}-secret`) })
     .nodeId.toString();
+  // A units property of a session diagnostics data type: the walk prunes it, so its units are never read.
+  const temp = namespace.addVariable({
+    componentOf: line,
+    browseName: "Temp",
+    dataType: "Double",
+    value: { get: () => new Variant({ dataType: DataType.Double, value: 21.5 }) },
+  });
+  ids.temp = temp.nodeId.toString();
+  const sessionData = space.findDataType("SessionDiagnosticsDataType");
+  if (sessionData === null) throw new Error("the server has no SessionDiagnosticsDataType");
+  ids.tempUnits = namespace
+    .addVariable({
+      propertyOf: temp,
+      browseName: { namespaceIndex: 0, name: "EngineeringUnits" },
+      dataType: sessionData,
+    })
+    .nodeId.toString();
+  /** A planted String variable beneath the line whose answer to one attribute the server rewrites. */
+  const rewritten = (name: string, answer: (attributeId: number) => DataValue | undefined): string => {
+    const node = namespace.addVariable({
+      componentOf: line,
+      browseName: name,
+      dataType: "String",
+      value: text(`${PLANTED}-${name}`),
+    });
+    const own = node.readAttribute.bind(node);
+    node.readAttribute = ((context, attributeId, ...rest) =>
+      answer(attributeId) ?? own(context, attributeId, ...rest)) as typeof node.readAttribute;
+    return node.nodeId.toString();
+  };
+  const refused = new DataValue({ statusCode: StatusCodes.BadUserAccessDenied });
+  const classed = (nodeClass: number) =>
+    new DataValue({ value: new Variant({ dataType: DataType.Int32, value: nodeClass }), statusCode: StatusCodes.Good });
+  // The server refuses to read the DataType of one, and the NodeClass of another.
+  ids.refusedType = rewritten("RefusedType", (id) => (id === AttributeIds.DataType ? refused : undefined));
+  ids.refusedClass = rewritten("RefusedClass", (id) => (id === AttributeIds.NodeClass ? refused : undefined));
+  // The browse says Variable, and the NodeClass attribute says Object (1) or Unspecified (0).
+  ids.classedObject = rewritten("ClassedObject", (id) => (id === AttributeIds.NodeClass ? classed(1) : undefined));
+  ids.classedZero = rewritten("ClassedZero", (id) => (id === AttributeIds.NodeClass ? classed(0) : undefined));
+  // A String to the walk, and a session diagnostics data type to the answer's own Read.
+  ids.shifting = rewritten("Shifting", (id) => {
+    if (id !== AttributeIds.DataType) return undefined;
+    shifts += 1;
+    const type = shifts === 1 ? "ns=0;i=12" : "ns=0;i=865";
+    return new DataValue({
+      value: new Variant({ dataType: DataType.NodeId, value: resolveNodeId(type) }),
+      statusCode: StatusCodes.Good,
+    });
+  });
   // A reference from a member out to the Server object, which is never a member whatever reaches it.
   line.addReference({ referenceType: "Organizes", isForward: true, nodeId: "ns=0;i=2253" });
   // Outside every root: a folder beside the line, with a value of its own.
@@ -135,23 +192,38 @@ beforeAll(async () => {
     .addVariable({ componentOf: office, browseName: "Recipe", dataType: "String", value: text(`${PLANTED}-recipe`) })
     .nodeId.toString();
   ids.missing = `ns=${namespace.index};s=NoSuchNode`;
+  // A clean process folder, which holds none of the shapes, for the second connection's one root.
+  const processFolder = namespace.addFolder("ObjectsFolder", { browseName: "Process" });
+  ids.process = processFolder.nodeId.toString();
+  ids.flow = namespace
+    .addVariable({
+      componentOf: processFolder,
+      browseName: "Flow",
+      dataType: "Double",
+      value: { get: () => new Variant({ dataType: DataType.Double, value: 3.5 }) },
+    })
+    .nodeId.toString();
   await server.start();
   const endpoint = `opc.tcp://127.0.0.1:${server.endpoints[0]?.port}/libredb-vendor`;
-  const root = `nsu=${namespace.namespaceUri};${ids.line.slice(ids.line.indexOf(";") + 1)}`;
-  const connection = {
-    id: "vendor",
-    name: "vendor",
-    type: "opcua",
-    host: endpoint,
-    securityMode: "None",
-    agentReadRoots: [root],
-  } as unknown as DatabaseConnection;
-  provider = new OpcuaProvider(connection, {}, AGENT, recordedSession);
+  const rootOf = (id: string): string => `nsu=${namespace.namespaceUri};${id.slice(id.indexOf(";") + 1)}`;
+  const connection = (root: string) =>
+    ({
+      id: "vendor",
+      name: "vendor",
+      type: "opcua",
+      host: endpoint,
+      securityMode: "None",
+      agentReadRoots: [root],
+    }) as unknown as DatabaseConnection;
+  provider = new OpcuaProvider(connection(rootOf(ids.line)), {}, AGENT, recordedSession);
   await provider.connect();
+  clean = new OpcuaProvider(connection(rootOf(ids.process)), {}, AGENT, recordedSession);
+  await clean.connect();
 });
 
 afterAll(async () => {
   await provider?.disconnect();
+  await clean?.disconnect();
   await server?.shutdown();
   if (PKI_BEFORE === undefined) delete process.env[OPCUA_PKI_ROOT_ENV];
   else process.env[OPCUA_PKI_ROOT_ENV] = PKI_BEFORE;
@@ -159,16 +231,32 @@ afterAll(async () => {
 });
 
 /** One read's answer and requests, the named id put back to one spelling so two ids compare byte for byte. */
-async function read(statement: Record<string, unknown>, id: string) {
+async function read(statement: Record<string, unknown>, id: string, on: OpcuaProvider = provider) {
   requests = [];
-  const answer = await provider.queryReadOnly(JSON.stringify(statement), BUDGET).then(
+  shifts = 0;
+  const answer = await on.queryReadOnly(JSON.stringify(statement), BUDGET).then(
     (result) => JSON.stringify({ ...result, executionTime: 0 }),
     (error: Error) => `${error.name}: ${error.message}`,
   );
   return { answer: answer.replaceAll(id, "<id>"), requests: [...requests] };
 }
 
-const OUTSIDE = ["lock", "lockingClient", "lockingUser", "clientUserId", "client", "clientName", "password", "outside"];
+const OUTSIDE = [
+  "lock",
+  "lockingClient",
+  "lockingUser",
+  "clientUserId",
+  "client",
+  "clientName",
+  "password",
+  "tempUnits",
+  "refusedType",
+  "refusedClass",
+  "classedZero",
+  "outside",
+];
+
+const KINDS = [(id: string) => ({ read: [id] }), (id: string) => ({ history: id }), (id: string) => ({ browse: id })];
 
 describe("beneath a declared root", () => {
   test("a process value is answered, with its units", async () => {
@@ -177,12 +265,8 @@ describe("beneath a declared root", () => {
     expect(answer).toContain('"units":"no units published"');
   });
 
-  test("the identity, session and credential nodes and the folder outside answer as a missing id, for every read", async () => {
-    for (const kind of [
-      (id: string) => ({ read: [id] }),
-      (id: string) => ({ history: id }),
-      (id: string) => ({ browse: id }),
-    ]) {
+  test("the identity, session, credential, pruned and refused nodes and the folder outside answer as a missing id", async () => {
+    for (const kind of KINDS) {
       const missing = await read(kind(ids.missing), ids.missing);
       for (const name of OUTSIDE) {
         const outside = await read(kind(ids[name] as string), ids[name] as string);
@@ -199,16 +283,69 @@ describe("beneath a declared root", () => {
     expect(history.answer).toBe(`OpcuaAgentError: ${OPCUA_AGENT_FAILURE_SENTENCES.status("BadNodeIdUnknown")}`);
   });
 
-  test("a browse of the root lists the process value and counts what leads outside, naming none of it", async () => {
+  test("a value whose units property the walk pruned answers that its units were not read, and never reads it", async () => {
+    const { answer, requests: sent } = await read({ read: [ids.temp] }, ids.temp);
+    expect(answer).toContain('"value":"21.5"');
+    expect(answer).toContain(`"units":"${OPCUA_UNITS_OUTSIDE}"`);
+    expect(sent.filter((request) => request.startsWith("read ")).join(" ")).not.toContain(ids.tempUnits);
+  });
+
+  test("a node whose NodeClass attribute says Object although it holds a value never answers that value", async () => {
+    for (const kind of KINDS.slice(0, 2)) {
+      const missing = await read(kind(ids.missing), ids.missing);
+      const classed = await read(kind(ids.classedObject), ids.classedObject);
+      expect(classed.answer).toBe(missing.answer);
+      expect(classed.answer).not.toContain(PLANTED);
+      expect(classed.requests.some((request) => request.startsWith("historyRead"))).toBe(false);
+    }
+    // A browse of it lists what the walk kept beneath it, which is nothing, and no value.
+    const browsed = await read({ browse: ids.classedObject }, ids.classedObject);
+    expect(browsed.answer).toContain('"rows":[]');
+    expect(browsed.answer).not.toContain(PLANTED);
+  });
+
+  test("a node whose DataType turns withheld between the walk and the answer is answered as a missing id", async () => {
+    const missing = await read({ read: [ids.missing] }, ids.missing);
+    const shifted = await read({ read: [ids.shifting] }, ids.shifting);
+    expect(shifts).toBe(2);
+    expect(shifted.answer).toBe(missing.answer);
+    expect(shifted.answer).not.toContain(PLANTED);
+  });
+
+  test("a browse of the root lists the process values and counts what leads outside, naming none of it", async () => {
     requests = [];
+    shifts = 0;
     const result = await provider.queryReadOnly(JSON.stringify({ browse: ids.line }), BUDGET);
-    expect(result.rows.map((row) => row.browseName)).toEqual(["Speed"]);
-    expect(result.warnings?.map((warning) => warning.message)).toEqual([outwardNote(5)]);
+    expect(result.rows.map((row) => row.browseName)).toEqual(["Speed", "Temp", "ClassedObject", "Shifting"]);
+    expect(result.warnings?.map((warning) => warning.message)).toEqual([outwardNote(8)]);
     expect(JSON.stringify(result)).not.toContain(PLANTED);
     // The answer itself sent nothing: its requests are the walk's alone, the same as a browse of the read roots sends.
     const browsed = [...requests];
     requests = [];
+    shifts = 0;
     await provider.queryReadOnly(JSON.stringify({ browse: "i=85" }), BUDGET);
     expect(browsed).toEqual(requests);
+  });
+});
+
+describe("beneath a clean declared root", () => {
+  test("the process value is answered, and the root lists it with nothing leading outside", async () => {
+    const { answer } = await read({ read: [ids.flow] }, ids.flow, clean);
+    expect(answer).toContain('"value":"3.5"');
+    const browsed = await clean.queryReadOnly(JSON.stringify({ browse: ids.process }), BUDGET);
+    expect(browsed.rows.map((row) => row.browseName)).toEqual(["Flow"]);
+    expect(browsed.warnings).toBeUndefined();
+  });
+
+  test("every shape beneath the other folder, and that folder itself, answers as a missing id, sending nothing for it", async () => {
+    for (const kind of KINDS) {
+      const missing = await read(kind(ids.missing), ids.missing, clean);
+      for (const name of ["line", "speed", ...OUTSIDE, "classedObject", "shifting", "temp"]) {
+        const outside = await read(kind(ids[name] as string), ids[name] as string, clean);
+        expect([name, outside.answer]).toEqual([name, missing.answer]);
+        expect([name, outside.requests]).toEqual([name, missing.requests]);
+        expect(outside.requests.some((request) => request.includes(ids[name] as string))).toBe(false);
+      }
+    }
   });
 });

@@ -691,15 +691,16 @@ export async function proveReadSet(
 
 /**
  * Whether a member's row from the answer's own Read is answered as an id outside the roots instead, sending nothing:
- * a value on a member the walk classed as a class that bears none, a NodeClass other than the walk's (or none), or a
- * DataType among the withheld data types. It reads only the row already fetched, so it turns an in-set row into the
+ * a value on a member the walk classed as a class that bears none, a NodeClass other than the walk's (or none), or,
+ * on a Variable or VariableType, a DataType among the withheld data types or none at all, since the walk admitted it
+ * only on a DataType answered Good. It reads only the row already fetched, so it turns an in-set row into the
  * outside answer and never touches an outside id.
  */
 export function answerTimeOutside(member: OpcuaMemberFacts, row: OpcuaDataValue): boolean {
   if (row.nodeClass === undefined || row.nodeClass !== member.nodeClass) return true;
-  if (VALUELESS_CLASSES.has(row.nodeClass) && row.value !== null && row.value !== undefined) return true;
+  if (VALUELESS_CLASSES.has(row.nodeClass)) return row.value !== null && row.value !== undefined;
   const dataType = row.dataTypeId === undefined ? undefined : canonicalNodeId(row.dataTypeId);
-  return dataType !== undefined && OPCUA_PRUNED_DATA_TYPES.has(dataType);
+  return dataType === undefined || OPCUA_PRUNED_DATA_TYPES.has(dataType);
 }
 
 /** The note a browse of a member whose own Browse the server refused answers, with no rows. */

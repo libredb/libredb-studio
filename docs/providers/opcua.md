@@ -1353,13 +1353,14 @@ Answers, decided by a set lookup with nothing sent for an id outside the set:
 | Request | An id in the set | Any other id |
 | --- | --- | --- |
 | `{"read": [...]}` | the console's row from one Read of the in-set ids, with units ([section 14.4](#144-values-units-and-what-each-path-reads)) | a row `BadNodeIdUnknown` with no value and no units |
-| `{"history": id}` | the console's raw history read, then units | refused with the sentence for `BadNodeIdUnknown` |
+| `{"history": id}` | the console's raw history read, then units, for a member the walk classed as a Variable; any other member answers as an id outside the set | refused with the sentence for `BadNodeIdUnknown` |
 | `{"browse": id}` | the references the walk kept, with no Browse sent, and `<n> references of this node lead outside this connection's read roots and are not listed.` when there are any | refused with the sentence for `BadNodeIdUnknown` |
 | `{"browse": "i=85"}` | the read roots, one row each, with their own names and classes, and the warning that names them | |
 
 An id outside the set is every id not proved beneath a root: namespace 0 outside a declared table root (the server's configuration, roles and sessions among them), the diagnostics namespace, an id whose URI the table does not hold, and every node only an unfollowed reference reaches.
 So an id outside the roots and an id the server does not hold answer alike and send nothing, and the walk's requests depend only on the roots, the identity and the server, never on the request.
-An in-set id is checked again at answer time with no extra request, on the NodeClass and DataType its own Read returned: a value on a node the walk classed as one that bears none, a NodeClass other than the walk's, or a withheld data type answers as an id outside the roots.
+An in-set id is checked again at answer time with no extra request, on the NodeClass and DataType its own Read returned: a value on a node the walk classed as one that bears none, a NodeClass other than the walk's, or, on a Variable or VariableType, a withheld data type or none at all answers as an id outside the roots.
+A history read is sent only for a member the walk classed as a Variable, since raw history is defined only for a Variable and the walk checked the data type of a Variable alone; a history read of any other member is refused as an id outside the roots, with nothing sent for it.
 
 What an answer reveals about a node outside the roots, and nothing more: for a member, how many of its references lead outside, and whether its units property lies outside ([section 14.4](#144-values-units-and-what-each-path-reads)); neither names an outside id, class or reason, and both are the same for every request.
 

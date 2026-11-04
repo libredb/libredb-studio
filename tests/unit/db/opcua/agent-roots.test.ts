@@ -692,17 +692,77 @@ describe("proveReadSet", () => {
     expect(proved.units.get("ns=2;s=Bare")).toBeUndefined();
   });
 
-  test("the walk's requests depend on the roots and the server, never on anything else", async () => {
-    const nodes = {
-      "ns=2;s=Line": { name: "Line", children: ["A", "B"].map((n) => ({ target: `ns=2;s=${n}` })) },
-      "ns=2;s=A": variable("A"),
-      "ns=2;s=B": variable("B"),
+  test("the walk's request count is a formula of the set: one facts Read and one Browse per chunk of each level", async () => {
+    const line = (count: number): Record<string, FakeNode> => ({
+      "ns=2;s=Line": {
+        name: "Line",
+        children: Array.from({ length: count }, (_, i) => ({ target: `ns=2;i=${i}` })),
+      },
+      ...Object.fromEntries(Array.from({ length: count }, (_, i) => [`ns=2;i=${i}`, variable(`V${i}`)])),
+    });
+    // The root's facts, its Browse, the facts of its children in one Read of 200, and their Browses 20 at a time.
+    for (const count of [2, 20, 21, 45]) {
+      const { set, server } = prove(line(count));
+      const proved = await set;
+      expect([count, proved.requests]).toEqual([count, 3 + Math.ceil(count / CHUNKS.browse)]);
+      expect(server.log).toHaveLength(proved.requests);
+    }
+  });
+
+  test("the request bound answers a walk of exactly its size and refuses one request more", async () => {
+    const wide: Record<string, FakeNode> = {
+      "ns=2;s=Line": {
+        name: "Line",
+        children: Array.from({ length: 74 }, (_, i) => ({ target: `ns=2;i=${i}` })),
+      },
+      ...Object.fromEntries(Array.from({ length: 74 }, (_, i) => [`ns=2;i=${i}`, variable(`V${i}`)])),
+      "i=2255": { name: "NamespaceArray", nodeClass: "Variable", dataType: "ns=0;i=12", ns: 0 },
     };
-    const first = prove(nodes);
-    const second = prove(nodes);
-    expect((await first.set).requests).toBe(4);
-    await second.set;
-    expect(first.server.log).toEqual(second.server.log);
+    const one = { browse: 1, read: 1 };
+    // With chunks of one: the root's facts, its Browse, then one facts Read and one Browse per child, 2 + 2 * 74.
+    const exact = await proveReadSet(fakeServer(wide).client, [ROOT], TABLE, one);
+    expect(exact.requests).toBe(OPCUA_READ_SET_MAX_REQUESTS);
+    // A namespace-0 root with no rows adds one facts Read and no Browse: 151.
+    expect(
+      await proveReadSet(fakeServer(wide).client, [ROOT, "i=2255"], TABLE, one).catch((e: Error) => e.message),
+    ).toBe(OPCUA_READ_ROOTS_SENTENCES.requests);
+  });
+
+  test("a namespace-0 fixed row the server does not answer Good for is no member", async () => {
+    const nodes: Record<string, FakeNode> = {
+      "i=2256": { name: "ServerStatus", nodeClass: "Variable", dataType: "ns=0;i=862", ns: 0 },
+    };
+    for (const row of OPCUA_NAMESPACE0_ROOTS[0]?.rows ?? [])
+      nodes[row.nodeId] = { name: row.browseName, nodeClass: "Variable", dataType: "ns=0;i=13", ns: 0 };
+    nodes["i=2259"] = { name: "State", classStatus: "BadUserAccessDenied", ns: 0 };
+    nodes["i=2258"] = { name: "CurrentTime", nodeClass: "Variable", dataTypeStatus: "BadUserAccessDenied", ns: 0 };
+    const proved = await prove(nodes, ["i=2256"]).set;
+    expect(proved.members.has("i=2259")).toBe(false);
+    expect(proved.members.has("i=2258")).toBe(false);
+    expect(proved.members.has("i=2257")).toBe(true);
+    expect(proved.members.size).toBe(11);
+  });
+
+  test("a units property the walk pruned by its own facts is outside, never a place to read", async () => {
+    const withUnits = (eu: FakeNode): Record<string, FakeNode> => ({
+      "ns=2;s=Line": { name: "Line", children: [{ target: "ns=2;s=Temp" }] },
+      "ns=2;s=Temp": variable("Temp", {
+        children: [{ target: "ns=2;s=Temp.EU", ref: "ns=0;i=46", name: "EngineeringUnits" }],
+      }),
+      "ns=2;s=Temp.EU": eu,
+    });
+    for (const [why, eu] of [
+      ["a withheld data type", variable("EngineeringUnits", { dataType: "ns=0;i=865" })],
+      ["a credential name", variable("EngineeringUnits", { display: "DevicePassword" })],
+      ["a standard identity property", variable("LockingUser", { ns: 4 })],
+      ["a refused data type", variable("EngineeringUnits", { dataTypeStatus: "BadUserAccessDenied" })],
+    ] as const) {
+      const proved = await prove(withUnits(eu)).set;
+      expect([why, proved.members.has("ns=2;s=Temp.EU")]).toEqual([why, false]);
+      expect([why, proved.units.get("ns=2;s=Temp")]).toEqual([why, { units: "outside" }]);
+      expect([why, proved.kept.get("ns=2;s=Temp")]).toEqual([why, []]);
+      expect([why, proved.outward.get("ns=2;s=Temp")]).toEqual([why, 1]);
+    }
   });
 });
 
@@ -746,6 +806,10 @@ describe("answerTimeOutside", () => {
     expect(answerTimeOutside({ nodeClass: "Object" }, row({ nodeClass: "Variable" }))).toBe(true);
     expect(answerTimeOutside({ nodeClass: "Variable" }, row({}))).toBe(true);
     expect(answerTimeOutside({ nodeClass: "Variable" }, row({ nodeClass: "Variable", dataTypeId: "ns=0;i=868" }))).toBe(
+      true,
+    ); // The walk admitted a Variable or VariableType only on a DataType answered Good, so a row with none disagrees.
+    expect(answerTimeOutside({ nodeClass: "Variable" }, row({ nodeClass: "Variable" }))).toBe(true);
+    expect(answerTimeOutside({ nodeClass: "VariableType" }, row({ nodeClass: "VariableType", value: null }))).toBe(
       true,
     );
   });

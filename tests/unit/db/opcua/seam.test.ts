@@ -221,6 +221,11 @@ describe("the agent's client", () => {
     expect(client.requests()).toBe(1);
     now = 10;
     await expect(client.walk.read(["ns=3;s=A"])).rejects.toThrow("Read-only execution exceeded the time budget");
+    await expect(client.walk.browse(["ns=3;s=A"])).rejects.toThrow("Read-only execution exceeded the time budget");
+    await expect(client.walk.browseNext([new Uint8Array([1])])).rejects.toThrow(
+      "Read-only execution exceeded the time budget",
+    );
+    expect(asked).toEqual(["limits", "browse", "browseNext", "read"]);
   });
 
   test("asks the walk's Read for the facts list and Browse forward only, with no direction", async () => {

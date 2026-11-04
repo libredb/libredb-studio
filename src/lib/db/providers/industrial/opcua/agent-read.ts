@@ -322,6 +322,9 @@ async function readHistoryOf(
   budget: ReadOnlyStatementBudget,
 ): Promise<OpcuaAgentAnswer> {
   const key = memberKey(plan.nodeId, scope) ?? outsideRefusal();
+  // Raw history is defined only for a Variable, and the walk checked the data type of a Variable alone, so a member it
+  // classed as anything else is answered as an id outside the roots, with nothing sent for it.
+  if (scope.set.members.get(key)?.nodeClass !== "Variable") outsideRefusal();
   // A limit the request wrote within the budget is the request's own; otherwise one value past the budget is read, so
   // a window holding exactly the budget is answered and one more value is refused.
   const own = plan.limitStated && plan.limit <= budget.maxResultRows;
