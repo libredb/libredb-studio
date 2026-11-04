@@ -291,6 +291,8 @@ See [LAUNCH.md](LAUNCH.md).
 
 Multi-statement queries execute sequentially via `POST /api/db/multi-query`, one request per execution unit (`splitExecutionUnits`): a statement, or on SQL Server the whole batch between `GO` lines.
 
+The run target, the connection type's refusal, the confirmation and the route of a run are decided by the functions `analyzeStatement` in `src/lib/editor/statement-analysis.ts` composes in the web editor's order: the web editor calls them one by one, and the VS Code extension's child calls the run target, the editor language and the gate.
+
 ### 4.4. Storage Abstraction Layer
 
 - **Write-through cache architecture**: localStorage (L1 cache) + optional server storage (L2 persistent)
