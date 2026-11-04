@@ -70,7 +70,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds } from "@/lib/db/object-kinds";
@@ -331,65 +331,75 @@ describe("the installed editor's language ids", () => {
     }
   });
 
-  test("every declared sourceLanguage is an id the installed editor registers", async () => {
-    const registered = new Set([...basic, ...rich, ...core]);
-    const declared = await everyDeclaredSourceLanguage();
+  describe("over the built fleet", () => {
+    let declared: Awaited<ReturnType<typeof everyDeclaredSourceLanguage>> = [];
 
-    // The zero-iteration case of the loop below certifies NOTHING about the fleet, and a provider
-    // set that failed to build would produce exactly that, so it is refused by name.
-    if (declared.length === 0) {
-      throw new Error("the language guard inspected 0 declared languages, so it certifies nothing about the fleet");
-    }
-    // MariaDB's two kinds are inside the population, which no unconnected read would show. This
-    // and the throw above are what make the membership assertion below non-vacuous, so both come
-    // first.
-    expect(declared.map((entry) => entry.where)).toContain("mysql/package");
-    expect(declared.map((entry) => entry.where)).toContain("mysql/sequence");
-    // 69 before etcd (#1089), whose five kinds with a source each declare `json` (object-source-declarations),
-    // 74 before Db2 (#786), whose five kinds with a source each declare `sql`, 79 before Qdrant, whose
-    // collection declares `json`, 80 before Milvus, whose collection declares `json` too, 81 before Oxia,
-    // whose shard and key each declare `json`, 83 before Databend, whose four kinds each declare `sql`, 87 before
-    // S3, whose bucket and object each declare `json`, 89 before Kubernetes, whose 37 built-in kinds each declare
-    // `yaml`, 127 before Firestore, whose document kind declares `json`, 128 before RabbitMQ, whose stream, queue
-    // and exchange each declare `json`, 131 before Snowflake, whose nine kinds with a source each declare `sql`,
-    // 140 before OPC UA, whose node declares `json` too, 141 before Apache Spark, whose table and view kinds
-    // each declare `sql`, and 143 before MTConnect, whose asset declares `xml`.
-    // falling back to plaintext (#1722).
-    // 144 since NETCONF's two kinds joined (#1724): a node declares `plaintext`, the first kind in
-    // the fleet to declare it, and a key declares `xml`. `plaintext` is the honest answer rather
-    // than a near relative: the installed bundle registers no YANG, and declaring `ini` or `sql`
-    // for a module's text would colour it as something it is not.
-    // 146 with that pair, and 148 since Sparkplug B's two kinds joined (#1720): a node and a device
-    // each declare `json`, the payload this provider decodes a birth certificate into. 149 since Weaviate's
-    // collection joined (#1566), declaring `json`, the two-part Source of its schema and its state.
-    expect(declared).toHaveLength(149);
+    // Setup with its own budget: building the fleet imports every provider module, 407 ms here and 2.9 s on one busy
+    // core, which the membership test below paid inside its 5000 ms default. It sits in this describe so a failed
+    // build stops only the test that reads it.
+    beforeAll(async () => {
+      declared = await everyDeclaredSourceLanguage();
+    }, 60_000);
 
-    const unregistered = declared.filter((entry) => !registered.has(entry.language));
-    // Named, so a failure says which kind on which engine declared what, rather than false. This
-    // is the assertion the whole file exists for, and it is asserted BEFORE the content control
-    // below on purpose: MEASURED, with the control first, declaring `plsql` on Oracle died on the
-    // control instead and the membership check never ran, which would have read as a kill of a
-    // guard that had not executed.
-    expect(unregistered.map((entry) => `${entry.where}: ${entry.language}`)).toEqual([]);
+    test("every declared sourceLanguage is an id the installed editor registers", () => {
+      const registered = new Set([...basic, ...rich, ...core]);
 
-    // Non-vacuous in CONTENT and not only in count: these are the seven distinct languages the
-    // fleet declares, so a population that reached only the SQL engines fails here rather than
-    // passing a membership loop that never saw `json` or `lua`. `xml` is the seventh and MTConnect's
-    // asset is the only kind that declares it (#1722): an asset IS an XML document, which is why the
-    // Source tab shows the agent's own bytes rather than a re-encoding of them.
-    expect([...new Set(declared.map((entry) => entry.language))].sort()).toEqual([
-      "json",
-      "lua",
-      "mysql",
-      "pgsql",
-      // The eighth, and the first that declares an ABSENCE rather than a language: NETCONF's node
-      // answers a YANG module's text, the bundle registers no YANG, and `plaintext` says so instead
-      // of pretending. The editor CORE registers it, which is why it passes the membership check
-      // above (#1724).
-      "plaintext",
-      "sql",
-      "xml",
-      "yaml",
-    ]);
+      // The zero-iteration case of the loop below certifies NOTHING about the fleet, and a provider
+      // set that failed to build would produce exactly that, so it is refused by name.
+      if (declared.length === 0) {
+        throw new Error("the language guard inspected 0 declared languages, so it certifies nothing about the fleet");
+      }
+      // MariaDB's two kinds are inside the population, which no unconnected read would show. This
+      // and the throw above are what make the membership assertion below non-vacuous, so both come
+      // first.
+      expect(declared.map((entry) => entry.where)).toContain("mysql/package");
+      expect(declared.map((entry) => entry.where)).toContain("mysql/sequence");
+      // 69 before etcd (#1089), whose five kinds with a source each declare `json` (object-source-declarations),
+      // 74 before Db2 (#786), whose five kinds with a source each declare `sql`, 79 before Qdrant, whose
+      // collection declares `json`, 80 before Milvus, whose collection declares `json` too, 81 before Oxia,
+      // whose shard and key each declare `json`, 83 before Databend, whose four kinds each declare `sql`, 87 before
+      // S3, whose bucket and object each declare `json`, 89 before Kubernetes, whose 37 built-in kinds each declare
+      // `yaml`, 127 before Firestore, whose document kind declares `json`, 128 before RabbitMQ, whose stream, queue
+      // and exchange each declare `json`, 131 before Snowflake, whose nine kinds with a source each declare `sql`,
+      // 140 before OPC UA, whose node declares `json` too, 141 before Apache Spark, whose table and view kinds
+      // each declare `sql`, and 143 before MTConnect, whose asset declares `xml`.
+      // falling back to plaintext (#1722).
+      // 144 since NETCONF's two kinds joined (#1724): a node declares `plaintext`, the first kind in
+      // the fleet to declare it, and a key declares `xml`. `plaintext` is the honest answer rather
+      // than a near relative: the installed bundle registers no YANG, and declaring `ini` or `sql`
+      // for a module's text would colour it as something it is not.
+      // 146 with that pair, and 148 since Sparkplug B's two kinds joined (#1720): a node and a device
+      // each declare `json`, the payload this provider decodes a birth certificate into. 149 since Weaviate's
+      // collection joined (#1566), declaring `json`, the two-part Source of its schema and its state.
+      expect(declared).toHaveLength(149);
+
+      const unregistered = declared.filter((entry) => !registered.has(entry.language));
+      // Named, so a failure says which kind on which engine declared what, rather than false. This
+      // is the assertion the whole file exists for, and it is asserted BEFORE the content control
+      // below on purpose: MEASURED, with the control first, declaring `plsql` on Oracle died on the
+      // control instead and the membership check never ran, which would have read as a kill of a
+      // guard that had not executed.
+      expect(unregistered.map((entry) => `${entry.where}: ${entry.language}`)).toEqual([]);
+
+      // Non-vacuous in CONTENT and not only in count: these are the seven distinct languages the
+      // fleet declares, so a population that reached only the SQL engines fails here rather than
+      // passing a membership loop that never saw `json` or `lua`. `xml` is the seventh and MTConnect's
+      // asset is the only kind that declares it (#1722): an asset IS an XML document, which is why the
+      // Source tab shows the agent's own bytes rather than a re-encoding of them.
+      expect([...new Set(declared.map((entry) => entry.language))].sort()).toEqual([
+        "json",
+        "lua",
+        "mysql",
+        "pgsql",
+        // The eighth, and the first that declares an ABSENCE rather than a language: NETCONF's node
+        // answers a YANG module's text, the bundle registers no YANG, and `plaintext` says so instead
+        // of pretending. The editor CORE registers it, which is why it passes the membership check
+        // above (#1724).
+        "plaintext",
+        "sql",
+        "xml",
+        "yaml",
+      ]);
+    });
   });
 });

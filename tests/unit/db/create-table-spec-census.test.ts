@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { beforeAll, describe, test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -52,10 +52,20 @@ function createTableSection(type: DatabaseType): string | undefined {
 }
 
 describe("createTable census (#1822)", () => {
-  test("exactly the eight ids with a measured grammar declare one", async () => {
-    const providers = await Promise.all(ALL_TYPES.map((type) => createDatabaseProvider(CENSUS_CONNECTION[type])));
-    const declaring = ALL_TYPES.filter((_, index) => providers[index].getCapabilities().createTable !== undefined);
-    expect(declaring.sort()).toEqual([...DECLARING_TYPES].sort());
+  describe("over every type-id", () => {
+    let providers: Awaited<ReturnType<typeof createDatabaseProvider>>[] = [];
+
+    // Setup with its own budget: the first build of every type-id imports every provider module, 380 ms here and 2.8 s
+    // on one busy core, which the census test below paid inside its 5000 ms default (D377). It sits in this describe
+    // so a failed build stops only the test that reads it.
+    beforeAll(async () => {
+      providers = await Promise.all(ALL_TYPES.map((type) => createDatabaseProvider(CENSUS_CONNECTION[type])));
+    }, 60_000);
+
+    test("exactly the eight ids with a measured grammar declare one", () => {
+      const declaring = ALL_TYPES.filter((_, index) => providers[index].getCapabilities().createTable !== undefined);
+      expect(declaring.sort()).toEqual([...DECLARING_TYPES].sort());
+    });
   });
 
   test.each(DECLARING_TYPES)("%s returns its own module's constant, the same object", async (type) => {
