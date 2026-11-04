@@ -17,8 +17,7 @@ import { QUERY_SAFETY_ANALYSIS_TIMEOUT_MS } from "@/lib/llm/query-safety";
 import { cn } from "@/lib/utils";
 import { vocabularySendsToModel, vocabularyTypedConfirmation } from "@/lib/db/destructive-commands";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
-import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
-import { hasLoneCarriageReturnInLineComment, hasUnterminatedSpan } from "@/lib/sql/spans";
+import { hasUnreadableRun } from "@/lib/sql/dangerous-query";
 import type { DatabaseType } from "@/lib/types";
 
 // The gate lives in `@/lib/sql/dangerous-query` so the VS Code extension's child, which bundles no component, asks
@@ -191,17 +190,14 @@ export function QuerySafetyDialog({
    *
    * Memoised because the analysis stream re-renders this component per chunk while
    * the query text does not change, and the scan is linear in that text.
+   *
+   * The gate's own predicate, so the notice and the gate cannot disagree; it answers
+   * false where the text is not SQL, which this notice must never call unreadable.
    */
-  const unreadableRun = useMemo(() => {
-    const type = databaseType as DatabaseType | undefined;
-    // Asked first: a SQL span reader's verdict about text that is not SQL is not
-    // evidence of anything, and saying "could not be read" about a Mongo document
-    // that reads fine is the false alarm this notice exists to avoid.
-    const grammar = resolveSqlGrammar(type);
-    return (
-      readsSqlText(type) && (hasUnterminatedSpan(query, grammar) || hasLoneCarriageReturnInLineComment(query, grammar))
-    );
-  }, [query, databaseType]);
+  const unreadableRun = useMemo(
+    () => hasUnreadableRun(query, databaseType as DatabaseType | undefined),
+    [query, databaseType],
+  );
 
   // What this engine's vocabulary asks the person to type before the statement runs, read from the table the gate
   // that opened this dialog read, so the two cannot disagree about a statement (#1089, section 5.5).
