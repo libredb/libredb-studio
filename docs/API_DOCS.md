@@ -2813,7 +2813,7 @@ single number written here has gone stale every time it was updated:
 | Bucket | Applies to | Default |
 |--------|-----------|---------|
 | `ai` | The `/api/ai/*` routes, plus every `/api/agent/*` route except `GET /api/agent/config`: classifying an objective, starting a run, driving one, reading one, cancelling one, streaming one, and fetching an artifact | 20 requests / 60 seconds |
-| `query` | Every database-reaching `/api/db/*` route, plus `/api/admin/fleet-health`, the three storage data routes (`GET /api/storage`, `PUT /api/storage/{collection}`, `POST /api/storage/migrate`) and the owner's own factor routes (`/api/auth/totp`, `/api/auth/passkey`), together | 120 requests / 60 seconds |
+| `query` | Every database-reaching `/api/db/*` route, plus `POST /api/db/statement/analyze`, which reaches no database, `/api/admin/fleet-health`, the three storage data routes (`GET /api/storage`, `PUT /api/storage/{collection}`, `POST /api/storage/migrate`) and the owner's own factor routes (`/api/auth/totp`, `/api/auth/passkey`), together | 120 requests / 60 seconds |
 
 Routing the same workload through a different endpoint does not multiply the budget - the bucket is
 shared across every route it applies to. All limits are configurable through the `RATE_LIMIT_*`
