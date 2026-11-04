@@ -68,6 +68,43 @@ describe("GET /api/connections/managed", () => {
     }
   });
 
+  // Read roots bind what agent mode and MCP read, and a run resolves them from the file on the server, so the browser's
+  // copy of a seed never holds them and a Duplicate never copies them into a connection of the user's own.
+  it("never lists an OPC UA seed's read roots, managed or unmanaged", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-seed-roots-"));
+    const file = path.join(dir, "seed-connections.json");
+    const plant = {
+      type: "opcua",
+      host: "opc.tcp://plc.ornek.net:4840/",
+      roles: ["*"],
+      agentReadRoots: ["nsu=urn:plant;s=Line1", "i=2256"],
+    };
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          { ...plant, id: "plant-a", name: "Plant A" },
+          { ...plant, id: "plant-b", name: "Plant B", managed: false },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = file;
+    resetCache();
+    try {
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.connections.map((conn: { seedId: string }) => conn.seedId)).toEqual(["plant-a", "plant-b"]);
+      for (const conn of data.connections) expect(conn).not.toHaveProperty("agentReadRoots");
+    } finally {
+      process.env.SEED_CONFIG_PATH = origPath;
+      resetCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("returns managed connections for admin role", async () => {
     const res = await GET();
     expect(res.status).toBe(200);

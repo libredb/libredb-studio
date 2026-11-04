@@ -130,6 +130,9 @@ export function projectSeedConnection(conn: SeedConnection, userRoles: string[])
     // credential would run its agent and MCP calls under its own login, the wider principal.
     agentUser: conn.agentUser,
     agentPassword: conn.agentPassword,
+    // OPC UA's read roots, copied for the reason skipObjectScan is: dropped here, a seed that declared read roots
+    // would answer every agent and MCP read with a refusal for roots the file did declare.
+    agentReadRoots: conn.agentReadRoots,
     // The second half of the seed round-trip, and the half a zod field cannot cover:
     // this mapper is a hand-written field list, so a field validated above and not
     // copied here reaches the browser as `undefined` and the seeded connection scans

@@ -420,8 +420,9 @@ too. A tunnel the factory has not opened is refused rather than dialled.
 
 ### Connection string
 
-`opcua` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/opcua/connection-string.ts)).
-`securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath` are its seed-only fields, declared in `SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` (#1677): on any other engine the provider never reads them, so a seed of another engine that carries one would be listed as pinned or as encrypted and be neither, and is refused by name.
+`opcua` has no connection string scheme, no `readTls` and no `paste` ([`connection-string.ts`](../../src/lib/db/providers/industrial/opcua/connection-string.ts)).
+Its `validateSeed` holds a seed's `agentReadRoots` to the read roots grammar (`readRootRefusals` in [`agent-roots.ts`](../../src/lib/db/providers/industrial/opcua/agent-roots.ts)) when the file loads, one refusal per element with its index, and the provider holds a connection built in memory to the same grammar when it is constructed.
+`securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath`, `clientPrivateKeyPath` and `agentReadRoots` are its seed-only fields, declared in `SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` (#1677): on any other engine the provider never reads them, so a seed of another engine that carries one would be listed as pinned or as encrypted and be neither, and is refused by name.
 The last three are the fields the dialog has no box for, because they are deployment facts: the policy to insist on, and the client certificate and key to present.
 A server with a trust list of its own has to be given a stable client certificate before it will accept a secured channel, and a file path is how a deployment names one, which is the seed file's job and not a text box's.
 

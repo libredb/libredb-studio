@@ -50,6 +50,12 @@ export const OPCUA_POLICY_NONE = "http://opcfoundation.org/UA/SecurityPolicy#Non
 export const OPCUA_FOUNDATION_NAMESPACE = "http://opcfoundation.org/UA/" as const;
 
 /**
+ * The OPC Foundation diagnostics namespace URI, where servers built on the OPC Foundation .NET stack place their
+ * session and subscription diagnostics. Agent mode never reads a node in it, wherever a server's table lists it.
+ */
+export const OPCUA_DIAGNOSTICS_NAMESPACE = "http://opcfoundation.org/UA/Diagnostics" as const;
+
+/**
  * The reference type a level listing follows, with its subtypes: HierarchicalReferences, `i=33`.
  *
  * Measured on the documented OPC PLC fixture: following this and its subtypes reaches 6,769 nodes

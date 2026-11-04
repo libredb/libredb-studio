@@ -279,7 +279,7 @@ export function canonicalNodeId(nodeId: OpcuaNodeId, namespaces?: readonly strin
 export const namesNamespaceUri = (key: OpcuaNodeId): boolean => key.startsWith("nsu=");
 
 /** Whether a key is in namespace 0. Keys only: `canonicalNodeId` writes namespace 0 with no prefix. */
-const inNamespace0 = (key: OpcuaNodeId): boolean => !key.startsWith("ns=") && !namesNamespaceUri(key);
+export const inNamespace0 = (key: OpcuaNodeId): boolean => !key.startsWith("ns=") && !namesNamespaceUri(key);
 
 /** The withheld root a node id names, or undefined. Pure: decides only the standard ids. */
 export function withheldRootOf(nodeId: OpcuaNodeId): OpcuaWithheldNode | undefined {

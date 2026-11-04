@@ -769,6 +769,113 @@ describe("SeedConnectionSchema: OPC UA's mode, pin and deployment paths", () => 
 });
 
 /**
+ * OPC UA's read roots: the node ids an operator declares beneath which agent mode and MCP read. Every refusal of the
+ * grammar names the element by its index inside the sentence, at the field's path, never the rest of the file.
+ */
+describe("SeedConnectionSchema: OPC UA's read roots", () => {
+  const opcua = {
+    id: "plant",
+    name: "Plant",
+    type: "opcua",
+    host: "opc.tcp://plc.ornek.net:4840/UA/Server",
+    roles: ["*"],
+  };
+  const refusal = (agentReadRoots: unknown) => {
+    const result = SeedConnectionSchema.safeParse({ ...opcua, agentReadRoots });
+    expect(result.success).toBe(false);
+    return result.error?.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+  };
+  const framed = (sentence: string) => ({
+    path: "agentReadRoots",
+    message: `Seed connection "plant": agentReadRoots is refused: ${sentence}`,
+  });
+
+  it("carries a valid list through validation, on a managed and an unmanaged seed", () => {
+    const roots = ["nsu=http://microsoft.com/Opc/OpcPlc/;s=Telemetry", "i=2256"];
+    for (const managed of [true, false]) {
+      const result = SeedConfigSchema.safeParse({
+        version: "1",
+        connections: [{ ...opcua, managed, agentReadRoots: roots }],
+      });
+      expect(result.success).toBe(true);
+      expect(result.data?.connections[0]?.agentReadRoots).toEqual(roots);
+    }
+  });
+
+  it("refuses anything but a list of strings in the table's words, not zod's", () => {
+    for (const value of ["i=2256", 3, [3]])
+      expect(refusal(value)).toEqual([
+        framed('agentReadRoots is a list of node ids, such as ["nsu=urn:plant;s=Line1"].'),
+      ]);
+  });
+
+  it.each([
+    [
+      [],
+      "agentReadRoots is empty: list at least one node id agent mode and MCP may read beneath, or remove agentReadRoots.",
+    ],
+    [
+      Array.from({ length: 33 }, (_, i) => `nsu=urn:plant;i=${i}`),
+      "agentReadRoots holds 33 roots, and a connection takes at most 32: declare the folders that hold the process data rather than each node.",
+    ],
+    [["i=2256", `nsu=urn:plant;s=${"x".repeat(512)}`], "agentReadRoots[1] is longer than 512 characters."],
+    [
+      ["${PLANT_ROOT}"],
+      "agentReadRoots[0] is a reference: read roots are written in the seed file as they are, since they are neither a credential nor an address.",
+    ],
+    [
+      ["Telemetry"],
+      "agentReadRoots[0] is not a node id: write nsu=<namespace URI>;s=<name>, or i=, g= or b= for the identifier.",
+    ],
+    [
+      ["nsu=urn:plant;b=A"],
+      "agentReadRoots[0] has an identifier that does not decode, so Studio cannot tell which node it names.",
+    ],
+    [
+      ["ns=3;s=Telemetry"],
+      "agentReadRoots[0] names its namespace by index, which a server restart can move to another namespace: write it with the namespace URI, nsu=<uri>;..., as the server's NamespaceArray lists it.",
+    ],
+    [
+      ["nsu=http://opcfoundation.org/UA/Diagnostics;i=1"],
+      "agentReadRoots[0] is in the OPC Foundation diagnostics namespace, which servers built on the OPC Foundation .NET stack use for their session and subscription diagnostics, and is never a read root.",
+    ],
+    [["i=2256", "ns=0;i=2256"], "agentReadRoots[1] names the same node as agentReadRoots[0]."],
+  ])("refuses %j with its framed sentence at the field's path", (roots, sentence) => {
+    expect(refusal(roots)).toEqual([framed(sentence)]);
+  });
+
+  it("refuses a namespace-0 node outside the fixed table", () => {
+    const [issue] = refusal(["i=85"]) ?? [];
+    expect(issue?.path).toBe("agentReadRoots");
+    expect(issue?.message).toStartWith(
+      'Seed connection "plant": agentReadRoots is refused: agentReadRoots[0] names a namespace-0 node that is not offered as a read root',
+    );
+  });
+
+  it("refuses the field on a seed of another type, where no provider reads it", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "pg",
+      name: "Postgres",
+      type: "postgres",
+      host: "db.ornek.net",
+      roles: ["*"],
+      agentReadRoots: ["nsu=urn:plant;s=A"],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["agentReadRoots"]);
+    expect(result.error?.issues[0]?.message).toStartWith("agentReadRoots is OPC UA only");
+  });
+
+  it("refuses the field in defaults", () => {
+    const result = SeedDefaultsSchema.safeParse({ agentReadRoots: ["i=2256"] });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe(
+      "agentReadRoots is set per connection and never in defaults: add the read roots to each OPC UA seed connection whose agent and MCP reads they bound.",
+    );
+  });
+});
+
+/**
  * NETCONF's host key pin. The provider refuses an empty pin, and agent mode starts only on a connection the server
  * lists itself, so a seed that could not carry the pin could never be opened, by agent mode or the editor.
  */

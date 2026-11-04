@@ -299,6 +299,7 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/industrial/opcua/agent-units.ts",
   "src/lib/db/providers/industrial/opcua/agent-read.ts",
   "src/lib/db/providers/industrial/opcua/agent-surface.ts",
+  "src/lib/db/providers/industrial/opcua/agent-roots.ts",
   "src/lib/db/providers/industrial/mtconnect/agent-statement.ts",
   "src/lib/db/providers/industrial/mtconnect/agent-withheld.ts",
   "src/lib/db/providers/industrial/mtconnect/agent-read.ts",

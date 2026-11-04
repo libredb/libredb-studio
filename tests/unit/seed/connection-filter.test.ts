@@ -44,6 +44,14 @@ describe("mergeDefaults", () => {
   });
 });
 
+describe("filterByRoles: OPC UA's read roots", () => {
+  it("carries a seed's read roots through to the connection the server resolves", () => {
+    const roots = ["nsu=urn:plant;s=Line1", "i=2256"];
+    const [managed] = filterByRoles([{ ...baseConn, type: "opcua", agentReadRoots: roots }], ["admin"]);
+    expect(managed.agentReadRoots).toEqual(roots);
+  });
+});
+
 describe("filterByRoles: the no-scan choice", () => {
   it("carries a seeded connection's no-scan choice through to the managed connection", () => {
     // The second silent half (#765): this mapper is a hand-written field list, so a field

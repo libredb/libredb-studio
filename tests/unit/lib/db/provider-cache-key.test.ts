@@ -236,6 +236,17 @@ describe("providerCacheKey frames every public field that decides who a connecti
     ["location", { ...base, location: "EU" }, { ...base, location: "US" }],
     ["region", { ...base, region: "eu-central-1" }, { ...base, region: "us-east-1" }],
     ["namespaces", { ...base, namespaces: "shop" }, { ...base, namespaces: "web" }],
+    [
+      "agentReadRoots",
+      { ...base, agentReadRoots: ["nsu=urn:plant;s=A"] },
+      { ...base, agentReadRoots: ["nsu=urn:plant;s=B"] },
+    ],
+    ["agentReadRoots present", { ...base, agentReadRoots: ["nsu=urn:plant;s=A"] }, base],
+    [
+      "agentReadRoots split",
+      { ...base, agentReadRoots: ["nsu=urn:p;s=A", "B"] },
+      { ...base, agentReadRoots: ["nsu=urn:p;s=A\u0000B"] },
+    ],
     ["role", { ...base, role: "STUDIO_RO" }, { ...base, role: "STUDIO_RW" }],
     ["authMethod", { ...base, authMethod: "keypair" }, { ...base, authMethod: "pat" }],
     [

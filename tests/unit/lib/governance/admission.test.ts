@@ -448,6 +448,8 @@ describe("admitConnectionRows", () => {
       ["ssl.verify", true],
       ["ssl", "require"],
       ["options", { statement_timeout: 0 }],
+      // Read roots are declared only by an operator's seed file, so a governed record never carries any.
+      ["agentReadRoots", ["nsu=urn:plant;s=Line1"]],
     ];
     for (const [field, value] of others) {
       const result = admit([connectionRow({ definition: withField(DEFINITION, field, value) })]);

@@ -616,6 +616,12 @@ export interface DatabaseConnection {
   agentUser?: string; // optional least-privilege principal every agent execution profile and MCP call signs in as (#328); a seed may set it, on a managed seed only
   agentPassword?: string; // that principal's secret, or the agent's whole token or key; secret-classified, sealed at rest by connection-secrets
   /**
+   * OPC UA only: the read roots, node ids written with their namespace URI, beneath which agent mode and MCP read and
+   * nowhere else. Set only by the operator's seed file: the managed listing strips it before a seed reaches the browser,
+   * and `resolveConnection` refuses a connection a caller supplies that carries it. The editor never reads it.
+   */
+  agentReadRoots?: readonly string[];
+  /**
    * Elasticsearch only (#708): an API key pair, sent as `Authorization: ApiKey
    * base64(apiKeyId:apiKeySecret)` in preference to `user`/`password` when both halves
    * are set (each half trimmed first). Half a pair (one field with no other) is not a

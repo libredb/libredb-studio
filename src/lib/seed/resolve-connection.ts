@@ -137,6 +137,19 @@ export async function resolveConnection(
       });
       throw new SeedConnectionError(CUSTOM_CONNECTIONS_DISABLED_MESSAGE, 403, ApiErrorCode.CUSTOM_CONNECTIONS_DISABLED);
     }
+    /*
+     * Read roots bound what agent mode and MCP read on OPC UA, and only the operator's seed file declares them. No
+     * inline connection reaches an agent execution profile or MCP today, so this guards no agent path: it tells a
+     * client that writes the field that it binds nothing, rather than drop it in silence and let the client believe a
+     * root it wrote bounds an agent, and it keeps a later surface that admits an inline connection on an agent path
+     * from inheriting roots from a caller. A `seed:` id below is resolved from the file, the caller's copy discarded.
+     */
+    if (connection.agentReadRoots !== undefined) {
+      throw new SeedConnectionError(
+        "agentReadRoots is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot declare what agent mode and MCP read. Remove agentReadRoots from this connection.",
+        400,
+      );
+    }
     // `managed` is the operator's grant (BigQuery and Firestore read it to use server credentials).
     return { ...connection, managed: false };
   }

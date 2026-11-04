@@ -311,6 +311,14 @@ export const SeedDefaultsSchema = z.object({
   // file, on engines whose forms differ.
   agentUser: z.never({ error: AGENT_CREDENTIAL_IN_DEFAULTS }).optional(),
   agentPassword: z.never({ error: AGENT_CREDENTIAL_IN_DEFAULTS }).optional(),
+  // Refused rather than stripped, like the agent credential: read roots name nodes on one server, so a default would
+  // hand one server's roots to every OPC UA connection of the file.
+  agentReadRoots: z
+    .never({
+      error:
+        "agentReadRoots is set per connection and never in defaults: add the read roots to each OPC UA seed connection whose agent and MCP reads they bound.",
+    })
+    .optional(),
 });
 
 export const SeedConnectionSchema = z
@@ -467,6 +475,13 @@ export const SeedConnectionSchema = z
     // in defaults.
     agentUser: z.string().optional(),
     agentPassword: z.string().optional(),
+    // OPC UA only: the read roots, the node ids beneath which agent mode and MCP read. Declared for the reason
+    // skipObjectScan is: zod strips an undeclared key silently, and a seed's roots would validate and vanish, leaving
+    // every agent and MCP read refused for roots the file did declare. Accepted here whatever it holds, so that the
+    // engine's load check (OPCUA_CONNECTION_STRING.validateSeed, which runs readRootRefusals) answers every case in
+    // its own words, a value that is not a list of strings included, framed with the connection's id. Never resolved
+    // from a reference, and refused on every other type through SEED_ONLY_FIELDS.opcua.
+    agentReadRoots: z.custom<readonly string[]>(() => true).optional(),
     // And the three OPC UA fields the dialog has no box for: why, at SEED_ONLY_FIELDS.opcua in src/lib/db/connection-fields.ts.
     securityPolicyUri: z.string().optional(),
     clientCertificatePath: z.string().optional(),

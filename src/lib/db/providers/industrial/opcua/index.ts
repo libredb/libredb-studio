@@ -58,6 +58,7 @@ import {
   OPCUA_AGENT_FAILURE_SENTENCES,
   type OpcuaAgentAnswer,
 } from "./agent-read";
+import { readRootRefusals, readRootSentence } from "./agent-roots";
 import { readOpcuaAgentStatement, type OpcuaAgentPlan } from "./agent-statement";
 import { OPCUA_AGENT_WITHHELD } from "./agent-surface";
 import { OPCUA_CAPABILITIES } from "./capabilities";
@@ -102,6 +103,13 @@ export class OpcuaProvider extends BaseDatabaseProvider {
     private readonly environment: Readonly<Record<string, string | undefined>> = process.env,
   ) {
     super(config, options);
+    // The seed load holds the roots to the same grammar; this holds a connection built in memory past the schema to it.
+    const [refusal] = config.agentReadRoots === undefined ? [] : readRootRefusals(config.agentReadRoots);
+    if (refusal !== undefined)
+      throw new DatabaseConfigError(
+        `This OPC UA connection's agentReadRoots is refused: ${readRootSentence(refusal)}`,
+        OPCUA_TYPE,
+      );
     this.pool = this.newPool();
   }
 

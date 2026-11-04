@@ -35,6 +35,7 @@ const TLS_PARAMS: Readonly<Partial<Record<DatabaseType, readonly string[]>>> = {
 /** The fields each engine's `validateSeed` refuses, which its document's subsection names. */
 const SEED_CHECKED_FIELDS: Readonly<Partial<Record<string, readonly string[]>>> = {
   etcd: ["user", "agentUser"],
+  opcua: ["agentReadRoots"],
   snowflake: ["host", "user", "authMethod", "privateKey", "password", "role"],
 };
 

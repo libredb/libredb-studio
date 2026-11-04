@@ -28,13 +28,16 @@ const OPENSHIFT_CACHE_HINT_MS = 10_000;
  * browser: the literal marker (src/lib/seed/types.ts) tells the server how to resolve a connection's values, the
  * Kubernetes Secret marker which Secret the access review asks about, the reserved role (src/lib/seed/roles.ts) that
  * sets a connection apart for that review, so a reviewed connection reaches the browser with no role, and the grant
- * level (src/lib/governance/visible.ts) which credential a governed record carries. The level itself is no secret and
+ * level (src/lib/governance/visible.ts) which credential a governed record carries, and an OPC UA seed's read roots
+ * (`agentReadRoots`), which bound agent and MCP reads and are resolved from the file on the server, so the browser's
+ * copy never holds them and a Duplicate never copies them into a connection of the user's own. The level itself is no secret and
  * goes out as `access`, so a client can say a connection is read only before a write fails.
  */
 function withoutServerMarkers(conn: GovernedRecord): ManagedConnection {
   const { grantLevel, ...copy } = conn;
   delete copy.literal;
   delete copy.kubernetesSecret;
+  delete copy.agentReadRoots;
   copy.roles = copy.roles.filter((role) => role !== KUBERNETES_REVIEWED_ROLE);
   return grantLevel === undefined ? copy : { ...copy, access: grantLevel };
 }

@@ -162,6 +162,38 @@ describe("resolve-connection", () => {
     expect(result.password).toBe("shared-secret");
   });
 
+  it("refuses an inline connection that carries read roots, which only an operator's seed file declares", async () => {
+    const conn = {
+      id: "user-plant",
+      name: "User Plant",
+      type: "opcua",
+      host: "opc.tcp://plc.ornek.net:4840/",
+      agentReadRoots: ["nsu=urn:plant;s=Line1"],
+      createdAt: new Date(),
+    } as DatabaseConnection;
+    const refused = resolveConnection({ connection: conn }, { role: "admin", username: "test" });
+    await expect(refused).rejects.toBeInstanceOf(SeedConnectionError);
+    await expect(refused).rejects.toMatchObject({
+      statusCode: 400,
+      message:
+        "agentReadRoots is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot declare what agent mode and MCP read. Remove agentReadRoots from this connection.",
+    });
+  });
+
+  it("resolves a seed id claim from the file, discarding read roots the caller's copy carries", async () => {
+    const claimed = {
+      id: "seed:everyone",
+      name: "Claimed",
+      type: "postgres",
+      host: "db.ornek.net",
+      agentReadRoots: ["nsu=urn:plant;s=Line1"],
+      createdAt: new Date(),
+    } as DatabaseConnection;
+    const result = await resolveConnection({ connection: claimed }, { role: "user", username: "test" });
+    expect(result.id).toBe("seed:everyone");
+    expect(result.agentReadRoots).toBeUndefined();
+  });
+
   it("resolves seed connection by connectionId", async () => {
     const result = await resolveConnection({ connectionId: "seed:everyone" }, { role: "user", username: "test" });
     expect(result.id).toBe("seed:everyone");
