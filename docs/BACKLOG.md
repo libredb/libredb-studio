@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D454, U17 · 335
+- [Drivers and connections](#drivers-and-connections) — D1-D453, U17 · 334
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -4462,16 +4462,6 @@ The same reader is the web editor's confirmation gate and the etcd provider's ow
 Found 2026-11-04 by the review of #2204's route.
 
 **Done when:** the lexer collects refusals without an argument spread, and a test drives a 1,000,000-character line of `;` and one of `(` through `isDestructiveNonSqlQuery` and the provider's guard under Bun and Node.
-
-### D454. A connection record whose `type` is missing or not a string, or whose `name` is not a string, answers 500 with a TypeError
-
-`createDatabaseProvider` in `src/lib/db/factory.ts` logs `sanitize(connection.type)` before it reads the type, and `sanitize` calls `replace` on it, so a record whose `type` is not a string fails with a TypeError, which `createErrorResponse` answers as 500 `INTERNAL_ERROR` in the runtime's words.
-Measured on 2026-11-04 on the production server with an inline connection: `POST /api/db/query` answered `Cannot read properties of undefined (reading 'length')` for no `type` and `e.replace is not a function` for `"type": 5`, and `POST /api/db/provider-meta`, which refuses a missing type with 400, answered the second.
-The same factory logs `sanitize(connection.name || "")`, so an inline record whose `name` is a non-string that is not falsy, such as `5` or an object, fails the same way and every other route answers it 500; a `null` name reaches the factory as an empty one.
-`POST /api/db/statement/analyze` guards both: it refuses a missing or non-string `type`, and a `name` that is present and not a string, `null` included, with 400 `Valid connection configuration is required` before any provider is built.
-Found 2026-11-04 by the review of #2204's route.
-
-**Done when:** every route that builds a provider from an inline record answers a missing or non-string `type`, and a present non-string `name`, with one 400 sentence before the factory is reached, with a test per route.
 
 ## Value interpolation
 
