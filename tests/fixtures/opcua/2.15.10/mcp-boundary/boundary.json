@@ -1,0 +1,335 @@
+{
+  "$captured": {
+    "image": "mcr.microsoft.com/iotedge/opc-plc:2.15.10@sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c",
+    "date": "2026-11-04",
+    "runtime": "bun 1.4.4",
+    "identities": "anonymous; user: a non-privileged user; administrator: the fixture's administrator (names and passwords made per run, not recorded)",
+    "roots": [
+      "nsu=http://microsoft.com/Opc/OpcPlc/;s=Telemetry",
+      "nsu=http://microsoft.com/Opc/OpcPlc/ReferenceTest;s=DataAccess",
+      "i=2256"
+    ],
+    "outside": [
+      "i=12637",
+      "i=3706",
+      "i=3707",
+      "i=2253",
+      "ns=3;s=OpcPlc",
+      "ns=2;i=5001",
+      "ns=4;i=5",
+      "i=15606"
+    ],
+    "missingTwin": "ns=3;s=NoSuchNodeAtAll"
+  },
+  "reads": {
+    "anonymous": {
+      "read": {
+        "isError": false,
+        "rows": 2,
+        "statuses": [
+          "Good"
+        ],
+        "notes": [],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "history": {
+        "isError": false,
+        "rows": 5,
+        "statuses": [
+          "Good"
+        ],
+        "notes": [
+          "The read reached its cap of 5 values, and the node holds more. A narrower window reads the rest: a server appends histor"
+        ],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse i=85": {
+        "isError": false,
+        "rows": 3,
+        "statuses": [
+          "Object",
+          "Variable"
+        ],
+        "notes": [
+          "These are this connection's read roots, declared by its operator: agent mode reads only these nodes and the nodes beneat"
+        ],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse ns=3;s=Telemetry": {
+        "isError": false,
+        "rows": 8,
+        "statuses": [
+          "Object"
+        ],
+        "notes": [],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse i=2256": {
+        "isError": false,
+        "rows": 6,
+        "statuses": [
+          "Variable"
+        ],
+        "notes": [],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      }
+    },
+    "user": {
+      "read": {
+        "isError": false,
+        "rows": 2,
+        "statuses": [
+          "Good"
+        ],
+        "notes": [],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "history": {
+        "isError": false,
+        "rows": 5,
+        "statuses": [
+          "Good"
+        ],
+        "notes": [
+          "The read reached its cap of 5 values, and the node holds more. A narrower window reads the rest: a server appends histor"
+        ],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse i=85": {
+        "isError": false,
+        "rows": 3,
+        "statuses": [
+          "Object",
+          "Variable"
+        ],
+        "notes": [
+          "These are this connection's read roots, declared by its operator: agent mode reads only these nodes and the nodes beneat"
+        ],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse ns=3;s=Telemetry": {
+        "isError": false,
+        "rows": 8,
+        "statuses": [
+          "Object"
+        ],
+        "notes": [],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse i=2256": {
+        "isError": false,
+        "rows": 6,
+        "statuses": [
+          "Variable"
+        ],
+        "notes": [],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      }
+    },
+    "administrator": {
+      "read": {
+        "isError": false,
+        "rows": 2,
+        "statuses": [
+          "Good"
+        ],
+        "notes": [],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "history": {
+        "isError": false,
+        "rows": 5,
+        "statuses": [
+          "Good"
+        ],
+        "notes": [
+          "The read reached its cap of 5 values, and the node holds more. A narrower window reads the rest: a server appends histor"
+        ],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse i=85": {
+        "isError": false,
+        "rows": 3,
+        "statuses": [
+          "Object",
+          "Variable"
+        ],
+        "notes": [
+          "These are this connection's read roots, declared by its operator: agent mode reads only these nodes and the nodes beneat"
+        ],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse ns=3;s=Telemetry": {
+        "isError": false,
+        "rows": 8,
+        "statuses": [
+          "Object"
+        ],
+        "notes": [],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse i=2256": {
+        "isError": false,
+        "rows": 6,
+        "statuses": [
+          "Variable"
+        ],
+        "notes": [],
+        "carriesPlanted": false,
+        "carriesAccount": false
+      }
+    }
+  },
+  "outside": {
+    "anonymous": {
+      "read": {
+        "pairs": 8,
+        "alike": 8,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "history": {
+        "pairs": 8,
+        "alike": 8,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse": {
+        "pairs": 8,
+        "alike": 8,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      }
+    },
+    "user": {
+      "read": {
+        "pairs": 8,
+        "alike": 8,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "history": {
+        "pairs": 8,
+        "alike": 8,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse": {
+        "pairs": 8,
+        "alike": 8,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      }
+    },
+    "administrator": {
+      "read": {
+        "pairs": 8,
+        "alike": 8,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "history": {
+        "pairs": 8,
+        "alike": 8,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse": {
+        "pairs": 8,
+        "alike": 8,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      }
+    },
+    "administratorSessionObjects": {
+      "read": {
+        "pairs": 1,
+        "alike": 1,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "history": {
+        "pairs": 1,
+        "alike": 1,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      },
+      "browse": {
+        "pairs": 1,
+        "alike": 1,
+        "carriesPlanted": false,
+        "carriesAccount": false
+      }
+    }
+  },
+  "rootless": {
+    "isError": true,
+    "acquired": [],
+    "text": "run_opcua_read cannot run on this connection: Connection \"seed:live-anonymous\" is read by MCP only beneath read roots its seed entry declares, and it declares none: an operator sets agentReadRoots on this seed. It runs on OPC UA."
+  },
+  "refused": [
+    {
+      "request": "a write",
+      "code": "request",
+      "ownWords": true,
+      "unfencedNotSent": true
+    },
+    {
+      "request": "a call",
+      "code": "request",
+      "ownWords": true,
+      "unfencedNotSent": true
+    },
+    {
+      "request": "an index range",
+      "code": "request",
+      "ownWords": true,
+      "unfencedNotSent": true
+    },
+    {
+      "request": "a data encoding",
+      "code": "request",
+      "ownWords": true,
+      "unfencedNotSent": true
+    },
+    {
+      "request": "a subscription",
+      "code": "request",
+      "ownWords": true,
+      "unfencedNotSent": true
+    },
+    {
+      "request": "two reads in one request",
+      "code": "request",
+      "ownWords": true,
+      "unfencedNotSent": true
+    }
+  ],
+  "overBudget": "The result has more than 1000 rows, the most this server reads for one call. Ask for at most 1000 rows: a value read answers one row per node it names, a history read one row per value in its window, ",
+  "writes": {
+    "rawWriteStatus": "Good",
+    "rawWriteChangedTheValue": true,
+    "unfencedToolSentNothing": true,
+    "unfencedToolChangedTheValue": false
+  },
+  "limits": {
+    "leastTimeoutAnsweredMs": 501,
+    "leastReadEndedMs": 468,
+    "cancelAnsweredMs": 1002,
+    "cancelReadEndedMs": 2962
+  }
+}

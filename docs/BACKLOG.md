@@ -9347,7 +9347,7 @@ Found 2026-11-02 while verifying `run_read_query` on Couchbase.
 ### B170. OPC UA proves its read roots on every read
 
 Every OPC UA agent and MCP read walks down from the connection's read roots on its own session before it answers (`proveReadSet` in `src/lib/db/providers/industrial/opcua/agent-roots.ts`), and nothing of the proved set is held for the next read, so a read of one value repeats the walk.
-Measured on the pinned OPC PLC 2.15.10 fixture on 2026-11-04, with roots over the `Telemetry` and `DataAccess` folders and `Server.ServerStatus`, the walk took 32 requests and every read answered within 100 ms; a plant model with larger roots costs up to 150 walk requests a read.
+Measured on the pinned OPC PLC 2.15.10 fixture on 2026-11-04 (`tests/fixtures/opcua/2.15.10/agent-boundary/boundary.json`), with roots over the `Telemetry` and `DataAccess` folders and `Server.ServerStatus`, the walk took 32 requests for every identity and every read, the walk included, answered within 120 ms on loopback; a plant model with larger roots costs up to 150 walk requests a read.
 A cache would have to be keyed by seed id, identity and root list, and invalidated when the server's model changes, which the read client cannot observe without a subscription.
 Found 2026-11-04 while building the read roots.
 
