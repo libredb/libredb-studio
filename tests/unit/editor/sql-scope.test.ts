@@ -210,7 +210,7 @@ describe("statementScope", () => {
   /**
    * A level's sources and its CTE names were once added to the scope's lists as the arguments of one call, which
    * overflows the stack past the arguments a runtime takes: measured on 2026-11-04, 700,000 overflowed under Bun 1.4.4
-   * (130,000 did not) and 130,000 under Node 24.22.1, whose V8 is the engine of Chrome and Edge. A million is past both.
+   * (600,000 did not) and 130,000 under Node 24.22.1, whose V8 is the engine of Chrome and Edge. A million is past both.
    */
   test("a FROM list of 1,000,000 tables names every one", () => {
     const { sources } = scopeAt(`SELECT | FROM ${"t, ".repeat(999_999)}last`);
