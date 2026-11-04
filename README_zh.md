@@ -55,6 +55,7 @@
   <a href="https://docs.couchbase.com/server/current/third-party/integrations.html#standalone-query-and-admin-tools">Couchbase</a>、
   <a href="https://etcd.io/docs/v3.7/integrations/#:~:text=LibreDB%20Studio">etcd</a>、
   <a href="https://prometheus.io/docs/operating/integrations/#:~:text=LibreDB%20Studio">Prometheus</a>、
+  <a href="https://docs.influxdata.com/influxdb/v2/tools/libredb-studio/">InfluxDB</a>、
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>、
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>、
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>、
