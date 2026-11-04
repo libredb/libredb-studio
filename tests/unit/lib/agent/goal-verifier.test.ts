@@ -619,6 +619,66 @@ describe("a query-optimization run is judged by its own artifact as well as the 
         expect(verdict.unmet).toEqual(["empty-evidence"]);
       });
 
+      /*
+        B45 again, from the other side: the exemption rescues a plan-ONLY report and discards the
+        plan everywhere else.
+
+        `restsOnlyOnEmptyResults` skips an exempt artifact instead of counting it, so a cited plan is
+        neither empty nor full — it leaves the census entirely. Where the plan is the only citation
+        that works, because the census is then empty and an empty census is not an emptiness
+        finding. Where the report cites a plan AND a read that came back empty, the one piece of
+        evidence that was not empty is the one removed, and the empty read decides alone.
+
+        Measured 2026-10-19 on `bonsai-2:4b` query-optimization, the cell at 4/5 and the model at
+        29/30: four of five runs ended `report-composed` with `empty-evidence` inside 44-65 seconds,
+        and the first of them cited two artifacts — a read of zero rows and a
+        `sql.explain.estimate` carrying FIVE. Without the exemption that report would have passed
+        the census on arithmetic alone. With it, the five were thrown away.
+
+        So a cited exempt artifact settles the census rather than leaving it: a report resting on a
+        plan rests on something, which is the exemption's own stated reason for existing. The
+        control above is untouched and still asserts `empty-evidence` — it cites the read ALONE, so
+        no exempt reference is in its claims at all.
+      */
+      test("a report citing the plan BESIDE an empty read does not rest on nothing", () => {
+        const verdict = optimization([
+          contextCaptured,
+          planReadCountedEmpty,
+          completed(CORRELATION.empty, 0),
+          recommends("index", ARTIFACT(CORRELATION.plan)),
+          reportCiting(ARTIFACT(CORRELATION.empty), ARTIFACT(CORRELATION.plan)),
+        ]);
+
+        expect(verdict.unmet).toEqual([]);
+        expect(verdict.outcome).toBe("answered");
+      });
+
+      test("and the live shape: a plan the engine DID count, beside an empty read", () => {
+        // The ledger as `bonsai-2:4b` wrote it. A plan with five rows beside a read with none is
+        // not a report resting on nothing under any reading of the rule, and it was scored as one.
+        const planWithRows: AgentRunEvent = {
+          kind: "tool-completed",
+          atMs: 20,
+          stepId: "step_plan",
+          artifact: {
+            correlationId: CORRELATION.plan,
+            runId: "arun_1",
+            operationId: "sql.explain.estimate",
+            summary: { rowCount: 5, columnNames: ["QUERY PLAN"], elapsedMs: 4 },
+          },
+        };
+
+        const verdict = optimization([
+          contextCaptured,
+          planWithRows,
+          completed(CORRELATION.empty, 0),
+          recommends("index", ARTIFACT(CORRELATION.plan)),
+          reportCiting(ARTIFACT(CORRELATION.empty), ARTIFACT(CORRELATION.plan)),
+        ]);
+
+        expect(verdict.unmet).toEqual([]);
+      });
+
       test("a plan read and nothing reported is still a run that answered nothing", () => {
         // The second control: the exemption must not turn a missing report into an
         // answer. `no-report` dominates, as it does everywhere else.

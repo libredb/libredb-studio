@@ -719,6 +719,72 @@ const RESOLVED: ResolvedRow[] = [
     turnTimeoutMs: undefined,
     sampling: { temperature: 0.3, topP: 1 },
   },
+  // Three sizes of one family resolving to three disjoint answers, which is the reason this table
+  // is per model id rather than per family. The 2b and the 4b land on the same four fields as
+  // `laguna-xs-2.1:latest` above - temperature, the refusal examples and both holds - and the 9b
+  // shares none of them.
+  {
+    id: "bonsai-2:2b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: true,
+    verdictHoldLimit: 5,
+    compareHoldLimit: 5,
+    turnTimeoutMs: undefined,
+    sampling: { temperature: 0.3, topP: 1 },
+  },
+  {
+    id: "bonsai-2:4b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: true,
+    verdictHoldLimit: 5,
+    compareHoldLimit: 5,
+    turnTimeoutMs: undefined,
+    sampling: { temperature: 0.3, topP: 1 },
+  },
+  {
+    // The second row to carry `suppressesAgentReasoning`, after `gemma4:12b` earned it: operate
+    // and assess both spent their turns thinking and filed nothing.
+    id: "bonsai-2:9b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: true,
+    suppressesAgentReasoning: true,
+    turnTimeoutMs: undefined,
+  },
+  // The two that resolve to the compiled defaults in every field. A row is still pinned for each,
+  // because "it needed nothing" is a measurement, and an unpinned model is how a later change to
+  // the defaults would move them without anything saying so.
+  {
+    id: "gemma4:e4b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
+  {
+    id: "lfm3:1.7b",
+    unreportedCallCeiling: 12,
+    reportReminderLimit: 1,
+    planStatementRetries: 0,
+    presentReminderLimit: 1,
+    retriesEmptyTurn: false,
+    refusalExamples: false,
+    turnTimeoutMs: undefined,
+  },
 ];
 
 describe("every resolver's answer, pinned before the profiles moved", () => {
@@ -758,7 +824,7 @@ describe("every resolver's answer, pinned before the profiles moved", () => {
     // would assert 43 against 40 and deriving from the profiles would assert nothing at all. The
     // loop above is what guarantees coverage; this is the second half, that the roster is the size
     // the change intended. `model-roster-docs.test.ts` derives the same count for the docs.
-    expect(Object.keys(modelProfiles())).toHaveLength(46);
+    expect(Object.keys(modelProfiles())).toHaveLength(51);
   });
 });
 
@@ -844,6 +910,11 @@ describe("what each model records about the runs that earned its settings", () =
     "qwen3:32b": "95abe040e1654ecf1462bd73d48079a6fb152723551bbc8001899facd16d70c0",
     "laguna-xs-2.1:latest": "2fc40492ef6cb14b7eeb4eee05a95eef31feab539e693634adea21b22765b7c7",
     "qwen3.8:27b": "5948f3803fc6daf3d9ae0255f14e09a35099a6149a20611d885ff3365d1f834e",
+    "bonsai-2:2b": "e063b03cbc9bf5cfbdab8ce14daab729157ee0e6412e64e603fb76eb7f92ffbe",
+    "bonsai-2:4b": "d578548fb5afb2f72ec4278079623868101e5a9586f7b86e473b540f9d12a10e",
+    "bonsai-2:9b": "b5d6930a98ac3e4f5713dd36d699d8b1484c777b3e371541fb8ebc574afa16b0",
+    "gemma4:e4b": "1a5c88487024a7cb5b3d0020ff97e2b808d79f3e94a62a071493e5f3f2a27803",
+    "lfm3:1.7b": "6c77f982b76f7405f6a4555ee4e9dbdcb52f7233382ace689c6a6dadc4b1eed5",
   };
 
   test("every model's record survives the move, character for character", () => {
