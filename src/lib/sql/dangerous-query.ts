@@ -532,9 +532,9 @@ function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGramma
  * Exported for the grammar-level tests in `tests/components/QuerySafetyDialog.test.tsx`, which read a row's forms
  * before any shipped row declares them; `isDangerousQuery` is the gate.
  */
-export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
-  const reading = readOperativeKeyword(text, grammar);
-  const keyword = reading?.keyword;
+export function writesUnderGrammar(statement: string, grammar: SqlGrammar): boolean {
+  let text = statement;
+  let reading = readOperativeKeyword(text, grammar);
 
   // PostgreSQL's EXPLAIN executes the explained statement only when ANALYZE is on
   // (`EXPLAIN ANALYZE DELETE`, `EXPLAIN (ANALYZE, BUFFERS) UPDATE`). The operative
@@ -543,11 +543,16 @@ export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
   // or the integer 0, only plans: returning here, instead of falling through, is what keeps an
   // `UPDATE … SET` inside a plan from asking. The remaining text is read as its own
   // statement, so a data-modifying CTE under the EXPLAIN asks too. CockroachDB
-  // shares this grammar.
-  if (reading !== null && reading.keyword === "EXPLAIN" && grammar.explainExecutesWithAnalyze === true) {
+  // shares this grammar. An explained statement can be an EXPLAIN in turn, so the chain is
+  // followed in a loop: read one call deeper per EXPLAIN, a chain as long as the analyze
+  // route accepts ran Node out of stack.
+  while (reading !== null && reading.keyword === "EXPLAIN" && grammar.explainExecutesWithAnalyze === true) {
     const inner = stripExplainOptions(text, reading.end, grammar);
-    return inner !== null && writesUnderGrammar(inner, grammar);
+    if (inner === null) return false;
+    text = inner;
+    reading = readOperativeKeyword(text, grammar);
   }
+  const keyword = reading?.keyword;
 
   if (
     reading !== null &&

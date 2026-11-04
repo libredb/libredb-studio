@@ -41,3 +41,12 @@ describe("hasUnreadableRun", () => {
     expect(isDangerousQuery("SELECT 1", "postgres")).toBe(false);
   });
 });
+
+describe("isDangerousQuery at the analyze route's bound of 1,000,000 units", () => {
+  test("follows an EXPLAIN chain to the statement it executes", () => {
+    // Read one call deeper per EXPLAIN, V8 ran out of stack a few thousand in. Bun's engine does not show that, so the
+    // VS Code extension's query/target suite, which runs under Node, pins it too.
+    expect(isDangerousQuery(`${"EXPLAIN ANALYZE ".repeat(62_500)}DELETE FROM t`, "postgres")).toBe(true);
+    expect(isDangerousQuery(`${"EXPLAIN ANALYZE ".repeat(62_500)}SELECT 1`, "postgres")).toBe(false);
+  });
+});

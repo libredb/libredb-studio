@@ -996,6 +996,16 @@ describe("query/target", () => {
     assert.equal((await target(mysql.handlers, text, 0, whole)).dangerous, false);
   });
 
+  it("reads an EXPLAIN chain as long as the analyze route's bound without running out of stack", async () => {
+    // Each EXPLAIN ANALYZE executes the statement after it, so the gate reads 62,500 of them to reach the last
+    // statement. Read one call deeper per EXPLAIN, Node's stack ended the read with a RangeError a few thousand in.
+    const { handlers } = await on();
+    const write = `${"EXPLAIN ANALYZE ".repeat(62_500)}DELETE FROM t`;
+    const read = `${"EXPLAIN ANALYZE ".repeat(62_500)}SELECT 1`;
+    assert.equal((await target(handlers, write, 0, { start: 0, end: write.length })).dangerous, true);
+    assert.equal((await target(handlers, read, 0, { start: 0, end: read.length })).dangerous, false);
+  });
+
   it("flags a non-SQL target by its engine's own vocabulary", async () => {
     const mongo = await openedOn(
       fakeProvider({ getCapabilities: () => ({ ...SQL_CAPS, queryLanguage: "json" }) as ProviderCapabilities }),
