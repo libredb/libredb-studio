@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
-import { cursorTarget, runnableTarget, runTarget, selectionTarget, type RunTargetInput } from "@/lib/sql/run-target";
+import {
+  cursorTarget,
+  RunTargetRangeError,
+  runnableTarget,
+  runTarget,
+  selectionTarget,
+  type RunTargetInput,
+} from "@/lib/sql/run-target";
 
 const PG = resolveSqlGrammar("postgres");
 const TSQL = resolveSqlGrammar("mssql");
@@ -179,6 +186,27 @@ describe("offsets it cannot honour", () => {
     expect(() => runTarget(sqlAt(TWO, 0, { selection: { start: loose(null), end: loose(null) } }))).toThrow(RangeError);
     expect(() => runTarget(sqlAt(TWO, loose(null), { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
     expect(() => runTarget(sqlAt(TWO, Number.NaN, { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
+  });
+
+  // A caller answers this error as its caller's fault, so it must tell it from a RangeError the runtime raises, a
+  // stack overflow among them, which is a server defect (#2204).
+  test("the error is the rule's own RangeError subclass, named after it, so a caller can tell it from the runtime's", () => {
+    const thrown = (() => {
+      try {
+        runTarget(sqlAt(TWO, 21, { selection: { start: 0, end: 0 } }));
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    })();
+    expect(thrown).toBeInstanceOf(RunTargetRangeError);
+    expect(thrown).toBeInstanceOf(RangeError);
+    expect((thrown as Error).name).toBe("RunTargetRangeError");
+    expect((thrown as Error).message).toBe("run target: cursor 21 is not within a text of length 20");
+    expect(() => runTarget(sqlAt(TWO, 0, { selection: { start: 0.5, end: 8.5 } }))).toThrow(RunTargetRangeError);
+    expect(() => runTarget(sqlAt(TWO, 4.7, { selection: { start: 0, end: 0 } }))).toThrow(RunTargetRangeError);
+    expect(() => runTarget(sqlAt(TWO, 5, { selection: { start: 5, end: 2 } }))).toThrow(RunTargetRangeError);
+    expect(new RangeError("Maximum call stack size exceeded.")).not.toBeInstanceOf(RunTargetRangeError);
   });
 });
 

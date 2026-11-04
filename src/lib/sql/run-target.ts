@@ -35,6 +35,19 @@ export interface RunTargetInput extends RunTargetRule {
   cursor: number;
 }
 
+/**
+ * The rule's refusal of offsets it cannot honour, and the only error it raises.
+ *
+ * A `RangeError`, as it always was, and a class of its own so a caller that answers it as its caller's fault can tell
+ * it from a `RangeError` the runtime raises, a stack overflow among them, which is the server's (#2204).
+ */
+export class RunTargetRangeError extends RangeError {
+  constructor(message: string) {
+    super(message);
+    this.name = "RunTargetRangeError";
+  }
+}
+
 /** The statement to send and, unless it is the whole text, where it sits. */
 export interface RunTarget {
   statement: string;
@@ -88,27 +101,27 @@ export function cursorTarget(
 /**
  * The rule whole: a non-blank selection, then the cursor's statement, then the whole text (no `range` key).
  *
- * Throws a `RangeError` on offsets it cannot honour, so it never slices with them.
+ * Throws a `RunTargetRangeError` on offsets it cannot honour, so it never slices with them.
  */
 export function runTarget(input: RunTargetInput): RunTarget {
   const { text, selection, cursor } = input;
   // Only an integer UTF-16 index is an offset: a fraction, a numeric string, an array or null would be coerced by
   // the comparisons and by `slice`, which would send a statement cut where no caller asked and echo the raw input back.
   if (!Number.isInteger(selection.start) || !Number.isInteger(selection.end)) {
-    throw new RangeError(
+    throw new RunTargetRangeError(
       `run target: selection [${selection.start}, ${selection.end}) is not a pair of integer offsets`,
     );
   }
   if (!Number.isInteger(cursor)) {
-    throw new RangeError(`run target: cursor ${cursor} is not an integer offset`);
+    throw new RunTargetRangeError(`run target: cursor ${cursor} is not an integer offset`);
   }
   if (!(0 <= selection.start && selection.start <= selection.end && selection.end <= text.length)) {
-    throw new RangeError(
+    throw new RunTargetRangeError(
       `run target: selection [${selection.start}, ${selection.end}) is not within a text of length ${text.length}`,
     );
   }
   if (!(0 <= cursor && cursor <= text.length)) {
-    throw new RangeError(`run target: cursor ${cursor} is not within a text of length ${text.length}`);
+    throw new RunTargetRangeError(`run target: cursor ${cursor} is not within a text of length ${text.length}`);
   }
   const selected = selectionTarget(text.slice(selection.start, selection.end), input);
   if (selected !== null) return { statement: selected, range: { start: selection.start, end: selection.end } };
@@ -125,7 +138,7 @@ export function runTarget(input: RunTargetInput): RunTarget {
  * text in another editor language is never read for comments: a Redis `# note` is its own command line, and the
  * engine's parser answers it.
  *
- * Throws `runTarget`'s `RangeError` on offsets it cannot honour.
+ * Throws `runTarget`'s `RunTargetRangeError` on offsets it cannot honour.
  */
 export function runnableTarget(input: RunTargetInput): RunTarget {
   const target = runTarget(input);

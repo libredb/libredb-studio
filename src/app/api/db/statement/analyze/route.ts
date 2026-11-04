@@ -6,7 +6,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { analyzeStatement, type StatementAnalysis } from "@/lib/editor/statement-analysis";
-import type { RunTargetRange } from "@/lib/sql/run-target";
+import { type RunTargetRange, RunTargetRangeError } from "@/lib/sql/run-target";
 
 export const dynamic = "force-dynamic";
 
@@ -34,8 +34,8 @@ function isInteger(value: unknown): value is number {
  * the words VS Code's `query/target` refuses the same field with. `null` is no value for any of them. The text is
  * handed on exactly as it was sent, never trimmed or normalised, because the offsets index into it.
  *
- * Whether the offsets fall within the text is not asked here: that is the run target's own rule, and its `RangeError`
- * is answered below, so the rule has one implementation.
+ * Whether the offsets fall within the text is not asked here: that is the run target's own rule, and its
+ * `RunTargetRangeError` is answered below, so the rule has one implementation.
  */
 function readAnalysisFields(body: Record<string, unknown>): AnalysisFields {
   const { text, selection, cursor } = body;
@@ -113,8 +113,9 @@ export async function POST(req: NextRequest) {
       });
     } catch (error) {
       // Offsets the run target cannot honour are the caller's, answered in the rule's own sentence, which names
-      // numbers only and never the text, as VS Code's query/target answers them. Anything else is the server's.
-      if (!(error instanceof RangeError)) throw error;
+      // numbers only and never the text, as VS Code's query/target answers them. Anything else is the server's, a
+      // RangeError the runtime raises included: a stack overflow in an engine's reader is no offset of the caller's.
+      if (!(error instanceof RunTargetRangeError)) throw error;
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     return NextResponse.json(analysis);

@@ -372,6 +372,30 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
     });
   });
 
+  // A RangeError the run target did not raise is no offset of the caller's: a stack overflow inside an engine's reader
+  // is one, and it is the server's, answered and logged as every other failure.
+  test("a RangeError that is not the run target's answers 500 INTERNAL_ERROR, not 400", async () => {
+    createDatabaseProvider.mockImplementationOnce(
+      async () =>
+        ({
+          getCapabilities: () => {
+            throw new RangeError("Maximum call stack size exceeded.");
+          },
+        }) as unknown as DatabaseProvider,
+    );
+    const errorSpy = spyOn(logger, "error");
+    try {
+      expect(await analyze({ connectionId: "seed:orders-pg", text: TWO, ...at(19) })).toEqual({
+        status: 500,
+        body: { error: "Maximum call stack size exceeded.", code: "INTERNAL_ERROR", statusCode: 500 },
+        retryAfter: null,
+      });
+      expect(errorSpy).toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   // H10: the canary runs. A refusal may quote a word of the text, so one run below makes Redis quote the canary itself.
   test("no log line, audit event or query event carries the text, the statement or the refusal", async () => {
     const CANARY = "canary-2204";

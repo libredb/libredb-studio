@@ -16,7 +16,7 @@ import {
 import { editorLanguageOf } from "@/lib/editor/tab-language";
 import { hasUnreadableRun, isDangerousQuery } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
-import { cursorTarget, selectionTarget } from "@/lib/sql/run-target";
+import { cursorTarget, RunTargetRangeError, selectionTarget } from "@/lib/sql/run-target";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
@@ -473,7 +473,7 @@ describe("analyzeStatement", () => {
 
   test("throws the run target's RangeError, with its sentence, on offsets it cannot honour", () => {
     const rt1 = inputOf(CASES[0]);
-    expect(() => analyzeStatement({ ...rt1, selection: { start: 5, end: 2 } })).toThrow(RangeError);
+    expect(() => analyzeStatement({ ...rt1, selection: { start: 5, end: 2 } })).toThrow(RunTargetRangeError);
     expect(() => analyzeStatement({ ...rt1, selection: { start: 5, end: 2 } })).toThrow(
       "run target: selection [5, 2) is not within a text of length 24",
     );
