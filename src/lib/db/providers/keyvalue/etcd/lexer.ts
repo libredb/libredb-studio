@@ -1184,7 +1184,7 @@ export function splitWords(text: string): SplitResult {
     const placed = reading.refusals.map((refusal) => placeRefusal(refusal, line));
     const joined = joinLine(open, reading.parts, reading.open, line);
     joined.words.forEach((word, position) => {
-      placed.push(...wordRefusals(word));
+      for (const refusal of wordRefusals(word)) placed.push(refusal);
       command.push(commandWord(word));
       const role = reading.roles[position];
       if (role === "command") commandIndex = command.length - 1;
@@ -1194,8 +1194,12 @@ export function splitWords(text: string): SplitResult {
     const body = reading.body;
     const start = reading.tokens.find((token) => token.kind !== "whitespace")?.start ?? lineText.length;
     let entry: SplitLine = { line, text: lineText, start, section: state.section, role: reading.role };
-    if (body === undefined) refusals.push(...placed);
-    else if (placed.length > 0) entry = { ...entry, refusal: earliest(placed) };
+    // One at a time, never as the arguments of one call: a line of ; or ( places a refusal per character, and a
+    // runtime takes fewer arguments than that (measured: 700,000 overflowed the stack under Bun 1.4.4, and 130,000
+    // under Node 24.22.1).
+    if (body === undefined) {
+      for (const refusal of placed) refusals.push(refusal);
+    } else if (placed.length > 0) entry = { ...entry, refusal: earliest(placed) };
     else if (body.compare !== undefined) {
       const { target, key, operator, value, rest } = body.compare;
       entry = {
@@ -1249,10 +1253,11 @@ export function lexLogicalLine(
       return { ok: false, refusal: { code: "not-text", line, column, message: surrogateSentence(line, column + 1) } };
     }
     const scan = scanShellLine(lineText, carry, from);
-    refusals.push(...scan.refusals.map((refusal) => placeRefusal(refusal, line)));
+    // One at a time, as splitWords collects them.
+    for (const refusal of scan.refusals) refusals.push(placeRefusal(refusal, line));
     const joined = joinLine(open, scan.words, scan.open, line);
     for (const word of joined.words) {
-      refusals.push(...wordRefusals(word));
+      for (const refusal of wordRefusals(word)) refusals.push(refusal);
       words.push(commandWord(word));
     }
     open = joined.open;

@@ -206,4 +206,21 @@ describe("statementScope", () => {
       "users",
     ]);
   });
+
+  /**
+   * A level's sources and its CTE names were once added to the scope's lists as the arguments of one call, which
+   * overflows the stack past the arguments a runtime takes: measured on 2026-11-04, 700,000 overflowed under Bun 1.4.4
+   * (600,000 did not) and 130,000 under Node 24.22.1, whose V8 is the engine of Chrome and Edge. A million is past both.
+   */
+  test("a FROM list of 1,000,000 tables names every one", () => {
+    const { sources } = scopeAt(`SELECT | FROM ${"t, ".repeat(999_999)}last`);
+    expect(sources.length).toBe(1_000_000);
+    expect(names([sources[0], sources[999_998], sources[999_999]])).toEqual(["t", "t", "last"]);
+  });
+
+  test("a WITH list of 1,000,000 CTEs names every one", () => {
+    const { ctes } = scopeAt(`WITH ${"c AS (), ".repeat(999_999)}last AS () SELECT |`);
+    expect(ctes.length).toBe(1_000_000);
+    expect([ctes[0], ctes[999_998], ctes[999_999]]).toEqual(["c", "c", "last"]);
+  });
 });
