@@ -2570,7 +2570,7 @@ Found in the review of #1572; both predate it.
 
 ### D246. The confirmation gate does not know Databend's destructive forms
 
-`isDangerousQuery` in `src/components/QuerySafetyDialog.tsx` asks first for a statement whose operative keyword is in `DANGEROUS_KEYWORDS` (`DELETE`, `DROP`, `TRUNCATE`, `ALTER`, `GRANT`, `REVOKE`, `UPDATE`, `MERGE`), or whose code holds an `UPDATE` followed by `SET`, and that one set serves every SQL engine.
+`isDangerousQuery` in `src/lib/sql/dangerous-query.ts` asks first for a statement whose operative keyword is in `DANGEROUS_KEYWORDS` (`DELETE`, `DROP`, `TRUNCATE`, `ALTER`, `GRANT`, `REVOKE`, `UPDATE`, `MERGE`), or whose code holds an `UPDATE` followed by `SET`, and that one set serves every SQL engine.
 Databend has destructive forms the set does not name: `INSERT OVERWRITE`, `REPLACE INTO`, `OPTIMIZE TABLE ... PURGE`, the `VACUUM` forms, `FLASHBACK TABLE`, `COPY INTO ... PURGE = true`, `REMOVE @stage`, `EXECUTE IMMEDIATE`, `CALL` and a `SETTINGS (...)` clause.
 Some write from a SELECT shape: `nextval` and the table functions `fuse_amend`, `set_cache_capacity`, `fuse_vacuum2`, `fuse_vacuum_temporary_table` and the two `fuse_vacuum_drop_*_index` (`table_function_factory.rs` in Databend's source).
 So Run sends each of them with no confirmation unless its text also holds an `UPDATE ... SET` pair; `docs/providers/databend.md` states the list under its known limitations.
@@ -4059,11 +4059,11 @@ Found 2026-10-29 in the review of #1950; pre-existing.
 
 ### D409. The dangerous-query gate is a pure function tested from a component test file
 
-On `main` the gate, `isDangerousQuery` and `writesUnderGrammar` with the helpers they call, lives in `src/components/QuerySafetyDialog.tsx`.
+The gate, `isDangerousQuery` and `writesUnderGrammar` with the helpers they call, lives in `src/lib/sql/dangerous-query.ts` since #1990, and `src/components/QuerySafetyDialog.tsx` re-exports both.
 Its tests live in `tests/components/QuerySafetyDialog.test.tsx`: the `isDangerousQuery` block and the blocks from Snowflake's confirmation forms to the end of the file, about 1640 of its 3131 lines, render nothing and call the two functions directly.
-The hooks import the gate from the component (`src/hooks/use-query-execution.ts`, `src/workspace/hooks/use-query-adapter.ts`), so the tests that stub it mock the component's module (`tests/hooks/use-query-execution.test.ts`, `tests/hooks/script-cancel-contract.test.ts`, `tests/components/StudioWorkspace.test.tsx`).
+The hooks still import the gate through that re-export (`src/hooks/use-query-execution.ts`, `src/workspace/hooks/use-query-adapter.ts`), so the tests that stub it mock the component's module (`tests/hooks/use-query-execution.test.ts`, `tests/hooks/script-cancel-contract.test.ts`, `tests/components/StudioWorkspace.test.tsx`).
 Five unit test files import the gate from the component too: `tests/unit/db/destructive-commands.test.ts` and the BigQuery, Couchbase, Druid and carriage-return comment tests in `tests/unit/sql/`.
-Open PR #1990 moves the gate to `src/lib/sql/dangerous-query.ts` and leaves its tests where they are.
+#1990 moved the gate's code only: its tests, its imports and its stub seams stayed where they were.
 
 Found 2026-10-29 in the review of #1990; pre-existing.
 
@@ -5275,7 +5275,7 @@ X13 already names this site in its **Done when**, so the change that settles X13
 
 ### U43. The gate's SQL keyword test prompts on a Redis read whose arguments include `update` and then `set`
 
-`isDangerousQuery` in `src/components/QuerySafetyDialog.tsx` runs its SQL keyword test in front of the Redis row of `NON_SQL_DESTRUCTIVE_VOCABULARY`, and that test's unanchored `UPDATE ... SET` probe finds the two words anywhere in the buffer.
+`isDangerousQuery` in `src/lib/sql/dangerous-query.ts` runs its SQL keyword test in front of the Redis row of `NON_SQL_DESTRUCTIVE_VOCABULARY`, and that test's unanchored `UPDATE ... SET` probe finds the two words anywhere in the buffer.
 So a legal read whose arguments include `update` and then `set` opens the Query Safety Check dialog, and posts the command for AI analysis, on both execution paths: `MGET update set`, `HMGET h update set` and `EXISTS update set` each ask, while the Redis row alone answers no for each (measured against the two functions on 2026-09-23, with `DEL k` asking under both as the control).
 What the keyword test adds for Redis is a prompt on a buffer that leads with a SQL write keyword, and Redis has no command by any of those names, so that text errors without it.
 

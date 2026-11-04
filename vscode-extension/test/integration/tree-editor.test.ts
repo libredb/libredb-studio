@@ -20,7 +20,7 @@ import { ConnectionStore } from "../../src/host/connections/connection-store";
 import type { ProfileEntry } from "../../src/host/connections/profile";
 import { BindingStore } from "../../src/host/editor/bindings";
 import { cancelQuery, type EditorCommandDeps, newQuery, selectRows } from "../../src/host/editor/commands";
-import { NOTHING_TO_RUN, runQuery } from "../../src/host/editor/run-query";
+import { NOTHING_TO_RUN, RUN_ANYWAY, runQuery } from "../../src/host/editor/run-query";
 import { RunRegistry } from "../../src/host/editor/run-registry";
 import { RunService } from "../../src/host/editor/run-service";
 import { OpenConnections } from "../../src/host/open-connections";
@@ -43,6 +43,7 @@ import { FakeSetting } from "../fakes/connections-setting";
 import { FakeTextDocument, FakeTextEditor } from "../fakes/documents";
 import { MemorySecretStorage } from "../fakes/secret-storage";
 import {
+  answerMessages,
   answerQuickPicks,
   CancellationTokenSource,
   languages,
@@ -904,11 +905,27 @@ describe("the Connections tree against PostgreSQL, SQL Server, MySQL and MongoDB
       assert.deepEqual(runs.running(), []);
     });
 
-    it("ends MongoDB text that is not JSON with the provider's sentence, and the child answers the next run (Review Focus 5)", async () => {
+    it("asks once in a modal before MongoDB text that is not JSON, ends it with the provider's sentence, and the child answers the next run (Review Focus 5)", async () => {
       const id = profileId("mongodb");
-      editorFor(id, "{ collection: orders }");
+      const statement = "{ collection: orders }";
+      editorFor(id, statement);
       const from = presented.length;
-      await runQuery(deps);
+      const shown = shownMessages.length;
+      // The integration config loads no reset hook, so the scripted answer is put back before any later case.
+      answerMessages(() => RUN_ANYWAY);
+      try {
+        await runQuery(deps);
+      } finally {
+        answerMessages(() => undefined);
+      }
+      // The gate reads MongoDB text that is not JSON as unreadable rather than safe, so Run asks before the provider refuses it.
+      assert.deepEqual(
+        shownMessages
+          .slice(shown)
+          .filter(({ options }) => options?.modal === true)
+          .map(({ level, options, items }) => ({ level, options, items })),
+        [{ level: "warning", options: { modal: true, detail: statement }, items: [RUN_ANYWAY] }],
+      );
       const error = failed(from);
       assert.ok(error instanceof BackendError, String(error));
       console.log(`mongodb: text that is not JSON answered ${error.code}: ${JSON.stringify(error.message)}`);

@@ -372,7 +372,7 @@ function serveBackend(): RunQueryParams[] {
   const child = createMessageConnection(new StreamMessageReader(up), new StreamMessageWriter(down));
   const runs: RunQueryParams[] = [];
   child.onRequest(METHODS.openConnection, () => ({ description: ZERO_LEVELS }));
-  child.onRequest(METHODS.runTarget, (params: RunTargetParams) => ({ statement: params.text }));
+  child.onRequest(METHODS.runTarget, (params: RunTargetParams) => ({ statement: params.text, dangerous: false }));
   child.onRequest(METHODS.runQuery, (params: RunQueryParams) => {
     runs.push(params);
     return PAGE;
