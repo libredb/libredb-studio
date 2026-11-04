@@ -91,6 +91,11 @@ export async function POST(req: NextRequest) {
     }
 
     const connection = await resolveConnection(body, guard.session);
+    // An inline record may name no type, or a type that is no string; it names no provider to read, so it is refused in
+    // `POST /api/db/provider-meta`'s words rather than reaching the factory, which fails on it with a TypeError.
+    if (!connection.type || typeof connection.type !== "string") {
+      return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
+    }
 
     // Before any provider is built: a request this route cannot read costs no provider.
     const fields = readAnalysisFields(body);

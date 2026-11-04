@@ -513,6 +513,22 @@ describe("POST /api/db/statement/analyze without governance", () => {
     expect(createDatabaseProvider).not.toHaveBeenCalled();
   });
 
+  // As POST /api/db/provider-meta answers it: a record with no type names no provider to read, which is the caller's.
+  test.each([
+    ["no type", {}],
+    ["an empty type", { type: "" }],
+    ["a type that is not a string", { type: 5 }],
+  ])("an inline connection with %s answers 400, and builds nothing", async (_label, type) => {
+    const connection = { id: "inline-x", name: "Inline", host: "127.0.0.1", port: 1, ...type };
+
+    expect(await analyze({ connection, text: TWO, ...at(19) })).toEqual({
+      status: 400,
+      body: { error: "Valid connection configuration is required" },
+      retryAfter: null,
+    });
+    expect(createDatabaseProvider).not.toHaveBeenCalled();
+  });
+
   // H4, under the Kubernetes access review: a seed the caller's role may not see is a miss like any other.
   test("under the Kubernetes access review, a seed the caller's role may not see answers 404 CONNECTION_NOT_FOUND", async () => {
     Object.assign(process.env, {
