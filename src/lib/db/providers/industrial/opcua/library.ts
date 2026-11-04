@@ -52,7 +52,7 @@ import {
   type HistoryReadResult,
   type UserIdentityInfo,
 } from "node-opcua-client";
-import { OPCUA_LIMIT_NODES, OPCUA_POLICY_NONE, OPCUA_READ_ATTRIBUTES } from "./constants";
+import { OPCUA_LIMIT_NODES, OPCUA_POLICY_NONE, OPCUA_READ_ATTRIBUTES, OPCUA_WALK_ATTRIBUTES } from "./constants";
 import type { OpcuaDataValue, OpcuaEndpoint, OpcuaReadOnlyClient, OpcuaServerLimits } from "./client";
 import type { OpcuaConnectionOptions } from "./connection";
 import { openReadOnlySession, OPCUA_TRANSPORT_SETTINGS, type OpcuaLibraryBridge } from "./session";
@@ -300,9 +300,10 @@ export const OPCUA_LIBRARY_BRIDGE: OpcuaLibraryBridge = {
 
   /** Browse answers in this provider's shape, with the folder flag derived from the node class. */
   shapeBrowse: (answers, nodeIds) =>
-    // oxlint-disable-next-line no-map-spread -- a row is a new object, built from the ten answers; nothing of the library's is modified.
+    // oxlint-disable-next-line no-map-spread -- a row is a new object, built from the answers; nothing of the library's is modified.
     (answers as unknown as readonly BrowseResult[]).map((answer, at) => ({
       nodeId: nodeIds[at] ?? "",
+      // oxlint-disable-next-line no-map-spread -- each reference is a new object; the type definition is spread only where the server gave one.
       references: (answer.references ?? []).map((reference) => ({
         // `nsu=` where the server gave one, because a namespace INDEX is a per-session position.
         nodeId: reference.nodeId.toString(),
@@ -312,6 +313,12 @@ export const OPCUA_LIBRARY_BRIDGE: OpcuaLibraryBridge = {
         referenceTypeId: reference.referenceTypeId.toString(),
         // Derived, because a server publishes no such flag; Method is the one class never browsed.
         mayHaveChildren: NodeClass[reference.nodeClass] !== "Method",
+        // A reference with no type definition carries the null node id, which names no type.
+        ...(reference.typeDefinition === null ||
+        reference.typeDefinition === undefined ||
+        reference.typeDefinition.isEmpty()
+          ? {}
+          : { typeDefinition: reference.typeDefinition.toString() }),
       })),
       ...(answer.continuationPoint === null || answer.continuationPoint === undefined
         ? {}
@@ -387,6 +394,33 @@ export const OPCUA_LIBRARY_BRIDGE: OpcuaLibraryBridge = {
     });
   },
 
+  /**
+   * The read roots walk's facts in this provider's shape: `OPCUA_WALK_ATTRIBUTES` per node back to one row. The row's
+   * status is the NodeClass attribute's, the DataType's is kept apart since a server may refuse it alone, and the
+   * BrowseName keeps its namespace index. No value is read.
+   */
+  shapeFacts: (answers, nodeIds) => {
+    const per = OPCUA_WALK_ATTRIBUTES.length;
+    const values = answers as unknown as readonly DataValue[];
+    return nodeIds.map((nodeId, at) => {
+      const [nodeClass, dataType, browseName, displayName] = values.slice(at * per, at * per + per);
+      const classNumber: unknown = nodeClass?.value?.value;
+      const typeId: unknown = dataType?.value?.value;
+      const qualified: unknown = browseName?.value?.value;
+      const text: unknown = displayName?.value?.value;
+      return {
+        nodeId,
+        value: null,
+        ...(typeof classNumber === "number" ? { nodeClass: NodeClass[classNumber] ?? "Unspecified" } : {}),
+        ...(typeId === null || typeId === undefined ? {} : { dataTypeId: String(typeId) }),
+        dataTypeStatusCode: statusName(dataType?.statusCode),
+        ...(qualifiedName(qualified) === undefined ? {} : { browseName: qualifiedName(qualified) }),
+        ...(localizedText(text) === undefined ? {} : { displayName: localizedText(text) }),
+        statusCode: statusName(nodeClass?.statusCode),
+      } as OpcuaDataValue;
+    });
+  },
+
   /** One history page in this provider's shape, with the continuation point it did or did not give. */
   shapeHistory: (answers, nodeId) => {
     const [answer] = answers as unknown as readonly HistoryReadResult[];
@@ -407,6 +441,20 @@ export const OPCUA_LIBRARY_BRIDGE: OpcuaLibraryBridge = {
     };
   },
 };
+
+/** A QualifiedName's namespace index and name, or undefined for anything else. */
+function qualifiedName(raw: unknown): { readonly namespaceIndex: number; readonly name: string } | undefined {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const { namespaceIndex, name } = raw as { namespaceIndex?: unknown; name?: unknown };
+  return typeof namespaceIndex === "number" && typeof name === "string" ? { namespaceIndex, name } : undefined;
+}
+
+/** A LocalizedText's text, or undefined for anything else. */
+function localizedText(raw: unknown): string | undefined {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const { text } = raw as { text?: unknown };
+  return typeof text === "string" ? text : undefined;
+}
 
 /**
  * Browse through the library, named so the call site above reads as one line.

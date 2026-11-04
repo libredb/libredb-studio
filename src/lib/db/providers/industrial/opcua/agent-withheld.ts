@@ -473,3 +473,131 @@ export async function deniedAncestry(
   }
   return found;
 }
+
+/**
+ * The namespace-0 type definitions the read roots walk prunes, with everything beneath a node of one: the session and
+ * subscription diagnostics, the security configuration (certificate groups, trust lists, key credentials,
+ * authorization services, user management, configuration files), the roles, and the PubSub key management. Defence in
+ * depth inside a root, never the boundary: a vendor type that holds the same is not on it, and a node of one inside a
+ * declared root is answered, since the operator declared that subtree readable. The table is not extended here.
+ */
+export const OPCUA_PRUNED_TYPE_DEFINITIONS: ReadonlyMap<OpcuaNodeId, string> = new Map([
+  ["i=2026", "SessionsDiagnosticsSummaryType"],
+  ["i=2029", "SessionDiagnosticsObjectType"],
+  ["i=2196", "SessionDiagnosticsArrayType"],
+  ["i=2197", "SessionDiagnosticsVariableType"],
+  ["i=2243", "SessionSecurityDiagnosticsArrayType"],
+  ["i=2244", "SessionSecurityDiagnosticsType"],
+  ["i=2171", "SubscriptionDiagnosticsArrayType"],
+  ["i=2172", "SubscriptionDiagnosticsType"],
+  ["i=12581", "ServerConfigurationType"],
+  ["i=13813", "CertificateGroupFolderType"],
+  ["i=12555", "CertificateGroupType"],
+  ["i=12522", "TrustListType"],
+  ["i=17496", "KeyCredentialConfigurationFolderType"],
+  ["i=18001", "KeyCredentialConfigurationType"],
+  ["i=23556", "AuthorizationServicesConfigurationFolderType"],
+  ["i=17852", "AuthorizationServiceConfigurationType"],
+  ["i=24264", "UserManagementType"],
+  ["i=25731", "ApplicationConfigurationType"],
+  ["i=16662", "ApplicationConfigurationFolderType"],
+  ["i=15437", "ConfigurationFileType"],
+  ["i=15550", "ApplicationConfigurationFileType"],
+  ["i=26871", "ProvisionableDeviceType"],
+  ["i=15607", "RoleSetType"],
+  ["i=15620", "RoleType"],
+  ["i=15452", "SecurityGroupFolderType"],
+  ["i=15471", "SecurityGroupType"],
+  ["i=25346", "PubSubKeyPushTargetFolderType"],
+  ["i=25337", "PubSubKeyPushTargetType"],
+  ["i=15906", "PubSubKeyServiceType"],
+]);
+
+/**
+ * The namespace-0 data types a value of which the read roots walk never answers: a session's or subscription's
+ * diagnostics, a client application's description, a user identity token, an identity mapping rule, a user account, a
+ * trust list, and the PubSub key management objects. A Variable of one is pruned, and an answer whose Read returns one
+ * is answered as an id outside the roots. Defence in depth for the same reason as the type definitions, except where
+ * the answer-time check reads it.
+ */
+export const OPCUA_PRUNED_DATA_TYPES: ReadonlyMap<OpcuaNodeId, string> = new Map([
+  ["i=865", "SessionDiagnosticsDataType"],
+  ["i=868", "SessionSecurityDiagnosticsDataType"],
+  ["i=874", "SubscriptionDiagnosticsDataType"],
+  ["i=308", "ApplicationDescription"],
+  ["i=316", "UserIdentityToken"],
+  ["i=319", "AnonymousIdentityToken"],
+  ["i=322", "UserNameIdentityToken"],
+  ["i=325", "X509IdentityToken"],
+  ["i=938", "IssuedIdentityToken"],
+  ["i=15634", "IdentityMappingRuleType"],
+  ["i=24281", "UserManagementDataType"],
+  ["i=12554", "TrustListDataType"],
+  ["i=23601", "SecurityGroupDataType"],
+  ["i=25270", "PubSubKeyPushTargetDataType"],
+]);
+
+/** Words that name a credential wherever they sit inside a word of a name. */
+const CREDENTIAL_WORDS: ReadonlySet<string> = new Set([
+  "password",
+  "passwd",
+  "passphrase",
+  "pwd",
+  "secret",
+  "credential",
+  "privatekey",
+  "apikey",
+  "accesskey",
+  "token",
+  "jwt",
+  "psk",
+  "connectionstring",
+  "connstr",
+  "passwort",
+  "kennwort",
+  "passcode",
+  "pincode",
+  "keystore",
+]);
+
+/**
+ * Words that name a credential only as the whole last word of a name: a key, a pass, a PIN or an SNMP community ends
+ * a credential's name (EncryptionKey, MqttPass, DevicePIN, ReadCommunity), not when it starts one (KeyPressure,
+ * PassCount, PinCount) or is part of a word (Keyboard, Bypass, Spindle).
+ */
+const CREDENTIAL_LAST_WORDS: ReadonlySet<string> = new Set(["key", "pass", "pin", "community"]);
+
+/** A data source name is a connection string as a word of its own (DSN, Db_DSN), never inside a word. */
+const CREDENTIAL_WHOLE_WORDS: ReadonlySet<string> = new Set(["dsn"]);
+
+/** A word with and without a trailing plural `s`, so `Passwords` and `ApiKeys` are held to `password` and `key`. */
+const forms = (word: string): readonly string[] => (word.endsWith("s") ? [word, word.slice(0, -1)] : [word]);
+
+/**
+ * Whether a name names a credential, failing closed: its words, split at every character that is not a letter or a
+ * digit, at every change from lower to upper case and at every boundary between a letter and a digit, each in lower
+ * case with and without a trailing plural `s`, and every two adjacent words joined. A name is named when any word, or
+ * any two adjacent words joined, holds one of the any-word words anywhere inside it, since a one-case compound
+ * (`devicepassword`, `DEVICEPASSWORD`, `adminpwd2`) has no boundary to split at; when its last word that is not a
+ * number is a key, a pass, a PIN or a community; and when any word is a DSN. So `DB_Password`, `Passwords`,
+ * `password1`, `ApiKeys`, `Secret_2`, `EncryptionKey2`, `MqttPass`, `Passwort`, `Passcode`, `DevicePIN`, `DbConnStr`
+ * and `DSN` are named, and so are `Tokenizer` and `Secretary`, which hold `token` and `secret`; `KeyPressure`,
+ * `Keyboard`, `PassCount`, `PinCount`, `Bypass` and `Passage` are not. The read roots walk prunes a node so named, as
+ * defence in depth: the words are frozen, and a credential name they miss inside a declared root is answered.
+ */
+export function namesCredential(name: string): boolean {
+  const words = name
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([A-Za-z])(\d)/g, "$1 $2")
+    .replace(/(\d)([A-Za-z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
+    .filter((word) => word !== "")
+    .map((word) => word.toLowerCase());
+  const holds = (word: string): boolean =>
+    forms(word).some((form) => [...CREDENTIAL_WORDS].some((named) => form.includes(named)));
+  const last = words.filter((word) => !/^\d+$/.test(word)).at(-1) ?? "";
+  if (forms(last).some((form) => CREDENTIAL_LAST_WORDS.has(form))) return true;
+  if (words.some((word) => forms(word).some((form) => CREDENTIAL_WHOLE_WORDS.has(form)))) return true;
+  return words.some((word, at) => holds(word) || (at > 0 && holds(`${words[at - 1]}${word}`)));
+}

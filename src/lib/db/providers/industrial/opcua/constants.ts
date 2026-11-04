@@ -233,6 +233,21 @@ export const OPCUA_READ_ATTRIBUTES = Object.freeze([
 ] as const);
 
 /**
+ * The attributes the read roots walk asks for, per node, in this order: the facts it decides membership on.
+ *
+ * FOUR, NOT TEN, and no Value: the walk reads every member of the read roots, and a Value per node would carry every
+ * process value of the plant model to decide which nodes may be read. NodeClass and DataType decide what kind of node
+ * it is on the node's own attributes rather than on what a browse claimed, and BrowseName arrives qualified with its
+ * namespace index, which the standard identity properties are matched by. DisplayName names a root to the agent.
+ */
+export const OPCUA_WALK_ATTRIBUTES = Object.freeze([
+  2, //  NodeClass
+  14, // DataType
+  3, //  BrowseName
+  4, //  DisplayName
+] as const);
+
+/**
  * The operational-limit nodes read once per session, each with the variable it is (Part 5 6.3.11).
  *
  * `i=2735` and `i=2737` are the continuation-point counts and sit under ServerCapabilities itself;

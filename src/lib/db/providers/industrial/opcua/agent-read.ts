@@ -52,6 +52,7 @@ import type {
   OpcuaBrowseDirection,
   OpcuaDataValue,
   OpcuaNodeId,
+  OpcuaReadList,
   OpcuaReadOnlyClient,
   OpcuaReference,
   OpcuaServerLimits,
@@ -240,9 +241,9 @@ export function boundedAgentClient(
       charge();
       return session.releaseBrowseContinuationPoints(points);
     },
-    read: async (nodeIds: readonly OpcuaNodeId[]) => {
+    read: async (nodeIds: readonly OpcuaNodeId[], list?: OpcuaReadList) => {
       charge();
-      return session.read(nodeIds);
+      return list === undefined ? session.read(nodeIds) : session.read(nodeIds, list);
     },
     historyRead: async (options: Parameters<OpcuaReadOnlyClient["historyRead"]>[0]) => {
       charge();

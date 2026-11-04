@@ -15,6 +15,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { boundedAgentClient } from "@/lib/db/providers/industrial/opcua/agent-read";
 import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
+import { OPCUA_READ_ATTRIBUTES, OPCUA_WALK_ATTRIBUTES } from "@/lib/db/providers/industrial/opcua/constants";
 
 const PROVIDER = path.join(
   import.meta.dir,
@@ -152,6 +153,21 @@ describe("the client seam", () => {
  * none, no Write, Call, AddNodes, DeleteNodes, AddReferences, DeleteReferences, HistoryUpdate, RegisterNodes,
  * TranslateBrowsePathsToNodeIds, TransferSubscriptions or CreateSubscription.
  */
+/**
+ * No request field chooses an attribute: a value read asks for the ten attributes the console shows, and the read
+ * roots walk for the four facts it decides membership on, both fixed lists in `constants.ts` that `session.ts` sends.
+ */
+describe("the two fixed attribute lists", () => {
+  test("a value read's ten and the walk's four, and no other list", () => {
+    expect([...OPCUA_READ_ATTRIBUTES]).toEqual([13, 2, 14, 15, 16, 17, 18, 20, 5, 4]);
+    expect([...OPCUA_WALK_ATTRIBUTES]).toEqual([2, 14, 3, 4]);
+    expect(Object.isFrozen(OPCUA_READ_ATTRIBUTES)).toBe(true);
+    expect(Object.isFrozen(OPCUA_WALK_ATTRIBUTES)).toBe(true);
+    const session = code("session.ts");
+    expect(session.match(/attributeId/g)?.length).toBe(2);
+  });
+});
+
 describe("the agent's client", () => {
   test("holds exactly the eight read members of the seam, and its request count", () => {
     const session = new Proxy({} as OpcuaReadOnlyClient, {

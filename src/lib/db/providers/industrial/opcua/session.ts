@@ -27,6 +27,7 @@ import {
   OPCUA_MAX_MESSAGE_BYTES,
   OPCUA_READ_ATTRIBUTES,
   OPCUA_TYPE,
+  OPCUA_WALK_ATTRIBUTES,
 } from "./constants";
 import type {
   OpcuaBrowseResult,
@@ -90,6 +91,8 @@ export interface OpcuaLibraryBridge {
   /** Shape the library's own answers into this provider's, which is where decoding lives. */
   shapeBrowse(answers: readonly unknown[], nodeIds: readonly OpcuaNodeId[]): readonly OpcuaBrowseResult[];
   shapeRead(answers: readonly unknown[], nodeIds: readonly OpcuaNodeId[]): readonly OpcuaDataValue[];
+  /** The facts read's answers, `OPCUA_WALK_ATTRIBUTES` per node, as one row per node. */
+  shapeFacts(answers: readonly unknown[], nodeIds: readonly OpcuaNodeId[]): readonly OpcuaDataValue[];
   shapeHistory(answers: readonly unknown[], nodeId: OpcuaNodeId): OpcuaHistoryPage;
 }
 
@@ -362,22 +365,22 @@ export async function openReadOnlySession(
         await session.browseNext(points, true);
       });
     },
-    read: async (nodeIds) =>
-      guarded("A read", async () =>
-        bridge.shapeRead(
-          // One request for the value and the nine attributes beside it, per node, in the order
-          // `OPCUA_READ_ATTRIBUTES` names. Ten requests would be ten round trips for one row.
-          await session.read(
-            nodeIds.flatMap((nodeId) =>
-              OPCUA_READ_ATTRIBUTES.map((attributeId) => ({
-                nodeId,
-                attributeId,
-              })),
-            ),
+    read: async (nodeIds, list = "values") =>
+      guarded("A read", async () => {
+        // One request for every attribute of the fixed list, per node, in the order it names: the value and the nine
+        // beside it (`OPCUA_READ_ATTRIBUTES`), or the walk's four facts (`OPCUA_WALK_ATTRIBUTES`). One request per
+        // attribute would be ten round trips for one row.
+        const attributes = list === "facts" ? OPCUA_WALK_ATTRIBUTES : OPCUA_READ_ATTRIBUTES;
+        const answers = await session.read(
+          nodeIds.flatMap((nodeId) =>
+            attributes.map((attributeId) => ({
+              nodeId,
+              attributeId,
+            })),
           ),
-          nodeIds,
-        ),
-      ),
+        );
+        return list === "facts" ? bridge.shapeFacts(answers, nodeIds) : bridge.shapeRead(answers, nodeIds);
+      }),
     historyRead: async (request) =>
       guarded("A history read", async () =>
         bridge.shapeHistory(

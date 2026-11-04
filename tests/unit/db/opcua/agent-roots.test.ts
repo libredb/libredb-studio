@@ -6,12 +6,23 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  answerTimeOutside,
+  keyIn,
   OPCUA_IDENTITY_PROPERTIES,
   OPCUA_NAMESPACE0_ROOTS,
   OPCUA_READ_ROOT_MAX_LENGTH,
   OPCUA_READ_ROOTS_MAX,
+  OPCUA_READ_SET_MAX_DEPTH,
+  OPCUA_READ_SET_MAX_NODES,
+  OPCUA_READ_SET_MAX_REQUESTS,
+  OPCUA_READ_ROOTS_SENTENCES,
+  OpcuaReadRootsError,
+  outwardNote,
+  proveReadSet,
   readRootRefusals,
+  readRootSentence,
 } from "@/lib/db/providers/industrial/opcua/agent-roots";
+import type { OpcuaBrowseResult, OpcuaDataValue, OpcuaReference } from "@/lib/db/providers/industrial/opcua/client";
 
 const NODESETS = join(process.cwd(), "node_modules", "node-opcua-nodesets", "nodesets");
 
@@ -259,5 +270,503 @@ describe("the standard identity properties", () => {
     expect(di.get("ns=1;i=6161")?.browseName).toBe("1:Lock");
     expect(di.get("ns=1;i=6163")?.browseName).toBe("1:LockingClient");
     expect(di.get("ns=1;i=6164")?.browseName).toBe("1:LockingUser");
+  });
+});
+
+/** A scripted server for the walk: nodes by key, each with its facts and its forward references, and a request log. */
+interface FakeChild {
+  readonly target: string;
+  readonly ref?: string;
+  readonly name?: string;
+  readonly typeDefinition?: string;
+}
+interface FakeNode {
+  readonly nodeClass?: string;
+  readonly classStatus?: string;
+  readonly dataType?: string;
+  readonly dataTypeStatus?: string;
+  readonly ns?: number;
+  readonly name?: string;
+  readonly display?: string;
+  readonly browseStatus?: string;
+  readonly children?: readonly FakeChild[];
+}
+
+const PLANT = "urn:plant";
+const TABLE = [
+  "http://opcfoundation.org/UA/",
+  "urn:local",
+  PLANT,
+  "http://opcfoundation.org/UA/Diagnostics",
+  "http://opcfoundation.org/UA/DI/",
+];
+
+function fakeServer(
+  nodes: Readonly<Record<string, FakeNode>>,
+  options: { readonly page?: number; readonly nextStatus?: string } = {},
+) {
+  const log: string[] = [];
+  const pending = new Map<string, OpcuaReference[]>();
+  let points = 0;
+  const reference = (child: FakeChild): OpcuaReference => {
+    const node = nodes[child.target];
+    const name = child.name ?? node?.name ?? child.target;
+    return {
+      nodeId: child.target,
+      browseName: name,
+      displayName: node?.display ?? name,
+      nodeClass: node?.nodeClass ?? "Object",
+      referenceTypeId: child.ref ?? "ns=0;i=47",
+      mayHaveChildren: true,
+      ...(child.typeDefinition === undefined ? {} : { typeDefinition: child.typeDefinition }),
+    };
+  };
+  const page = (references: OpcuaReference[]): Pick<OpcuaBrowseResult, "references" | "continuationPoint"> => {
+    const size = options.page ?? Number.POSITIVE_INFINITY;
+    if (references.length <= size) return { references };
+    points += 1;
+    const point = new Uint8Array([points]);
+    pending.set(String(points), references.slice(size));
+    return { references: references.slice(0, size), continuationPoint: point };
+  };
+  const client = {
+    browse: async (ids: readonly string[]) => {
+      log.push(`browse ${ids.join(",")}`);
+      return ids.map((nodeId) => {
+        const node = nodes[nodeId];
+        if (node === undefined) return { nodeId, references: [], statusCode: "BadNodeIdUnknown" };
+        if (node.browseStatus !== undefined) return { nodeId, references: [], statusCode: node.browseStatus };
+        return { nodeId, statusCode: "Good", ...page((node.children ?? []).map(reference)) };
+      });
+    },
+    browseNext: async (list: readonly Uint8Array[]) => {
+      log.push("browseNext");
+      const rest = pending.get(String(list[0]?.[0])) ?? [];
+      if (options.nextStatus !== undefined) return [{ nodeId: "", references: [], statusCode: options.nextStatus }];
+      return [{ nodeId: "", statusCode: "Good", ...page(rest) }];
+    },
+    read: async (ids: readonly string[], list?: string) => {
+      log.push(`read:${list} ${ids.join(",")}`);
+      return ids.map((nodeId): OpcuaDataValue => {
+        const node = nodes[nodeId];
+        if (node === undefined)
+          return { nodeId, value: null, statusCode: "BadNodeIdUnknown", dataTypeStatusCode: "BadNodeIdUnknown" };
+        return {
+          nodeId,
+          value: null,
+          ...(node.classStatus === undefined ? { nodeClass: node.nodeClass ?? "Object" } : {}),
+          ...(node.dataType === undefined ? {} : { dataTypeId: node.dataType }),
+          dataTypeStatusCode: node.dataTypeStatus ?? "Good",
+          browseName: { namespaceIndex: node.ns ?? 2, name: node.name ?? nodeId },
+          displayName: node.display ?? node.name ?? nodeId,
+          statusCode: node.classStatus ?? "Good",
+        };
+      });
+    },
+  };
+  return { client, log };
+}
+
+const CHUNKS = { browse: 20, read: 200 } as const;
+const ROOT = `nsu=${PLANT};s=Line`;
+const variable = (name: string, over: Partial<FakeNode> = {}): FakeNode => ({
+  nodeClass: "Variable",
+  dataType: "ns=0;i=11",
+  name,
+  ...over,
+});
+const prove = (nodes: Record<string, FakeNode>, roots: readonly string[] = [ROOT], options = {}) => {
+  const server = fakeServer(nodes, options);
+  return { server, set: proveReadSet(server.client, roots, TABLE, CHUNKS) };
+};
+
+describe("proveReadSet", () => {
+  test("follows Organizes, HasComponent, HasOrderedComponent and HasProperty, and no other reference type", async () => {
+    const { set } = prove({
+      "ns=2;s=Line": {
+        name: "Line",
+        children: [
+          { target: "ns=2;s=A", ref: "ns=0;i=35" },
+          { target: "ns=2;s=B", ref: "ns=0;i=47" },
+          { target: "ns=2;s=C", ref: "ns=0;i=49" },
+          { target: "ns=2;s=D", ref: "ns=0;i=46" },
+          { target: "ns=2;s=E", ref: "ns=0;i=36" },
+          { target: "ns=2;s=F", ref: "ns=0;i=48" },
+          { target: "ns=2;s=G", ref: "ns=0;i=45" },
+          { target: "ns=2;s=H", ref: "ns=2;i=900" },
+        ],
+      },
+      ...Object.fromEntries(["A", "B", "C", "D", "E", "F", "G", "H"].map((n) => [`ns=2;s=${n}`, variable(n)])),
+    });
+    const proved = await set;
+    expect([...proved.members.keys()].sort()).toEqual(["ns=2;s=A", "ns=2;s=B", "ns=2;s=C", "ns=2;s=D", "ns=2;s=Line"]);
+    expect(proved.outward.get("ns=2;s=Line")).toBe(4);
+    expect(proved.kept.get("ns=2;s=Line")?.map((r) => r.referenceTypeId)).toEqual(["i=35", "i=47", "i=49", "i=46"]);
+  });
+
+  test("namespace 0, the diagnostics namespace, an index past the table and an unkeyable id are outside", async () => {
+    const table = [...TABLE, PLANT.replace("plant", "other")];
+    const local = await proveReadSet(
+      fakeServer({
+        "ns=2;s=Line": {
+          name: "Line",
+          children: [
+            { target: "ns=0;i=2253" },
+            { target: "ns=3;i=1" },
+            { target: "ns=9;s=Far" },
+            { target: "nsu=http://opcfoundation.org/UA/Diagnostics;i=7" },
+            { target: "ns=2;b=A" },
+            { target: "ns=1;s=Local" },
+          ],
+        },
+        "ns=1;s=Local": variable("Local", { ns: 1 }),
+      }).client,
+      [ROOT],
+      table,
+      CHUNKS,
+    );
+    expect([...local.members.keys()]).toEqual(["ns=2;s=Line", "ns=1;s=Local"]);
+    expect(local.outward.get("ns=2;s=Line")).toBe(5);
+  });
+
+  test("an id in a namespace whose URI the table lists twice is outside", async () => {
+    const table = [...TABLE, "urn:twin", "urn:twin"];
+    const { client } = fakeServer({
+      "ns=2;s=Line": { name: "Line", children: [{ target: "ns=5;s=A" }, { target: "nsu=urn:twin;s=B" }] },
+      "ns=5;s=A": variable("A"),
+    });
+    const proved = await proveReadSet(client, [ROOT], table, CHUNKS);
+    expect([...proved.members.keys()]).toEqual(["ns=2;s=Line"]);
+    expect(proved.outward.get("ns=2;s=Line")).toBe(2);
+    const refused = await proveReadSet(client, ["nsu=urn:twin;s=A"], table, CHUNKS).catch((e: Error) => e.message);
+    expect(refused).toBe(
+      "Read root nsu=urn:twin;s=A is ambiguous on this server: its namespace URI appears more than once in the server's namespace table. Nothing was answered.",
+    );
+  });
+
+  test("a root whose URI sits at index 0, or in the diagnostics namespace, refuses before anything is sent", async () => {
+    const { client, log } = fakeServer({});
+    const table = [PLANT, ...TABLE.filter((uri) => uri !== PLANT)];
+    expect(await proveReadSet(client, [ROOT], table, CHUNKS).catch((e: Error) => e.message)).toBe(
+      "Read root nsu=urn:plant;s=Line resolves into namespace 0 on this server, which is never read beneath a root outside the fixed table. Nothing was answered.",
+    );
+    expect(
+      await proveReadSet(client, ["nsu=http://opcfoundation.org/UA/Diagnostics;i=1"], TABLE, CHUNKS).catch(
+        (e: Error) => e.message,
+      ),
+    ).toStartWith(
+      "Read root nsu=http://opcfoundation.org/UA/Diagnostics;i=1 resolves into the OPC Foundation diagnostics namespace",
+    );
+    expect(await proveReadSet(client, ["nsu=urn:elsewhere;s=Line"], TABLE, CHUNKS).catch((e: Error) => e.message)).toBe(
+      "Read root nsu=urn:elsewhere;s=Line is not on this server: its namespace URI is not in the server's namespace table. Nothing was answered.",
+    );
+    expect(log).toEqual([]);
+  });
+
+  test("a root the server does not answer Good for, or one the prune catches, refuses the read whole", async () => {
+    for (const [nodes, expected] of [
+      [
+        {},
+        "Read root nsu=urn:plant;s=Line could not be read on this server: it answered BadNodeIdUnknown. Nothing was answered.",
+      ],
+      [
+        { "ns=2;s=Line": { classStatus: "BadUserAccessDenied" } },
+        "Read root nsu=urn:plant;s=Line could not be read on this server: it answered BadUserAccessDenied. Nothing was answered.",
+      ],
+      [
+        { "ns=2;s=Line": { name: "AdminPassword" } },
+        "Read root nsu=urn:plant;s=Line is of a kind agent mode never reads (its class, type, data type or name), so nothing beneath it is read: an operator declares another root.",
+      ],
+    ] as const) {
+      const { set, server } = prove(nodes as Record<string, FakeNode>);
+      const refused = await set.catch((e: Error) => e);
+      expect(refused).toBeInstanceOf(OpcuaReadRootsError);
+      expect((refused as Error).message).toBe(expected);
+      expect(server.log).toEqual([`read:facts ns=2;s=Line`]);
+    }
+  });
+
+  test("a DAG costs one visit per node, and a cycle ends", async () => {
+    const { set, server } = prove({
+      "ns=2;s=Line": { name: "Line", children: [{ target: "ns=2;s=A" }, { target: "ns=2;s=B" }] },
+      "ns=2;s=A": { name: "A", children: [{ target: "ns=2;s=C" }] },
+      "ns=2;s=B": { name: "B", children: [{ target: "ns=2;s=C" }] },
+      "ns=2;s=C": { name: "C", children: [{ target: "ns=2;s=Line" }] },
+    });
+    const proved = await set;
+    expect(proved.members.size).toBe(4);
+    expect(proved.kept.get("ns=2;s=B")?.map((r) => r.nodeId)).toEqual(["ns=2;s=C"]);
+    expect(proved.kept.get("ns=2;s=C")?.map((r) => r.nodeId)).toEqual(["ns=2;s=Line"]);
+    expect(server.log.filter((line) => line.startsWith("browse")).join(" ")).toBe(
+      "browse ns=2;s=Line browse ns=2;s=A,ns=2;s=B browse ns=2;s=C",
+    );
+  });
+
+  test("a member at the depth stop is browsed and counted, and its targets are not added", async () => {
+    const chain: Record<string, FakeNode> = {};
+    for (let level = 0; level <= OPCUA_READ_SET_MAX_DEPTH + 1; level += 1)
+      chain[`ns=2;s=L${level}`] = { name: `L${level}`, children: [{ target: `ns=2;s=L${level + 1}` }] };
+    const { set } = prove(chain, [`nsu=${PLANT};s=L0`]);
+    const proved = await set;
+    expect(proved.members.has(`ns=2;s=L${OPCUA_READ_SET_MAX_DEPTH}`)).toBe(true);
+    expect(proved.members.has(`ns=2;s=L${OPCUA_READ_SET_MAX_DEPTH + 1}`)).toBe(false);
+    expect(proved.outward.get(`ns=2;s=L${OPCUA_READ_SET_MAX_DEPTH}`)).toBe(1);
+    expect(proved.kept.get(`ns=2;s=L${OPCUA_READ_SET_MAX_DEPTH}`)).toEqual([]);
+  });
+
+  test("the node bound refuses at one past it, never answering part of the set", async () => {
+    const wide = (count: number): Record<string, FakeNode> => ({
+      "ns=2;s=Line": {
+        name: "Line",
+        children: Array.from({ length: count }, (_, i) => ({ target: `ns=2;i=${i}` })),
+      },
+      ...Object.fromEntries(Array.from({ length: count }, (_, i) => [`ns=2;i=${i}`, variable(`V${i}`)])),
+    });
+    const big = { browse: 20, read: 5_000 };
+    const exact = await proveReadSet(fakeServer(wide(OPCUA_READ_SET_MAX_NODES - 1)).client, [ROOT], TABLE, big);
+    expect(exact.members.size).toBe(OPCUA_READ_SET_MAX_NODES);
+    expect(
+      await proveReadSet(fakeServer(wide(OPCUA_READ_SET_MAX_NODES)).client, [ROOT], TABLE, big).catch(
+        (e: Error) => e.message,
+      ),
+    ).toBe(
+      "The read roots of this connection hold more than 2,000 nodes, past what one read proves: an operator declares narrower read roots. Nothing was answered.",
+    );
+  });
+
+  test("the request bound refuses at one past it", async () => {
+    const roots = Array.from({ length: 32 }, (_, i) => `nsu=${PLANT};s=R${i}`);
+    const many = (perRoot: number): Record<string, FakeNode> => {
+      const nodes: Record<string, FakeNode> = {};
+      for (const [r] of roots.entries())
+        for (let i = 0; i < perRoot; i += 1)
+          nodes[i === 0 ? `ns=2;s=R${r}` : `ns=2;s=R${r}.${i}`] = {
+            name: `R${r}.${i}`,
+            children: i + 1 < perRoot ? [{ target: `ns=2;s=R${r}.${i + 1}` }] : [],
+          };
+      return nodes;
+    };
+    const one = { browse: 1, read: 1 };
+    // With chunks of one, the roots' facts cost 32 reads, and each level one browse per member and one facts read per
+    // new member: 32 roots of two members cost 32 + 32 browses + 32 reads + 32 browses = 128, and of three, 192.
+    const fits = await proveReadSet(fakeServer(many(2)).client, roots, TABLE, one);
+    expect(fits.requests).toBe(128);
+    expect(await proveReadSet(fakeServer(many(3)).client, roots, TABLE, one).catch((e: Error) => e.message)).toBe(
+      "The read roots of this connection need more than 150 requests to prove, past what one read proves: an operator declares narrower read roots. Nothing was answered.",
+    );
+    expect(OPCUA_READ_SET_MAX_REQUESTS).toBe(150);
+  });
+
+  test("a member whose Browse is refused is a leaf, and nothing beneath it is a member", async () => {
+    const { set } = prove({
+      "ns=2;s=Line": { name: "Line", children: [{ target: "ns=2;s=Locked" }] },
+      "ns=2;s=Locked": { name: "Locked", browseStatus: "BadUserAccessDenied", children: [{ target: "ns=2;s=Under" }] },
+      "ns=2;s=Under": variable("Under"),
+    });
+    const proved = await set;
+    expect([...proved.leaves]).toEqual(["ns=2;s=Locked"]);
+    expect(proved.members.has("ns=2;s=Under")).toBe(false);
+    expect(proved.kept.get("ns=2;s=Locked")).toEqual([]);
+  });
+
+  test("continuation points are followed to their end, and a refused one or a Bad BrowseNext refuses whole", async () => {
+    const nodes = {
+      "ns=2;s=Line": { name: "Line", children: ["A", "B", "C"].map((n) => ({ target: `ns=2;s=${n}` })) },
+      ...Object.fromEntries(["A", "B", "C"].map((n) => [`ns=2;s=${n}`, variable(n)])),
+    };
+    const paged = await proveReadSet(fakeServer(nodes, { page: 1 }).client, [ROOT], TABLE, CHUNKS);
+    expect(paged.kept.get("ns=2;s=Line")?.map((r) => r.nodeId)).toEqual(["ns=2;s=A", "ns=2;s=B", "ns=2;s=C"]);
+    expect(
+      await proveReadSet(
+        fakeServer(nodes, { page: 1, nextStatus: "BadContinuationPointInvalid" }).client,
+        [ROOT],
+        TABLE,
+        CHUNKS,
+      ).catch((e: Error) => e.message),
+    ).toBe(
+      "The server stopped listing the read roots part way (BadContinuationPointInvalid), so the set cannot be proved. Nothing was answered.",
+    );
+    const refusedPoint = {
+      ...nodes,
+      "ns=2;s=Line": { ...nodes["ns=2;s=Line"], browseStatus: "BadNoContinuationPoints" },
+    };
+    expect(
+      await proveReadSet(fakeServer(refusedPoint).client, [ROOT], TABLE, CHUNKS).catch((e: Error) => e.message),
+    ).toBe(
+      "The server stopped listing the read roots part way (BadNoContinuationPoints), so the set cannot be proved. Nothing was answered.",
+    );
+  });
+
+  test("prune rule 1: a class refused, unspecified, or a Variable whose DataType is refused or withheld", async () => {
+    const { set } = prove({
+      "ns=2;s=Line": {
+        name: "Line",
+        children: ["Refused", "Zero", "NoType", "Session", "Folder", "Plain"].map((n) => ({ target: `ns=2;s=${n}` })),
+      },
+      "ns=2;s=Refused": { name: "Refused", classStatus: "BadUserAccessDenied" },
+      "ns=2;s=Zero": { name: "Zero", nodeClass: "Unspecified" },
+      "ns=2;s=NoType": variable("NoType", { dataTypeStatus: "BadUserAccessDenied" }),
+      "ns=2;s=Session": variable("Session", { dataType: "ns=0;i=865" }),
+      "ns=2;s=Folder": { name: "Folder", nodeClass: "Object", children: [{ target: "ns=2;s=Deep" }] },
+      "ns=2;s=Deep": variable("Deep"),
+      "ns=2;s=Plain": variable("Plain"),
+    });
+    const proved = await set;
+    expect([...proved.members.keys()].sort()).toEqual(["ns=2;s=Deep", "ns=2;s=Folder", "ns=2;s=Line", "ns=2;s=Plain"]);
+    expect(proved.outward.get("ns=2;s=Line")).toBe(4);
+  });
+
+  test("prune rule 2 by a withheld type definition, rule 3 by qualified name, rule 4 by a credential name", async () => {
+    const { set } = prove({
+      "ns=2;s=Line": {
+        name: "Line",
+        children: [
+          { target: "ns=2;s=Session", typeDefinition: "ns=0;i=2029" },
+          { target: "ns=2;s=Lock" },
+          { target: "ns=2;s=Condition" },
+          { target: "ns=2;s=OwnClientUserId" },
+          { target: "ns=2;s=Secret" },
+          { target: "ns=2;s=Pump" },
+        ],
+      },
+      "ns=2;s=Session": { name: "Session", children: [{ target: "ns=2;s=Who" }] },
+      "ns=2;s=Who": variable("Who"),
+      "ns=2;s=Lock": { name: "Lock", ns: 4, children: [{ target: "ns=2;s=LockingUser" }] },
+      "ns=2;s=LockingUser": variable("LockingUser", { ns: 4 }),
+      "ns=2;s=Condition": variable("ClientUserId", { ns: 0 }),
+      "ns=2;s=OwnClientUserId": variable("ClientUserId", { ns: 2 }),
+      "ns=2;s=Secret": variable("ApiToken"),
+      "ns=2;s=Pump": variable("Pump"),
+    });
+    const proved = await set;
+    expect([...proved.members.keys()].sort()).toEqual(["ns=2;s=Line", "ns=2;s=OwnClientUserId", "ns=2;s=Pump"]);
+    expect(proved.outward.get("ns=2;s=Line")).toBe(4);
+  });
+
+  test("a namespace-0 root's members are its fixed rows, read and never browsed", async () => {
+    const nodes: Record<string, FakeNode> = {
+      "i=2256": { name: "ServerStatus", nodeClass: "Variable", dataType: "ns=0;i=862", ns: 0 },
+    };
+    for (const row of OPCUA_NAMESPACE0_ROOTS[0]?.rows ?? [])
+      nodes[row.nodeId] = { name: row.browseName, nodeClass: "Variable", dataType: "ns=0;i=13", ns: 0 };
+    const { set, server } = prove(nodes, ["i=2256"]);
+    const proved = await set;
+    expect(proved.members.size).toBe(13);
+    expect(server.log.every((line) => line.startsWith("read:facts"))).toBe(true);
+    expect(proved.roots).toEqual([
+      {
+        nodeId: "i=2256",
+        browseName: "ServerStatus",
+        displayName: "ServerStatus",
+        nodeClass: "Variable",
+        referenceTypeId: null,
+      },
+    ]);
+  });
+
+  test("the units properties a Variable lists are kept by kind, and one left outside is recorded", async () => {
+    const { set } = prove({
+      "ns=2;s=Line": {
+        name: "Line",
+        children: [{ target: "ns=2;s=Temp" }, { target: "ns=2;s=Flow" }, { target: "ns=2;s=Bare" }],
+      },
+      "ns=2;s=Temp": variable("Temp", {
+        children: [
+          { target: "ns=2;s=Temp.EU", ref: "ns=0;i=46", name: "EngineeringUnits" },
+          { target: "ns=2;s=Temp.Range", ref: "ns=0;i=46", name: "EURange" },
+        ],
+      }),
+      "ns=2;s=Temp.EU": variable("EngineeringUnits", { dataType: "ns=0;i=887" }),
+      "ns=2;s=Temp.Range": variable("EURange", { dataType: "ns=0;i=884" }),
+      "ns=2;s=Flow": variable("Flow", {
+        children: [{ target: "ns=0;i=1", ref: "ns=0;i=46", name: "EngineeringUnits" }],
+      }),
+      "ns=2;s=Bare": variable("Bare"),
+    });
+    const proved = await set;
+    expect(proved.units.get("ns=2;s=Temp")).toEqual({
+      units: "ns=2;s=Temp.EU",
+      range: "ns=2;s=Temp.Range",
+      outside: false,
+    });
+    expect(proved.units.get("ns=2;s=Flow")).toEqual({ outside: true });
+    expect(proved.units.get("ns=2;s=Bare")).toBeUndefined();
+  });
+
+  test("the walk's requests depend on the roots and the server, never on anything else", async () => {
+    const nodes = {
+      "ns=2;s=Line": { name: "Line", children: ["A", "B"].map((n) => ({ target: `ns=2;s=${n}` })) },
+      "ns=2;s=A": variable("A"),
+      "ns=2;s=B": variable("B"),
+    };
+    const first = prove(nodes);
+    const second = prove(nodes);
+    expect((await first.set).requests).toBe(4);
+    await second.set;
+    expect(first.server.log).toEqual(second.server.log);
+  });
+});
+
+describe("the sentences", () => {
+  test("a fragment is framed with the element's index inside the sentence", () => {
+    expect(readRootSentence({ index: 3, reason: "is longer than 512 characters." })).toBe(
+      "agentReadRoots[3] is longer than 512 characters.",
+    );
+    expect(readRootSentence({ reason: "is empty." })).toBe("agentReadRoots is empty.");
+  });
+
+  test("the whole-read refusals name only what the operator wrote", () => {
+    expect(OPCUA_READ_ROOTS_SENTENCES.unreadable("i=2256", "BadNodeIdUnknown")).toBe(
+      "Read root i=2256 could not be read on this server: it answered BadNodeIdUnknown. Nothing was answered.",
+    );
+  });
+
+  test("the outward note counts and names nothing else", () => {
+    expect(outwardNote(1)).toBe(
+      "1 reference of this node leads outside this connection's read roots and is not listed.",
+    );
+    expect(outwardNote(4)).toBe(
+      "4 references of this node lead outside this connection's read roots and are not listed.",
+    );
+  });
+});
+
+describe("answerTimeOutside", () => {
+  const row = (over: Partial<OpcuaDataValue>): OpcuaDataValue => ({
+    nodeId: "ns=2;s=A",
+    value: 1,
+    statusCode: "Good",
+    ...over,
+  });
+  test("a value on a valueless class, a changed class, no class, or a withheld data type answers as outside", () => {
+    expect(answerTimeOutside({ nodeClass: "Variable" }, row({ nodeClass: "Variable", dataTypeId: "ns=0;i=11" }))).toBe(
+      false,
+    );
+    expect(answerTimeOutside({ nodeClass: "Object" }, row({ nodeClass: "Object" }))).toBe(true);
+    expect(answerTimeOutside({ nodeClass: "Object" }, row({ nodeClass: "Object", value: null }))).toBe(false);
+    expect(answerTimeOutside({ nodeClass: "Object" }, row({ nodeClass: "Variable" }))).toBe(true);
+    expect(answerTimeOutside({ nodeClass: "Variable" }, row({}))).toBe(true);
+    expect(answerTimeOutside({ nodeClass: "Variable" }, row({ nodeClass: "Variable", dataTypeId: "ns=0;i=868" }))).toBe(
+      true,
+    );
+  });
+});
+
+describe("keyIn", () => {
+  test("keys by the table entry, never by a cached index", () => {
+    expect(keyIn("nsu=urn:plant;s=A", TABLE)).toEqual({ key: "ns=2;s=A", namespace: "other" });
+    expect(keyIn("ns=0;i=85", TABLE)).toEqual({ key: "i=85", namespace: "0" });
+    expect(keyIn("ns=3;i=1", TABLE)).toEqual({ key: "ns=3;i=1", namespace: "diagnostics" });
+    expect(
+      keyIn(
+        "ns=7;i=1",
+        ["http://opcfoundation.org/UA/", "x", "http://opcfoundation.org/UA/", "", "", "", "", ""].map((u, i) =>
+          i === 7 ? "http://opcfoundation.org/UA/" : u,
+        ),
+      ),
+    ).toBeUndefined();
+    expect(keyIn("ns=5;i=1", TABLE)).toBeUndefined();
+    expect(keyIn("nsu=urn:nowhere;i=1", TABLE)).toBeUndefined();
+    expect(keyIn("ns=2;b=A", TABLE)).toBeUndefined();
   });
 });

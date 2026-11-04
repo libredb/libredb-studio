@@ -79,6 +79,7 @@ function bridge(
     readLimits: async () => ({ maxNodesPerRead: 2_500 }),
     shapeBrowse: () => [],
     shapeRead: () => [],
+    shapeFacts: () => [],
     shapeHistory: (_answers, nodeId) => ({
       nodeId,
       values: [],
@@ -218,6 +219,44 @@ describe("browse", () => {
   });
 });
 
+describe("read", () => {
+  test("a value read asks for the ten attributes, and a facts read for the four, per node, in one request", async () => {
+    const sent: unknown[][] = [];
+    const shaped: string[] = [];
+    const base = bridge([endpoint("SignAndEncrypt", PLC_THUMB)], fresh());
+    const client = await openReadOnlySession(
+      {
+        ...base,
+        shapeRead: () => {
+          shaped.push("values");
+          return [];
+        },
+        shapeFacts: () => {
+          shaped.push("facts");
+          return [];
+        },
+        openSession: async (opened) => ({
+          ...(await base.openSession(opened)),
+          read: async (nodes) => {
+            sent.push([...nodes]);
+            return [];
+          },
+        }),
+      },
+      options(),
+    );
+    await client.read(["i=2258"]);
+    await client.read(["i=2258", "ns=3;s=A"], "facts");
+    const pairs = (nodeId: string, attributes: readonly number[]) =>
+      attributes.map((attributeId) => ({ nodeId, attributeId }));
+    expect(sent).toEqual([
+      pairs("i=2258", [13, 2, 14, 15, 16, 17, 18, 20, 5, 4]),
+      [...pairs("i=2258", [2, 14, 3, 4]), ...pairs("ns=3;s=A", [2, 14, 3, 4])],
+    ]);
+    expect(shaped).toEqual(["values", "facts"]);
+  });
+});
+
 describe("browse continuation points", () => {
   test("following one does not release it, and releasing one does", async () => {
     const record = fresh();
@@ -285,6 +324,7 @@ describe("the dial itself", () => {
       readLimits: async () => ({}),
       shapeBrowse: () => [],
       shapeRead: () => [],
+      shapeFacts: () => [],
       shapeHistory: (_answers, nodeId) => ({
         nodeId,
         values: [],
@@ -405,6 +445,7 @@ describe("a library throw becomes a sentence, and the code in it is read", () =>
       },
       shapeBrowse: () => [],
       shapeRead: () => [],
+      shapeFacts: () => [],
       shapeHistory: (_answers, nodeId) => ({
         nodeId,
         values: [],
@@ -674,6 +715,7 @@ describe("a library throw while the session is being opened", () => {
       readLimits: async () => ({}),
       shapeBrowse: () => [],
       shapeRead: () => [],
+      shapeFacts: () => [],
       shapeHistory: (_answers, nodeId) => ({
         nodeId,
         values: [],

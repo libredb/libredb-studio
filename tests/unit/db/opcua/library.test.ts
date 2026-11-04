@@ -27,7 +27,7 @@ import {
   DataType,
 } from "node-opcua-client";
 import { OPCUA_LIBRARY_BRIDGE } from "@/lib/db/providers/industrial/opcua/library";
-import { OPCUA_READ_ATTRIBUTES } from "@/lib/db/providers/industrial/opcua/constants";
+import { OPCUA_READ_ATTRIBUTES, OPCUA_WALK_ATTRIBUTES } from "@/lib/db/providers/industrial/opcua/constants";
 
 const SOURCE = new Date("2026-10-12T06:00:00.000Z");
 const SERVER = new Date("2026-10-12T06:00:00.250Z");
@@ -173,6 +173,52 @@ describe("shapeRead: nine attributes back to one row", () => {
   });
 });
 
+describe("shapeFacts: the four facts the read roots walk reads, back to one row", () => {
+  test("the control: the walk asks for NodeClass, DataType, BrowseName and DisplayName, in this order", () => {
+    expect([...OPCUA_WALK_ATTRIBUTES]).toEqual([2, 14, 3, 4]);
+  });
+
+  test("one node's four answers become one row, the BrowseName qualified with its namespace index", () => {
+    const answers = [
+      new DataValue({ value: new Variant({ dataType: DataType.Int32, value: NodeClass.Variable }) }),
+      new DataValue({
+        value: new Variant({ dataType: DataType.NodeId, value: new NodeId(NodeId.NodeIdType.NUMERIC, 12, 0) }),
+      }),
+      new DataValue({
+        value: new Variant({
+          dataType: DataType.QualifiedName,
+          value: new QualifiedName({ namespaceIndex: 2, name: "LockingUser" }),
+        }),
+      }),
+      new DataValue({
+        value: new Variant({ dataType: DataType.LocalizedText, value: new LocalizedText({ text: "Locking user" }) }),
+      }),
+    ];
+    const [row] = OPCUA_LIBRARY_BRIDGE.shapeFacts(answers, ["ns=2;i=6164"]);
+    expect(row).toEqual({
+      nodeId: "ns=2;i=6164",
+      value: null,
+      nodeClass: "Variable",
+      dataTypeId: "ns=0;i=12",
+      dataTypeStatusCode: "Good",
+      browseName: { namespaceIndex: 2, name: "LockingUser" },
+      displayName: "Locking user",
+      statusCode: "Good",
+    });
+  });
+
+  test("a refused NodeClass is the row's status, and a refused DataType is its own, with no value for either", () => {
+    const refused = new DataValue({ statusCode: StatusCodes.BadUserAccessDenied });
+    const [row] = OPCUA_LIBRARY_BRIDGE.shapeFacts([refused, refused, refused, refused], ["ns=3;s=A"]);
+    expect(row).toEqual({
+      nodeId: "ns=3;s=A",
+      value: null,
+      dataTypeStatusCode: "BadUserAccessDenied",
+      statusCode: "BadUserAccessDenied",
+    });
+  });
+});
+
 describe("shapeBrowse: references, and the folder flag nothing publishes", () => {
   function reference(name: string, nodeClass: NodeClass): ReferenceDescription {
     return new ReferenceDescription({
@@ -204,6 +250,18 @@ describe("shapeBrowse: references, and the folder flag nothing publishes", () =>
       // node count 352 above the figure it quotes.
       ["ResetToServerDefaults", "Method", false],
     ]);
+  });
+
+  test("each reference keeps its type definition, and a reference the server gave none has none", () => {
+    const typed = reference("ClientSession1", NodeClass.Object);
+    typed.typeDefinition = new ExpandedNodeId(NodeId.NodeIdType.NUMERIC, 2029, 0);
+    const answer = new BrowseResult({
+      statusCode: StatusCodes.Good,
+      references: [typed, reference("SlowUInt1", NodeClass.Variable)],
+    });
+    const [shaped] = OPCUA_LIBRARY_BRIDGE.shapeBrowse([answer], ["i=85"]);
+    // The null node id a ReferenceDescription carries by default is no type, never `ns=0;i=0`.
+    expect(shaped?.references.map((row) => row.typeDefinition)).toEqual(["ns=0;i=2029", undefined]);
   });
 
   test("a continuation point survives as bytes, so the same request can consume it", () => {

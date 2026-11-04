@@ -4,6 +4,8 @@
  * server will not say.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   canonicalNodeId,
   deniedAncestry,
@@ -21,6 +23,9 @@ import {
   withheldNodes,
   withheldReason,
   withheldRootOf,
+  namesCredential,
+  OPCUA_PRUNED_DATA_TYPES,
+  OPCUA_PRUNED_TYPE_DEFINITIONS,
 } from "@/lib/db/providers/industrial/opcua/agent-withheld";
 import type {
   OpcuaBrowseDirection,
@@ -468,5 +473,136 @@ describe("deniedAncestry", () => {
     await expect(deniedAncestry(fake.client, ["ns=3;s=A"], set, keyOf)).rejects.toThrow(
       "it answered BadContinuationPointInvalid for a node's parents",
     );
+  });
+});
+
+/**
+ * Defence in depth inside a read root: a node named for a credential is pruned, failing closed. The words are frozen,
+ * so a name they miss inside a root is answered, because the operator declared that subtree readable.
+ */
+describe("namesCredential", () => {
+  test("a name names a credential by its words, and by a credential word inside one", () => {
+    for (const name of ["DB_Password", "PrivateKey", "APIKey", "connection-string", "SECRET", "userPwd", "AuthToken"])
+      expect(namesCredential(name)).toBe(true);
+    for (const name of ["KeyPressure", "Passage", "SlowUInt1", "Boiler #1", ""])
+      expect(namesCredential(name)).toBe(false);
+  });
+
+  test("plural, digit-suffixed and one-case compound forms are named, failing closed", () => {
+    for (const name of [
+      "Passwords",
+      "password1",
+      "DEVICEPASSWORD",
+      "devicepassword",
+      "adminpwd2",
+      "ApiKeys",
+      "mqttpassword",
+      "Secret_2",
+      "EncryptionKey2",
+      "Credentials",
+      "accesstokens",
+      "MQTTPSK",
+      "dbconnstring",
+    ])
+      expect(namesCredential(name)).toBe(true);
+    // A credential word is matched inside a word, since a one-case compound (`authtokenvalue`, `devicesecret`) has no
+    // boundary to split at; so `Tokenizer` and `Secretary`, which hold `token` and `secret`, are withheld too.
+    for (const name of ["Tokenizer", "Secretary", "authtokenvalue", "devicesecret"])
+      expect(namesCredential(name)).toBe(true);
+  });
+
+  test("a token is named as a word anywhere, and a key or a pass as the last word, as the class says", () => {
+    for (const name of [
+      "Token",
+      "RefreshToken",
+      "BearerToken",
+      "SessionToken",
+      "ApiToken",
+      "Token_Expiry",
+      "JWT",
+      "Key",
+      "EncryptionKey",
+      "SharedKey",
+      "PreSharedKey",
+      "Site.Keys",
+      "PSK",
+      "ConnString",
+      "Pass",
+      "MqttPass",
+    ])
+      expect(namesCredential(name)).toBe(true);
+    for (const name of ["KeyPressure", "Keyboard", "Monkey", "PassCount", "Bypass", "KeyedTank1", "Hockey"])
+      expect(namesCredential(name)).toBe(false);
+  });
+
+  test("a German password, a passcode, a PIN, a short connection string, a DSN and an SNMP community are named", () => {
+    for (const name of [
+      "Passwort",
+      "AdminPasswort",
+      "Kennwort",
+      "Passcode",
+      "DoorPasscode",
+      "DevicePIN",
+      "Device_Pin",
+      "PIN",
+      "Pins",
+      "PinCode",
+      "DbConnStr",
+      "connstr",
+      "DSN",
+      "Db_DSN",
+      "OdbcDsnName",
+      "ReadCommunity",
+      "SnmpCommunity",
+      "KeyStore",
+    ])
+      expect([name, namesCredential(name)]).toEqual([name, true]);
+    // The pinned readable names stay readable, and a PIN or a DSN counts only as a word of its own.
+    for (const name of [
+      "KeyPressure",
+      "Keyboard",
+      "PassCount",
+      "Bypass",
+      "Passage",
+      "PinCount",
+      "Spindle",
+      "Spin",
+      "Pinion",
+      "Opinion",
+      "CommunityPage",
+      "Boiler #1",
+    ])
+      expect([name, namesCredential(name)]).toEqual([name, false]);
+  });
+});
+
+/** The namespace-0 type definitions and data types the read roots walk prunes, each by its id in the published nodeset. */
+describe("the pruned type definitions and data types", () => {
+  const nodeset = readFileSync(
+    join(process.cwd(), "node_modules", "node-opcua-nodesets", "nodesets", "Opc.Ua.NodeSet2.xml"),
+    "utf8",
+  );
+  const browseNameOf = (id: string): string | undefined => {
+    const at = nodeset.indexOf(` NodeId="${id}" `);
+    if (at < 0) return undefined;
+    const from = nodeset.indexOf('BrowseName="', at) + 'BrowseName="'.length;
+    return nodeset.slice(from, nodeset.indexOf('"', from));
+  };
+
+  test("every id is in namespace 0 and names its node as the nodeset does", () => {
+    for (const table of [OPCUA_PRUNED_TYPE_DEFINITIONS, OPCUA_PRUNED_DATA_TYPES])
+      for (const [id, name] of table) {
+        expect(canonicalNodeId(id)).toBe(id);
+        expect([id, browseNameOf(id)]).toEqual([id, name]);
+      }
+  });
+
+  test("the sessions, security configuration, roles and PubSub key management are covered", () => {
+    expect(OPCUA_PRUNED_TYPE_DEFINITIONS.get("i=2029")).toBe("SessionDiagnosticsObjectType");
+    expect(OPCUA_PRUNED_TYPE_DEFINITIONS.get("i=12581")).toBe("ServerConfigurationType");
+    expect(OPCUA_PRUNED_TYPE_DEFINITIONS.get("i=15620")).toBe("RoleType");
+    expect(OPCUA_PRUNED_TYPE_DEFINITIONS.get("i=15471")).toBe("SecurityGroupType");
+    expect(OPCUA_PRUNED_DATA_TYPES.get("i=865")).toBe("SessionDiagnosticsDataType");
+    expect(OPCUA_PRUNED_DATA_TYPES.get("i=322")).toBe("UserNameIdentityToken");
   });
 });
