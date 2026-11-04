@@ -1345,8 +1345,10 @@ A namespace-0 root the identity may not read refuses the read whole: with every 
 What prunes a node, with its whole subtree:
 
 1. Its NodeClass is not answered `Good`, or is a class other than Object, Method, ObjectType, ReferenceType, DataType and View, unless it is a Variable or VariableType whose DataType the server answered `Good` and that is not one of the withheld data types (session and subscription diagnostics, client descriptions, identity tokens, identity mapping rules, user accounts, trust lists and PubSub key management, `OPCUA_PRUNED_DATA_TYPES`).
+   A node of a class that bears no value whose DataType the server answers all the same is pruned too, since none of those classes has a DataType, so the node is not what its class says.
 2. Its type definition, as the browse answered it, is one of the namespace-0 types that hold session and subscription diagnostics, security configuration, roles or PubSub key management (`OPCUA_PRUNED_TYPE_DEFINITIONS`).
 3. Its qualified BrowseName is a standard identity property (`OPCUA_IDENTITY_PROPERTIES`): `ClientUserId` of the OPC Foundation namespace, which Part 9 gives every condition, and `Lock`, `LockingClient` and `LockingUser` of the DI namespace, the locking object of every DI device and the client and user that hold it.
+   A node whose BrowseName the server does not answer is pruned too, since the name is the only thing that tells an identity property apart.
 4. Its BrowseName or DisplayName names a credential (`namesCredential`).
 
 Rules 1 and 3 are part of the boundary: rule 1 answers a node that classes itself as one kind and carries a value of another as an id outside the roots, and rule 3 keeps other clients' and users' identities out of an answer inside a root, where standard companion models hang them under ordinary plant folders.

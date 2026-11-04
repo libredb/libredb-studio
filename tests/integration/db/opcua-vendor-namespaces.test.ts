@@ -4,8 +4,9 @@
  * user that hold it, a condition's `ClientUserId`, a session object of the standard type, a node named for a
  * credential, a reference out to the Server object, a units property of a session diagnostics data type, nodes whose
  * NodeClass or DataType the server refuses to read, nodes whose NodeClass attribute disagrees with their browse, and
- * one whose DataType changes between the walk and the answer; outside every root, a folder of its own; and a clean
- * process folder declared as the root of a second connection.
+ * one whose DataType changes between the walk and the answer; identity nodes whose BrowseName the server refuses to
+ * read, and a value of an identity data type whose NodeClass attribute says Object, with a child; outside every root, a
+ * folder of its own; and a clean process folder declared as the root of a second connection.
  *
  * A stand-in session would agree with whatever the provider assumed about a server's answers, so this drives the
  * provider's own `queryReadOnly`, over the library, against `node-opcua-server` started here on a port the system
@@ -184,6 +185,53 @@ beforeAll(async () => {
       statusCode: StatusCodes.Good,
     });
   });
+  /** A node beneath the line whose answer to one attribute the server replaces with `answer`. */
+  const answering = <T extends { readAttribute: unknown }>(node: T, attributeId: number, answer: DataValue): string => {
+    const own = (node.readAttribute as (...args: unknown[]) => DataValue).bind(node);
+    node.readAttribute = ((context: unknown, id: number, ...rest: unknown[]) =>
+      id === attributeId ? answer : own(context, id, ...rest)) as T["readAttribute"];
+    return (node as unknown as { nodeId: { toString(): string } }).nodeId.toString();
+  };
+  // The DI locking object, its client and user, and a condition's ClientUserId, each refusing its BrowseName, so
+  // only a server that answers the name could have them told apart from a process value.
+  const unnamedLock = di.addObject({ componentOf: line, browseName: "Lock" });
+  ids.unnamedLock = answering(unnamedLock, AttributeIds.BrowseName, refused);
+  ids.unnamedLockingClient = answering(
+    di.addVariable({
+      componentOf: unnamedLock,
+      browseName: "LockingClient",
+      dataType: "String",
+      value: text(`${PLANTED}-unnamed-client`),
+    }),
+    AttributeIds.BrowseName,
+    refused,
+  );
+  ids.unnamedLockingUser = answering(
+    di.addVariable({
+      componentOf: unnamedLock,
+      browseName: "LockingUser",
+      dataType: "String",
+      value: text(`${PLANTED}-unnamed-user`),
+    }),
+    AttributeIds.BrowseName,
+    refused,
+  );
+  ids.unnamedClientUserId = answering(
+    namespace.addVariable({
+      componentOf: line,
+      browseName: { namespaceIndex: 0, name: "ClientUserId" },
+      dataType: "String",
+      value: text(`${PLANTED}-unnamed-operator`),
+    }),
+    AttributeIds.BrowseName,
+    refused,
+  );
+  // A UserNameIdentityToken value whose NodeClass attribute says Object, with a child of its own.
+  const token = namespace.addVariable({ componentOf: line, browseName: "AuthState", dataType: "ns=0;i=322" });
+  ids.token = answering(token, AttributeIds.NodeClass, classed(1));
+  ids.tokenDetail = namespace
+    .addVariable({ componentOf: token, browseName: "Detail", dataType: "String", value: text(`${PLANTED}-detail`) })
+    .nodeId.toString();
   // A reference from a member out to the Server object, which is never a member whatever reaches it.
   line.addReference({ referenceType: "Organizes", isForward: true, nodeId: "ns=0;i=2253" });
   // Outside every root: a folder beside the line, with a value of its own.
@@ -253,6 +301,13 @@ const OUTSIDE = [
   "refusedType",
   "refusedClass",
   "classedZero",
+  "classedObject",
+  "unnamedLock",
+  "unnamedLockingClient",
+  "unnamedLockingUser",
+  "unnamedClientUserId",
+  "token",
+  "tokenDetail",
   "outside",
 ];
 
@@ -290,20 +345,6 @@ describe("beneath a declared root", () => {
     expect(sent.filter((request) => request.startsWith("read ")).join(" ")).not.toContain(ids.tempUnits);
   });
 
-  test("a node whose NodeClass attribute says Object although it holds a value never answers that value", async () => {
-    for (const kind of KINDS.slice(0, 2)) {
-      const missing = await read(kind(ids.missing), ids.missing);
-      const classed = await read(kind(ids.classedObject), ids.classedObject);
-      expect(classed.answer).toBe(missing.answer);
-      expect(classed.answer).not.toContain(PLANTED);
-      expect(classed.requests.some((request) => request.startsWith("historyRead"))).toBe(false);
-    }
-    // A browse of it lists what the walk kept beneath it, which is nothing, and no value.
-    const browsed = await read({ browse: ids.classedObject }, ids.classedObject);
-    expect(browsed.answer).toContain('"rows":[]');
-    expect(browsed.answer).not.toContain(PLANTED);
-  });
-
   test("a node whose DataType turns withheld between the walk and the answer is answered as a missing id", async () => {
     const missing = await read({ read: [ids.missing] }, ids.missing);
     const shifted = await read({ read: [ids.shifting] }, ids.shifting);
@@ -316,8 +357,8 @@ describe("beneath a declared root", () => {
     requests = [];
     shifts = 0;
     const result = await provider.queryReadOnly(JSON.stringify({ browse: ids.line }), BUDGET);
-    expect(result.rows.map((row) => row.browseName)).toEqual(["Speed", "Temp", "ClassedObject", "Shifting"]);
-    expect(result.warnings?.map((warning) => warning.message)).toEqual([outwardNote(8)]);
+    expect(result.rows.map((row) => row.browseName)).toEqual(["Speed", "Temp", "Shifting"]);
+    expect(result.warnings?.map((warning) => warning.message)).toEqual([outwardNote(12)]);
     expect(JSON.stringify(result)).not.toContain(PLANTED);
     // The answer itself sent nothing: its requests are the walk's alone, the same as a browse of the read roots sends.
     const browsed = [...requests];
@@ -340,7 +381,7 @@ describe("beneath a clean declared root", () => {
   test("every shape beneath the other folder, and that folder itself, answers as a missing id, sending nothing for it", async () => {
     for (const kind of KINDS) {
       const missing = await read(kind(ids.missing), ids.missing, clean);
-      for (const name of ["line", "speed", ...OUTSIDE, "classedObject", "shifting", "temp"]) {
+      for (const name of ["line", "speed", ...OUTSIDE, "shifting", "temp"]) {
         const outside = await read(kind(ids[name] as string), ids[name] as string, clean);
         expect([name, outside.answer]).toEqual([name, missing.answer]);
         expect([name, outside.requests]).toEqual([name, missing.requests]);

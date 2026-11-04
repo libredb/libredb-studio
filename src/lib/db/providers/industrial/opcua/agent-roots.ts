@@ -425,29 +425,35 @@ const isListed = (status: string): boolean => status.startsWith("Good") || statu
 const REFUSED_POINTS: ReadonlySet<string> = new Set(["BadNoContinuationPoints", "BadContinuationPointInvalid"]);
 
 /**
- * Whether a node's own facts prune it, with its subtree: rule 1, a NodeClass not answered Good, or a class other than
+ * Whether a node's own facts prune it, with its subtree: rule 1, a NodeClass not answered Good, a class other than
  * the valueless ones unless a Variable or VariableType whose DataType was answered Good and is not a withheld data
- * type; rule 3, a standard identity property by its qualified BrowseName; rule 4, a name that names a credential.
+ * type, or a valueless class whose DataType was answered Good all the same, since none of those classes has one and
+ * the answer says the node is not what it claims; rule 3, a standard identity property by its qualified BrowseName,
+ * or a BrowseName the server did not answer, since only the name tells an identity property apart; rule 4, a name
+ * that names a credential.
  */
 function prunedByFacts(facts: OpcuaDataValue, table: readonly string[]): boolean {
   if (!isGood(facts.statusCode)) return true;
   const nodeClass = facts.nodeClass;
   if (nodeClass === undefined) return true;
-  if (!VALUELESS_CLASSES.has(nodeClass)) {
+  const typed = facts.dataTypeStatusCode !== undefined && isGood(facts.dataTypeStatusCode);
+  if (VALUELESS_CLASSES.has(nodeClass)) {
+    if (typed && facts.dataTypeId !== undefined) return true;
+  } else {
     if (nodeClass !== "Variable" && nodeClass !== "VariableType") return true;
-    if (facts.dataTypeStatusCode === undefined || !isGood(facts.dataTypeStatusCode)) return true;
+    if (!typed) return true;
     const dataType = facts.dataTypeId === undefined ? undefined : canonicalNodeId(facts.dataTypeId);
     if (dataType === undefined || OPCUA_PRUNED_DATA_TYPES.has(dataType)) return true;
   }
   const qualified = facts.browseName;
+  if (qualified === undefined) return true;
   if (
-    qualified !== undefined &&
     OPCUA_IDENTITY_PROPERTIES.some(
       (property) => property.name === qualified.name && table[qualified.namespaceIndex] === property.namespaceUri,
     )
   )
     return true;
-  return [qualified?.name, facts.displayName].some((name) => name !== undefined && namesCredential(name));
+  return [qualified.name, facts.displayName].some((name) => name !== undefined && namesCredential(name));
 }
 
 /** Whether a browse reference prunes its target: rule 2, a withheld type definition; rule 4, a credential name. */

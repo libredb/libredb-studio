@@ -287,6 +287,8 @@ interface FakeNode {
   readonly dataTypeStatus?: string;
   readonly ns?: number;
   readonly name?: string;
+  /** A status the server answers the BrowseName attribute with instead of the name. */
+  readonly nameStatus?: string;
   readonly display?: string;
   readonly browseStatus?: string;
   readonly children?: readonly FakeChild[];
@@ -357,7 +359,9 @@ function fakeServer(
           ...(node.classStatus === undefined ? { nodeClass: node.nodeClass ?? "Object" } : {}),
           ...(node.dataType === undefined ? {} : { dataTypeId: node.dataType }),
           dataTypeStatusCode: node.dataTypeStatus ?? "Good",
-          browseName: { namespaceIndex: node.ns ?? 2, name: node.name ?? nodeId },
+          ...(node.nameStatus === undefined
+            ? { browseName: { namespaceIndex: node.ns ?? 2, name: node.name ?? nodeId } }
+            : {}),
           displayName: node.display ?? node.name ?? nodeId,
           statusCode: node.classStatus ?? "Good",
         };
@@ -475,6 +479,10 @@ describe("proveReadSet", () => {
       ],
       [
         { "ns=2;s=Line": { name: "AdminPassword" } },
+        "Read root nsu=urn:plant;s=Line is of a kind agent mode never reads (its class, type, data type or name), so nothing beneath it is read: an operator declares another root.",
+      ],
+      [
+        { "ns=2;s=Line": { name: "Line", nameStatus: "BadUserAccessDenied" } },
         "Read root nsu=urn:plant;s=Line is of a kind agent mode never reads (its class, type, data type or name), so nothing beneath it is read: an operator declares another root.",
       ],
     ] as const) {
@@ -641,6 +649,49 @@ describe("proveReadSet", () => {
     const proved = await set;
     expect([...proved.members.keys()].sort()).toEqual(["ns=2;s=Line", "ns=2;s=OwnClientUserId", "ns=2;s=Pump"]);
     expect(proved.outward.get("ns=2;s=Line")).toBe(4);
+  });
+
+  test("prune rule 3 fails closed: a node whose BrowseName the server will not answer is pruned with its subtree", async () => {
+    const { set } = prove({
+      "ns=2;s=Line": {
+        name: "Line",
+        children: ["Lock", "Condition", "Pump"].map((n) => ({ target: `ns=2;s=${n}` })),
+      },
+      "ns=2;s=Lock": {
+        name: "Lock",
+        ns: 4,
+        nameStatus: "BadUserAccessDenied",
+        children: [{ target: "ns=2;s=LockingUser" }],
+      },
+      "ns=2;s=LockingUser": variable("LockingUser", { ns: 4, nameStatus: "BadUserAccessDenied" }),
+      "ns=2;s=Condition": variable("ClientUserId", { ns: 0, nameStatus: "BadUserAccessDenied" }),
+      "ns=2;s=Pump": variable("Pump"),
+    });
+    const proved = await set;
+    expect([...proved.members.keys()].sort()).toEqual(["ns=2;s=Line", "ns=2;s=Pump"]);
+    expect(proved.outward.get("ns=2;s=Line")).toBe(2);
+  });
+
+  test("a node that claims a class bearing no value yet answers a DataType is pruned with its subtree", async () => {
+    const { set } = prove({
+      "ns=2;s=Line": {
+        name: "Line",
+        children: ["Liar", "Folder"].map((n) => ({ target: `ns=2;s=${n}` })),
+      },
+      // A UserNameIdentityToken variable whose own NodeClass attribute says Object.
+      "ns=2;s=Liar": {
+        name: "Liar",
+        nodeClass: "Object",
+        dataType: "ns=0;i=322",
+        children: [{ target: "ns=2;s=Detail" }],
+      },
+      "ns=2;s=Detail": variable("Detail"),
+      // A folder whose DataType the server refuses, as a server answers for a class with no such attribute.
+      "ns=2;s=Folder": { name: "Folder", nodeClass: "Object", dataTypeStatus: "BadAttributeIdInvalid" },
+    });
+    const proved = await set;
+    expect([...proved.members.keys()].sort()).toEqual(["ns=2;s=Folder", "ns=2;s=Line"]);
+    expect(proved.outward.get("ns=2;s=Line")).toBe(1);
   });
 
   test("a namespace-0 root's members are its fixed rows, read and never browsed", async () => {
