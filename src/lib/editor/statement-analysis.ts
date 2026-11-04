@@ -1,13 +1,81 @@
-import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
+import { consoleTextByteLimit, statementRefusal, vocabularyTypedConfirmation } from "@/lib/db/destructive-commands";
 import type { ProviderCapabilities, TypedConfirmationAsk } from "@/lib/db/types";
+import { editorLanguageOf } from "@/lib/editor/tab-language";
+import { hasUnreadableRun, isDangerousQuery } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type RunTargetRange, runnableTarget } from "@/lib/sql/run-target";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import type { DatabaseType } from "@/lib/types";
 
 /**
  * What Run does with the editor's text, decided as the web editor decides it, in parts that hold no component, no React
  * and no Monaco, so that a caller outside the browser reads the same answers.
+ *
+ * The web editor calls the parts one by one: `QueryEditor.tsx` picks the target, `use-query-execution.ts` asks the
+ * refusal, the confirmation gate and `runsAsScript`, and `QuerySafetyDialog` reads `typedConfirmationExpected` and
+ * `hasUnreadableRun`. `analyzeStatement` composes the same parts, in the same order, into one answer.
  */
+
+/** A `[start, end)` pair of UTF-16 code unit offsets into the analysed text. */
+export interface OffsetRange {
+  start: number;
+  end: number;
+}
+
+/** The route a run outside a transaction, without bound params and not an explain, takes: `/api/db/<route>`. */
+export type StatementRoute = "query" | "multi-query";
+
+/** What the person types before a confirmed statement runs, compared exactly, case and whitespace included. */
+export type TypedConfirmation =
+  | { type: "text"; expected: string }
+  | { type: "connection-name"; expected: string; targets: string[] };
+
+/**
+ * What Run does with the text. Every key a variant lists is present, and no other key is.
+ *
+ * - `nothing`: the target holds no code, so nothing is sent.
+ * - `refuse`: the connection type refuses the statement, so nothing is sent and `refusal` is shown as it is. It may
+ *   quote a word of the text.
+ * - `run`: `statement` is sent without asking.
+ * - `confirm`: `statement` is sent once the person confirms, and has typed the expected value where
+ *   `typedConfirmation` is not null. `unreadable` says that part of the statement could not be read, which is a reason
+ *   the gate asks.
+ *
+ * `statement` is the exact text to send. It is not always the text `range` covers: a one-statement selection on an
+ * engine whose `statementTerminator` is `none` is sent without its `;` and the blanks around it.
+ */
+export type StatementAnalysis =
+  | { decision: "nothing" }
+  | { decision: "refuse"; statement: string; range: OffsetRange; refusal: string }
+  | { decision: "run"; statement: string; range: OffsetRange; route: StatementRoute }
+  | {
+      decision: "confirm";
+      statement: string;
+      range: OffsetRange;
+      route: StatementRoute;
+      unreadable: boolean;
+      typedConfirmation: TypedConfirmation | null;
+    };
+
+export interface StatementAnalysisInput {
+  /** The editor's whole text, as written. */
+  text: string;
+  /** The selection; `start === end` is no selection. */
+  selection: RunTargetRange;
+  cursor: number;
+  databaseType: DatabaseType;
+  /** The connection's provider's capabilities: its editor language, its terminator and its query language. */
+  capabilities: ProviderCapabilities;
+  /** The connection's name, which a typed confirmation of the connection asks for. */
+  connectionName: string | undefined;
+}
+
+/**
+ * The refusal of a statement that is confirmed by typing the connection's name, on a connection with no name: an
+ * empty expected value would let an empty field confirm it.
+ */
+export const TYPED_NAME_MISSING_REFUSAL =
+  "This statement is confirmed by typing the connection's name, and this connection has no name, so it cannot run.";
 
 /**
  * Whether Run sends this statement to `POST /api/db/multi-query`, the route that cuts a script into its statements and
@@ -49,7 +117,8 @@ export function runsAsScript(
  * undefined where the ask is the name and there is none to type.
  *
  * An empty name is no name: an exact comparison would let an empty field confirm it. The safety dialog answers
- * undefined with a refusal in place of the typed field and a Proceed button that stays disabled.
+ * undefined with a refusal in place of the typed field and a Proceed button that stays disabled, and
+ * `analyzeStatement` with TYPED_NAME_MISSING_REFUSAL.
  */
 export function typedConfirmationExpected(
   ask: TypedConfirmationAsk,
@@ -57,4 +126,64 @@ export function typedConfirmationExpected(
 ): string | undefined {
   if (ask.type === "text") return ask.text;
   return connectionName === "" ? undefined : connectionName;
+}
+
+/**
+ * What Run does with this text, its selection and its caret on this connection, decided in the web editor's order:
+ *
+ * 1. The target, by `runnableTarget` under the connection's editor language, terminator and grammar: a non-blank
+ *    selection, then the caret's statement, then the whole text, which the range then covers.
+ * 2. A target that holds no code is nothing to run. The web editor sends such a target as it is, which is the one place
+ *    the two differ (`docs/BACKLOG.md` U200).
+ * 3. The connection type's refusal, before anything else is asked of the statement.
+ * 4. The route, and whether the confirmation gate asks; a statement it does not ask about runs.
+ * 5. What the person types, and whether part of the statement could not be read.
+ *
+ * The gate reads the statement that is sent, not the whole text, as the web gate reads the query it is about to run.
+ * Nothing here opens a connection or depends on anything but its input. What the web editor also decides from its own
+ * state is the caller's: Proceed, an explain run, a later page and playground mode skip the gate there, and a
+ * transaction takes every statement whatever the route says.
+ *
+ * Throws the run target's `RangeError` on offsets it cannot honour.
+ */
+export function analyzeStatement(input: StatementAnalysisInput): StatementAnalysis {
+  const { text, selection, cursor, databaseType, capabilities, connectionName } = input;
+  const target = runnableTarget({
+    text,
+    selection,
+    cursor,
+    editorLanguage: editorLanguageOf(capabilities),
+    statementTerminator: capabilities.statementTerminator,
+    grammar: resolveSqlGrammar(databaseType),
+  });
+  const { statement } = target;
+  if (statement.trim() === "") return { decision: "nothing" };
+  const range: OffsetRange = target.range ?? { start: 0, end: text.length };
+
+  const refusal = statementRefusal(statement, databaseType);
+  if (refusal !== undefined) return { decision: "refuse", statement, range, refusal };
+
+  const route: StatementRoute = runsAsScript(statement, databaseType, capabilities.queryLanguage)
+    ? "multi-query"
+    : "query";
+  if (!isDangerousQuery(statement, databaseType)) return { decision: "run", statement, range, route };
+
+  const ask = vocabularyTypedConfirmation(databaseType, statement);
+  let typedConfirmation: TypedConfirmation | null = null;
+  if (ask !== undefined) {
+    const expected = typedConfirmationExpected(ask, connectionName);
+    if (expected === undefined) return { decision: "refuse", statement, range, refusal: TYPED_NAME_MISSING_REFUSAL };
+    typedConfirmation =
+      ask.type === "text"
+        ? { type: "text", expected }
+        : { type: "connection-name", expected, targets: [...ask.targets] };
+  }
+  return {
+    decision: "confirm",
+    statement,
+    range,
+    route,
+    unreadable: hasUnreadableRun(statement, databaseType),
+    typedConfirmation,
+  };
 }

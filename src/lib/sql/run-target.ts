@@ -6,12 +6,13 @@ import { countCodeStatements, type SplitStatement, splitCursorTargets } from "./
 /**
  * What text Run sends: the run target rule, on plain offsets, with no editor in it.
  *
- * Two callers read it.
+ * Three callers read it.
  * `QueryEditor.tsx` reads its selection, text and caret from Monaco and calls the two parts, `selectionTarget` and
- * `cursorTarget`; the VS Code channel's `query/target` calls `runnableTarget`, the whole rule with a target that holds
- * no code answered as nothing to run, with the offsets its editor reports.
- * One rule for both, so the web editor and the extension never disagree about which statement a Run sends; they part
- * only over a target that holds no code, which the web editor sends as it is.
+ * `cursorTarget`; the VS Code channel's `query/target` and `analyzeStatement` (`src/lib/editor/statement-analysis.ts`)
+ * call `runnableTarget`, the whole rule with a target that holds no code answered as nothing to run, on the offsets
+ * they are given.
+ * One rule for all three, so they never disagree about which statement a Run sends; they part only over a target that
+ * holds no code, which the web editor sends as it is (`docs/BACKLOG.md` U200).
  */
 
 /** A `[start, end)` offset pair into the text. */
