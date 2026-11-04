@@ -264,7 +264,9 @@ export function statementScope(sql: string, cursor: number): StatementScope {
     const end = depth === 0 ? sql.length : closeOf(sql, open);
     const read = readCtes(sql, open + 1, end, ctes, depth);
     ctes = read.ctes;
-    cteNames.push(...read.names);
+    // One at a time here and below, never as the arguments of one call: a level may name more CTEs and sources than a
+    // runtime takes arguments (measured: 700,000 overflowed the stack under Bun 1.4.4, and 130,000 under Node 24.22.1).
+    for (const name of read.names) cteNames.push(name);
     for (const body of read.bodies) cteBodies.add(body);
     levels.push({ open, end, ctes });
   }
@@ -272,7 +274,7 @@ export function statementScope(sql: string, cursor: number): StatementScope {
   const sources: ScopeSource[] = [];
   for (let depth = opens.length; depth >= 0; depth--) {
     const { open, end, ctes: visible } = levels[depth];
-    sources.push(...sourcesIn(sql, open + 1, end, new Map(visible), depth));
+    for (const source of sourcesIn(sql, open + 1, end, new Map(visible), depth)) sources.push(source);
     // A CTE body is a query of its own: the statement around it is no enclosing query.
     if (cteBodies.has(open)) break;
   }
