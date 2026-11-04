@@ -9,9 +9,10 @@ import type { BottomPanelMode } from "@/components/studio/BottomPanel";
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
-import { consoleTextByteLimit, statementRefusal } from "@/lib/db/destructive-commands";
+import { statementRefusal } from "@/lib/db/destructive-commands";
 import { executionUiFor } from "@/lib/db/execution-ui";
-import { countCodeStatements, isMultiStatement } from "@/lib/sql/statement-splitter";
+import { runsAsScript } from "@/lib/editor/statement-analysis";
+import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import { hasLoneCarriageReturnInLineComment, hasUnterminatedSpan } from "@/lib/sql/spans";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
@@ -657,36 +658,18 @@ export function useQueryExecution({
         // the statement would run with unbound placeholders. Parameters may only
         // travel to an endpoint that binds them (PR #304 review).
         //
-        // The splitter is a SQL splitter: it cuts on `;` outside quotes. A dialect
-        // that is not SQL has no such separator, so every cut it makes there is an
-        // invented fragment. Measured on Redis (#427): the generated cheatsheet
-        // carried a `;` inside a `#` comment, so the buffer was split, and the
-        // first "statement" was comments only - the run failed with "No command to
-        // run" and the panel reported a successful empty result. Unknown metadata
-        // keeps the pre-existing behaviour, since only a declared language is known
-        // not to be SQL: JSON, and PromQL since #1085, whose single expression the
-        // splitter would cut at a `;` inside a `#` comment exactly as it cut Redis's.
-        // A type whose vocabulary row declares a console text bound is never SQL, and that declaration is static,
-        // so it holds while the metadata above is still null, the window in which the default of "sql" would send
-        // one console text to the splitter.
-        const dialectIsSql =
-          consoleTextByteLimit(activeConnection.type) === undefined &&
-          (metadata?.capabilities.queryLanguage ?? "sql") === "sql";
+        // Whether the statement itself is a script is `runsAsScript`'s question
+        // (`src/lib/editor/statement-analysis.ts`), read under the connection's own
+        // dialect. Unknown metadata keeps the pre-existing behaviour, since only a
+        // declared language is known not to be SQL, so the language is "sql" until
+        // the provider's metadata arrives.
         const useMultiQuery =
           !isExplain &&
           !isLoadMore &&
           !transactionActive &&
           !isPlaygroundRun &&
           !params &&
-          dialectIsSql &&
-          // Under the connection's own dialect, the same record the gate above
-          // reads the statement with: whether a `;` is code depends on the
-          // engine's comment, quoting and bracket rules, and a fragment this
-          // disagrees about is a fragment the route RUNS (S1). The same record says where a
-          // procedural body holds its `;` and which line is a script separator (#1312), so a
-          // PL/SQL unit alone stays on the single-statement route and one followed by `/`
-          // goes to the route that strips the `/`.
-          isMultiStatement(queryToExecute, grammar);
+          runsAsScript(queryToExecute, activeConnection.type, metadata?.capabilities.queryLanguage ?? "sql");
 
         // Use transaction endpoint if a transaction is active or in playground mode. It is sent the
         // text whole and splits a script itself, running each statement on the transaction's

@@ -16,7 +16,7 @@ import { useReturnFocus } from "@/hooks/use-return-focus";
 import { QUERY_SAFETY_ANALYSIS_TIMEOUT_MS } from "@/lib/llm/query-safety";
 import { cn } from "@/lib/utils";
 import { vocabularySendsToModel, vocabularyTypedConfirmation } from "@/lib/db/destructive-commands";
-import type { TypedConfirmationAsk } from "@/lib/db/types";
+import { typedConfirmationExpected } from "@/lib/editor/statement-analysis";
 import { hasUnreadableRun } from "@/lib/sql/dangerous-query";
 import type { DatabaseType } from "@/lib/types";
 
@@ -85,16 +85,6 @@ const MISSING_CONNECTION_NAME =
  */
 const LOCAL_CLASSIFICATION =
   "This editor checked the statement itself: statements for this engine are not sent to an AI provider for a risk analysis.";
-
-/**
- * The text a typed ask is compared with: the ask's own text, or the connection's name, or undefined where the ask is
- * the name and there is none to type, which the dialog answers with MISSING_CONNECTION_NAME.
- */
-function typedConfirmationText(ask: TypedConfirmationAsk, connectionName: string | undefined): string | undefined {
-  if (ask.type === "text") return ask.text;
-  // An empty name is no name: an exact comparison would let an empty field confirm it.
-  return connectionName === "" ? undefined : connectionName;
-}
 
 /**
  * Why the dialog stopped waiting for the AI analysis before it answered: the person chose to skip it, or it did not
@@ -205,7 +195,8 @@ export function QuerySafetyDialog({
     () => vocabularyTypedConfirmation(databaseType as DatabaseType | undefined, query),
     [query, databaseType],
   );
-  const typedExpected = typedAsk === undefined ? undefined : typedConfirmationText(typedAsk, connectionName);
+  // Undefined where the ask is the connection's name and there is none to type, answered with MISSING_CONNECTION_NAME.
+  const typedExpected = typedAsk === undefined ? undefined : typedConfirmationExpected(typedAsk, connectionName);
   // Proceed waits for the analysis and for an exact match, and a refusal in place of the field is never a match,
   // whatever was typed before it replaced the field. The wait for the analysis is bounded: Skip ends it at once and
   // QUERY_SAFETY_ANALYSIS_TIMEOUT_MS ends it anyway, so a slow or hung model can no longer hold every write back.
