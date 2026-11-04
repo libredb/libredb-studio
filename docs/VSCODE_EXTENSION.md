@@ -370,7 +370,8 @@ Select Rows asks the child for `objects/selectStatement`, which writes the state
 - **No login or roles.** The extension serves one person's VS Code: no host or backend code signs anyone in or checks a role, and the host bundle check refuses `src/lib/config/auth-env.ts`.
 - **No storage layer or sync.** Connections are the setting plus SecretStorage, not `src/lib/storage`; the webview's `@/lib/storage` shim throws on any use; editor bindings are in memory only.
 - **A plainer dangerous-query confirmation.** The statement is read by the web editor's own `isDangerousQuery`, but the question is one modal button: no AI risk analysis, and no typed confirmation where the web editor asks for one (an etcd range delete or lease revoke).
-  Select Rows and Load More ask nothing: the first runs a generated SELECT and the second reads more pages of a statement already confirmed.
+  Select Rows and Load More ask nothing: the first runs the read the engine's generator built for the object (a SELECT, a find, a `get`, an `aws s3 ls`), and the second reads more pages of a statement already confirmed.
+  That differs from the web editor on purpose, whose table click goes through the gate, so a generated read on an object whose name the gate cannot read safely (a ClickHouse table named `a$$b`, an S3 bucket with `--` in its name) asks there and not here.
 - **No query events or governance.** The child bundle refuses `src/lib/governance/start.ts` and `src/lib/query-events/sink.ts`, and `query/run` runs no admission gate.
 - **Masking starts off.** The view's saved state starts with `maskingEnabled: false` (`INITIAL_VIEW_STATE`); the person can switch it on and reveal values, since `EXTENSION_MASKING_CONFIG` gives the `user` role both rights.
 - **Some engines are held back.** `ENABLED_PROVIDERS` in `src/host/channel.ts` is every engine of `EXTERNAL_DATABASE_TYPES` except the ones `HELD_BACK` lists with a reason; the catalogue and the factory both follow it.
