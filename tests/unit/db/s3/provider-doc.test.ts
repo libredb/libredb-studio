@@ -1417,7 +1417,7 @@ describe("docs/SECURITY.md: the S3 rows and limits", () => {
       "Qdrant, Weaviate, InfluxDB (InfluxQL), InfluxDB 3 (SQL), S3-compatible object storage and Kubernetes HTTP requests",
     );
     expect(knownLimit("**A statement the editor refuses is never sent and never written to history.**")).toContain(
-      "The Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3 and Kubernetes rows declare both (rows 3.11, 3.12, 3.15, 3.18, 3.20 and 3.25); no other shipped engine declares either.",
+      "The Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3, Kubernetes and Firestore rows declare both, and the Redis row declares a refusal and no bound; no other shipped engine declares either.",
     );
     const s3 = knownLimit("**S3-compatible object storage is reached over a REST client of Studio's own.**");
     expect(s3).toContain("14 minutes of skew were accepted and 20 refused on MinIO, Silo and RustFS");

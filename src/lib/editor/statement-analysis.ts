@@ -147,7 +147,7 @@ export function typedConfirmationExpected(
  * state is the caller's: Proceed, an explain run, a later page and playground mode skip the gate there, and a
  * transaction takes every statement whatever the route says.
  *
- * Throws the run target's `RangeError` on offsets it cannot honour.
+ * Throws the run target's `RunTargetRangeError` on offsets it cannot honour.
  */
 export function analyzeStatement(input: StatementAnalysisInput): StatementAnalysis {
   const { text, selection, cursor, databaseType, capabilities, connectionName } = input;

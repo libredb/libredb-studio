@@ -1047,6 +1047,74 @@ Redis is a key-value store, so the `sql` field carries a Redis command instead o
 
 ---
 
+#### POST /api/db/statement/analyze
+
+What Run would do with the editor's text, decided as the web editor decides it: the statement to send, where it sits, whether the connection type refuses it, whether to ask before it runs and what to type, and which route it takes.
+It runs nothing and opens no database connection: it builds the connection's provider only to read its capabilities, as `POST /api/db/provider-meta` does.
+It records no query event and logs no part of the text, of the statement or of the refusal.
+It is advisory, like the web editor's confirmation dialog: it is not an authorization check, and `POST /api/db/query` does not require it.
+
+**Authentication:** Required, the `auth-token` cookie or, where that channel is on, a bearer access token (see [Authentication](#authentication)), and no admin role.
+Each request spends one slot of the `query` budget (see [Rate Limiting](#rate-limiting)).
+
+**Request:**
+```json
+{
+  "connectionId": "seed:orders-db",
+  "text": "SELECT 1;\nDELETE FROM t;",
+  "selection": { "start": 19, "end": 19 },
+  "cursor": 19
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `connectionId` or `connection` | string or object | Yes | The same connection selector every database route takes |
+| `text` | string | Yes | The editor's whole text as the user sees it, at most 1,000,000 UTF-16 code units; it is never trimmed or normalised |
+| `selection` | `{ "start": integer, "end": integer }` | Yes | The selection, with `start <= end`; `start` equal to `end` is no selection, and a blank selection falls back to the caret |
+| `cursor` | integer | Yes | The caret; an editor that never placed one sends `0` |
+
+Offsets are UTF-16 code units into `text`, the unit of a JavaScript and a Dart string index, so `text.slice(start, end)` and Dart's `text.substring(start, end)` agree.
+`null` is no value for any of these fields, and every other field is ignored.
+
+**Response (200 OK):** an object whose `decision` is one of:
+
+| `decision` | Other fields | Meaning |
+|------------|--------------|---------|
+| `nothing` | none | The target holds no code; send nothing |
+| `refuse` | `statement`, `range`, `refusal` | The connection type refuses the statement; send nothing and show `refusal` |
+| `run` | `statement`, `range`, `route` | Send `statement` without asking |
+| `confirm` | `statement`, `range`, `route`, `unreadable`, `typedConfirmation` | Ask first; send `statement` once the user confirmed, and typed `typedConfirmation.expected` where it is not `null` |
+
+```json
+{"decision":"confirm","statement":"DELETE FROM t","range":{"start":10,"end":23},"route":"query","unreadable":false,"typedConfirmation":null}
+```
+
+Every field a decision lists is present, and no other field is; a client that reads any other `decision` treats the analysis as failed.
+`statement` is the exact text to send; it is not always the text `range` covers, because a one-statement selection on an engine whose editor language is SQL and whose `statementTerminator` capability is `none` is sent without its `;` and the blanks around it.
+`range` is where the target sits in `text`: the selection, the caret's statement, or the whole text where the connection's editor language is not SQL and nothing is selected.
+`route` is `query` (`POST /api/db/query`) or `multi-query` (`POST /api/db/multi-query`), the route of a run outside a transaction, without bound params and not an explain; inside a transaction the statement goes to `POST /api/db/transaction` whatever `route` says, and a connection whose query language is not SQL always answers `query`.
+`refusal` is the connection type's own sentence, shown as it is; it may quote a word of the text, so a client does not log it.
+`unreadable` is `true` when part of the statement could not be read, a run that never closes or a lone carriage return in a line comment, which is a reason to ask; it is `false` wherever the confirmation gate does not read the text as SQL, and the embedded LibreDB store's text is read as SQL, so its unclosed literal is unreadable.
+`typedConfirmation` is `null`, or `{ "type": "text", "expected": "..." }`, or `{ "type": "connection-name", "expected": "<the connection's name>", "targets": ["..."] }`, whose `targets` name what the statement reaches, for display; the user types `expected` exactly, case and whitespace included.
+A statement confirmed by typing the connection's name answers `refuse` on a connection with no name, because an empty expected value would let an empty field confirm it.
+
+**Errors:** the connection is resolved before any field is read, so a connection the caller may not resolve answers its `403`, `404` or `503` whatever the body holds.
+A type the server cannot build, one `LIBREDB_ENABLED_PROVIDERS` leaves out, an unknown type or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
+
+| Status | When |
+|--------|------|
+| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; an inline connection with no `type`, or one that is not a string, `Valid connection configuration is required`, as `POST /api/db/provider-meta` answers it, and an inline connection whose `name` is present and not a string, `null` included, in the same words; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required` or a type `LIBREDB_ENABLED_PROVIDERS` leaves out |
+| `413` | A text over 1,000,000 UTF-16 code units: `The text is <n> UTF-16 code units long, over the 1000000-unit limit for statement analysis. Shorten it to run it.` |
+| `401` | No session (`AUTH_REQUIRED`) |
+| `403` | `CUSTOM_CONNECTIONS_DISABLED` for an inline connection while custom connections are off, or, without governance and the Kubernetes access review, `AUTH_ERROR` for a seed the caller's role may not use |
+| `404` | `CONNECTION_NOT_FOUND` under governance or the Kubernetes access review, for every connection the caller may not see; without them, a seed that does not exist |
+| `429` | The `query` budget is spent (`RATE_LIMITED`, with `Retry-After`) |
+| `503` | `GOVERNANCE_UNAVAILABLE` or `ACCOUNT_STORE_UNAVAILABLE` |
+| `500` | `INTERNAL_ERROR`, for anything else |
+
+---
+
 #### POST /api/db/maintenance
 
 Run database maintenance operations.
@@ -2745,7 +2813,7 @@ single number written here has gone stale every time it was updated:
 | Bucket | Applies to | Default |
 |--------|-----------|---------|
 | `ai` | The `/api/ai/*` routes, plus every `/api/agent/*` route except `GET /api/agent/config`: classifying an objective, starting a run, driving one, reading one, cancelling one, streaming one, and fetching an artifact | 20 requests / 60 seconds |
-| `query` | Every database-reaching `/api/db/*` route, plus `/api/admin/fleet-health`, the three storage data routes (`GET /api/storage`, `PUT /api/storage/{collection}`, `POST /api/storage/migrate`) and the owner's own factor routes (`/api/auth/totp`, `/api/auth/passkey`), together | 120 requests / 60 seconds |
+| `query` | Every database-reaching `/api/db/*` route, plus `POST /api/db/statement/analyze`, which reaches no database, `/api/admin/fleet-health`, the three storage data routes (`GET /api/storage`, `PUT /api/storage/{collection}`, `POST /api/storage/migrate`) and the owner's own factor routes (`/api/auth/totp`, `/api/auth/passkey`), together | 120 requests / 60 seconds |
 
 Routing the same workload through a different endpoint does not multiply the budget - the bucket is
 shared across every route it applies to. All limits are configurable through the `RATE_LIMIT_*`
