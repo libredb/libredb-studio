@@ -36,7 +36,7 @@ export interface RunTargetInput extends RunTargetRule {
 }
 
 /**
- * The rule's refusal of offsets it cannot honour, and the only error it raises.
+ * The rule's refusal of offsets it cannot honour, the one error it raises itself.
  *
  * A `RangeError`, as it always was, and a class of its own so a caller that answers it as its caller's fault can tell
  * it from a `RangeError` the runtime raises, a stack overflow among them, which is the server's (#2204).
