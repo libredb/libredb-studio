@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
-import { findCodeWord, readSqlWord } from "@/lib/sql/words";
+import { type CodeWordQuery, findCodeWord, indexCodeWords, readSqlWord } from "@/lib/sql/words";
 
 /** The word at an index as its text alone - the shape most assertions want. */
 function wordAt(sql: string, index = 0): string | null {
@@ -182,5 +182,67 @@ describe("findCodeWord", () => {
       expect(found, label).toBe(expected);
       expect(elapsed, `${label} took ${elapsed.toFixed(1)}ms`).toBeLessThan(BOUND_MS);
     }
+  });
+});
+
+describe("indexCodeWords", () => {
+  const QUERY: CodeWordQuery = { words: new Set(["UPDATE", "SET"]), prefixes: ["SYS$"], quotedIdentifiers: true };
+  const SQL = `UPDATE t /* UPDATE */ SET a = 'UPDATE', "UPDATE" = 1; update "sys$x"(1) sys$wait SET \`q\` "open`;
+
+  test("lists every code occurrence of each word asked about, in order, where findCodeWord finds them", () => {
+    const code = indexCodeWords(SQL, QUERY);
+    for (const word of QUERY.words) {
+      const found = [];
+      for (let at = findCodeWord(SQL, word); at !== null; at = findCodeWord(SQL, word, at.end)) found.push(at);
+      expect(code.occurrences(word)).toEqual(found);
+    }
+    // Neither the comment, the string nor the quoted name holds a code UPDATE.
+    expect(code.occurrences("UPDATE")).toEqual([
+      { start: 0, end: 6 },
+      { start: 54, end: 60 },
+    ]);
+  });
+
+  test("finds a word from the start, or from the end of an occurrence, as findCodeWord does from there", () => {
+    const code = indexCodeWords(SQL, QUERY);
+    expect(code.find("SET")).toEqual(findCodeWord(SQL, "SET"));
+    const first = code.find("UPDATE");
+    expect(first).toEqual({ start: 0, end: 6 });
+    expect(code.find("UPDATE", first?.end)).toEqual(findCodeWord(SQL, "UPDATE", first?.end));
+    expect(code.find("SET", code.occurrences("SET").at(-1)?.end)).toBeNull();
+    expect(code.find("SET", SQL.length)).toBeNull();
+  });
+
+  test("tells whether some code word starts with a prefix asked about, which a quoted name does not make true", () => {
+    expect(indexCodeWords(SQL, QUERY).startsWith("SYS$")).toBe(true);
+    expect(indexCodeWords(`SELECT "sys$x"(1)`, QUERY).startsWith("SYS$")).toBe(false);
+  });
+
+  test("lists the closed quoted identifiers, quotes included, and no string or unclosed name", () => {
+    const quoted = indexCodeWords(SQL, QUERY).quotedIdentifiers();
+    expect(quoted.map((name) => SQL.slice(name.start, name.end))).toEqual(['"UPDATE"', '"sys$x"', "`q`"]);
+  });
+
+  test("lists nothing it was not asked to look for", () => {
+    const code = indexCodeWords("SELECT 1", QUERY);
+    expect(code.occurrences("UPDATE")).toEqual([]);
+    expect(code.find("SET")).toBeNull();
+    expect(code.quotedIdentifiers()).toEqual([]);
+  });
+
+  test("reads the text under the dialect it is given", () => {
+    const sql = "SELECT 1 # UPDATE t SET x";
+    expect(indexCodeWords(sql, QUERY, resolveSqlGrammar("mysql")).occurrences("UPDATE")).toEqual([]);
+    expect(indexCodeWords(sql, QUERY, resolveSqlGrammar("postgres")).occurrences("UPDATE")).toEqual([
+      { start: 11, end: 17 },
+    ]);
+  });
+
+  test("throws when asked about a word, a prefix or quoted names the query did not name", () => {
+    const code = indexCodeWords(SQL, { words: new Set(["SET"]), prefixes: [], quotedIdentifiers: false });
+    expect(() => code.occurrences("UPDATE")).toThrow("The code word index was not asked about UPDATE.");
+    expect(() => code.find("UPDATE")).toThrow("The code word index was not asked about UPDATE.");
+    expect(() => code.startsWith("SYS$")).toThrow("The code word index was not asked about the prefix SYS$.");
+    expect(() => code.quotedIdentifiers()).toThrow("The code word index was not asked about quoted identifiers.");
   });
 });

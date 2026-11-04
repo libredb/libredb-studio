@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { hasUnreadableRun, isDangerousQuery } from "@/lib/sql/dangerous-query";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { findCodeWord } from "@/lib/sql/words";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -114,6 +116,34 @@ describe("isDangerousQuery's cost grows with its text and no faster", () => {
       expect(isDangerousQuery(long, type)).toBe(false);
       const growth = cheapest(() => isDangerousQuery(long, type), 5) / cheapest(() => isDangerousQuery(short, type), 5);
       expect(growth, `the text 8 times as long cost ${growth.toFixed(1)} times as much`).toBeLessThan(24);
+    },
+  );
+
+  /**
+   * Texts the gate read in linear time but walked once for every form and word it asks about: more than 40 walks of
+   * each of these, more than 100 of a Snowflake block of `BEGIN` words and more than 200 of a block of `CREATE` words,
+   * which made 1,000,000 units of those cost more than a second. The yardstick is one walk of the same text by
+   * `findCodeWord`, the reader every one of those walks was. The gate reads the text, cuts it into its statements and
+   * reads each of them, which costs a few walks, and about a dozen for a script of short statements or a run of quoted
+   * names, whose own walk is cheap.
+   */
+  const WALKED: readonly [string, DatabaseType, string][] = [
+    ["a block of BEGIN words", "snowflake", "BEGIN ".repeat(16_000)],
+    ["a block of CREATE words", "snowflake", `BEGIN ${"CREATE ".repeat(14_000)}`],
+    ["one-letter words", "spark", "x ".repeat(50_000)],
+    ["words that could open a raw string", "spark", "r ".repeat(50_000)],
+    ["quoted names", "spark", `SELECT ${'"x" '.repeat(25_000)}`],
+    ["a script of short statements", "spark", "SELECT 1;\n".repeat(10_000)],
+  ];
+
+  test.each(WALKED.map(([label, type, text]) => [label, type, text] as const))(
+    "%s (%s): the gate costs less than 24 walks of the text",
+    (_label, type, text) => {
+      const grammar = resolveSqlGrammar(type);
+      expect(isDangerousQuery(text, type)).toBe(false);
+      const walks =
+        cheapest(() => isDangerousQuery(text, type), 5) / cheapest(() => findCodeWord(text, "ABSENT", 0, grammar), 5);
+      expect(walks, `the gate cost ${walks.toFixed(1)} walks of the text`).toBeLessThan(24);
     },
   );
 });
