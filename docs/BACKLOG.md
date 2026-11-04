@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D455, U17 · 334
+- [Drivers and connections](#drivers-and-connections) — D1-D457, U17 · 336
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -4463,6 +4463,26 @@ Coverage holds them at 100% only because their route tests mock `resolveConnecti
 Found 2026-11-04 by the review of the change that moved that refusal into `resolveConnection`.
 
 **Done when:** the five checks are gone, the five mocked cases are removed or moved onto the real `resolveConnection`, and `bun run coverage:check` passes.
+
+### D456. The etcd lexer grows the heap by several hundred bytes per character of a line of `;` or `(`, so a line at the body limit aborts a Node process
+
+`splitWords` and `lexLogicalLine` in `src/lib/db/providers/keyvalue/etcd/lexer.ts` place one refusal per `;` or `(` and keep every one, with its tokens, until the line is read.
+Measured on 2026-11-05 with `isDestructiveNonSqlQuery(text, "etcd")` bundled for Node 24.22.1 (default heap limit 4,288 MiB): 1,000,000 characters grew RSS by 654 MiB in 386 ms, 3,000,000 by 1,651 MiB in 1,024 ms, 7,000,000 by 3,790 MiB in 4,467 ms, and 10,000,000 aborted the process with `FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory`; a line of `(` measured the same.
+Ten million characters fit under the 10,485,760-byte body limit of X19, so one request to a route that reads the text, such as `POST /api/db/statement/analyze`, can carry it; the route itself was not driven at that size.
+The answer at every size that completed was right (`false`); only the cost is wrong.
+Found 2026-11-05 by the review of the change that collected the etcd lexer's refusals one at a time.
+
+**Done when:** the lexer's memory for a line of `;` or `(` no longer grows in proportion to the refusals it places, and a test under Node reads a 10,000,000-character line of each through `isDestructiveNonSqlQuery` without the process aborting.
+
+### D457. A Redis command of about 120,000 words or more answers `Redis error: Maximum call stack size exceeded`
+
+`runCommand` in `src/lib/db/providers/keyvalue/redis.ts` sends a command as `callBuffer(command, ...args)`, an argument spread of one element per word, and its catch answers every error as `Redis error: <message>`, so a stack overflow at the call site reads as the server's refusal.
+The plain line and the JSON form (`{"command": ..., "args": [...]}`) both reach it, and nothing bounds the word count before it.
+Measured on 2026-11-05 by calling the provider's `executeRedisCommand` with `DEL k k ...` over a stub client whose `callBuffer` takes rest arguments, as ioredis's does: under Node 24.22.1, 110,000 words ran and 120,000 answered `QueryError: Redis error: Maximum call stack size exceeded`; under Bun 1.4.4, 130,000 ran and 1,000,000 answered the same.
+The agent path's `client.call(argv[0], ...argv.slice(1))` has the same shape, but `readRedisAgentStatement` admits a head, one key and at most two option words, and `FUNCTION LOAD`'s `call(unit.name, ...unit.arguments, ...)` spreads the fixed `LOAD REPLACE`, so neither is reachable with a long list.
+Found 2026-11-05 by the review of the change that collected the etcd lexer's refusals one at a time.
+
+**Done when:** a Redis command with more words than a runtime takes arguments is either sent without an argument spread or refused before the send with a sentence that names the word count, and a test drives 1,000,000 words through the plain and the JSON form.
 
 ## Value interpolation
 
