@@ -1,15 +1,18 @@
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { EditorLanguage } from "@/lib/editor/tab-language";
 import type { SqlGrammar } from "./grammar";
-import { type SplitStatement, splitCursorTargets } from "./statement-splitter";
+import { countCodeStatements, type SplitStatement, splitCursorTargets } from "./statement-splitter";
 
 /**
  * What text Run sends: the run target rule, on plain offsets, with no editor in it.
  *
- * Two callers read it.
+ * Three callers read it.
  * `QueryEditor.tsx` reads its selection, text and caret from Monaco and calls the two parts, `selectionTarget` and
- * `cursorTarget`; the VS Code channel's `query/target` calls `runTarget` with the offsets its editor reports.
- * One rule for both, so the web editor and the extension never disagree about which statement a Run sends.
+ * `cursorTarget`; the VS Code channel's `query/target` and `analyzeStatement` (`src/lib/editor/statement-analysis.ts`)
+ * call `runnableTarget`, the whole rule with a target that holds no code answered as nothing to run, on the offsets
+ * they are given.
+ * One rule for all three, so they never disagree about which statement a Run sends; they part only over a target that
+ * holds no code, which the web editor sends as it is (`docs/BACKLOG.md` U200).
  */
 
 /** A `[start, end)` offset pair into the text. */
@@ -112,4 +115,22 @@ export function runTarget(input: RunTargetInput): RunTarget {
   const current = cursorTarget(text, cursor, input);
   if (current) return { statement: current.sql, range: { start: current.start, end: current.end } };
   return { statement: text };
+}
+
+/**
+ * `runTarget`, except that under the `sql` editor language a target that holds no code, only comments or blanks,
+ * answers `{ statement: "" }` with no range, which its caller answers with "Nothing to run." and sends nothing.
+ *
+ * Counted by `countCodeStatements`, which leaves out a fragment of comments only, under the engine's own grammar. A
+ * text in another editor language is never read for comments: a Redis `# note` is its own command line, and the
+ * engine's parser answers it.
+ *
+ * Throws `runTarget`'s `RangeError` on offsets it cannot honour.
+ */
+export function runnableTarget(input: RunTargetInput): RunTarget {
+  const target = runTarget(input);
+  if (input.editorLanguage === "sql" && countCodeStatements(target.statement, input.grammar) === 0) {
+    return { statement: "" };
+  }
+  return target;
 }

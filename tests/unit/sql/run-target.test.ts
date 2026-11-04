@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
-import { cursorTarget, runTarget, selectionTarget, type RunTargetInput } from "@/lib/sql/run-target";
+import { cursorTarget, runnableTarget, runTarget, selectionTarget, type RunTargetInput } from "@/lib/sql/run-target";
 
 const PG = resolveSqlGrammar("postgres");
 const TSQL = resolveSqlGrammar("mssql");
@@ -179,5 +179,60 @@ describe("offsets it cannot honour", () => {
     expect(() => runTarget(sqlAt(TWO, 0, { selection: { start: loose(null), end: loose(null) } }))).toThrow(RangeError);
     expect(() => runTarget(sqlAt(TWO, loose(null), { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
     expect(() => runTarget(sqlAt(TWO, Number.NaN, { selection: { start: 0, end: 0 } }))).toThrow(RangeError);
+  });
+});
+
+describe("runnableTarget", () => {
+  test("answers an empty statement with no range for a target that holds no code under the sql editor language", () => {
+    const noCode = [
+      sqlAt("-- only a comment\n", 0),
+      // The caret after the note, which is a statement of comments only.
+      sqlAt("SELECT 1;\n-- note", 17),
+      // A selection of the note alone.
+      sqlAt("SELECT 1;\n-- note", 17, { selection: { start: 10, end: 17 } }),
+      sqlAt("", 0),
+      sqlAt("   \n", 2),
+    ];
+    for (const input of noCode) {
+      const answer = runnableTarget(input);
+      expect(answer).toEqual({ statement: "" });
+      expect("range" in answer).toBe(false);
+    }
+  });
+
+  test("answers runTarget's target when it holds code", () => {
+    expect(runnableTarget(sqlAt(TWO, 4))).toEqual({ statement: "SELECT 1", range: { start: 0, end: 8 } });
+    expect(runnableTarget(sqlAt(TWO, 20, { selection: { start: 11, end: 20 } }))).toEqual({
+      statement: "SELECT 2;",
+      range: { start: 11, end: 20 },
+    });
+    // A selection of code and a note keeps the note: the script route keeps it too.
+    expect(runnableTarget(sqlAt("SELECT 1;\n-- note", 17, { selection: { start: 0, end: 17 } }))).toEqual({
+      statement: "SELECT 1;\n-- note",
+      range: { start: 0, end: 17 },
+    });
+    expect(
+      runnableTarget(
+        sqlAt("SELECT a FROM t LIMIT 2;", 24, {
+          selection: { start: 0, end: 24 },
+          statementTerminator: "none",
+          grammar: ES,
+        }),
+      ),
+    ).toEqual({ statement: "SELECT a FROM t LIMIT 2", range: { start: 0, end: 24 } });
+  });
+
+  test("answers the whole text as written in an editor language other than sql, a comment included", () => {
+    expect(runnableTarget(sqlAt("# note", 6, { editorLanguage: "redis" }))).toEqual({ statement: "# note" });
+    expect(runnableTarget(sqlAt("-- note", 0, { editorLanguage: "json" }))).toEqual({ statement: "-- note" });
+  });
+
+  test("throws runTarget's RangeError with its sentence", () => {
+    const pastTheEnd = sqlAt(TWO, 21, { selection: { start: 0, end: 0 } });
+    expect(() => runnableTarget(pastTheEnd)).toThrow(RangeError);
+    expect(() => runnableTarget(pastTheEnd)).toThrow("run target: cursor 21 is not within a text of length 20");
+    expect(() => runnableTarget(sqlAt(TWO, 5, { selection: { start: 5, end: 2 } }))).toThrow(
+      "run target: selection [5, 2) is not within a text of length 20",
+    );
   });
 });

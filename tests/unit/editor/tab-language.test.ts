@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
+import { editorLanguageForTabType, editorLanguageOf, resolveTabType } from "@/lib/editor/tab-language";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
 function makeCaps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabilities {
@@ -148,5 +148,16 @@ describe("editorLanguageForTabType", () => {
 
   test("a firestore tab renders in the firestore language, restored with no capabilities", () => {
     expect(editorLanguageForTabType("firestore")).toBe("firestore");
+  });
+});
+
+describe("editorLanguageOf", () => {
+  test("reads the declared dialect before the query language, as a query tab does", () => {
+    // Redis, etcd and LibreDB declare queryLanguage json while speaking neither MongoDB JSON nor SQL.
+    expect(editorLanguageOf(makeCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe("redis");
+    expect(editorLanguageOf(makeCaps({ queryLanguage: "json", queryDialect: "etcd" }))).toBe("etcd");
+    expect(editorLanguageOf(makeCaps({ queryLanguage: "json", queryDialect: "libredb" }))).toBe("libredb");
+    expect(editorLanguageOf(makeCaps({ queryLanguage: "json" }))).toBe("json");
+    expect(editorLanguageOf(makeCaps())).toBe("sql");
   });
 });

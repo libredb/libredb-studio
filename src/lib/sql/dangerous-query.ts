@@ -610,6 +610,27 @@ export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
 }
 
 /**
+ * Whether part of this text could not be read: a run that never closes, or a line comment that holds a lone carriage
+ * return (#297).
+ *
+ * Either one hides what the server runs. A run that never closes hides whatever is written inside it, and engines that
+ * share a connection type end such a line comment in different places, so either reading of the code after it may be
+ * wrong. So the gate below asks about this text before it reads a keyword, and the safety dialog says that is why it
+ * is asking, both through this one predicate so that the two cannot disagree.
+ *
+ * Only where the text IS SQL. Both execution paths ask about whatever is in the editor, so this is handed MongoDB
+ * documents, Redis commands, PromQL expressions, Kafka read requests and etcdctl commands as well, and an escaped quote
+ * that a SQL span reader cannot resolve closes perfectly in the grammar those are written in: a SQL span reader's
+ * verdict about text that is not SQL is not evidence of anything, and saying "could not be read" about a Mongo
+ * document that reads fine is the false alarm the dialog's notice exists to avoid. No type at all reads as SQL.
+ */
+export function hasUnreadableRun(text: string, databaseType?: DatabaseType): boolean {
+  if (!readsSqlText(databaseType)) return false;
+  const grammar = resolveSqlGrammar(databaseType);
+  return hasUnterminatedSpan(text, grammar) || hasLoneCarriageReturnInLineComment(text, grammar);
+}
+
+/**
  * Detect if a query is potentially dangerous and should trigger safety analysis.
  *
  * This gates the confirmation dialog on BOTH execution paths - `use-query-execution`
@@ -666,18 +687,12 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // Asked FIRST because it is the only question here whose answer does not depend
   // on reading the statement: where a run never closes, every keyword test below
   // is reading text that stops early, so their `false` is "not found" rather than
-  // "not there".
+  // "not there". The same holds for a line comment with a lone carriage return.
   //
-  // Only where the text IS SQL, though. Both execution paths ask about whatever is
-  // in the editor, so this predicate is handed MongoDB documents, Redis commands, PromQL
-  // expressions, Kafka read requests and etcdctl commands as well, and an escaped quote that a SQL
-  // span reader cannot resolve closes perfectly in the grammar those are written in. For MongoDB and
+  // Only where the text IS SQL, though (see `hasUnreadableRun`). For MongoDB and
   // Redis the keyword tests below still run: narrowing this rule is not switching the
   // gate off.
-  if (readsSqlText(databaseType) && hasUnterminatedSpan(query, grammar)) return true;
-  // The same reasoning for a line comment that holds a lone carriage return: engines that share a connection type end
-  // it in different places, so either reading of the code after it may be wrong about what the server runs.
-  if (readsSqlText(databaseType) && hasLoneCarriageReturnInLineComment(query, grammar)) return true;
+  if (hasUnreadableRun(query, databaseType)) return true;
 
   // A type whose own vocabulary is the whole answer is not read as SQL at all, and
   // PromQL, Kafka and etcd are those types. A PromQL expression can start with a metric name the

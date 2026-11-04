@@ -15,20 +15,12 @@ import { executionUiFor } from "@/lib/db/execution-ui";
 import type { clearProviderCache, enabledProviderTypes, getOrCreateProvider } from "@/lib/db/factory";
 import { findKind, kindHasColumns } from "@/lib/db/object-kinds";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
-import type {
-  Container,
-  DatabaseObject,
-  KindCount,
-  ObjectDetail,
-  ProviderCapabilities,
-  QueryPrepareOptions,
-} from "@/lib/db/types";
-import { type EditorLanguage, editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
+import type { Container, DatabaseObject, KindCount, ObjectDetail, QueryPrepareOptions } from "@/lib/db/types";
+import { editorLanguageOf } from "@/lib/editor/tab-language";
 import { generateTableQuery } from "@/lib/query-generators";
 import { isDangerousQuery } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
-import { type RunTarget, runTarget } from "@/lib/sql/run-target";
-import { countCodeStatements } from "@/lib/sql/statement-splitter";
+import { type RunTarget, runnableTarget } from "@/lib/sql/run-target";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
 import {
   type BackendErrorCode,
@@ -191,11 +183,6 @@ function readConnectionParams(params: unknown): OpenRecord {
   // The other fields are the provider's to check, as they are behind the routes.
   const connection = { ...wire, createdAt } as unknown as DatabaseConnection;
   return { connection, posture: { allowExternalFileAccess } };
-}
-
-/** The editor language a provider's text is written in, as the web's query tab reads it from the same capabilities. */
-function editorLanguageOf(capabilities: ProviderCapabilities): EditorLanguage {
-  return editorLanguageForTabType(resolveTabType(capabilities));
 }
 
 export function createHandlers(
@@ -448,9 +435,10 @@ export function createHandlers(
       }
     },
 
-    // The web editor's run target rule on the offsets the host's editor reports; a target with no code under the sql
-    // editor language answers "", so the host's one blank check says "Nothing to run." (builder's call 4). The target
-    // also carries the web editor's confirmation gate's verdict, read under the connection's type, for the host to ask on.
+    // The web editor's run target rule on the offsets the host's editor reports, through runnableTarget: a target with
+    // no code under the sql editor language answers "", so the host's one blank check says "Nothing to run." (builder's
+    // call 4). The target also carries the web editor's confirmation gate's verdict, read under the connection's type,
+    // for the host to ask on.
     async runTarget(params) {
       const connectionId = connectionIdOf(params);
       const text = aString(fieldOf(params, "text"), "text");
@@ -470,14 +458,13 @@ export function createHandlers(
       };
       let target: RunTarget;
       try {
-        target = runTarget({ text, selection, cursor, ...rule });
+        target = runnableTarget({ text, selection, cursor, ...rule });
       } catch (error) {
         // Offsets the rule cannot honour are the caller's params (the PR 10 ruling); anything else is an error answer.
         throw error instanceof RangeError ? invalidParams(error.message) : error;
       }
-      if (rule.editorLanguage === "sql" && countCodeStatements(target.statement, rule.grammar) === 0) {
-        return { statement: "", dangerous: false };
-      }
+      // Nothing to run asks nothing.
+      if (rule.editorLanguage === "sql" && target.statement === "") return { statement: "", dangerous: false };
       return { ...target, dangerous: isDangerousQuery(target.statement, record.connection.type) };
     },
   };

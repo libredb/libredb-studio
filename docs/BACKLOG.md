@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D452, U17 · 333
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U199 · 185
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U201 · 187
 - [Dependencies](#dependencies) — P1-P13 · 11
 - [Documentation](#documentation) — DOC3-DOC35 · 29
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6942,6 +6942,27 @@ The cost is in the runtime, not in setup, so the test was left as it is; no upst
 Found 2026-11-04 while moving the cross-platform jobs' one-time test setup out of timed test bodies.
 
 **Done when:** the test refuses a cyclic plan well inside the default timeout on a busy runner, by a Bun release that detects the cycle on the indented path as fast as on the plain one, or by a fence that refuses a cyclic plan before it serialises it, with the test kept.
+
+### U200. The web editor sends a run target that holds no code, which the extension and the statement analysis answer as nothing to run
+
+With the caret on a statement of comments only (`-- note` after `SELECT 1;`, or `SELECT 1; -- note` with the caret at the line's end), or with only a comment selected, `getEffectiveQuery` in `src/components/QueryEditor.tsx` answers the comment and `executeQuery` in `src/hooks/use-query-execution.ts` sends it to the engine; a text of blanks only is sent the same way.
+A target that is an unclosed block comment (`/* open` after `SELECT 1;`, with the caret at the end) is asked about first, with the notice that part of the statement could not be read, and then sent.
+The VS Code extension's `query/target` and `analyzeStatement` in `src/lib/editor/statement-analysis.ts` answer each of these with nothing to run, through `runnableTarget` in `src/lib/sql/run-target.ts`.
+`tests/unit/sql/run-target.test.ts` pins `runTarget`'s own answer for such text, and the parity test in `tests/unit/editor/statement-analysis.test.ts` holds the divergence case by case.
+The web cannot adopt `runnableTarget` alone: when the effective query is empty, `executeQuery` falls back to the tab's whole text.
+Found 2026-11-03 while designing the statement analysis for #2204.
+
+**Done when:** the web answers a target that holds no code with Nothing to run, through `runnableTarget`, and no empty effective query falls back to the tab text.
+
+### U201. The VS Code extension sends a statement the web editor refuses to `query/run` without a question
+
+The web editor asks `statementRefusal` (`src/lib/db/destructive-commands.ts`) before the confirmation gate, and on the nine connection types whose vocabulary row declares a refusal or a console text bound a refused statement is never sent or written to history (`src/hooks/use-query-execution.ts`).
+The extension's `query/target` in `vscode-extension/src/backend/handlers.ts` answers only the gate's verdict, and the host in `vscode-extension/src/host/editor/run-query.ts` sends a statement the gate does not flag to `query/run` without asking, where `checkEditorQuery` applies the console text bound but not the refusal, so only the provider's own guard stops it.
+Checked on 2026-11-04 with the shared functions: `isDangerousQuery` answers false and `statementRefusal` refuses both a Redis `GET a` with `DEL b` on the line after it and `kubectl delete pod web-1`; the Redis provider then refuses the first with the same sentence in `executeRedisCommand`, and the Kubernetes console refuses the second in `readKubectlRun` before any request.
+`analyzeStatement` in `src/lib/editor/statement-analysis.ts` answers both with `refuse`, but `query/target` has no field for a refusal and the host no way to show one.
+Found 2026-11-03 while designing the statement analysis for #2204.
+
+**Done when:** `query/target` answers the connection type's refusal, the host shows it and sends nothing, and a test drives Redis `GET a\nDEL b` and `kubectl delete pod web-1` through it.
 
 ## Dependencies
 

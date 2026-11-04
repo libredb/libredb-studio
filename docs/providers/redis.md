@@ -644,7 +644,7 @@ So the next user's command does not fail, it silently does not happen, and the s
 **WHICH CALLERS END IT, AND WHY THAT CHANGED.** The surface now has TWO callers in the product,
 `POST /api/db/multi-query` and `POST /api/db/query`, each awaiting it in a `finally` under a call
 scope of its own. **The editor never sends a Redis buffer to the first of those.**
-`use-query-execution.ts` gates the multi-statement route on `dialectIsSql`, read from
+`use-query-execution.ts` gates the multi-statement route on `runsAsScript`, read from
 `queryLanguage`, and this provider declares `json` (§9), so an editor run goes to
 `POST /api/db/query` (§12.2).
 
