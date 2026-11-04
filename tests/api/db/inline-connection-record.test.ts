@@ -154,6 +154,46 @@ for (const route of Object.keys(ROUTES)) {
   });
 }
 
+// The disconnect route reads the record's id before it resolves anything, and resolves a record only without governance
+// and only for an id outside `seed:`, so the refusal above reaches it only there.
+describe("POST /api/db/disconnect, where the record check does not reach", () => {
+  test.each<[string, unknown]>([
+    ["a string", "postgres"],
+    ["a number", 5],
+    ["an array", ["postgres"]],
+    ["a record with no id", { host: "127.0.0.1", port: 1, name: "Probe", type: 5 }],
+  ])("answers a connection that is %s in its own envelope, and builds nothing", async (_label, connection) => {
+    const { result, built } = await counted(() => answer("db/disconnect", { connection }));
+
+    expect(result).toEqual({
+      status: 400,
+      body: { success: false, error: "Either connection or connectionId is required" },
+    });
+    expect(built).toBe(0);
+  });
+
+  test.each(MALFORMED)(
+    "under governance removes the caller's providers of a record with %s without reading it",
+    async (_label, record) => {
+      process.env.GOVERNANCE_SOURCE = "postgres";
+      mockGetSession.mockImplementation(async () => ({
+        role: "admin",
+        username: "admin",
+        idpSubject: "admin-subject",
+      }));
+      try {
+        const { result, built } = await counted(() => answer("db/disconnect", { connection: record }));
+
+        expect(result).toEqual({ status: 200, body: { success: true } });
+        expect(built).toBe(0);
+      } finally {
+        delete process.env.GOVERNANCE_SOURCE;
+        mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+      }
+    },
+  );
+});
+
 describe("POST /api/admin/fleet-health", () => {
   test.each(MALFORMED)(
     "reports an inline connection with %s as that item's refusal, and builds nothing",

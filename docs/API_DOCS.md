@@ -590,7 +590,9 @@ Its `options`, when sent, must be an object as well: anything else (`null`, a nu
 
 An inline `connection` whose `type` is missing, empty or not a string, or whose `name` is present and not a string, `null` included, answers `400 { "error": "Valid connection configuration is required", "code": "CONFIG_ERROR", "statusCode": 400 }` when the connection resolves, before any provider is built; a `connection` that is not an object is refused the same way.
 A `connection` without a `name` is still accepted, as a connection with no name.
-Every route that takes a `connection` answers it the same way, `POST /api/db/disconnect` and `POST /api/db/test-connection` included, and `POST /api/admin/fleet-health` reports it as that item's `error`.
+Every route that takes a `connection` answers it the same way, `POST /api/db/test-connection` included, and `POST /api/admin/fleet-health` reports it as that item's `error`.
+`POST /api/db/disconnect` reads the record's `id` before it resolves anything, so a `connection` that is not an object, or a record with no `id`, answers its own `400 { "success": false, "error": "Either connection or connectionId is required" }`.
+It resolves a record only without governance and only for an `id` outside `seed:`, so only that record is refused as above; under governance it removes the caller's providers of the `id` without reading the record, and answers `200`.
 While custom connections are off, an inline connection answers `403 CUSTOM_CONNECTIONS_DISABLED` whatever it holds.
 
 **A connection type's console text bound:**
