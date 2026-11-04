@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 80
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B171 · 82
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP16 · 16
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
@@ -3777,6 +3777,7 @@ Found on #1818, whose change does not touch the HTTP transport.
 
 `SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` names the fields only a seed file may set, but `resolveConnection` in `src/lib/seed/resolve-connection.ts` does not check an inline connection against it.
 For example, OPC UA's `clientCertificatePath` and `clientPrivateKeyPath` are seed-only, and the provider reads them from any config it is given, so a request that carries them inline reaches the provider with them.
+One seed-only field is refused already: `resolveConnection` answers an inline connection that carries OPC UA's `agentReadRoots` with `400`, and the other seed-only fields are still not checked.
 
 Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
 
@@ -4119,7 +4120,8 @@ Found 2026-10-30 in the pre-release browser E2E; pre-existing.
 
 `shapeBrowse` in `src/lib/db/providers/industrial/opcua/library.ts` writes each reference's id with `reference.nodeId.toString()`, beside a comment saying it keeps `nsu=` where the server gave one.
 `ExpandedNodeId.toString` in `node-opcua-nodeid` 2.187.0 appends the URI and the index after the identifier instead: measured, an id in namespace 0 with URI `urn:x` and server index 2 is written `ns=0;i=5;namespaceUri:urn:x;serverIndex:2`, and with URI alone `ns=0;i=5;namespaceUri:urn:x`, where Part 6 5.3.1.11 spells them `svr=2;nsu=urn:x;i=5` and `nsu=urn:x;i=5`.
-So a reference a server answers that way is listed in the Keys panel under an id no request can name back, and a Read of it is refused by the console's parser; agent mode refuses the whole read that meets one (`unkeyed` in `agent-read.ts`), which is the stated rule there.
+So a reference a server answers that way is listed in the Keys panel under an id no request can name back, and a Read of it is refused by the console's parser.
+The read roots walk (`proveReadSet` in `agent-roots.ts`) keys such a target as a local id, which answers as outside the roots unless that local id is itself a member; once the id is written in the Part 6 spelling, a target on another server is outside by its server index.
 Not reached on the pinned OPC PLC 2.15.10 fixture, whose references carry neither; found 2026-11-01 while verifying the OPC UA agent read.
 
 **Done when:** `shapeBrowse` writes such an id in the Part 6 spelling (`nsu=` for a URI, `svr=` for a non-zero server index), the comment says what it does, a reference on another server is shown as not readable rather than offered as a key, and a library-bridge test pins both spellings.
@@ -9341,6 +9343,24 @@ Measured on Couchbase Server 8.0.2 Enterprise: capture 02 of `tests/fixtures/cou
 Found 2026-11-02 while verifying `run_read_query` on Couchbase.
 
 **Done when:** a 5010 whose `reason` carries 13014 reaches the agent path and `run_read_query` as the role refusal naming the missing role, read from the structured `reason` rather than its prose, a transport and a provider test pin the three captured answers, and `docs/providers/couchbase.md` no longer says the role is lost; cited in `docs/AGENT.md`.
+
+### B170. OPC UA proves its read roots on every read
+
+Every OPC UA agent and MCP read walks down from the connection's read roots on its own session before it answers (`proveReadSet` in `src/lib/db/providers/industrial/opcua/agent-roots.ts`), and nothing of the proved set is held for the next read, so a read of one value repeats the walk.
+Measured on the pinned OPC PLC 2.15.10 fixture on 2026-11-04, with roots over the `Telemetry` and `DataAccess` folders and `Server.ServerStatus`, the walk took 32 requests and every read answered within 100 ms; a plant model with larger roots costs up to 150 walk requests a read.
+A cache would have to be keyed by seed id, identity and root list, and invalidated when the server's model changes, which the read client cannot observe without a subscription.
+Found 2026-11-04 while building the read roots.
+
+**Done when:** a fixture where the walk dominates a read is measured, and a cache keyed by seed id, identity and root list with explicit invalidation is designed and shipped with tests, or this entry is closed with the measurement showing it is not needed; cited in `docs/AGENT.md`.
+
+### B171. An OPC UA operator cannot exclude a node beneath a read root
+
+Inside a declared read root the operator vouches for the subtree: the standard identity properties are pruned by qualified name, but a vendor's own identity or credential node that no table names is answered (`docs/providers/opcua.md`, section 14.3).
+Today the only way to keep such a node out is to move the roots down past it.
+A seed field `agentReadExclusions`, with the grammar and limits of `agentReadRoots` and applied as a prune by node id during the walk, would let an operator cut one node without moving roots.
+Found 2026-11-04 while building the read roots, and left out of that change by decision.
+
+**Done when:** an OPC UA seed may declare `agentReadExclusions`, held to the read roots grammar at load and when the provider is built, refused inline and in `defaults`, kept from the browser, pruned with its subtree during the walk so an excluded node answers as one the server does not hold, with seed, walk and provider tests and the field documented in `docs/SEED_CONNECTIONS.md` and `docs/providers/opcua.md`; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
