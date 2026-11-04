@@ -815,6 +815,8 @@ const PROFILE_REFUSAL_ADVICE: Readonly<Record<ExecutionProfileDenyCode, string>>
     "A secret reference in the connection's seed entry could not be read from Vault, so nothing was sent to the database. The server log names the cause; fix the reference or Vault's access and try again.",
   AGENT_CREDENTIAL_REQUIRED:
     "This engine is read only under an agent credential of the connection's own, and its seed entry sets none, so nothing was sent to the database. Set agentUser and agentPassword on the seed entry to a read credential.",
+  READ_ROOTS_REQUIRED:
+    "This connection declares no read roots, so agent mode cannot read it. An operator adds agentReadRoots to its seed entry; plan mode still drafts requests for the editor.",
 });
 
 /**

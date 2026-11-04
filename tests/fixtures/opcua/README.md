@@ -52,5 +52,6 @@ structural rather than a setting. `history.json` shows `BadContinuationPointInva
 continuation whose window differs from the read that handed out the point, which is why the window is
 fixed once per read and travels with every page.
 
-**The agent boundary capture** is in [`2.15.10/agent-boundary/`](2.15.10/agent-boundary/): its `run.sh` starts two fresh containers of the same image, one with a user and an administrator whose passwords it generates for the run, and [`tests/live/opcua-agent-boundary.ts`](../../live/opcua-agent-boundary.ts) records what the agent path answers, what the withheld nodes answer read raw, and what a raw Write and a raw Call do.
-It holds no credential value.
+**The agent boundary capture** is in [`2.15.10/agent-boundary/`](2.15.10/agent-boundary/): its `run.sh` starts two fresh containers of the same image on ports Docker picks, one with a user and an administrator whose passwords it generates for the run, and [`tests/live/opcua-agent-boundary.ts`](../../live/opcua-agent-boundary.ts) records what the agent path answers beneath read roots for each identity, how each id outside the roots compares with a missing twin, what the walk costs, and what a raw Write and a raw Call do.
+**The MCP boundary capture** is in [`2.15.10/mcp-boundary/`](2.15.10/mcp-boundary/): its `run.sh` starts one such container, and [`tests/live/opcua-mcp-boundary.ts`](../../live/opcua-mcp-boundary.ts) records what `run_opcua_read` answers through the tool's own handler, the refused forms, the write control and the cancellation timings.
+Neither holds a credential value.

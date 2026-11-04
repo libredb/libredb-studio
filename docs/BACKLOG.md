@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D452, U17 · 334
+- [Drivers and connections](#drivers-and-connections) — D1-D452, U17 · 333
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U199 · 185
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 81
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B171 · 82
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP16 · 16
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
@@ -3777,6 +3777,7 @@ Found on #1818, whose change does not touch the HTTP transport.
 
 `SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` names the fields only a seed file may set, but `resolveConnection` in `src/lib/seed/resolve-connection.ts` does not check an inline connection against it.
 For example, OPC UA's `clientCertificatePath` and `clientPrivateKeyPath` are seed-only, and the provider reads them from any config it is given, so a request that carries them inline reaches the provider with them.
+One seed-only field is refused already: `resolveConnection` answers an inline connection that carries OPC UA's `agentReadRoots` with `400`, and the other seed-only fields are still not checked.
 
 Found 2026-10-20 during the VS Code extension work, and deferred because it does not block that work.
 
@@ -4119,7 +4120,8 @@ Found 2026-10-30 in the pre-release browser E2E; pre-existing.
 
 `shapeBrowse` in `src/lib/db/providers/industrial/opcua/library.ts` writes each reference's id with `reference.nodeId.toString()`, beside a comment saying it keeps `nsu=` where the server gave one.
 `ExpandedNodeId.toString` in `node-opcua-nodeid` 2.187.0 appends the URI and the index after the identifier instead: measured, an id in namespace 0 with URI `urn:x` and server index 2 is written `ns=0;i=5;namespaceUri:urn:x;serverIndex:2`, and with URI alone `ns=0;i=5;namespaceUri:urn:x`, where Part 6 5.3.1.11 spells them `svr=2;nsu=urn:x;i=5` and `nsu=urn:x;i=5`.
-So a reference a server answers that way is listed in the Keys panel under an id no request can name back, and a Read of it is refused by the console's parser; agent mode refuses the whole read that meets one (`unkeyed` in `agent-read.ts`), which is the stated rule there.
+So a reference a server answers that way is listed in the Keys panel under an id no request can name back, and a Read of it is refused by the console's parser.
+The read roots walk (`proveReadSet` in `agent-roots.ts`) keys such a target as a local id, which answers as outside the roots unless that local id is itself a member; once the id is written in the Part 6 spelling, a target on another server is outside by its server index.
 Not reached on the pinned OPC PLC 2.15.10 fixture, whose references carry neither; found 2026-11-01 while verifying the OPC UA agent read.
 
 **Done when:** `shapeBrowse` writes such an id in the Part 6 spelling (`nsu=` for a URI, `svr=` for a non-zero server index), the comment says what it does, a reference on another server is shown as not readable rather than offered as a key, and a library-bridge test pins both spellings.
@@ -4296,14 +4298,6 @@ The `scopeServer` helper had the same collision and now matches the request body
 Found 2026-11-03 while fixing that helper.
 
 **Done when:** `agentServer` matches a request by its line and body, or refuses at build time when two captures of one principal share a line, with a helper test on the two root captures.
-
-### D434. The OPC UA live step publishes its fixture on a fixed port inside the ephemeral range
-
-The CI step that starts the OPC UA fixture publishes it on `127.0.0.1:54840` (`.github/workflows/ci.yml`, `LIBREDB_OPCUA_LIVE_URL`), and `tests/unit/db/opcua/live-environment.test.ts` pins that mapping.
-54840 is inside Linux's ephemeral port range (32768 to 60999), where a client socket of an earlier step, open or in `TIME_WAIT`, can hold it, and Docker then refuses the bind with "address already in use"; the live PostgreSQL fixtures failed this way and now publish on a port Docker picks.
-Found 2026-11-03 while moving those fixtures.
-
-**Done when:** the OPC UA live step publishes on a port Docker picks and passes it to the probes through `LIBREDB_OPCUA_LIVE_URL`, or on a fixed port below 32768, with `live-environment.test.ts` pinning the new form.
 
 ### D435. A discovered connection cannot carry an agent credential
 
@@ -9312,26 +9306,6 @@ Found 2026-10-31 when agent mode joined Prometheus; the MCP reason recorded 2026
 
 **Done when:** a change of its own opens MCP statement reads on Prometheus once one of the two conditions above holds: the pack declares its MCP facet (`src/lib/agent/languages/promql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same closed table, budgets and projection, and `MCP_STATEMENT_READ.prometheus` is true, with tests that an MCP read sends only the instant query's form, that no MCP answer carries the flags or a URL's userinfo or query string, and, where a narrowing layer is the condition, that a connection which bypasses it is refused at open; cited in `docs/AGENT.md`.
 
-### B162. OPC UA's agent reads withhold the server's configuration, roles and sessions, and it has no MCP surface
-
-Agent mode executes OPC UA reads under the `opcuaread` request language, one JSON request per call: a value read or a history read written as the console writes it, or a one-level browse of one node (`docs/providers/opcua.md`, section 14).
-The boundary is the provider's structural closed seam: an agent read reaches the server only through a session opened for that read alone, through a client that holds Browse, BrowseNext, Read and HistoryRead and nothing else, with the reference type, result mask, attribute list and history details fixed by the provider and the browse direction forward but where the provider reads a node's parents, so no Write, Call, HistoryUpdate, node or reference change, RegisterNodes, TranslateBrowsePathsToNodeIds or subscription can be sent on the agent path.
-No principal can be the boundary: the pinned fixture took a raw anonymous Write with status Good, and `ResetToServerDefaults` reported UserExecutable true to an anonymous session.
-Values are the server's process data, so they are answered as the console renders them, each with its node's engineering units and EU range read from its own `EngineeringUnits` and `EURange` properties through the same two services, or "no units published" and "no range published" where it has none, never a unit derived from a name; the units lookup counts against the read's request bound, so a value is never answered without it.
-Withheld on every agent-mode path, decided by node id before every read on the read's own session: `Server.ServerConfiguration` (i=12637), `RoleSet` (i=15606), the session diagnostics (i=3706, i=3707, i=3708) and the PubSub security groups and key push targets (i=15443, i=25440), with every node the server answers beneath them, so no trust list, account name, role identity mapping or open session's client, user identity or endpoint reaches an agent answer.
-In namespace 0 agent mode reads only a list of standard nodes (the Root and Objects folders, the Server object, its state, its capabilities but `RoleSet`, and its diagnostics summary counters), so every standard descendant of a withheld root is refused by id even where the server will not let a walk see it; where the server refuses this identity the browse of a withheld node, each node the read answers outside namespace 0 is placed by its parents through an inverse Browse, and refused when they cannot be read.
-Node ids are compared as one key: a GUID in lower case, an opaque id as its bytes, and an `nsu=` URI through the server's NamespaceArray, read on the read's session; an id with no key refuses the read.
-An aggregating server that exposes another server's configuration under a namespace of its own is not recognised by these ids.
-A browse or a history read past the row budget, any read past the byte or time budget, and a read needing more than 100 requests are refused, never cut, and one session is opened and closed per read, so nothing is held between reads.
-On a handle of either agent profile the console and the Keys panel are refused, and the overview, health, performance, slow-query, session, table, index and storage readings answer their reason rather than an empty reading; the provider declares no kind the grounding walk lists, so an agent run is ungrounded and is told to read a node id the question names as it is written and to browse from the Objects folder only for any other.
-So the language offers the investigation and the operations workflow only.
-`MCP_EXPOSABLE.opcua` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.opcua` false, so MCP `run_read_query` refuses an OPC UA connection, because no MCP surface that reads through the same withheld set and units lookup is designed yet; `READ_ONLY_ENFORCED.opcua` is unchanged.
-Kept so that MCP access, and any widening of what agent mode reads on an OPC UA server, are decisions of their own rather than side effects of agent mode joining.
-
-Found 2026-11-01 when agent mode joined OPC UA.
-
-**Done when:** a per-engine exposure ruling opens MCP for OPC UA, an MCP surface that reads through the same seam, withheld set, units lookup and request bound is designed and `MCP_EXPOSABLE.opcua` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/opcuaread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.opcua` is true, with tests that no MCP read reaches a withheld node or answers a value without its units; cited in `docs/AGENT.md`.
-
 ### B166. Trino composes no estimating plan, profile, statistics reading or grounding capture, and has no MCP statement read
 
 Agent mode executes statements on Trino on a server whose access control refuses every identity every catalog's functions but the builtin ones, and catalog management (Trino's read-only access control, alone or beside other access controls; file rules alone are refused, since a view runs as its owner and another identity's grant reaches this user through that identity's view), proved before every statement with calls that run nothing, every statement inside a read-only transaction Studio rolls back (`docs/providers/trino.md`, section 15).
@@ -9369,6 +9343,24 @@ Measured on Couchbase Server 8.0.2 Enterprise: capture 02 of `tests/fixtures/cou
 Found 2026-11-02 while verifying `run_read_query` on Couchbase.
 
 **Done when:** a 5010 whose `reason` carries 13014 reaches the agent path and `run_read_query` as the role refusal naming the missing role, read from the structured `reason` rather than its prose, a transport and a provider test pin the three captured answers, and `docs/providers/couchbase.md` no longer says the role is lost; cited in `docs/AGENT.md`.
+
+### B170. OPC UA proves its read roots on every read
+
+Every OPC UA agent and MCP read walks down from the connection's read roots on its own session before it answers (`proveReadSet` in `src/lib/db/providers/industrial/opcua/agent-roots.ts`), and nothing of the proved set is held for the next read, so a read of one value repeats the walk.
+Measured on the pinned OPC PLC 2.15.10 fixture on 2026-11-04 (`tests/fixtures/opcua/2.15.10/agent-boundary/boundary.json`), with roots over the `Telemetry` and `DataAccess` folders and `Server.ServerStatus`, the walk took 32 requests for every identity and every read, the walk included, answered within 120 ms on loopback; a plant model with larger roots costs up to 150 walk requests a read.
+A cache would have to be keyed by seed id, identity and root list, and invalidated when the server's model changes, which the read client cannot observe without a subscription.
+Found 2026-11-04 while building the read roots.
+
+**Done when:** a fixture where the walk dominates a read is measured, and a cache keyed by seed id, identity and root list with explicit invalidation is designed and shipped with tests, or this entry is closed with the measurement showing it is not needed; cited in `docs/AGENT.md`.
+
+### B171. An OPC UA operator cannot exclude a node beneath a read root
+
+Inside a declared read root the operator vouches for the subtree: the standard identity properties are pruned by qualified name, but a vendor's own identity or credential node that no table names is answered (`docs/providers/opcua.md`, section 14.3).
+Today the only way to keep such a node out is to move the roots down past it.
+A seed field `agentReadExclusions`, with the grammar and limits of `agentReadRoots` and applied as a prune by node id during the walk, would let an operator cut one node without moving roots.
+Found 2026-11-04 while building the read roots, and left out of that change by decision.
+
+**Done when:** an OPC UA seed may declare `agentReadExclusions`, held to the read roots grammar at load and when the provider is built, refused inline and in `defaults`, kept from the browser, pruned with its subtree during the walk so an excluded node answers as one the server does not hold, with seed, walk and provider tests and the field documented in `docs/SEED_CONNECTIONS.md` and `docs/providers/opcua.md`; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

@@ -94,6 +94,7 @@ describe("the classification is exhaustive by construction", () => {
     expect(classified).toEqual(
       [
         "agentPassword",
+        "agentReadRoots",
         "agentUser",
         // Db2's consent to a cleartext password (#786). A choice about the transport, so `public`.
         "allowInsecureAuth",

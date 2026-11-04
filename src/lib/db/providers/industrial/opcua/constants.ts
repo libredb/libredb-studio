@@ -50,6 +50,18 @@ export const OPCUA_POLICY_NONE = "http://opcfoundation.org/UA/SecurityPolicy#Non
 export const OPCUA_FOUNDATION_NAMESPACE = "http://opcfoundation.org/UA/" as const;
 
 /**
+ * The OPC Foundation diagnostics namespace URI, where servers built on the OPC Foundation .NET stack place their
+ * session and subscription diagnostics. Agent mode never reads a node in it, wherever a server's table lists it.
+ */
+export const OPCUA_DIAGNOSTICS_NAMESPACE = "http://opcfoundation.org/UA/Diagnostics" as const;
+
+/**
+ * The namespace URI of the OPC Foundation's Devices companion model (OPC 10000-100), which defines the `Lock` object
+ * and the client and user it names. An identifier like the two above, written from the Foundation's own.
+ */
+export const OPCUA_DI_NAMESPACE = `${OPCUA_FOUNDATION_NAMESPACE}DI/` as const;
+
+/**
  * The reference type a level listing follows, with its subtypes: HierarchicalReferences, `i=33`.
  *
  * Measured on the documented OPC PLC fixture: following this and its subtypes reaches 6,769 nodes
@@ -111,6 +123,24 @@ export const OPCUA_MAX_NODES_PER_READ = 200;
  * still a failure a reader should not meet.
  */
 export const OPCUA_MAX_NODES_PER_BROWSE = 20;
+
+/**
+ * The most continued pages one browsed level follows before it stops, the server's continuation point handed back.
+ *
+ * A server may answer every BrowseNext with a continuation point and never an end, and nothing else bounds the loop:
+ * the references a page carries can be none. No server measured here paged a Browse at all, so this is a bound on a
+ * misbehaving server, not on a real level.
+ */
+export const OPCUA_BROWSE_LEVEL_MAX_CONTINUATIONS = 100;
+
+/**
+ * The most references one browsed level gathers across its pages before it stops, the server's continuation point
+ * handed back.
+ *
+ * Twice the widest level measured: Milo answered a level of 10,000 children in one Browse. A level past it is refused,
+ * never shown in part.
+ */
+export const OPCUA_BROWSE_LEVEL_MAX_REFERENCES = 20_000;
 
 /**
  * The client's own message ceiling, and what crossing it costs - which is not the same on every
@@ -223,6 +253,21 @@ export const OPCUA_READ_ATTRIBUTES = Object.freeze([
   18, // UserAccessLevel
   20, // Historizing
   5, //  Description
+  4, //  DisplayName
+] as const);
+
+/**
+ * The attributes the read roots walk asks for, per node, in this order: the facts it decides membership on.
+ *
+ * FOUR, NOT TEN, and no Value: the walk reads every member of the read roots, and a Value per node would carry every
+ * process value of the plant model to decide which nodes may be read. NodeClass and DataType decide what kind of node
+ * it is on the node's own attributes rather than on what a browse claimed, and BrowseName arrives qualified with its
+ * namespace index, which the standard identity properties are matched by. DisplayName names a root to the agent.
+ */
+export const OPCUA_WALK_ATTRIBUTES = Object.freeze([
+  2, //  NodeClass
+  14, // DataType
+  3, //  BrowseName
   4, //  DisplayName
 ] as const);
 

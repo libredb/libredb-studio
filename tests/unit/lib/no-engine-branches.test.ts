@@ -84,6 +84,7 @@ export const REGISTRIES: readonly Listed[] = [
     "MCP_EXPOSABLE",
     "MCP_STATEMENT_READ",
     "MCP_AGENT_CREDENTIAL_REQUIRED",
+    "READ_ROOTS_REQUIRED",
     "CONNECTION_FORM_URI_MODE",
     "CONNECTION_STRING_ACCEPTED",
     "OPENS_LOCAL_FILE",
@@ -291,6 +292,12 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     declaration: "refuseMcpWithoutAgentCredential",
     count: 1,
     reason: "the parameter type of the `MCP_AGENT_CREDENTIAL_REQUIRED` registry it is handed, which holds no row here",
+  },
+  {
+    path: "src/lib/seed/types.ts",
+    declaration: "refuseMcpWithoutReadRoots",
+    count: 1,
+    reason: "the parameter type of the `READ_ROOTS_REQUIRED` registry it is handed, which holds no row here",
   },
   {
     path: "src/lib/seed/types.ts",

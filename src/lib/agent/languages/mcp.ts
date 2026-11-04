@@ -23,6 +23,7 @@ import { MILVUSRPC_MCP_FACET } from "./milvusrpc/mcp";
 import { MONGO_MCP_FACET } from "./mongo/mcp";
 import { MQTTREAD_MCP_FACET } from "./mqttread/mcp";
 import { MTCONNECTREAD_MCP_FACET } from "./mtconnectread/mcp";
+import { OPCUAREAD_MCP_FACET } from "./opcuaread/mcp";
 import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
 import { RABBITREAD_MCP_FACET } from "./rabbitread/mcp";
 import { REDISCLI_MCP_FACET } from "./rediscli/mcp";
@@ -129,8 +130,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   modbusread: null,
   // No MCP statement tool yet: MCP read stays closed on Prometheus until a change of its own declares one and opens it.
   promql: null,
-  // No MCP statement tool yet: MCP read stays closed on OPC UA until a change of its own declares one and opens it.
-  opcuaread: null,
+  opcuaread: OPCUAREAD_MCP_FACET,
   mtconnectread: MTCONNECTREAD_MCP_FACET,
   mqttread: MQTTREAD_MCP_FACET,
   sparkplugread: SPARKPLUGREAD_MCP_FACET,

@@ -366,7 +366,7 @@ connections:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `version` | Yes | — | Must be `"1"` |
-| `defaults` | No | - | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged, and `mcp`, `readOnly`, `agentUser` and `agentPassword` are refused here (see [MCP opt-in](#mcp-opt-in) and [An agent credential](#an-agent-credential)) |
+| `defaults` | No | - | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged, and `mcp`, `readOnly`, `agentUser`, `agentPassword` and `agentReadRoots` are refused here (see [MCP opt-in](#mcp-opt-in), [An agent credential](#an-agent-credential) and [An OPC UA connection's read roots](#an-opc-ua-connections-read-roots)) |
 | `defaults.managed` | No | `true` | Default managed state |
 | `defaults.environment` | No | — | Default environment label |
 | `defaults.ssl` | No | — | Default SSL config |
@@ -418,9 +418,10 @@ connections:
 | `connections[].securityPolicyUri` | No | absent | OPC UA only: the policy to insist on, such as `http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256`. An endpoint is a mode **and** a policy, so naming one narrows the choice to that pair and is refused when the server offers no such pair |
 | `connections[].clientCertificatePath` / `connections[].clientPrivateKeyPath` | No | absent | OPC UA only: the client certificate and private key to present, as paths on the host that runs Studio, supplied together or not at all. A server holding a trust list of its own has to be given a STABLE client identity before it will accept a secured channel, which is what a mounted pair is for; absent, the library generates one under the PKI root (`LIBREDB_OPCUA_PKI_ROOT`), which is stable for as long as that directory is. Paths and never keys: the private key stays in the file |
 | `connections[].authSource` | No | - | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error. A seed for MongoDB agent mode names the read user's own database here: [the agent's user](providers/mongodb.md#setting-up-the-agents-user) has the whole entry |
-| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An Oxia, Firestore, OPC UA, Modbus or NETCONF connection refuses `mcp: true` when the file loads: MCP is not offered for it. An S3 connection with `mcp: true` and no agent credential is refused too, since MCP reads S3 only under an agent read key of its own ([An agent credential](#an-agent-credential)). An etcd connection with `mcp: true` whose effective MCP principal is `root`, its `agentUser` where it sets one and its `user` otherwise, is refused too, since MCP reads etcd only under a user the server proves reads only ([providers/etcd.md](providers/etcd.md), section 15.7) |
+| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An Oxia, Firestore, Modbus or NETCONF connection refuses `mcp: true` when the file loads: MCP is not offered for it. An S3 connection with `mcp: true` and no agent credential is refused too, since MCP reads S3 only under an agent read key of its own ([An agent credential](#an-agent-credential)), and so is an OPC UA connection with `mcp: true` and no `agentReadRoots`, since MCP reads OPC UA only beneath read roots its seed declares ([An OPC UA connection's read roots](#an-opc-ua-connections-read-roots)). An etcd connection with `mcp: true` whose effective MCP principal is `root`, its `agentUser` where it sets one and its `user` otherwise, is refused too, since MCP reads etcd only under a user the server proves reads only ([providers/etcd.md](providers/etcd.md), section 15.7) |
 | `connections[].agentUser` | No | absent | The principal every agent execution profile and every MCP call on this connection signs in as, in the engine's own user field: a database role, an etcd user, an S3 access key ID. Set with `agentPassword` on an engine that takes a user and a password, and never on one that takes the agent's secret alone. Resolved like `user`. Public, as `user` is ([An agent credential](#an-agent-credential)) |
 | `connections[].agentPassword` | No | absent | That principal's secret, or on an engine that takes the agent's secret alone the whole credential: a bearer token, a service-account key JSON. Resolved like `password`, and stripped from `GET /api/connections/managed` as `password` is. Only on a managed connection, and never in `defaults` ([An agent credential](#an-agent-credential)) |
+| `connections[].agentReadRoots` | No | absent | OPC UA only: a list of 1 to 32 node ids, each written with its namespace URI (`nsu=<uri>;s=<name>`), beneath which agent mode and MCP read. A literal, never resolved from a reference; on a managed or an unmanaged connection, never in `defaults`, and stripped from `GET /api/connections/managed` ([An OPC UA connection's read roots](#an-opc-ua-connections-read-roots)) |
 
 ### MCP opt-in
 
@@ -444,7 +445,7 @@ Which fields a seed of each engine takes is `SEED_AGENT_CREDENTIAL` in `src/lib/
 - `agentPassword` alone, the agent's token or key: `libsql`, `qdrant`, `weaviate`, `influxdb3`, `kubernetes`, and `bigquery`, which takes a service-account key JSON.
 - Neither: `sqlite`, `duckdb`, `oxia`, `snowflake`, `spark`, `firestore`, `mtconnect`, `modbus`, `snmp`, `sparkplug`, `libredb`, since the engine has no user or no secret field for an agent to sign in with, or, on Snowflake, an agent user and password would narrow no privilege.
 
-MCP reads under the agent credential on every engine it offers; on `opcua` and `netconf`, which MCP does not offer, it narrows agent runs only, and on `druid`, `trino`, `prometheus`, `influxdb`, `databend` and `bigquery`, which have no MCP statement tool, it narrows `inspect_schema` and agent runs.
+MCP reads under the agent credential on every engine it offers; on `netconf`, which MCP does not offer, it narrows agent runs only, and on `druid`, `trino`, `prometheus`, `influxdb`, `databend` and `bigquery`, which have no MCP statement tool, it narrows `inspect_schema` and agent runs.
 
 ```yaml
 version: "1"
@@ -481,6 +482,50 @@ On S3, MCP reads only under the agent credential: an S3 connection with `mcp: tr
 A refused entry fails the whole file, as any invalid field does, so one such entry takes every connection of that file off the list until it is fixed.
 A reference is unknown at load, so a field written as one passes there, and the factory checks the resolved credential against the engine's form when the connection opens, before it connects.
 One limit of the resolved value: an `agentPassword` whose text before the first colon is `v` and digits, such as `v2:x`, is read as a sealed secret and refused at open with `AGENT_CREDENTIAL_UNRESOLVABLE`, where the same text as `password` opens.
+
+### An OPC UA connection's read roots
+
+An OPC UA seed connection may declare read roots, `agentReadRoots`: the node ids beneath which agent mode and MCP read.
+
+```yaml
+connections:
+  - id: plant-a
+    name: Plant A
+    type: opcua
+    host: opc.tcp://plc.plant-a.internal:4840/
+    agentUser: "${PLANT_A_AGENT_USER}"
+    agentPassword: "${PLANT_A_AGENT_PASSWORD}"
+    agentReadRoots:
+      - "nsu=http://microsoft.com/Opc/OpcPlc/;s=Telemetry"
+      - "i=2256"
+```
+
+Each root is one node id in the console's string form, with its namespace written by URI and never by index, since a namespace index is a position in the server's NamespaceArray that a server restart can move.
+In namespace 0 a root is one of a fixed table of standard nodes that describe the server's state and limits: `Server.ServerStatus` (`i=2256`), `Server.ServerCapabilities.OperationLimits` (`i=11704`), `Server.ServerDiagnostics.ServerDiagnosticsSummary` (`i=2275`), `Server.NamespaceArray` (`i=2255`), `Server.ServerArray` (`i=2254`), `Server.ServiceLevel` (`i=2267`) and `Server.Auditing` (`i=2994`), written `i=<n>`, `ns=0;i=<n>` or with the OPC Foundation URI.
+
+The file is refused when it loads, naming the connection, the field and the element's index, for:
+
+- a value that is not a list of strings, an empty list, or more than 32 roots;
+- an element longer than 512 characters;
+- a `${ENV}` or `${vault:...}` reference, since a read root is neither a credential nor an address;
+- an element that is not a node id, or whose identifier does not decode;
+- a namespace written by index (`ns=3;...`, or `nsu=...;ns=3;...`);
+- an element in the OPC Foundation diagnostics namespace (`http://opcfoundation.org/UA/Diagnostics`);
+- a namespace-0 node outside the table above, the Objects folder and the Server object among them;
+- two elements that name one node;
+- the field on a connection of another type, or in `defaults`.
+
+A root beneath another root is not refused, since that is the server's to say.
+Whether a root is on the server is decided on every read's own session, never from the file.
+
+Read roots are kept from the browser: `GET /api/connections/managed` never lists them, so a Duplicate never copies them into a connection of the user's own, and an agent run on the editable copy of an unmanaged seed resolves the seed's own roots on the server.
+A connection a browser or an API client supplies inline that carries `agentReadRoots` is refused with 400, since only the operator's seed file declares what agent mode and MCP read.
+A governed connection carries none: the control plane's definition has no such key, so a governed OPC UA connection runs no agent read and is never opted in to MCP.
+
+What the roots bound: every agent read and every MCP read on the connection answers only nodes proved beneath them, on the read's own session, and every other node id answers as one the server does not hold, with nothing sent for it ([providers/opcua.md](providers/opcua.md#143-what-agent-mode-reads-the-read-roots)).
+An agent run on a statement-sending workflow is refused at Start on an OPC UA seed without roots, and `mcp: true` without them is refused when the file loads; the editor, plan mode and the operations workflow never read them.
+The roots are read once per drive: a run resolves its connection when it is driven, so an operator who narrows a root mid-run is obeyed from the run's next drive, and MCP reads a changed file after the seed cache's time to live, `SEED_CACHE_TTL_MS`.
+Inside a root the operator vouches for the subtree: the standard identity properties (a condition's `ClientUserId`, a DI device's `Lock` with `LockingClient` and `LockingUser`) are never answered, but a vendor's own identity or credential node that no table names is, so declare the folders that hold the process data rather than a device's whole tree.
 
 ### A read-only cluster for everyone
 
@@ -1602,7 +1647,8 @@ In OIDC sign-in mode the ServiceAccount review refuses to run on OpenShift: befo
 | `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |
 | `readOnly: true` on a connection whose type's write reach is `open`, on a connection whose effective `managed` is false, or `readOnly` in `defaults` | The whole file fails like any invalid config, and the error names the connection, the field and the reason |
 | `readOnly: true` on a connection whose literal credential matches a default its type declares, or with no password where its type declares it accepts none | The whole file fails like any invalid config, and the error names the connection and `password`, never the value; a `${ENV}` or `${vault:...}` reference is checked once it resolves, and the connection is refused before anything is dialled |
-| `mcp: true` on an Oxia, Firestore, OPC UA, Modbus or NETCONF connection | The whole file fails like any invalid config, and the error names `mcp` and the type, such as `oxia` or `netconf` |
+| `mcp: true` on an Oxia, Firestore, Modbus or NETCONF connection | The whole file fails like any invalid config, and the error names `mcp` and the type, such as `oxia` or `netconf` |
+| `mcp: true` on an OPC UA connection with no `agentReadRoots` | The whole file fails like any invalid config, and the error names `mcp` and says to add `agentReadRoots` |
 | `mcp: true` on an S3 connection with no `agentUser` and `agentPassword` | The whole file fails like any invalid config, and the error names the connection, `mcp` and the type |
 | `mcp: true` on an etcd connection whose `user` is `root` | The whole file fails like any invalid config, and the error names the connection and `user` |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |

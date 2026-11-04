@@ -15,31 +15,29 @@
  * (an identifier that does not decode) is refused. An `nsu=` id outside namespace 0 keeps its URI here: which index it
  * names is the server's NamespaceArray's to say, read by the provider on the read's own session.
  *
- * A history read or a browse of a withheld root, or of a namespace-0 node outside agent mode's list
- * (`standingRefusal` in `agent-withheld.ts`), is refused here with its reason, before anything is sent. A value read
- * naming one is admitted, and that node is never sent: its row is answered withheld (`agent-read.ts`). The nodes
- * beneath a root have server-chosen ids, so they are decided by the provider on the read's own session.
+ * Which node ids a read may answer is not decided here: the read roots are proved on the read's own session
+ * (`agent-roots.ts`), and every id outside them answers as an id the server does not hold (`agent-read.ts`). Only a
+ * refusal that depends on the text alone is made here.
  *
  * Not the boundary. The boundary is the provider's structural closed seam: `OpcuaReadOnlyClient` (`client.ts`) holds
  * eight read services and nothing that writes, calls a method or subscribes. This is what lets the model read why it
  * was refused, before anything is sent.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { canonicalNodeId, OPCUA_WITHHELD_SENTENCE, standingRefusal, withheldReason } from "./agent-withheld";
+import { OPCUA_READ_ROOTS_SENTENCE } from "./agent-roots";
+import { canonicalNodeId } from "./agent-withheld";
 import { isNodeId, type OpcuaNodeId } from "./node-id";
 import { readRequest } from "./read-request";
 
 const NOTHING_SENT = "Nothing was sent.";
 
 /** What agent mode reads on OPC UA, in the words every refusal of the reader repeats. */
-export const OPCUA_AGENT_READS = `Agent mode on OPC UA reads with one JSON request per read: {"read": ["ns=3;s=SlowUInt1", ...]} reads the current value of each node, with its engineering units and EU range where the server publishes them; {"history": "ns=3;s=HistorianInt32", "start": "2026-10-31T00:00:00Z", "end": "2026-10-31T01:00:00Z", "limit": 100} reads one node's raw history (start, end and limit optional); {"browse": "i=85"} lists the children of one node, starting from the Objects folder i=85. A node id is written with its namespace index (ns=3;s=...) or its namespace URI (nsu=urn:...;s=...), or in namespace 0 with no prefix (i=2256). Only Browse, BrowseNext, Read and HistoryRead are sent, never a Write, a method Call, a subscription or a node change. ${OPCUA_WITHHELD_SENTENCE}`;
+export const OPCUA_AGENT_READS = `Agent mode on OPC UA reads with one JSON request per read: {"read": ["ns=3;s=SlowUInt1", ...]} reads the current value of each node, with its engineering units and EU range where the server publishes them; {"history": "ns=3;s=HistorianInt32", "start": "2026-10-31T00:00:00Z", "end": "2026-10-31T01:00:00Z", "limit": 100} reads one node's raw history (start, end and limit optional); {"browse": "<node id>"} lists the children of one node, and {"browse": "i=85"} lists the read roots. A node id is written with its namespace index (ns=3;s=...) or its namespace URI (nsu=urn:...;s=...), or in namespace 0 with no prefix (i=2256). Only Browse, BrowseNext, Read and HistoryRead are sent, never a Write, a method Call, a subscription or a node change. ${OPCUA_READ_ROOTS_SENTENCE}`;
 
 export const OPCUA_AGENT_SENTENCES = {
   reads: OPCUA_AGENT_READS,
   /** `message` is the parser's refusal; the list of reads follows it. */
   request: (message: string): string => `${message.replace(/\.$/, "")}. ${OPCUA_AGENT_READS} ${NOTHING_SENT}`,
-  /** A history read or a browse of a withheld root. */
-  withheld: (reason: string): string => `${reason} ${NOTHING_SENT}`,
 } as const;
 
 /** One read the agent's request names. Node ids are keys (`canonicalNodeId`), an `nsu=` one still to be resolved. */
@@ -58,7 +56,7 @@ export type OpcuaAgentPlan =
 
 export type OpcuaAgentReading =
   | { readonly ok: true; readonly plan: OpcuaAgentPlan }
-  | { readonly ok: false; readonly code: "request" | "withheld"; readonly message: string };
+  | { readonly ok: false; readonly code: "request"; readonly message: string };
 
 const BROWSE_KEYS: ReadonlySet<string> = new Set(["browse"]);
 
@@ -125,11 +123,6 @@ export function readOpcuaAgentStatement(text: string): OpcuaAgentReading {
     // The console's parser refuses with a DatabaseConfigError and this reader with its own; anything else is a defect.
     if (!(error instanceof AgentRequestRefusal) && !(error instanceof DatabaseConfigError)) throw error;
     return { ok: false, code: "request", message: OPCUA_AGENT_SENTENCES.request(error.message) };
-  }
-  if (plan.kind !== "read") {
-    const root = standingRefusal(plan.nodeId);
-    if (root !== undefined)
-      return { ok: false, code: "withheld", message: OPCUA_AGENT_SENTENCES.withheld(withheldReason(root)) };
   }
   return { ok: true, plan };
 }

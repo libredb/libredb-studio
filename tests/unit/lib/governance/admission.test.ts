@@ -448,6 +448,8 @@ describe("admitConnectionRows", () => {
       ["ssl.verify", true],
       ["ssl", "require"],
       ["options", { statement_timeout: 0 }],
+      // Read roots are declared only by an operator's seed file, so a governed record never carries any.
+      ["agentReadRoots", ["nsu=urn:plant;s=Line1"]],
     ];
     for (const [field, value] of others) {
       const result = admit([connectionRow({ definition: withField(DEFINITION, field, value) })]);
@@ -596,6 +598,22 @@ describe("admitConnectionRows", () => {
     );
     expect(itemsOf(s3)).toEqual([]);
     expect(s3.admitted[0].read.mcp).toBeUndefined();
+
+    // OPC UA is offered to MCP only beneath read roots a seed declares, which a governed record never carries, so its
+    // flag is left off and the row is still served, with no roots.
+    const opcua = admit(
+      [
+        connectionRow({
+          engine: "opcua",
+          definition: { host: "opc.tcp://plc.example.internal:4840/" },
+          columns: { mcp_enabled: true },
+        }),
+      ],
+      { allowedEngines: ["opcua"] },
+    );
+    expect(itemsOf(opcua)).toEqual([]);
+    expect(opcua.admitted[0].read.mcp).toBeUndefined();
+    expect(opcua.admitted[0].read.agentReadRoots).toBeUndefined();
   });
 
   test("an opener failure that carries no envelope code is no row's fault, so admission throws it", () => {

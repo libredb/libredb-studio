@@ -25,6 +25,10 @@ import {
 } from "@/lib/db/providers/industrial/opcua/key-scan";
 import type { OpcuaBrowseResult, OpcuaNodeId, OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 import { pathSegments } from "@/lib/db/providers/industrial/opcua/node-id";
+import {
+  OPCUA_BROWSE_LEVEL_MAX_CONTINUATIONS,
+  OPCUA_BROWSE_LEVEL_MAX_REFERENCES,
+} from "@/lib/db/providers/industrial/opcua/constants";
 
 function reference(browseName: string, over: Partial<OpcuaReference> = {}): OpcuaReference {
   return {
@@ -761,6 +765,49 @@ describe("one level, however many answers the server splits it into", () => {
       browseNext: async () => [],
     };
     expect((await browseLevel(client, "ns=3;s=Folder")).map((row) => row.browseName)).toEqual(["A"]);
+  });
+});
+
+describe("a level the server never stops listing", () => {
+  /** A server that answers every Browse and BrowseNext of the folder with `per` references and a fresh point. */
+  function endless(per: number) {
+    const record = fresh();
+    let points = 0;
+    const page = (): OpcuaBrowseResult => {
+      points += 1;
+      return {
+        nodeId: "ns=3;s=Folder",
+        references: Array.from({ length: per }, (_, at) => reference(`R${points}-${at}`)),
+        continuationPoint: new Uint8Array([points % 256, Math.floor(points / 256)]),
+        statusCode: "Good",
+      };
+    };
+    const client: OpcuaReadOnlyClient = {
+      ...clientFrom({}, record),
+      browse: async () => [page()],
+      browseNext: async () => {
+        record.nexts += 1;
+        return [page()];
+      },
+    };
+    return { client, record, last: () => new Uint8Array([points % 256, Math.floor(points / 256)]) };
+  }
+
+  test("stops at the continuation bound, hands the point back, and refuses rather than answering part", async () => {
+    const { client, record, last } = endless(1);
+    const refused = await browseLevel(client, "ns=3;s=Folder").catch((error: Error) => error);
+    expect(refused).toBeInstanceOf(Error);
+    expect((refused as Error).message).toContain("refused rather than shown in part");
+    expect(record.nexts).toBe(OPCUA_BROWSE_LEVEL_MAX_CONTINUATIONS);
+    expect(record.released).toEqual([[last()]]);
+  });
+
+  test("stops at the reference bound, hands the point back, and refuses rather than answering part", async () => {
+    const { client, record, last } = endless(OPCUA_BROWSE_LEVEL_MAX_REFERENCES / 2);
+    const refused = await browseLevel(client, "ns=3;s=Folder").catch((error: Error) => error);
+    expect((refused as Error).message).toContain("refused rather than shown in part");
+    expect(record.nexts).toBe(2);
+    expect(record.released).toEqual([[last()]]);
   });
 });
 

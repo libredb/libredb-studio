@@ -386,6 +386,13 @@ export type AgentRunFailureReason =
    */
   | "agent-credential-unusable"
   /**
+   * The connection's engine is read by agent mode only beneath read roots its seed entry declares, and it declares
+   * none, so the profile was refused before anything was sent. The engine is supported and the credential is not at
+   * fault: the repair is the seed entry's `agentReadRoots`. `READ_ROOTS_REQUIRED` is the one code that reaches it, and
+   * the runs route refuses a Start under the same name before a run exists.
+   */
+  | "read-roots-required"
+  /**
    * The database principal this run would have executed as holds privileges the
    * read-only boundary cannot contain, so the execution profile refused it. The engine
    * IS supported and the credential WAS applied: what failed is the principal it names,

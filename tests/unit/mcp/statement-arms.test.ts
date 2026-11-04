@@ -53,6 +53,7 @@ const RUN_MILVUS_READ_ARM = mcpStatementArm("run_milvus_read");
 const RUN_MQTT_READ_ARM = mcpStatementArm("run_mqtt_read");
 const RUN_SPARKPLUG_READ_ARM = mcpStatementArm("run_sparkplug_read");
 const RUN_SNMP_READ_ARM = mcpStatementArm("run_snmp_read");
+const RUN_OPCUA_READ_ARM = mcpStatementArm("run_opcua_read");
 const RUN_S3_READ_ARM = mcpStatementArm("run_s3_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
@@ -150,8 +151,15 @@ describe("MCP_STATEMENT_ARMS", () => {
       expect(arm.answersWarnings).toBe(facet.answersWarnings === true);
     }
     // The window tools say what a window cannot; SNMP names the withheld subtrees a read stepped over or answered; S3
-    // says a pinned connection's bucket list holds its one bucket.
-    for (const arm of [RUN_MQTT_READ_ARM, RUN_SPARKPLUG_READ_ARM, RUN_SNMP_READ_ARM, RUN_S3_READ_ARM])
+    // says a pinned connection's bucket list holds its one bucket; OPC UA lists the read roots and counts a member's
+    // references that lead outside them.
+    for (const arm of [
+      RUN_MQTT_READ_ARM,
+      RUN_SPARKPLUG_READ_ARM,
+      RUN_SNMP_READ_ARM,
+      RUN_S3_READ_ARM,
+      RUN_OPCUA_READ_ARM,
+    ])
       expect(arm.answersWarnings).toBe(true);
     expect(RUN_READ_QUERY_ARM.answersWarnings).toBe(false);
     expect(RUN_ETCD_READ_ARM.answersWarnings).toBe(false);

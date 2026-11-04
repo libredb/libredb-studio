@@ -6,13 +6,13 @@ import { UNAVAILABLE_TEXT } from "../../tool-contracts";
 import type { AgentRunWorkflowType } from "../../types";
 import type { AgentLanguageGrounding, AgentLanguageServerPack } from "../pack";
 import { OPERATIONS_TOOL_RULE } from "../shared";
-import { OPCUA_WITHHELD_SENTENCE } from "@/lib/db/providers/industrial/opcua/agent-withheld";
+import { OPCUA_READ_ROOTS_SENTENCE } from "@/lib/db/providers/industrial/opcua/agent-roots";
 import { OPCUAREAD_ADAPTER } from "./adapter";
 import { OPCUAREAD_TOOL_OVERRIDES } from "./definitions";
 
 /** Where the address space comes from, the same words in the rule, the grounding advice and the ungrounded note. */
 const BROWSED =
-  'An OPC UA address space is browsed one level at a time rather than listed, so no node is listed for the run: read a node id the question names exactly as it is written, without browsing to it first, and browse from the Objects folder with {"browse": "i=85"} only to find a node the question does not name, going down from what it answers.';
+  'An OPC UA address space is browsed one level at a time rather than listed, so no node is listed for the run: read a node id the question names exactly as it is written, without browsing to it first, and browse the read roots with {"browse": "i=85"} only to find a node the question does not name, going down from what it answers.';
 
 /** The units rule, the same words in the rule and the grounding advice. */
 const UNITS =
@@ -23,7 +23,7 @@ const OPCUAREAD_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowTyp
     'Read the server with run_read_query, one JSON request at a time: {"browse": "<node id>"} for the children of one node, {"read": ["<node id>", ...]} for current values, and {"history": "<node id>", "start": "...", "end": "...", "limit": 100} for one node\'s raw history.',
     `${BROWSED} Write any other node id exactly as a browse answers it, and ask for every value you need in one read rather than one read per node.`,
     UNITS,
-    OPCUA_WITHHELD_SENTENCE,
+    OPCUA_READ_ROOTS_SENTENCE,
     "Values are the server's own readings, answered as the console renders them.",
     "Report what the evidence supports, and nothing further.",
   ].join(" "),
@@ -39,10 +39,10 @@ const OPCUAREAD_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowTyp
  * the no-inventory refusal every grounded engine's plan meets when its inventory cannot be read.
  */
 const OPCUAREAD_GROUNDING: AgentLanguageGrounding = Object.freeze({
-  omissionAdvice: `${BROWSED} ${UNITS} ${OPCUA_WITHHELD_SENTENCE}`,
+  omissionAdvice: `${BROWSED} ${UNITS} ${OPCUA_READ_ROOTS_SENTENCE}`,
   relations: false,
   ungrounded: (detail: string, noun: AgentInventoryNoun) =>
-    `${detail}\nSo nothing about this server has been established for you: not one ${noun.singular} name. ${BROWSED} ${UNITS} ${OPCUA_WITHHELD_SENTENCE}`,
+    `${detail}\nSo nothing about this server has been established for you: not one ${noun.singular} name. ${BROWSED} ${UNITS} ${OPCUA_READ_ROOTS_SENTENCE}`,
   ungroundedPlanning: Object.freeze([
     "No inventory of this server is in this conversation, and none ever will be: an OPC UA address space is browsed one level at a time rather than listed.",
     "So the node ids of the request you draft are the ones the question names, written exactly as it writes them: invent none, and derive none from a node's name.",

@@ -180,6 +180,9 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  * - `namespaces` decides which namespaces a Kubernetes provider lists as containers, and a cached provider holds the
  *   list it was opened with, so a connection whose list changed must not be handed one that draws the old list. It
  *   changes no identity: the fingerprint and `connectionIdentity` leave it out.
+ * - `agentReadRoots` decides which nodes an OPC UA agent or MCP read proves readable, so a connection whose root list
+ *   changed must not be handed a handle opened under the old list. Framed as one JSON array, so where one root ends
+ *   is part of the key. It changes no identity: the fingerprint and `connectionIdentity` leave it out.
  * - `authMethod`, `privateKey`, `privateKeyPassphrase` and `role` decide who a Snowflake connection signs in as and
  *   which role every statement runs as, so a connection differing in any of them must not be handed a provider opened
  *   with the other; the two secrets are also held by the census through `CONNECTION_FIELDS`, and `role` and
@@ -219,6 +222,8 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
     tunnel?.privateKey ?? "",
     tunnel?.passphrase ?? "",
     tunnel?.hostKeyFingerprint ?? "",
+    // Last and only when set, so every connection without roots keeps the key it had.
+    ...(connection.agentReadRoots === undefined ? [] : [JSON.stringify(connection.agentReadRoots)]),
   ]
     .map((value) => `${value.length}:${value}`)
     .join("");

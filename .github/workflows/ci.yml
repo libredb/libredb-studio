@@ -618,13 +618,16 @@ jobs:
           # The digest reaches the suite, so the image this step runs and the image the fixture documents
           # cannot drift apart: `tests/unit/db/opcua/live-environment.test.ts` compares them.
           export OPCUA_LIVE_DIGEST="${image#*@}"
-          export LIBREDB_OPCUA_LIVE_URL="opc.tcp://127.0.0.1:54840/"
           trap 'docker rm -f libredb-ci-opcua > /dev/null' EXIT
           # Loopback only. Without the host address Docker publishes on 0.0.0.0, and this server is
           # started --autoaccept --unsecuretransport: it would accept any client on every interface of
-          # the runner.
-          docker run -d --name libredb-ci-opcua -p 127.0.0.1:54840:50000 "$image" \
+          # the runner. The host port is Docker's pick: a fixed one inside the ephemeral range
+          # (32768-60999) can be held by a client socket, open or in TIME_WAIT, and
+          # Docker then refuses the bind with "address already in use".
+          docker run -d --name libredb-ci-opcua -p 127.0.0.1::50000 "$image" \
             --pn=50000 --autoaccept --unsecuretransport --ut --sph --hn --slownodes=3 --fastnodes=3
+          port="$(docker port libredb-ci-opcua 50000/tcp | head -n 1)"
+          export LIBREDB_OPCUA_LIVE_URL="opc.tcp://127.0.0.1:${port##*:}/"
 
           # 1. The server's own statement. opc-plc prints this once the simulation is up.
           logged=""

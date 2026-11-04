@@ -601,11 +601,10 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // `run_rabbitmq_read`, which reads through agent mode's metadata-only path: each message's offset and body size,
   // never a message value (BACKLOG B108).
   rabbitmq: true,
-  // Outside this version. Agent mode reads values with their
-  // engineering units and withholds the server's configuration, role identities and session
-  // diagnostics, one session per read; no MCP surface that reads through the same withheld set and
-  // units lookup is designed yet (BACKLOG B162).
-  opcua: false,
+  // Offered only beneath the read roots its seed declares, which READ_ROOTS_REQUIRED holds MCP to: an OPC UA server
+  // declares no relation kind, so `inspect_schema` refuses an OPC UA connection by name, and `run_opcua_read` answers
+  // every node outside the roots exactly as a missing one.
+  opcua: true,
   // Offered for the metadata tools and run_mtconnect_read, which acquire an agent-mode handle and so read the device
   // model with the agent's adapter connections withheld.
   mtconnect: true,
@@ -753,9 +752,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // and the `x-stream-offset` 406 backstop), answered metadata only, each message's offset and body size; message values
   // stay withheld (docs/providers/rabbitmq.md section 17, BACKLOG B108).
   rabbitmq: true,
-  // Agent mode executes reads with engineering units on OPC UA, and MCP read stays closed on it until a change of its
-  // own opens it (BACKLOG B162).
-  opcua: false,
+  // Opened on its own: run_opcua_read runs under the boundary agent mode uses, the provider's read-only client over a
+  // session opened per read, reading only beneath the seed's read roots, proved by a walk down from them on that
+  // session, with every other node id answered as a missing one and nothing sent for it (docs/providers/opcua.md
+  // section 15).
+  opcua: true,
   // Opened on its own: run_mtconnect_read runs under the boundary agent mode uses, the provider's closed table of nine
   // GET routes, with the agent's adapter connections withheld from every answer (docs/providers/mtconnect.md section 14).
   mtconnect: true,
@@ -839,6 +840,71 @@ export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolea
   sparkplug: false,
   libredb: false,
 });
+
+/**
+ * Which shipped engines agent mode and MCP read only beneath read roots a seed declares (`agentReadRoots`), never
+ * across the whole server: on such an engine the roots are what bound what an agent or an MCP client reads, so a
+ * connection without them is not read at all. Read by every layer outside the provider, so none branches on the type
+ * id: the runs route refuses an agent-mode Start whose workflow sends statements on a connection without roots, the seed
+ * schema refuses `mcp: true` without roots at load, the MCP context refuses to acquire such a connection at open with
+ * `READ_ROOTS_REQUIRED`, and a governed record, which carries no roots, is never opted in to MCP.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held true exactly where
+ * `SEED_ONLY_FIELDS` (src/lib/db/connection-fields.ts) names `agentReadRoots`, by `tests/unit/db/compatibility.test.ts`.
+ */
+export const READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: true,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
+  snmp: false,
+  sparkplug: false,
+  libredb: false,
+});
+
+/**
+ * The refusal of an agent-mode Start whose workflow sends statements, on a connection of an engine `READ_ROOTS_REQUIRED`
+ * names that declares no read roots. Worded without naming an engine, since the runs route answers it for every engine
+ * the record names.
+ */
+export const READ_ROOTS_REQUIRED_SENTENCE =
+  "This connection declares no read roots: agent mode reads its engine only beneath read roots an operator declares on its seed entry (agentReadRoots). Nothing was sent.";
 
 /**
  * Which shipped engines' connection form offers a URI mode (Spec A section 7): the answer

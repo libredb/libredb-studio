@@ -23,12 +23,13 @@ import {
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
   READ_ONLY_ENFORCED,
+  READ_ROOTS_REQUIRED,
   READS_FILE_ACCESS_POSTURE,
   SHIPPED_DATABASE_TYPES,
   SINGLE_WRITER_FILE,
 } from "@/lib/db/compatibility";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
+import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { isFileBased } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
@@ -719,6 +720,17 @@ describe("MCP_AGENT_CREDENTIAL_REQUIRED", () => {
     for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => MCP_AGENT_CREDENTIAL_REQUIRED[candidate])) {
       expect([type, MCP_EXPOSABLE[type], SEED_AGENT_CREDENTIAL[type] !== null]).toEqual([type, true, true]);
     }
+  });
+});
+
+describe("READ_ROOTS_REQUIRED", () => {
+  test("is frozen, and true exactly where a seed of the engine may declare read roots", () => {
+    expect(Object.isFrozen(READ_ROOTS_REQUIRED)).toBe(true);
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const declares = SEED_ONLY_FIELDS[type]?.fields.includes("agentReadRoots") ?? false;
+      expect([type, READ_ROOTS_REQUIRED[type]]).toEqual([type, declares]);
+    }
+    expect(READ_ROOTS_REQUIRED.opcua).toBe(true);
   });
 });
 

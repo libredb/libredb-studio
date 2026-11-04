@@ -19,6 +19,7 @@ import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
 import {
   assertAgentCredentialWhereRequired,
+  assertReadRootsWhereRequired,
   MCP_CONNECTIONS_UNREADABLE,
   McpConnectionContext,
   mcpCaller,
@@ -570,6 +571,46 @@ describe("a seed's agent credential", () => {
       ["agent_reader", STAND_IN_AGENT_PASSWORD],
       ["agent_reader", STAND_IN_AGENT_PASSWORD],
     ]);
+  });
+});
+
+describe("an engine MCP reads only beneath read roots", () => {
+  const listed = (fields: Record<string, unknown> = {}): ManagedConnection => ({
+    id: "seed:plant",
+    name: "plant",
+    type: "opcua",
+    host: "opc.tcp://plc.ornek.net:4840/",
+    createdAt: new Date(),
+    managed: true,
+    roles: ["*"],
+    seedId: "plant",
+    ...fields,
+  });
+
+  test("refuses a connection that declares none in Studio's words, naming the connection", () => {
+    let refusal: unknown;
+    try {
+      assertReadRootsWhereRequired(listed());
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(ExecutionProfileError);
+    expect((refusal as ExecutionProfileError).reasonCode).toBe("READ_ROOTS_REQUIRED");
+    expect((refusal as Error).message).toBe(
+      'Connection "seed:plant" is read by MCP only beneath read roots its seed entry declares, and it declares none: an operator sets agentReadRoots on this seed.',
+    );
+  });
+
+  test("admits one that declares roots, and every connection of an engine the registry does not name", () => {
+    expect(() => assertReadRootsWhereRequired(listed({ agentReadRoots: ["nsu=urn:plant;s=Line1"] }))).not.toThrow();
+    expect(() => assertReadRootsWhereRequired({ ...listed(), type: "postgres" })).not.toThrow();
+  });
+
+  test("an acquisition refuses it before anything is resolved or opened", async () => {
+    const context = new McpConnectionContext(mcpCaller({ extra: { role: "admin", username: "alice" } } as never));
+    await expect(context.acquire(listed(), "agent-read-only")).rejects.toMatchObject({
+      reasonCode: "READ_ROOTS_REQUIRED",
+    });
   });
 });
 

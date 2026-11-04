@@ -921,6 +921,22 @@ describe("captureContextSnapshot — an environment failure on the composed path
     expect(capture.detail).not.toMatch(/so its schema was not read for this run\.$/);
   });
 
+  test("a connection that declares no read roots is told who adds them, in the deny code's own words", async () => {
+    const h = harness("postgres");
+    const capture = await captureContextSnapshot({
+      ...h.context,
+      acquireProvider: async () => {
+        throw new ExecutionProfileError("refused before any socket", "READ_ROOTS_REQUIRED");
+      },
+    });
+    expect(capture.kind).toBe("unavailable");
+    if (capture.kind !== "unavailable") throw new Error("unreachable");
+    expect(capture.detail).toContain(
+      "This connection declares no read roots, so agent mode cannot read it. An operator adds agentReadRoots to its seed entry; plan mode still drafts requests for the editor.",
+    );
+    expect(capture.detail).not.toContain("refused before any socket");
+  });
+
   test("a profile that refuses the principal says what to do about it, in the deny code's own words", async () => {
     // The measured case this exists for: a SQL Server connection saved as `sa`, which is
     // how most of them are saved, is refused correctly and was reported only as "could not

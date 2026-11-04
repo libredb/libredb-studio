@@ -117,6 +117,8 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   seedId: "public",
   agentUser: "public",
   agentPassword: "secret",
+  // Node ids an operator declared readable, not a credential and not an address.
+  agentReadRoots: "public",
   // Not `user`'s twin. `user` is a name an operator chose and can re-type; this is one
   // generated, opaque half of a credential pair, so leaving it readable narrows what a
   // leak has to guess from two values to one. See the field's own doc in types.ts.

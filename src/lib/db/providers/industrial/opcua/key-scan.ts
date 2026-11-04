@@ -26,12 +26,17 @@
  * would then read as the end of the level it was in the middle of; and `opaque` is declared, so the
  * route hands the string back to us exactly as it came.
  */
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import { errorForStatus } from "./errors";
 import type { KeyScanCapability, KeyScanPage } from "@/lib/db/types";
 import type { OpcuaNodeId, OpcuaReadOnlyClient, OpcuaReference, OpcuaServerLimits } from "./client";
 import { browseChunkSize, chunked } from "./limits";
-import { OPCUA_OBJECTS_FOLDER, OPCUA_TYPE } from "./constants";
+import {
+  OPCUA_BROWSE_LEVEL_MAX_CONTINUATIONS,
+  OPCUA_BROWSE_LEVEL_MAX_REFERENCES,
+  OPCUA_OBJECTS_FOLDER,
+  OPCUA_TYPE,
+} from "./constants";
 import { OPCUA_PATH_SEPARATOR, pathKey, pathSegments } from "./node-id";
 
 /** Batch size a page accepts, and the most it will answer. */
@@ -198,6 +203,10 @@ export async function resolvePath(client: OpcuaReadOnlyClient, segments: readonl
  * folder the reader could not be told about opened as a folder with nothing in it, and the walk
  * down a path reported "No node named X" for a level the server had refused outright. The status is
  * now read before the references, as the history read already does.
+ *
+ * A SERVER THAT NEVER STOPS PAGING IS STOPPED HERE. Past `OPCUA_BROWSE_LEVEL_MAX_CONTINUATIONS` continued pages, or
+ * once the level holds more than `OPCUA_BROWSE_LEVEL_MAX_REFERENCES` references with a point still to follow, the
+ * point is handed back and the level is refused rather than shown in part.
  */
 export async function browseLevel(
   client: OpcuaReadOnlyClient,
@@ -208,7 +217,14 @@ export async function browseLevel(
   requireBrowsed(first.statusCode);
   const references: OpcuaReference[] = [...first.references];
   let point = first.continuationPoint;
+  let continued = 0;
   while (point !== undefined) {
+    if (continued >= OPCUA_BROWSE_LEVEL_MAX_CONTINUATIONS || references.length > OPCUA_BROWSE_LEVEL_MAX_REFERENCES) {
+      // oxlint-disable-next-line no-await-in-loop -- the one point still held, handed back before the refusal.
+      await client.releaseBrowseContinuationPoints([point]);
+      throw new QueryError(OPCUA_LEVEL_PAST_BOUND, OPCUA_TYPE);
+    }
+    continued += 1;
     // oxlint-disable-next-line no-await-in-loop -- a continuation point is consumed by the request that received it, in order.
     const [next] = await client.browseNext([point]);
     if (next === undefined) break;
@@ -218,6 +234,13 @@ export async function browseLevel(
   }
   return references;
 }
+
+/** The refusal of a level the server kept listing past either bound, in Studio's words. */
+const OPCUA_LEVEL_PAST_BOUND =
+  `The server kept listing this node's references past what one level takes (more than ` +
+  `${OPCUA_BROWSE_LEVEL_MAX_REFERENCES.toLocaleString("en-US")} references, or more than ` +
+  `${OPCUA_BROWSE_LEVEL_MAX_CONTINUATIONS} continued pages), so the level is refused rather than shown in part. ` +
+  "Studio handed the server's continuation point back.";
 
 /**
  * The server's own answer about one Browse, read rather than assumed.

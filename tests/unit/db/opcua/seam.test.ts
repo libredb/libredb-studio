@@ -15,6 +15,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { boundedAgentClient } from "@/lib/db/providers/industrial/opcua/agent-read";
 import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
+import { OPCUA_READ_ATTRIBUTES, OPCUA_WALK_ATTRIBUTES } from "@/lib/db/providers/industrial/opcua/constants";
 
 const PROVIDER = path.join(
   import.meta.dir,
@@ -152,8 +153,23 @@ describe("the client seam", () => {
  * none, no Write, Call, AddNodes, DeleteNodes, AddReferences, DeleteReferences, HistoryUpdate, RegisterNodes,
  * TranslateBrowsePathsToNodeIds, TransferSubscriptions or CreateSubscription.
  */
+/**
+ * No request field chooses an attribute: a value read asks for the ten attributes the console shows, and the read
+ * roots walk for the four facts it decides membership on, both fixed lists in `constants.ts` that `session.ts` sends.
+ */
+describe("the two fixed attribute lists", () => {
+  test("a value read's ten and the walk's four, and no other list", () => {
+    expect([...OPCUA_READ_ATTRIBUTES]).toEqual([13, 2, 14, 15, 16, 17, 18, 20, 5, 4]);
+    expect([...OPCUA_WALK_ATTRIBUTES]).toEqual([2, 14, 3, 4]);
+    expect(Object.isFrozen(OPCUA_READ_ATTRIBUTES)).toBe(true);
+    expect(Object.isFrozen(OPCUA_WALK_ATTRIBUTES)).toBe(true);
+    const session = code("session.ts");
+    expect(session.match(/attributeId/g)?.length).toBe(2);
+  });
+});
+
 describe("the agent's client", () => {
-  test("holds exactly the eight read members of the seam, and its request count", () => {
+  test("holds exactly the read members an answer needs, its request count and the walk's client", () => {
     const session = new Proxy({} as OpcuaReadOnlyClient, {
       get: () => () => {
         throw new Error("not called");
@@ -162,21 +178,27 @@ describe("the agent's client", () => {
     const client = boundedAgentClient(session, { deadlineAt: Number.POSITIVE_INFINITY, timeoutMs: 1, now: () => 0 });
     expect(Object.keys(client).sort()).toEqual(
       [
-        "browse",
-        "browseNext",
         "historyRead",
         "historyReadNext",
         "limits",
         "read",
-        "releaseBrowseContinuationPoints",
         "releaseHistoryContinuationPoint",
         "requests",
+        "walk",
       ].sort(),
     );
     expect(Object.isFrozen(client)).toBe(true);
+    // The read roots walk's client: forward Browse, BrowseNext, the facts Read and the release of a browse point.
+    expect(Object.keys(client.walk).sort()).toEqual([
+      "browse",
+      "browseNext",
+      "read",
+      "releaseBrowseContinuationPoints",
+    ]);
+    expect(Object.isFrozen(client.walk)).toBe(true);
   });
 
-  test("refuses a request at or past its deadline before the session is asked anything", async () => {
+  test("refuses a request at or past its deadline before the session is asked anything but a release", async () => {
     const asked: string[] = [];
     const session = new Proxy({} as OpcuaReadOnlyClient, {
       get: (_target, member) => async () => {
@@ -186,14 +208,49 @@ describe("the agent's client", () => {
     });
     let now = 0;
     const client = boundedAgentClient(session, { deadlineAt: 10, timeoutMs: 10, now: () => now });
-    await client.browse(["i=85"]);
+    await client.limits();
     now = 10;
     const refused = await client.read(["i=2256"]).then(
       () => "answered",
       (error: Error) => error.message,
     );
     expect(refused).toStartWith("Read-only execution exceeded the time budget: the read did not finish within 10ms");
-    expect(asked).toEqual(["browse"]);
+    expect(asked).toEqual(["limits"]);
     expect(client.requests()).toBe(1);
+    // The walk meets the same deadline and is not counted against the answer's bound.
+    now = 0;
+    await client.walk.browse(["ns=3;s=A"]);
+    await client.walk.browseNext([new Uint8Array([1])]);
+    await client.walk.read(["ns=3;s=A"]);
+    await client.walk.releaseBrowseContinuationPoints([new Uint8Array([1])]);
+    expect(asked).toEqual(["limits", "browse", "browseNext", "read", "releaseBrowseContinuationPoints"]);
+    expect(client.requests()).toBe(1);
+    asked.length = 0;
+    now = 10;
+    await expect(client.walk.read(["ns=3;s=A"])).rejects.toThrow("Read-only execution exceeded the time budget");
+    await expect(client.walk.browse(["ns=3;s=A"])).rejects.toThrow("Read-only execution exceeded the time budget");
+    await expect(client.walk.browseNext([new Uint8Array([1])])).rejects.toThrow(
+      "Read-only execution exceeded the time budget",
+    );
+    // The one thing the deadline still sends is the release of the point a stopped BrowseNext held.
+    expect(asked).toEqual(["releaseBrowseContinuationPoints"]);
+  });
+
+  test("asks the walk's Read for the facts list and Browse forward only, with no direction", async () => {
+    const asked: unknown[][] = [];
+    const session = new Proxy({} as OpcuaReadOnlyClient, {
+      get:
+        () =>
+        async (...args: unknown[]) => {
+          asked.push(args);
+          return [];
+        },
+    });
+    const client = boundedAgentClient(session, { deadlineAt: Number.POSITIVE_INFINITY, timeoutMs: 1, now: () => 0 });
+    await client.walk.read(["ns=3;s=A"]);
+    await client.walk.browse(["ns=3;s=A"]);
+    await client.read(["ns=3;s=A"]);
+    await client.read(["ns=3;s=A"], "facts");
+    expect(asked).toEqual([[["ns=3;s=A"], "facts"], [["ns=3;s=A"]], [["ns=3;s=A"]], [["ns=3;s=A"], "facts"]]);
   });
 });

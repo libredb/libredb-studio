@@ -1116,6 +1116,22 @@ describe("useConnectionForm", () => {
     expect(resolveAgentRunConnectionId(saved, { loaded: true, seeds: [served] })).toEqual({ id: "seed:sample" });
   });
 
+  // Read roots never reach the browser, so they decide nothing here: the run resolves the seed's own roots on the
+  // server, and an editable copy without them is still the seed.
+  test("an OPC UA seed's editable copy without read roots stays eligible", () => {
+    const copy = {
+      id: "seed:plant",
+      name: "Plant",
+      type: "opcua",
+      host: "opc.tcp://plc.ornek.net:4840/",
+      seedId: "plant",
+      managed: false,
+      createdAt: new Date(),
+    } as DatabaseConnection;
+    const served = { ...copy, agentReadRoots: ["nsu=urn:plant;s=Line1"], createdAt: copy.createdAt.toISOString() };
+    expect(resolveAgentRunConnectionId(copy, { loaded: true, seeds: [served] })).toEqual({ id: "seed:plant" });
+  });
+
   /*
     A file-addressed engine takes a path and nothing else, and the editor shows it
     nothing else — but it used to write `host: "localhost"`, an empty user and

@@ -80,8 +80,8 @@ export type ConnectionField =
   // are checked by different code, and one box for both would carry a label that is wrong half
   // the time.
   | "hostKeyFingerprint";
-/** A field a seed file may carry that no connection dialog draws: a deployment fact, named by a file path or a URI. */
-export type SeedOnlyField = "securityPolicyUri" | "clientCertificatePath" | "clientPrivateKeyPath";
+/** A field a seed file may carry that no connection dialog draws: a deployment fact, named by a file path or a URI, or an OPC UA seed's read roots. */
+export type SeedOnlyField = "securityPolicyUri" | "clientCertificatePath" | "clientPrivateKeyPath" | "agentReadRoots";
 
 /**
  * The fields the connection dialog draws either in the open or behind its Advanced accordion, as the engine's
@@ -558,6 +558,7 @@ const OPCUA_SEED_ONLY_FIELDS: SeedOnlyFields = Object.freeze({
     "securityPolicyUri",
     "clientCertificatePath",
     "clientPrivateKeyPath",
+    "agentReadRoots",
   ] as const),
   kind: "each",
   refusal: (field: string) =>

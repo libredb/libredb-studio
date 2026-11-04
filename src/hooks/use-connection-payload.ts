@@ -129,6 +129,9 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // profile even when it points at the same database (#328).
   agentUser: "resolution",
   agentPassword: "resolution",
+  // The browser never holds it: the managed listing strips it, and a run resolves the seed's own roots on the server,
+  // so an editable copy without it is still the seed.
+  agentReadRoots: "cosmetic",
   // The key ID carries its own role descriptors on the cluster, so two connections
   // differing only here can see different indices - the same "changes which catalog
   // it reaches" test `authSource` is classified by above, not an analogy to `user`.
