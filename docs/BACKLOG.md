@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D447, U17 · 330
+- [Drivers and connections](#drivers-and-connections) — D1-D452, U17 · 334
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U198 · 184
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U199 · 185
 - [Dependencies](#dependencies) — P1-P13 · 11
 - [Documentation](#documentation) — DOC3-DOC35 · 29
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -3725,12 +3725,10 @@ Each ran out of that default under load on a 20-core development machine during 
   5114 ms in a `test:coverage` run on the SQL grammar branch of #1847 on 2026-10-19, while other worktrees ran tests too.
 - `tests/security/duckdb-posture-callsites.test.ts`, `the scan found the real call sites, so it is not vacuously green`, parses every file under `src/` with the TypeScript compiler a second time to count the factory calls, after the module scope parsed them once for `UNPOSTURED`.
   6345 ms in a `test:coverage` run of the connection form branch of #1849 at `3dc61662d` on 2026-10-19.
-- `tests/unit/db/create-table-spec-census.test.ts`, `exactly the eight ids with a measured grammar declare one`, builds every provider through `createDatabaseProvider`, which imports every provider module.
-  7268 ms in the same run as the DuckDB test.
 - `tests/unit/db/mongodb/seam-guard.test.ts` ran a test out of the default under 20 parallel jobs on the SQL writing branch of #1850 on 2026-10-19; which test was not recorded.
   Its slowest without a timeout of its own is `the real sources pass all three rules`, an import-graph walk from every file under `src/lib/db/operations` and `src/lib/agent`, read from disk in the body.
 
-Re-measured alone on 2026-10-20 on `main` at `6e611bf73`, three runs each through bun's JUnit reporter: 0.88 to 1.13 s, 0.52 to 0.53 s, 0.39 to 0.40 s and 0.38 to 0.39 s, in the order above.
+Re-measured alone on 2026-10-20 on `main` at `6e611bf73`, three runs each through bun's JUnit reporter: 0.88 to 1.13 s, 0.52 to 0.53 s and 0.38 to 0.39 s, in the order above.
 The etcd `seam-guard.test.ts` and `connection-options.test.ts` were the same class; #1855 made the one's slowest rule cheaper and gave the other's hook a budget.
 
 Amended 2026-10-29: more of the same class ran out of the default under load, each passing alone.
@@ -3822,7 +3820,12 @@ Found 2026-10-20 during the VS Code extension work.
 `step 4: a certificate whose Common Name etcd does not know is named` in `tests/integration/db/etcd-provider.test.ts` timed out at 60 s on the `windows-latest` job of #1875 on 2026-10-20.
 Whether the cause is the runner or the test was not measured.
 
-**Done when:** the cause is known and the test passes repeated runs on the `windows-latest` job.
+Amended 2026-11-04: the same test timed out at 60 s on the `windows-latest` jobs of runs 41476648885 (2026-11-02) and 41634421640 (2026-11-03), each with `openssl was killed by SIGTERM and made no test certificate`, so the time went to the `openssl req` that `selfSigned` spawned inside the test, not to the connect.
+In both, the second step 4 test spawned openssl again and passed, after 10440 ms and 38265 ms.
+On Linux that spawn takes under 10 ms and the connect 19 to 28 ms.
+Why openssl takes that long on that runner was not measured.
+
+**Done when:** the cause is known and the file passes repeated runs on the `windows-latest` job.
 
 ### D386. Two first requests for one connection at once each open a provider, and the cache keeps only the second
 
@@ -4417,6 +4420,44 @@ So an operator whose server takes a token alone cannot give either engine an age
 Found 2026-11-03 while adding the seed agent credential.
 
 **Done when:** an `AgentCredentialForm` member takes a user and a password or a password alone, `assertAgentCredentialForm` supports it, both providers declare it, the census and `SEED_AGENT_CREDENTIAL` follow, and a factory test shows an agent token alone opening each.
+
+### D449. The RabbitMQ routes' Node child hook ran out of its 120 s on Windows once
+
+`the three routes' full JSON bodies on Node (R-S5, R-S7)` in `tests/integration/db/rabbitmq-provider.test.ts` bundles three route modules with `Bun.build` in one `beforeAll` and runs them in a Node child in another, each with a 120 s budget.
+On the `windows-latest` job of run 41511087083 on 2026-11-02 one of the two hooks timed out at 120142 ms and the file took 136.3 s, against 18.1 to 53.9 s on the other Windows jobs read for this entry, from 2026-10-31 to 2026-11-03, and 17.7 to 22.6 s on macOS.
+The log names the hook only as `a beforeEach/afterEach hook timed out`, so whether the bundle or the child ran out, and on what it waited, is not known.
+Found 2026-11-04 while moving the cross-platform jobs' one-time test setup out of timed test bodies.
+
+**Done when:** a failed run says which of the two hooks ran out and what it was waiting on, and the cause is fixed or recorded where it bites.
+
+### D450. Two Kafka connect tests over the real library ran past their bounds on Windows
+
+`with no client factory, the provider loads the real library, and an unreachable broker is a ConnectionError` in `tests/integration/db/kafka-provider.test.ts` gives the provider a 2000 ms query timeout and the test 20 s, and it timed out on the `windows-latest` jobs of runs 41325986552 (2026-11-01), 41416484220 (20949 ms, 2026-11-02), 41476648885 (23244 ms, 2026-11-02), 41592387118 (25908 ms, 2026-11-03) and 41634421640 (20002 ms, 2026-11-03).
+In the last, `with the real library, a host that accepts and never answers fails the connect within its query timeout, retries included` also failed `expect(elapsed).toBeLessThan(1_900)` after 16344 ms, against a 1000 ms query timeout.
+On Linux the two take 1.1 s and 2.5 s alone, and 1.6 s and 2.5 s pinned to one busy core, and macOS passed both on every run of those three days.
+`connect` in `src/lib/db/providers/stream/kafka/index.ts` holds only the `metadata([])` probe to the query timeout (`withinConnectBudget`); the library's first load (`loadPlatformatic`) runs before it, and the `client.close()` after a failed probe is awaited with no bound, so either can hold the connect past its timeout. Which one did on Windows was not measured.
+Found 2026-11-04 while moving the cross-platform jobs' one-time test setup out of timed test bodies.
+
+**Done when:** the Windows time is attributed by a measurement on `windows-latest`, a connect that fails is answered within its query timeout there or the bound it is held to is documented in `docs/providers/kafka.md`, and both tests pass repeated runs on that job.
+
+### D451. A RabbitMQ hostile peer stopped on the deadline instead of idle under Node on macOS
+
+`R-S10: hostile peers settle within the deadline, uncaught-free, leaving no socket > under Node` and `both runtimes come to the same outcome for every peer` in `tests/unit/db/rabbitmq/hostile-peers.test.ts` failed on the `macos-latest` job of run 41712343989 (attempt 1, job 126183332406) on 2026-11-03.
+Under Node v24.22.1, `tune-frame-max-0` settled as `stop:deadline`, and its row in `tests/helpers/rabbitmq-fake-peer.ts` admits only `stop:idle`.
+That is the race the file's docblock describes, the read's 1,000 ms idle timer against its 2,000 ms deadline, on a peer of the light wave, whose longest stall the docblock measured under 200 ms on a starved core.
+Attempt 2 of the same run passed the file, and so did Bun in attempt 1.
+Found 2026-11-04 while moving the cross-platform jobs' one-time test setup out of timed test bodies.
+
+**Done when:** what held the Node loop past the idle stop on that runner is measured, and either the peer's row admits the deadline stop with the reason beside it, as the heavy pair's rows do, or the peer no longer races the deadline, and the file passes repeated runs on `macos-latest`.
+
+### D452. An etcd client-certificate refusal reached Node as a deadline on Windows
+
+`in a Node child, the production runtime (spec E5) > a server that requires a client certificate refuses a connection without one` in `tests/unit/db/etcd/tls-handshake.test.ts` failed on the `windows-latest` job of run 41596611612 (job 125785357498, a push to `main`) on 2026-11-03.
+Node v24.22.2 answered gRPC code 4, `Deadline exceeded after 5.002s,name resolution: 0.001s,Waiting for LB pick`, as `not-connected`, where the Node branch of the case admits only code 14 with `tlsv13 alert certificate required`.
+The Bun branch of the same case already admits code 4 for this race on the loaded Windows runner (#1511 precedent); the Node branch does not, so the file holds the two runtimes to different answers for one race.
+Found 2026-11-04 while moving the cross-platform jobs' one-time test setup out of timed test bodies.
+
+**Done when:** the Node branch admits the deadline answer beside code 14 with the reason in its comment, as the Bun branch does, or the refusal reaches Node before the call's deadline on that runner, and the file passes repeated runs on `windows-latest`.
 
 ## Value interpolation
 
@@ -6896,6 +6937,17 @@ Found 2026-11-03 while recording what each engine can write.
 Found 2026-11-03 while recording what each engine can write.
 
 **Done when:** a LibreDB `put` asks for the same confirmation a `delete` does, read from a row the provider declares rather than a type-id branch in the gate, with a test that drives `put` and `delete` through the gate.
+
+### U199. A cyclic EXPLAIN plan costs Bun a quarter to two thirds of a second before it is refused
+
+`fenceExplainPlan` in `src/lib/ai/prompt-fence.ts` serialises the plan with `JSON.stringify(plan, null, 2)`.
+On Bun 1.4.4 that call takes 658 ms the first time and 240 ms after to raise `JSON.stringify cannot serialize cyclic structures.` for `{ self }`, and 837 ms for `[{ self }]`, while the same object without the indent argument raises in 0.4 ms and a 2,000-deep acyclic object with it serialises in 7 ms.
+So `a circular object is refused rather than silently half-serialised` in `tests/unit/lib/ai/prompt-fence.test.ts` takes 676 ms alone, 4.5 s pinned to one busy core, and ran out of bun's 5000 ms default on the `macos-latest` jobs of runs 41458126085 (5051 ms) and 41469464573 (5935 ms) on 2026-11-02.
+No route reaches the slow path: the plan the explain route fences comes from a parsed request body, which cannot be cyclic.
+The cost is in the runtime, not in setup, so the test was left as it is; no upstream Bun report was searched for.
+Found 2026-11-04 while moving the cross-platform jobs' one-time test setup out of timed test bodies.
+
+**Done when:** the test refuses a cyclic plan well inside the default timeout on a busy runner, by a Bun release that detects the cycle on the indented path as fast as on the plain one, or by a fence that refuses a cyclic plan before it serialises it, with the test kept.
 
 ## Dependencies
 

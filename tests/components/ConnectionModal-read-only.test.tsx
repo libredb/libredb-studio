@@ -46,12 +46,17 @@ test("the package exports the app's dialog itself, so both surfaces draw the con
 });
 
 describe.each(SURFACES)("the read-only control in %s", (_surface, Modal) => {
-  test("every engine Studio has no write path on draws the fixed label and the shared sentence, and no box", () => {
-    render(<Modal isOpen onClose={() => {}} onConnect={() => {}} />);
-    const none = byReach("none");
+  // One engine per test: each engine switch re-renders the whole form, about 25 ms here and 200 ms on one busy core,
+  // so a loop over a reach's population spent seconds of one test's 5000 ms default on re-renders.
+  test("the engines Studio has no write path on include the three that used to fall back to the toggle's sentence", () => {
     // Vacuity, by name: the three engines that used to fall back to the toggle's sentence are in the population.
-    expect(none).toEqual(expect.arrayContaining(["qdrant", "weaviate", "netconf"]));
-    for (const type of none) {
+    expect(byReach("none")).toEqual(expect.arrayContaining(["qdrant", "weaviate", "netconf"]));
+  });
+
+  test.each(byReach("none"))(
+    "%s, where Studio has no write path, draws the fixed label and the shared sentence, and no box",
+    (type) => {
+      render(<Modal isOpen onClose={() => {}} onConnect={() => {}} />);
       choose(type);
       expect({
         type,
@@ -59,37 +64,37 @@ describe.each(SURFACES)("the read-only control in %s", (_surface, Modal) => {
         label: document.getElementById("readOnly-label")?.textContent,
         hint: hint(),
       }).toEqual({ type, box: true, label: "Read-only", hint: FIXED_HINT });
-    }
+    },
+  );
+
+  test("the guarded engines include etcd and milvus", () => {
+    expect(byReach("guarded")).toEqual(expect.arrayContaining(["etcd", "milvus"]));
   });
 
-  test("every guarded engine draws the toggle with the toggle's sentence", () => {
+  test.each(byReach("guarded"))("%s, a guarded engine, draws the toggle with the toggle's sentence", (type) => {
     render(<Modal isOpen onClose={() => {}} onConnect={() => {}} />);
-    const guarded = byReach("guarded");
-    expect(guarded).toEqual(expect.arrayContaining(["etcd", "milvus"]));
-    for (const type of guarded) {
-      choose(type);
-      const box = screen.getByLabelText("Read-only") as HTMLInputElement;
-      expect({ type, kind: box.type, label: document.getElementById("readOnly-label"), hint: hint() }).toEqual({
-        type,
-        kind: "checkbox",
-        label: null,
-        hint: TOGGLE_HINT,
-      });
-    }
+    choose(type);
+    const box = screen.getByLabelText("Read-only") as HTMLInputElement;
+    expect({ type, kind: box.type, label: document.getElementById("readOnly-label"), hint: hint() }).toEqual({
+      type,
+      kind: "checkbox",
+      label: null,
+      hint: TOGGLE_HINT,
+    });
   });
 
-  test("an engine whose reach is open draws neither", () => {
+  test("the engines whose reach is open include postgres", () => {
+    expect(byReach("open")).toContain("postgres");
+  });
+
+  test.each(byReach("open"))("%s, whose reach is open, draws neither", (type) => {
     render(<Modal isOpen onClose={() => {}} onConnect={() => {}} />);
-    const open = byReach("open");
-    expect(open).toContain("postgres");
-    for (const type of open) {
-      choose(type);
-      expect({
-        type,
-        box: document.getElementById("readOnly"),
-        label: document.getElementById("readOnly-label"),
-      }).toEqual({ type, box: null, label: null });
-    }
+    choose(type);
+    expect({
+      type,
+      box: document.getElementById("readOnly"),
+      label: document.getElementById("readOnly-label"),
+    }).toEqual({ type, box: null, label: null });
   });
 
   test("a seed copy keeps the fixed label where Studio has no write path, and loses the toggle where it is guarded", () => {

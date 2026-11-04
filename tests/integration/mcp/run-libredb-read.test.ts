@@ -96,17 +96,23 @@ beforeAll(() => {
   });
   db.close();
 
+  // Each file below is written in one transaction: the kv lens commits and fsyncs every set on its own, and the
+  // 1,044 commits took 1.3 s on a Linux NVMe disk, and on windows-latest they ran the hook past its 60 s timeout.
   const many = open({ path: MANY });
-  const manyStore = kv(many);
-  for (let i = 0; i < 1_001; i += 1) manyStore.set(`n:${String(i).padStart(4, "0")}`, "x");
+  many.transact((tx) => {
+    const manyStore = kv({ transact: (run) => run(tx) });
+    for (let i = 0; i < 1_001; i += 1) manyStore.set(`n:${String(i).padStart(4, "0")}`, "x");
+  });
   many.close();
 
   const large = open({ path: LARGE });
-  const largeStore = kv(large);
-  for (let i = 0; i < 40; i += 1) largeStore.set(`l:${String(i).padStart(2, "0")}`, "w".repeat(30 * 1024));
-  largeStore.set("big:1", VALUE_32K);
-  largeStore.set("half:15", "h".repeat(15 * 1024));
-  largeStore.set("half:16", "h".repeat(16 * 1024));
+  large.transact((tx) => {
+    const largeStore = kv({ transact: (run) => run(tx) });
+    for (let i = 0; i < 40; i += 1) largeStore.set(`l:${String(i).padStart(2, "0")}`, "w".repeat(30 * 1024));
+    largeStore.set("big:1", VALUE_32K);
+    largeStore.set("half:15", "h".repeat(15 * 1024));
+    largeStore.set("half:16", "h".repeat(16 * 1024));
+  });
   large.close();
 });
 
