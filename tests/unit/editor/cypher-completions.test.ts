@@ -181,6 +181,17 @@ describe("cypherCompletionContext", () => {
     expect(at("RETURN 1 /* open")).toBeUndefined();
     expect(at("MATCH (n:`Wei")).toBeUndefined();
   });
+
+  /**
+   * Each `(` is a token, and the text's list once took a line's tokens as the arguments of one call, which overflows
+   * the stack past the arguments a runtime takes: measured on 2026-11-04, 700,000 overflowed under Bun 1.4.4 (130,000
+   * did not) and 130,000 under Node 24.22.1, whose V8 is the engine of Chrome and Edge. A million is past both.
+   */
+  test("a line of 1,000,000 tokens reads to the context its end is in, as a short line does", () => {
+    expect(at("(((")).toEqual({ kind: "keyword", start: 3 });
+    expect(at("(".repeat(1_000_000))).toEqual({ kind: "keyword", start: 1_000_000 });
+    expect(at(`MATCH ${"(".repeat(1_000_000)}n:`)).toEqual({ kind: "label", start: 1_000_008 });
+  });
 });
 
 describe("registerCypherCompletionProvider", () => {
