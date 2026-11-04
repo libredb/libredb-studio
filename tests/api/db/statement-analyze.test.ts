@@ -248,6 +248,22 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
     expect(built[0].connect).not.toHaveBeenCalled();
   });
 
+  // The text is never trimmed: the range indexes into the text as it was sent, its leading blanks counted.
+  test("a text with leading blank lines answers a range that counts them", async () => {
+    expect(await analyze({ connectionId: "seed:orders-pg", text: "\n\nDELETE FROM t", ...at(15) })).toEqual({
+      status: 200,
+      body: {
+        decision: "confirm",
+        statement: "DELETE FROM t",
+        range: { start: 2, end: 15 },
+        route: "query",
+        unreadable: false,
+        typedConfirmation: null,
+      },
+      retryAfter: null,
+    });
+  });
+
   test("ignores fields it does not read, catalog among them", async () => {
     const body = { connectionId: "seed:orders-pg", text: TWO, ...at(19), catalog: "other", sql: "DROP TABLE t" };
 
@@ -302,6 +318,16 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
       },
       retryAfter: null,
     });
+    expect(createDatabaseProvider).not.toHaveBeenCalled();
+  });
+
+  // The field checks come before the bound, so a text over it with a field of the wrong type names the field.
+  test("a text over 1,000,000 UTF-16 code units with a cursor that is a string answers 400 naming the cursor, not 413", async () => {
+    const text = "x".repeat(1_000_001);
+
+    expect(
+      await analyze({ connectionId: "seed:orders-pg", text, selection: { start: 0, end: 0 }, cursor: "3" }),
+    ).toEqual({ status: 400, body: { error: "cursor must be an integer" }, retryAfter: null });
     expect(createDatabaseProvider).not.toHaveBeenCalled();
   });
 
