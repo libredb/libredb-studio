@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D453, U17 · 334
+- [Drivers and connections](#drivers-and-connections) — D1-D455, U17 · 335
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -4462,6 +4462,16 @@ The same reader is the web editor's confirmation gate and the etcd provider's ow
 Found 2026-11-04 by the review of #2204's route.
 
 **Done when:** the lexer collects refusals without an argument spread, and a test drives a 1,000,000-character line of `;` and one of `(` through `isDestructiveNonSqlQuery` and the provider's guard under Bun and Node.
+
+### D455. Five route-level checks for a connection with no type can no longer be reached
+
+`resolveConnection` in `src/lib/seed/resolve-connection.ts` refuses an inline record whose `type` is missing, empty or not a string, and a seed, governed or discovered record passes `SeedConnectionSchema`, which requires `name` and `type` as text, so every connection it answers carries a type.
+Five `if (!connection.type)` checks after it stayed, in the `POST` handlers of `src/app/api/db/provider-meta/route.ts`, `src/app/api/db/test-connection/route.ts` (still in its own sentence, `Connection configuration is required`, with `success: false`), `src/app/api/db/health/route.ts` and `src/app/api/db/monitoring/route.ts`, and in `handleObjectRequest` in `src/lib/api/object-route.ts`.
+Coverage holds them at 100% only because their route tests mock `resolveConnection` to answer a record with no type: "returns 400 when connection has no type" in `tests/api/db/provider-meta.test.ts` and `tests/api/db/health.test.ts`, "returns 400 when connection type is missing" in `tests/api/db/test-connection.test.ts`, "missing connection type returns 400" in `tests/api/db/monitoring.test.ts` and "refuses a resolved connection with no type" in `tests/api/db-objects.test.ts`.
+`tests/api/db/inline-connection-record.test.ts` drives the real `resolveConnection` through every connection route and pins the 400 they answer such a record, so the routes need no check of their own.
+Found 2026-11-04 by the review of the change that moved that refusal into `resolveConnection`.
+
+**Done when:** the five checks are gone, the five mocked cases are removed or moved onto the real `resolveConnection`, and `bun run coverage:check` passes.
 
 ## Value interpolation
 
