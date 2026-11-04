@@ -56,6 +56,12 @@ export const OPCUA_FOUNDATION_NAMESPACE = "http://opcfoundation.org/UA/" as cons
 export const OPCUA_DIAGNOSTICS_NAMESPACE = "http://opcfoundation.org/UA/Diagnostics" as const;
 
 /**
+ * The namespace URI of the OPC Foundation's Devices companion model (OPC 10000-100), which defines the `Lock` object
+ * and the client and user it names. An identifier like the two above, written from the Foundation's own.
+ */
+export const OPCUA_DI_NAMESPACE = `${OPCUA_FOUNDATION_NAMESPACE}DI/` as const;
+
+/**
  * The reference type a level listing follows, with its subtypes: HierarchicalReferences, `i=33`.
  *
  * Measured on the documented OPC PLC fixture: following this and its subtypes reaches 6,769 nodes

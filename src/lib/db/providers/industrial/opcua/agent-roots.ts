@@ -21,7 +21,7 @@ import {
   OPCUA_PRUNED_TYPE_DEFINITIONS,
 } from "./agent-withheld";
 import type { OpcuaBrowseResult, OpcuaDataValue, OpcuaNodeId, OpcuaReadOnlyClient, OpcuaReference } from "./client";
-import { OPCUA_DIAGNOSTICS_NAMESPACE, OPCUA_FOUNDATION_NAMESPACE } from "./constants";
+import { OPCUA_DI_NAMESPACE, OPCUA_DIAGNOSTICS_NAMESPACE, OPCUA_FOUNDATION_NAMESPACE } from "./constants";
 import { chunked } from "./limits";
 import { isNodeId } from "./node-id";
 
@@ -168,9 +168,9 @@ export interface OpcuaIdentityProperty {
  */
 export const OPCUA_IDENTITY_PROPERTIES: readonly OpcuaIdentityProperty[] = Object.freeze([
   Object.freeze({ namespaceUri: OPCUA_FOUNDATION_NAMESPACE, name: "ClientUserId" }),
-  Object.freeze({ namespaceUri: "http://opcfoundation.org/UA/DI/", name: "Lock" }),
-  Object.freeze({ namespaceUri: "http://opcfoundation.org/UA/DI/", name: "LockingClient" }),
-  Object.freeze({ namespaceUri: "http://opcfoundation.org/UA/DI/", name: "LockingUser" }),
+  Object.freeze({ namespaceUri: OPCUA_DI_NAMESPACE, name: "Lock" }),
+  Object.freeze({ namespaceUri: OPCUA_DI_NAMESPACE, name: "LockingClient" }),
+  Object.freeze({ namespaceUri: OPCUA_DI_NAMESPACE, name: "LockingUser" }),
 ]);
 
 /** One refusal of a root list: the element it is about, when it is about one, and the reason after the field name. */
