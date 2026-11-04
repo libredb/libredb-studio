@@ -6946,6 +6946,7 @@ Found 2026-11-04 while moving the cross-platform jobs' one-time test setup out o
 ### U200. The web editor sends a run target that holds no code, which the extension and the statement analysis answer as nothing to run
 
 With the caret on a statement of comments only (`-- note` after `SELECT 1;`, or `SELECT 1; -- note` with the caret at the line's end), or with only a comment selected, `getEffectiveQuery` in `src/components/QueryEditor.tsx` answers the comment and `executeQuery` in `src/hooks/use-query-execution.ts` sends it to the engine; a text of blanks only is sent the same way.
+A target that is an unclosed block comment (`/* open` after `SELECT 1;`, with the caret at the end) is asked about first, with the notice that part of the statement could not be read, and then sent.
 The VS Code extension's `query/target` and `analyzeStatement` in `src/lib/editor/statement-analysis.ts` answer each of these with nothing to run, through `runnableTarget` in `src/lib/sql/run-target.ts`.
 `tests/unit/sql/run-target.test.ts` pins `runTarget`'s own answer for such text, and the parity test in `tests/unit/editor/statement-analysis.test.ts` holds the divergence case by case.
 The web cannot adopt `runnableTarget` alone: when the effective query is empty, `executeQuery` falls back to the tab's whole text.

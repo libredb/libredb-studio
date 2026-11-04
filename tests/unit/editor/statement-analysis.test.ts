@@ -395,10 +395,37 @@ const CASES: readonly Case[] = [
 ];
 
 /**
- * The cases whose target holds no code: the web editor sends it, where `analyzeStatement` answers nothing to run, the
- * divergence `docs/BACKLOG.md` U200 records.
+ * Cases section 5 does not list, pinned beside it: what the review of the first pull request for #2204 measured. The
+ * embedded store reads its text as SQL, so its gate asks about an unclosed literal as a SQL engine's does, and a caret
+ * target that is an unclosed block comment holds no code.
  */
-const NO_CODE_TARGETS: readonly string[] = ["RT23", "N1", "N2", "N3", "N4", "N5"];
+const MORE_CASES: readonly Case[] = [
+  {
+    id: "M1",
+    type: "libredb",
+    text: "SELECT 'abc",
+    ...at(11),
+    expected: confirm("SELECT 'abc", 0, 11, { unreadable: true }),
+  },
+  { id: "M2", type: "postgres", text: "SELECT 1;\n/* open", ...at(17), expected: NOTHING },
+  { id: "M3", type: "postgres", text: "SELECT 1;\n/* a /* b */ DELETE FROM t", ...at(36), expected: NOTHING },
+];
+
+const ALL_CASES: readonly Case[] = [...CASES, ...MORE_CASES];
+
+/**
+ * The cases whose target holds no code: the web editor sends it, where `analyzeStatement` answers nothing to run, the
+ * divergence `docs/BACKLOG.md` U200 records. Where the target is an unclosed comment (M2, M3), the web asks first,
+ * with the notice that part of it could not be read.
+ */
+const NO_CODE_TARGETS: readonly string[] = ["RT23", "N1", "N2", "N3", "N4", "N5", "M2", "M3"];
+
+/**
+ * The case the two answer in different words: a name-typed confirmation on a connection whose name is empty.
+ * `analyzeStatement` refuses it; the web's safety dialog opens with its own sentence in place of the typed field and
+ * keeps Proceed disabled (`tests/components/QuerySafetyDialog.test.tsx` pins that sentence). Neither sends it.
+ */
+const NAME_MISSING: readonly string[] = ["C14"];
 
 /**
  * Each engine's capabilities from its real provider, built without connecting as `POST /api/db/provider-meta` builds
@@ -406,7 +433,7 @@ const NO_CODE_TARGETS: readonly string[] = ["RT23", "N1", "N2", "N3", "N4", "N5"
  */
 const capabilitiesOf = new Map<DatabaseType, ProviderCapabilities>();
 beforeAll(async () => {
-  const types = [...new Set(CASES.map((c) => c.type))];
+  const types = [...new Set(ALL_CASES.map((c) => c.type))];
   const providers = await Promise.all(types.map((type) => createDatabaseProvider(CENSUS_CONNECTION[type])));
   types.forEach((type, index) => capabilitiesOf.set(type, providers[index].getCapabilities()));
 });
@@ -430,7 +457,7 @@ describe("analyzeStatement", () => {
     expect(new Set(CASES.map((c) => c.id)).size).toBe(62);
   });
 
-  test.each(CASES.map((c) => [c.id, c] as const))("%s", (_id, c) => {
+  test.each(ALL_CASES.map((c) => [c.id, c] as const))("%s", (_id, c) => {
     expect(analyzeStatement(inputOf(c))).toStrictEqual(c.expected);
   });
 
@@ -461,10 +488,14 @@ describe("analyzeStatement", () => {
  * as `QueryEditor.tsx`'s `getEffectiveQuery` picks it (a non-blank selection through `selectionTarget`, then the
  * caret's statement through `cursorTarget`, then the whole text); the refusal, then the confirmation gate, as
  * `use-query-execution.ts` asks them of that text; its route; and the typed value and the unreadable notice as
- * `QuerySafetyDialog` reads them. A typed ask with nothing to type is the dialog's refusal in place of the field, which
- * keeps Proceed disabled. Nothing here decides "nothing": the web editor has no such step.
+ * `QuerySafetyDialog` reads them. A typed ask with nothing to type opens the dialog with Proceed disabled, which
+ * `analyzeStatement` has no variant for. Nothing here decides "nothing": the web editor has no such step.
  */
-function webDecision(c: Case, capabilities: ProviderCapabilities): StatementAnalysis {
+type WebDecision =
+  | StatementAnalysis
+  | { decision: "confirm-disabled"; statement: string; range: OffsetRange; route: StatementRoute; unreadable: boolean };
+
+function webDecision(c: Case, capabilities: ProviderCapabilities): WebDecision {
   const rule = {
     editorLanguage: editorLanguageOf(capabilities),
     statementTerminator: capabilities.statementTerminator,
@@ -489,7 +520,9 @@ function webDecision(c: Case, capabilities: ProviderCapabilities): StatementAnal
   let typedConfirmation: TypedConfirmation | null = null;
   if (ask !== undefined) {
     const expected = typedConfirmationExpected(ask, c.name ?? "census");
-    if (expected === undefined) return { decision: "refuse", statement, range, refusal: TYPED_NAME_MISSING_REFUSAL };
+    if (expected === undefined) {
+      return { decision: "confirm-disabled", statement, range, route, unreadable: hasUnreadableRun(statement, c.type) };
+    }
     typedConfirmation =
       ask.type === "text"
         ? { type: "text", expected }
@@ -507,22 +540,45 @@ function webDecision(c: Case, capabilities: ProviderCapabilities): StatementAnal
 
 describe("analyzeStatement and the web editor's own composition", () => {
   test("the cases that answer nothing to run are exactly the ones whose target holds no code", () => {
-    expect(CASES.filter((c) => c.expected.decision === "nothing").map((c) => c.id)).toEqual([...NO_CODE_TARGETS]);
+    expect(ALL_CASES.filter((c) => c.expected.decision === "nothing").map((c) => c.id)).toEqual([...NO_CODE_TARGETS]);
   });
 
-  test.each(CASES.map((c) => [c.id, c] as const))("%s decides as the web editor does", (id, c) => {
+  test.each(ALL_CASES.map((c) => [c.id, c] as const))("%s decides as the web editor does", (id, c) => {
     const input = inputOf(c);
     const web = webDecision(c, input.capabilities);
-    if (!NO_CODE_TARGETS.includes(id)) {
-      expect(analyzeStatement(input)).toStrictEqual(web);
+    if (NAME_MISSING.includes(id)) {
+      // Neither sends it: a refusal here, a dialog whose Proceed stays disabled there, about the same statement.
+      const analysis = analyzeStatement(input);
+      expect(analysis).toStrictEqual(c.expected);
+      expect(analysis.decision === "refuse" && analysis.refusal).toBe(TYPED_NAME_MISSING_REFUSAL);
+      expect(web).toStrictEqual({
+        decision: "confirm-disabled",
+        statement: c.text,
+        range: { start: 0, end: c.text.length },
+        route: "query",
+        unreadable: false,
+      });
       return;
     }
-    // The recorded divergence: the web editor sends a target that holds no code without asking.
+    if (!NO_CODE_TARGETS.includes(id)) {
+      expect<WebDecision>(analyzeStatement(input)).toStrictEqual(web);
+      return;
+    }
+    // The recorded divergence: the web editor sends a target that holds no code, asking first only where part of it
+    // could not be read.
     expect(analyzeStatement(input)).toStrictEqual(NOTHING);
-    expect(web.decision).toBe("run");
-    const sent = web.decision === "run" ? web.statement : undefined;
+    if (web.decision === "confirm") expect(web.unreadable).toBe(true);
+    else expect(web.decision).toBe("run");
+    const sent = web.decision === "run" || web.decision === "confirm" ? web.statement : undefined;
     expect(sent).toBeDefined();
     expect(countCodeStatements(sent as string, resolveSqlGrammar(c.type))).toBe(0);
+  });
+
+  test("an unclosed comment is the no-code target the web asks about before it sends it", () => {
+    const asked = ALL_CASES.filter((c) => NO_CODE_TARGETS.includes(c.id)).filter(
+      (c) => webDecision(c, inputOf(c).capabilities).decision === "confirm",
+    );
+    expect(asked.map((c) => c.id)).toEqual(["M2", "M3"]);
   });
 });
 

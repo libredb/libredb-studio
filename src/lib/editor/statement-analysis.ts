@@ -39,7 +39,8 @@ export type TypedConfirmation =
  * - `run`: `statement` is sent without asking.
  * - `confirm`: `statement` is sent once the person confirms, and has typed the expected value where
  *   `typedConfirmation` is not null. `unreadable` says that part of the statement could not be read, which is a reason
- *   the gate asks.
+ *   the gate asks. It is false wherever the gate does not read the text as SQL (`readsSqlText`), whatever the editor
+ *   language: the embedded store's text is read as SQL, so its unclosed literal is unreadable.
  *
  * `statement` is the exact text to send. It is not always the text `range` covers: a one-statement selection on an
  * engine whose `statementTerminator` is `none` is sent without its `;` and the blanks around it.
@@ -133,11 +134,13 @@ export function typedConfirmationExpected(
  *
  * 1. The target, by `runnableTarget` under the connection's editor language, terminator and grammar: a non-blank
  *    selection, then the caret's statement, then the whole text, which the range then covers.
- * 2. A target that holds no code is nothing to run. The web editor sends such a target as it is, which is the one place
- *    the two differ (`docs/BACKLOG.md` U200).
+ * 2. A target that holds no code is nothing to run. The web editor sends such a target, after asking first where it is
+ *    an unclosed comment, which is the one place the two differ in what reaches the engine (`docs/BACKLOG.md` U200).
  * 3. The connection type's refusal, before anything else is asked of the statement.
  * 4. The route, and whether the confirmation gate asks; a statement it does not ask about runs.
- * 5. What the person types, and whether part of the statement could not be read.
+ * 5. What the person types, and whether part of the statement could not be read. A name to type on a connection with
+ *    no name is refused here, where the web's safety dialog says so in place of the typed field and keeps Proceed
+ *    disabled: neither sends the statement, and only the answer's shape differs.
  *
  * The gate reads the statement that is sent, not the whole text, as the web gate reads the query it is about to run.
  * Nothing here opens a connection or depends on anything but its input. What the web editor also decides from its own
