@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D455, U17 · 335
+- [Drivers and connections](#drivers-and-connections) — D1-D455, U17 · 334
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -4453,15 +4453,6 @@ The Bun branch of the same case already admits code 4 for this race on the loade
 Found 2026-11-04 while moving the cross-platform jobs' one-time test setup out of timed test bodies.
 
 **Done when:** the Node branch admits the deadline answer beside code 14 with the reason in its comment, as the Bun branch does, or the refusal reaches Node before the call's deadline on that runner, and the file passes repeated runs on `windows-latest`.
-
-### D453. The etcd lexer overflows the stack on a long line of `;` or `(`
-
-`splitWords` in `src/lib/db/providers/keyvalue/etcd/lexer.ts` adds a line's refusals to its list with `refusals.push(...placed)`, an argument spread of one element per refusal, and a line of `;` or of `(` places one refusal per character.
-Measured on 2026-11-04: `isDestructiveNonSqlQuery(text, "etcd")` raises `RangeError: Maximum call stack size exceeded.` at that line, through `readEtcdOperations` and `parseEtcdCommand`, from 700,000 such characters under Bun 1.4.4 (600,000 pass), and through `POST /api/db/statement/analyze` on the production server under Node 24 from 130,000 (120,000 pass).
-The same reader is the web editor's confirmation gate and the etcd provider's own guard, so a long enough line fails there too, and the statement analysis answers it with 500 `INTERNAL_ERROR`.
-Found 2026-11-04 by the review of #2204's route.
-
-**Done when:** the lexer collects refusals without an argument spread, and a test drives a 1,000,000-character line of `;` and one of `(` through `isDestructiveNonSqlQuery` and the provider's guard under Bun and Node.
 
 ### D455. Five route-level checks for a connection with no type can no longer be reached
 

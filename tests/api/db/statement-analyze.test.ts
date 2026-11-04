@@ -610,6 +610,25 @@ describe("POST /api/db/statement/analyze without governance", () => {
     expect(built.map(({ args }) => args.slice(1))).toEqual([[{}, { allowExternalFileAccess: false }]]);
     expect(built[0].connect).not.toHaveBeenCalled();
   });
+
+  // The etcd lexer places one refusal per character of a line of ; or (, and once took them as the arguments of one
+  // call, so this route answered such a line 500 with the runtime's stack overflow: measured on 2026-11-04 at 650,000
+  // characters here under Bun 1.4.4 (600,000 answered 200) and at 130,000 on the production server under Node 24.22.1
+  // (120,000 answered 200). The parser refuses the text, so the gate asks nothing, and the provider refuses it before
+  // any request.
+  test.each([";", "("])("an etcd line of 1,000,000 %s answers its run decision, not 500", async (char) => {
+    const connection = { id: "inline-etcd", name: "Inline", type: "etcd", host: "127.0.0.1", port: 1 };
+    const text = char.repeat(1_000_000);
+
+    const answer = await analyze({ connection, text, ...at(0) });
+    expect(answer.status).toBe(200);
+    expect(answer.body).toEqual({
+      decision: "run",
+      statement: text,
+      range: { start: 0, end: 1_000_000 },
+      route: "query",
+    });
+  });
 });
 
 /** An argument of a console or logger call as text, an error's message and stack included. */

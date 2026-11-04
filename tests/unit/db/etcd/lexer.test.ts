@@ -284,6 +284,18 @@ describe("text a shell would expand or refuse is refused (spec 5.1.1)", () => {
     expect(refusalOf("get a\\\n$b").line).toBe(2);
   });
 
+  /**
+   * A line of `;` or of `(` places one refusal per character, and the text's list once took a line's refusals as the
+   * arguments of one call, which overflows the stack past the arguments a runtime can take: measured on 2026-11-04,
+   * 700,000 overflowed under Bun 1.4.4 (600,000 did not) and 130,000 under Node 24.22.1 (120,000 did not). A million
+   * is past both, and the whole text is still refused at its first character, as the line of one is.
+   */
+  test.each([";", "("])("a line of 1,000,000 %s is refused at its first, as a line of one is", (char) => {
+    const refusal = { code: "shell-operator", line: 1, column: 0, message: operator(char, 1, 1) } as const;
+    expect(refusalOf(char)).toEqual(refusal);
+    expect(refusalOf(char.repeat(1_000_000))).toEqual(refusal);
+  });
+
   test("a refusal on a later line of a multi-line word names that line", () => {
     expect(refusalOf("put k 'a\nb' $c")).toMatchObject({ code: "shell-expansion", line: 2, column: 3 });
   });
@@ -1188,6 +1200,16 @@ describe("lexLogicalLine", () => {
     expect(lexLogicalLine("get 'x", 0)).toMatchObject({ ok: false, refusal: { code: "unclosed-quote" } });
     expect(lexLogicalLine("get x\\", 0)).toMatchObject({ ok: false, refusal: { code: "trailing-backslash" } });
     expect(lexLogicalLine("get \ud800", 0)).toMatchObject({ ok: false, refusal: { code: "not-text" } });
+  });
+
+  // The lines splitWords refuses above, one refusal per character, through the logical line's reader.
+  test.each([";", "("])("a line of 1,000,000 %s is refused at its first, as a line of one is", (char) => {
+    const refused = {
+      ok: false,
+      refusal: { code: "shell-operator", line: 1, column: 0, message: operator(char, 1, 1) },
+    } as const;
+    expect(lexLogicalLine(char, 0)).toEqual(refused);
+    expect(lexLogicalLine(char.repeat(1_000_000), 0)).toEqual(refused);
   });
 });
 
