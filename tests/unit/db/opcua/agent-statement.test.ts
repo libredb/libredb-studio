@@ -1,7 +1,7 @@
 /**
  * The agent's reader of one OPC UA request: the console's two read requests, read by the console's own parser, the
- * one-level browse agent mode adds, node ids in their canonical spelling, a history or browse of a withheld root
- * refused before anything is sent, and every other text refused in agent mode's own words followed by the list of reads.
+ * one-level browse agent mode adds, node ids in their canonical spelling, and every other text refused in agent mode's
+ * own words followed by the list of reads. Which ids a read may answer is the read roots' to say, on the read's session.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -9,12 +9,13 @@ import {
   OPCUA_AGENT_SENTENCES,
   readOpcuaAgentStatement,
 } from "@/lib/db/providers/industrial/opcua/agent-statement";
+import { OPCUA_READ_ROOTS_SENTENCE } from "@/lib/db/providers/industrial/opcua/agent-roots";
 import { OPCUA_HISTORY_VALUE_CAP } from "@/lib/db/providers/industrial/opcua/constants";
 
-const refusal = (text: string, code: "request" | "withheld" = "request"): string => {
+const refusal = (text: string): string => {
   const reading = readOpcuaAgentStatement(text);
   if (reading.ok) throw new Error(`admitted: ${text}`);
-  expect(reading.code).toBe(code);
+  expect(reading.code).toBe("request");
   return reading.message;
 };
 
@@ -26,7 +27,7 @@ describe("the three agent reads are admitted", () => {
     });
   });
 
-  test("a value read may name a withheld root: its row is answered withheld and it is never sent", () => {
+  test("a value read may name any node: one outside the read roots answers as missing, decided on the session", () => {
     expect(readOpcuaAgentStatement('{"read": ["i=12637"]}')).toEqual({
       ok: true,
       plan: { kind: "read", nodeIds: ["i=12637"] },
@@ -116,32 +117,19 @@ describe("everything else is refused before anything is sent, with the list of r
     expect(refusal('{"history": "ns=2;b=A"}')).toContain("cannot be put in one spelling");
   });
 
-  test("a history read or a browse of a namespace-0 node outside the list is refused with its reason", () => {
-    expect(refusal('{"browse": "i=12642"}', "withheld")).toStartWith(
-      "A namespace-0 node outside agent mode's list is not read",
-    );
-    expect(refusal('{"history": "ns=0;i=16192"}', "withheld")).toEndWith("Nothing was sent.");
-    expect(readOpcuaAgentStatement('{"browse": "i=2268"}').ok).toBe(true);
-    // A value read naming one is admitted: its row is answered withheld, and the node never sent.
-    expect(readOpcuaAgentStatement('{"read": ["i=12642"]}').ok).toBe(true);
-  });
-
-  test("a history read or a browse of a withheld root is refused with its reason, in any spelling", () => {
-    expect(refusal('{"browse": "ns=0;i=12637"}', "withheld")).toStartWith(
-      "Server.ServerConfiguration (i=12637) is withheld from agent mode",
-    );
-    expect(refusal('{"browse": "nsu=http://opcfoundation.org/UA/;i=15606"}', "withheld")).toContain("RoleSet");
-    expect(refusal('{"history": "i=3708"}', "withheld")).toContain("SessionSecurityDiagnosticsArray");
-    expect(refusal('{"history": "i=3708"}', "withheld")).toEndWith("Nothing was sent.");
+  test("a history read or a browse of any node is admitted here: the read roots decide it on the read's session", () => {
+    for (const text of ['{"browse": "i=12642"}', '{"history": "ns=0;i=16192"}', '{"browse": "ns=0;i=12637"}'])
+      expect(readOpcuaAgentStatement(text).ok).toBe(true);
   });
 });
 
 describe("the list of reads", () => {
-  test("names the three reads and what is withheld", () => {
+  test("names the three reads and the read roots rule", () => {
     expect(OPCUA_AGENT_READS).toContain('{"read": [');
     expect(OPCUA_AGENT_READS).toContain('{"history": ');
-    expect(OPCUA_AGENT_READS).toContain('{"browse": "i=85"}');
-    expect(OPCUA_AGENT_READS).toContain("Server.ServerConfiguration (i=12637)");
+    expect(OPCUA_AGENT_READS).toContain('{"browse": "i=85"} lists the read roots');
+    expect(OPCUA_AGENT_READS).toContain(OPCUA_READ_ROOTS_SENTENCE);
+    expect(OPCUA_AGENT_READS).not.toContain("ithheld");
     expect(OPCUA_AGENT_READS).toContain("never a Write, a method Call");
   });
 });

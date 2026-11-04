@@ -841,6 +841,63 @@ export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolea
 });
 
 /**
+ * Which shipped engines agent mode and MCP read only beneath read roots a seed declares (`agentReadRoots`), never
+ * across the whole server: on such an engine the roots are what bound what an agent or an MCP client reads, so a
+ * connection without them is not read at all. Read by every layer outside the provider, so none branches on the type
+ * id: the runs route refuses an agent-mode Start whose workflow sends statements on a connection without roots, the seed
+ * schema refuses `mcp: true` without roots at load, the MCP context refuses to acquire such a connection at open with
+ * `READ_ROOTS_REQUIRED`, and a governed record, which carries no roots, is never opted in to MCP.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held true exactly where
+ * `SEED_ONLY_FIELDS` (src/lib/db/connection-fields.ts) names `agentReadRoots`, by `tests/unit/db/compatibility.test.ts`.
+ */
+export const READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: true,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
+  snmp: false,
+  sparkplug: false,
+  libredb: false,
+});
+
+/**
  * Which shipped engines' connection form offers a URI mode (Spec A section 7): the answer
  * `DB_UI_CONFIG[type].showConnectionStringToggle` gives in `src/lib/db-ui-config.ts`. Kept here because the seed
  * layer must not load `db-ui-config.ts`: it value-imports the React icon components, the reason

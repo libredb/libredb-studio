@@ -302,7 +302,13 @@ export type ExecutionProfileDenyCode =
    * src/lib/db/compatibility.ts), and the connection carries none, so it is not read under its own login. Raised by
    * MCP's acquisition, and its own code so both MCP tools answer it in Studio's words.
    */
-  | "AGENT_CREDENTIAL_REQUIRED";
+  | "AGENT_CREDENTIAL_REQUIRED"
+  /**
+   * The engine is one agent mode and MCP read only beneath read roots the seed declares (`READ_ROOTS_REQUIRED` in
+   * src/lib/db/compatibility.ts), and the connection declares none, so nothing is read. Raised by the provider when a
+   * statement-sending agent profile opens, and by MCP's acquisition, its own code so both answer it in Studio's words.
+   */
+  | "READ_ROOTS_REQUIRED";
 
 /**
  * Raised when a provider cannot be vended under a requested execution profile.

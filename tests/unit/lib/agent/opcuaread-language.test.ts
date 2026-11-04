@@ -1,6 +1,6 @@
 /**
  * The opcuaread request language: its server adapter, its admission, its prompt texts and its posture, each held to
- * the provider's own reader and constants so no copy of a bound or of the withheld nodes can drift from what it names.
+ * the provider's own reader and constants so no copy of a bound or of the read roots rule can drift from what it names.
  */
 import { describe, expect, test } from "bun:test";
 import { AGENT_LANGUAGE_COPY, AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
@@ -20,7 +20,7 @@ import {
 } from "@/lib/db/operations/opcuaread-admission";
 import { OPCUA_AGENT_MAX_REQUESTS } from "@/lib/db/providers/industrial/opcua/agent-read";
 import { OPCUA_AGENT_READS } from "@/lib/db/providers/industrial/opcua/agent-statement";
-import { OPCUA_WITHHELD_NODES, OPCUA_WITHHELD_SENTENCE } from "@/lib/db/providers/industrial/opcua/agent-withheld";
+import { OPCUA_READ_ROOTS_SENTENCE } from "@/lib/db/providers/industrial/opcua/agent-roots";
 import { OPCUA_LABELS } from "@/lib/db/providers/industrial/opcua/labels";
 
 const READ = '{"read": ["ns=3;s=SlowUInt1", "i=2256"]}';
@@ -58,10 +58,8 @@ describe("the admission", () => {
       code: "request",
       message: expect.stringContaining(OPCUA_AGENT_READS),
     });
-    expect(admitOpcuareadStatement('{"browse": "i=15606"}')).toEqual({
-      code: "withheld",
-      message: expect.stringContaining("Server.ServerCapabilities.RoleSet (i=15606) is withheld"),
-    });
+    // Any node is admitted here: the read roots decide on the read's own session, where one outside answers as missing.
+    expect(admitOpcuareadStatement('{"browse": "i=15606"}')).toBeNull();
     const long = `{"read": [${Array.from({ length: 400 }, (_unused, n) => `"ns=3;s=P${n}"`).join(", ")}]}`;
     expect(long.length).toBeGreaterThan(OPCUAREAD_AGENT_MAX_STATEMENT_CHARS);
     expect(admitOpcuareadStatement(long)).toEqual({
@@ -82,14 +80,15 @@ describe("the admission", () => {
 });
 
 describe("the prompt texts", () => {
-  test("the tool description names the three reads, the units, the withheld nodes and the request bound", () => {
+  test("the tool description names the three reads, the units, the read roots rule and the request bound", () => {
     const description = languageServerPack("opcuaread").toolOverrides.investigation?.run_read_query?.description ?? "";
     expect(description).toContain('{"read": ["ns=3;s=SlowUInt1", ...]}');
     expect(description).toContain('{"browse": "i=85"}');
     expect(description).toContain('"no units published"');
     expect(description).toContain("report the unit beside every value, and never assume one");
     expect(description).toContain("Only Browse, BrowseNext, Read and HistoryRead are sent");
-    expect(description).toContain(OPCUA_WITHHELD_SENTENCE);
+    expect(description).toContain(OPCUA_READ_ROOTS_SENTENCE);
+    expect(description).not.toContain("ithheld");
     expect(description).toContain(`at most ${OPCUA_AGENT_MAX_REQUESTS} requests to the server`);
     expect(Object.keys(LANGUAGE_BASE_DEFINITIONS)).not.toContain("opcuaread");
   });
@@ -97,32 +96,35 @@ describe("the prompt texts", () => {
   test("the rule, the grounding advice and the ungrounded note say how the address space is reached and the units rule", () => {
     const rule = WORKFLOW_TOOL_RULES.opcuaread.investigation as string;
     const browsed =
-      'An OPC UA address space is browsed one level at a time rather than listed, so no node is listed for the run: read a node id the question names exactly as it is written, without browsing to it first, and browse from the Objects folder with {"browse": "i=85"} only to find a node the question does not name, going down from what it answers.';
+      'An OPC UA address space is browsed one level at a time rather than listed, so no node is listed for the run: read a node id the question names exactly as it is written, without browsing to it first, and browse the read roots with {"browse": "i=85"} only to find a node the question does not name, going down from what it answers.';
     const units =
       "Every value row carries the node's engineering units and EU range as the server publishes them, or \"no units published\": report the unit beside each value, and never assume one from a node's name.";
     expect(rule).toContain(browsed);
     expect(rule).toContain("Write any other node id exactly as a browse answers it");
     expect(rule).toContain(units);
-    expect(rule).toContain(OPCUA_WITHHELD_SENTENCE);
+    expect(rule).toContain(OPCUA_READ_ROOTS_SENTENCE);
     const grounding = languageServerPack("opcuaread").grounding;
-    expect(grounding.omissionAdvice).toBe(`${browsed} ${units} ${OPCUA_WITHHELD_SENTENCE}`);
+    expect(grounding.omissionAdvice).toBe(`${browsed} ${units} ${OPCUA_READ_ROOTS_SENTENCE}`);
     expect(grounding.relations).toBe(false);
     expect(grounding.ungrounded?.("No inventory.", { singular: "node", plural: "nodes" })).toBe(
-      `No inventory.\nSo nothing about this server has been established for you: not one node name. ${browsed} ${units} ${OPCUA_WITHHELD_SENTENCE}`,
+      `No inventory.\nSo nothing about this server has been established for you: not one node name. ${browsed} ${units} ${OPCUA_READ_ROOTS_SENTENCE}`,
     );
     expect(grounding.planningRules).toBeUndefined();
   });
 
-  test("the withheld sentence names every withheld node by its id", () => {
-    for (const entry of OPCUA_WITHHELD_NODES) expect(OPCUA_WITHHELD_SENTENCE).toContain(`(${entry.nodeId})`);
+  test("the read roots sentence says how the roots are listed and what every other id answers", () => {
+    expect(OPCUA_READ_ROOTS_SENTENCE).toContain('{"browse": "i=85"} lists the roots');
+    expect(OPCUA_READ_ROOTS_SENTENCE).toContain("answers exactly as a node the server does not hold");
+    expect(OPCUA_READ_ROOTS_SENTENCE).toContain("nothing is sent for it");
   });
 
-  test("plan mode follows the provider's statement label, which names the console's two reads and the withheld nodes", () => {
+  test("plan mode follows the provider's statement label, which names the console's two reads and no read roots", () => {
     const label = OPCUA_LABELS.statementLanguage ?? "";
     expect(label).toContain('{"read": ["ns=3;s=SlowUInt1", ...]}');
     expect(label).toContain('{"history": "ns=3;s=HistorianInt32"');
     expect(label).not.toContain('"browse"');
-    for (const entry of OPCUA_WITHHELD_NODES) expect(label).toContain(entry.nodeId);
+    expect(label).not.toContain("read roots");
+    expect(label).not.toContain("ithheld");
   });
 
   test("only the investigation and the operations workflow are offered, and nothing auto-executes", () => {
@@ -134,13 +136,15 @@ describe("the prompt texts", () => {
 describe("the posture on OPC UA", () => {
   const posture = agentPosture({ mode: "agent", engine: "opcua", engineLabel: "OPC UA", handover: false });
 
-  test("names exactly what the agent sends and reads, the units, the withheld nodes, and never a write", () => {
+  test("names exactly what the agent sends and reads, the units, the read roots, and never a write", () => {
     expect(posture.headline).toBe("Reads only");
     expect(posture.qualifier).toBe(
       `${BUDGETS.maxResultRows} rows and ${BUDGETS.statementTimeoutMs / 1000} s per read, one session per read, over a client that sends only Browse, BrowseNext, Read and HistoryRead`,
     );
     expect(posture.body).toContain('or "no units published" where it publishes none, never a unit Studio guessed');
-    expect(posture.body).toContain("ServerConfiguration, RoleSet and session diagnostics");
+    expect(posture.body).toContain(
+      "It reads only beneath the read roots the connection's operator declared on its seed entry",
+    );
     expect(posture.body).toContain("Each read opens its own session and closes it, so nothing is held between reads.");
     expect(posture.body).toContain("so it cannot write a value, call a method, change a node or subscribe");
     expect(posture.body).not.toMatch(/metadata only/);

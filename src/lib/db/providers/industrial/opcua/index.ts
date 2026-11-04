@@ -12,13 +12,15 @@
  * AGENT MODE. `queryReadOnly` is the agent's: one read of `agent-statement.ts`'s table (a value read, a history read
  * or a one-level browse), refused before anything is sent when it is not one, and run by `agent-read.ts` over a session
  * opened for that read alone and closed when it ends, through a client that holds the read services only and counts
- * them. Values are answered with their engineering units (`agent-units.ts`), and the server's configuration, role
- * identities, session diagnostics and PubSub key management are withheld (`agent-withheld.ts`). On a handle opened for
- * any agent-mode profile no session is held, the console and the Keys panel are refused, and every reading the agent
- * does not report answers its reason (`agent-surface.ts`). MCP read stays closed on this engine.
+ * them. Values are answered with their engineering units (`agent-units.ts`), and only beneath the read roots the
+ * connection's seed entry declares (`agent-roots.ts`): every other node id answers as an id the server does not hold,
+ * with nothing sent for it, and a statement-sending profile on a connection that declares no roots is refused when it
+ * opens, before any socket. On a handle opened for any agent-mode profile no session is held, the console and the Keys
+ * panel are refused, and every reading the agent does not report answers its reason (`agent-surface.ts`). MCP read
+ * stays closed on this engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { DatabaseConfigError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
@@ -58,7 +60,7 @@ import {
   OPCUA_AGENT_FAILURE_SENTENCES,
   type OpcuaAgentAnswer,
 } from "./agent-read";
-import { readRootRefusals, readRootSentence } from "./agent-roots";
+import { OPCUA_READ_ROOTS_REQUIRED_SENTENCE, readRootRefusals, readRootSentence } from "./agent-roots";
 import { readOpcuaAgentStatement, type OpcuaAgentPlan } from "./agent-statement";
 import { OPCUA_AGENT_WITHHELD } from "./agent-surface";
 import { OPCUA_CAPABILITIES } from "./capabilities";
@@ -191,6 +193,9 @@ export class OpcuaProvider extends BaseDatabaseProvider {
    * translated there (`session.ts`).
    */
   public async connect(): Promise<void> {
+    // Before anything is read or dialled: a statement-sending agent profile reads only beneath declared read roots.
+    if (this.readOnlyProfile && this.config.agentReadRoots === undefined)
+      throw new ExecutionProfileError(OPCUA_READ_ROOTS_REQUIRED_SENTENCE, "READ_ROOTS_REQUIRED");
     this.connectionOptions = readConnection(
       this.config as DatabaseConnection & Record<string, unknown>,
       this.environment,
@@ -299,8 +304,8 @@ export class OpcuaProvider extends BaseDatabaseProvider {
 
   /**
    * One agent read. Only on a handle opened under the agent read-only profile; the request is read by
-   * `readOpcuaAgentStatement` and refused before anything is sent when it is not one of the three reads, when it is a
-   * history read or a browse of a withheld root, or when a value read names more nodes than the row budget. The read
+   * `readOpcuaAgentStatement` and refused before anything is sent when it is not one of the three reads, or when a value
+   * read names more nodes than the row budget. The read proves the set beneath the connection's read roots first, and
    * runs over a session opened for it alone and closed when it ends, through `boundedAgentClient`, which holds the read
    * services and counts them against the request bound and the time budget, and its answer is refused past the row,
    * byte or time budget rather than cut. A failure is worded by its category, never in the server's text.
@@ -344,7 +349,7 @@ export class OpcuaProvider extends BaseDatabaseProvider {
       opened = true;
       try {
         const client = boundedAgentClient(session, { deadlineAt: started + ms, timeoutMs: ms, now: Date.now });
-        return await runOpcuaAgentRead(client, plan, budget);
+        return await runOpcuaAgentRead(client, plan, budget, this.config.agentReadRoots ?? []);
       } finally {
         await session.close().catch(() => undefined);
       }

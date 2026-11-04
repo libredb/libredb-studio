@@ -331,18 +331,16 @@ export async function openReadOnlySession(
       limits ??= await guarded("Reading the server's operation limits", () => bridge.readLimits(session));
       return limits;
     },
-    browse: async (nodeIds, direction) =>
+    browse: async (nodeIds) =>
       guarded("A browse", async () =>
         bridge.shapeBrowse(
           await session.browse(
             nodeIds.map((nodeId) => ({
               nodeId,
-              // Hierarchical references with every subtype: the measured reach. Forward (0) to the children, and
-              // inverse (1, Part 4 7.5) to the parents, which the agent path reads to place a node it could not
-              // see from above.
+              // Hierarchical references with every subtype, the measured reach, forward (0) to the children only.
               referenceTypeId: OPCUA_HIERARCHICAL_REFERENCES,
               includeSubtypes: true,
-              browseDirection: direction === "inverse" ? 1 : 0,
+              browseDirection: 0,
               resultMask: 63,
             })),
           ),

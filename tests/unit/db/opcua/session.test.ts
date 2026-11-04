@@ -189,7 +189,7 @@ describe("history reads are built explicitly, never left to the library", () => 
 });
 
 describe("browse", () => {
-  test("follows hierarchical references forward by default, and inverse only when asked, in full requests", async () => {
+  test("follows hierarchical references forward only, in full requests", async () => {
     const sent: unknown[] = [];
     const base = bridge([endpoint("SignAndEncrypt", PLC_THUMB)], fresh());
     const client = await openReadOnlySession(
@@ -206,8 +206,8 @@ describe("browse", () => {
       options(),
     );
     await client.browse(["i=85"]);
-    await client.browse(["ns=3;s=SlowUInt1"], "inverse");
-    await client.browse(["i=2253"], "forward");
+    await client.browse(["ns=3;s=SlowUInt1"]);
+    await client.browse(["i=2253"]);
     const request = (nodeId: string, browseDirection: number) => ({
       nodeId,
       referenceTypeId: "i=33",
@@ -215,7 +215,7 @@ describe("browse", () => {
       browseDirection,
       resultMask: 63,
     });
-    expect(sent).toEqual([request("i=85", 0), request("ns=3;s=SlowUInt1", 1), request("i=2253", 0)]);
+    expect(sent).toEqual([request("i=85", 0), request("ns=3;s=SlowUInt1", 0), request("i=2253", 0)]);
   });
 });
 

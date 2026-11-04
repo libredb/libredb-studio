@@ -687,9 +687,8 @@ describe("proveReadSet", () => {
     expect(proved.units.get("ns=2;s=Temp")).toEqual({
       units: "ns=2;s=Temp.EU",
       range: "ns=2;s=Temp.Range",
-      outside: false,
     });
-    expect(proved.units.get("ns=2;s=Flow")).toEqual({ outside: true });
+    expect(proved.units.get("ns=2;s=Flow")).toEqual({ units: "outside" });
     expect(proved.units.get("ns=2;s=Bare")).toBeUndefined();
   });
 

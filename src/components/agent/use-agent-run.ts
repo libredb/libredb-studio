@@ -187,7 +187,7 @@ interface StartResponse {
  * Exported because the surface that acts on it has to be able to name it: `AgentRail`
  * compares against this rather than against a string of its own.
  */
-export type AgentStartRefusalCode = Extract<AgentRunFailureReason, "engine-unsupported">;
+export type AgentStartRefusalCode = Extract<AgentRunFailureReason, "engine-unsupported" | "read-roots-required">;
 
 /** Typed rather than compared inline, so the RUNTIME string is extracted from the union too. */
 const ENGINE_UNSUPPORTED_CODE: AgentStartRefusalCode = "engine-unsupported";

@@ -59,9 +59,6 @@ export interface OpcuaReference {
  */
 export type OpcuaReadList = "values" | "facts";
 
-/** Which way a Browse follows hierarchical references: to a node's children, or to its parents. */
-export type OpcuaBrowseDirection = "forward" | "inverse";
-
 /** What one Browse answered for one node, with the continuation point it did or did not hand back. */
 export interface OpcuaBrowseResult {
   readonly nodeId: OpcuaNodeId;
@@ -189,9 +186,9 @@ export interface OpcuaReadOnlyClient {
   limits(): Promise<OpcuaServerLimits>;
   /**
    * Browse, for up to `OPCUA_MAX_NODES_PER_BROWSE` nodes at a time, following hierarchical references forward to a
-   * node's children, or inverse to its parents when `direction` says so. Both are the one Browse service.
+   * node's children, and never to its parents: no caller decides a node by what the server says lies above it.
    */
-  browse(nodeIds: readonly OpcuaNodeId[], direction?: OpcuaBrowseDirection): Promise<readonly OpcuaBrowseResult[]>;
+  browse(nodeIds: readonly OpcuaNodeId[]): Promise<readonly OpcuaBrowseResult[]>;
   /** BrowseNext, consuming a continuation point this client handed back. */
   browseNext(continuationPoints: readonly Uint8Array[]): Promise<readonly OpcuaBrowseResult[]>;
   /** BrowseNext with `releaseContinuationPoints` set, which frees the server's slot and returns nothing. */

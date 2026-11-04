@@ -754,6 +754,41 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart).toHaveBeenCalledTimes(1);
   });
 
+  /*
+    An OPC UA connection is read by agent mode only beneath read roots its seed entry declares, so a run whose
+    workflow sends statements on one that declares none is refused when it is opened, before a run exists, rather
+    than after its first read; plan mode and the operations workflow read nothing beneath roots and still open.
+  */
+  const ROOTLESS_PLANT = { id: "seed:plant", name: "Plant", type: "opcua", host: "opc.tcp://plc.ornek.net:4840/" };
+
+  test("an OPC UA run that sends statements is refused on a connection without read roots, before a run exists", async () => {
+    mockResolveConnection.mockResolvedValueOnce(ROOTLESS_PLANT);
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
+    const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(
+      "This OPC UA connection declares no read roots: agent mode reads OPC UA only beneath read roots an operator declares on its seed entry (agentReadRoots). Nothing was sent.",
+    );
+    expect(body.refused).toBe("read-roots-required");
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+  });
+
+  test("plan mode and the operations workflow open on the same connection, and roots open the investigation", async () => {
+    mockResolveConnection.mockResolvedValueOnce(ROOTLESS_PLANT);
+    expect((await POST(startRequest({ ...VALID_BODY, mode: "planning" }))).status).toBe(202);
+    mockResolveConnection.mockResolvedValueOnce(ROOTLESS_PLANT);
+    expect((await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }))).status).toBe(202);
+    mockResolveConnection.mockResolvedValueOnce({
+      ...ROOTLESS_PLANT,
+      agentReadRoots: ["nsu=urn:plant;s=Line1"],
+    } as never);
+    expect((await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }))).status).toBe(202);
+    expect(mockStart).toHaveBeenCalledTimes(3);
+  });
+
   test("an Apache Spark investigation is refused with the posture's own paragraph", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "spark" });
 

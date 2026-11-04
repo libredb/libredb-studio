@@ -483,6 +483,7 @@ describe("a drive that fails before the loop", () => {
     AGENT_CREDENTIAL_WITH_CONNECTION_STRING: "agent-credential-unusable",
     CONNECTION_SECRET_UNRESOLVABLE: "connection-unresolvable",
     AGENT_CREDENTIAL_REQUIRED: "agent-credential-unusable",
+    READ_ROOTS_REQUIRED: "read-roots-required",
   } as const satisfies Record<ExecutionProfileDenyCode, AgentRunFailureReason>;
 
   test.each(Object.entries(REASON_OF_DENY_CODE) as [ExecutionProfileDenyCode, AgentRunFailureReason][])(

@@ -377,11 +377,15 @@ export interface OpcuaKeptReference {
   readonly referenceTypeId: OpcuaNodeId;
 }
 
+/** A units property a member's browse listed whose node is not a member: never read, answered as not read. */
+export const OPCUA_OUTSIDE_PROPERTY = "outside";
+
 /** Where a Variable's units live, as the walk saw them: the member properties, and whether one lies outside. */
 export interface OpcuaUnitPlaces {
-  readonly units?: OpcuaNodeId;
-  readonly range?: OpcuaNodeId;
-  readonly outside: boolean;
+  /** The EngineeringUnits property: a member's key, or "outside" when the browse listed one the walk did not keep. */
+  readonly units?: OpcuaNodeId | typeof OPCUA_OUTSIDE_PROPERTY;
+  /** The EURange property, the same way. */
+  readonly range?: OpcuaNodeId | typeof OPCUA_OUTSIDE_PROPERTY;
 }
 
 /** One row a browse of the Objects folder answers: a read root with its own names. */
@@ -562,8 +566,8 @@ export async function proveReadSet(
   const leaves = new Set<OpcuaNodeId>();
   const units = new Map<OpcuaNodeId, OpcuaUnitPlaces>();
   const pruned = new Set<OpcuaNodeId>();
-  // How many units or range properties each browse listed, kept or not, so one left outside is told apart.
-  const unitsListed = new Map<OpcuaNodeId, number>();
+  // Which units properties each browse listed, kept or not, so one left outside is told apart from none.
+  const unitsListed = new Map<OpcuaNodeId, Set<"units" | "range">>();
   const join = (key: OpcuaNodeId, facts: OpcuaMemberFacts): void => {
     members.set(key, facts);
     if (members.size > OPCUA_READ_SET_MAX_NODES) refuse(R.nodes);
@@ -613,7 +617,8 @@ export async function proveReadSet(
         for (const reference of await referencesOf(walk, answer as OpcuaBrowseResult)) {
           const target = keyIn(reference.nodeId, table);
           const type = canonicalNodeId(reference.referenceTypeId);
-          if (unitProperty(reference) !== undefined) unitsListed.set(parent, (unitsListed.get(parent) ?? 0) + 1);
+          const property = unitProperty(reference);
+          if (property !== undefined) unitsListed.set(parent, (unitsListed.get(parent) ?? new Set()).add(property));
           const followed =
             type !== undefined &&
             KEPT_REFERENCES.has(type) &&
@@ -656,14 +661,19 @@ export async function proveReadSet(
         referenceTypeId: canonicalNodeId(reference.referenceTypeId) as OpcuaNodeId,
       });
       const property = unitProperty(reference);
-      if (property !== undefined) units.set(parent, { ...units.get(parent), [property]: key, outside: false });
+      if (
+        property !== undefined &&
+        (units.get(parent)?.[property] ?? OPCUA_OUTSIDE_PROPERTY) === OPCUA_OUTSIDE_PROPERTY
+      )
+        units.set(parent, { ...units.get(parent), [property]: key });
     }
     frontier = next;
   }
   for (const [parent, listed] of unitsListed) {
-    const place = units.get(parent) ?? { outside: false };
-    const keptCount = [place.units, place.range].filter((key) => key !== undefined).length;
-    units.set(parent, { ...place, outside: listed > keptCount });
+    const place = units.get(parent) ?? {};
+    for (const property of listed)
+      if (place[property] === undefined)
+        units.set(parent, { ...units.get(parent), [property]: OPCUA_OUTSIDE_PROPERTY });
   }
 
   const rootRows = rootKeys.map((key) => {
@@ -690,4 +700,38 @@ export function answerTimeOutside(member: OpcuaMemberFacts, row: OpcuaDataValue)
   if (VALUELESS_CLASSES.has(row.nodeClass) && row.value !== null && row.value !== undefined) return true;
   const dataType = row.dataTypeId === undefined ? undefined : canonicalNodeId(row.dataTypeId);
   return dataType !== undefined && OPCUA_PRUNED_DATA_TYPES.has(dataType);
+}
+
+/** The note a browse of a member whose own Browse the server refused answers, with no rows. */
+export const OPCUA_LEAF_NOTE = "The server did not list this node's references to this connection's identity.";
+
+/** The warning a browse of the Objects folder answers beside the read roots. */
+export const OPCUA_ROOTS_WARNING =
+  "These are this connection's read roots, declared by its operator: agent mode reads only these nodes and the nodes beneath them.";
+
+/** The Objects folder, whose browse answers the read roots. */
+export const OPCUA_OBJECTS_FOLDER_KEY = "i=85";
+
+/** The refusal of a statement-sending agent profile on a connection that declares no read roots, before any socket. */
+export const OPCUA_READ_ROOTS_REQUIRED_SENTENCE =
+  "This OPC UA connection declares no read roots: agent mode reads OPC UA only beneath read roots an operator declares on its seed entry (agentReadRoots). Nothing was sent.";
+
+/** What agent mode reads, in the words the reader, the tool description, the grounding and the posture repeat. */
+export const OPCUA_READ_ROOTS_SENTENCE = `Agent mode reads only beneath this connection's read roots, the node ids its operator declared on its seed entry: {"browse": "${OPCUA_OBJECTS_FOLDER_KEY}"} lists the roots, and every node beneath them may be read. Every other node id, namespace 0 and the server's configuration, roles and sessions among them, answers exactly as a node the server does not hold (statusCode BadNodeIdUnknown, no value), and nothing is sent for it. A browse of a node beneath a root lists its references inside the roots and says how many lead outside them without naming any; a value whose units property lies outside the roots answers that its units were not read.`;
+
+/** The browse rows of a namespace-0 root or member: the fixed table's rows beneath it, or undefined for any other key. */
+export function namespace0Rows(key: OpcuaNodeId): readonly OpcuaKeptReference[] | undefined {
+  for (const entry of OPCUA_NAMESPACE0_ROOTS) {
+    if (entry.nodeId !== key && !entry.rows.some((row) => row.nodeId === key)) continue;
+    return entry.rows
+      .filter((row) => row.parent === key)
+      .map((row) => ({
+        nodeId: row.nodeId,
+        browseName: row.browseName,
+        displayName: row.displayName,
+        nodeClass: row.nodeClass,
+        referenceTypeId: row.referenceTypeId,
+      }));
+  }
+  return undefined;
 }

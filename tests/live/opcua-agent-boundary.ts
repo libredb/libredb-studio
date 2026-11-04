@@ -37,7 +37,6 @@ import {
   UserTokenType,
 } from "node-opcua-client";
 import { OPCUACertificateManager } from "node-opcua-certificate-manager";
-import { OPCUA_WITHHELD_NODES } from "@/lib/db/providers/industrial/opcua/agent-withheld";
 import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 import type { OpcuaConnectionOptions } from "@/lib/db/providers/industrial/opcua/connection";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
@@ -45,6 +44,17 @@ import { openLibrarySession } from "@/lib/db/providers/industrial/opcua/library"
 import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+
+/** The standard namespace-0 nodes that hold the server's configuration, roles and sessions, read raw by status. */
+const SENSITIVE_STANDARD_NODES = [
+  { kind: "Server.ServerConfiguration", nodeId: "i=12637" },
+  { kind: "Server.ServerCapabilities.RoleSet", nodeId: "i=15606" },
+  { kind: "Server.ServerDiagnostics.SessionsDiagnosticsSummary", nodeId: "i=3706" },
+  { kind: "SessionsDiagnosticsSummary.SessionDiagnosticsArray", nodeId: "i=3707" },
+  { kind: "SessionsDiagnosticsSummary.SessionSecurityDiagnosticsArray", nodeId: "i=3708" },
+  { kind: "Server.PublishSubscribe.SecurityGroups", nodeId: "i=15443" },
+  { kind: "Server.PublishSubscribe.KeyPushTargets", nodeId: "i=25440" },
+] as const;
 
 function env(name: string): string {
   const value = process.env[name];
@@ -122,7 +132,7 @@ async function withheldRaw(port: number, who: Who) {
   const raw = await rawSession(port, who);
   try {
     const roots = [];
-    for (const root of OPCUA_WITHHELD_NODES) {
+    for (const root of SENSITIVE_STANDARD_NODES) {
       const browsed = await browseRaw(raw.session, root.nodeId);
       const children = browsed.references ?? [];
       const read = await raw.session.read({ nodeId: root.nodeId, attributeId: AttributeIds.Value });
