@@ -135,6 +135,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/profile/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/provider-meta/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/query/route.ts": RESOLVED_BY_THE_ROUTE,
+    "src/app/api/db/statement/analyze/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/transaction/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/agent/classify/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
@@ -211,6 +212,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/provider-meta/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+    "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
     "src/lib/api/test-connection.ts":
       "testConnection builds for the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveConnection first",
