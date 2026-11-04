@@ -539,34 +539,35 @@ describe("POST /api/db/statement/analyze without governance", () => {
     expect(createDatabaseProvider).not.toHaveBeenCalled();
   });
 
-  // A name that is present and not a string is refused before the factory, which logs it with a string method and
-  // would answer 500 for any name that is not falsy; null is refused the same way, as no name of any connection.
+  // A name that is present and not a string is refused when the connection resolves, as on every route that resolves
+  // a caller's connection, before the factory, which logs it with a string method; null is refused the same way, as no
+  // name of any connection.
   test.each([
     ["null", null],
     ["a number", 5],
     ["an object", { first: "orders" }],
-  ])("an inline connection whose name is %s answers 400, and builds nothing", async (_label, name) => {
+  ])("an inline connection whose name is %s answers 400 CONFIG_ERROR, and builds nothing", async (_label, name) => {
     const connection = { id: "inline-etcd", name, type: "etcd", host: "127.0.0.1", port: 1 };
 
     expect(await analyze({ connection, text: "del '' --prefix", ...at(15) })).toEqual({
       status: 400,
-      body: { error: "Valid connection configuration is required" },
+      body: { error: "Valid connection configuration is required", code: "CONFIG_ERROR", statusCode: 400 },
       retryAfter: null,
     });
     expect(createDatabaseProvider).not.toHaveBeenCalled();
   });
 
-  // As POST /api/db/provider-meta answers it: a record with no type names no provider to read, which is the caller's.
+  // As every route that resolves a caller's connection answers it: a record with no type names no provider to read.
   test.each([
     ["no type", {}],
     ["an empty type", { type: "" }],
     ["a type that is not a string", { type: 5 }],
-  ])("an inline connection with %s answers 400, and builds nothing", async (_label, type) => {
+  ])("an inline connection with %s answers 400 CONFIG_ERROR, and builds nothing", async (_label, type) => {
     const connection = { id: "inline-x", name: "Inline", host: "127.0.0.1", port: 1, ...type };
 
     expect(await analyze({ connection, text: TWO, ...at(19) })).toEqual({
       status: 400,
-      body: { error: "Valid connection configuration is required" },
+      body: { error: "Valid connection configuration is required", code: "CONFIG_ERROR", statusCode: 400 },
       retryAfter: null,
     });
     expect(createDatabaseProvider).not.toHaveBeenCalled();

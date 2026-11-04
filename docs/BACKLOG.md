@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D454, U17 · 335
+- [Drivers and connections](#drivers-and-connections) — D1-D455, U17 · 335
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -1178,7 +1178,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 58 hits, re-measured on 2026-11-03. The breakdown below is the one measured at 54 on 2026-10-17.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 59 hits, re-measured on 2026-11-04. The breakdown below is the one measured at 54 on 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
 The remaining three write a shorter stub of their own, two with two keys and one with a single `getSession`.
@@ -1186,6 +1186,7 @@ The count moved from 53 to 54 between 2026-10-12 and 2026-10-14: `tests/api/db-t
 The count moved from 54 to 55 on 2026-10-29: `tests/api/auth/openshift-callback-role.test.ts` is the fifty-fifth, and it spreads the real module and replaces only `login`, so it adds no copy of the five-key stub.
 The count moved from 55 to 56 with `tests/security/ai-prompt-fence.test.ts`, added with the AI route fence work: it is the fifty-sixth, and it is a copy, carrying one key the other stubs lack, `readSession`, because the AI routes read the session through it.
 The count moved from 56 to 58 on 2026-11-03 with `tests/isolated/agent-run-seed-credential.test.ts` and `tests/security/seed-agent-credential-leak.test.ts`, the seed agent credential's tests: both spread the real module and replace only `getSession` and `readSession`, so neither adds a copy of the five-key stub.
+The count moved from 58 to 59 on 2026-11-04 with `tests/api/db/inline-connection-record.test.ts`, which sends every connection route an inline connection that names no provider: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 
 `src/lib/auth.ts` re-exports three names from `src/lib/auth-cookies.ts` that every hand-written stub lacks:
 `resetCookieSecurityWarning`, `readCookieSecureOverride` and `isLoopbackHost`, re-measured 2026-10-30.
@@ -4462,15 +4463,15 @@ Found 2026-11-04 by the review of #2204's route.
 
 **Done when:** the lexer collects refusals without an argument spread, and a test drives a 1,000,000-character line of `;` and one of `(` through `isDestructiveNonSqlQuery` and the provider's guard under Bun and Node.
 
-### D454. A connection record whose `type` is missing or not a string, or whose `name` is not a string, answers 500 with a TypeError
+### D455. Five route-level checks for a connection with no type can no longer be reached
 
-`createDatabaseProvider` in `src/lib/db/factory.ts` logs `sanitize(connection.type)` before it reads the type, and `sanitize` calls `replace` on it, so a record whose `type` is not a string fails with a TypeError, which `createErrorResponse` answers as 500 `INTERNAL_ERROR` in the runtime's words.
-Measured on 2026-11-04 on the production server with an inline connection: `POST /api/db/query` answered `Cannot read properties of undefined (reading 'length')` for no `type` and `e.replace is not a function` for `"type": 5`, and `POST /api/db/provider-meta`, which refuses a missing type with 400, answered the second.
-The same factory logs `sanitize(connection.name || "")`, so an inline record whose `name` is a non-string that is not falsy, such as `5` or an object, fails the same way and every other route answers it 500; a `null` name reaches the factory as an empty one.
-`POST /api/db/statement/analyze` guards both: it refuses a missing or non-string `type`, and a `name` that is present and not a string, `null` included, with 400 `Valid connection configuration is required` before any provider is built.
-Found 2026-11-04 by the review of #2204's route.
+`resolveConnection` in `src/lib/seed/resolve-connection.ts` refuses an inline record whose `type` is missing, empty or not a string, and a seed, governed or discovered record passes `SeedConnectionSchema`, which requires `name` and `type` as text, so every connection it answers carries a type.
+Five `if (!connection.type)` checks after it stayed, in the `POST` handlers of `src/app/api/db/provider-meta/route.ts`, `src/app/api/db/test-connection/route.ts` (still in its own sentence, `Connection configuration is required`, with `success: false`), `src/app/api/db/health/route.ts` and `src/app/api/db/monitoring/route.ts`, and in `handleObjectRequest` in `src/lib/api/object-route.ts`.
+Coverage holds them at 100% only because their route tests mock `resolveConnection` to answer a record with no type: "returns 400 when connection has no type" in `tests/api/db/provider-meta.test.ts` and `tests/api/db/health.test.ts`, "returns 400 when connection type is missing" in `tests/api/db/test-connection.test.ts`, "missing connection type returns 400" in `tests/api/db/monitoring.test.ts` and "refuses a resolved connection with no type" in `tests/api/db-objects.test.ts`.
+`tests/api/db/inline-connection-record.test.ts` drives the real `resolveConnection` through every connection route and pins the 400 they answer such a record, so the routes need no check of their own.
+Found 2026-11-04 by the review of the change that moved that refusal into `resolveConnection`.
 
-**Done when:** every route that builds a provider from an inline record answers a missing or non-string `type`, and a present non-string `name`, with one 400 sentence before the factory is reached, with a test per route.
+**Done when:** the five checks are gone, the five mocked cases are removed or moved onto the real `resolveConnection`, and `bun run coverage:check` passes.
 
 ## Value interpolation
 

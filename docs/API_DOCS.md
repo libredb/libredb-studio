@@ -586,6 +586,15 @@ The same answer comes from `POST /api/db/multi-query`, `/api/db/transaction`, `/
 `POST /api/db/monitoring` answers JSON that is not an object the same way, and keeps `400 { "error": "Invalid JSON in request body" }` for text that is not JSON.
 Its `options`, when sent, must be an object as well: anything else (`null`, a number, an array) answers `400 { "error": "options must be an object" }` before any connection resolves.
 
+**An inline connection with no type, or a type or name that is not a string:**
+
+An inline `connection` whose `type` is missing, empty or not a string, or whose `name` is present and not a string, `null` included, answers `400 { "error": "Valid connection configuration is required", "code": "CONFIG_ERROR", "statusCode": 400 }` when the connection resolves, before any provider is built; a `connection` that is not an object is refused the same way.
+A `connection` without a `name` is still accepted, as a connection with no name.
+Every route that takes a `connection` answers it the same way, `POST /api/db/test-connection` included, and `POST /api/admin/fleet-health` reports it as that item's `error`.
+`POST /api/db/disconnect` reads the record's `id` before it resolves anything, so a `connection` that is not an object, or a record with no `id`, answers its own `400 { "success": false, "error": "Either connection or connectionId is required" }`.
+It resolves a record only without governance and only for an `id` outside `seed:`, so only that record is refused as above; under governance it removes the caller's providers of the `id` without reading the record, and answers `200`.
+While custom connections are off, an inline connection answers `403 CUSTOM_CONNECTIONS_DISABLED` whatever it holds.
+
 **A connection type's console text bound:**
 
 A connection type can declare a bound on its statement text in UTF-8 bytes, on its row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/destructive-commands.ts`), declared in the provider's `destructive.ts` module.
@@ -1104,7 +1113,7 @@ A type the server cannot build, one `LIBREDB_ENABLED_PROVIDERS` leaves out, an u
 
 | Status | When |
 |--------|------|
-| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; an inline connection with no `type`, or one that is not a string, `Valid connection configuration is required`, as `POST /api/db/provider-meta` answers it, and an inline connection whose `name` is present and not a string, `null` included, in the same words; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required` or a type `LIBREDB_ENABLED_PROVIDERS` leaves out |
+| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required`, `Valid connection configuration is required` for an inline connection whose `type` is missing, empty or not a string or whose `name` is present and not a string, `null` included (see [`POST /api/db/query`](#post-apidbquery)), or a type `LIBREDB_ENABLED_PROVIDERS` leaves out |
 | `413` | A text over 1,000,000 UTF-16 code units: `The text is <n> UTF-16 code units long, over the 1000000-unit limit for statement analysis. Shorten it to run it.` |
 | `401` | No session (`AUTH_REQUIRED`) |
 | `403` | `CUSTOM_CONNECTIONS_DISABLED` for an inline connection while custom connections are off, or, without governance and the Kubernetes access review, `AUTH_ERROR` for a seed the caller's role may not use |

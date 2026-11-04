@@ -98,17 +98,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: INVALID_REQUEST_BODY }, { status: 400 });
     }
 
+    // `resolveConnection` refuses an inline record whose type is missing or no string, or whose name is present and no
+    // string, so the connection names a provider, and a name the analysis can read as the text a typed confirmation
+    // expects.
     const connection = await resolveConnection(body, guard.session);
-    // An inline record may name no type, or a type that is no string; it names no provider to read, so it is refused in
-    // `POST /api/db/provider-meta`'s words rather than reaching the factory, which fails on it with a TypeError. A name
-    // that is present and no string, null included, is refused in the same words: the factory logs the name with a
-    // string method, and the analysis reads it as the text a typed confirmation expects (docs/BACKLOG.md D454).
-    if (!connection.type || typeof connection.type !== "string") {
-      return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
-    }
-    if (connection.name !== undefined && typeof connection.name !== "string") {
-      return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
-    }
 
     // Before any provider is built: a request this route cannot read costs no provider.
     const fields = readAnalysisFields(body);
