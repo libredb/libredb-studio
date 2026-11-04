@@ -13,6 +13,7 @@ import {
 } from "@/lib/db/providers/industrial/modbus/agent-read";
 import { MODBUS_AGENT_READS } from "@/lib/db/providers/industrial/modbus/agent-statement";
 import { MODBUS_AGENT_WITHHELD } from "@/lib/db/providers/industrial/modbus/agent-surface";
+import { dialModbus, type Dialer } from "@/lib/db/providers/industrial/modbus/client";
 import { MAX_IDENTIFICATION_ROUNDS } from "@/lib/db/providers/industrial/modbus/constants";
 import { MODBUS_PROVIDER_SENTENCES, ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
 import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
@@ -57,7 +58,7 @@ const OPERATIONS: ProviderExecutionContext = { readOnly: true, sendsStatements: 
 
 function provider(
   port: number,
-  options: { execution?: ProviderExecutionContext; map?: string; pacer?: ModbusDevicePacer } = {},
+  options: { execution?: ProviderExecutionContext; map?: string; pacer?: ModbusDevicePacer; dial?: Dialer } = {},
 ): ModbusProvider {
   return new ModbusProvider(
     {
@@ -70,8 +71,36 @@ function provider(
     } as unknown as DatabaseConnection,
     {},
     options.execution ?? AGENT,
-    { pacer: options.pacer ?? new ModbusDevicePacer(5) },
+    { pacer: options.pacer ?? new ModbusDevicePacer(5), ...(options.dial === undefined ? {} : { dial: options.dial }) },
   );
+}
+
+/**
+ * The real dial, recording on Studio's side when each socket was asked for and when it was destroyed: the two moments
+ * the pacer's gap runs between, each stamped in the call that does it. The gap is not read off the device's own close
+ * event, which waits for a turn of the event loop the device shares with Studio here: a runner that stalls that loop
+ * just after a close records the close late and the gap short. MEASURED: a 15 ms stall right after the pacer's stamp
+ * read a 30 ms gap as 14 ms on the device's side, while every destroy to the next dial stayed at 30 ms or more.
+ */
+function recordingDial(): { dial: Dialer; sockets: Array<{ dialled: number; destroyed?: number }> } {
+  const sockets: Array<{ dialled: number; destroyed?: number }> = [];
+  const dial: Dialer = async (endpoint, options) => {
+    const record: { dialled: number; destroyed?: number } = { dialled: performance.now() };
+    sockets.push(record);
+    const socket = await dialModbus(endpoint, options);
+    const destroy = socket.destroy.bind(socket);
+    socket.destroy = () => {
+      record.destroyed ??= performance.now();
+      return destroy();
+    };
+    return socket;
+  };
+  return { dial, sockets };
+}
+
+/** How long after each socket was destroyed the next one was dialled. */
+function gapsBetween(sockets: ReadonlyArray<{ dialled: number; destroyed?: number }>): number[] {
+  return sockets.slice(1).map((next, at) => next.dialled - (sockets[at]?.destroyed ?? Number.POSITIVE_INFINITY));
 }
 
 function budget(overrides: Partial<ReadOnlyStatementBudget> = {}): ReadOnlyStatementBudget {
@@ -362,14 +391,15 @@ describe("pacing on one device", () => {
   test("two concurrent reads from two connections never overlap, and the gap follows the first's close", async () => {
     const dev = await device({ answerAfterMs: 30 });
     const pacer = new ModbusDevicePacer(80);
+    const { dial, sockets } = recordingDial();
     const text = '{"unit": 1, "table": "holding_register", "address": 0, "count": 1}';
     await Promise.all([
-      provider(dev.port, { pacer }).queryReadOnly(text, budget()),
-      provider(dev.port, { pacer }).queryReadOnly(text, budget()),
+      provider(dev.port, { pacer, dial }).queryReadOnly(text, budget()),
+      provider(dev.port, { pacer, dial }).queryReadOnly(text, budget()),
     ]);
     expect(dev.maxOpen).toBe(1);
-    const [first, second] = dev.connections;
-    expect((second?.opened ?? 0) - (first?.closed ?? 0)).toBeGreaterThanOrEqual(75);
+    expect(sockets).toHaveLength(2);
+    for (const gap of gapsBetween(sockets)) expect(gap).toBeGreaterThanOrEqual(80);
   });
 
   test("a read's execution time is its time on the device, never Studio's wait for its turn or the gap", async () => {
@@ -378,11 +408,12 @@ describe("pacing on one device", () => {
     // to the device.
     const dev = await device();
     const pacer = new ModbusDevicePacer(400);
+    const { dial, sockets } = recordingDial();
     const text = '{"unit": 1, "table": "holding_register", "address": 0, "count": 1}';
-    await provider(dev.port, { pacer }).queryReadOnly(text, budget());
-    const asked = performance.now();
-    const second = await provider(dev.port, { pacer }).queryReadOnly(text, budget());
-    expect(performance.now() - asked).toBeGreaterThanOrEqual(395);
+    await provider(dev.port, { pacer, dial }).queryReadOnly(text, budget());
+    const second = await provider(dev.port, { pacer, dial }).queryReadOnly(text, budget());
+    expect(sockets).toHaveLength(2);
+    for (const gap of gapsBetween(sockets)) expect(gap).toBeGreaterThanOrEqual(400);
     expect(second.executionTime).toBeLessThan(200);
   });
 
@@ -549,17 +580,17 @@ describe("what an agent-mode handle answers outside queryReadOnly", () => {
   test("connect and health reach the device only on its lane, after the agent read ahead of them", async () => {
     const dev = await device({ answerAfterMs: 40 });
     const pacer = new ModbusDevicePacer(30);
-    const read = provider(dev.port, { pacer }).queryReadOnly(
+    const { dial, sockets } = recordingDial();
+    const read = provider(dev.port, { pacer, dial }).queryReadOnly(
       '{"unit": 1, "table": "holding_register", "address": 0, "count": 1}',
       budget(),
     );
-    const handle = provider(dev.port, { pacer, execution: OPERATIONS });
+    const handle = provider(dev.port, { pacer, dial, execution: OPERATIONS });
     await Promise.all([read, handle.connect(), handle.getHealth()]);
     expect(dev.maxOpen).toBe(1);
-    expect(dev.connections).toHaveLength(3);
-    for (let at = 1; at < dev.connections.length; at += 1) {
-      expect((dev.connections[at]?.opened ?? 0) - (dev.connections[at - 1]?.closed ?? 0)).toBeGreaterThanOrEqual(25);
-    }
+    expect(sockets).toHaveLength(3);
+    await arrives(() => dev.connections.length === 3);
+    for (const gap of gapsBetween(sockets)) expect(gap).toBeGreaterThanOrEqual(30);
   });
 
   test("health with no map dials on the lane and reads nothing", async () => {
