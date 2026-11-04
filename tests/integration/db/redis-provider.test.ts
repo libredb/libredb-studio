@@ -2415,7 +2415,7 @@ describe("RedisProvider", () => {
 
     test("the doc names BOTH routes that call this, and says the editor path is now covered", () => {
       // This test used to pin the opposite, and the change is the point. `use-query-execution.ts`
-      // keeps a Redis buffer off `/api/db/multi-query` by gating that endpoint on `dialectIsSql`,
+      // keeps a Redis buffer off `/api/db/multi-query` by gating that endpoint on `runsAsScript`,
       // read from this capability, so an editor run goes to `/api/db/query`. That route ended
       // nothing while the ender named one shared client (D74 measured the naive `finally` there
       // destroying other callers' committed work). D87 bound the ender to a call scope the route
