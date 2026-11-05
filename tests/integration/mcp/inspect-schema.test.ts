@@ -1233,6 +1233,24 @@ describe("schema names", () => {
     expect(new TextEncoder().encode(JSON.stringify(kept)).byteLength).toBeLessThanOrEqual(4_096);
   });
 
+  test.each([
+    [74, 99, 0],
+    [75, 98, 1],
+  ] as const)(
+    "keep a last name whose JSON ends the list at 4,096 bytes, and leave one that ends it at 4,097 (%i characters)",
+    async (last, kept, omitted) => {
+      const names = [
+        ...Array.from({ length: 98 }, (_, index) => `${"n".repeat(35)}${String(index).padStart(3, "0")}`),
+        "x".repeat(last),
+      ];
+      // 98 names of 40 bytes of JSON, 97 commas and the brackets, then a comma and the last name: 4,022 bytes and its length.
+      expect(new TextEncoder().encode(JSON.stringify(names)).byteLength).toBe(4_022 + last);
+      const result = await inspectFixed(new FixedProvider(1, () => schemasOf(names)), { include_schema_names: true });
+      expect(result.structuredContent?.schema_names).toEqual(names.slice(0, kept));
+      expect(result.structuredContent?.schema_names_omitted).toBe(omitted);
+    },
+  );
+
   test("come back on every page of a call, not only the first", async () => {
     const result = await inspectFixed(new FixedProvider(1, () => schemasOf(["a", "b"]), 3), {
       include_schema_names: true,
