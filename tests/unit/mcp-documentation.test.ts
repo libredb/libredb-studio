@@ -190,6 +190,47 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("says inspect_schema's timeout_ms bounds the whole call", () => {
+    expect(MCP_DOC).toContain(
+      "    `timeout_ms`, 500 to 30000 and 30000 by default, bounds the whole call ([Limits](#limits)).",
+    );
+  });
+
+  test("follows the cancel table with inspect_schema's deadline, the step left running and the opening a later call joins", () => {
+    const lines = MCP_DOC.split("\n");
+    const after =
+      lines.indexOf("| Engine | The client closes the request | `timeout_ms` passes |") + 2 + cancelRows().length;
+    expect(lines.slice(after, after + 4)).toEqual([
+      "",
+      "- `inspect_schema` takes `timeout_ms` too, 500 to 30000 and 30000 by default, as one deadline over the whole call: opening the connection, the database choice, each container listing, the table listing and each table's description start only before it, and a call still waiting on one of them when it passes is answered with the timeout, never a partial page.",
+      "  A step that holds Studio's own thread, as a LibreDB read does, cannot be interrupted, so it is let finish and only the steps after it are refused.",
+      "  A cancel or the deadline ends the wait, not the step it was waiting on: a read already sent may still be running on the database, and an opening the call started runs on, so a later `inspect_schema` call on that connection made while it runs joins it rather than opening the connection again, and answers with its outcome.",
+    ]);
+  });
+
+  test("says what inspect_schema's include_foreign_keys returns, its cap and its hedge", () => {
+    for (const line of [
+      "    With `include_foreign_keys` each table also carries `foreign_keys`, at most 25 rows of `{ column, referenced_table, referenced_column }`, and `foreign_keys_omitted`, the count of the rest: a composite key comes back as one row per column pair, since no constraint name is returned, and an empty list may also mean the connection's login cannot see the keys.",
+      "    On an engine whose provider declares it holds no foreign keys (`declaresForeignKeys: false`), such as LibreDB and MongoDB, each table answers `foreign_keys: { unavailable }` instead, and so on Snowflake and BigQuery, whose providers declare the same although those engines can hold declared keys; with `include_columns` and `include_indexes` off, a call there describes no table.",
+    ])
+      expect(MCP_DOC).toContain(line);
+  });
+
+  test("says what inspect_schema's include_schema_names returns, its bound and its level rule", () => {
+    for (const line of [
+      "    With `include_schema_names` the page also carries `schema_names` after `schema`, the names `schema` can take on that connection in the provider's order, at most 100 names and 4,096 bytes of JSON with no name cut, and `schema_names_omitted`, the count of the rest; both are on every page of a call, count toward the 32 KiB result limit and leave `total_tables`, `has_more` and `next_offset` to the tables.",
+      "    On a connection with one container level the names are that level's listing, and on a PostgreSQL connection that reaches every database they are the schemas of the database `database` names; on one with two, such as DuckDB, they are the deepest level under the upper container the session is in, or else the first one listed, since no argument chooses that one; on a connection with no container level, such as SQLite, and on Sparkplug B, whose MCP handle declares none, `schema_names` is `{ unavailable }`.",
+      "    The names come from the container listings the call makes anyway, so asking for them sends no request of its own.",
+    ])
+      expect(MCP_DOC).toContain(line);
+  });
+
+  test("says inspect_schema opens under agent-operations, so it may list a connection whose statement tool refuses the login", () => {
+    expect(MCP_DOC).toContain(
+      "    It opens its connection under `agent-operations`, which sends no statement, so on an engine whose provider proves its login only for a connection that sends statements, MongoDB and Milvus among them, it proves no login and may list a connection whose statement tool refuses that login; [Opting connections in](#opting-connections-in) names more such engines.",
+    );
+  });
+
   test("carries the read_tool field", () => {
     expect(MCP_DOC).toContain("`read_tool`");
     expect(MCP_DOC).not.toContain("B117");

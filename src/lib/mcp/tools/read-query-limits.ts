@@ -29,6 +29,12 @@ import type { DatabaseType } from "@/lib/types";
 
 export type { ReadOnlyRefusalKind };
 
+/**
+ * The bounds of every MCP tool's `timeout_ms`: at least 500 ms, unless a statement facet raises its own least
+ * (`leastTimeout`), and at most 30000 ms, the most a timeout answer offers.
+ */
+export const MCP_TIMEOUT_BOUNDS_MS = { min: 500, max: 30_000 } as const;
+
 export const READ_ONLY_REFUSALS: readonly ReadOnlyRefusalOpening[] = READ_ONLY_REFUSAL_OPENINGS;
 
 const TOO_LARGE_TEXTS: Record<"rows" | "bytes", string> = {
@@ -114,7 +120,7 @@ export function offsetRefusalText(sql: string, type: DatabaseType): string {
 }
 
 export function timeoutText(timeoutMs: number): string {
-  return `The statement did not finish within timeout_ms (${timeoutMs} ms). Narrow it, or raise timeout_ms up to 30000.`;
+  return `The statement did not finish within timeout_ms (${timeoutMs} ms). Narrow it, or raise timeout_ms up to ${MCP_TIMEOUT_BOUNDS_MS.max}.`;
 }
 
 export function nextPageHint(nextOffset: number): string {

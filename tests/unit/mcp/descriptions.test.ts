@@ -4,20 +4,25 @@
  * at most 512 characters, which carry only server-wide facts; and the engine sentence, derived
  * from the one engine list rather than written out.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_LANGUAGE_MCP_FACETS, type AgentLanguageMcpFacet } from "@/lib/agent/languages/mcp";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { MQTT_COMPLETENESS } from "@/lib/db/providers/keyvalue/mqtt/agent-read";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
-import { INSPECT_SCHEMA_DESCRIPTION } from "@/lib/mcp/tools/inspect-schema";
+import { INSPECT_SCHEMA_DESCRIPTION, InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect-schema";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
 import { mcpStatementArm, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
-import { pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
+import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { handlerServe, legacyPost, readJsonRpc } from "../../helpers/mcp-harness";
+import { servedEngineSeeds } from "../../helpers/mcp-served-seeds";
 
 pinMcpTestEnvironment();
 
@@ -38,6 +43,40 @@ const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
 afterEach(async () => {
   await resetMcpTestState();
 });
+
+const seedDir = mkdtempSync(path.join(tmpdir(), "libredb-mcp-descriptions-"));
+
+afterAll(() => {
+  rmSync(seedDir, { recursive: true, force: true });
+});
+
+interface ListedTool {
+  readonly name: string;
+  readonly inputSchema: {
+    readonly properties?: Record<string, { minimum?: number; maximum?: number; default?: number }>;
+  };
+}
+
+/**
+ * What a token that reaches every served engine lists, every registered tool among it. GOVERNANCE_SOURCE is cleared
+ * while it lists, so a developer's environment never decides which connections are available.
+ */
+async function listedTools(): Promise<readonly ListedTool[]> {
+  const governance = process.env.GOVERNANCE_SOURCE;
+  delete process.env.GOVERNANCE_SOURCE;
+  try {
+    writeSeedFile(seedDir, servedEngineSeeds(seedDir));
+    const reply = await readJsonRpc(await handlerServe()(legacyPost({ jsonrpc: "2.0", id: 1, method: "tools/list" })));
+    return reply.result?.tools ?? [];
+  } finally {
+    if (governance === undefined) delete process.env.GOVERNANCE_SOURCE;
+    else process.env.GOVERNANCE_SOURCE = governance;
+  }
+}
+
+/** The sentence inspect_schema's description ends with before the notice. */
+const OPERATIONS_PROFILE_SENTENCE =
+  "It opens the connection under Studio's operations profile, which sends no statement, so on some engines it does not prove the login read-only and may list a connection whose statement tool refuses that login.";
 
 const METADATA_DESCRIPTIONS = [
   ["list_connections", LIST_CONNECTIONS_DESCRIPTION, "List the database connections"],
@@ -253,6 +292,46 @@ describe("the tool descriptions", () => {
   test("inspect_schema says, in static words, that sampled columns are left out", () => {
     expect(INSPECT_SCHEMA_DESCRIPTION).toContain(
       "Columns an engine only inferred from sampled data are left out, so a table may hold fields this list does not show.",
+    );
+  });
+});
+
+describe("timeout_ms", () => {
+  test("every listed tool but list_connections takes it, and inspect_schema's bounds are run_read_query's", async () => {
+    const tools = await listedTools();
+    expect(tools.length).toBeGreaterThan(0);
+    expect(
+      tools.filter((tool) => tool.inputSchema.properties?.timeout_ms === undefined).map((tool) => tool.name),
+    ).toEqual(["list_connections"]);
+    const bounds = (name: string) => {
+      const timeout = tools.find((tool) => tool.name === name)?.inputSchema.properties?.timeout_ms;
+      return { minimum: timeout?.minimum, maximum: timeout?.maximum };
+    };
+    // run_read_query's facet raises no least, so its bounds are the shared ones.
+    expect((AGENT_LANGUAGE_MCP_FACETS.sql as AgentLanguageMcpFacet).leastTimeout).toBeUndefined();
+    expect(bounds("inspect_schema")).toEqual(bounds("run_read_query"));
+    expect(bounds("inspect_schema")).toEqual({ minimum: 500, maximum: 30_000 });
+    expect(tools.find((tool) => tool.name === "inspect_schema")?.inputSchema.properties?.timeout_ms?.default).toBe(
+      30_000,
+    );
+  });
+});
+
+describe("inspect_schema's own words", () => {
+  test("describe include_foreign_keys with its cap and its hedge", () => {
+    expect(InspectSchemaInputSchema.shape.include_foreign_keys.description).toBe(
+      "Also return each table's foreign keys, at most 25, each as column, referenced_table and referenced_column, with foreign_keys_omitted counting the rest, or unavailable on an engine Studio reads no foreign keys on. A composite key comes back as one row per column pair, since no constraint name is returned, and an empty list may also mean the connection's login cannot see the keys.",
+    );
+  });
+
+  test("say last, before the notice and within 2,048 characters, that it opens under the operations profile", () => {
+    expect(INSPECT_SCHEMA_DESCRIPTION.endsWith(`${OPERATIONS_PROFILE_SENTENCE} ${MCP_UNTRUSTED_NOTICE}`)).toBe(true);
+    expect(INSPECT_SCHEMA_DESCRIPTION.length).toBeLessThanOrEqual(2_048);
+  });
+
+  test("describe include_schema_names with its bound and its level rule", () => {
+    expect(InspectSchemaInputSchema.shape.include_schema_names.description).toBe(
+      "Also return schema_names, the names schema can take here, in the engine's order: at most 100 names and 4 KiB of JSON, with schema_names_omitted counting the rest, and no name cut. Where the engine has a level above schemas, they are the ones under the container the session is in, or else the first listed; a connection with no schema level answers unavailable.",
     );
   });
 });
