@@ -226,7 +226,7 @@ describe("docs/MCP.md", () => {
 
   test("says inspect_schema opens under agent-operations, so it may list a connection whose statement tool refuses the login", () => {
     expect(MCP_DOC).toContain(
-      "    It opens its connection under `agent-operations`, which sends no statement, so on an engine whose provider proves its login only for a connection that sends statements, MongoDB among them, it proves no login and may list a connection whose statement tool refuses that login; [Opting connections in](#opting-connections-in) names each such engine.",
+      "    It opens its connection under `agent-operations`, which sends no statement, so on an engine whose provider proves its login only for a connection that sends statements, MongoDB and Milvus among them, it proves no login and may list a connection whose statement tool refuses that login; [Opting connections in](#opting-connections-in) names more such engines.",
     );
   });
 
