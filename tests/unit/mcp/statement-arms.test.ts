@@ -1239,7 +1239,7 @@ describe("the s3api arm", () => {
     );
   });
 
-  test("describes the six reads, what is withheld, the agent read key and its engine", () => {
+  test("describes the six reads, what is withheld, the seed's separate read key and its engine", () => {
     const description = RUN_S3_READ_ARM.description;
     expect(description.startsWith("Run one read-only S3 metadata read")).toBe(true);
     expect(description).toContain("Runs on S3-compatible object storage; other engines refuse it.");
@@ -1248,7 +1248,7 @@ describe("the s3api arm", () => {
       "object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and the endpoint are withheld",
     );
     expect(description).toContain(
-      "Every read is signed with the connection's agent read key, never the connection's own key",
+      "Every read is signed with the seed's separate read key, never the connection's own key",
     );
     expect(description).toContain(
       "a bucket or key it may not read answers in the same sentence as one that does not exist",

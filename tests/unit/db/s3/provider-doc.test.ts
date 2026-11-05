@@ -1759,7 +1759,7 @@ describe("docs/SEED_CONNECTIONS.md and the seed schema agree on s3", () => {
     const refused = SeedConfigSchema.safeParse({ version: "1", connections: [{ ...connection, mcp: true }] });
     expect(refused.success).toBe(false);
     expect(refused.error?.issues.map((issue) => issue.message)).toContain(
-      'Seed connection "s3-doc" sets mcp: true on s3 without an agent credential: MCP reads this engine only under an agent credential of its own, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.',
+      'Seed connection "s3-doc" sets mcp: true on s3 without a read credential of its own (agentUser and agentPassword): MCP reads this engine only under that credential, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.',
     );
     const agentKey = { agentUser: "studio-agent", agentPassword: "${S3_DOC_AGENT_SECRET}" };
     const opted = SeedConfigSchema.safeParse({

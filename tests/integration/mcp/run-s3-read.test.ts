@@ -468,7 +468,7 @@ describe("the connection's own key", () => {
       content: [
         {
           type: "text",
-          text: 'run_s3_read cannot run on this connection: Connection "seed:store" is read by MCP only under an agent credential of its own, and it has none: an operator sets agentUser and agentPassword on this seed. It runs on S3-compatible object storage.',
+          text: 'run_s3_read cannot run on this connection: Connection "seed:store" is read by MCP only under a read credential of its own (agentUser and agentPassword), and it has none: an operator sets agentUser and agentPassword on this seed. It runs on S3-compatible object storage.',
         },
       ],
     });

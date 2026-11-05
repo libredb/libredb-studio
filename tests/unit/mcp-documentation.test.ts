@@ -11,6 +11,7 @@ import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import { DB_UI_CONFIG, getDBConfig } from "@/lib/db-ui-config";
 import { namedList } from "@/lib/agent/engine-support";
 import { mcpClientConfigs } from "@/lib/mcp/client-config";
+import { parseSeedConfigText } from "@/lib/seed/sources/config-text";
 import { RUN_READ_QUERY_TYPES } from "../helpers/run-read-query";
 import { registeredMcpToolNames } from "../helpers/mcp-tool-names";
 import { namedLabels } from "../helpers/repo-text-scope";
@@ -59,7 +60,7 @@ const ORACLE_CANCEL_ROW =
 const ORACLE_BOUNDARY =
   "  - Oracle: by a user set `ALTER USER ... READ ONLY`, which the server refuses every write, checked before every statement, on that statement's own session, to reach nothing READ ONLY leaves open and to read nothing of Oracle's own schemas beyond what `PUBLIC` may, and refuses a login that could do more than read ([oracle.md](./providers/oracle.md)).";
 const ORACLE_SEED =
-  "On Oracle (23ai and later) the seed's user must be a local user set `ALTER USER ... READ ONLY` that holds `CREATE SESSION`, `SELECT` on the tables to read and, granted by SYS, `SELECT` on `SYS.DBA_POLICIES` and `SYS.DBA_AUDIT_POLICIES`, and nothing more, as the check before each agent statement proves ([oracle.md](./providers/oracle.md) section 5.7).\n" +
+  "On Oracle (23ai and later) the seed's user must be a local user set `ALTER USER ... READ ONLY` that holds `CREATE SESSION`, `SELECT` on the tables to read and, granted by SYS, `SELECT` on `SYS.DBA_POLICIES` and `SYS.DBA_AUDIT_POLICIES`, and nothing more, as the check before each `run_read_query` statement proves ([oracle.md](./providers/oracle.md) section 5.7).\n" +
   "The check runs before every statement, not at the open, so `run_read_query` answers its refusal in its own sentence and sends nothing: a user that is not READ ONLY, such as SYSTEM or the schema owner, one holding a system privilege beyond `CREATE SESSION` or a role carrying one, `CONNECT` and `DBA` included, `EXECUTE` on code that is not Oracle's, or any grant on a schema Oracle maintains beyond those two catalogs, such as `SELECT_CATALOG_ROLE` or `AUDIT_VIEWER`, and any user while the database holds a database link or a row-level security or fine-grained auditing policy that runs code that is not Oracle's.\n" +
   "A grant added between two calls refuses the next call, and a lifted one admits it.";
 const API_DOCS = read("docs/API_DOCS.md");
@@ -223,16 +224,16 @@ describe("docs/MCP.md", () => {
   });
 
   test("carries run_kafka_read's withheld topics and the seed's login", () => {
-    expect(MCP_DOC).toContain("are withheld from every listing, as they are in agent mode and in `inspect_schema`");
+    expect(MCP_DOC).toContain("are withheld from every listing, as they are in `inspect_schema`");
     expect(MCP_DOC).toContain(
-      "A Kafka seed needs no least-privilege principal and none is proven, since the agent's client can send no write whatever the login may do",
+      "A Kafka seed needs no least-privilege principal and none is proven, since the provider's read client can send no write whatever the login may do",
     );
     expect(MCP_DOC).toMatch(/^\| Apache Kafka \| /m);
   });
 
   test("carries what run_rabbitmq_read withholds and its cancel row", () => {
     expect(MCP_DOC).toContain(
-      "Its answer is the agent's metadata-only projection: each message's offset and body size, and never a message's body, headers, properties or routing key.",
+      "Its answer is Studio's metadata-only projection: each message's offset and body size, and never a message's body, headers, properties or routing key.",
     );
     expect(MCP_DOC).toMatch(/^\| RabbitMQ \| Studio stops waiting; /m);
     const cancelRow = MCP_DOC.split("\n").find((text) => text.startsWith("| RabbitMQ | Studio stops waiting; "));
@@ -406,7 +407,7 @@ describe("docs/MCP.md", () => {
       "  - InfluxDB 3 (SQL): by the 3.12 Core planner, which refuses every write, DDL, `COPY`, `SET` and transaction statement whatever the token, on a server checked at open to be that line ([influxdb3.md](./providers/influxdb3.md))",
     );
     expect(MCP_DOC).toContain(
-      "On InfluxDB 3 (SQL) every Core token is an admin token, so no seed token is least-privilege and none is asked for: `run_read_query` refuses instead a server that is not InfluxDB 3 Core on the 3.12 line, whose planner's write refusals were captured, as the open does for agent mode ([influxdb3.md](./providers/influxdb3.md) section 3.5).",
+      "On InfluxDB 3 (SQL) every Core token is an admin token, so no seed token is least-privilege and none is asked for: `run_read_query` refuses instead a server that is not InfluxDB 3 Core on the 3.12 line, whose planner's write refusals were captured, checking it at the open ([influxdb3.md](./providers/influxdb3.md) section 3.5).",
     );
     expect(MCP_DOC).toContain(
       "InfluxDB 3 checks its server's line only for a connection that sends statements, so `inspect_schema` opens an InfluxDB 3 connection on any 3.x server, as the editor does.",
@@ -424,7 +425,7 @@ describe("docs/MCP.md", () => {
       "  - Couchbase: by a user whose only roles are `query_select` on named scopes of the connection's bucket, checked at open and again before every statement on a server proven to refuse that user a write, behind the provider's fence that sends one `SELECT`, and refuses a login that could do more than read ([couchbase.md](./providers/couchbase.md)).",
     );
     expect(MCP_DOC).toContain(
-      "On Couchbase the seed's user must hold no role but `query_select` on named scopes of the seed's bucket (`query_select[<bucket>:<scope>]`, one for each scope it reads), never on every scope or on the bucket's `_system` scope, counting the roles of its groups, on a server that refuses that user a write, as the check proves at open and before every statement for agent mode ([couchbase.md](./providers/couchbase.md) section 15.7): the administrator, `ro_admin`, `query_system_catalog`, `data_reader`, a role on another bucket, a group that grants a writing role and every Community Edition user are refused.",
+      "On Couchbase the seed's user must hold no role but `query_select` on named scopes of the seed's bucket (`query_select[<bucket>:<scope>]`, one for each scope it reads), never on every scope or on the bucket's `_system` scope, counting the roles of its groups, on a server that refuses that user a write, as the check proves at open and before every statement of `run_read_query` ([couchbase.md](./providers/couchbase.md) section 15.7): the administrator, `ro_admin`, `query_system_catalog`, `data_reader`, a role on another bucket, a group that grants a writing role and every Community Edition user are refused.",
     );
     expect(MCP_DOC).toContain(
       "Couchbase checks its user only for a connection that sends statements, so `inspect_schema` opens a Couchbase connection unchecked, as the editor does, with the administrator too.",
@@ -494,7 +495,7 @@ describe("docs/MCP.md", () => {
       "  - Apache Cassandra: by a role checked at open and again before every statement, on that statement's own session, to be no superuser and to hold only `SELECT` on the connection's keyspace, on an Apache Cassandra 5.0 server that enforces its grants, while the provider sends one `SELECT` of a table of that keyspace or of `system_schema` and nothing else, and refuses a login that could do more than read ([cassandra.md](./providers/cassandra.md)).",
     );
     expect(MCP_DOC).toContain(
-      "On Apache Cassandra the seed must name its keyspace as `database`, a keyspace of the user's data, since a seed bound to one of Cassandra's own keyspaces (`system`, `system_auth`, `system_traces` and the rest) is refused at open whatever its role holds, and its `user` must be a role that is no superuser, holds no superuser role, and holds only `SELECT` on that keyspace or on tables of it, directly or through roles granted to it, with no column of the keyspace masked by a function outside the `system` keyspace, on an Apache Cassandra 5.0 server with `PasswordAuthenticator` and `CassandraAuthorizer`, as the check proves for agent mode ([cassandra.md](./providers/cassandra.md) section 14.2): the image's default `cassandra` superuser is refused, and so is a role holding `MODIFY`, `EXECUTE`, `UNMASK` or `DESCRIBE`, or `SELECT` on every keyspace, a node on `AllowAllAuthorizer`, and ScyllaDB.",
+      "On Apache Cassandra the seed must name its keyspace as `database`, a keyspace of the user's data, since a seed bound to one of Cassandra's own keyspaces (`system`, `system_auth`, `system_traces` and the rest) is refused at open whatever its role holds, and its `user` must be a role that is no superuser, holds no superuser role, and holds only `SELECT` on that keyspace or on tables of it, directly or through roles granted to it, with no column of the keyspace masked by a function outside the `system` keyspace, on an Apache Cassandra 5.0 server with `PasswordAuthenticator` and `CassandraAuthorizer`, as the check proves for `run_read_query` ([cassandra.md](./providers/cassandra.md) section 14.2): the image's default `cassandra` superuser is refused, and so is a role holding `MODIFY`, `EXECUTE`, `UNMASK` or `DESCRIBE`, or `SELECT` on every keyspace, a node on `AllowAllAuthorizer`, and ScyllaDB.",
     );
     expect(MCP_DOC).toContain(
       "Apache Cassandra checks its role only for a connection that sends statements, so `inspect_schema` opens an Apache Cassandra connection unproven, as the editor does, with a superuser too.",
@@ -593,7 +594,7 @@ describe("docs/MCP.md", () => {
   test("says run_read_query on PostgreSQL and SQL Server needs a least-privilege seed principal", () => {
     expect(MCP_DOC).toContain("On PostgreSQL the seed's role must not be a superuser");
     expect(MCP_DOC).toContain("and it must be granted `SHOWPLAN`");
-    expect(MCP_DOC).toContain("A seed entry may carry an agent credential, `agentUser` and `agentPassword`");
+    expect(MCP_DOC).toContain("A seed entry may carry a read credential of its own, `agentUser` and `agentPassword`");
   });
 
   // #1462: inspect_schema acquires under agent-operations, which carries the same
@@ -636,6 +637,117 @@ describe("docs/MCP.md", () => {
 
   test("says a static Authorization header is required, because phase 1 serves no OAuth metadata", () => {
     expect(MCP_DOC).toContain("a client needs its `Authorization` header configured");
+  });
+});
+
+/** The fixed sentence the vocabulary note opens with; the note is that line and every line after it up to a blank one. */
+const VOCABULARY_OPENING =
+  "MCP and agent mode, Studio's in-app agent, are separate features that share one read-only core.";
+
+interface DocLine {
+  readonly line: number;
+  readonly text: string;
+}
+
+/** The doc's lines outside fenced blocks, numbered from one. */
+const proseLines = (): DocLine[] => {
+  const prose: DocLine[] = [];
+  let fenced = false;
+  MCP_DOC.split("\n").forEach((text, index) => {
+    if (/^\s*```/.test(text)) fenced = !fenced;
+    else if (!fenced) prose.push({ line: index + 1, text });
+  });
+  return prose;
+};
+
+/** The bodies of the fenced blocks whose info string is `info`. */
+const fencedBlocks = (info: string): string[] => {
+  const blocks: string[] = [];
+  let inside = false;
+  let body: string[] | null = null;
+  for (const text of MCP_DOC.split("\n")) {
+    const fence = /^\s*```(\S*)/.exec(text);
+    if (fence !== null) {
+      if (inside) {
+        if (body !== null) blocks.push(body.join("\n"));
+        body = null;
+      } else body = fence[1] === info ? [] : null;
+      inside = !inside;
+    } else if (inside && body !== null) body.push(text);
+  }
+  return blocks;
+};
+
+/** The vocabulary note's lines: the fixed opening and every line after it up to a blank one. */
+const vocabularyNote = (): DocLine[] => {
+  const prose = proseLines();
+  const start = prose.findIndex((piece) => piece.text === VOCABULARY_OPENING);
+  if (start === -1) return [];
+  const end = prose.findIndex((piece, index) => index > start && piece.text === "");
+  return prose.slice(start, end === -1 ? undefined : end);
+};
+
+/** The prose outside the vocabulary note, with its inline code spans and link destinations removed. */
+const ownWords = (): DocLine[] => {
+  const note = new Set(vocabularyNote().map((piece) => piece.line));
+  return proseLines()
+    .filter((piece) => !note.has(piece.line))
+    .map((piece) => ({ line: piece.line, text: piece.text.replace(/`[^`]*`/g, "").replace(/\]\([^)]*\)/g, "]") }));
+};
+
+describe("docs/MCP.md in MCP's own words", () => {
+  test("says Studio runs no model for MCP, and opens its vocabulary note with the fixed sentence", () => {
+    expect(MCP_DOC).toContain(
+      "Studio runs no model for MCP: the model runs in your client, so MCP needs no LLM provider.",
+    );
+    const note = vocabularyNote().map((piece) => piece.text);
+    expect(note[0]).toBe(VOCABULARY_OPENING);
+    expect(note.join("\n")).toContain("`src/lib/agent/languages/`");
+  });
+
+  test("names the agent feature only in its vocabulary note", () => {
+    expect(vocabularyNote().length).toBeGreaterThan(1);
+    const feature = /\bagent[- ](?:mode|read|run|statement|execution)\b/i;
+    expect(
+      ownWords()
+        .filter((piece) => feature.test(piece.text))
+        .map((piece) => piece.line),
+    ).toEqual([]);
+    const protocolSenses = /SNMP agent|MTConnect agent|Agent Host/g;
+    expect(
+      ownWords()
+        .filter((piece) => /\bagents?\b/i.test(piece.text.replace(protocolSenses, "")))
+        .map((piece) => `${piece.line}: ${piece.text}`),
+    ).toEqual([]);
+  });
+
+  test("the vocabulary note names every agent identifier the doc uses", () => {
+    const noteLines = vocabularyNote();
+    const note = noteLines.map((piece) => piece.text).join("\n");
+    const inNote = new Set(noteLines.map((piece) => piece.line));
+    // One token: no space, slash or dot, so identifiers and profile names count, and paths and quoted sentences do not.
+    const identifiers = new Set(
+      proseLines()
+        .filter((piece) => !inNote.has(piece.line))
+        .flatMap((piece) => [...piece.text.matchAll(/`([^`\s/.]+)`/g)].map((match) => match[1]))
+        .filter((span) => /agent/i.test(span)),
+    );
+    expect(identifiers.size).toBeGreaterThan(0);
+    for (const identifier of identifiers) expect(note).toContain(`\`${identifier}\``);
+  });
+
+  test("every fenced yaml block holding connections: loads with SeedConfigSchema", () => {
+    const seeds = fencedBlocks("yaml").filter((body) => /^connections:/m.test(body));
+    expect(seeds.length).toBeGreaterThan(0);
+    const refused = seeds.flatMap((body) => {
+      try {
+        parseSeedConfigText(body, "docs/MCP.md", "yaml");
+        return [];
+      } catch (error) {
+        return [(error as Error).message];
+      }
+    });
+    expect(refused).toEqual([]);
   });
 });
 
