@@ -94,7 +94,7 @@ describe("an engine the registry reads only under an agent credential", () => {
     expect(parsed.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
       [
         "connections.0.mcp",
-        'Seed connection "warehouse" sets mcp: true on postgres without an agent credential: MCP reads this engine only under an agent credential of its own, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.',
+        'Seed connection "warehouse" sets mcp: true on postgres without a read credential of its own (agentUser and agentPassword): MCP reads this engine only under that credential, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.',
       ],
     ]);
   });
@@ -107,7 +107,7 @@ describe("an engine the registry reads only under an agent credential", () => {
 
   test("refuses the open of a connection loaded past the schema, in both tools, in Studio's words", async () => {
     const refusal =
-      'Connection "seed:warehouse" is read by MCP only under an agent credential of its own, and it has none: an operator sets agentUser and agentPassword on this seed.';
+      'Connection "seed:warehouse" is read by MCP only under a read credential of its own (agentUser and agentPassword), and it has none: an operator sets agentUser and agentPassword on this seed.';
     process.env.SEED_CACHE_TTL_MS = "600000";
     seedWithoutAgentCredential();
     const listed = await call("list_connections", {});

@@ -102,7 +102,7 @@ export function assertAgentCredentialWhereRequired(
   if (!required[connection.type]) return;
   if (connection.agentUser !== undefined || connection.agentPassword !== undefined) return;
   throw new ExecutionProfileError(
-    `Connection "${connection.id}" is read by MCP only under an agent credential of its own, and it has none: an operator sets agentUser and agentPassword on this seed.`,
+    `Connection "${connection.id}" is read by MCP only under a read credential of its own (agentUser and agentPassword), and it has none: an operator sets agentUser and agentPassword on this seed.`,
     "AGENT_CREDENTIAL_REQUIRED",
   );
 }

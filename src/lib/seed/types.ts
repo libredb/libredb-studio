@@ -227,7 +227,7 @@ export function refuseMcpWithoutAgentCredential(required: Readonly<Record<Databa
     if (isSet(conn.agentUser) || isSet(conn.agentPassword)) return;
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: `Seed connection "${conn.id}" sets mcp: true on ${conn.type} without an agent credential: MCP reads this engine only under an agent credential of its own, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.`,
+      message: `Seed connection "${conn.id}" sets mcp: true on ${conn.type} without a read credential of its own (agentUser and agentPassword): MCP reads this engine only under that credential, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.`,
       path: ["mcp"],
     });
   };

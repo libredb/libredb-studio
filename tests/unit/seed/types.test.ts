@@ -517,7 +517,7 @@ describe("SeedConnectionSchema: an S3 connection is offered to MCP under an agen
     expect(issues({})).toEqual([
       [
         "mcp",
-        'Seed connection "objects" sets mcp: true on s3 without an agent credential: MCP reads this engine only under an agent credential of its own, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.',
+        'Seed connection "objects" sets mcp: true on s3 without a read credential of its own (agentUser and agentPassword): MCP reads this engine only under that credential, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.',
       ],
     ]);
   });
@@ -1852,7 +1852,7 @@ describe("refuseMcpWithoutAgentCredential", () => {
 
   it("refuses mcp: true without an agent credential on an engine the registry names, at mcp", () => {
     const refusal =
-      'Seed connection "store" sets mcp: true on postgres without an agent credential: MCP reads this engine only under an agent credential of its own, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.';
+      'Seed connection "store" sets mcp: true on postgres without a read credential of its own (agentUser and agentPassword): MCP reads this engine only under that credential, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.';
     expect(issues({ type: "postgres", mcp: true })).toEqual([["mcp", refusal]]);
     expect(issues({ type: "postgres", mcp: true, agentUser: "", agentPassword: "" })).toEqual([["mcp", refusal]]);
   });

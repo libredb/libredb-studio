@@ -661,7 +661,7 @@ describe("an engine MCP reads only under an agent credential", () => {
     expect(refusal).toBeInstanceOf(ExecutionProfileError);
     expect((refusal as ExecutionProfileError).reasonCode).toBe("AGENT_CREDENTIAL_REQUIRED");
     expect((refusal as Error).message).toBe(
-      'Connection "seed:store" is read by MCP only under an agent credential of its own, and it has none: an operator sets agentUser and agentPassword on this seed.',
+      'Connection "seed:store" is read by MCP only under a read credential of its own (agentUser and agentPassword), and it has none: an operator sets agentUser and agentPassword on this seed.',
     );
     expect((refusal as Error).message).not.toContain(STAND_IN_PASSWORD);
   });
