@@ -65,9 +65,8 @@ const BOUND = 24;
 const ROUNDS = 9;
 
 /**
- * Each cost guard's own timeout. Its rounds take a few seconds on a loaded runner, and those of a gate that regressed
- * take longer, against bun's default of 5 s: the guard is the ratio rather than the time, so this only gives the
- * rounds room to finish and a regression its ratio in the failure message.
+ * Each cost guard's own timeout. Its rounds take a few seconds on a loaded runner, close to bun's default of 5 s, so
+ * this gives them room to finish; on Windows it stands in for the runner's 60 s, still far above what they take.
  */
 const ROUNDS_TIMEOUT_MS = 30_000;
 
@@ -83,13 +82,12 @@ function elapsed(probe: () => unknown, runs: number): number {
  * the measurement, the cold one, with every round's ratio in order of size for a failure message. A round times
  * `probeRuns` runs of `probe` and `bound` times as many runs of `yardstick` back to back, each side first in turn.
  *
- * Being preempted only ever adds time, and it adds more to the side of a round that lasts longer. Against `bound`
- * times as many runs of the yardstick, the two sides of a round last about as long as each other where the cost meets
- * the bound; below it the yardstick's side lasts longer and takes more of what a loaded machine adds, above it the
- * probe's side does, so the error leans away from the bound on either side of it, and the median keeps a round that
- * one preemption landed on from deciding. The cheapest of five runs of each side, one side after the other, leaned
- * toward it instead: a 1 ms walk often escapes preemption whole while a 12 ms gate run cannot, and a macOS runner read
- * a script of short statements at 34.8 walks of the text for a gate that costs about 12. Measured on one CPU shared
+ * Against `bound` times as many runs of the yardstick, the two sides of a round last about as long as each other
+ * where the cost meets the bound, and both sides of a round sample the same stretch of time, so a load that outlasts a
+ * round slows both, and the median of `ROUNDS` rounds keeps a round that one preemption landed on from deciding. The
+ * cheapest of five runs of each side, one side after the other, leaned toward the bound instead: a 1 ms walk often
+ * escapes preemption whole while a 12 ms gate run cannot, and a macOS runner read a script of short statements at 34.8
+ * walks of the text for a gate that costs about 12. Measured on one CPU shared
  * with two other test processes: the cheapest-of-five reading failed this file in every run, this one stayed under 16
  * on every shape below, and the gate before #2249 still read more than 30 on each of them.
  */
