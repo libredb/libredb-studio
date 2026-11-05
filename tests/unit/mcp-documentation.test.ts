@@ -200,9 +200,10 @@ describe("docs/MCP.md", () => {
     const lines = MCP_DOC.split("\n");
     const after =
       lines.indexOf("| Engine | The client closes the request | `timeout_ms` passes |") + 2 + cancelRows().length;
-    expect(lines.slice(after, after + 3)).toEqual([
+    expect(lines.slice(after, after + 4)).toEqual([
       "",
-      "- `inspect_schema` takes `timeout_ms` too, 500 to 30000 and 30000 by default, as one deadline over the whole call: opening the connection, the database choice, each container listing, the table listing and each table's description start only before it, and a call that outruns it is answered with the timeout, never a partial page.",
+      "- `inspect_schema` takes `timeout_ms` too, 500 to 30000 and 30000 by default, as one deadline over the whole call: opening the connection, the database choice, each container listing, the table listing and each table's description start only before it, and a call still waiting on one of them when it passes is answered with the timeout, never a partial page.",
+      "  A step that holds Studio's own thread, as a LibreDB read does, cannot be interrupted, so it is let finish and only the steps after it are refused.",
       "  A cancel or the deadline ends the wait, not the step it was waiting on: a read already sent may still be running on the database, and an opening the call started runs on, so a later `inspect_schema` call on that connection made while it runs joins it rather than opening the connection again, and answers with its outcome.",
     ]);
   });
