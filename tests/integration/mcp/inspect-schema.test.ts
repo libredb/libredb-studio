@@ -65,6 +65,7 @@ mock.module("mongodb", () => mongoDriverModule());
 const { MongoDBProvider } = await import("@/lib/db/providers/document/mongodb");
 
 pinMcpTestEnvironment();
+isolateAcquisitionEnvironment();
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-inspect-"));
 const serve = handlerServe(testAuthInfo());
@@ -876,9 +877,10 @@ async function within<T>(call: Promise<T>, ms: number): Promise<T | "still waiti
 }
 
 /**
- * Clears, for each test of the block, what a real acquisition reads from the environment, and restores it exactly
+ * Clears, for each test of the file, what a real acquisition reads from the environment, and restores it exactly
  * afterwards: governance decides the file-access posture, and the enabled-provider list which providers are built.
- * `pinned` sets values of the block's own, restored the same way.
+ * Called at file level with no argument; a block that calls it again with `pinned` sets values of its own, restored
+ * the same way.
  */
 function isolateAcquisitionEnvironment(pinned: Readonly<Record<string, string>> = {}): void {
   const names = ["GOVERNANCE_SOURCE", "LIBREDB_ENABLED_PROVIDERS", ...Object.keys(pinned)];
@@ -1030,8 +1032,6 @@ describe("the deadline", () => {
 });
 
 describe("foreign keys", () => {
-  isolateAcquisitionEnvironment();
-
   const key = (column: string, referenced_table: string, referenced_column: string) => ({
     column,
     referenced_table,
@@ -1102,8 +1102,6 @@ describe("foreign keys", () => {
 });
 
 describe("schema names", () => {
-  isolateAcquisitionEnvironment();
-
   const NO_SCHEMA_LEVEL =
     "This connection has no schema level: its tables are read at its root, and inspect_schema takes no schema.";
 
@@ -1232,8 +1230,6 @@ describe("schema names", () => {
 });
 
 describe("default arguments", () => {
-  isolateAcquisitionEnvironment();
-
   test.each(["seed:shop", "seed:warehouse", "seed:notes", "seed:documents"])(
     "answer %s with no field a flag adds, on the page or on a table",
     async (connectionId) => {
