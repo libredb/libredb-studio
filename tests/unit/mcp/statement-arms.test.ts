@@ -5,6 +5,8 @@
  * from the arms.
  */
 import { describe, expect, mock, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import {
@@ -943,6 +945,17 @@ describe("the Cypher arm", () => {
 
 describe("the Redis arm", () => {
   const server = languageServer("rediscli");
+
+  test("states the two effects a read has on the server, within 2,048 characters", () => {
+    const description = RUN_REDIS_READ_ARM.description;
+    expect(description).toContain("a read of a key whose time to live has passed deletes it");
+    expect(description).toContain("notify-keyspace-events");
+    expect(description).toContain("publishes a keymiss event");
+    expect(description.length).toBeLessThanOrEqual(2_048);
+    // docs/MCP.md's run_redis_read bullet says the same thing.
+    const guide = readFileSync(join(import.meta.dir, "..", "..", "..", "docs", "MCP.md"), "utf8");
+    expect(guide).toContain("a read of a key whose time to live has passed deletes it");
+  });
 
   test("takes one command line, no offset and no database, and sends it as written", () => {
     expect(RUN_REDIS_READ_ARM.title).toBe("Run a read-only Redis metadata read");
