@@ -73,8 +73,9 @@ function listZipEntries(zipPath: string): string[] {
  * Forty seconds is eight times the default the slow spawn died at and over twenty-five times the slowest green run of
  * the whole file, and `platformTimeoutMs` doubles it on Windows, where a test's own bound replaces the 60s the
  * runner gives every test there. It masks no broken script: one that packs the wrong layout or exits with the wrong
- * status still fails its assertions at once, and one that hangs still fails, at the bound. The last two tests stop
- * before 7-Zip and answer in milliseconds even under that load, so they keep the default.
+ * status still fails its assertions at once, and one that hangs still fails, at the bound (on Windows the runner's
+ * per-file budget can end the file first, once four bounds add up past it). The last two tests stop before 7-Zip and
+ * answer in milliseconds even under that load, so they keep the default.
  */
 const PACK_TIMEOUT_MS = platformTimeoutMs(40_000);
 
