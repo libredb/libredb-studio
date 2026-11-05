@@ -4,10 +4,11 @@
  *
  * Every LLM_* variable is deleted and LIBREDB_AGENT_ENABLED is false. createLLMProvider and resolveConfig, the two
  * functions that turn LLM_* into a model, are replaced so that a call records itself and throws; every other export of
- * their modules is kept. process.env sits behind a proxy that records each read of an LLM_* or LIBREDB_AGENT_* name
- * and each enumeration of the environment while the route module is imported and while the route serves. A token
- * minted at run time then initializes, lists the tools and calls list_connections, inspect_schema and run_read_query
- * on an admin-only SQLite seed through the real POST handler.
+ * their modules is kept. process.env sits behind a proxy that records each read, existence check or descriptor lookup
+ * of an LLM_* or LIBREDB_AGENT_* name and each enumeration of the environment while the route module is imported and
+ * while the route serves. Bun.env is a separate object the proxy cannot see, so a read through it is outside the pin.
+ * A token minted at run time then initializes, lists the tools and calls list_connections, inspect_schema and
+ * run_read_query on an admin-only SQLite seed through the real POST handler.
  *
  * This held before the test existed, and the test keeps it: a read of LLM_PROVIDER placed on the MCP path fails it.
  */
@@ -56,6 +57,10 @@ process.env = new Proxy(realEnvironment, {
   has(target, key) {
     if (recording && typeof key === "string" && WATCHED.test(key)) environmentUses.push(`asked for ${key}`);
     return Reflect.has(target, key);
+  },
+  getOwnPropertyDescriptor(target, key) {
+    if (recording && typeof key === "string" && WATCHED.test(key)) environmentUses.push(`described ${key}`);
+    return Reflect.getOwnPropertyDescriptor(target, key);
   },
   ownKeys(target) {
     if (recording) environmentUses.push("enumerated the environment");
@@ -117,9 +122,18 @@ describe("MCP with no LLM provider and agent mode off", () => {
     expect(realEnvironment.LIBREDB_AGENT_ENABLED).toBe("false");
   });
 
-  test("the proxy records a read of a watched name and an enumeration, so an empty record means none happened", async () => {
-    const { uses } = await recorded(async () => [process.env.LLM_PROVIDER, Object.keys(process.env).length]);
-    expect(uses).toEqual(["read LLM_PROVIDER", "enumerated the environment"]);
+  test("the proxy records a read, a descriptor lookup and an enumeration, so an empty record means none happened", async () => {
+    const { uses } = await recorded(async () => [
+      process.env.LLM_PROVIDER,
+      Object.hasOwn(process.env, "LLM_API_KEY"),
+      Object.keys(process.env).length,
+    ]);
+    expect(uses).toEqual([
+      "read LLM_PROVIDER",
+      "described LLM_API_KEY",
+      "enumerated the environment",
+      "described LIBREDB_AGENT_ENABLED",
+    ]);
   });
 
   test("importing the route reads no LLM_* or LIBREDB_AGENT_* variable and enumerates nothing", () => {
