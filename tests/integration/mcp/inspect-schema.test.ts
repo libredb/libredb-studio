@@ -1224,6 +1224,15 @@ describe("schema names", () => {
     expect(handlerBytes(result)).toBeLessThanOrEqual(MCP_RESULT_CAP_BYTES);
   });
 
+  test("count the comma between two names toward the 4 KiB, so 100 names of 38 characters keep 99", async () => {
+    const names = Array.from({ length: 100 }, (_, index) => `${"n".repeat(35)}${String(index).padStart(3, "0")}`);
+    const result = await inspectFixed(new FixedProvider(1, () => schemasOf(names)), { include_schema_names: true });
+    const kept = result.structuredContent?.schema_names as string[];
+    expect(kept).toEqual(names.slice(0, 99));
+    expect(result.structuredContent?.schema_names_omitted).toBe(1);
+    expect(new TextEncoder().encode(JSON.stringify(kept)).byteLength).toBeLessThanOrEqual(4_096);
+  });
+
   test("come back on every page of a call, not only the first", async () => {
     const result = await inspectFixed(new FixedProvider(1, () => schemasOf(["a", "b"]), 3), {
       include_schema_names: true,
