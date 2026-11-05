@@ -3,12 +3,14 @@
  * the opted-in connections without credentials or file paths, paged under the 32 KiB result cap,
  * in one compact JSON block with no untrusted-content notice, and one audit event per call.
  */
-import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { MCP_CONNECTION_UNAVAILABLE_TEXT } from "@/lib/mcp/availability";
+import { MCP_CONNECTIONS_UNREADABLE, type McpCaller, McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_RESULT_CAP_BYTES, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
@@ -18,7 +20,13 @@ import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
 import { mcpStatementToolFor, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { resetCache } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
-import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile, type SeedEntry } from "../../helpers/mcp-fixtures";
+import {
+  createSqliteFile,
+  pinMcpTestEnvironment,
+  resetMcpTestState,
+  writeSeedFile,
+  type SeedEntry,
+} from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo, type Negotiation } from "../../helpers/mcp-harness";
 
 const STAND_IN_AGENT_PASSWORD_MARKER = ["not", "a", "real", "agent", "password", "marker"].join("-");
@@ -252,6 +260,137 @@ describe("the answer", () => {
   });
 });
 
+describe("a connection no tool can read", () => {
+  const ALICE: McpCaller = { username: "alice", role: "admin" };
+  const BOB: McpCaller = { username: "bob", role: "user" };
+  let savedGovernance: string | undefined;
+
+  // The listing and editorExecutionContext both read GOVERNANCE_SOURCE, so a developer's setting is set aside.
+  beforeEach(() => {
+    savedGovernance = process.env.GOVERNANCE_SOURCE;
+    delete process.env.GOVERNANCE_SOURCE;
+  });
+
+  afterEach(() => {
+    if (savedGovernance === undefined) delete process.env.GOVERNANCE_SOURCE;
+    else process.env.GOVERNANCE_SOURCE = savedGovernance;
+  });
+
+  /** One list_connections call with no arguments, through the production handler, as `caller`'s token. */
+  async function listAs(caller: McpCaller): Promise<Listed> {
+    const session = await connectClient(handlerServe(testAuthInfo(caller)));
+    try {
+      return (await session.client.callTool({ name: "list_connections", arguments: {} })) as Listed;
+    } finally {
+      await session.close();
+    }
+  }
+
+  test.each([
+    ["every role, to an admin token", ALICE, ["*"]],
+    ["the user role, to a user token", BOB, ["user"]],
+    ["admin and user, to an admin token, as a seed another role can use opens for no caller", ALICE, ["admin", "user"]],
+  ] as const)(
+    "a SQLite seed offered to %s lists read_tool null and the unavailable sentence",
+    async (_, caller, roles) => {
+      writeSeedFile(dir, [{ ...SHOP, roles }]);
+      expect((await listAs(caller)).structuredContent?.connections).toEqual([
+        {
+          id: "seed:shop",
+          name: "shop",
+          engine: "sqlite",
+          database: "shop.db",
+          environment: "production",
+          read_tool: null,
+          unavailable: MCP_CONNECTION_UNAVAILABLE_TEXT,
+        },
+      ]);
+    },
+  );
+
+  test("a SQLite seed offered to admins alone keeps its read tool for an admin token, and carries no unavailable", async () => {
+    writeSeedFile(dir, [{ ...SHOP, roles: ["admin"] }]);
+    expect((await listAs(ALICE)).structuredContent?.connections).toEqual([
+      {
+        id: "seed:shop",
+        name: "shop",
+        engine: "sqlite",
+        database: "shop.db",
+        environment: "production",
+        read_tool: "run_read_query",
+      },
+    ]);
+  });
+
+  test("a DuckDB seed offered to every role keeps its read tool, since DuckDB confines a handle opened with file access denied", async () => {
+    writeSeedFile(dir, [
+      { id: "warehouse", type: "duckdb", database: "/srv/libredb/data/warehouse.duckdb", roles: ["*"] },
+    ]);
+    expect((await listAs(BOB)).structuredContent?.connections).toEqual([
+      {
+        id: "seed:warehouse",
+        name: "warehouse",
+        engine: "duckdb",
+        database: "warehouse.duckdb",
+        read_tool: "run_read_query",
+      },
+    ]);
+  });
+
+  test("a connection lists unavailable exactly where acquiring it for the token's caller is refused, under both MCP profiles", async () => {
+    const file = join(dir, "agree.db");
+    createSqliteFile(file, ["CREATE TABLE IF NOT EXISTS t (id INTEGER)"]);
+    writeSeedFile(dir, [
+      { id: "everyone", type: "sqlite", database: file, roles: ["*"] },
+      { id: "both", type: "sqlite", database: file, roles: ["admin", "user"] },
+      { id: "users", type: "sqlite", database: file, roles: ["user"] },
+      { id: "admins", type: "sqlite", database: file, roles: ["admin"] },
+    ]);
+    const outcomeOf = (acquisition: Promise<unknown>) =>
+      acquisition.then(
+        () => "opened",
+        (error: unknown) =>
+          error instanceof Error && error.message.includes("require an administrator") ? "refused" : String(error),
+      );
+    const seen: Array<[string, string, boolean, string, string]> = [];
+    for (const caller of [ALICE, BOB]) {
+      // oxlint-disable-next-line no-await-in-loop -- one caller at a time.
+      const rows: Array<{ id: string; unavailable?: string }> = (await listAs(caller)).structuredContent?.connections;
+      const context = new McpConnectionContext(caller);
+      for (const row of rows) {
+        // oxlint-disable-next-line no-await-in-loop -- one caller at a time.
+        const connection = await context.resolve(row.id);
+        if (connection === null || connection === MCP_CONNECTIONS_UNREADABLE)
+          throw new Error(`${row.id} did not resolve`);
+        // oxlint-disable-next-line no-await-in-loop -- one caller at a time.
+        const readOnly = await outcomeOf(context.acquire(connection, "agent-read-only"));
+        // oxlint-disable-next-line no-await-in-loop -- one caller at a time.
+        const operations = await outcomeOf(context.acquire(connection, "agent-operations"));
+        seen.push([caller.role, row.id, row.unavailable !== undefined, readOnly, operations]);
+      }
+    }
+    expect(seen).toEqual([
+      ["admin", "seed:everyone", true, "refused", "refused"],
+      ["admin", "seed:both", true, "refused", "refused"],
+      ["admin", "seed:admins", false, "opened", "opened"],
+      ["user", "seed:everyone", true, "refused", "refused"],
+      ["user", "seed:both", true, "refused", "refused"],
+      ["user", "seed:users", true, "refused", "refused"],
+    ]);
+  });
+
+  test("a page holding an unavailable connection is one audit event, as every list is", async () => {
+    writeSeedFile(dir, [{ ...SHOP, roles: ["*"] }, ANALYTICS]);
+    await listAs(ALICE);
+    const events = getServerAuditBuffer()
+      .getAll()
+      .filter((event) => event.type === "mcp_operation");
+    expect(events.map((event) => [event.action, event.target, event.result, event.reason])).toEqual([
+      ["list_connections", "mcp/decision", "success", undefined],
+    ]);
+  });
+});
+
 describe("paging under the 32 KiB cap", () => {
   const MANY: SeedEntry[] = Array.from({ length: 300 }, (_, index) => ({
     id: `conn-${index}`,
@@ -358,4 +497,10 @@ describe("the registration", () => {
       }
     },
   );
+
+  test("says a connection that carries unavailable cannot be read by any tool, right after what read_tool names", () => {
+    expect(LIST_CONNECTIONS_DESCRIPTION).toContain(
+      "Each connection's read_tool names the tool that runs a statement on it, or is null where inspect_schema is the only read. A connection that carries unavailable cannot be read by any tool, and unavailable says why and what an operator changes.",
+    );
+  });
 });
