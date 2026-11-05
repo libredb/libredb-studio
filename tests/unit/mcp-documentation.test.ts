@@ -207,6 +207,14 @@ describe("docs/MCP.md", () => {
     ]);
   });
 
+  test("says what inspect_schema's include_foreign_keys returns, its cap and its hedge", () => {
+    for (const line of [
+      "    With `include_foreign_keys` each table also carries `foreign_keys`, at most 25 rows of `{ column, referenced_table, referenced_column }`, and `foreign_keys_omitted`, the count of the rest: a composite key comes back as one row per column pair, since no constraint name is returned, and an empty list may also mean the connection's login cannot see the keys.",
+      "    On an engine whose provider declares it holds no foreign keys (`declaresForeignKeys: false`), such as LibreDB and MongoDB, each table answers `foreign_keys: { unavailable }` instead, and so on Snowflake and BigQuery, whose providers declare the same although those engines can hold declared keys; with `include_columns` and `include_indexes` off, a call there describes no table.",
+    ])
+      expect(MCP_DOC).toContain(line);
+  });
+
   test("carries the read_tool field", () => {
     expect(MCP_DOC).toContain("`read_tool`");
     expect(MCP_DOC).not.toContain("B117");

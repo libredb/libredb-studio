@@ -27,6 +27,7 @@ import { join } from "node:path";
 import { doc, open, table } from "@libredb/libredb";
 import { getServerAuditBuffer } from "@/lib/audit";
 import type { Container, DatabaseProvider } from "@/lib/db/types";
+import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
@@ -110,7 +111,18 @@ beforeAll(async () => {
     `CREATE TABLE huge (${Array.from({ length: 50 }, (_, index) => `${"h".repeat(400)}${index} TEXT`).join(", ")})`,
   ]);
   createSqliteFile(join(dir, "named.db"), [`CREATE TABLE ${"n".repeat(20_000)} (id INTEGER)`]);
-  await createDuckdbFile(join(dir, "warehouse.duckdb"), ["CREATE TABLE facts (id INTEGER, amount DOUBLE)"]);
+  await createDuckdbFile(join(dir, "warehouse.duckdb"), [
+    "CREATE TABLE facts (id INTEGER, amount DOUBLE)",
+    "CREATE SCHEMA sales",
+    "CREATE TABLE sales.customers (id INTEGER PRIMARY KEY)",
+    "CREATE TABLE sales.invoices (id INTEGER, customer_id INTEGER REFERENCES sales.customers (id))",
+  ]);
+  createSqliteFile(join(dir, "keys.db"), [
+    "CREATE TABLE orders (id INTEGER, rev INTEGER, PRIMARY KEY (id, rev))",
+    "CREATE TABLE line_items (id INTEGER PRIMARY KEY, order_id INTEGER, order_rev INTEGER, FOREIGN KEY (order_id, order_rev) REFERENCES orders (id, rev))",
+    `CREATE TABLE parent (${Array.from({ length: 26 }, (_, index) => `p${index} INTEGER UNIQUE`).join(", ")})`,
+    `CREATE TABLE child (${Array.from({ length: 26 }, (_, index) => `c${index} INTEGER REFERENCES parent (p${index})`).join(", ")})`,
+  ]);
   const libredb = open({ path: join(dir, "notes.libredb") });
   table(libredb, "employees", { primaryKey: "id", columns: { id: "string", name: "string" } }).insert({
     id: "1",
@@ -132,6 +144,7 @@ beforeEach(() => {
     { id: "memory", type: "sqlite", database: ":memory:" },
     { id: "notes", type: "libredb", database: join(dir, "notes.libredb") },
     { id: "documents", type: "libredb", database: join(dir, "documents.libredb") },
+    { id: "keys", type: "sqlite", database: join(dir, "keys.db") },
   ]);
 });
 
@@ -1010,6 +1023,78 @@ describe("the deadline", () => {
       gate.release();
       gate.restore();
       after.restore();
+    }
+  });
+});
+
+describe("foreign keys", () => {
+  isolateAcquisitionEnvironment();
+
+  const key = (column: string, referenced_table: string, referenced_column: string) => ({
+    column,
+    referenced_table,
+    referenced_column,
+  });
+
+  test("come back on request behind the notice, a composite key as one row per column pair, and not by default", async () => {
+    const asked = await inspect({ connection_id: "seed:keys", table: "line_items", include_foreign_keys: true });
+    expect(asked.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(tableNamed(asked, "line_items")).toMatchObject({
+      foreign_keys: [key("order_id", "orders", "id"), key("order_rev", "orders", "rev")],
+      foreign_keys_omitted: 0,
+    });
+    const plain = await inspect({ connection_id: "seed:keys" });
+    for (const entry of plain.structuredContent?.tables ?? []) {
+      expect(entry).not.toHaveProperty("foreign_keys");
+      expect(entry).not.toHaveProperty("foreign_keys_omitted");
+    }
+  });
+
+  test("26 keys answer the provider's first 25 and foreign_keys_omitted 1", async () => {
+    const result = await inspect({ connection_id: "seed:keys", table: "child", include_foreign_keys: true });
+    const child = tableNamed(result, "child");
+    expect(child?.foreign_keys).toHaveLength(25);
+    expect(child?.foreign_keys_omitted).toBe(1);
+  });
+
+  test("come back from a DuckDB schema, the referenced table named as the engine's schema reads it", async () => {
+    const result = await inspect({
+      connection_id: "seed:warehouse",
+      schema: "sales",
+      table: "invoices",
+      include_foreign_keys: true,
+    });
+    expect(tableNamed(result, "invoices")?.foreign_keys).toEqual([key("customer_id", "sales.customers", "id")]);
+  });
+
+  test("answer unavailable on an engine with no foreign keys, describing nothing when no other flag asks", async () => {
+    const describes = countMethod(LibreDBProvider.prototype, "describeObject");
+    try {
+      const result = await inspect({ connection_id: "seed:notes", include_columns: false, include_foreign_keys: true });
+      expect(result.structuredContent?.tables.length).toBeGreaterThan(0);
+      for (const entry of result.structuredContent?.tables ?? []) {
+        expect(entry.foreign_keys).toEqual({ unavailable: "Studio reads no foreign keys on this engine." });
+        expect(entry).not.toHaveProperty("foreign_keys_omitted");
+      }
+      expect(describes.calls).toBe(0);
+    } finally {
+      describes.restore();
+    }
+  });
+
+  test("beside include_columns add no description, and alone add one per listed table", async () => {
+    const describes = countMethod(SQLiteProvider.prototype, "describeObject");
+    const counted = async (args: Record<string, unknown>) => {
+      const before = describes.calls;
+      await inspect({ connection_id: "seed:keys", ...args });
+      return describes.calls - before;
+    };
+    try {
+      expect(await counted({ include_foreign_keys: true })).toBe(await counted({}));
+      expect(await counted({ include_columns: false })).toBe(0);
+      expect(await counted({ include_columns: false, include_foreign_keys: true })).toBe(4);
+    } finally {
+      describes.restore();
     }
   });
 });

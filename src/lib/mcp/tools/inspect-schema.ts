@@ -3,7 +3,7 @@ import { z } from "zod";
 import { machineColumns } from "@/lib/db/detailed-object";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import { containerDepth, isIndexesUnavailable, relationKindIds } from "@/lib/db/object-kinds";
-import type { Container, DatabaseObject, DatabaseProvider } from "@/lib/db/types";
+import type { Container, DatabaseObject, DatabaseProvider, ObjectDetail } from "@/lib/db/types";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
 import {
@@ -61,6 +61,8 @@ import {
  * One deadline, the call's start plus timeout_ms, covers every provider call: the acquisition, the database choice,
  * each container listing, the relation listing and each table's description each run through `raceDeadline`, so none
  * starts after it, while one already started runs on.
+ * Foreign keys come from the description the call makes for columns or indexes anyway, so asking for them alone adds
+ * a description only where the engine may declare keys.
  */
 
 export const InspectSchemaInputSchema = z.object({
@@ -72,6 +74,12 @@ export const InspectSchemaInputSchema = z.object({
   offset: z.number().int().min(0).default(0),
   include_columns: z.boolean().default(true),
   include_indexes: z.boolean().default(false),
+  include_foreign_keys: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Also return each table's foreign keys, at most 25, each as column, referenced_table and referenced_column, with foreign_keys_omitted counting the rest, or unavailable on an engine Studio reads no foreign keys on. A composite key comes back as one row per column pair, since no constraint name is returned, and an empty list may also mean the connection's login cannot see the keys.",
+    ),
   timeout_ms: z
     .number()
     .int()
@@ -104,6 +112,13 @@ const InspectedTableSchema = z.object({
     ])
     .optional(),
   indexes_omitted: z.number().int(),
+  foreign_keys: z
+    .union([
+      z.array(z.object({ column: z.string(), referenced_table: z.string(), referenced_column: z.string() })),
+      z.object({ unavailable: z.string() }),
+    ])
+    .optional(),
+  foreign_keys_omitted: z.number().int().optional(),
 });
 
 const InspectSchemaOutputSchema = z.object({
@@ -126,6 +141,8 @@ export const INSPECT_SCHEMA_DESCRIPTION = `List the tables of one connection wit
 
 const MAX_COLUMNS = 50;
 const MAX_INDEXES = 25;
+const MAX_FOREIGN_KEYS = 25;
+const FOREIGN_KEYS_UNAVAILABLE_TEXT = "Studio reads no foreign keys on this engine.";
 const SCHEMA_NOT_FOUND_TEXT =
   "This connection has no schema of that name. Call inspect_schema without schema to read the default one.";
 const FIRST_TABLE_OVER_CAP_TEXT =
@@ -209,8 +226,9 @@ async function inspectTable(
   args: InspectSchemaInput,
   step: Step,
 ): Promise<InspectedTable> {
+  const readsForeignKeys = args.include_foreign_keys && provider.getCapabilities().declaresForeignKeys !== false;
   const detail =
-    args.include_columns || args.include_indexes
+    args.include_columns || args.include_indexes || readsForeignKeys
       ? await step(() => provider.describeObject(object.path, object.kind))
       : null;
   const rawComment = (detail === null ? undefined : commentOf(detail)) ?? commentOf(object);
@@ -247,6 +265,21 @@ async function inspectTable(
         }
       : {}),
     indexes_omitted: args.include_indexes && !indexesUnavailable ? Math.max(0, indexes.length - MAX_INDEXES) : 0,
+    ...(args.include_foreign_keys ? foreignKeysOf(readsForeignKeys ? detail : null) : {}),
+  };
+}
+
+/** The described table's first 25 keys with the rest counted, or unavailable where no description read them (null). */
+function foreignKeysOf(detail: ObjectDetail | null): Pick<InspectedTable, "foreign_keys" | "foreign_keys_omitted"> {
+  if (detail === null) return { foreign_keys: { unavailable: FOREIGN_KEYS_UNAVAILABLE_TEXT } };
+  const keys = detail.foreignKeys;
+  return {
+    foreign_keys: keys.slice(0, MAX_FOREIGN_KEYS).map((key) => ({
+      column: key.columnName,
+      referenced_table: key.referencedTable,
+      referenced_column: key.referencedColumn,
+    })),
+    foreign_keys_omitted: Math.max(0, keys.length - MAX_FOREIGN_KEYS),
   };
 }
 

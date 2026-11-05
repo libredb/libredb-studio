@@ -16,7 +16,7 @@ import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { MQTT_COMPLETENESS } from "@/lib/db/providers/keyvalue/mqtt/agent-read";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
-import { INSPECT_SCHEMA_DESCRIPTION } from "@/lib/mcp/tools/inspect-schema";
+import { INSPECT_SCHEMA_DESCRIPTION, InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect-schema";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
 import { mcpStatementArm, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
@@ -309,6 +309,14 @@ describe("timeout_ms", () => {
     expect(bounds("inspect_schema")).toEqual({ minimum: 500, maximum: 30_000 });
     expect(tools.find((tool) => tool.name === "inspect_schema")?.inputSchema.properties?.timeout_ms?.default).toBe(
       30_000,
+    );
+  });
+});
+
+describe("inspect_schema's own words", () => {
+  test("describe include_foreign_keys with its cap and its hedge", () => {
+    expect(InspectSchemaInputSchema.shape.include_foreign_keys.description).toBe(
+      "Also return each table's foreign keys, at most 25, each as column, referenced_table and referenced_column, with foreign_keys_omitted counting the rest, or unavailable on an engine Studio reads no foreign keys on. A composite key comes back as one row per column pair, since no constraint name is returned, and an empty list may also mean the connection's login cannot see the keys.",
     );
   });
 });
