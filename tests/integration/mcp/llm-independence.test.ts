@@ -2,11 +2,13 @@
  * MCP needs no model (#2252, part 1): the client's model reads the answers, so Studio serves MCP with no LLM provider
  * configured and agent mode switched off.
  *
- * Every LLM_* variable is deleted and LIBREDB_AGENT_ENABLED is false. createLLMProvider and resolveConfig, the two
- * functions that turn LLM_* into a model, are replaced so that a call records itself and throws; every other export of
- * their modules is kept. process.env sits behind a proxy that records each read, existence check or descriptor lookup
- * of an LLM_* or LIBREDB_AGENT_* name and each enumeration of the environment while the route module is imported and
- * while the route serves. Bun.env is a separate object the proxy cannot see, so a read through it is outside the pin.
+ * Every LLM_* and LIBREDB_AGENT_* variable is deleted, so a developer's shell or .env cannot decide the outcome, and
+ * LIBREDB_AGENT_ENABLED is then set to false. process.env sits behind a proxy that records each read, existence check
+ * or descriptor lookup of an LLM_* or LIBREDB_AGENT_* name and each enumeration of the environment while the route
+ * module is imported and while the route serves. The real LLM config and factory modules load under that proxy too,
+ * since the route's own import graph reaches the config module. createLLMProvider and resolveConfig, the two functions
+ * that turn LLM_* into a model, are then replaced so that a call records itself and throws; every other export of
+ * their modules is kept. Bun.env is a separate object the proxy cannot see, so a read through it is outside the pin.
  * A token minted at run time then initializes, lists the tools and calls list_connections, inspect_schema and
  * run_read_query on an admin-only SQLite seed through the real POST handler.
  *
@@ -16,31 +18,15 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "b
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as realLlmFactory from "@/lib/llm/factory";
-import * as realLlmConfig from "@/lib/llm/utils/config";
 
 const modelCalls: string[] = [];
 
-mock.module("@/lib/llm/factory", () => ({
-  ...realLlmFactory,
-  createLLMProvider: async () => {
-    modelCalls.push("createLLMProvider");
-    throw new Error("createLLMProvider was called on the MCP path");
-  },
-}));
-mock.module("@/lib/llm/utils/config", () => ({
-  ...realLlmConfig,
-  resolveConfig: () => {
-    modelCalls.push("resolveConfig");
-    throw new Error("resolveConfig was called on the MCP path");
-  },
-}));
-
-for (const name of Object.keys(process.env)) if (name.startsWith("LLM_")) delete process.env[name];
-process.env.LIBREDB_AGENT_ENABLED = "false";
-
 /** The model's settings and agent mode's: nothing on the MCP path reads either family. */
 const WATCHED = /^(?:LLM_|LIBREDB_AGENT_)/;
+
+for (const name of Object.keys(process.env)) if (WATCHED.test(name)) delete process.env[name];
+process.env.LIBREDB_AGENT_ENABLED = "false";
+
 const environmentUses: string[] = [];
 let recording = false;
 const realEnvironment = process.env;
@@ -80,7 +66,25 @@ async function recorded<T>(work: () => Promise<T>): Promise<{ readonly answer: T
   }
 }
 
-const imported = await recorded(() => import("@/app/api/mcp/route"));
+const imported = await recorded(async () => {
+  const realLlmConfig = await import("@/lib/llm/utils/config");
+  const realLlmFactory = await import("@/lib/llm/factory");
+  mock.module("@/lib/llm/utils/config", () => ({
+    ...realLlmConfig,
+    resolveConfig: () => {
+      modelCalls.push("resolveConfig");
+      throw new Error("resolveConfig was called on the MCP path");
+    },
+  }));
+  mock.module("@/lib/llm/factory", () => ({
+    ...realLlmFactory,
+    createLLMProvider: async () => {
+      modelCalls.push("createLLMProvider");
+      throw new Error("createLLMProvider was called on the MCP path");
+    },
+  }));
+  return import("@/app/api/mcp/route");
+});
 const route = imported.answer;
 const { MCP_SERVER_NAME } = await import("@/lib/mcp/server");
 const { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } = await import(
@@ -117,8 +121,8 @@ afterAll(() => {
 });
 
 describe("MCP with no LLM provider and agent mode off", () => {
-  test("the environment holds no LLM_* variable, and agent mode is off", () => {
-    expect(Object.keys(realEnvironment).filter((name) => name.startsWith("LLM_"))).toEqual([]);
+  test("the environment holds no LLM_* variable and no LIBREDB_AGENT_* one but the switch, which is off", () => {
+    expect(Object.keys(realEnvironment).filter((name) => WATCHED.test(name))).toEqual(["LIBREDB_AGENT_ENABLED"]);
     expect(realEnvironment.LIBREDB_AGENT_ENABLED).toBe("false");
   });
 
