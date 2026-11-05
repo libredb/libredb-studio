@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B171 · 82
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP23 · 23
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP23 · 22
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
 
 ---
@@ -4523,7 +4523,7 @@ The DuckDB refusal names that case: `FILE_ACCESS_DENIED_REASON` in `src/lib/db/p
 Measured 2026-11-05 through `POST /api/db/query` with the real driver and an admin session: SQLite seeds offered to `["admin", "user"]` and to `["*"]` each answered 400 with that sentence, and one offered to `["admin"]` answered 200.
 Found 2026-11-05 by the review of the change that reads a shared seed's file-access audience from its operator roles.
 
-**Done when:** the SQLite refusal names a connection another role can use the way the DuckDB one does, for example "SQLite connections open only for an administrator on a connection no other role can use, because this driver cannot confine statement-level file access", every test that pins the sentence (in `tests/integration/mcp/context.test.ts`, `tests/integration/db/reserved-storage-paths.test.ts`, `tests/isolated/factory.test.ts` and `e2e/embedded-samples.spec.ts`) asserts the new wording, one of them for an administrator on a seed offered to `["admin", "user"]`, and any document that quotes the sentence follows it.
+**Done when:** the SQLite refusal names a connection another role can use the way the DuckDB one does, for example "SQLite connections open only for an administrator on a connection no other role can use, because this driver cannot confine statement-level file access", every test that pins the sentence (in `tests/integration/mcp/context.test.ts`, `tests/integration/db/reserved-storage-paths.test.ts`, `tests/isolated/factory.test.ts`, `tests/unit/db/refuses-denied-file-access.test.ts`, `tests/integration/mcp/list-connections.test.ts` and `e2e/embedded-samples.spec.ts`) asserts the new wording, one of them for an administrator on a seed offered to `["admin", "user"]`, and any document that quotes the sentence follows it.
 
 ## Value interpolation
 
@@ -9610,15 +9610,6 @@ Every statement tool runs the same `build`, and every facet's own row refusal (`
 Found 2026-11-01 while verifying `run_read_query` on ClickHouse; pre-existing and engine-agnostic; the same on the other statement tools, noted 2026-11-02.
 
 **Done when:** every statement tool's row refusal states the limit the row actually exceeds, or the cap is measured on one copy of the rows, with a test on a row between 16 and 32 KiB on each served arm, and `docs/MCP.md` says which bytes the 32 KiB counts.
-
-### MCP7. `list_connections` names `run_read_query` for a SQLite seed every MCP call refuses
-
-A SQLite seed whose `roles` admit a non-admin role is opened with external file access denied, so every `run_read_query` on it answers "SQLite connections require an administrator because this driver cannot confine statement-level file access" (`connect()` in `src/lib/db/providers/sql/sqlite.ts`), whoever holds the token; `docs/providers/sqlite.md` says so, and `docs/MCP.md` does not.
-`list_connections` still gives that connection `read_tool: "run_read_query"`.
-Measured 2026-11-01 with a seed set to `roles: ["*"]` and an admin's token.
-Found 2026-11-01 while verifying `run_read_query` on ClickHouse.
-
-**Done when:** `list_connections` gives such a seed a `read_tool` that can run, or says why none can, `docs/MCP.md` states the SQLite seed requirement beside the PostgreSQL, SQL Server and ClickHouse ones, and a test pins both.
 
 ### MCP8. An InfluxDB 3 refusal through `run_read_query` names `SHOW` and `DESCRIBE`, which the tool refuses
 

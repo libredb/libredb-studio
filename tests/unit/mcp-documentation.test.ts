@@ -63,6 +63,8 @@ const ORACLE_SEED =
   "On Oracle (23ai and later) the seed's user must be a local user set `ALTER USER ... READ ONLY` that holds `CREATE SESSION`, `SELECT` on the tables to read and, granted by SYS, `SELECT` on `SYS.DBA_POLICIES` and `SYS.DBA_AUDIT_POLICIES`, and nothing more, as the check before each `run_read_query` statement proves ([oracle.md](./providers/oracle.md) section 5.7).\n" +
   "The check runs before every statement, not at the open, so `run_read_query` answers its refusal in its own sentence and sends nothing: a user that is not READ ONLY, such as SYSTEM or the schema owner, one holding a system privilege beyond `CREATE SESSION` or a role carrying one, `CONNECT` and `DBA` included, `EXECUTE` on code that is not Oracle's, or any grant on a schema Oracle maintains beyond those two catalogs, such as `SELECT_CATALOG_ROLE` or `AUDIT_VIEWER`, and any user while the database holds a database link or a row-level security or fine-grained auditing policy that runs code that is not Oracle's.\n" +
   "A grant added between two calls refuses the next call, and a lifted one admits it.";
+const SQLITE_SEED =
+  'A SQLite file has no user, so a SQLite seed proves no principal, but MCP opens it only for an admin\'s token on a seed offered to admins alone, `roles: ["admin"]`: SQLite\'s drivers cannot confine a statement\'s file access, so Studio opens a SQLite seed only for an admin, and only where no other role can use it ([sqlite.md](./providers/sqlite.md)), and `list_connections` lists every other SQLite seed a token can see, such as one offered to every role, `roles: ["*"]`, with `read_tool: null` and `unavailable`.';
 const API_DOCS = read("docs/API_DOCS.md");
 const DOC_URL = "https://studio.example.com/api/mcp";
 const CLIENTS = ["Claude Code", "Codex", "Cursor", "VS Code", "Gemini CLI", "OpenCode"];
@@ -588,6 +590,31 @@ describe("docs/MCP.md", () => {
   test("says an MCP call on a LibreDB file keeps the Studio editor out until its handle is idle for 30 minutes", () => {
     expect(MCP_DOC).toContain(
       "- An MCP call on a LibreDB connection that no Studio session holds open opens the file itself and keeps its exclusive lock until that handle has been idle for 30 minutes.",
+    );
+  });
+
+  test("defines unavailable beside read_tool, and says inspect_schema refuses such a connection", () => {
+    const lines = MCP_DOC.split("\n");
+    const at = lines.findIndex((line) =>
+      line.startsWith("    Each connection's `read_tool` names the statement tool below"),
+    );
+    expect(lines.slice(at, at + 3)).toEqual([
+      "    Each connection's `read_tool` names the statement tool below that runs a statement on it, and is `null` where `inspect_schema` is the only read or where the connection carries `unavailable`.",
+      "    `unavailable` is a sentence that says why no tool can read the connection and what an operator changes, and `inspect_schema` refuses that connection with it as soon as the connection resolves, before anything is acquired.",
+      "    A SQLite seed carries it for every token but an admin's, and for an admin's token too where the seed's `roles` name any role but admin ([Opting connections in](#opting-connections-in)).",
+    ]);
+  });
+
+  test("states the SQLite seed requirement beside the PostgreSQL and SQL Server ones", () => {
+    const lines = MCP_DOC.split("\n");
+    const at = lines.findIndex((line) => line.startsWith("On SQL Server the login must hold no fixed server role"));
+    expect(lines[at - 1].startsWith("On PostgreSQL the seed's role must not be a superuser")).toBe(true);
+    expect(lines[at + 1]).toBe(SQLITE_SEED);
+  });
+
+  test("docs/providers/sqlite.md says how MCP lists and refuses a SQLite seed under the denied posture", () => {
+    expect(read("docs/providers/sqlite.md")).toContain(
+      "Where it is denied, MCP's `list_connections` lists the seed with `read_tool: null` and an `unavailable` sentence that says what an operator changes, and `inspect_schema` refuses it before anything is acquired ([MCP.md](../MCP.md#opting-connections-in)).",
     );
   });
 
