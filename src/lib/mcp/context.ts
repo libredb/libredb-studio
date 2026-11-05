@@ -45,6 +45,12 @@ export interface McpCaller {
   readonly claimRoles?: readonly string[];
 }
 
+/**
+ * The engines of the connections one token can read and some MCP open can serve (`reachableTypes`): what its
+ * tools/list registers statement tools for, and what `inspect_schema`'s hints are read from.
+ */
+export type McpReach = ReadonlySet<ManagedConnection["type"]>;
+
 export interface McpToolCall {
   readonly context: McpConnectionContext;
   readonly signal: AbortSignal;
