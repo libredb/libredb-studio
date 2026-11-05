@@ -193,6 +193,23 @@ describe("the tool", () => {
 });
 
 describe("inspect_schema's schema names", () => {
+  // A real acquisition reads governance and the enabled-provider list, so the test clears both and restores them.
+  const isolated = ["GOVERNANCE_SOURCE", "LIBREDB_ENABLED_PROVIDERS"];
+  const saved = new Map<string, string | undefined>();
+  beforeEach(() => {
+    for (const name of isolated) {
+      saved.set(name, process.env[name]);
+      delete process.env[name];
+    }
+  });
+  afterEach(() => {
+    for (const name of isolated) {
+      const value = saved.get(name);
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
   test("are unavailable, since the handle declares no level, and name no id", async () => {
     const result = await call("inspect_schema", { connection_id: "seed:north", include_schema_names: true });
     expect(result.structuredContent?.schema_names).toEqual({
