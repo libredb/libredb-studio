@@ -157,7 +157,7 @@ describe("docs/MCP.md", () => {
       "- A token's `tools/list` holds `list_connections`, `inspect_schema` and each statement tool that serves the engine of a connection the token can read: one that `list_connections` lists for it without `unavailable`.",
     );
     expect(MCP_DOC).toContain(
-      "  Each `tools/list` reads the seed file through the seed cache (`SEED_CACHE_TTL_MS`, 60 seconds unless set) and builds no provider and reads no Vault reference, so a client sees an operator's seed edit the next time it lists the tools, which a client that lists them only when it connects does once it reconnects.",
+      "  Each `tools/list` reads the seed file through the seed cache (`SEED_CACHE_TTL_MS`, 60 seconds unless set) and builds no provider and reads no Vault reference, so a client sees an operator's seed edit the first time it lists the tools after the seed cache's time to live has passed, which a client that lists them only when it connects does once it reconnects.",
     );
     expect(MCP_DOC).toContain(
       "  On revision 2026-07-28 the answer carries `ttlMs: 0` and `cacheScope: \"private\"`, since it is this token's list and no other's.",
@@ -165,6 +165,13 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain(
       "  A seed file that cannot be read or parsed answers `tools/list` with the JSON-RPC error `-32603` and the sentence every tool then answers, never a shorter or a longer list ([Troubleshooting](#troubleshooting)), while `initialize` and `server/discover` still answer.",
     );
+  });
+
+  test("limits the bookkeeping read-only claim to the statement tools, and points inspect_schema at its own entry", () => {
+    expect(MCP_DOC).toContain(
+      "  A statement tool whose read has an effect of the server's own bookkeeping stays read-only, and its description says so: a Redis read can delete an expired key and publish an event about it, and an MQTT or Sparkplug B read opens broker sessions; `inspect_schema` also stays read-only on Redis and Sparkplug B, with what a call does there stated in its entry above.",
+    );
+    expect(MCP_DOC).not.toContain("A read whose effect is the server's own bookkeeping");
   });
 
   test("has a Troubleshooting row for -32603 on tools/list", () => {
@@ -602,6 +609,12 @@ describe("docs/MCP.md", () => {
       .find((text) => text.startsWith("*   **Read-only tools:**"));
     expect(line).toContain("[docs/MCP.md](./MCP.md#what-it-is)");
     expect(line).not.toMatch(/\brun_[a-z]+_(?:read|query|command)\b/);
+  });
+
+  test("docs/ARCHITECTURE.md names both module-scope handlers of the MCP section", () => {
+    expect(read("docs/ARCHITECTURE.md")).toContain(
+      "two `createMcpHandler` handlers at module scope, one for a token's own `tools/list` and one for every other request, and one server per request,",
+    );
   });
 
   test("says which libSQL token a seed needs and that inspect_schema opens libSQL unproven", () => {
