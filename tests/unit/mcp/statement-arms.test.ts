@@ -1401,10 +1401,10 @@ describe("the tool each engine is read with", () => {
       mongo: idle,
     } as unknown as typeof MCP_STATEMENT_ARMS;
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
-    const registerTool = mock((_name: string) => undefined);
+    const registerTool = mock<(name: string) => undefined>(() => undefined);
     registerStatementTools({ registerTool } as unknown as McpServer, {} as McpConnectionContext, undefined, arms);
     expect(registerTool.mock.calls.map(([name]) => name)).toEqual(["run_read_query"]);
-    const reachMongo = mock((_name: string) => undefined);
+    const reachMongo = mock<(name: string) => undefined>(() => undefined);
     registerStatementTools(
       { registerTool: reachMongo } as unknown as McpServer,
       {} as McpConnectionContext,
@@ -1412,7 +1412,7 @@ describe("the tool each engine is read with", () => {
       arms,
     );
     expect(reachMongo.mock.calls).toEqual([]);
-    const reachSqlite = mock((_name: string) => undefined);
+    const reachSqlite = mock<(name: string) => undefined>(() => undefined);
     registerStatementTools(
       { registerTool: reachSqlite } as unknown as McpServer,
       {} as McpConnectionContext,
