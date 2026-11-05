@@ -90,6 +90,15 @@ describe("docs/API_DOCS.md documents every MCP route", () => {
   test("the MCP section is in the table of contents", () => {
     expect(API_DOCS).toContain("[MCP API](#mcp-api)");
   });
+
+  test("says a token lists only the tools it can use, and that an unreadable seed file answers tools/list with -32603", () => {
+    expect(API_DOCS).toContain(
+      "a token's `tools/list` holds the metadata tools and only the statement tools that serve the engines of the connections it can read",
+    );
+    expect(API_DOCS).toContain(
+      "A seed file that cannot be read or parsed answers `tools/list` with the JSON-RPC error `-32603` on HTTP 200.",
+    );
+  });
 });
 
 /**
@@ -140,7 +149,38 @@ describe("docs/MCP.md", () => {
   });
 
   test("states no count of tools", () => {
-    expect(MCP_DOC).toContain("- The tools, each annotated read-only and closed-world:");
+    expect(MCP_DOC).toContain("- The tools, as a token lists them and with their hints described after this list:");
+  });
+
+  test("says what a token's tools/list holds, when a seed edit reaches it, and what an unreadable seed file answers", () => {
+    expect(MCP_DOC).toContain(
+      "- A token's `tools/list` holds `list_connections`, `inspect_schema` and each statement tool that serves the engine of a connection the token can read: one that `list_connections` lists for it without `unavailable`.",
+    );
+    expect(MCP_DOC).toContain(
+      "  Each `tools/list` reads the seed file through the seed cache (`SEED_CACHE_TTL_MS`, 60 seconds unless set) and builds no provider and reads no Vault reference, so a client sees an operator's seed edit the next time it lists the tools, which a client that lists them only when it connects does once it reconnects.",
+    );
+    expect(MCP_DOC).toContain(
+      "  On revision 2026-07-28 the answer carries `ttlMs: 0` and `cacheScope: \"private\"`, since it is this token's list and no other's.",
+    );
+    expect(MCP_DOC).toContain(
+      "  A seed file that cannot be read or parsed answers `tools/list` with the JSON-RPC error `-32603` and the sentence every tool then answers, never a shorter or a longer list ([Troubleshooting](#troubleshooting)), while `initialize` and `server/discover` still answer.",
+    );
+  });
+
+  test("has a Troubleshooting row for -32603 on tools/list", () => {
+    const row = MCP_DOC.split("\n").find((line) => line.startsWith("| 200 `-32603` |"));
+    expect(row).toBeDefined();
+    expect(row).toContain("`tools/list`");
+    expect(row).toContain("cannot be read or parsed");
+  });
+
+  test("says inspect_schema's Redis walk can delete an expired key and publish an expired event, its hint unchanged", () => {
+    expect(MCP_DOC).toContain(
+      "    On Redis its one bounded `SCAN` walk, on a primary, deletes each expired key it meets and, on a server whose `notify-keyspace-events` holds the expired class, publishes an `expired` event for it, as a read of that key would (measured on Redis 8.10.2 and Valkey 9.1.2 on 2026-11-05), and `inspect_schema` stays annotated read-only there, as `run_redis_read` does.",
+    );
+    expect(read("docs/providers/redis.md")).toContain(
+      "On a primary that walk deletes each expired key it meets, and on a server whose `notify-keyspace-events` holds the expired class it publishes an `expired` event for each",
+    );
   });
 
   test("carries the read_tool field", () => {

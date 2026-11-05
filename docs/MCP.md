@@ -15,7 +15,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
 
 - One endpoint, `POST /api/mcp`, served by the official MCP TypeScript SDK.
   It speaks revision 2026-07-28 and, without sessions, the 2025 revisions 2025-11-25 and 2025-06-18 that most clients still use.
-- The tools, each annotated read-only and closed-world:
+- The tools, as a token lists them and with their hints described after this list:
   - `list_connections` lists the connections opted in for MCP that your token's role may use, without credentials.
     It works for every engine but Oxia, Firestore, Modbus and NETCONF, whose connections the seed file cannot opt in.
     Each connection's `read_tool` names the statement tool below that runs a statement on it, and is `null` where `inspect_schema` is the only read or where the connection carries `unavailable`.
@@ -42,6 +42,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
     On Weaviate it lists each collection's declared properties and vectors and never its tenants or aliases, which `run_weaviate_read` reads as far as the key's grants reach; it reads no stored object, so a vector's dimension, which the schema does not declare, reads `?`, and a call wakes no tenant.
     On InfluxDB (InfluxQL) it lists measurements with their tag and field keys, and on InfluxDB 3 (SQL) tables with their columns; the `_internal` database and the `system.*` tables of a 3.x server are never returned.
     On Databend it lists tables, views, materialized views and dynamic tables; on a Databend Cloud connection with a Warehouse set, a call resumes a suspended warehouse, which bills while it runs, as any statement does.
+    On Redis its one bounded `SCAN` walk, on a primary, deletes each expired key it meets and, on a server whose `notify-keyspace-events` holds the expired class, publishes an `expired` event for it, as a read of that key would (measured on Redis 8.10.2 and Valkey 9.1.2 on 2026-11-05), and `inspect_schema` stays annotated read-only there, as `run_redis_read` does.
     On Apache Spark it lists the tables and views of one namespace, read with SHOW and DESCRIBE statements that start no Spark job on Studio's own session; a namespace is named in Spark's spelling, its parts joined by dots.
   - `run_read_query` runs one read-only SQL statement.
     A `SELECT` runs on every engine it serves; a refused statement's answer names what else that engine takes.
@@ -198,6 +199,17 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
   `src/lib/mcp/tools/statement-arms.ts` builds the tools from those facets and names no language, so a language that gains an MCP tool adds its facet and edits nothing under `src/lib/mcp/`.
   A facet may raise the least `timeout_ms` its tool takes (`leastTimeout`), which tools/list then shows as the field's minimum, and may declare that its provider's warnings are Studio's own sentences an answer must carry (`answersWarnings`), which then reach the client as the answer's `notes`; every other tool's answers carry no warning text.
   A facet may also declare that a connection's database setting is a stored value on its engines (`withholdsDatabase`), which `list_connections` then leaves out of that connection's row.
+- A token's `tools/list` holds `list_connections`, `inspect_schema` and each statement tool that serves the engine of a connection the token can read: one that `list_connections` lists for it without `unavailable`.
+  A token that can read no connection, such as one whose only seed is unavailable to it, lists `list_connections` and `inspect_schema` alone.
+  A call to a statement tool the list leaves out still gets Studio's own answer, recorded in the audit log as every call is, never the protocol's unknown-tool error, so the list only shows what a token can use and every check stays at the call.
+  Each `tools/list` reads the seed file through the seed cache (`SEED_CACHE_TTL_MS`, 60 seconds unless set) and builds no provider and reads no Vault reference, so a client sees an operator's seed edit the next time it lists the tools, which a client that lists them only when it connects does once it reconnects.
+  On revision 2026-07-28 the answer carries `ttlMs: 0` and `cacheScope: "private"`, since it is this token's list and no other's.
+  A seed file that cannot be read or parsed answers `tools/list` with the JSON-RPC error `-32603` and the sentence every tool then answers, never a shorter or a longer list ([Troubleshooting](#troubleshooting)), while `initialize` and `server/discover` still answer.
+- Every tool is annotated closed-world (`openWorldHint: false`) and read-only (`readOnlyHint: true`), except `inspect_schema` for a token that reaches a Databend or LibreDB connection, which it tells `readOnlyHint: false` and `destructiveHint: false`, since a call there changes state the engine keeps, though it writes no data.
+  On Databend Cloud a call resumes a suspended warehouse, which bills while it runs, and on LibreDB it opens the file and keeps its exclusive lock until that handle has been idle for 30 minutes ([Limits](#limits)).
+  Those engines are the rows of `MCP_METADATA_READ_CHANGES_STATE` in `src/lib/db/compatibility.ts` that are true, one per engine, so a self-hosted Databend server, which bills nothing, is marked too.
+  No tool sets `idempotentHint`, which a client reads only beside `readOnlyHint: false`, where a repeated call extends the lock's idle time or the billed run.
+  A read whose effect is the server's own bookkeeping stays read-only, and its description says so: a Redis read can delete an expired key and publish an event about it, and an MQTT or Sparkplug B read opens broker sessions.
 - Read-only is the database's own enforcement, not a filter over statement text: every statement tool takes the connection under Studio's least-privilege read profile (`agent-read-only`) and runs through the provider's read-only statement path, and each engine enforces it as follows:
   - PostgreSQL: by a read-only transaction, and refuses a login that could do more than read.
   - SQLite: by a read-only open.
@@ -648,6 +660,7 @@ For the first few seconds after that service starts, `opencode mcp list` can say
 | 429 | The per-user query budget is spent; retry after `Retry-After` seconds |
 | 400 `-32020` | A required `MCP-Protocol-Version`, `Mcp-Method` or `Mcp-Name` header is missing, malformed or disagrees with the body |
 | 500 | An unrecognized `LIBREDB_MCP_ENABLED`, an unset server version, or a server fault such as a missing `JWT_SECRET`; the server log names which |
+| 200 `-32603` | On `tools/list`: the seed file cannot be read or parsed, so Studio cannot tell which tools the token can use, and every tool call answers that the connection configuration could not be read; the server log names the cause |
 
 A tool call that reaches a database writes two `mcp_operation` audit events: a decision before the database is reached and an outcome after it, under one correlation id, with the token's user and the connection's seed id.
 `list_connections` reaches no database, so it writes one event.

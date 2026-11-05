@@ -2176,7 +2176,8 @@ The answers, in the order they are checked:
 | 404 | JSON-RPC `-32601`, `Method not found` | `subscriptions/listen`, which this server does not implement |
 | 200, 202 | The SDK's JSON-RPC answer, as JSON or as an event stream; 202 for a notification | Everything else |
 
-The tools it serves are `list_connections`, `inspect_schema` and one statement tool per statement language, listed with their engines in [docs/MCP.md](./MCP.md#what-it-is); `list_connections` names each connection's `read_tool`, and [`docs/MCP.md`](MCP.md) documents each tool's arguments and limits.
+The tools it serves are `list_connections`, `inspect_schema` and one statement tool per statement language, listed with their engines in [docs/MCP.md](./MCP.md#what-it-is); a token's `tools/list` holds the metadata tools and only the statement tools that serve the engines of the connections it can read, `list_connections` names each connection's `read_tool`, and [`docs/MCP.md`](MCP.md) documents each tool's arguments, hints and limits.
+A seed file that cannot be read or parsed answers `tools/list` with the JSON-RPC error `-32603` on HTTP 200.
 
 #### `GET /api/mcp`, `DELETE /api/mcp`
 
