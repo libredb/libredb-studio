@@ -39,8 +39,8 @@
  *    `INFORMATION_SCHEMA`, and none may carry the grant option. Any other privilege is refused by name, a source
  *    grant (`CLICKHOUSE_SOURCE_PRIVILEGES`) and a grant `readonly` leaves usable
  *    (`CLICKHOUSE_READONLY_EXEMPT_PRIVILEGES`) said as such.
- * 4. **The principal cannot read the query log.** `SELECT 1 FROM system.query_log LIMIT 0` must be refused with 497,
- *    or answer 60 where the log is switched off.
+ * 4. **The principal cannot read query logs.** Probe `system.query_log` and `system.user_query_log` with `SELECT 1 ... LIMIT 0`.
+ *    Each must answer 497 (access denied) or 60 (table absent). The user log exposes statements from a shared connection.
  * 5. **The principal reads no external source.** Every table `system.tables` shows the principal must use a local
  *    storage engine (`CLICKHOUSE_LOCAL_TABLE_ENGINES`), and a view among them no SQL SECURITY of DEFINER or NONE;
  *    `system.dictionaries` must be unreadable to the principal (497) or empty.
@@ -58,7 +58,7 @@ export type AgentProofQuery = (sql: string) => Promise<ClickHouseQueryResult>;
 /**
  * The releases, as `version()`'s first two numbers, whose privilege and engine lists below were read from a live
  * server: 26.7.1.1315 and 26.9.23.15. A release outside this set is refused at open until its own `system.privileges` and
- * `system.table_engines` are read and the lists updated.
+ * `system.table_engines` are read and the lists updated. The 26.9 release also requires at least 26.9.23.15.
  */
 export const CLICKHOUSE_CHECKED_RELEASES: readonly string[] = Object.freeze(["26.7", "26.9"]);
 
@@ -73,7 +73,7 @@ export const CLICKHOUSE_AGENT_PRIVILEGES: readonly string[] = Object.freeze([
 ]);
 
 /**
- * The privileges that reach an external source, as 26.7's `system.privileges` lists them: the SOURCES group, each of
+ * The privileges that reach an external source across the checked releases: the SOURCES group, each of
  * its members, and the READ and WRITE source privileges (`GRANT READ ON URL` lists as `GRANT URL ON *.*`).
  */
 export const CLICKHOUSE_SOURCE_PRIVILEGES: readonly string[] = Object.freeze([
@@ -99,6 +99,8 @@ export const CLICKHOUSE_SOURCE_PRIVILEGES: readonly string[] = Object.freeze([
   "RABBITMQ",
   "YTSAURUS",
   "ARROW FLIGHT",
+  "BIGQUERY",
+  "DISK",
 ]);
 
 /**
@@ -236,7 +238,6 @@ const OBJECT_REFUSAL_LIMIT = 5;
 const IDENTITY_SQL = "SELECT version() AS version, currentUser() AS user, toString(getSetting('readonly')) AS readonly";
 const LOWER_READONLY_SQL = "SELECT 1 SETTINGS readonly = 0";
 const GRANTS_SQL = "SHOW GRANTS FINAL";
-const QUERY_LOG_SQL = "SELECT 1 FROM system.query_log LIMIT 0";
 const DICTIONARIES_SQL = "SELECT database, name FROM system.dictionaries LIMIT 1";
 
 /** The functions a caller reaches without any grant that run code outside SQL: any origin but built in and SQL. */
@@ -301,16 +302,23 @@ async function verifyServer(query: AgentProofQuery): Promise<string> {
   const { rows } = await query(IDENTITY_SQL);
   const version = cell(rows, "version");
   const user = cell(rows, "user");
-  const release = /^(\d+\.\d+)\.\d+\.\d+$/.exec(version ?? "")?.[1];
-  if (version === undefined || user === undefined || release === undefined) {
+  const parts = /^(\d+\.\d+)\.(\d+)\.(\d+)$/.exec(version ?? "");
+  if (version === undefined || user === undefined || parts === null) {
     throw new ExecutionProfileError(
       "The agent read-only profile could not read the ClickHouse server's version and user, so it is refused",
       "PROFILE_UNSUPPORTED_TARGET",
     );
   }
+  const release = parts[1];
   if (!CLICKHOUSE_CHECKED_RELEASES.includes(release)) {
     throw new ExecutionProfileError(
       `The agent read-only profile is checked on ClickHouse ${CLICKHOUSE_CHECKED_RELEASES.join(", ")}, and this server is ${version}: its privileges and table engines have not been checked, so it is refused`,
+      "PROFILE_UNSUPPORTED_TARGET",
+    );
+  }
+  if (release === "26.9" && (Number(parts[2]) < 23 || (Number(parts[2]) === 23 && Number(parts[3]) < 15))) {
+    throw new ExecutionProfileError(
+      `The agent read-only profile requires ClickHouse 26.9.23.15 or later within 26.9; this server is ${version}, so it is refused`,
       "PROFILE_UNSUPPORTED_TARGET",
     );
   }
@@ -444,11 +452,15 @@ async function verifyGrants(query: AgentProofQuery, user: string): Promise<void>
   }
 }
 
-async function verifyQueryLogUnreadable(query: AgentProofQuery, user: string): Promise<void> {
-  const code = await refusalCode(query, QUERY_LOG_SQL);
+async function verifyQueryLogUnreadable(
+  query: AgentProofQuery,
+  user: string,
+  table: "system.query_log" | "system.user_query_log",
+): Promise<void> {
+  const code = await refusalCode(query, `SELECT 1 FROM ${table} LIMIT 0`);
   if (code !== ACCESS_DENIED_CODE && code !== UNKNOWN_TABLE_CODE) {
     throw tooBroad(
-      `ClickHouse user "${user}" can read system.query_log, which holds every user's statements, so the agent read-only profile is refused`,
+      `ClickHouse user "${user}" has not proved it cannot read ${table}, which exposes statement text, so the agent read-only profile is refused`,
     );
   }
 }
@@ -491,7 +503,8 @@ export async function verifyAgentProfile(query: AgentProofQuery, database: strin
   const user = await verifyServer(query);
   await verifyWritesRefused(query, database, user);
   await verifyGrants(query, user);
-  await verifyQueryLogUnreadable(query, user);
+  await verifyQueryLogUnreadable(query, user, "system.query_log");
+  await verifyQueryLogUnreadable(query, user, "system.user_query_log");
   await verifyNoExternalObject(query, user);
   await verifyNoExecutableFunction(query, user);
 }
