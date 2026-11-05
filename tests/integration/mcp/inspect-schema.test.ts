@@ -1103,6 +1103,15 @@ describe("foreign keys", () => {
     }
   });
 
+  test("answer unavailable on an engine with no foreign keys when the default columns describe each table", async () => {
+    const result = await inspect({ connection_id: "seed:notes", include_foreign_keys: true });
+    expect(result.structuredContent?.tables.length).toBeGreaterThan(0);
+    for (const entry of result.structuredContent?.tables ?? []) {
+      expect(entry.foreign_keys).toEqual({ unavailable: "Studio reads no foreign keys on this engine." });
+      expect(entry).not.toHaveProperty("foreign_keys_omitted");
+    }
+  });
+
   test("beside include_columns add no description, and alone add one per listed table", async () => {
     const describes = countMethod(SQLiteProvider.prototype, "describeObject");
     const counted = async (args: Record<string, unknown>) => {
@@ -1213,6 +1222,15 @@ describe("schema names", () => {
     expect(bytes(names.slice(0, kept.length + 1))).toBeGreaterThan(4_096);
     expect(result.structuredContent?.schema_names_omitted).toBe(60 - kept.length);
     expect(handlerBytes(result)).toBeLessThanOrEqual(MCP_RESULT_CAP_BYTES);
+  });
+
+  test("come back on every page of a call, not only the first", async () => {
+    const result = await inspectFixed(new FixedProvider(1, () => schemasOf(["a", "b"]), 3), {
+      include_schema_names: true,
+      limit: 1,
+      offset: 1,
+    });
+    expect(result.structuredContent).toMatchObject({ offset: 1, schema_names: ["a", "b"], schema_names_omitted: 0 });
   });
 
   test("are [] for an empty level", async () => {
