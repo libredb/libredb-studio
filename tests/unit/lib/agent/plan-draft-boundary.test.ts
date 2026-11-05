@@ -96,6 +96,8 @@ describe("the plan-draft reader stays reachable from a browser", () => {
       words, and that reader reaches nothing but the other two. `./operative-keyword` and the
       `./leading-keyword` it reads joined it with SF-046: a T-SQL MERGE keeps its `;`, and the
       statement is a MERGE by its operative keyword; both reach only the readers above.
+      `./parenthesised` joined it when the confirmation gate went linear: the CTE list reader remembers where
+      each parenthesised run closes, and that memory reaches only `./spans` and `./words`.
     */
     const read = (specifier: string) =>
       fs.readFileSync(path.join(ROOT, "src/lib/sql", `${specifier.replace("./", "")}.ts`), "utf8");
@@ -115,6 +117,7 @@ describe("the plan-draft reader stays reachable from a browser", () => {
       "./grammar",
       "./leading-keyword",
       "./operative-keyword",
+      "./parenthesised",
       "./spans",
       "./words",
       "@/lib/db/sql-grammar",

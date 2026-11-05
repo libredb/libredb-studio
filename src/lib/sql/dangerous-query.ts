@@ -2,15 +2,21 @@
 // the VS Code extension's child answers `query/target` with its verdict.
 import { isDestructiveNonSqlQuery, vocabularyDecidesAlone } from "@/lib/db/destructive-commands";
 import {
-  conditionalFormInCode,
-  conditionalFormOperates,
+  confirmFormQuery,
+  exemptForms,
+  formInCode,
+  formOperates,
   hasConfirmCodeForm,
-  sequenceInCode,
-  wordsFollow,
+  operatingForms,
 } from "@/lib/sql/confirm-forms";
 import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
-import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
+import {
+  type CteListRuns,
+  cteListRuns,
+  readOperativeKeyword,
+  readOperativeKeywordAt,
+} from "@/lib/sql/operative-keyword";
 import {
   hasLoneCarriageReturnInLineComment,
   hasUnterminatedSpan,
@@ -19,7 +25,7 @@ import {
   readSqlSpan,
 } from "@/lib/sql/spans";
 import { splitStatements } from "@/lib/sql/statement-splitter";
-import { findCodeWord, readSqlWord } from "@/lib/sql/words";
+import { type CodeWordIndex, type CodeWordQuery, indexCodeWords, readSqlWord } from "@/lib/sql/words";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -242,9 +248,44 @@ function readNumericLiteral(text: string, start: number, limit: number): { end: 
 
 /** Whether a `confirmExemptForms` form led by `keyword` starts at the keyword that ends at `end`. */
 function exemptFormAt(text: string, keyword: string, end: number, grammar: SqlGrammar): boolean {
-  return (grammar.confirmExemptForms ?? []).some(
-    (form) => form[0].toUpperCase() === keyword && wordsFollow(text, end, form.slice(1), grammar),
-  );
+  return formOperates(exemptForms(grammar), keyword, text, end, grammar);
+}
+
+/**
+ * The words the gate looks for in a statement's code besides its dialect's forms: the shared vocabulary, the dynamic
+ * SQL a block can run, `AS` before a CTE body, and the `UPDATE … SET` pair.
+ */
+const GATE_WORDS = [...DANGEROUS_KEYWORDS, "EXECUTE", "IMMEDIATE", "DBMS_SQL", "AS", "UPDATE", "SET"];
+
+const GATE_QUERIES = new WeakMap<SqlGrammar, CodeWordQuery>();
+
+/** What the gate reads a statement's code words for, under `grammar`: built once per grammar record. */
+function gateQuery(grammar: SqlGrammar): CodeWordQuery {
+  let query = GATE_QUERIES.get(grammar);
+  if (query === undefined) {
+    const forms = confirmFormQuery(grammar);
+    query = { ...forms, words: new Set([...forms.words, ...GATE_WORDS]) };
+    GATE_QUERIES.set(grammar, query);
+  }
+  return query;
+}
+
+/** One character of white space, as the `\s` of a pattern reads it. */
+const WHITE_SPACE = /\s/;
+
+/** A cursor's lock clause right before an `UPDATE`: the word `FOR` and white space. */
+const FOR_LOCK_CLAUSE = /\bFOR\s+$/i;
+
+/**
+ * Where the text before `start` has to be read from for `FOR_LOCK_CLAUSE` to answer what it answers for all of it: the
+ * white space right before `start`, and the four characters before that, which hold the word `FOR` and the one that
+ * bounds it. Testing the pattern against the whole text before every `UPDATE` cost a block of lock clauses the square
+ * of its length.
+ */
+function lockClauseFrom(text: string, start: number): number {
+  let i = start;
+  while (i > 0 && WHITE_SPACE.test(text[i - 1])) i--;
+  return Math.max(0, i - 4);
 }
 
 /**
@@ -257,22 +298,19 @@ function exemptFormAt(text: string, keyword: string, end: number, grammar: SqlGr
  * used to refuse the block it sits in when the runner cut it at its first `;` (#1312).
  * A dialect's own `confirmForms` count the same way, anywhere in the block's code.
  */
-function blockWrites(text: string, grammar: SqlGrammar): boolean {
-  if ((grammar.confirmForms ?? []).some((form) => sequenceInCode(text, form, grammar))) return true;
-  if ((grammar.confirmFormsWhen ?? []).some((form) => conditionalFormInCode(text, form, grammar))) return true;
+function blockWrites(text: string, grammar: SqlGrammar, code: CodeWordIndex): boolean {
+  if (formInCode(operatingForms(grammar), text, grammar, code)) return true;
 
-  const execute = findCodeWord(text, "EXECUTE", 0, grammar);
-  if (execute !== null && findCodeWord(text, "IMMEDIATE", execute.end, grammar) !== null) return true;
-  if (findCodeWord(text, "DBMS_SQL", 0, grammar) !== null) return true;
+  const execute = code.find("EXECUTE");
+  if (execute !== null && code.find("IMMEDIATE", execute.end) !== null) return true;
+  if (code.find("DBMS_SQL") !== null) return true;
 
   for (const word of DANGEROUS_KEYWORDS) {
-    let found = findCodeWord(text, word, 0, grammar);
-    while (found !== null) {
-      const before = text.slice(0, found.start);
-      const variable = before.endsWith("@");
-      const lockClause = word === "UPDATE" && /\bFOR\s+$/i.test(before);
+    for (const found of code.occurrences(word)) {
+      const variable = text[found.start - 1] === "@";
+      const lockClause =
+        word === "UPDATE" && FOR_LOCK_CLAUSE.test(text.slice(lockClauseFrom(text, found.start), found.start));
       if (!variable && !lockClause && !exemptFormAt(text, word, found.end, grammar)) return true;
-      found = findCodeWord(text, word, found.end, grammar);
     }
   }
   return false;
@@ -493,23 +531,19 @@ function cteBodyAt(text: string, afterAs: number, grammar: SqlGrammar): number |
   return pastHiddenText(text, at + 1, grammar);
 }
 
-/** Whether `INSERT`, `DELETE` or `MERGE` opens a CTE body, or operates one that itself opens with `WITH`. */
-function cteBodyWrites(text: string, grammar: SqlGrammar): boolean {
-  let i = 0;
-  while (i < text.length) {
-    const span = readSqlSpan(text, i, grammar);
-    if (span !== null) {
-      i = span.end;
-      continue;
-    }
-    const word = readSqlWord(text, i);
-    if (word !== null && word.text === "AS" && cteBodyOpensWithWrite(text, word.end, grammar)) return true;
-    i = word?.end ?? i + 1;
-  }
-  return false;
+/**
+ * Whether `INSERT`, `DELETE` or `MERGE` opens a CTE body, or operates one that itself opens with `WITH`, read after
+ * each code `AS` of `code`. The CTE lists read for bodies that open with `WITH` share where the runs of `text` close, so
+ * lists nested in each other cross each run once between them.
+ */
+function cteBodyWrites(text: string, grammar: SqlGrammar, code: CodeWordIndex): boolean {
+  const occurrences = code.occurrences("AS");
+  if (occurrences.length === 0) return false;
+  const runs = cteListRuns(text, grammar);
+  return occurrences.some((as) => cteBodyOpensWithWrite(text, as.end, grammar, runs));
 }
 
-function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGrammar): boolean {
+function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGrammar, runs: CteListRuns): boolean {
   const bodyAt = cteBodyAt(text, afterAs, grammar);
   if (bodyAt === null) return false;
   const body = readSqlWord(text, bodyAt);
@@ -517,8 +551,8 @@ function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGramma
   // `WITH x AS (WITH y AS (…) DELETE …)` : the body is a statement, and the write is the
   // keyword that operates it, not the first word.
   if (body?.text !== "WITH") return false;
-  const operative = readOperativeKeyword(text.slice(bodyAt), grammar);
-  return operative !== null && CTE_DATA_MODIFYING.has(operative.keyword);
+  const operative = readOperativeKeywordAt(text, bodyAt, grammar, runs);
+  return operative !== null && CTE_DATA_MODIFYING.has(operative);
 }
 
 /**
@@ -532,9 +566,9 @@ function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGramma
  * Exported for the grammar-level tests in `tests/components/QuerySafetyDialog.test.tsx`, which read a row's forms
  * before any shipped row declares them; `isDangerousQuery` is the gate.
  */
-export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
-  const reading = readOperativeKeyword(text, grammar);
-  const keyword = reading?.keyword;
+export function writesUnderGrammar(statement: string, grammar: SqlGrammar): boolean {
+  let text = statement;
+  let reading = readOperativeKeyword(text, grammar);
 
   // PostgreSQL's EXPLAIN executes the explained statement only when ANALYZE is on
   // (`EXPLAIN ANALYZE DELETE`, `EXPLAIN (ANALYZE, BUFFERS) UPDATE`). The operative
@@ -543,11 +577,16 @@ export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
   // or the integer 0, only plans: returning here, instead of falling through, is what keeps an
   // `UPDATE … SET` inside a plan from asking. The remaining text is read as its own
   // statement, so a data-modifying CTE under the EXPLAIN asks too. CockroachDB
-  // shares this grammar.
-  if (reading !== null && reading.keyword === "EXPLAIN" && grammar.explainExecutesWithAnalyze === true) {
+  // shares this grammar. An explained statement can be an EXPLAIN in turn, so the chain is
+  // followed in a loop: read one call deeper per EXPLAIN, a chain as long as the analyze
+  // route accepts ran Node out of stack.
+  while (reading !== null && reading.keyword === "EXPLAIN" && grammar.explainExecutesWithAnalyze === true) {
     const inner = stripExplainOptions(text, reading.end, grammar);
-    return inner !== null && writesUnderGrammar(inner, grammar);
+    if (inner === null) return false;
+    text = inner;
+    reading = readOperativeKeyword(text, grammar);
   }
+  const keyword = reading?.keyword;
 
   if (
     reading !== null &&
@@ -557,27 +596,17 @@ export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
     return true;
   }
 
-  // The dialect's own forms: a keyword sequence that operates the statement, and a form found anywhere in its code.
-  // Both are absent on every row that does not declare them, so no other dialect's verdict moves.
-  if (
-    reading !== null &&
-    (grammar.confirmForms ?? []).some(
-      (form) => form[0].toUpperCase() === reading.keyword && wordsFollow(text, reading.end, form.slice(1), grammar),
-    )
-  ) {
+  // The dialect's own forms: a keyword sequence that operates the statement (`confirmForms`, and `confirmFormsWhen`
+  // with its word after it), and a form found anywhere in its code. All are absent on every row that does not declare
+  // them, so no other dialect's verdict moves.
+  if (reading !== null && formOperates(operatingForms(grammar), reading.keyword, text, reading.end, grammar)) {
     return true;
   }
   // A session key the dialect names: SET or RESET of it changes how every later statement of the session reads.
   if (reading !== null && configKeyAsks(text, reading, grammar)) return true;
-  if (
-    reading !== null &&
-    (grammar.confirmFormsWhen ?? []).some((form) =>
-      conditionalFormOperates(text, reading.keyword, reading.end, form, grammar),
-    )
-  ) {
-    return true;
-  }
-  if (hasConfirmCodeForm(text, grammar)) return true;
+  // Every question left is about words anywhere in the code, so its code words are read once for all of them.
+  const code = indexCodeWords(text, gateQuery(grammar), grammar);
+  if (hasConfirmCodeForm(text, grammar, code)) return true;
 
   // A statement led by a control-flow word, or by a `<<label>>` no keyword reading
   // passes, does what the words AFTER it say: `BEGIN DELETE FROM emp; END;` is a PL/SQL
@@ -587,7 +616,7 @@ export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
   // fact the runner cut such a block at its first `;` and Oracle refused the fragment, so
   // nothing ran unasked; now the whole block runs, and the gate has to read into it.
   const labelled = keyword === undefined && text.trimStart().startsWith("<<");
-  if ((labelled || (keyword !== undefined && CONTROL_FLOW_KEYWORDS.has(keyword))) && blockWrites(text, grammar)) {
+  if ((labelled || (keyword !== undefined && CONTROL_FLOW_KEYWORDS.has(keyword))) && blockWrites(text, grammar, code)) {
     return true;
   }
 
@@ -600,13 +629,13 @@ export function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
   // a parenthesised query and `CREATE TABLE … AS WITH …` carry the same body.
   // An unclosed list that leads with WITH (`WITH t AS (DELETE FROM x`) stays silent.
   // UPDATE stays the pair below. CockroachDB connections are the postgres type-id
-  // and share this grammar (#1862).
-  const leadsWithWith = readLeadingKeyword(text, grammar)?.keyword === "WITH";
-  if ((!leadsWithWith || reading !== null) && cteBodyWrites(text, grammar)) {
+  // and share this grammar (#1862). Whether it leads with WITH matters only where no keyword operates it.
+  const unclosedWith = reading === null && readLeadingKeyword(text, grammar)?.keyword === "WITH";
+  if (!unclosedWith && cteBodyWrites(text, grammar, code)) {
     return true;
   }
-  const update = findCodeWord(text, "UPDATE", 0, grammar);
-  return update !== null && findCodeWord(text, "SET", update.end, grammar) !== null;
+  const update = code.find("UPDATE");
+  return update !== null && code.find("SET", update.end) !== null;
 }
 
 /**
@@ -736,5 +765,8 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // reading the body's own `;`-separated statements, which is what it read before bodies
   // were a fact at all. The spans and the separator lines stay the dialect's.
   const statementsInsideBodies = { ...grammar, script: { ...grammar.script, blocks: "none" as const } };
-  return splitStatements(query, statementsInsideBodies).some((statement) => writesUnderGrammar(statement.sql, grammar));
+  // A statement that is the whole text, as a statement under the caret is, was read above.
+  return splitStatements(query, statementsInsideBodies).some(
+    (statement) => statement.sql !== query && writesUnderGrammar(statement.sql, grammar),
+  );
 }

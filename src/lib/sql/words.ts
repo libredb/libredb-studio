@@ -111,3 +111,118 @@ export function findCodeWord(
 
   return null;
 }
+
+/** What `indexCodeWords` collects in its one walk. Every word and prefix is upper-cased, as `readSqlWord` reports one. */
+export interface CodeWordQuery {
+  /** The words whose every code occurrence the index lists. */
+  readonly words: ReadonlySet<string>;
+  /** The prefixes the index tells whether some code word starts with. */
+  readonly prefixes: readonly string[];
+  /** Whether the index lists the closed quoted identifiers too, for a reader of quoted names called as functions. */
+  readonly quotedIdentifiers: boolean;
+}
+
+/** The answers of one walk to a `CodeWordQuery`. Asking it about anything the query did not name throws. */
+export interface CodeWordIndex {
+  /**
+   * Where `word` appears in the code at or after `from`, or `null`: what `findCodeWord(sql, word, from, grammar)`
+   * answers, for a `from` that is 0 or the end of a code word this index found. Those are positions the walk stands on;
+   * from any other one `findCodeWord` walks differently, so a caller holding such a position asks `findCodeWord`.
+   */
+  find(word: string, from?: number): CodeWord | null;
+  /** Every code occurrence of `word`, in text order. */
+  occurrences(word: string): readonly CodeWord[];
+  /** Whether some code word starts with `prefix`. */
+  startsWith(prefix: string): boolean;
+  /** Every closed quoted identifier the walk crossed, its quotes included, in text order. */
+  quotedIdentifiers(): readonly CodeWord[];
+}
+
+const NO_WORDS: readonly CodeWord[] = [];
+
+class IndexedCodeWords implements CodeWordIndex {
+  constructor(
+    private readonly query: CodeWordQuery,
+    private readonly found: ReadonlyMap<string, readonly CodeWord[]>,
+    private readonly prefixed: ReadonlySet<string>,
+    private readonly quoted: readonly CodeWord[],
+  ) {}
+
+  find(word: string, from = 0): CodeWord | null {
+    const list = this.occurrences(word);
+    // The first occurrence that starts at or after `from`, found by halving: the list is in text order.
+    let low = 0;
+    let high = list.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (list[middle].start < from) low = middle + 1;
+      else high = middle;
+    }
+    return list[low] ?? null;
+  }
+
+  occurrences(word: string): readonly CodeWord[] {
+    if (!this.query.words.has(word)) throw new Error(`The code word index was not asked about ${word}.`);
+    return this.found.get(word) ?? NO_WORDS;
+  }
+
+  startsWith(prefix: string): boolean {
+    if (!this.query.prefixes.includes(prefix)) {
+      throw new Error(`The code word index was not asked about the prefix ${prefix}.`);
+    }
+    return this.prefixed.has(prefix);
+  }
+
+  quotedIdentifiers(): readonly CodeWord[] {
+    if (!this.query.quotedIdentifiers) throw new Error("The code word index was not asked about quoted identifiers.");
+    return this.quoted;
+  }
+}
+
+/**
+ * The code words of `sql` that `query` names, read in one walk, for a reader with many questions about one text.
+ *
+ * The walk is `findCodeWord`'s from the start of the text, so the occurrences of a word are, in order, exactly what
+ * `findCodeWord` finds for it from 0 and then from the end of each occurrence, and the quoted identifiers are the ones a
+ * reader walking the same way crosses. A reader that asked `findCodeWord` once per word walked the text once per word:
+ * the confirmation gate asks about some sixty words of one Snowflake text, and a 1,000,000-unit text cost it more than a
+ * second.
+ */
+export function indexCodeWords(
+  sql: string,
+  query: CodeWordQuery,
+  grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR,
+): CodeWordIndex {
+  const found = new Map<string, CodeWord[]>();
+  const prefixed = new Set<string>();
+  const quoted: CodeWord[] = [];
+  let i = 0;
+
+  while (i < sql.length) {
+    const span = readSqlSpan(sql, i, grammar);
+    if (span !== null) {
+      if (query.quotedIdentifiers && span.kind === "quoted-identifier" && span.terminated) {
+        quoted.push({ start: i, end: span.end });
+      }
+      i = span.end;
+      continue;
+    }
+
+    const word = readSqlWord(sql, i);
+    if (word === null) {
+      i++;
+      continue;
+    }
+    if (query.words.has(word.text)) {
+      const list = found.get(word.text);
+      if (list === undefined) found.set(word.text, [{ start: i, end: word.end }]);
+      else list.push({ start: i, end: word.end });
+    }
+    for (const prefix of query.prefixes) {
+      if (word.text.startsWith(prefix)) prefixed.add(prefix);
+    }
+    i = word.end;
+  }
+
+  return new IndexedCodeWords(query, found, prefixed, quoted);
+}

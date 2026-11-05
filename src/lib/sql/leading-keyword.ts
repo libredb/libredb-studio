@@ -83,6 +83,9 @@ function isKeywordPart(ch: string): boolean {
   return isKeywordStart(ch) || (ch >= "0" && ch <= "9");
 }
 
+/** `leadingTriviaGrammar`'s answer for each grammar record it was asked about. */
+const TRIVIA_GRAMMARS = new WeakMap<SqlGrammar, SqlGrammar>();
+
 /**
  * The trivia grammar this reader applies, which is the caller's with one
  * deliberate override.
@@ -103,7 +106,15 @@ function isKeywordPart(ch: string): boolean {
  * reports a word from inside a literal.
  */
 function leadingTriviaGrammar(grammar: SqlGrammar): SqlGrammar {
-  return grammar.hash === "comment" ? grammar : { ...grammar, hash: "comment" };
+  if (grammar.hash === "comment") return grammar;
+  // Kept per grammar record, which is a constant: copying the record for every statement read was a measurable share
+  // of reading a script of short statements.
+  let trivia = TRIVIA_GRAMMARS.get(grammar);
+  if (trivia === undefined) {
+    trivia = { ...grammar, hash: "comment" };
+    TRIVIA_GRAMMARS.set(grammar, trivia);
+  }
+  return trivia;
 }
 
 /**
