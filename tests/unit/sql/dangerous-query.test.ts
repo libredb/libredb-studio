@@ -55,25 +55,69 @@ describe("isDangerousQuery at the analyze route's bound of 1,000,000 units", () 
 });
 
 /**
- * The cheapest of `runs` runs of `probe`, in milliseconds, after one run outside the measurement, the cold one. Being
- * preempted only ever adds time, so the cheapest run is the one that measured the reader rather than the machine.
+ * Where both cost guards draw their line. Eight times the text costs about 8 times as much when the gate reads it in
+ * linear time and about 64 when it reads it in quadratic time, and the gate costs at most about a dozen walks of a
+ * text against the more than 40 it used to walk.
  */
-function cheapest(probe: () => unknown, runs: number): number {
+const BOUND = 24;
+
+/** How many rounds `costInRuns` times: odd, so the median is one round's ratio. */
+const ROUNDS = 9;
+
+/**
+ * Each cost guard's own timeout. Its rounds take a few seconds on a loaded runner, and those of a gate that regressed
+ * take longer, against bun's default of 5 s: the guard is the ratio rather than the time, so this only gives the
+ * rounds room to finish and a regression its ratio in the failure message.
+ */
+const ROUNDS_TIMEOUT_MS = 30_000;
+
+/** The milliseconds `runs` runs of `probe` take, back to back. */
+function elapsed(probe: () => unknown, runs: number): number {
+  const started = performance.now();
+  for (let run = 0; run < runs; run++) probe();
+  return performance.now() - started;
+}
+
+/**
+ * How many runs of `yardstick` one run of `probe` costs: the median of `ROUNDS` rounds, after one run of each outside
+ * the measurement, the cold one, with every round's ratio in order of size for a failure message. A round times
+ * `probeRuns` runs of `probe` and `bound` times as many runs of `yardstick` back to back, each side first in turn.
+ *
+ * Being preempted only ever adds time, and it adds more to the side of a round that lasts longer. Against `bound`
+ * times as many runs of the yardstick, the two sides of a round last about as long as each other where the cost meets
+ * the bound; below it the yardstick's side lasts longer and takes more of what a loaded machine adds, above it the
+ * probe's side does, so the error leans away from the bound on either side of it, and the median keeps a round that
+ * one preemption landed on from deciding. The cheapest of five runs of each side, one side after the other, leaned
+ * toward it instead: a 1 ms walk often escapes preemption whole while a 12 ms gate run cannot, and a macOS runner read
+ * a script of short statements at 34.8 walks of the text for a gate that costs about 12. Measured on one CPU shared
+ * with two other test processes: the cheapest-of-five reading failed this file in every run, this one stayed under 16
+ * on every shape below, and the gate before #2249 still read more than 30 on each of them.
+ */
+function costInRuns(
+  probe: () => unknown,
+  yardstick: () => unknown,
+  bound: number,
+  probeRuns: number,
+): { cost: number; rounds: string } {
   probe();
-  let elapsed = Infinity;
-  for (let attempt = 0; attempt < runs; attempt++) {
-    const started = performance.now();
-    probe();
-    elapsed = Math.min(elapsed, performance.now() - started);
+  yardstick();
+  const ratios: number[] = [];
+  for (let round = 0; round < ROUNDS; round++) {
+    const probeFirst = round % 2 === 0;
+    const first = probeFirst ? elapsed(probe, probeRuns) : elapsed(yardstick, bound * probeRuns);
+    const second = probeFirst ? elapsed(yardstick, bound * probeRuns) : elapsed(probe, probeRuns);
+    const [probeMs, yardstickMs] = probeFirst ? [first, second] : [second, first];
+    ratios.push((bound * probeMs) / yardstickMs);
   }
-  return elapsed;
+  ratios.sort((a, b) => a - b);
+  return { cost: ratios[ROUNDS >> 1], rounds: ratios.map((ratio) => ratio.toFixed(1)).join(", ") };
 }
 
 /**
  * What the gate costs on the texts `POST /api/db/statement/analyze` hands it, of up to 1,000,000 UTF-16 code units,
- * on the event loop. Each guard is a RATIO of two costs measured on one machine in one
- * process, so a slow or loaded machine slows both sides and moves the ratio little, and neither side is a ceiling in
- * milliseconds.
+ * on the event loop. Each guard is a RATIO of two costs measured on one machine in one process, in rounds that time
+ * both sides in turn (`costInRuns`), so a slow or loaded machine slows both sides and moves the ratio little, and
+ * neither side is a ceiling in milliseconds.
  */
 describe("isDangerousQuery's cost grows with its text and no faster", () => {
   /**
@@ -107,16 +151,26 @@ describe("isDangerousQuery's cost grows with its text and no faster", () => {
   ];
 
   test.each(NESTED.map(([label, type, copies, textOf]) => [label, type, copies, textOf] as const))(
-    "%s (%s): eight times the text costs less than 24 times as much",
+    `%s (%s): eight times the text costs less than ${BOUND} times as much`,
     (_label, type, copies, textOf) => {
       const short = textOf(copies);
       const long = textOf(8 * copies);
       // A correct answer AND a bounded one: a fast wrong answer is not a pass.
       expect(isDangerousQuery(short, type)).toBe(false);
       expect(isDangerousQuery(long, type)).toBe(false);
-      const growth = cheapest(() => isDangerousQuery(long, type), 5) / cheapest(() => isDangerousQuery(short, type), 5);
-      expect(growth, `the text 8 times as long cost ${growth.toFixed(1)} times as much`).toBeLessThan(24);
+      // Two runs of the long text a round: one lasts a few milliseconds, which a preemption misses whole or doubles.
+      const { cost: growth, rounds } = costInRuns(
+        () => isDangerousQuery(long, type),
+        () => isDangerousQuery(short, type),
+        BOUND,
+        2,
+      );
+      expect(
+        growth,
+        `the text 8 times as long cost ${growth.toFixed(1)} times as much (rounds ${rounds})`,
+      ).toBeLessThan(BOUND);
     },
+    ROUNDS_TIMEOUT_MS,
   );
 
   /**
@@ -137,13 +191,18 @@ describe("isDangerousQuery's cost grows with its text and no faster", () => {
   ];
 
   test.each(WALKED.map(([label, type, text]) => [label, type, text] as const))(
-    "%s (%s): the gate costs less than 24 walks of the text",
+    `%s (%s): the gate costs less than ${BOUND} walks of the text`,
     (_label, type, text) => {
       const grammar = resolveSqlGrammar(type);
       expect(isDangerousQuery(text, type)).toBe(false);
-      const walks =
-        cheapest(() => isDangerousQuery(text, type), 5) / cheapest(() => findCodeWord(text, "ABSENT", 0, grammar), 5);
-      expect(walks, `the gate cost ${walks.toFixed(1)} walks of the text`).toBeLessThan(24);
+      const { cost: walks, rounds } = costInRuns(
+        () => isDangerousQuery(text, type),
+        () => findCodeWord(text, "ABSENT", 0, grammar),
+        BOUND,
+        1,
+      );
+      expect(walks, `the gate cost ${walks.toFixed(1)} walks of the text (rounds ${rounds})`).toBeLessThan(BOUND);
     },
+    ROUNDS_TIMEOUT_MS,
   );
 });
