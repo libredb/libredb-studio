@@ -8,7 +8,8 @@
  * module is imported and while the route serves. The real LLM config and factory modules load under that proxy too,
  * since the route's own import graph reaches the config module. createLLMProvider and resolveConfig, the two functions
  * that turn LLM_* into a model, are then replaced so that a call records itself and throws; every other export of
- * their modules is kept. Bun.env is a separate object the proxy cannot see, so a read through it is outside the pin.
+ * their modules is kept, and neither may be called while the route is imported or while it serves. Bun.env and
+ * import.meta.env are separate objects the proxy cannot see, so a read through either is outside the pin.
  * A token minted at run time then initializes, lists the tools and calls list_connections, inspect_schema and
  * run_read_query on an admin-only SQLite seed through the real POST handler.
  *
@@ -86,6 +87,8 @@ const imported = await recorded(async () => {
   return import("@/app/api/mcp/route");
 });
 const route = imported.answer;
+/** What the replaced functions recorded while the route was imported, kept before beforeEach clears the record. */
+const modelCallsWhileImporting = [...modelCalls];
 const { MCP_SERVER_NAME } = await import("@/lib/mcp/server");
 const { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } = await import(
   "../../helpers/mcp-fixtures"
@@ -140,8 +143,9 @@ describe("MCP with no LLM provider and agent mode off", () => {
     ]);
   });
 
-  test("importing the route reads no LLM_* or LIBREDB_AGENT_* variable and enumerates nothing", () => {
+  test("importing the route reads no LLM_* or LIBREDB_AGENT_* variable, enumerates nothing and calls no model function", () => {
     expect(imported.uses).toEqual([]);
+    expect(modelCallsWhileImporting).toEqual([]);
   });
 
   test("a minted token lists every tool and reads an admin-only SQLite seed, and nothing reads the model's settings", async () => {
