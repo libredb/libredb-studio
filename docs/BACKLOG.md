@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D457, U17 · 336
+- [Drivers and connections](#drivers-and-connections) — D1-D460, U17 · 338
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -3844,11 +3844,14 @@ Why openssl takes that long on that runner was not measured.
 Two requests that miss the cache at once therefore each build and connect a provider, and the later `set` replaces the earlier entry, whose provider no `removeProvider`, idle sweep or `clearProviderCache` can reach any more: its pool and its server sessions stay open until the process exits.
 Measured 2026-10-21 on `postgres:18` (1 CPU, `512m`) through the VS Code extension's backend child as its first review found it: two concurrent `connection/open` requests with the same params logged `[DB] Creating postgres provider` twice and left 2 client sessions in `pg_stat_activity`, and 1 of them stayed after `connection/close` and after `shutdown` had answered `null`.
 The child now runs one `connection/open` or `connection/close` of an id at a time and the extension shares one reopen per connection, generation and profile revision, starting a reopen at a newer revision only once the one under way has settled, so that channel no longer sends two at once: the same probe then counts 1 provider, 1 session, and none after the close.
-Nothing in `getOrCreateProvider` keeps the web routes from doing the same when two requests for one connection both miss the cache, after the idle sweep closed its provider, say; that path was not measured.
+Nothing in `getOrCreateProvider` keeps the web routes from doing the same when two requests for one connection both miss the cache, after the idle sweep closed its provider, say.
+On DuckDB the orphaned provider is a second read-write handle on the connection's file (`docs/providers/duckdb.md` section 3.8), and a write it acknowledged can be lost.
+Measured 2026-11-05 on that path through `POST /api/db/query` with the real DuckDB engine, on two seeds: two first requests for one seed at once, each an `INSERT`, right after every handle had closed, then six more `INSERT`s one at a time, then every cached handle closed and the file read back by a fresh one.
+The cache held one entry each time, and in 17 of 18 rounds one of the two first `INSERT`s, though answered 200, was not in the file.
 
 Found by the review of the VS Code extension's backend (PR 5).
 
-**Done when:** `getOrCreateProvider` keeps one in-flight promise per cache key that concurrent callers share and a failed connect removes, and a test sends two concurrent first calls for one key and expects one `createDatabaseProvider`, one `connect()` and one cached provider.
+**Done when:** `getOrCreateProvider` keeps one in-flight promise per cache key that concurrent callers share and a failed connect removes, a test sends two concurrent first calls for one key and expects one `createDatabaseProvider`, one `connect()` and one cached provider, and a DuckDB test sends two concurrent first writes for one connection and finds both rows in the file once every handle has closed.
 
 ### D387. A wrong password answers `CONNECTION_ERROR`, not `AUTH_ERROR`, on the four v0 engines
 
@@ -4492,6 +4495,26 @@ The agent path's `client.call(argv[0], ...argv.slice(1))` has the same shape, bu
 Found 2026-11-05 by the review of the change that collected the etcd lexer's refusals one at a time.
 
 **Done when:** a Redis command with more words than a runtime takes arguments is either sent without an argument spread or refused before the send with a sentence that names the word count, and a test drives 1,000,000 words through the plain and the JSON form.
+
+### D459. A request whose DuckDB handle is closed under its running statement is never answered
+
+`close()` of the client `openDuckDBClient` returns (`src/lib/db/providers/sql/duckdb/client.ts`) runs `connection.disconnectSync()` and `instance.closeSync()` with no `interrupt()` first, and in the measurement below the request whose statement was still running on that connection got neither rows nor an error.
+`getOrCreateProvider` in `src/lib/db/factory.ts` can close a handle under a running statement in two places: the stale single-writer handles it closes before opening one record's file under a new cache key, a seed edit among the cases its comment names (`docs/providers/duckdb.md` section 3.16 says such a statement does not complete), and the cached provider it closes when the request's `queryTimeout` differs.
+Measured 2026-11-05 through `POST /api/db/query` with the real engine: a `SELECT count(*) FROM range(20000000000)`, about 2 s on its own, whose handle a second request for the same seed closed 300 ms in to open the file under another cache key, had not answered after 60 s in one run and after 20 s in another, while the second request answered 200 in 11 ms; the timeout close was read in the code, not measured.
+Its severity is low: the cases that comment names and a saved timeout change are rare, and only a statement still running at the moment of the close is affected.
+Found 2026-11-05 while measuring how one DuckDB seed's handle serves several requests.
+
+**Done when:** a request whose DuckDB handle is closed under its running statement answers an error that says its connection closed, within a few seconds of the close, and a test closes a handle under a running `range` count through `POST /api/db/query` and expects that answer.
+
+### D460. On a SQLite seed another role can use, the refusal tells an administrator that SQLite requires one
+
+`connect()` in `src/lib/db/providers/sql/sqlite.ts` refuses a handle opened with file access denied with "SQLite connections require an administrator because this driver cannot confine statement-level file access".
+A seed whose `roles` admit a non-admin role opens that way for every caller, administrators included, as `docs/providers/sqlite.md` states, so on such a seed an administrator is told they need a role they hold, and not that the connection is one another role can use.
+The DuckDB refusal names that case: `FILE_ACCESS_DENIED_REASON` in `src/lib/db/providers/sql/duckdb/index.ts` says Studio denies file access "for any connection a non-admin role can use".
+Measured 2026-11-05 through `POST /api/db/query` with the real driver and an admin session: SQLite seeds offered to `["admin", "user"]` and to `["*"]` each answered 400 with that sentence, and one offered to `["admin"]` answered 200.
+Found 2026-11-05 by the review of the change that reads a shared seed's file-access audience from its operator roles.
+
+**Done when:** the SQLite refusal names a connection another role can use the way the DuckDB one does, for example "SQLite connections open only for an administrator on a connection no other role can use, because this driver cannot confine statement-level file access", every test that pins the sentence (in `tests/integration/mcp/context.test.ts`, `tests/integration/db/reserved-storage-paths.test.ts`, `tests/isolated/factory.test.ts` and `e2e/embedded-samples.spec.ts`) asserts the new wording, one of them for an administrator on a seed offered to `["admin", "user"]`, and any document that quotes the sentence follows it.
 
 ## Value interpolation
 

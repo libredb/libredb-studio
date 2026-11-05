@@ -28,6 +28,9 @@ import { AGENT_HANDOVER_BUDGET, AGENT_HANDOVER_READ_ALLOWANCE } from "@/lib/agen
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
+import { filterByRoles } from "@/lib/seed/connection-filter";
+import { seedRolesOf } from "@/lib/seed/roles";
+import type { SeedConnection } from "@/lib/seed/types";
 import * as realAuth from "@/lib/auth";
 
 const ANSWER_SQL = "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region";
@@ -270,6 +273,36 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
     runs.set("arun_1", { ...fakeRun(), actor: { sessionId: "ada", role: "admin" } });
     await POST(request(), params());
     expect(mockAcquire.mock.calls[0][3]).toEqual({ allowExternalFileAccess: true });
+  });
+
+  test("an admin's run on a seed offered to admin and user hands over under the posture a user's run gets", async () => {
+    // `resolveConnection` hands the route the run actor's own copy of the seed, which names only the roles that actor
+    // holds, so an admin's copy of a seed offered to ["admin", "user"] reads ["admin"]. The posture is still the one the
+    // operator's roles decide (docs/providers/duckdb.md 3.16), so every actor of that seed hands over on one handle.
+    const warehouse = (roles: string[]): SeedConnection => ({
+      id: "warehouse",
+      name: "Warehouse",
+      type: "duckdb",
+      database: "/srv/data/warehouse.duckdb",
+      roles,
+    });
+    async function handoverPosture(role: string, roles: string[]): Promise<unknown> {
+      const [copy] = filterByRoles([warehouse(roles)], seedRolesOf({ role }));
+      if (copy === undefined) throw new Error(`a ${role} run cannot resolve a seed offered to ${roles.join(", ")}`);
+      mockResolveConnection.mockResolvedValue(copy);
+      runs.set("arun_1", { ...fakeRun(), actor: { sessionId: "ada", role }, connectionId: "seed:warehouse" });
+      mockAcquire.mockClear();
+      await POST(request(), params());
+      return mockAcquire.mock.calls[0]?.[3];
+    }
+
+    try {
+      expect(await handoverPosture("admin", ["admin", "user"])).toEqual({ allowExternalFileAccess: false });
+      expect(await handoverPosture("user", ["admin", "user"])).toEqual({ allowExternalFileAccess: false });
+      expect(await handoverPosture("admin", ["admin"])).toEqual({ allowExternalFileAccess: true });
+    } finally {
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
   });
 
   test("a run whose gate declined is refused, and told so", async () => {

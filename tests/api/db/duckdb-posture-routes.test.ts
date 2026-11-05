@@ -119,6 +119,13 @@ writeFileSync(
     version: "1",
     connections: [
       { id: "duck-shared", name: "Shared", type: "duckdb", database: join(workDir, "shared.duckdb"), roles: ["*"] },
+      {
+        id: "duck-pair",
+        name: "Pair",
+        type: "duckdb",
+        database: join(workDir, "pair.duckdb"),
+        roles: ["admin", "user"],
+      },
       { id: "duck-admin", name: "Admin", type: "duckdb", database: join(workDir, "admin.duckdb"), roles: ["admin"] },
     ],
   }),
@@ -172,6 +179,11 @@ describe("each handle-opening route passes the posture the session and the conne
   test.each(ROUTES)("%s: an admin on a seed every role can use is denied too", async (route) => {
     role = "admin";
     expect(await postureFrom(route, { connectionId: "seed:duck-shared" })).toEqual({ allowExternalFileAccess: false });
+  });
+
+  test.each(ROUTES)("%s: an admin on a seed offered to admin and user is denied too", async (route) => {
+    role = "admin";
+    expect(await postureFrom(route, { connectionId: "seed:duck-pair" })).toEqual({ allowExternalFileAccess: false });
   });
 
   test.each(ROUTES)("%s: an admin on a seed only admins can use keeps the full reach", async (route) => {
@@ -274,6 +286,12 @@ describe("POST /api/admin/fleet-health passes the same posture for each connecti
         managed: true,
         seedId: "duck-shared",
       }),
+    ).toEqual({ allowExternalFileAccess: false });
+  });
+
+  test("a managed seed offered to admin and user is resolved, and denied", async () => {
+    expect(
+      await fleetPosture({ id: "seed:duck-pair", name: "Pair", type: "duckdb", managed: true, seedId: "duck-pair" }),
     ).toEqual({ allowExternalFileAccess: false });
   });
 

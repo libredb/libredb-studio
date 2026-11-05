@@ -481,7 +481,7 @@ from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sa
 `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db) — see
 [`seed-assets/sqlite/ATTRIBUTION.md`](../../seed-assets/sqlite/ATTRIBUTION.md)) to
 `<data dir>/sample-employees.db` and `getManagedConnections()` advertises it as an editable,
-dismissable "Sample (Employees)" connection (`type: "sqlite"`, `managed: false`, `roles: ["*"]`).
+dismissable "Sample (Employees)" connection (`type: "sqlite"`, `managed: false`, `roles: ["admin"]`).
 
 Unlike the LibreDB sample, the copy runs **asynchronously and fail-open**: `register()`
 fires-and-forgets the seed (start/completion/duration are logged), boot never waits on it, and a

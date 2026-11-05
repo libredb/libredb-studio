@@ -273,19 +273,23 @@ describe("acquire", () => {
     }
   });
 
-  test("a SQLite seed another role can use opens for no caller, admin included", async () => {
-    // SQLite's drivers cannot confine a statement's file access, so the caller's posture reaches the
-    // profiled handle (#1523): on a seed a non-admin role can use that posture is denied for every
-    // caller, and the acquisition is refused at connect rather than served read-only.
-    writeSeedFile(dir, [{ id: "shop", type: "sqlite", database: join(dir, "shop.db"), roles: ["*"] }]);
-    for (const caller of [alice, bob]) {
-      const context = new McpConnectionContext(caller);
-      // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next caller asks.
-      const connection = await shopConnection(context);
-      // oxlint-disable-next-line no-await-in-loop -- as above.
-      await expect(context.acquire(connection, "agent-read-only")).rejects.toThrow("require an administrator");
-    }
-  });
+  test.each([[["*"]], [["admin", "user"]]])(
+    "a SQLite seed offered to %p opens for no caller, admin included",
+    async (roles) => {
+      // SQLite's drivers cannot confine a statement's file access, so the caller's posture reaches the
+      // profiled handle (#1523): on a seed a non-admin role can use that posture is denied for every
+      // caller, and the acquisition is refused at connect rather than served read-only. Each caller lists
+      // its own copy of the seed, and alice's copy of the second seed names ["admin"] alone.
+      writeSeedFile(dir, [{ id: "shop", type: "sqlite", database: join(dir, "shop.db"), roles }]);
+      for (const caller of [alice, bob]) {
+        const context = new McpConnectionContext(caller);
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next caller asks.
+        const connection = await shopConnection(context);
+        // oxlint-disable-next-line no-await-in-loop -- as above.
+        await expect(context.acquire(connection, "agent-read-only")).rejects.toThrow("require an administrator");
+      }
+    },
+  );
 
   test("an admin's operations acquisition on an admin-only DuckDB seed borrows the editor's open handle", async () => {
     // The non-admin DuckDB file-access change with B49: the editor holds the file under the admin
@@ -335,6 +339,25 @@ describe("acquire", () => {
       const acquired = await context.acquire(connection, "agent-operations");
       expect(acquired).not.toBe(adminEditor);
     }
+  });
+
+  test("an admin's and a user's read acquisitions of a DuckDB seed offered to both are one provider", async () => {
+    // Each caller lists its own copy, ["admin"] for alice and ["user"] for bob; the posture, and so the
+    // profiled key, comes from the operator's list, so both are served by one handle on the file.
+    const file = join(dir, "offered-to-both.duckdb");
+    await createDuckdbFile(file, ["CREATE TABLE t (id INTEGER)"]);
+    writeSeedFile(dir, [{ id: "warehouse", type: "duckdb", database: file, roles: ["admin", "user"] }]);
+    const providers = [];
+    for (const caller of [alice, bob]) {
+      const context = new McpConnectionContext(caller);
+      // oxlint-disable-next-line no-await-in-loop -- one caller at a time.
+      const connection = await context.resolve("seed:warehouse");
+      if (connection === null || connection === MCP_CONNECTIONS_UNREADABLE)
+        throw new Error("seed:warehouse did not resolve");
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      providers.push(await context.acquire(connection, "agent-read-only"));
+    }
+    expect(providers[1]).toBe(providers[0]);
   });
 });
 

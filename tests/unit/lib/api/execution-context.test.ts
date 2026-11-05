@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { editorExecutionContext, sessionOwner } from "@/lib/api/execution-context";
 import { SETTINGS_REGISTRY } from "@/lib/governance/settings-registry";
 import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
-import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
+import { filterByRoles } from "@/lib/seed/connection-filter";
+import { KUBERNETES_REVIEWED_ROLE, seedRolesOf } from "@/lib/seed/roles";
+import type { SeedConnection } from "@/lib/seed/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { grantedSnapshot } from "../../../helpers/governance/granted-snapshot";
 
@@ -94,6 +96,64 @@ describe("editorExecutionContext on a seed a non-admin role can use", () => {
 
     expect(editorExecutionContext(ADMIN, bare)).toEqual({ allowExternalFileAccess: true });
     expect(editorExecutionContext(USER, bare)).toEqual({ allowExternalFileAccess: false });
+  });
+});
+
+/**
+ * The record a route or an MCP acquisition hands editorExecutionContext is the caller's own copy of the seed, built by
+ * filterByRoles, which keeps only the roles that caller holds: an admin's copy of a seed offered to ["admin", "user"]
+ * names ["admin"] alone. The posture must still be the one the operator's list decides, the same for every caller.
+ */
+describe("editorExecutionContext on the copy each caller resolves of one seed", () => {
+  /** The operator's entry: a DuckDB seed offered to `roles`. */
+  const entry = (roles: string[]): SeedConnection => ({
+    id: "warehouse",
+    name: "Warehouse",
+    type: "duckdb",
+    database: "/srv/data/warehouse.duckdb",
+    roles,
+  });
+
+  /** The copy `caller` resolves, through the product's projection. */
+  function copyFor(caller: { role: string; claimRoles?: readonly string[] }, roles: string[]): DatabaseConnection {
+    const [copy] = filterByRoles([entry(roles)], seedRolesOf(caller));
+    if (copy === undefined)
+      throw new Error(`a ${caller.role} caller cannot resolve a seed offered to ${roles.join(", ")}`);
+    return copy;
+  }
+
+  test.each([[["*"]], [["admin", "user"]], [["user", "admin"]]])(
+    "an admin's and a user's copies of a seed offered to %p both get the deny posture",
+    (roles) => {
+      expect(editorExecutionContext(ADMIN, copyFor(ADMIN, roles))).toEqual({ allowExternalFileAccess: false });
+      expect(editorExecutionContext(USER, copyFor(USER, roles))).toEqual({ allowExternalFileAccess: false });
+    },
+  );
+
+  test("an admin's copy of a seed offered to admins only keeps the full reach", () => {
+    expect(editorExecutionContext(ADMIN, copyFor(ADMIN, ["admin"]))).toEqual({ allowExternalFileAccess: true });
+  });
+
+  describe("with OIDC claim roles", () => {
+    let savedPrefix: string | undefined;
+
+    beforeEach(() => {
+      savedPrefix = process.env.OIDC_ROLE_PREFIX;
+      process.env.OIDC_ROLE_PREFIX = "team-";
+    });
+
+    afterEach(() => {
+      if (savedPrefix === undefined) delete process.env.OIDC_ROLE_PREFIX;
+      else process.env.OIDC_ROLE_PREFIX = savedPrefix;
+    });
+
+    test("every caller of a seed offered to admin and a team gets the deny posture, an admin without the team's role included", () => {
+      const roles = ["admin", "team-a"];
+      const callers = [ADMIN, { role: "admin", claimRoles: ["team-a"] }, { role: "user", claimRoles: ["team-a"] }];
+      for (const caller of callers) {
+        expect(editorExecutionContext(caller, copyFor(caller, roles))).toEqual({ allowExternalFileAccess: false });
+      }
+    });
   });
 });
 

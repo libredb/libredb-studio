@@ -490,3 +490,31 @@ describe("projectSeedConnection", () => {
     ).toThrow(/Elasticsearch-only/);
   });
 });
+
+describe("projectSeedConnection: whom the operator offers a seed to", () => {
+  // The file-access posture is decided from this marker (src/lib/api/execution-context.ts), because the roles on a
+  // caller's copy are narrowed to the roles that caller holds.
+  it.each([
+    [["*"], ["user"]],
+    [["admin", "user"], ["admin"]],
+    [["user", "admin"], ["admin"]],
+    [["admin", "team-a"], ["admin"]],
+  ])(
+    "marks a seed offered to %p as shared with a role other than admin, for a caller holding %p",
+    (roles, callerRoles) => {
+      expect(projectSeedConnection({ ...baseConn, roles }, callerRoles).sharedWithNonAdminRoles).toBe(true);
+    },
+  );
+
+  it("marks a row set apart for the Kubernetes access review as shared", () => {
+    expect(projectSeedConnection({ ...baseConn, roles: [KUBERNETES_REVIEWED_ROLE] }, []).sharedWithNonAdminRoles).toBe(
+      true,
+    );
+  });
+
+  it("leaves a seed offered to admins only unmarked rather than marked false", () => {
+    expect("sharedWithNonAdminRoles" in projectSeedConnection({ ...baseConn, roles: ["admin"] }, ["admin"])).toBe(
+      false,
+    );
+  });
+});
