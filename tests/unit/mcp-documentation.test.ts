@@ -215,6 +215,15 @@ describe("docs/MCP.md", () => {
       expect(MCP_DOC).toContain(line);
   });
 
+  test("says what inspect_schema's include_schema_names returns, its bound and its level rule", () => {
+    for (const line of [
+      "    With `include_schema_names` the page also carries `schema_names` after `schema`, the names `schema` can take on that connection in the provider's order, at most 100 names and 4,096 bytes of JSON with no name cut, and `schema_names_omitted`, the count of the rest; both are on every page of a call, count toward the 32 KiB result limit and leave `total_tables`, `has_more` and `next_offset` to the tables.",
+      "    On a connection with one container level the names are that level's listing, and on a PostgreSQL connection that reaches every database they are the schemas of the database `database` names; on one with two, such as DuckDB, they are the deepest level under the upper container the session is in, or else the first one listed, since no argument chooses that one; on a connection with no container level, such as SQLite, and on Sparkplug B, whose MCP handle declares none, `schema_names` is `{ unavailable }`.",
+      "    The names come from the container listings the call makes anyway, so asking for them sends no request of its own.",
+    ])
+      expect(MCP_DOC).toContain(line);
+  });
+
   test("carries the read_tool field", () => {
     expect(MCP_DOC).toContain("`read_tool`");
     expect(MCP_DOC).not.toContain("B117");

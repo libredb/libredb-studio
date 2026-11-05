@@ -38,6 +38,7 @@ import {
   recordOrRefuse,
   resultBytes,
   untrustedResult,
+  utf8Length,
   type ToolResult,
 } from "../output";
 
@@ -63,6 +64,8 @@ import {
  * starts after it, while one already started runs on.
  * Foreign keys come from the description the call makes for columns or indexes anyway, so asking for them alone adds
  * a description only where the engine may declare keys.
+ * The schema names are what the last container listing `chooseContainer` made answered, so asking for them sends
+ * nothing more.
  */
 
 export const InspectSchemaInputSchema = z.object({
@@ -79,6 +82,12 @@ export const InspectSchemaInputSchema = z.object({
     .default(false)
     .describe(
       "Also return each table's foreign keys, at most 25, each as column, referenced_table and referenced_column, with foreign_keys_omitted counting the rest, or unavailable on an engine Studio reads no foreign keys on. A composite key comes back as one row per column pair, since no constraint name is returned, and an empty list may also mean the connection's login cannot see the keys.",
+    ),
+  include_schema_names: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Also return schema_names, the names schema can take here, in the engine's order: at most 100 names and 4 KiB of JSON, with schema_names_omitted counting the rest, and no name cut. Where the engine has a level above schemas, they are the ones under the container the session is in, or else the first listed; a connection with no schema level answers unavailable.",
     ),
   timeout_ms: z
     .number()
@@ -125,6 +134,8 @@ const InspectSchemaOutputSchema = z.object({
   connection_id: z.string(),
   database: z.string().optional(),
   schema: z.string(),
+  schema_names: z.union([z.array(z.string()), z.object({ unavailable: z.string() })]).optional(),
+  schema_names_omitted: z.number().int().optional(),
   total_tables: z.number().int(),
   offset: z.number().int(),
   limit: z.number().int(),
@@ -135,6 +146,7 @@ const InspectSchemaOutputSchema = z.object({
 
 export type InspectSchemaInput = z.infer<typeof InspectSchemaInputSchema>;
 type InspectedTable = z.infer<typeof InspectedTableSchema>;
+type PageResult = z.infer<typeof InspectSchemaOutputSchema>;
 
 const INSPECT_SCHEMA_TITLE = "Inspect schema";
 export const INSPECT_SCHEMA_DESCRIPTION = `List the tables of one connection with their columns and, on request, their indexes. Works on every engine that holds tables. An engine whose objects are not tables refuses it, and the refusal names the tool that reads it, as list_connections' read_tool does. Columns an engine only inferred from sampled data are left out, so a table may hold fields this list does not show. Pages with limit and offset; has_more and next_offset say when more tables exist. ${MCP_UNTRUSTED_NOTICE}`;
@@ -143,10 +155,14 @@ const MAX_COLUMNS = 50;
 const MAX_INDEXES = 25;
 const MAX_FOREIGN_KEYS = 25;
 const FOREIGN_KEYS_UNAVAILABLE_TEXT = "Studio reads no foreign keys on this engine.";
+const MAX_SCHEMA_NAMES = 100;
+const MAX_SCHEMA_NAMES_BYTES = 4_096;
+const NO_SCHEMA_LEVEL_TEXT =
+  "This connection has no schema level: its tables are read at its root, and inspect_schema takes no schema.";
 const SCHEMA_NOT_FOUND_TEXT =
-  "This connection has no schema of that name. Call inspect_schema without schema to read the default one.";
+  "This connection has no schema of that name. Call inspect_schema without schema to read the default one, or with include_schema_names set to true to list the schemas it can read.";
 const FIRST_TABLE_OVER_CAP_TEXT =
-  "The first table on this page is larger than the 32 KiB result limit on its own. Call inspect_schema again for it with limit 1 and include_columns and include_indexes set to false.";
+  "The first table on this page is larger than the 32 KiB result limit on its own. Call inspect_schema again for it with limit 1 and include_columns, include_indexes, include_foreign_keys and include_schema_names set to false.";
 const FIRST_TABLE_OVER_CAP_BARE_TEXT =
   "The first table on this page does not fit the 32 KiB result limit even without its columns and indexes, so it cannot be listed here.";
 
@@ -180,10 +196,11 @@ function tablelessText(type: DatabaseType, tool: McpStatementTool): string {
   return `${getDBConfig(type).label} holds no table for inspect_schema to list. Read this connection with ${tool}.`;
 }
 
+/** Where a level was listed, `listed` is what its last listing answered: the deepest one, or the empty one above it. */
 type ContainerChoice =
   | { readonly kind: "root" }
-  | { readonly kind: "found"; readonly container: Container }
-  | { readonly kind: "none" }
+  | { readonly kind: "found"; readonly container: Container; readonly listed: readonly Container[] }
+  | { readonly kind: "none"; readonly listed: readonly Container[] }
   | { readonly kind: "not-found" };
 
 /**
@@ -208,8 +225,8 @@ async function chooseContainer(
     const chosen = named
       ? containers.find((candidate) => candidate.name.toLowerCase() === wanted)
       : (containers.find((candidate) => candidate.isSessionDefault === true) ?? containers[0]);
-    if (chosen === undefined) return named ? { kind: "not-found" } : { kind: "none" };
-    if (deepest) return { kind: "found", container: chosen };
+    if (chosen === undefined) return named ? { kind: "not-found" } : { kind: "none", listed: containers };
+    if (deepest) return { kind: "found", container: chosen, listed: containers };
     parent = chosen.path;
   }
 }
@@ -283,9 +300,23 @@ function foreignKeysOf(detail: ObjectDetail | null): Pick<InspectedTable, "forei
   };
 }
 
+/** The listed names in the provider's order while 100 and 4 KiB of JSON hold, the rest counted; no name is cut. */
+function schemaNamesOf(listed: readonly Container[]): Pick<PageResult, "schema_names" | "schema_names_omitted"> {
+  const names: string[] = [];
+  let bytes = utf8Length("[]");
+  for (const container of listed) {
+    const cost = utf8Length(JSON.stringify(container.name)) + (names.length === 0 ? 0 : 1);
+    if (names.length === MAX_SCHEMA_NAMES || bytes + cost > MAX_SCHEMA_NAMES_BYTES) break;
+    names.push(container.name);
+    bytes += cost;
+  }
+  return { schema_names: names, schema_names_omitted: listed.length - names.length };
+}
+
 function pageResult(
   args: InspectSchemaInput,
   container: Container | null,
+  names: Pick<PageResult, "schema_names" | "schema_names_omitted">,
   total: number,
   tables: readonly InspectedTable[],
   cutByCap: boolean,
@@ -295,6 +326,7 @@ function pageResult(
     connection_id: args.connection_id,
     ...(args.database === undefined ? {} : { database: args.database }),
     schema: container?.name ?? "default",
+    ...names,
     total_tables: total,
     offset: args.offset,
     limit: args.limit,
@@ -324,6 +356,11 @@ async function readPage(
   const choice = await chooseContainer(provider, args.schema, step);
   if (choice.kind === "not-found")
     return { result: ownWordsError(SCHEMA_NOT_FOUND_TEXT), failure: "mcp_schema_not_found" };
+  const names = !args.include_schema_names
+    ? {}
+    : choice.kind === "root"
+      ? { schema_names: { unavailable: NO_SCHEMA_LEVEL_TEXT } }
+      : schemaNamesOf(choice.listed);
   const container = choice.kind === "found" ? choice.container : null;
   const objects = choice.kind === "none" ? [] : await step(() => listRelations(provider, container?.path ?? []));
   const wanted = args.table?.toLowerCase();
@@ -332,9 +369,12 @@ async function readPage(
   for (const object of filtered.slice(args.offset, args.offset + args.limit)) {
     if (signal.aborted) return { result: ownWordsError(MCP_CANCELLED_TEXT), failure: "mcp_cancelled" };
     const table = await inspectTable(provider, object, args, step);
-    if (resultBytes(pageResult(args, container, filtered.length, [...tables, table], false)) > MCP_RESULT_CAP_BYTES) {
-      if (tables.length > 0) return { result: pageResult(args, container, filtered.length, tables, true) };
-      const bare = !args.include_columns && !args.include_indexes;
+    if (
+      resultBytes(pageResult(args, container, names, filtered.length, [...tables, table], false)) > MCP_RESULT_CAP_BYTES
+    ) {
+      if (tables.length > 0) return { result: pageResult(args, container, names, filtered.length, tables, true) };
+      const bare =
+        !args.include_columns && !args.include_indexes && !args.include_foreign_keys && !args.include_schema_names;
       return {
         result: ownWordsError(bare ? FIRST_TABLE_OVER_CAP_BARE_TEXT : FIRST_TABLE_OVER_CAP_TEXT),
         failure: "mcp_result_too_large",
@@ -342,7 +382,7 @@ async function readPage(
     }
     tables.push(table);
   }
-  return { result: pageResult(args, container, filtered.length, tables, false) };
+  return { result: pageResult(args, container, names, filtered.length, tables, false) };
 }
 
 export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall): Promise<ToolResult> {

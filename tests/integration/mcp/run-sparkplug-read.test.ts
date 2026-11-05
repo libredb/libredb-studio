@@ -192,6 +192,17 @@ describe("the tool", () => {
   });
 });
 
+describe("inspect_schema's schema names", () => {
+  test("are unavailable, since the handle declares no level, and name no id", async () => {
+    const result = await call("inspect_schema", { connection_id: "seed:north", include_schema_names: true });
+    expect(result.structuredContent?.schema_names).toEqual({
+      unavailable:
+        "This connection has no schema level: its tables are read at its root, and inspect_schema takes no schema.",
+    });
+    holdsNoId(result);
+  });
+});
+
 describe("a read", () => {
   test("the window answers totals behind the notice, with its window and the completeness sentence as notes", async () => {
     const result = await sparkplug('{"read": "window"}');

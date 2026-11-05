@@ -319,6 +319,12 @@ describe("inspect_schema's own words", () => {
       "Also return each table's foreign keys, at most 25, each as column, referenced_table and referenced_column, with foreign_keys_omitted counting the rest, or unavailable on an engine Studio reads no foreign keys on. A composite key comes back as one row per column pair, since no constraint name is returned, and an empty list may also mean the connection's login cannot see the keys.",
     );
   });
+
+  test("describe include_schema_names with its bound and its level rule", () => {
+    expect(InspectSchemaInputSchema.shape.include_schema_names.description).toBe(
+      "Also return schema_names, the names schema can take here, in the engine's order: at most 100 names and 4 KiB of JSON, with schema_names_omitted counting the rest, and no name cut. Where the engine has a level above schemas, they are the ones under the container the session is in, or else the first listed; a connection with no schema level answers unavailable.",
+    );
+  });
 });
 
 describe("the instructions", () => {

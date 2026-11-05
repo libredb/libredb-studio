@@ -275,7 +275,7 @@ describe("inspect_schema", () => {
         content: [
           {
             type: "text",
-            text: "This connection has no schema of that name. Call inspect_schema without schema to read the default one.",
+            text: "This connection has no schema of that name. Call inspect_schema without schema to read the default one, or with include_schema_names set to true to list the schemas it can read.",
           },
         ],
       });
