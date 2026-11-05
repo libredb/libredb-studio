@@ -572,7 +572,7 @@ That is the denied posture: the database stays editable, and statement-level fil
 |---|---|---|
 | An inline connection, the requester's own | Full reach | Denied |
 | A seed only admins can use (`roles: [admin]`) | Full reach | Cannot resolve it |
-| A seed a non-admin role can use (`roles` holds `user` or `*`) | **Denied** | Denied |
+| A seed a non-admin role can use (`roles` holds `user`, `*` or a custom role) | **Denied** | Denied |
 
 The last row is the price of DuckDB's single writer.
 Every role a seed is offered to resolves the same record, and one record is one cached handle, because DuckDB serves one file through one read-write handle per process.

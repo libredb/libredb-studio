@@ -21,7 +21,7 @@ mock.module("@/lib/auth", () => ({
 }));
 
 import { GET } from "@/app/api/connections/managed/route";
-import { resetCache } from "@/lib/seed";
+import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { getSession } from "@/lib/auth";
 import { setSqliteSampleSeedState, SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
@@ -98,6 +98,54 @@ describe("GET /api/connections/managed", () => {
       const data = await res.json();
       expect(data.connections.map((conn: { seedId: string }) => conn.seedId)).toEqual(["plant-a", "plant-b"]);
       for (const conn of data.connections) expect(conn).not.toHaveProperty("agentReadRoots");
+    } finally {
+      process.env.SEED_CONFIG_PATH = origPath;
+      resetCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Whom the operator offers a seed to is read on the server, where the file-access posture is decided from it; the
+  // browser is sent only the roles its session holds, so neither copy of a seed carries the marker.
+  it("never lists the server-side marker of whom a seed is offered to, which the server's record carries", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-seed-audience-"));
+    const file = path.join(dir, "seed-connections.json");
+    const db = { type: "postgres", host: "db.ornek.net" };
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          { ...db, id: "pair", name: "Pair", roles: ["admin", "user"] },
+          { ...db, id: "pair-editable", name: "Pair editable", roles: ["admin", "user"], managed: false },
+          { ...db, id: "admins", name: "Admins", roles: ["admin"] },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = file;
+    resetCache();
+    try {
+      // The server's records: the two seeds also offered to a user carry it, the admins' seed does not.
+      const server = await getManagedConnections(["admin"]);
+      expect(server.map((c) => [c.seedId, c.sharedWithNonAdminRoles === true])).toEqual([
+        ["pair", true],
+        ["pair-editable", true],
+        ["admins", false],
+      ]);
+      for (const session of [
+        { role: "admin", username: "admin@test.com" },
+        { role: "user", username: "user@test.com" },
+      ]) {
+        (getSession as ReturnType<typeof mock>).mockImplementation(() => session);
+        // oxlint-disable-next-line no-await-in-loop -- one session at a time.
+        const res = await GET();
+        expect(res.status).toBe(200);
+        // oxlint-disable-next-line no-await-in-loop -- as above.
+        const data = await res.json();
+        expect(data.connections.length).toBeGreaterThan(0);
+        for (const conn of data.connections) expect(conn).not.toHaveProperty("sharedWithNonAdminRoles");
+      }
     } finally {
       process.env.SEED_CONFIG_PATH = origPath;
       resetCache();

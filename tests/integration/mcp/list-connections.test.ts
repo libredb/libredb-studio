@@ -112,6 +112,13 @@ describe("the answer", () => {
     }
   });
 
+  test("carries no server-side marker of whom a seed is offered to", async () => {
+    writeSeedFile(dir, [{ ...ANALYTICS, roles: ["admin", "user"] }]);
+    const result = await list();
+    expect(result.structuredContent?.connections).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain("sharedWithNonAdminRoles");
+  });
+
   test("carries neither field of an agent credential, nor either value, on any page", async () => {
     const agent = { agentUser: "not-a-real-agent-user-marker", agentPassword: STAND_IN_AGENT_PASSWORD_MARKER };
     const many = Array.from({ length: 40 }, (_, index) => ({ ...ANALYTICS, id: `analytics-${index}`, ...agent }));
