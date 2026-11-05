@@ -25,6 +25,12 @@ const ROOT = path.resolve(import.meta.dir, "../../..");
 /** Agent mode, an agent read or run, the agent read key and the agent credential: the feature, never a protocol's agent. */
 const AGENT_FEATURE = /\bagent (?:mode|read|run)\b|\bagent read key\b|\bagent credential\b/i;
 
+/**
+ * The same feature in the forms prose also takes, agent-mode, an agent statement or execution among them. It reads only
+ * what a client is served, since in source literals a hyphen form is a module path or the agent-read-only profile.
+ */
+const SERVED_AGENT_FEATURE = /\bagent[- ](?:mode|read|run|statement|execution)\b|\bagent credential\b/i;
+
 afterEach(async () => {
   await resetMcpTestState();
 });
@@ -48,6 +54,7 @@ function servedTexts(value: unknown, where: string): Array<readonly [string, str
 describe("what a client reads before it calls a tool", () => {
   test("the server instructions name no agent feature", () => {
     expect(MCP_INSTRUCTIONS).not.toMatch(AGENT_FEATURE);
+    expect(MCP_INSTRUCTIONS).not.toMatch(SERVED_AGENT_FEATURE);
   });
 
   test("tools/list answers every registered tool, so the scan reads each one", async () => {
@@ -59,6 +66,7 @@ describe("what a client reads before it calls a tool", () => {
     const texts = tools.flatMap((tool) => servedTexts(tool, tool.name));
     for (const tool of tools) expect(texts.map(([where]) => where)).toContain(`${tool.name}.description`);
     expect(texts.filter(([, text]) => AGENT_FEATURE.test(text)).map(([where]) => where)).toEqual([]);
+    expect(texts.filter(([, text]) => SERVED_AGENT_FEATURE.test(text)).map(([where]) => where)).toEqual([]);
   });
 });
 
