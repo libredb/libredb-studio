@@ -7,7 +7,7 @@ It is off by default.
 
 MCP and agent mode, Studio's in-app agent, are separate features that share one read-only core.
 MCP needs neither agent mode nor an LLM provider: it runs with `LIBREDB_AGENT_ENABLED` set to `false` and no `LLM_*` variable set.
-The shared core is the statement languages under `src/lib/agent/languages/`, each of which registers its MCP tool in `AGENT_LANGUAGE_MCP_FACETS`, the read profiles `agent-read-only` and `agent-operations`, and the seed fields `agentUser`, `agentPassword` and `agentReadRoots`, so those names keep the word agent.
+The shared core is the statement languages under `src/lib/agent/languages/`, each of which declares its MCP tool, or none yet, in `AGENT_LANGUAGE_MCP_FACETS`, the read profiles `agent-read-only` and `agent-operations`, and the seed fields `agentUser`, `agentPassword` and `agentReadRoots`, so those names keep the word agent.
 In the rest of this guide, `agent-read-only` is Studio's least-privilege read profile, under which every statement tool opens its connection, and `agent-operations` is the profile `inspect_schema` opens under, which sends no statement.
 `agentUser` and `agentPassword` are a seed's read credential of its own, `agentReadRoots` an OPC UA seed's read roots, and `AGENT_EXECUTION_ENGINES` the engines the shared core runs statements on.
 
