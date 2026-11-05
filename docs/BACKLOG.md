@@ -32,9 +32,9 @@ None of it is a GitHub issue.
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
-- [Dependencies](#dependencies) — P1-P13 · 11
+- [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC37 · 31
-- [Release pipeline](#release-pipeline) — REL1-REL9 · 9
+- [Release pipeline](#release-pipeline) — REL1-REL10 · 10
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
@@ -7235,6 +7235,16 @@ Found 2026-11-02 while taking the Dependabot production group (#2167); the pin s
 
 **Done when:** the agent-boundary captures are recorded on 6.3.0 or a later release against the Enterprise fixture and match the committed ones (or the differences are taken into the provider and `docs/providers/neo4j.md`), the pin moves to it with the measurement its `//dependencies` note asks for, with `neo4j-driver-core` and `neo4j-driver-bolt-connection` on the same version, and the `neo4j-driver-lite` ignore entry in `.github/dependabot.yml` is removed with it.
 
+### P14. biome.json names the 2.5.1 schema while the lockfile installs Biome 2.6.4
+
+`biome.json` points `$schema` at `https://biomejs.dev/schemas/2.5.1/schema.json`, while `package.json` asks for `@biomejs/biome` `^2.5.12` and `bun.lock` resolves 2.6.4.
+So every Biome run, `bun run format` in the required check among them, prints "The configuration schema version does not match the CLI version 2.6.4" as an info diagnostic on `biome.json`, where a new diagnostic is easy to miss beside it.
+The `biome.json` excerpt in `docs/TOOLCHAIN.md` names the same 2.5.1 schema.
+
+Found 2026-11-05 while reading the format step of a local gate run.
+
+**Done when:** `biome.json` names the schema of the installed Biome, through `biome migrate` or by hand, the `docs/TOOLCHAIN.md` excerpt matches it, and `bun run format` prints no schema-version diagnostic.
+
 ## Documentation
 
 ### DOC3. Six channel listings carry corrected copy that nobody has resubmitted
@@ -7778,6 +7788,16 @@ Seen once, on 2026-10-16, in a local run of the E2E Tests job's suite in CI mode
 The cause above is a reading of the code, not a measurement: the run kept no trace of the second context's requests.
 
 **Done when:** the second context makes no request between the removal and its own navigation, for example because it waits for its editor to settle and then stays on `about:blank` until the check, or the check accepts either redirect and asserts what both prove, that the session is refused; and the test passes 20 of 20 runs with `--repeat-each=20`.
+
+### REL10. The Windows-raise test checks a hand-kept list of bounds, which already misses one
+
+`tests/unit/platform-timeout.test.ts` checks, for each bound in its `BOUNDS_IN_USE` list, that the Windows raise stays under the runner's per-file budget and above the runner's Windows per-test default.
+Its docblock calls the list the bounds that pass through the helper today, and it holds 40_000 and 120_000, while the Kafka write-reach test (`tests/unit/db/kafka/write-reach.test.ts`) also passes 60_000.
+60_000 lies between the two listed bounds, and both checks grow with the bound, so a change to the factor or to either limit that broke it would break a listed bound too; what the hand-kept list cannot catch is a new bound below 40_000 or above 120_000, which nothing asks anyone to list.
+
+Found 2026-11-05 while sizing a per-test bound for the standalone zip packing tests.
+
+**Done when:** every bound passed to `platformTimeoutMs` under `tests/` is held by those checks, either because `BOUNDS_IN_USE` lists it or because the test collects the bounds from the tests that pass them, and a new bound outside the list fails the test.
 
 ---
 
