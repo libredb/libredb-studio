@@ -457,6 +457,70 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
 });
 
 /**
+ * Which shipped engines refuse to open a handle at all when its file-access posture is denied, rather
+ * than confining it. SQLite's `connect()` refuses before any file I/O because its drivers cannot confine
+ * statement-level file access, while DuckDB, the other engine that reads the posture, opens the handle
+ * with external access off. A true row is always a `READS_FILE_ACCESS_POSTURE` engine.
+ *
+ * Static because MCP decides before any provider exists: `list_connections` and `inspect_schema` ask,
+ * through `mcpConnectionUnavailable` in `src/lib/mcp/availability.ts`, whether any open of a listed
+ * connection can succeed for its caller, and no provider declares the fact. Reading `connection.type`
+ * there was the alternative and is forbidden by `CLAUDE.md`.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * answering, and `tests/unit/db/refuses-denied-file-access.test.ts` holds every row to what `connect()`
+ * does under the context an MCP open gives a caller whose file access is denied. Frozen like the records
+ * above it.
+ */
+export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  // Its open refuses a denied handle before any file I/O.
+  sqlite: true,
+  libsql: false,
+  // It reads the posture too, and confines a denied handle instead of refusing it.
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
+  snmp: false,
+  sparkplug: false,
+  libredb: false,
+});
+
+/**
  * Which shipped engines keep one handle per database file in this process: the static answer
  * `ProviderCapabilities.singleWriterFile` gives once a provider is built.
  *
