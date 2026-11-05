@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D460, U17 · 338
+- [Drivers and connections](#drivers-and-connections) — D1-D460, U17 · 339
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B171 · 82
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP16 · 16
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP23 · 23
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
 
 ---
@@ -4495,6 +4495,15 @@ The agent path's `client.call(argv[0], ...argv.slice(1))` has the same shape, bu
 Found 2026-11-05 by the review of the change that collected the etcd lexer's refusals one at a time.
 
 **Done when:** a Redis command with more words than a runtime takes arguments is either sent without an argument spread or refused before the send with a sentence that names the word count, and a test drives 1,000,000 words through the plain and the JSON form.
+
+### D458. Snowflake and BigQuery declare that their engine has no foreign keys, though both keep declared ones
+
+`getCapabilities` in `src/lib/db/providers/sql/snowflake/index.ts` and in `src/lib/db/providers/sql/bigquery/index.ts` answers `declaresForeignKeys: false`, which `ProviderCapabilities.declaresForeignKeys` in `src/lib/db/types.ts` defines as an engine with no foreign keys to declare at all, so a consumer may read an empty list as a fact of the engine rather than hedge it.
+Both engines keep foreign keys a user declares and do not enforce them: Snowflake lists them with `SHOW IMPORTED KEYS`, and BigQuery takes `FOREIGN KEY ... NOT ENFORCED` and lists it in `INFORMATION_SCHEMA.TABLE_CONSTRAINTS`; neither was measured against a live account for this entry.
+So every reader that gates on the flag, the schema relations text of `src/lib/agent/er-diagram.ts` among them, states as fact an absence these engines do not have, and `docs/providers/snowflake.md` says Studio draws no foreign keys.
+Found 2026-11-05 while designing MCP phase 1 (#2252).
+
+**Done when:** each provider reads its engine's declared keys into `ObjectDetail.foreignKeys` and answers `declaresForeignKeys` true, with `docs/providers/snowflake.md`, `docs/providers/bigquery.md` and each provider's tests in step.
 
 ### D459. A request whose DuckDB handle is closed under its running statement is never answered
 
@@ -9532,7 +9541,7 @@ Which earlier PostgreSQL versions behave the same is not measured.
 
 ## MCP server deferrals (#246)
 
-Each was decided when PR #1070's MCP server was redesigned, not overlooked.
+Each was decided when PR #1070's MCP server was redesigned, or when MCP phase 1 was designed (#2252), not overlooked.
 
 ### MCP1. MCP clients authenticate with a static bearer token, not OAuth
 
@@ -9695,6 +9704,71 @@ Dropping the entry when its first caller stops waiting would let two acquisition
 Found 2026-11-03 while opening `run_snmp_read`.
 
 **Done when:** a call that joins an acquisition no caller is still waiting on starts its own after the first settles, or answers that the connection is still opening, without two providers ever held for one key, with a test that times out one call and pins what the next call sends and answers, and the SNMP docs updated to match.
+
+### MCP17. MCP reads only operator seed connections, never a connection a user creates
+
+`McpConnectionContext` in `src/lib/mcp/context.ts` lists the managed connections the caller's roles admit and keeps only those with `mcp: true`, which an operator sets on a seed entry, so no connection a user creates and stores on the server reaches an MCP client.
+Opening those needs decisions the seed path never had to make: whose credential a stored connection is read under, how its owner opts it in, which roles reach it, and what the audit names.
+OAuth and hosted connectors stay MCP1.
+Found 2026-11-05 while designing MCP phase 1 (#2252).
+
+**Done when:** the owner sets the credential policy for stored connections, a design gives their opt-in, roles and audit, and `list_connections` and every tool serve such a connection under it, with a test for each.
+
+### MCP18. No MCP tool reads an object beyond the relations `inspect_schema` lists
+
+The maintainer's comment on #246 of 2026-09-21 asked for the schema and object reads first, and MCP serves the schema read alone: `inspect_schema` lists an engine's relation kinds, and no tool reads the object inventory or an object's source.
+Opening the inventory as it stands would widen what MCP reaches: it walks every kind `enumerableKinds` in `src/lib/db/object-kinds.ts` returns and keeps a kind's names back only where the kind declares `machineNames: "withheld"` (`kindNamesWithheld`).
+So it would answer Kafka's consumer groups (`KAFKA_OBJECT_KINDS` in `src/lib/db/providers/stream/kafka/objects.ts`), which `run_kafka_read` never reads, and S3's buckets (`S3_OBJECT_KINDS` in `src/lib/db/providers/objectstore/s3/objects.ts`) from one ListBuckets, where `run_s3_read` names only the buckets whose HEAD the read key is answered.
+Found 2026-11-05 while designing MCP phase 1 (#2252).
+
+**Done when:** a per-kind MCP opt-in declared beside each provider gates which kinds an MCP object read returns, a design gives the tool its input and bounds, and a test shows a kind without the opt-in never reaches an MCP answer.
+
+### MCP19. `inspect_schema` opens under a profile that skips the statement proofs, so it lists seeds the statement tool refuses
+
+`inspectSchema` in `src/lib/mcp/tools/inspect-schema.ts` acquires its connection under `agent-operations`, which `PROFILE_ACQUISITION` in `src/lib/db/factory.ts` opens with `requiresReadOnlyStatements` false, and a provider that proves its principal only for a connection that sends statements opens that profile with neither the proof nor its refusal, as the docblock above `PROFILE_ACQUISITION` says of MongoDB.
+So on every engine whose provider proves its login only for a connection that sends statements, which `docs/MCP.md` names engine by engine, `inspect_schema` lists a seed whose login the statement tool refuses; `tests/integration/mcp/inspect-schema.test.ts` lists the collections of a MongoDB seed signed in as an admin.
+Switching `inspect_schema` to `agent-read-only` would refuse those seeds where they list today, and a hybrid that proves the login wherever a statement tool serves the engine is a design of its own.
+Found 2026-11-05 while designing MCP phase 1 (#2252).
+
+**Done when:** the owner keeps `agent-operations` with its disclosure in `docs/MCP.md` and the tool description, and this entry is deleted, or adopts the hybrid, with an `inspect_schema` test on each such engine that a seed its statement tool refuses is refused there too.
+
+### MCP20. Refusals MCP relays from providers and statement languages name Studio's agent
+
+MCP answers a provider's or a statement language's refusal in that code's own sentence, behind an opening of its own, and many of those sentences name the agent feature.
+"The agent read-only execution profile ..." opens refusals in 27 files under `src/lib/db/providers/`, and `readLibreDBReadCommand` in `src/lib/db/providers/embedded/libredb-command.ts` refuses a second line with "an agent read is exactly one command on one line".
+Agent mode reads the same sentences, so rewording them for MCP alone would substitute text over another module's words and hide where they come from.
+The MCP subsections of several provider docs describe MCP's reads in the same terms, such as "in the sentence an agent run reads" in `docs/providers/etcd.md` and `docs/providers/kafka.md`.
+MCP4 is the like gap for SQL's words in MCP's own read-query module.
+Found 2026-11-05 while designing MCP phase 1 (#2252), which rewords only the text MCP itself serves and `docs/MCP.md`.
+
+**Done when:** one change rewords those sentences for both features at once, in words that name neither, with every pinned test moved in that change, the provider docs' MCP subsections following, and a test that no refusal MCP relays names the agent feature.
+
+### MCP21. MCP serves tools alone, and its longest statement descriptions leave little room under the 2,048-character bound
+
+`createStudioMcpServer` in `src/lib/mcp/server.ts` declares tools as the server's only capability, and `resources/list` and `prompts/list` answer -32601, so a client learns each statement language's syntax, the seed rules and the limits from tool descriptions and `docs/MCP.md` alone.
+`tests/unit/mcp/descriptions.test.ts` holds every description to 2,048 characters, the length a client may cut at, and measured on 2026-11-05 with part 1 of #2252 the MTConnect, MQTT, Sparkplug B and S3 statement descriptions are 2,040, 2,039, 2,029 and 2,014 characters, so a sentence added to one of them has almost no room.
+One consolidated read tool, per-language syntax served as MCP resources or prompts, and Skills over MCP are each open, and each changes what every client lists.
+Found 2026-11-05 while designing MCP phase 1 (#2252).
+
+**Done when:** the owner sets a headroom bound for the statement descriptions and decides where per-language syntax lives, and `tests/unit/mcp/descriptions.test.ts` holds that bound.
+
+### MCP22. `inspect_schema` guesses a container where the shared rule declines
+
+`chooseContainer` in `src/lib/mcp/tools/inspect-schema.ts` reads, at each level, the first container flagged `isSessionDefault`, or the first listed when none is flagged, while `sessionDefaultContainer` in `src/lib/db/container-walk.ts`, the rule the object browser's scoped read and agent grounding read, answers no default when no container or more than one is flagged.
+So on a connection whose level flags none, or flags two, a call without `schema` reads whichever container the provider listed first, and its answer names that container without saying it was a guess.
+MCP3, the case-insensitive match in the same function, is a separate defect.
+Found 2026-11-05 while designing MCP phase 1 (#2252).
+
+**Done when:** `chooseContainer` reads the default through `sessionDefaultContainer` and answers a level where that rule declines with a refusal that asks for `schema`, with a test on fake providers of depth 1 and 2 for none and for a tie.
+
+### MCP23. The chart's MCP values comment says the server runs read-only SQL
+
+The comment above `mcp:` in `charts/libredb-studio/values.yaml` says an AI client "reads schemas and runs bounded read-only SQL at /api/mcp", while every statement tool but `run_read_query` runs a statement in its own engine's language, as `docs/MCP.md` says.
+Its copy in `operator/helm-charts/libredb-studio/values.yaml` says the same, and `bun run chart:check` (`operatorCopyViolations` in `scripts/sync-chart-version.mjs`) and the operator release's "Verify operator embedded chart is in sync" step hold the two equal.
+The settings screen, `.env.example` and `docker-compose.example.yml` say it in MCP's words since #2252, which left the chart alone because a `values.yaml` edit forces a hand bump of the released chart version (#167) and publishes a chart release on merge (`.github/workflows/helm-release.yml`).
+Found 2026-11-05 while designing MCP phase 1 (#2252).
+
+**Done when:** both comments say "bounded, read-only statements in each engine's own language" in the next change to the chart, with its #167 version bump and `bun run chart:bump` refreshing the operator copy, and `tests/unit/mcp/copy.test.ts` reads both.
 
 ---
 
