@@ -33,7 +33,7 @@ None of it is a GitHub issue.
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
 - [Dependencies](#dependencies) — P1-P13 · 11
-- [Documentation](#documentation) — DOC3-DOC35 · 29
+- [Documentation](#documentation) — DOC3-DOC36 · 30
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
@@ -7575,6 +7575,15 @@ Counted 2026-10-17 on the #1790 branch; every omission is older than that PR, wh
 Found 2026-10-17 while verifying #1790.
 
 **Done when:** the tree names every directory and shared module under `src/lib/db/providers/`, and a test walks that directory and fails when the tree misses one.
+
+### DOC36. docs/AGENT.md and B9 state counts and callers the code has moved past
+
+The "Supported models" section of `docs/AGENT.md` says thirty-five models run every agent surface and later calls them the thirty-seven, while `docs/llms/README.md` says fifty-one models are supported.
+Its "HTTP surface" section counts six paths under `src/app/api/agent/` and seven handlers, where the tree holds eight route files with eleven handlers, counted 2026-11-05 on `main` at 43bac5149.
+B9 says `driveAgentRun`'s only callers are the start route and the drive route, while the `PATCH` handler of `src/app/api/agent/runs/[runId]/route.ts` drives a run it resumed as well.
+Found 2026-11-05 while designing MCP phase 1 (#2252).
+
+**Done when:** each count names what it counts from the tree or `docs/llms/README.md` rather than a number that moves, `tests/unit/agent-documentation.test.ts` holds it, and B9 states the resume path as it is or leaves the backlog.
 
 ## Release pipeline
 
