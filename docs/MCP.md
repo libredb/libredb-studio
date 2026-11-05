@@ -599,6 +599,46 @@ In `opencode.json`, as a remote server under `mcp.servers`, where OpenCode 2 loo
 OpenCode 2 runs one shared background service that reads `LIBREDB_MCP_TOKEN` when it starts, so set the token before the first `opencode` command, or run `opencode service restart` after setting it.
 For the first few seconds after that service starts, `opencode mcp list` can say "No MCP servers configured" or show the server as pending: run it again.
 
+## Plugin and skill
+
+The `libredb-studio` skill tells a client how to use these tools: what to check before the first call, the order of calls, the limits and what each refusal means.
+The Claude Code plugin installs that skill together with the `libredb` server entry, and this repository's own marketplace, `libredb`, is the one place it is published.
+
+Verified live on 2026-11-06 with Claude Code 2.1.318.
+That run, from a local checkout against a local Studio, validated both manifests, added the marketplace, installed the plugin with the address, saved the token through standard input, and saw `claude mcp list` connect with a minted token, fail after a wrong one replaced it and connect again with a new one; the token was then in `.credentials.json` alone, with mode 0600, and the address alone in `pluginConfigs`.
+The in-session commands below were not run.
+
+In a Claude Code session:
+
+```text
+/plugin marketplace add libredb/libredb-studio
+/plugin install libredb-studio@libredb
+```
+
+Claude Code asks for your Studio's MCP address, its `LIBREDB_MCP_URL`, and for a token minted on the settings screen, which it masks as you type.
+
+From a shell, add the marketplace with a sparse checkout of the directories it needs, and install the plugin with your Studio's address:
+
+```bash
+claude plugin marketplace add libredb/libredb-studio --sparse .claude-plugin plugins
+claude plugin install libredb-studio@libredb --config mcp_url=https://studio.example.com/api/mcp
+```
+
+Then, in bash or zsh, save the token from standard input, never as a `--config` value, which would keep it in your shell history; paste it at the silent prompt and press Enter:
+
+```bash
+read -rs token && printf '{"mcp_token":"%s"}\n' "$token" | claude plugin configure libredb-studio@libredb --values-stdin; unset token
+```
+
+Until the token is saved, Claude Code starts no server from the plugin, and once it is, the next Claude Code session connects.
+A token is valid for `LIBREDB_MCP_TOKEN_TTL_DAYS` days, so when it expires, or a changed label revokes it, mint a new one and save it with the same command.
+Claude Code keeps the token in its credential store, the macOS Keychain or `.credentials.json` in its configuration directory, so it never goes into `settings.json`, `.mcp.json`, this repository, an environment variable or the chat; the address goes to `pluginConfigs` in your user `settings.json`.
+Use the plugin or a manual `libredb` entry, not both.
+The plugin carries no version, so it follows this repository's commits: `claude plugin marketplace update libredb`, then `claude plugin update libredb-studio@libredb`, brings in a newer skill.
+
+Other hosts take the skill alone: copy `plugins/libredb-studio/skills/libredb-studio/` into the host's skills directory, and keep the host's entry from [Client configuration](#client-configuration).
+OpenAI's [plugin guide](https://developers.openai.com/plugins/build/plugins) said on 2026-11-06 that its desktop app can read this repository's marketplace file too, but the plugin's server entry takes its address and token from Claude Code's plugin settings, so in Codex copy the skill directory rather than install the plugin.
+
 ## Limits
 
 - Authentication is a static bearer token that Studio mints: there is no OAuth and no protected resource metadata document, so a client needs its `Authorization` header configured.
