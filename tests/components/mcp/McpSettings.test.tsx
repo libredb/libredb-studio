@@ -76,6 +76,20 @@ describe("the three states", () => {
   });
 });
 
+describe("the introduction", () => {
+  test("says what an AI client runs through MCP, and that MCP needs no LLM provider", async () => {
+    serve(READY);
+    const { findByText, getByText, queryByText } = render(<McpSettings />);
+    expect(
+      await findByText(
+        "An AI client of your own reads the opted-in connections of this server and runs bounded, read-only statements in each engine's own language with a token minted for you.",
+      ),
+    ).toBeTruthy();
+    expect(getByText("The model runs in your client, so MCP needs no LLM provider on this server.")).toBeTruthy();
+    expect(queryByText(/read-only SQL/)).toBeNull();
+  });
+});
+
 describe("the connection count", () => {
   test("at zero explains the empty list and the fix", async () => {
     serve({ ...READY, visibleConnections: 0 });
