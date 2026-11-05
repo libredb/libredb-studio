@@ -13,6 +13,7 @@ import {
   type McpCallRecord,
   type McpToolAuditReason,
 } from "../audit";
+import { mcpConnectionUnavailable } from "../availability";
 import { DATABASE_ARGUMENT_DESCRIPTION, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
 import { type McpStatementTool, mcpTablelessReadTool } from "./statement-arms";
 import {
@@ -289,6 +290,11 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
       recordOrRefuse(() => recordMcpDecision(resolved, "mcp_execution_failed")) ??
       ownWordsError(tablelessText(connection.type, tableless))
     );
+  // Ahead of any acquisition too: a connection no MCP open can serve for this caller is refused with the sentence
+  // list_connections lists it with, so no provider is built for an open that would be refused.
+  const unavailable = mcpConnectionUnavailable(call.context.caller, connection);
+  if (unavailable !== null)
+    return recordOrRefuse(() => recordMcpDecision(resolved, "mcp_execution_failed")) ?? ownWordsError(unavailable);
   const unrecorded = recordOrRefuse(() => recordMcpDecision(resolved));
   if (unrecorded !== null) return unrecorded;
 

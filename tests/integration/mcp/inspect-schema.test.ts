@@ -18,6 +18,7 @@ import { getServerAuditBuffer } from "@/lib/audit";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
+import { MCP_CONNECTION_UNAVAILABLE_TEXT } from "@/lib/mcp/availability";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_CANCELLED_TEXT, MCP_NOT_VISIBLE_TEXT, MCP_RESULT_CAP_BYTES, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { INSPECT_SCHEMA_DESCRIPTION, InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
@@ -621,6 +622,37 @@ describe("the audit sequence", () => {
       expect(connects.calls).toBe(0);
     } finally {
       connects.restore();
+    }
+  });
+
+  test("refuses an unavailable connection before anything is acquired", async () => {
+    // The posture is read through editorExecutionContext, so a developer's GOVERNANCE_SOURCE is set aside.
+    const savedGovernance = process.env.GOVERNANCE_SOURCE;
+    delete process.env.GOVERNANCE_SOURCE;
+    writeSeedFile(dir, [{ id: "shared", type: "sqlite", database: join(dir, "shop.db"), roles: ["*"] }]);
+    // The constructor calls validate(), so this counts the providers built.
+    const builds = countMethod(SQLiteProvider.prototype, "validate");
+    const connects = countMethod(SQLiteProvider.prototype, "connect");
+    try {
+      const result = await inspect({ connection_id: "seed:shared" });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([{ type: "text", text: MCP_CONNECTION_UNAVAILABLE_TEXT }]);
+      expect(result.structuredContent).toBeUndefined();
+      expect(mcpEvents()).toEqual([
+        expect.objectContaining({
+          action: "inspect_schema",
+          target: "mcp/decision",
+          result: "failure",
+          reason: "mcp_execution_failed",
+          connectionName: "shared",
+        }),
+      ]);
+      expect([builds.calls, connects.calls]).toEqual([0, 0]);
+    } finally {
+      builds.restore();
+      connects.restore();
+      if (savedGovernance === undefined) delete process.env.GOVERNANCE_SOURCE;
+      else process.env.GOVERNANCE_SOURCE = savedGovernance;
     }
   });
 
