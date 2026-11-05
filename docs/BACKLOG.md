@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D459, U17 · 337
+- [Drivers and connections](#drivers-and-connections) — D1-D460, U17 · 338
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -4505,6 +4505,16 @@ Its severity is low: the cases that comment names and a saved timeout change are
 Found 2026-11-05 while measuring how one DuckDB seed's handle serves several requests.
 
 **Done when:** a request whose DuckDB handle is closed under its running statement answers an error that says its connection closed, within a few seconds of the close, and a test closes a handle under a running `range` count through `POST /api/db/query` and expects that answer.
+
+### D460. On a SQLite seed another role can use, the refusal tells an administrator that SQLite requires one
+
+`connect()` in `src/lib/db/providers/sql/sqlite.ts` refuses a handle opened with file access denied with "SQLite connections require an administrator because this driver cannot confine statement-level file access".
+A seed whose `roles` admit a non-admin role opens that way for every caller, administrators included, as `docs/providers/sqlite.md` states, so on such a seed an administrator is told they need a role they hold, and not that the connection is one another role can use.
+The DuckDB refusal names that case: `FILE_ACCESS_DENIED_REASON` in `src/lib/db/providers/sql/duckdb/index.ts` says Studio denies file access "for any connection a non-admin role can use".
+Measured 2026-11-05 through `POST /api/db/query` with the real driver and an admin session: SQLite seeds offered to `["admin", "user"]` and to `["*"]` each answered 400 with that sentence, and one offered to `["admin"]` answered 200.
+Found 2026-11-05 by the review of the change that reads a shared seed's file-access audience from its operator roles.
+
+**Done when:** the SQLite refusal names a connection another role can use the way the DuckDB one does, for example "SQLite connections open only for an administrator on a connection no other role can use, because this driver cannot confine statement-level file access", every test that pins the sentence (in `tests/integration/mcp/context.test.ts`, `tests/integration/db/reserved-storage-paths.test.ts`, `tests/isolated/factory.test.ts` and `e2e/embedded-samples.spec.ts`) asserts the new wording, one of them for an administrator on a seed offered to `["admin", "user"]`, and any document that quotes the sentence follows it.
 
 ## Value interpolation
 
