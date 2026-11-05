@@ -149,7 +149,7 @@ type InspectedTable = z.infer<typeof InspectedTableSchema>;
 type PageResult = z.infer<typeof InspectSchemaOutputSchema>;
 
 const INSPECT_SCHEMA_TITLE = "Inspect schema";
-export const INSPECT_SCHEMA_DESCRIPTION = `List the tables of one connection with their columns and, on request, their indexes. Works on every engine that holds tables. An engine whose objects are not tables refuses it, and the refusal names the tool that reads it, as list_connections' read_tool does. Columns an engine only inferred from sampled data are left out, so a table may hold fields this list does not show. Pages with limit and offset; has_more and next_offset say when more tables exist. ${MCP_UNTRUSTED_NOTICE}`;
+export const INSPECT_SCHEMA_DESCRIPTION = `List the tables of one connection with their columns and, on request, their indexes. Works on every engine that holds tables. An engine whose objects are not tables refuses it, and the refusal names the tool that reads it, as list_connections' read_tool does. Columns an engine only inferred from sampled data are left out, so a table may hold fields this list does not show. Pages with limit and offset; has_more and next_offset say when more tables exist. It opens the connection under Studio's operations profile, which sends no statement, so on some engines it does not prove the login read-only and may list a connection whose statement tool refuses that login. ${MCP_UNTRUSTED_NOTICE}`;
 
 const MAX_COLUMNS = 50;
 const MAX_INDEXES = 25;

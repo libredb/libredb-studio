@@ -224,6 +224,12 @@ describe("docs/MCP.md", () => {
       expect(MCP_DOC).toContain(line);
   });
 
+  test("says inspect_schema opens under agent-operations, so it may list a connection whose statement tool refuses the login", () => {
+    expect(MCP_DOC).toContain(
+      "    It opens its connection under `agent-operations`, which sends no statement, so on an engine whose provider proves its login only for a connection that sends statements, MongoDB among them, it proves no login and may list a connection whose statement tool refuses that login; [Opting connections in](#opting-connections-in) names each such engine.",
+    );
+  });
+
   test("carries the read_tool field", () => {
     expect(MCP_DOC).toContain("`read_tool`");
     expect(MCP_DOC).not.toContain("B117");

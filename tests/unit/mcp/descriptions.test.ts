@@ -74,6 +74,10 @@ async function listedTools(): Promise<readonly ListedTool[]> {
   }
 }
 
+/** The sentence inspect_schema's description ends with before the notice. */
+const OPERATIONS_PROFILE_SENTENCE =
+  "It opens the connection under Studio's operations profile, which sends no statement, so on some engines it does not prove the login read-only and may list a connection whose statement tool refuses that login.";
+
 const METADATA_DESCRIPTIONS = [
   ["list_connections", LIST_CONNECTIONS_DESCRIPTION, "List the database connections"],
   ["inspect_schema", INSPECT_SCHEMA_DESCRIPTION, "List the tables of one connection"],
@@ -318,6 +322,11 @@ describe("inspect_schema's own words", () => {
     expect(InspectSchemaInputSchema.shape.include_foreign_keys.description).toBe(
       "Also return each table's foreign keys, at most 25, each as column, referenced_table and referenced_column, with foreign_keys_omitted counting the rest, or unavailable on an engine Studio reads no foreign keys on. A composite key comes back as one row per column pair, since no constraint name is returned, and an empty list may also mean the connection's login cannot see the keys.",
     );
+  });
+
+  test("say last, before the notice and within 2,048 characters, that it opens under the operations profile", () => {
+    expect(INSPECT_SCHEMA_DESCRIPTION.endsWith(`${OPERATIONS_PROFILE_SENTENCE} ${MCP_UNTRUSTED_NOTICE}`)).toBe(true);
+    expect(INSPECT_SCHEMA_DESCRIPTION.length).toBeLessThanOrEqual(2_048);
   });
 
   test("describe include_schema_names with its bound and its level rule", () => {
