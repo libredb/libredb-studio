@@ -437,7 +437,7 @@ describe("GET /api/auth/oidc/callback", () => {
     }
   });
 
-  test("OIDC callback preserves the mount through exchange, redirect and state cleanup", async () => {
+  test.each(["", "/tools/libredb"])("OIDC callback preserves the mount with request prefix %p", async (prefix) => {
     await withBasePathEnv("/tools/libredb", async () => {
       mockCookieGet.mockReturnValue({ value: "encrypted-state-cookie" });
       mockDecryptState.mockResolvedValue({ code_verifier: "v", state: "s", nonce: "n" });
@@ -456,8 +456,7 @@ describe("GET /api/auth/oidc/callback", () => {
       mockMapOIDCRole.mockReturnValue("user");
       mockCookieStore.delete.mockClear();
       mockGetPublicOrigin.mockReturnValue("https://studio.example");
-      // Next.js removes the base path from the route-handler URL.
-      const url = "http://localhost:3000/api/auth/oidc/callback?code=c%2B1&state=s%2F2";
+      const url = `http://localhost:3000${prefix}/api/auth/oidc/callback?code=c%2B1&state=s%2F2`;
       const response = await GET(new Request(url));
       expect(mockExchangeCode.mock.calls[0]?.[1]?.toString()).toBe(
         "https://studio.example/tools/libredb/api/auth/oidc/callback?code=c%2B1&state=s%2F2",

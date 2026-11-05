@@ -87,7 +87,7 @@ Set these URLs in your identity provider:
 
 For local development, use `http://localhost:3000` instead.
 
-For a deployment built with `BASE_PATH=/studio`, register `https://your-domain.com/studio/api/auth/oidc/callback` and `https://your-domain.com/studio/login`. Keep the web origin unchanged.
+For deployments under a base path, see [Authentication and editor assets](SUBPATH.md#authentication-and-editor-assets) for the provider URLs.
 
 ### 3. Start the App
 
