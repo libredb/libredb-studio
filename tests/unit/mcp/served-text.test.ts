@@ -31,6 +31,13 @@ const AGENT_FEATURE = /\bagent (?:mode|read|run)\b|\bagent read key\b|\bagent cr
  */
 const SERVED_AGENT_FEATURE = /\bagent[- ](?:mode|read|run|statement|execution)\b|\bagent credential\b/i;
 
+/**
+ * The served forms a source literal can be held to: every space form, and agent-mode, which no module path or profile
+ * spells. The other hyphen forms stay out, since agent-statement is a module path and agent-read the read-only profile.
+ */
+const LITERAL_AGENT_FEATURE =
+  /\bagent (?:mode|read|run|statement|execution)\b|\bagent-mode\b|\bagent read key\b|\bagent credential\b/i;
+
 afterEach(async () => {
   await resetMcpTestState();
 });
@@ -91,8 +98,8 @@ describe("the string literals of MCP's own sources and statement facets", () => 
   test("no string literal names an agent feature", () => {
     const hits = sources.flatMap((file) =>
       codeText(readFileSync(path.join(ROOT, file), "utf8"), file)
-        .strings.filter((piece) => AGENT_FEATURE.test(piece.text))
-        .map((piece) => `${file} line ${piece.line + 1}: ${piece.text.match(AGENT_FEATURE)?.[0]}`),
+        .strings.filter((piece) => LITERAL_AGENT_FEATURE.test(piece.text))
+        .map((piece) => `${file} line ${piece.line + 1}: ${piece.text.match(LITERAL_AGENT_FEATURE)?.[0]}`),
     );
     expect(hits).toEqual([]);
   });
