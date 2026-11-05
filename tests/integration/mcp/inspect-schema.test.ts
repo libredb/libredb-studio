@@ -1006,6 +1006,25 @@ describe("the deadline", () => {
     10_000,
   );
 
+  test("a database choice held past the deadline is the timeout, and no session listing starts", async () => {
+    const session = new FixedProvider(1, () => schemasOf(["public"]));
+    const server = Object.assign(new FixedProvider(2), {
+      getCapabilities: () => ({ ...new FixedProvider(2).getCapabilities(), catalogSessions: true }),
+      forCatalog: async () => session,
+    });
+    const gate = gateMethod(server, "forCatalog");
+    const after = countMethod(FixedProvider.prototype, "listContainers");
+    try {
+      const result = await within(inspectFixed(server, { database: "shop", timeout_ms: 500 }), 5_000);
+      expect(result === "still waiting" ? result : result.content).toEqual([{ type: "text", text: TIMEOUT_500 }]);
+      expect([gate.calls, after.calls]).toEqual([1, 0]);
+    } finally {
+      gate.release();
+      gate.restore();
+      after.restore();
+    }
+  }, 10_000);
+
   test("a cancel during a held step is answered at once as mcp_cancelled, and nothing after it starts", async () => {
     const gate = gateMethod(FixedProvider.prototype, "listContainers");
     const after = countMethod(FixedProvider.prototype, "listObjects");
@@ -1253,6 +1272,9 @@ describe("default arguments", () => {
   test("count all four include flags before giving up on a first table without advice", async () => {
     expect(
       (await inspect({ connection_id: "seed:named", include_columns: false, include_schema_names: true })).content,
+    ).toEqual([{ type: "text", text: FIRST_OVER_CAP }]);
+    expect(
+      (await inspect({ connection_id: "seed:named", include_columns: false, include_foreign_keys: true })).content,
     ).toEqual([{ type: "text", text: FIRST_OVER_CAP }]);
   });
 });
