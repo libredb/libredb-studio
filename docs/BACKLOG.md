@@ -7579,7 +7579,7 @@ Found 2026-10-17 while verifying #1790.
 ### DOC36. docs/AGENT.md and B9 state counts and callers the code has moved past
 
 The "Supported models" section of `docs/AGENT.md` says thirty-five models run every agent surface and later calls them the thirty-seven, while `docs/llms/README.md` says fifty-one models are supported.
-Its "HTTP surface" section counts six paths under `src/app/api/agent/` and seven handlers, where the tree holds eight route files with eleven handlers, counted 2026-11-05 on `main` at 43bac5149.
+Its "HTTP surface" section counts six paths under `src/app/api/agent/` and seven handlers, five of them run-reaching beside two exceptions, where the tree holds eight route files with eleven handlers, nine of them run-reaching, counted 2026-11-05 on `main` at 43bac5149.
 B9 says `driveAgentRun`'s only callers are the start route and the drive route, while the `PATCH` handler of `src/app/api/agent/runs/[runId]/route.ts` drives a run it resumed as well.
 Found 2026-11-05 while designing MCP phase 1 (#2252).
 
