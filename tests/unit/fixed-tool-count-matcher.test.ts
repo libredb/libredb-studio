@@ -14,13 +14,14 @@ const hits = (path: string, source: string): string[] =>
   countFindings(path, source, LABELS).map((finding) => finding.text);
 
 describe("scope", () => {
-  test("reads READMEs, every doc, source, tests, end-to-end specs and the env example, never fixtures", () => {
+  test("reads READMEs, every doc, the plugins' Markdown, source, tests, end-to-end specs and the env example, never fixtures", () => {
     for (const path of [
       "README.md",
       "README_ja.md",
       "docs/FEATURES.md",
       "docs/ARCHITECTURE.md",
       "docs/providers/neo4j.md",
+      "plugins/libredb-studio/skills/libredb-studio/SKILL.md",
       "src/lib/db/compatibility.ts",
       "tests/unit/agent-documentation.test.ts",
       "e2e/mcp.spec.ts",
@@ -34,6 +35,7 @@ describe("scope", () => {
   test("reads the files MCP owns on every line", () => {
     for (const path of [
       "docs/MCP.md",
+      "plugins/libredb-studio/skills/libredb-studio/SKILL.md",
       "src/lib/mcp/tools/index.ts",
       "tests/integration/mcp/protocol.test.ts",
       "tests/helpers/mcp-fixtures.ts",
@@ -73,6 +75,7 @@ describe("countFindings", () => {
     ["tests/integration/mcp/protocol.test.ts", "expect((await client.listTools()).tools.length).toBe(15);"],
     ["tests/integration/mcp/protocol.test.ts", "// the fifteen-tool list"],
     ["docs/MCP.md", "The fifteen-tool surface is read-only."],
+    ["plugins/libredb-studio/skills/libredb-studio/SKILL.md", "Pick one of the fifteen tools."],
     [
       "tests/integration/mcp/x.test.ts",
       'expect(tools).toEqual([["a", "run_read_query"], ["b", "run_redis_read"], ["c", "inspect_schema"]]);',
