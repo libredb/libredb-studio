@@ -14,12 +14,14 @@ import {
   type McpToolAuditReason,
 } from "../audit";
 import { mcpConnectionUnavailable } from "../availability";
+import { metadataReadAnnotations } from "./annotations";
 import { DATABASE_ARGUMENT_DESCRIPTION, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
 import { type McpStatementTool, mcpTablelessReadTool } from "./statement-arms";
 import {
   MCP_CONNECTIONS_UNREADABLE,
   MCP_CONNECTIONS_UNREADABLE_TEXT,
   type McpConnectionContext,
+  type McpReach,
   type McpToolCall,
 } from "../context";
 import {
@@ -28,7 +30,6 @@ import {
   MCP_CANCELLED_TEXT,
   MCP_ENGINE_ERROR_PREFIX,
   MCP_NOT_VISIBLE_TEXT,
-  MCP_READ_ONLY_ANNOTATIONS,
   MCP_RESULT_CAP_BYTES,
   MCP_TABLE_COMMENT_CAP_BYTES,
   MCP_UNTRUSTED_NOTICE,
@@ -324,7 +325,8 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
   }
 }
 
-export function registerInspectSchema(server: McpServer, context: McpConnectionContext): void {
+/** Its hints are the reached engines' (`metadataReadAnnotations`); without a reach, the read-only hints. */
+export function registerInspectSchema(server: McpServer, context: McpConnectionContext, reach?: McpReach): void {
   server.registerTool(
     "inspect_schema",
     {
@@ -332,7 +334,7 @@ export function registerInspectSchema(server: McpServer, context: McpConnectionC
       description: INSPECT_SCHEMA_DESCRIPTION,
       inputSchema: InspectSchemaInputSchema,
       outputSchema: InspectSchemaOutputSchema,
-      annotations: MCP_READ_ONLY_ANNOTATIONS,
+      annotations: metadataReadAnnotations(reach),
     },
     (args, ctx) => inspectSchema(args, { context, signal: ctx.mcpReq.signal }),
   );

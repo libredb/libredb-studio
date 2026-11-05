@@ -31,6 +31,7 @@ import {
   mcpStatementArm,
   mcpStatementToolFor,
   mcpTablelessReadTool,
+  listedStatementArms,
   mcpWithholdsDatabase,
   servingStatementArms,
 } from "@/lib/mcp/tools/statement-arms";
@@ -1388,8 +1389,60 @@ describe("the tool each engine is read with", () => {
     } as unknown as typeof MCP_STATEMENT_ARMS;
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);
-    registerStatementTools({ registerTool } as unknown as McpServer, {} as McpConnectionContext, arms);
+    registerStatementTools({ registerTool } as unknown as McpServer, {} as McpConnectionContext, undefined, arms);
     expect(registerTool.mock.calls.map(([name]) => name)).toEqual(["run_read_query"]);
+    const reachMongo = mock((_name: string) => undefined);
+    registerStatementTools(
+      { registerTool: reachMongo } as unknown as McpServer,
+      {} as McpConnectionContext,
+      new Set(["mongodb"]),
+      arms,
+    );
+    expect(reachMongo.mock.calls).toEqual([]);
+    const reachSqlite = mock((_name: string) => undefined);
+    registerStatementTools(
+      { registerTool: reachSqlite } as unknown as McpServer,
+      {} as McpConnectionContext,
+      new Set(["sqlite"]),
+      arms,
+    );
+    expect(reachSqlite.mock.calls.map(([name]) => name)).toEqual(["run_read_query"]);
+  });
+});
+
+describe("listedStatementArms", () => {
+  test("lists no statement tool for an empty reach", () => {
+    expect(listedStatementArms(new Set())).toEqual([]);
+  });
+
+  test("lists the arm that serves a reached engine", () => {
+    expect(listedStatementArms(new Set(["mongodb"]))).toEqual([RUN_MONGO_COMMAND_ARM]);
+  });
+
+  test("lists nothing for an engine no statement tool serves", () => {
+    expect(listedStatementArms(new Set(["druid", "prometheus", "databend"]))).toEqual([]);
+  });
+
+  test("lists each arm once, in record order, however many of its engines are reached", () => {
+    expect(listedStatementArms(new Set(["redis", "duckdb", "sqlite"]))).toEqual([
+      RUN_READ_QUERY_ARM,
+      RUN_REDIS_READ_ARM,
+    ]);
+  });
+
+  test("never lists an arm that serves nothing, whatever the reach", () => {
+    const idle = Object.freeze({ ...RUN_MONGO_COMMAND_ARM, types: [] });
+    const arms = {
+      ...Object.fromEntries(Object.keys(MCP_STATEMENT_ARMS).map((language) => [language, null])),
+      sql: RUN_READ_QUERY_ARM,
+      mongo: idle,
+    } as unknown as typeof MCP_STATEMENT_ARMS;
+    expect(listedStatementArms(new Set(["mongodb", "sqlite"]), arms)).toEqual([RUN_READ_QUERY_ARM]);
+  });
+
+  test("lists every serving arm for a reach of every served engine", () => {
+    const served = new Set(servingStatementArms().flatMap((arm) => arm.types));
+    expect(listedStatementArms(served)).toEqual(servingStatementArms());
   });
 });
 
