@@ -1,7 +1,7 @@
 /**
  * Which connections an MCP token reaches (#246): only seed entries that opt in with mcp: true,
  * within the role filter, never the built-in samples; and a seed file that cannot be loaded is an
- * explicit error on every tool, while initialize and tools/list, which read no connection, work.
+ * explicit error on every tool and on tools/list, while initialize and server/discover, which read no connection, work.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -165,16 +165,21 @@ describe("a seed file that cannot be loaded", () => {
   );
 
   test.each(["legacy", "pinned"] as const)(
-    "leaves initialize, server/discover and tools/list working, because nothing reads the seed file until a tool asks (%s)",
+    "leaves initialize and server/discover working, and answers tools/list with -32603 and the unreadable sentence (%s)",
     async (negotiation) => {
       // The legacy client connects with initialize, the pinned one with server/discover.
       brokenSeed("not-json");
+      const errorLog = spyOn(logger, "error").mockImplementation(() => {});
       const session = await connectClient(admin, { negotiation });
       try {
         expect(session.client.getProtocolEra()).toBe(negotiation === "legacy" ? "legacy" : "modern");
-        expect((await session.client.listTools()).tools).toHaveLength(registeredMcpToolNames().length);
+        await expect(session.client.listTools()).rejects.toMatchObject({
+          code: -32603,
+          message: MCP_CONNECTIONS_UNREADABLE_TEXT,
+        });
       } finally {
         await session.close();
+        errorLog.mockRestore();
       }
     },
   );

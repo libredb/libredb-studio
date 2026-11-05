@@ -28,7 +28,7 @@ import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
-import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
+import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../../helpers/neo4j-fixtures";
 
 pinMcpTestEnvironment();
@@ -157,13 +157,12 @@ const mcpEvents = () =>
 const textOf = (result: Answered) => result.content.map((block) => block.text).join("\n");
 
 describe("the tool", () => {
-  test("is listed in its registration position, read-only, with the statement schema and no offset or database", async () => {
+  test("is listed in its place in the token's list, read-only, with the statement schema and no offset or database", async () => {
     const session = await connectClient(serve, { negotiation: "legacy" });
     try {
       const tools = (await session.client.listTools()).tools;
       const names = tools.map((tool) => tool.name);
-      expect(names.indexOf("run_cypher_read")).not.toBe(-1);
-      expect(names.indexOf("run_cypher_read")).toBe(registeredMcpToolNames().indexOf("run_cypher_read"));
+      expect(names).toEqual(listedMcpToolNames(new Set(["neo4j", "sqlite"])));
       const tool = tools.find((candidate) => candidate.name === "run_cypher_read");
       expect(tool?.description).toBe(RUN_CYPHER_READ_ARM.description);
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });

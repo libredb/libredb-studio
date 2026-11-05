@@ -45,6 +45,7 @@ export interface SeedEntry {
   readonly agentPassword?: string;
   readonly environment?: string;
   readonly roles?: readonly string[];
+  readonly agentReadRoots?: readonly string[];
   readonly mcp?: boolean | string | null;
 }
 

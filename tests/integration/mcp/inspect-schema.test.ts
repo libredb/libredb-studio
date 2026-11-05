@@ -21,6 +21,7 @@ import { logger } from "@/lib/logger";
 import { MCP_CONNECTION_UNAVAILABLE_TEXT } from "@/lib/mcp/availability";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_CANCELLED_TEXT, MCP_NOT_VISIBLE_TEXT, MCP_RESULT_CAP_BYTES, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { metadataReadAnnotations } from "@/lib/mcp/tools/annotations";
 import { INSPECT_SCHEMA_DESCRIPTION, InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
 import {
   countMethod,
@@ -735,7 +736,7 @@ describe("the audit sequence", () => {
 
 describe("the registration", () => {
   test.each(["legacy", "pinned"] as const)(
-    "gives the tool its title, description, read-only closed-world annotations and an object output schema (%s)",
+    "gives the tool its title, description, the hints of the engines its token reaches and an object output schema (%s)",
     async (negotiation) => {
       const session = await connectClient(serve, { negotiation });
       try {
@@ -743,7 +744,9 @@ describe("the registration", () => {
         expect(tool?.title).toBe("Inspect schema");
         expect(tool?.description).toBe(INSPECT_SCHEMA_DESCRIPTION);
         expect(tool?.description?.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
-        expect(tool?.annotations).toEqual({ readOnlyHint: true, openWorldHint: false });
+        // The seeds are SQLite, DuckDB and LibreDB, and a LibreDB read takes the file's lock.
+        expect(tool?.annotations).toEqual(metadataReadAnnotations(new Set(["sqlite", "duckdb", "libredb"])));
+        expect(tool?.annotations).toEqual({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
         expect(tool?.outputSchema?.type).toBe("object");
       } finally {
         await session.close();

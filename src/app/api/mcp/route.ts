@@ -15,7 +15,7 @@ import {
 } from "@/lib/mcp/config";
 import { mcpOriginHostRefusal } from "@/lib/mcp/origin-policy";
 import { preprocessMcpPost, recordInvalidArguments } from "@/lib/mcp/preprocess";
-import { mcpHandler } from "@/lib/mcp/server";
+import { mcpHandler, mcpHandlerFor } from "@/lib/mcp/server";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
  * optimisation and not the authorization boundary: Origin and Host, then the bearer. No cookie is
  * read on this path, so a Studio session opens nothing here. The kill switch is read after
  * identity, so an unauthenticated caller learns nothing about it, and the version check follows
- * it. A POST is then metered and pre-processed before the SDK handler sees it.
+ * it. A POST is then metered and pre-processed before the handler `mcpHandlerFor` picks for its body sees it.
  */
 
 const MCP_DISABLED_BODY = { error: "MCP is not enabled on this server" };
@@ -88,7 +88,10 @@ export async function POST(request: Request): Promise<Response> {
   if ("response" in admission) return admission.response;
   const outcome = await preprocessMcpPost(request, admission.authInfo);
   if (outcome.kind === "refused") return outcome.response;
-  const response = await mcpHandler.fetch(request, { authInfo: admission.authInfo, parsedBody: outcome.parsedBody });
+  const response = await mcpHandlerFor(outcome.parsedBody).fetch(request, {
+    authInfo: admission.authInfo,
+    parsedBody: outcome.parsedBody,
+  });
   // HTTP 200 means the SDK accepted the call and answered its own input validation error; any other
   // status is an earlier SDK gate's refusal, and no call was made to record.
   if (outcome.invalidArgumentsTool !== null && response.status === 200) {

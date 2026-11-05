@@ -95,7 +95,7 @@ const { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFil
 );
 const { legacyPost, readJsonRpc } = await import("../../helpers/mcp-harness");
 const { mintTestToken, useMcpChannel } = await import("../../helpers/mcp-token");
-const { registeredMcpToolNames } = await import("../../helpers/mcp-tool-names");
+const { listedMcpToolNames } = await import("../../helpers/mcp-tool-names");
 
 pinMcpTestEnvironment();
 
@@ -148,7 +148,7 @@ describe("MCP with no LLM provider and agent mode off", () => {
     expect(modelCallsWhileImporting).toEqual([]);
   });
 
-  test("a minted token lists every tool and reads an admin-only SQLite seed, and nothing reads the model's settings", async () => {
+  test("a minted token lists its tools and reads an admin-only SQLite seed, and nothing reads the model's settings", async () => {
     const token = await mintTestToken();
     let id = 0;
     const post = async (method: string, params?: Record<string, unknown>) =>
@@ -172,7 +172,9 @@ describe("MCP with no LLM provider and agent mode off", () => {
     }));
 
     expect(answer.initialized.result?.serverInfo?.name).toBe(MCP_SERVER_NAME);
-    expect(answer.listed.result?.tools.map((tool: { name: string }) => tool.name)).toEqual(registeredMcpToolNames());
+    expect(answer.listed.result?.tools.map((tool: { name: string }) => tool.name)).toEqual(
+      listedMcpToolNames(new Set(["sqlite"])),
+    );
     expect(answer.connections.result?.structuredContent).toMatchObject({
       connections: [{ id: "seed:shop", engine: "sqlite", read_tool: "run_read_query" }],
     });

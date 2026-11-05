@@ -23,7 +23,7 @@ import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
-import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
+import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { mongoDriver, mongoDriverModule, resetMongoDriver } from "../../helpers/mongodb-driver";
 import readWriteStatus from "../../unit/db/mongodb/fixtures/connection-status-read-plus-insert-one-collection-9.0.4.json";
 
@@ -124,13 +124,12 @@ function direct(args: Record<string, unknown>, context: McpConnectionContext) {
 }
 
 describe("the tool", () => {
-  test("is listed in its registration position, read-only, with the command schema and no offset", async () => {
+  test("is listed in its place in the token's list, read-only, with the command schema and no offset", async () => {
     const session = await connectClient(serve, { negotiation: "legacy" });
     try {
       const tools = (await session.client.listTools()).tools;
       const names = tools.map((tool) => tool.name);
-      expect(names.indexOf("run_mongo_command")).not.toBe(-1);
-      expect(names.indexOf("run_mongo_command")).toBe(registeredMcpToolNames().indexOf("run_mongo_command"));
+      expect(names).toEqual(listedMcpToolNames(new Set(["mongodb", "sqlite"])));
       const tool = tools.find((candidate) => candidate.name === "run_mongo_command");
       expect(tool?.description).toBe(RUN_MONGO_COMMAND_ARM.description);
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
