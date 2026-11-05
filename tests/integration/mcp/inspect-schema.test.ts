@@ -9,12 +9,24 @@
  * engine that declares no "table" kind, and no server runs here: one over a hand-made client, and three
  * through the real acquisition, over the driver stand-in of tests/helpers/mongodb-driver.ts.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  setSystemTime,
+  spyOn,
+  test,
+} from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { doc, open, table } from "@libredb/libredb";
 import { getServerAuditBuffer } from "@/lib/audit";
+import type { Container, DatabaseProvider } from "@/lib/db/types";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
@@ -693,6 +705,8 @@ describe("the audit sequence", () => {
       ]);
     } finally {
       gate.release();
+      // The cancel is answered at once, so the held step is let finish before afterEach clears the provider cache.
+      await gate.finished;
       gate.restore();
     }
   });
@@ -710,6 +724,8 @@ describe("the audit sequence", () => {
       expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_cancelled" });
     } finally {
       gate.release();
+      // The cancel is answered at once, so the held step is let finish before afterEach clears the provider cache.
+      await gate.finished;
       gate.restore();
     }
   });
@@ -753,4 +769,247 @@ describe("the registration", () => {
       }
     },
   );
+});
+
+/**
+ * A provider of fixed containers and `tables` tables of `columns` long-named columns per deepest container, reached
+ * through a hand-made context, for the levels, bounds and stalls no file engine here shows. `listing` answers each
+ * `listContainers` call by its parent.
+ */
+class FixedProvider {
+  constructor(
+    readonly levels: 0 | 1 | 2,
+    readonly listing: (parent: readonly string[] | undefined) => Container[] = () => [],
+    readonly tables = 1,
+    readonly columns = 1,
+  ) {}
+
+  getCapabilities() {
+    const levels = [
+      { id: "catalog", label: "Database", labelPlural: "Databases" },
+      { id: "schema", label: "Schema", labelPlural: "Schemas" },
+    ] as const;
+    return {
+      containerLevels: levels.slice(2 - this.levels),
+      objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+    };
+  }
+
+  async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    return this.listing(parent);
+  }
+
+  async listObjects(container: readonly string[], kind: string) {
+    return Array.from({ length: this.tables }, (_, index) => ({
+      name: `t${index}`,
+      kind,
+      path: [...container, `t${index}`],
+    }));
+  }
+
+  async describeObject(path: readonly string[]) {
+    const columns = Array.from({ length: this.columns }, (_, index) => ({
+      name: `${"c".repeat(100)}${index}`,
+      type: "text",
+      nullable: true,
+      isPrimary: false,
+    }));
+    return { path, columns, indexes: [], foreignKeys: [] };
+  }
+}
+
+const schemasOf = (names: readonly string[], parent: readonly string[] = [], defaultName?: string): Container[] =>
+  names.map((name) => ({
+    name,
+    path: [...parent, name],
+    level: parent.length,
+    isSessionDefault: name === defaultName,
+  }));
+
+/** inspect_schema on `provider` through a context that resolves one PostgreSQL-typed connection and acquires it. */
+function inspectFixed(
+  provider: FixedProvider,
+  args: Record<string, unknown>,
+  signal: AbortSignal = new AbortController().signal,
+) {
+  const connection = {
+    id: "seed:fixed",
+    name: "fixed",
+    type: "postgres" as const,
+    seedId: "fixed",
+    createdAt: new Date(),
+  };
+  const context = {
+    caller: { username: "alice", role: "admin" as const },
+    resolve: async () => connection,
+    acquire: async () => provider as unknown as DatabaseProvider,
+  } as unknown as McpConnectionContext;
+  return inspectSchema(InspectSchemaInputSchema.parse({ connection_id: "seed:fixed", ...args }), { context, signal });
+}
+
+/** The call's answer, or "still waiting" when it has not answered within `ms`; the timer is cleared either way. */
+async function within<T>(call: Promise<T>, ms: number): Promise<T | "still waiting"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const waited = new Promise<"still waiting">((resolve) => {
+    timer = setTimeout(() => resolve("still waiting"), ms);
+  });
+  try {
+    return await Promise.race([call, waited]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Clears, for each test of the block, what a real acquisition reads from the environment, and restores it exactly
+ * afterwards: governance decides the file-access posture, and the enabled-provider list which providers are built.
+ * `pinned` sets values of the block's own, restored the same way.
+ */
+function isolateAcquisitionEnvironment(pinned: Readonly<Record<string, string>> = {}): void {
+  const names = ["GOVERNANCE_SOURCE", "LIBREDB_ENABLED_PROVIDERS", ...Object.keys(pinned)];
+  const saved = new Map<string, string | undefined>();
+  beforeEach(() => {
+    for (const name of names) {
+      saved.set(name, process.env[name]);
+      delete process.env[name];
+    }
+    Object.assign(process.env, pinned);
+  });
+  afterEach(() => {
+    for (const name of names) {
+      const value = saved.get(name);
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+}
+
+const TIMEOUT_500 =
+  "inspect_schema did not finish within timeout_ms (500 ms), and a read it already sent, or the connection it was opening, may still be running. Call it again with table naming one table or with a smaller limit, or raise timeout_ms up to 30000.";
+
+describe("the deadline", () => {
+  // The in-process driver opens a file at once, so the 500 ms deadline is spent on the step a test holds.
+  isolateAcquisitionEnvironment({ LIBREDB_SQLITE_WORKER: "0" });
+
+  test("takes timeout_ms from 500 to 30000, 30000 by default", () => {
+    const timeout = (value?: number) =>
+      InspectSchemaInputSchema.safeParse({
+        connection_id: "seed:shop",
+        ...(value === undefined ? {} : { timeout_ms: value }),
+      });
+    expect(timeout().data?.timeout_ms).toBe(30_000);
+    expect([499, 500, 30_000, 30_001].map((value) => timeout(value).success)).toEqual([false, true, true, false]);
+  });
+
+  test("lets no step start once a settled step has outrun the deadline, and offers no more time at the most", async () => {
+    // The listing moves the clock past the deadline as it answers, as a provider that holds the process would.
+    const late = new FixedProvider(1, () => {
+      setSystemTime(new Date(Date.now() + 30_001));
+      return schemasOf(["public"]);
+    });
+    const lists = countMethod(FixedProvider.prototype, "listObjects");
+    try {
+      expect((await inspectFixed(late, { timeout_ms: 30_000 })).content).toEqual([
+        {
+          type: "text",
+          text: "inspect_schema did not finish within timeout_ms (30000 ms), and a read it already sent, or the connection it was opening, may still be running. Call it again with table naming one table or with a smaller limit.",
+        },
+      ]);
+      expect(lists.calls).toBe(0);
+    } finally {
+      setSystemTime();
+      lists.restore();
+    }
+  });
+
+  test.each([
+    ["a description that never settles", "describeObject"],
+    ["an acquisition that never settles", "connect"],
+  ] as const)(
+    "%s is answered as the timeout near timeout_ms, the step left running",
+    async (_what, method) => {
+      const gate = gateMethod(SQLiteProvider.prototype, method);
+      try {
+        const started = Date.now();
+        const result = await within(direct({ connection_id: "seed:shop", timeout_ms: 500 }), 5_000);
+        expect(result === "still waiting" ? result : result.content).toEqual([{ type: "text", text: TIMEOUT_500 }]);
+        expect(Date.now() - started).toBeLessThan(5_000);
+        expect(gate.calls).toBe(1);
+        expect(mcpEvents().map((event) => [event.target, event.reason])).toEqual([
+          ["mcp/decision", undefined],
+          ["mcp/execution", "mcp_timeout"],
+        ]);
+      } finally {
+        gate.release();
+        // The held call runs to its end before afterEach closes the provider under it.
+        if (gate.calls > 0) await gate.finished;
+        gate.restore();
+      }
+    },
+    10_000,
+  );
+
+  test("a call after a timed-out acquisition joins it, opens nothing of its own and answers once it settles", async () => {
+    const gate = gateMethod(SQLiteProvider.prototype, "connect");
+    try {
+      const first = await within(direct({ connection_id: "seed:shop", timeout_ms: 500 }), 5_000);
+      expect(first === "still waiting" ? first : first.content).toEqual([{ type: "text", text: TIMEOUT_500 }]);
+      const next = direct({ connection_id: "seed:shop" });
+      expect(await within(next, 200)).toBe("still waiting");
+      expect(gate.calls).toBe(1);
+      gate.release();
+      expect((await next).structuredContent?.total_tables).toBe(4);
+      expect(gate.calls).toBe(1);
+    } finally {
+      gate.release();
+      if (gate.calls > 0) await gate.finished;
+      gate.restore();
+    }
+  }, 10_000);
+
+  test.each([
+    ["a container listing", "listContainers", "listObjects"],
+    ["a relation listing", "listObjects", "describeObject"],
+  ] as const)(
+    "%s held past the deadline is the timeout, and nothing after it starts",
+    async (_what, held, next) => {
+      const gate = gateMethod(FixedProvider.prototype, held);
+      const after = countMethod(FixedProvider.prototype, next);
+      try {
+        const provider = new FixedProvider(1, () => schemasOf(["public"]));
+        const result = await within(inspectFixed(provider, { timeout_ms: 500 }), 5_000);
+        expect(result === "still waiting" ? result : result.content).toEqual([{ type: "text", text: TIMEOUT_500 }]);
+        expect([gate.calls, after.calls]).toEqual([1, 0]);
+      } finally {
+        gate.release();
+        gate.restore();
+        after.restore();
+      }
+    },
+    10_000,
+  );
+
+  test("a cancel during a held step is answered at once as mcp_cancelled, and nothing after it starts", async () => {
+    const gate = gateMethod(FixedProvider.prototype, "listContainers");
+    const after = countMethod(FixedProvider.prototype, "listObjects");
+    try {
+      const controller = new AbortController();
+      const call = inspectFixed(new FixedProvider(1, () => schemasOf(["public"])), {}, controller.signal);
+      await gate.entered;
+      controller.abort();
+      const result = await within(call, 2_000);
+      expect(result === "still waiting" ? result : result.content).toEqual([
+        { type: "text", text: MCP_CANCELLED_TEXT },
+      ]);
+      expect(after.calls).toBe(0);
+      expect(mcpEvents().map((event) => [event.target, event.reason])).toEqual([
+        ["mcp/decision", undefined],
+        ["mcp/execution", "mcp_cancelled"],
+      ]);
+    } finally {
+      gate.release();
+      gate.restore();
+      after.restore();
+    }
+  });
 });

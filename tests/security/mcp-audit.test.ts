@@ -201,6 +201,8 @@ describe("every refusal exit writes one event with its reason", () => {
       ]);
     } finally {
       gate.release();
+      // The cancel is answered at once, so the held step is let finish before afterEach clears the provider cache.
+      await gate.finished;
       gate.restore();
     }
   });

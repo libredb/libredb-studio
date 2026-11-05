@@ -22,6 +22,7 @@ import { MCP_UNTRUSTED_NOTICE } from "../output";
 import { DATABASE_ARGUMENT_DESCRIPTION } from "./database-choice";
 import {
   fenceRefusalText,
+  MCP_TIMEOUT_BOUNDS_MS,
   moreRowsThanPageableHint,
   ROW_OVER_CAP_TEXT,
   tooLargeTextsOf,
@@ -104,7 +105,7 @@ const CONNECTION_ID = z.string().min(1, "connection_id is required");
 const DATABASE = z.string().min(1).optional().describe(DATABASE_ARGUMENT_DESCRIPTION);
 const MAX_ROWS = z.number().int().min(1).max(500).default(100);
 const OFFSET = z.number().int().min(0).default(0);
-const TIMEOUT_MS = z.number().int().min(500).max(30000).default(10000);
+const TIMEOUT_MS = z.number().int().min(MCP_TIMEOUT_BOUNDS_MS.min).max(MCP_TIMEOUT_BOUNDS_MS.max).default(10000);
 
 /** The timeout of a tool whose reads need more than the shared least: refused below it, in the facet's words. */
 function leastTimeoutMs(tool: string, least: { readonly ms: number; readonly why: string }) {
@@ -112,7 +113,7 @@ function leastTimeoutMs(tool: string, least: { readonly ms: number; readonly why
     .number()
     .int()
     .min(least.ms, `timeout_ms must be at least ${least.ms} for ${tool}: ${least.why}`)
-    .max(30000)
+    .max(MCP_TIMEOUT_BOUNDS_MS.max)
     .default(10000);
 }
 const SHARED_LIMITS =

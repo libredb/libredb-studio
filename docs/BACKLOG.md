@@ -9708,6 +9708,7 @@ Found 2026-11-02 while opening `run_kafka_read`, `run_rabbitmq_read` and `run_mt
 `McpConnectionContext.acquire` (`src/lib/mcp/context.ts`) keeps one pending acquisition per connection and profile in `pendingAcquisitions` until it settles, so when the call that started it stops waiting on a timeout or a cancel, the next call on the same connection and profile joins that acquisition: it sends nothing of its own and answers with the first acquisition's outcome.
 On SNMP, a call made at once after a 5,000 ms timeout answered "No SNMP agent answered" about 4.5 s later, although the agent had come back by then.
 Engine-neutral; `docs/providers/snmp.md` section 14 and the SNMP cancel row of `docs/MCP.md` record it, and `tests/integration/mcp/run-snmp-read.test.ts` pins it.
+`inspect_schema` has raced its acquisition against its own `timeout_ms` since #2252, so its calls join an acquisition a timed-out `inspect_schema` call left in the same way, as the `inspect_schema` bullet under "Limits" in `docs/MCP.md` says and `tests/integration/mcp/inspect-schema.test.ts` pins.
 Dropping the entry when its first caller stops waiting would let two acquisitions for one key run at once and the later one overwrite the cached provider, leaking the earlier one; retrying the join would be a fallback.
 Found 2026-11-03 while opening `run_snmp_read`.
 

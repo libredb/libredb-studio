@@ -16,6 +16,7 @@ import {
 import { mcpConnectionUnavailable } from "../availability";
 import { metadataReadAnnotations } from "./annotations";
 import { DATABASE_ARGUMENT_DESCRIPTION, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
+import { MCP_TIMEOUT_BOUNDS_MS, raceDeadline } from "./read-query-limits";
 import { type McpStatementTool, mcpTablelessReadTool } from "./statement-arms";
 import {
   MCP_CONNECTIONS_UNREADABLE,
@@ -56,6 +57,10 @@ import {
  * cannot be written runs nothing. The page is fitted to the result cap at a table boundary, a
  * table comment is cut to its own bound first, and the column and index caps count what they leave
  * out instead of adding fake entries.
+ *
+ * One deadline, the call's start plus timeout_ms, covers every provider call: the acquisition, the database choice,
+ * each container listing, the relation listing and each table's description each run through `raceDeadline`, so none
+ * starts after it, while one already started runs on.
  */
 
 export const InspectSchemaInputSchema = z.object({
@@ -67,6 +72,12 @@ export const InspectSchemaInputSchema = z.object({
   offset: z.number().int().min(0).default(0),
   include_columns: z.boolean().default(true),
   include_indexes: z.boolean().default(false),
+  timeout_ms: z
+    .number()
+    .int()
+    .min(MCP_TIMEOUT_BOUNDS_MS.min)
+    .max(MCP_TIMEOUT_BOUNDS_MS.max)
+    .default(MCP_TIMEOUT_BOUNDS_MS.max),
 });
 
 const InspectedTableSchema = z.object({
@@ -122,6 +133,31 @@ const FIRST_TABLE_OVER_CAP_TEXT =
 const FIRST_TABLE_OVER_CAP_BARE_TEXT =
   "The first table on this page does not fit the 32 KiB result limit even without its columns and indexes, so it cannot be listed here.";
 
+/** The timeout answer in this tool's words, since `timeoutText` speaks of a statement; more time is offered below the most. */
+function inspectSchemaTimeoutText(timeoutMs: number): string {
+  const more = timeoutMs < MCP_TIMEOUT_BOUNDS_MS.max ? `, or raise timeout_ms up to ${MCP_TIMEOUT_BOUNDS_MS.max}` : "";
+  return `inspect_schema did not finish within timeout_ms (${timeoutMs} ms), and a read it already sent, or the connection it was opening, may still be running. Call it again with table naming one table or with a smaller limit${more}.`;
+}
+
+/** A call the deadline or the signal stopped between or during its provider calls. */
+class InspectStopped extends Error {
+  constructor(readonly reason: "mcp_timeout" | "mcp_cancelled") {
+    super(reason);
+  }
+}
+
+/** One provider call of the call, raced against its signal and deadline: its value, its own error, or the stop. */
+type Step = <T>(work: () => Promise<T>) => Promise<T>;
+
+function deadlineStep(signal: AbortSignal, deadline: number): Step {
+  return async (work) => {
+    const raced = await raceDeadline(work, signal, deadline);
+    if (raced.kind === "settled") return raced.value;
+    if (raced.kind === "failed") throw raced.error;
+    throw new InspectStopped(raced.kind === "timeout" ? "mcp_timeout" : "mcp_cancelled");
+  };
+}
+
 /** The refusal of an engine that holds no table, naming the statement tool that reads it. */
 function tablelessText(type: DatabaseType, tool: McpStatementTool): string {
   return `${getDBConfig(type).label} holds no table for inspect_schema to list. Read this connection with ${tool}.`;
@@ -139,13 +175,17 @@ type ContainerChoice =
  * same default. An engine that declares no level is read at its root; a level that lists nothing
  * leaves nothing to read.
  */
-async function chooseContainer(provider: DatabaseProvider, schema: string | undefined): Promise<ContainerChoice> {
+async function chooseContainer(
+  provider: DatabaseProvider,
+  schema: string | undefined,
+  step: Step,
+): Promise<ContainerChoice> {
   const depth = containerDepth(provider.getCapabilities());
   const wanted = schema?.toLowerCase();
   if (depth === 0) return wanted === undefined ? { kind: "root" } : { kind: "not-found" };
   let parent: readonly string[] | undefined;
   for (let level = 0; ; level += 1) {
-    const containers = await provider.listContainers(parent);
+    const containers = await step(() => provider.listContainers(parent));
     const deepest = level === depth - 1;
     const named = deepest && wanted !== undefined;
     const chosen = named
@@ -167,9 +207,12 @@ async function inspectTable(
   provider: DatabaseProvider,
   object: DatabaseObject,
   args: InspectSchemaInput,
+  step: Step,
 ): Promise<InspectedTable> {
   const detail =
-    args.include_columns || args.include_indexes ? await provider.describeObject(object.path, object.kind) : null;
+    args.include_columns || args.include_indexes
+      ? await step(() => provider.describeObject(object.path, object.kind))
+      : null;
   const rawComment = (detail === null ? undefined : commentOf(detail)) ?? commentOf(object);
   const comment = rawComment === undefined ? undefined : cutUtf8(rawComment, MCP_TABLE_COMMENT_CAP_BYTES);
   // Before the cap and the count: a column the engine only inferred from sampled data is named by the data, so it
@@ -243,18 +286,19 @@ async function readPage(
   provider: DatabaseProvider,
   args: InspectSchemaInput,
   signal: AbortSignal,
+  step: Step,
 ): Promise<{ readonly result: ToolResult; readonly failure?: McpToolAuditReason }> {
-  const choice = await chooseContainer(provider, args.schema);
+  const choice = await chooseContainer(provider, args.schema, step);
   if (choice.kind === "not-found")
     return { result: ownWordsError(SCHEMA_NOT_FOUND_TEXT), failure: "mcp_schema_not_found" };
   const container = choice.kind === "found" ? choice.container : null;
-  const objects = choice.kind === "none" ? [] : await listRelations(provider, container?.path ?? []);
+  const objects = choice.kind === "none" ? [] : await step(() => listRelations(provider, container?.path ?? []));
   const wanted = args.table?.toLowerCase();
   const filtered = wanted === undefined ? objects : objects.filter((object) => object.name.toLowerCase() === wanted);
   const tables: InspectedTable[] = [];
   for (const object of filtered.slice(args.offset, args.offset + args.limit)) {
     if (signal.aborted) return { result: ownWordsError(MCP_CANCELLED_TEXT), failure: "mcp_cancelled" };
-    const table = await inspectTable(provider, object, args);
+    const table = await inspectTable(provider, object, args, step);
     if (resultBytes(pageResult(args, container, filtered.length, [...tables, table], false)) > MCP_RESULT_CAP_BYTES) {
       if (tables.length > 0) return { result: pageResult(args, container, filtered.length, tables, true) };
       const bare = !args.include_columns && !args.include_indexes;
@@ -269,6 +313,7 @@ async function readPage(
 }
 
 export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall): Promise<ToolResult> {
+  const step = deadlineStep(call.signal, Date.now() + args.timeout_ms);
   const record: McpCallRecord = {
     action: "inspect_schema",
     user: call.context.caller.username,
@@ -305,14 +350,16 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
 
   try {
     // In the database the call names, on a connection that reaches a whole server (#1530).
-    const provider = await providerInDatabase(
-      await call.context.acquire(connection, "agent-operations"),
-      args.database,
-    );
+    const acquired = await step(() => call.context.acquire(connection, "agent-operations"));
+    const provider = await step(() => providerInDatabase(acquired, args.database));
     if (call.signal.aborted) return finish(ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled");
-    const { result, failure } = await readPage(provider, args, call.signal);
+    const { result, failure } = await readPage(provider, args, call.signal, step);
     return finish(result, failure);
   } catch (error) {
+    if (error instanceof InspectStopped) {
+      const text = error.reason === "mcp_timeout" ? inspectSchemaTimeoutText(args.timeout_ms) : MCP_CANCELLED_TEXT;
+      return finish(ownWordsError(text), error.reason);
+    }
     // #1462: the agent-operations profile runs the same role check as agent-read-only
     // (factory.ts), so a superuser seed refuses here too. That refusal is Studio's own
     // decision, not the engine's, so it reads in Studio's words - no untrusted-data

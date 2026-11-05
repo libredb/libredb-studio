@@ -190,6 +190,23 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("says inspect_schema's timeout_ms bounds the whole call", () => {
+    expect(MCP_DOC).toContain(
+      "    `timeout_ms`, 500 to 30000 and 30000 by default, bounds the whole call ([Limits](#limits)).",
+    );
+  });
+
+  test("follows the cancel table with inspect_schema's deadline, the step left running and the opening a later call joins", () => {
+    const lines = MCP_DOC.split("\n");
+    const after =
+      lines.indexOf("| Engine | The client closes the request | `timeout_ms` passes |") + 2 + cancelRows().length;
+    expect(lines.slice(after, after + 3)).toEqual([
+      "",
+      "- `inspect_schema` takes `timeout_ms` too, 500 to 30000 and 30000 by default, as one deadline over the whole call: opening the connection, the database choice, each container listing, the table listing and each table's description start only before it, and a call that outruns it is answered with the timeout, never a partial page.",
+      "  A cancel or the deadline ends the wait, not the step it was waiting on: a read already sent may still be running on the database, and an opening the call started runs on, so a later `inspect_schema` call on that connection made while it runs joins it rather than opening the connection again, and answers with its outcome.",
+    ]);
+  });
+
   test("carries the read_tool field", () => {
     expect(MCP_DOC).toContain("`read_tool`");
     expect(MCP_DOC).not.toContain("B117");
