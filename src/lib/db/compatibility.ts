@@ -846,6 +846,73 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // internal namespace is left out of every answer (docs/providers/libredb.md section 15).
   libredb: true,
 });
+
+/**
+ * Which shipped engines change state the engine keeps when MCP's `inspect_schema` reads them, though it writes no
+ * data: a Databend Cloud call resumes a suspended warehouse, which bills while it runs, and an operations open of a
+ * LibreDB file takes its exclusive lock and keeps it until the handle has been idle for 30 minutes (docs/MCP.md,
+ * "Limits"). A token whose `tools/list` reaches such an engine is told `readOnlyHint: false` and
+ * `destructiveHint: false` on `inspect_schema` (`metadataReadAnnotations` in `src/lib/mcp/tools/annotations.ts`);
+ * every other tool keeps its read-only hint.
+ *
+ * Not derived from `ProviderCapabilities.resumesBilledCompute`: Snowflake declares that flag yet lists its catalog
+ * with `SHOW` statements that need no running warehouse (docs/providers/snowflake.md), and Databend declares it per
+ * connection, from its Warehouse and its host, while `tools/list` decides before any provider exists and builds
+ * none. So the row is per engine, and a self-hosted Databend server is marked as well, as docs/providers/databend.md
+ * says.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held by
+ * `tests/unit/mcp/annotations.test.ts`, which also holds its true rows to the engines docs/MCP.md and the provider
+ * docs name for the hint.
+ */
+export const MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  // A Databend Cloud call resumes a suspended warehouse, which bills while it runs; the row is per engine, so a
+  // self-hosted server, which never bills, is marked too.
+  databend: true,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
+  snmp: false,
+  sparkplug: false,
+  // The operations open holds the file's exclusive lock until the handle has been idle for 30 minutes.
+  libredb: true,
+});
 /**
  * Which shipped engines MCP reads only under an agent credential of the seed's own, `agentUser` and `agentPassword`,
  * never under the connection's login: on such an engine the agent credential's grants are what bound what an MCP

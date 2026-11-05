@@ -9,6 +9,7 @@ import { logger } from "@/lib/logger";
 import { getManagedConnections, seedRolesOf, type ManagedConnection } from "@/lib/seed";
 import { resolveVaultCredentials } from "@/lib/seed/credential-resolver";
 import { VaultError } from "@/lib/seed/vault-client";
+import { mcpConnectionUnavailable } from "./availability";
 import { redactError } from "./serializer";
 
 /** The answer of a context whose seed file could not be loaded; the cause is logged, never sent. */
@@ -19,9 +20,10 @@ export const MCP_CONNECTIONS_UNREADABLE_TEXT =
 /**
  * The MCP tools' view of the connections one caller may use (#246).
  *
- * One instance per request, built by the SDK server factory around the verified identity. The
- * seed file is read lazily by the first tool that needs it, so initialize, server/discover and
- * tools/list never depend on it, and within one request it is read once.
+ * One instance per request, built by an SDK server factory around the verified identity. The seed
+ * file is read lazily, the first time a tool asks for connections or the per-token tools/list asks
+ * which engines the caller reaches (`reachableTypes`), so initialize and server/discover never
+ * depend on it, and within one request it is read once.
  *
  * Acquisition goes through acquireExecutionProfileProvider and nothing else. Concurrent first
  * acquisitions of one connection and profile are joined here, keyed on the factory's own
@@ -44,6 +46,12 @@ export interface McpCaller {
   readonly role: Role;
   readonly claimRoles?: readonly string[];
 }
+
+/**
+ * The engines of the connections one token can read and some MCP open can serve (`reachableTypes`): what its
+ * tools/list registers statement tools for, and what `inspect_schema`'s hints are read from.
+ */
+export type McpReach = ReadonlySet<ManagedConnection["type"]>;
 
 export interface McpToolCall {
   readonly context: McpConnectionContext;
@@ -138,6 +146,21 @@ export class McpConnectionContext {
     const visible = await this.visibleConnections();
     if (visible === MCP_CONNECTIONS_UNREADABLE) return visible;
     return visible.find((connection) => connection.id === connectionId) ?? null;
+  }
+
+  /**
+   * The engines of the visible connections some MCP open can serve for this caller (`mcpConnectionUnavailable`): what
+   * one token's tools/list registers statement tools for. It reads the listing this context holds, so it builds no
+   * provider and reads no Vault reference, and answers MCP_CONNECTIONS_UNREADABLE when the seed file cannot be loaded.
+   */
+  async reachableTypes(): Promise<McpReach | typeof MCP_CONNECTIONS_UNREADABLE> {
+    const visible = await this.visibleConnections();
+    if (visible === MCP_CONNECTIONS_UNREADABLE) return visible;
+    return new Set(
+      visible
+        .filter((connection) => mcpConnectionUnavailable(this.caller, connection) === null)
+        .map((connection) => connection.type),
+    );
   }
 
   async acquire(listed: ManagedConnection, profile: ExecutionProfile): Promise<DatabaseProvider> {

@@ -26,7 +26,7 @@ import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
-import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
+import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { asReply, type CapturedStep, principalCapture, probeLabel, stepFor } from "../../helpers/redis-agent";
 
 pinMcpTestEnvironment();
@@ -178,13 +178,12 @@ const textOf = (result: Answered) => result.content.map((block) => block.text).j
 const sentCommands = () => opened.flatMap((connection) => connection.calls);
 
 describe("the tool", () => {
-  test("is listed in its registration position, read-only, with the statement schema and no offset or database", async () => {
+  test("is listed in its place in the token's list, read-only, with the statement schema and no offset or database", async () => {
     const session = await connectClient(serve, { negotiation: "legacy" });
     try {
       const tools = (await session.client.listTools()).tools;
       const names = tools.map((tool) => tool.name);
-      expect(names.indexOf("run_redis_read")).not.toBe(-1);
-      expect(names.indexOf("run_redis_read")).toBe(registeredMcpToolNames().indexOf("run_redis_read"));
+      expect(names).toEqual(listedMcpToolNames(new Set(["redis", "sqlite"])));
       const tool = tools.find((candidate) => candidate.name === "run_redis_read");
       expect(tool?.description).toBe(RUN_REDIS_READ_ARM.description);
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });

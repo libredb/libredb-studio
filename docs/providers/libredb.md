@@ -1512,3 +1512,4 @@ Measured on `@libredb/libredb` 0.2.2 by [`tests/integration/mcp/run-libredb-read
 
 A cancel or a timeout is seen only when the read has ended, because the read runs on the server's own thread and cannot be stopped midway: a read that outran the time left of `timeout_ms` is then answered as the timeout, and a cancel delivered during a read arrives after the read's answer was settled.
 `run_libredb_read` takes no lock, so it never holds the file from the editor; `inspect_schema` opens the file as the operations profile does, which takes the exclusive lock when no Studio session holds the file open, and opens an existing file only ([`docs/MCP.md`](../MCP.md)).
+So MCP's `inspect_schema` tells a token that reaches a LibreDB connection `readOnlyHint: false` and `destructiveHint: false` (`MCP_METADATA_READ_CHANGES_STATE`), while `run_libredb_read`, which takes no lock, stays annotated read-only.

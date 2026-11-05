@@ -27,7 +27,7 @@ import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
-import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
+import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { fakeCluster, manyRows } from "../../helpers/kubernetes-cluster";
 import { TEST_CA_PEM, TEST_TOKEN } from "../../helpers/kubernetes-connection";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../helpers/kubernetes-markers";
@@ -128,13 +128,12 @@ const mcpEvents = () =>
 const asked = (path: string) => transport.requests.some((request) => new URL(request.url).pathname === path);
 
 describe("the tool", () => {
-  test("is listed in its registration position, read-only, with the statement schema and no offset or database", async () => {
+  test("is listed in its place in the token's list, read-only, with the statement schema and no offset or database", async () => {
     const session = await connectClient(serve, { negotiation: "legacy" });
     try {
       const tools = (await session.client.listTools()).tools;
       const names = tools.map((tool) => tool.name);
-      expect(names.indexOf("run_kubectl_read")).not.toBe(-1);
-      expect(names.indexOf("run_kubectl_read")).toBe(registeredMcpToolNames().indexOf("run_kubectl_read"));
+      expect(names).toEqual(listedMcpToolNames(new Set(["kubernetes", "sqlite"])));
       const tool = tools.find((candidate) => candidate.name === "run_kubectl_read");
       expect(tool?.description).toBe(RUN_KUBECTL_READ_ARM.description);
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });

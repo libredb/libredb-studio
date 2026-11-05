@@ -181,6 +181,65 @@ describe("resolve", () => {
   });
 });
 
+describe("reachableTypes", () => {
+  const savedGovernance = process.env.GOVERNANCE_SOURCE;
+
+  beforeEach(() => {
+    delete process.env.GOVERNANCE_SOURCE;
+  });
+
+  afterEach(() => {
+    if (savedGovernance === undefined) delete process.env.GOVERNANCE_SOURCE;
+    else process.env.GOVERNANCE_SOURCE = savedGovernance;
+  });
+
+  test("answers the engines of the connections the caller can read, and no other", async () => {
+    writeSeedFile(dir, [
+      { id: "shop", type: "sqlite", database: join(dir, "shop.db") },
+      { id: "mongo", type: "mongodb", host: "127.0.0.1", port: 27017, database: "app" },
+      { id: "hidden", type: "postgres", host: "127.0.0.1", port: 5432, mcp: false },
+      { id: "users", type: "duckdb", database: join(dir, "users.duckdb"), roles: ["user"] },
+    ]);
+    expect(await new McpConnectionContext(alice).reachableTypes()).toEqual(new Set(["sqlite", "mongodb"]));
+  });
+
+  test("leaves out a connection no MCP open can serve for the caller", async () => {
+    writeSeedFile(dir, [
+      { id: "files", type: "sqlite", database: join(dir, "shop.db"), roles: ["*"] },
+      { id: "warehouse", type: "duckdb", database: join(dir, "warehouse.duckdb"), roles: ["*"] },
+    ]);
+    expect(await new McpConnectionContext(bob).reachableTypes()).toEqual(new Set(["duckdb"]));
+    // A seed another role can use opens with file access denied for every caller, admins included.
+    writeSeedFile(dir, [{ id: "files", type: "sqlite", database: join(dir, "shop.db"), roles: ["*"] }]);
+    expect(await new McpConnectionContext(alice).reachableTypes()).toEqual(new Set());
+  });
+
+  test("answers unreadable for a seed file that cannot be parsed", async () => {
+    const path = join(dir, "broken.json");
+    writeFileSync(path, "{ this is not json");
+    process.env.SEED_CONFIG_PATH = path;
+    const errorLog = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      expect(await new McpConnectionContext(alice).reachableTypes()).toBe(MCP_CONNECTIONS_UNREADABLE);
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  test("answers no engine when the seed file is absent", async () => {
+    process.env.SEED_CONFIG_PATH = join(dir, "never-written.json");
+    expect(await new McpConnectionContext(alice).reachableTypes()).toEqual(new Set());
+  });
+
+  test("reads the listing the context already holds, so one request reads the seed file once", async () => {
+    seedShop();
+    const context = new McpConnectionContext(alice);
+    expect(await context.reachableTypes()).toEqual(new Set(["sqlite"]));
+    writeSeedFile(dir, [{ id: "other", type: "sqlite", database: join(dir, "shop.db") }]);
+    expect(await visibleIds(context)).toEqual(["seed:shop"]);
+  });
+});
+
 describe("acquire", () => {
   test("joins twelve concurrent first acquisitions of one connection and profile into one provider", async () => {
     seedShop();
@@ -413,6 +472,13 @@ describe("a seed's Vault reference", () => {
       throw new Error("seed:warehouse did not resolve");
     return connection;
   }
+
+  test("is not read by reachableTypes, which answers the engine from the listing alone", async () => {
+    vaultAnswers(200, { data: { data: { password: "not-a-real-password" } } });
+    seedWarehouse();
+    expect(await new McpConnectionContext(alice).reachableTypes()).toEqual(new Set(["postgres"]));
+    expect(vaultCalls).toEqual([]);
+  });
 
   test("is read from Vault when a tool opens the connection, so the provider gets the secret and not the text", async () => {
     vaultAnswers(200, { data: { data: { password: "not-a-real-password" } } });

@@ -33,7 +33,7 @@ None of it is a GitHub issue.
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
 - [Dependencies](#dependencies) — P1-P13 · 11
-- [Documentation](#documentation) — DOC3-DOC36 · 30
+- [Documentation](#documentation) — DOC3-DOC37 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B171 · 82
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP23 · 22
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP25 · 24
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
 
 ---
@@ -7585,6 +7585,14 @@ Found 2026-11-05 while designing MCP phase 1 (#2252).
 
 **Done when:** each count names what it counts from the tree or `docs/llms/README.md` rather than a number that moves, `tests/unit/agent-documentation.test.ts` holds it, and B9 states the resume path as it is or leaves the backlog.
 
+### DOC37. ADDING_A_PROVIDER.md says only DuckDB reads the file-access posture
+
+The `readsFileAccessPosture` row of the capability table in `docs/ADDING_A_PROVIDER.md` says only DuckDB opens its editor handle under the server-derived file-access posture.
+`SQLiteProvider.getCapabilities` in `src/lib/db/providers/sql/sqlite.ts` declares `readsFileAccessPosture: true` as well, and `READS_FILE_ACCESS_POSTURE` in `src/lib/db/compatibility.ts` holds it true: SQLite refuses a denied handle at `connect()` where DuckDB confines it, as `REFUSES_DENIED_FILE_ACCESS` records.
+Found 2026-11-05 in the review of #2255.
+
+**Done when:** the row names both engines and what each does with a denied handle, and a test holds the engines the row names to the true rows of `READS_FILE_ACCESS_POSTURE`.
+
 ## Release pipeline
 
 ### REL1. No CI job installs the released chart artifact with a Helm 3 client
@@ -9769,6 +9777,26 @@ The settings screen, `.env.example` and `docker-compose.example.yml` say it in M
 Found 2026-11-05 while designing MCP phase 1 (#2252).
 
 **Done when:** both comments say "bounded, read-only statements in each engine's own language" in the next change to the chart, with its #167 version bump and `bun run chart:bump` refreshing the operator copy, and `tests/unit/mcp/copy.test.ts` reads both.
+
+### MCP24. An in-memory SQLite or DuckDB seed lists a read tool that every MCP open refuses
+
+A seed whose `database` is `:memory:` loads on SQLite and on DuckDB, and every MCP open of it is refused: both MCP profiles open read-only, and `connectReadOnly` in `SQLiteProvider` (`src/lib/db/providers/sql/sqlite.ts`) and in `DuckDBProvider` (`src/lib/db/providers/sql/duckdb/index.ts`) refuses an in-memory target with an `ExecutionProfileError`.
+`mcpConnectionUnavailable` in `src/lib/mcp/availability.ts` reads only the file-access posture, so `list_connections` lists such a seed with `read_tool: "run_read_query"` and no `unavailable`, a token that reaches it lists `run_read_query` in its `tools/list`, and `inspect_schema` and `run_read_query` both answer the profile's refusal, in the words MCP20 records.
+Measured 2026-11-05 on `main` for an admin token on a SQLite and on a DuckDB seed offered to admins alone, and for a user token on a DuckDB seed offered to every role.
+`docs/MCP.md` says a SQLite seed's `database` is an absolute path, and the seed schema refuses neither engine's `:memory:`.
+Found 2026-11-05 in the review of #2255.
+
+**Done when:** such a seed is refused when the seed file loads, or is listed with `read_tool: null` and an `unavailable` sentence and left out of every token's `tools/list`, decided from a record beside the providers rather than a type-id branch, with a test that lists it and opens it under both MCP profiles.
+
+### MCP25. A statement tool's not-served refusal names `run_read_query` for a SQLite seed no MCP open serves
+
+`notServedText` in `src/lib/mcp/tools/run-statement.ts` names the tool that serves the connection's engine (`mcpStatementToolFor`), or `inspect_schema` where none does, and never asks `mcpConnectionUnavailable`.
+So a statement tool that does not serve SQLite, called on a SQLite seed that is unavailable to the caller, answers "this tool does not serve SQLite; use run_read_query there", while `list_connections` lists that seed with `read_tool: null` and `unavailable`, a token whose only seed it is lists no `run_read_query`, and `inspect_schema` refuses the seed too.
+`docs/MCP.md` says the tool named in that refusal is the one the connection's `read_tool` names, or `inspect_schema` where it is `null`, which this case contradicts.
+Measured 2026-11-05 on `main` with `run_cypher_read` and a user token on a SQLite seed offered to `["user"]`.
+Found 2026-11-05 while planning #2255.
+
+**Done when:** a statement tool that does not serve such a connection answers that the connection is not available to MCP, naming no tool, `docs/MCP.md` says so beside the not-served refusal, and a test calls such a tool on such a seed.
 
 ---
 

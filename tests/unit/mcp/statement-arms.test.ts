@@ -5,6 +5,8 @@
  * from the arms.
  */
 import { describe, expect, mock, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import {
@@ -31,6 +33,7 @@ import {
   mcpStatementArm,
   mcpStatementToolFor,
   mcpTablelessReadTool,
+  listedStatementArms,
   mcpWithholdsDatabase,
   servingStatementArms,
 } from "@/lib/mcp/tools/statement-arms";
@@ -943,6 +946,17 @@ describe("the Cypher arm", () => {
 describe("the Redis arm", () => {
   const server = languageServer("rediscli");
 
+  test("states the two effects a read has on the server, within 2,048 characters", () => {
+    const description = RUN_REDIS_READ_ARM.description;
+    expect(description).toContain("a read of a key whose time to live has passed deletes it");
+    expect(description).toContain("notify-keyspace-events");
+    expect(description).toContain("publishes a keymiss event");
+    expect(description.length).toBeLessThanOrEqual(2_048);
+    // docs/MCP.md's run_redis_read bullet says the same thing.
+    const guide = readFileSync(join(import.meta.dir, "..", "..", "..", "docs", "MCP.md"), "utf8");
+    expect(guide).toContain("a read of a key whose time to live has passed deletes it");
+  });
+
   test("takes one command line, no offset and no database, and sends it as written", () => {
     expect(RUN_REDIS_READ_ARM.title).toBe("Run a read-only Redis metadata read");
     expect(RUN_REDIS_READ_ARM.argument).toBe("statement");
@@ -1387,9 +1401,61 @@ describe("the tool each engine is read with", () => {
       mongo: idle,
     } as unknown as typeof MCP_STATEMENT_ARMS;
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
-    const registerTool = mock((_name: string) => undefined);
-    registerStatementTools({ registerTool } as unknown as McpServer, {} as McpConnectionContext, arms);
+    const registerTool = mock<(name: string) => undefined>(() => undefined);
+    registerStatementTools({ registerTool } as unknown as McpServer, {} as McpConnectionContext, undefined, arms);
     expect(registerTool.mock.calls.map(([name]) => name)).toEqual(["run_read_query"]);
+    const reachMongo = mock<(name: string) => undefined>(() => undefined);
+    registerStatementTools(
+      { registerTool: reachMongo } as unknown as McpServer,
+      {} as McpConnectionContext,
+      new Set(["mongodb"]),
+      arms,
+    );
+    expect(reachMongo.mock.calls).toEqual([]);
+    const reachSqlite = mock<(name: string) => undefined>(() => undefined);
+    registerStatementTools(
+      { registerTool: reachSqlite } as unknown as McpServer,
+      {} as McpConnectionContext,
+      new Set(["sqlite"]),
+      arms,
+    );
+    expect(reachSqlite.mock.calls.map(([name]) => name)).toEqual(["run_read_query"]);
+  });
+});
+
+describe("listedStatementArms", () => {
+  test("lists no statement tool for an empty reach", () => {
+    expect(listedStatementArms(new Set())).toEqual([]);
+  });
+
+  test("lists the arm that serves a reached engine", () => {
+    expect(listedStatementArms(new Set(["mongodb"]))).toEqual([RUN_MONGO_COMMAND_ARM]);
+  });
+
+  test("lists nothing for an engine no statement tool serves", () => {
+    expect(listedStatementArms(new Set(["druid", "prometheus", "databend"]))).toEqual([]);
+  });
+
+  test("lists each arm once, in record order, however many of its engines are reached", () => {
+    expect(listedStatementArms(new Set(["redis", "duckdb", "sqlite"]))).toEqual([
+      RUN_READ_QUERY_ARM,
+      RUN_REDIS_READ_ARM,
+    ]);
+  });
+
+  test("never lists an arm that serves nothing, whatever the reach", () => {
+    const idle = Object.freeze({ ...RUN_MONGO_COMMAND_ARM, types: [] });
+    const arms = {
+      ...Object.fromEntries(Object.keys(MCP_STATEMENT_ARMS).map((language) => [language, null])),
+      sql: RUN_READ_QUERY_ARM,
+      mongo: idle,
+    } as unknown as typeof MCP_STATEMENT_ARMS;
+    expect(listedStatementArms(new Set(["mongodb", "sqlite"]), arms)).toEqual([RUN_READ_QUERY_ARM]);
+  });
+
+  test("lists every serving arm for a reach of every served engine", () => {
+    const served = new Set(servingStatementArms().flatMap((arm) => arm.types));
+    expect(listedStatementArms(served)).toEqual(servingStatementArms());
   });
 });
 

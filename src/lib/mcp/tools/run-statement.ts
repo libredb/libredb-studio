@@ -18,6 +18,7 @@ import {
   MCP_CONNECTIONS_UNREADABLE,
   MCP_CONNECTIONS_UNREADABLE_TEXT,
   type McpConnectionContext,
+  type McpReach,
   type McpToolCall,
 } from "../context";
 import {
@@ -47,7 +48,13 @@ import {
   raceDeadline,
   timeoutText,
 } from "./read-query-limits";
-import { MCP_STATEMENT_ARMS, mcpStatementToolFor, servingStatementArms, type McpStatementArm } from "./statement-arms";
+import {
+  listedStatementArms,
+  MCP_STATEMENT_ARMS,
+  mcpStatementToolFor,
+  servingStatementArms,
+  type McpStatementArm,
+} from "./statement-arms";
 
 /**
  * The one core every MCP statement tool runs (#246): one read-only statement, on an engine that
@@ -347,13 +354,17 @@ export async function runStatement(
   }
 }
 
-/** Every statement tool whose arm serves an engine, in record order; an arm that serves none is never listed. */
+/**
+ * Every statement tool whose arm serves an engine, in record order, or with `reach` only those that serve a reached
+ * engine; an arm that serves none is never listed.
+ */
 export function registerStatementTools(
   server: McpServer,
   context: McpConnectionContext,
+  reach?: McpReach,
   arms: Parameters<typeof servingStatementArms>[0] = MCP_STATEMENT_ARMS,
 ): void {
-  for (const arm of servingStatementArms(arms)) {
+  for (const arm of reach === undefined ? servingStatementArms(arms) : listedStatementArms(reach, arms)) {
     server.registerTool(
       arm.tool,
       {

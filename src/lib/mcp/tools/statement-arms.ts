@@ -16,6 +16,7 @@ import {
 import { languageServer } from "@/lib/agent/languages/server";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
+import type { McpReach } from "../context";
 import { checkReadOnlyStatement } from "../guards/execution-fence";
 import { MCP_UNTRUSTED_NOTICE } from "../output";
 import { DATABASE_ARGUMENT_DESCRIPTION } from "./database-choice";
@@ -240,6 +241,17 @@ export function servingStatementArms(
   arms: Readonly<Record<AgentStatementLanguageId, McpStatementArm | null>> = MCP_STATEMENT_ARMS,
 ): readonly McpStatementArm[] {
   return Object.values(arms).filter((arm): arm is McpStatementArm => arm !== null && arm.types.length > 0);
+}
+
+/**
+ * The serving arms that serve an engine in `reached`, in record order: the statement tools one token's tools/list
+ * holds. A registry read only, since each arm's `types` already come from the served-engine resolver.
+ */
+export function listedStatementArms(
+  reached: McpReach,
+  arms: Readonly<Record<AgentStatementLanguageId, McpStatementArm | null>> = MCP_STATEMENT_ARMS,
+): readonly McpStatementArm[] {
+  return servingStatementArms(arms).filter((arm) => arm.types.some((type) => reached.has(type)));
 }
 
 /** The arm that serves `type`, or null where no statement tool serves it. */

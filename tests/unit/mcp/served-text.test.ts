@@ -8,14 +8,16 @@
  * waits for one change that rewords it for both features (`docs/BACKLOG.md` MCP20). Comments are not read: no client
  * sees them.
  */
-import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { codeText } from "../../helpers/comment-text";
-import { pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
+import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { handlerServe, legacyPost, readJsonRpc } from "../../helpers/mcp-harness";
+import { servedEngineSeeds } from "../../helpers/mcp-served-seeds";
 import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
 
 pinMcpTestEnvironment();
@@ -38,13 +40,32 @@ const SERVED_AGENT_FEATURE = /\bagent[- ](?:mode|read|run|statement|execution)\b
 const LITERAL_AGENT_FEATURE =
   /\bagent (?:mode|read|run|statement|execution)\b|\bagent-mode\b|\bagent read key\b|\bagent credential\b/i;
 
+const seedDir = mkdtempSync(path.join(tmpdir(), "libredb-mcp-served-text-"));
+
 afterEach(async () => {
   await resetMcpTestState();
 });
 
+afterAll(() => {
+  rmSync(seedDir, { recursive: true, force: true });
+});
+
+/**
+ * The tools an admin token lists with a seed on every served engine, which is every registered tool: a token lists only
+ * the statement tools that serve an engine it reaches. GOVERNANCE_SOURCE is cleared while it lists, so a developer's
+ * environment never decides what is read.
+ */
 async function listedTools(): Promise<Array<{ readonly name: string }>> {
-  const reply = await readJsonRpc(await handlerServe()(legacyPost({ jsonrpc: "2.0", id: 1, method: "tools/list" })));
-  return reply.result?.tools ?? [];
+  const governance = process.env.GOVERNANCE_SOURCE;
+  delete process.env.GOVERNANCE_SOURCE;
+  try {
+    writeSeedFile(seedDir, servedEngineSeeds(seedDir));
+    const reply = await readJsonRpc(await handlerServe()(legacyPost({ jsonrpc: "2.0", id: 1, method: "tools/list" })));
+    return reply.result?.tools ?? [];
+  } finally {
+    if (governance === undefined) delete process.env.GOVERNANCE_SOURCE;
+    else process.env.GOVERNANCE_SOURCE = governance;
+  }
 }
 
 /** Every title and description string a listed tool carries, nested ones included, with where it sits. */
