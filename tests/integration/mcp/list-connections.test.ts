@@ -264,16 +264,22 @@ describe("a connection no tool can read", () => {
   const ALICE: McpCaller = { username: "alice", role: "admin" };
   const BOB: McpCaller = { username: "bob", role: "user" };
   let savedGovernance: string | undefined;
+  let savedEnabledProviders: string | undefined;
 
-  // The listing and editorExecutionContext both read GOVERNANCE_SOURCE, so a developer's setting is set aside.
+  // The listing and editorExecutionContext both read GOVERNANCE_SOURCE, and acquiring a provider reads
+  // LIBREDB_ENABLED_PROVIDERS, so a developer's setting of either is set aside.
   beforeEach(() => {
     savedGovernance = process.env.GOVERNANCE_SOURCE;
     delete process.env.GOVERNANCE_SOURCE;
+    savedEnabledProviders = process.env.LIBREDB_ENABLED_PROVIDERS;
+    delete process.env.LIBREDB_ENABLED_PROVIDERS;
   });
 
   afterEach(() => {
     if (savedGovernance === undefined) delete process.env.GOVERNANCE_SOURCE;
     else process.env.GOVERNANCE_SOURCE = savedGovernance;
+    if (savedEnabledProviders === undefined) delete process.env.LIBREDB_ENABLED_PROVIDERS;
+    else process.env.LIBREDB_ENABLED_PROVIDERS = savedEnabledProviders;
   });
 
   /** One list_connections call with no arguments, through the production handler, as `caller`'s token. */
