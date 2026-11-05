@@ -923,12 +923,12 @@ The run read allowance is not charged: ClickHouse does not bill per read.
 
 Each step runs under the request settings above, and any answer the proof cannot read refuses the profile.
 
-1. `SELECT version(), currentUser(), toString(getSetting('readonly'))`: the release must be one whose lists below were checked (`CLICKHOUSE_CHECKED_RELEASES`, 26.7 today), and `readonly` must read `1`. Another release is refused `PROFILE_UNSUPPORTED_TARGET` until its lists are checked again.
+1. `SELECT version(), currentUser(), toString(getSetting('readonly'))`: the release must be 26.7 or 26.9 (`CLICKHOUSE_CHECKED_RELEASES`), and `readonly` must read `1`. Within 26.9, the minimum version is the tested `26.9.23.15`. Earlier 26.9 patches and other releases receive `PROFILE_UNSUPPORTED_TARGET`.
 2. `SELECT 1 SETTINGS readonly = 0` must answer `164`. A user whose settings profile marks `readonly` `CHANGEABLE_IN_READONLY` runs it and answers `1`, and is refused `PROFILE_SERVER_UNENFORCED`.
 3. `CREATE DATABASE IF NOT EXISTS` on the bound database, a write that changes nothing on any outcome because the connect probe already ran in that database, must be refused with `164` or `497`. A least-privilege user answers `497`, because the grant check comes first, and an unrestricted one `164`. `DROP TABLE IF EXISTS` on an absent table cannot serve as this probe: it answers success under `readonly = 1`.
-4. `SHOW GRANTS FINAL` lists the user's grants merged with every role granted to it, default or not: a role granted with `SET DEFAULT ROLE NONE` still lists its grants. Each privilege must be `SELECT` or `SHOW` and its four parts (`CLICKHOUSE_AGENT_PRIVILEGES`), on one named database or table outside `system` and `INFORMATION_SCHEMA`, without the grant option. Any other privilege is refused `PROFILE_PRIVILEGES_TOO_BROAD` by name: a source grant (`CLICKHOUSE_SOURCE_PRIVILEGES`: SOURCES, READ, WRITE and every source 26.7 lists) and a grant `readonly` leaves usable (`CLICKHOUSE_READONLY_EXEMPT_PRIVILEGES`: BACKUP, UNDROP TABLE, ALTER DATABASE SETTINGS, the named-collection group, KILL QUERY and CLUSTER) are said as such.
-5. `SELECT 1 FROM system.query_log LIMIT 0` must answer `497`, or `60` where the log is off: the query log holds every user's statements.
-6. `system.tables` must show the user no table outside the local engines (`CLICKHOUSE_LOCAL_TABLE_ENGINES`: the MergeTree family, `Memory`, the log engines, `Null`, `Set`, `Join` and the two view engines), and no view or materialized view whose SQL SECURITY is `DEFINER` or `NONE`. `system.dictionaries` must be unreadable to it (`497`) or empty. Every other engine 26.7 lists is in `CLICKHOUSE_REFUSED_TABLE_ENGINES`, and the two lists are held to cover 26.7's `system.table_engines` exactly.
+4. `SHOW GRANTS FINAL` lists the user's grants merged with every role granted to it, default or not: a role granted with `SET DEFAULT ROLE NONE` still lists its grants. Each privilege must be `SELECT` or `SHOW` and its four parts (`CLICKHOUSE_AGENT_PRIVILEGES`), on one named database or table outside `system` and `INFORMATION_SCHEMA`, without the grant option. Any other privilege is refused `PROFILE_PRIVILEGES_TOO_BROAD` by name: a source grant (`CLICKHOUSE_SOURCE_PRIVILEGES`: SOURCES, READ, WRITE and the sources across both checked releases, including BIGQUERY and DISK) and a grant `readonly` leaves usable (`CLICKHOUSE_READONLY_EXEMPT_PRIVILEGES`: BACKUP, UNDROP TABLE, ALTER DATABASE SETTINGS, the named-collection group, KILL QUERY and CLUSTER) are said as such.
+5. Probe both `system.query_log` and `system.user_query_log` with `SELECT 1 FROM <table> LIMIT 0`. Each must answer `497` (access denied) or `60` (table absent). Any other answer refuses the profile. The query log holds every user's statements. The user query log exposes the current user's statements without a grant, including editor statements when the agent shares the connection user.
+6. `system.tables` must show the user no table outside the local engines (`CLICKHOUSE_LOCAL_TABLE_ENGINES`: the MergeTree family, `Memory`, the log engines, `Null`, `Set`, `Join` and the two view engines), and no view or materialized view whose SQL SECURITY is `DEFINER` or `NONE`. `system.dictionaries` must be unreadable to it (`497`) or empty. Every other engine listed by either checked release is in `CLICKHOUSE_REFUSED_TABLE_ENGINES`. Tests compare the combined lists with the union of both `system.table_engines` inventories.
 7. `system.functions` must list no function whose `origin` is neither `System` nor `SQLUserDefined`, and one that does is refused `PROFILE_PRIVILEGES_TOO_BROAD` by name. An executable function declared in the server's configuration (`user_defined_executable_functions_config`, listed with origin `ExecutableUserDefined`, `executable` and `executable_pool` alike) needs no grant to call, and `readonly = 1` does not refuse it: the least-privilege user called one and its program ran. A WebAssembly function (`WasmUserDefined`) and an origin a later release adds are refused the same way.
 
 The check is of what `system.tables` shows, so a `SHOW TABLES` grant that makes a URL-engine table visible refuses the user even without `SELECT` on it.
@@ -951,6 +951,23 @@ Grant `SELECT` per table, or per database where every table in it uses a local e
 A server that declares an executable function refuses every agent user, since no grant governs the call.
 Grant the `SELECT` to the user itself: a user whose only `SELECT` comes through a role that is not a default role is admitted, because `SHOW GRANTS FINAL` lists the role's grants, but its reads answer `497`, since the role is not active.
 
+#### Disable the user query log
+
+On 26.9, disable `system.user_query_log` before opening an agent or MCP connection.
+Add this server configuration in `/etc/clickhouse-server/config.d/disable-user-query-log.xml`, then restart ClickHouse:
+
+```xml
+<clickhouse>
+    <query_log>
+        <enable_user_query_log>false</enable_user_query_log>
+    </query_log>
+</clickhouse>
+```
+
+As the agent user, verify that `SELECT 1 FROM system.user_query_log LIMIT 0` answers code `60`.
+This setting disables the user query log; the ordinary query log remains available to users with its grant.
+The profile refuses a readable user query log even with a separate agent credential.
+
 #### What only the fence or the operator stops
 
 - `cluster()` and `clusterAllReplicas()` answer an unrestricted user under `readonly = 1`, measured; a least-privilege user is refused them with `497` (`READ ON REMOTE`), and the open refuses any REMOTE grant. The provider fence (`assertNoRemoteTableFunction`) refuses `remote`, `remoteSecure`, `cluster` and `clusterAllReplicas` before anything is sent, quoted names and `\xHH` escapes included, reading the statement with this engine's registered grammar (`resolveSqlGrammar`), so it is defence in depth, lexer-only on its own.
@@ -963,6 +980,13 @@ Grant the `SELECT` to the user itself: a user whose only `SELECT` comes through 
 #### Boundary record
 
 Measured on `clickhouse/clickhouse-server:26.7.1.1315` (2026-10-29) by [`tests/live/clickhouse-agent-boundary.ts`](../../tests/live/clickhouse-agent-boundary.ts), with Studio's agent admission bypassed: 115 checks, all passing.
+
+On 2026-11-02, the live suite passed all 115 checks against each Linux ARM64 server: `26.7.1.1315` and `26.9.23.15`. Both engine inventories contain 83 names; 26.9 adds `BigQuery` and removes `WindowView`. Both names remain in the refused list, and the local-engine allowlist is unchanged. The privilege inventory grows from 241 to 249 entries; tests name and refuse all eight additions.
+
+On 2026-11-05, the updated profile passed all 115 agent checks and 50 MCP checks on both versions.
+On `26.9.23.15`, the default user query log answered a user without a log grant, and the profile refused that connection.
+After disabling the user query log and restarting, its probe answered `60`, and both suites passed.
+The eight new-privilege tests use a named database target, so the privilege allowlist alone must refuse them.
 
 | Probe | Least-privilege user | Writable admin under `readonly = 1` | Writable admin, positive control |
 | --- | --- | --- | --- |
@@ -1006,7 +1030,8 @@ It runs a `SELECT` (a `WITH` is fine), or `EXPLAIN` without `ANALYZE`: a bare `V
 A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.
 A read past `timeout_ms` is answered as the timeout.
 
-[`tests/live/clickhouse-mcp-boundary.ts`](../../tests/live/clickhouse-mcp-boundary.ts) replays the boundary check above through the tool's handler with its statement fence removed, against 26.7.1.1315, and passed on 2026-11-01.
+[`tests/live/clickhouse-mcp-boundary.ts`](../../tests/live/clickhouse-mcp-boundary.ts) replays the boundary check through the tool's handler with its statement fence removed.
+All 50 checks passed on `26.7.1.1315` and `26.9.23.15` on 2026-11-05; the latter had its user query log disabled.
 The least-privilege user read its table; the writable admin, a user holding `BACKUP` and a user holding it only through a non-default role were each refused at open through MCP.
 Every write, DDL, `SYSTEM`, grant, temporary table, function, source table function, `BACKUP` and `KILL` was refused by the server with `497`, a trailing `SETTINGS readonly = 0` with `164` and a second statement with `62`; `remote()`, `remoteSecure()` and `cluster()` were refused by the provider before they were sent, and by the server (`497`) when sent to it directly.
 The writable admin ran each statement on a control copy, and a hash of the tables, rows, users, roles, collections and functions read back the same before and after.
