@@ -17,7 +17,7 @@ Studio runs no model for MCP: the model is the one in this client, and these too
 ## Setup checks
 
 A 401 means the token is missing, expired, revoked or minted for another Studio address, or the configured address is not exactly Studio's MCP address, which ends in /api/mcp, so check the address before the user mints a new token on Studio's MCP settings screen and saves it in this client's configuration.
-A 404 means MCP is off on that Studio, or the configured address does not reach Studio at all.
+A 404 means MCP is off on that Studio, or the configured address is not Studio's MCP address.
 An empty connection list means no connection is opted in for the token's role, and an operator adds `mcp: true` to a seed connection to opt one in.
 A `tools/list` answered with the JSON-RPC error `-32603`, or a tool answering that the connection configuration could not be read, means Studio cannot read its seed file, and the operator finds the cause in the server log.
 A connection that carries `unavailable` cannot be read by any tool: report its sentence, which says what an operator changes, and call no tool on it.

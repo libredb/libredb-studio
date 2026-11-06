@@ -252,14 +252,14 @@ describe("the skill's text", () => {
     expect(guide).toContain("\n| 200 `-32603` |");
   });
 
-  test("lays a 401 on the token or the configured address, and a 404 on MCP being off or the address not reaching Studio", () => {
+  test("lays a 401 on the token or the configured address, and a 404 on MCP being off or the address not being its MCP address", () => {
     const line = (status: string): string =>
       BODY.split("\n").find((text) => text.startsWith(`A ${status} means `)) ?? "";
     expect(line("401")).toBe(
       "A 401 means the token is missing, expired, revoked or minted for another Studio address, or the configured address is not exactly Studio's MCP address, which ends in /api/mcp, so check the address before the user mints a new token on Studio's MCP settings screen and saves it in this client's configuration.",
     );
     expect(line("404")).toBe(
-      "A 404 means MCP is off on that Studio, or the configured address does not reach Studio at all.",
+      "A 404 means MCP is off on that Studio, or the configured address is not Studio's MCP address.",
     );
   });
 
