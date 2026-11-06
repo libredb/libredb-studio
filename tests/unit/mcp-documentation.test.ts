@@ -917,3 +917,17 @@ describe("docs/SEED_CONNECTIONS.md", () => {
     );
   });
 });
+
+describe("docs/MCP.md, Gemini CLI", () => {
+  test("carries the dated note of Google's own announcement on individual sign-ins and Antigravity CLI", () => {
+    const gemini = MCP_DOC.split(/^### /m).find((part) => part.startsWith("Gemini CLI\n")) ?? "";
+    expect(gemini).toContain(
+      "Google's announcement of 2026-05-19, [Transitioning Gemini CLI to Antigravity CLI](https://developers.googleblog.com/en/an-important-update-transitioning-gemini-cli-to-antigravity-cli/), says that from 2026-06-18 Gemini CLI no longer serves",
+    );
+    expect(gemini).toContain("Gemini Code Assist for individuals, and points those users to Antigravity CLI.\n");
+    expect(gemini).toContain(
+      "It also says Google keeps supporting Gemini CLI for paid Gemini API keys and Gemini Code Assist Standard or Enterprise licences.\n",
+    );
+    expect(gemini).toContain("Antigravity CLI has not been checked against Studio.");
+  });
+});

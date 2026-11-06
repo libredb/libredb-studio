@@ -549,6 +549,10 @@ VS Code's Agent Host does not receive servers that need an `${input:...}` value.
 
 Not verified live.
 
+Google's announcement of 2026-05-19, [Transitioning Gemini CLI to Antigravity CLI](https://developers.googleblog.com/en/an-important-update-transitioning-gemini-cli-to-antigravity-cli/), says that from 2026-06-18 Gemini CLI no longer serves Google AI Pro or Ultra sign-ins or no-cost use through Gemini Code Assist for individuals, and points those users to Antigravity CLI.
+It also says Google keeps supporting Gemini CLI for paid Gemini API keys and Gemini Code Assist Standard or Enterprise licences.
+Antigravity CLI has not been checked against Studio.
+
 In `~/.gemini/settings.json`; Gemini CLI takes the streaming HTTP address as `httpUrl`, because `url` selects its SSE client, and it takes the token written in:
 
 ```json
