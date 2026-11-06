@@ -369,6 +369,13 @@ describe("the marketplace", () => {
     expect(String(entries[0]?.description)).toContain("bounded, read-only statements");
   });
 
+  test("lists the plugin by name, source, description and category alone, so the entry adds no hook, command, agent or skill", () => {
+    expect(Object.keys(marketplace).sort()).toEqual(["description", "name", "owner", "plugins"]);
+    for (const entry of entries) {
+      expect(Object.keys(entry).sort()).toEqual(["category", "description", "name", "source"]);
+    }
+  });
+
   test("carries no version, and neither does the plugin, so every install follows the repository", () => {
     expect(keysOf(marketplace)).not.toContain("version");
     expect(keysOf(json(PLUGIN_FILE))).not.toContain("version");
