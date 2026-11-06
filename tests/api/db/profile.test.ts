@@ -298,6 +298,38 @@ describe("POST /api/db/profile", () => {
 
       expect(data.columns[0]).toMatchObject({ minValue: "\\xdead", maxValue: "\\xdead" });
     });
+
+    // A lowercase reserved word passes the bare-name test, so it went into the statement
+    // unquoted and the engine read it as a keyword: `COUNT(order)` is a syntax error (#2245).
+    test("profiles a column named after a reserved word", async () => {
+      const provider = new SQLiteProvider(sqliteConnection);
+      await provider.connect();
+      await provider.query('CREATE TABLE orders (id INTEGER PRIMARY KEY, "order" INTEGER, "group" TEXT)');
+      await provider.query("INSERT INTO orders VALUES (1, 10, 'a'), (2, NULL, 'b'), (3, 30, NULL)");
+      mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+      const body = { connection: sqliteConnection, tablePath: ["orders"], columns: ["order", "group"] };
+
+      const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+      const data = await parseResponseJSON<{ columns: Record<string, unknown>[] }>(res);
+      await provider.disconnect();
+
+      expect(res.status).toBe(200);
+      expect(data.columns).toEqual([
+        expect.objectContaining({
+          name: "order",
+          nullCount: 1,
+          distinctCount: 2,
+          minValue: "10",
+          maxValue: "30",
+          sampleValues: ["10", "NULL", "30"],
+        }),
+        expect.objectContaining({ name: "group", nullCount: 1, distinctCount: 2, sampleValues: ["a", "b", "NULL"] }),
+      ]);
+      for (const column of data.columns) {
+        expect(column.error).toBeUndefined();
+        expect(column.warnings).toBeUndefined();
+      }
+    });
   });
 
   test("no statement carries a PostgreSQL cast, and the sample is bounded by the provider", async () => {
@@ -312,8 +344,8 @@ describe("POST /api/db/profile", () => {
     for (const sql of emitted) expect(sql).not.toContain("::");
     // The sample's bound is the provider's own spelling (`FETCH FIRST`, `TOP`, `LIMIT`), so the
     // route hands it an unbounded statement and the limit as an option.
-    expect(mockSQLProvider.prepareQuery).toHaveBeenCalledWith("SELECT id, name FROM public.users", { limit: 5 });
-    expect(emitted.at(-1)).toBe("SELECT id, name FROM public.users LIMIT 50");
+    expect(mockSQLProvider.prepareQuery).toHaveBeenCalledWith('SELECT "id", "name" FROM public.users', { limit: 5 });
+    expect(emitted.at(-1)).toBe('SELECT "id", "name" FROM public.users LIMIT 50');
   });
 
   test("reads result aliases whatever case the engine folded them to", async () => {
@@ -382,10 +414,10 @@ describe("POST /api/db/profile", () => {
       sampleValues: [],
     });
     expect(sent.slice(1, 5)).toEqual([
-      "SELECT COUNT(*) AS total_count, COUNT(body) AS non_null_count, COUNT(DISTINCT body) AS distinct_count, MIN(body) AS min_value, MAX(body) AS max_value FROM dbo.notes",
-      "SELECT COUNT(*) AS total_count, COUNT(body) AS non_null_count FROM dbo.notes",
-      "SELECT COUNT(DISTINCT body) AS distinct_count FROM dbo.notes",
-      "SELECT MIN(body) AS min_value, MAX(body) AS max_value FROM dbo.notes",
+      'SELECT COUNT(*) AS total_count, COUNT("body") AS non_null_count, COUNT(DISTINCT "body") AS distinct_count, MIN("body") AS min_value, MAX("body") AS max_value FROM dbo.notes',
+      'SELECT COUNT(*) AS total_count, COUNT("body") AS non_null_count FROM dbo.notes',
+      'SELECT COUNT(DISTINCT "body") AS distinct_count FROM dbo.notes',
+      'SELECT MIN("body") AS min_value, MAX("body") AS max_value FROM dbo.notes',
     ]);
   });
 
@@ -420,7 +452,7 @@ describe("POST /api/db/profile", () => {
       sent.push(sql);
       if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ TOTAL: 200 }], fields: [] };
       if (sql.includes("IS NULL")) return { rows: [{ NULL_COUNT: 50 }], fields: [] };
-      if (sql.startsWith("SELECT bio FROM")) return { rows: [], fields: [] };
+      if (sql.startsWith('SELECT "bio" FROM')) return { rows: [], fields: [] };
       throw new QueryError("ORA-22849: Type CLOB is not supported for this function or operator.");
     });
     mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
@@ -439,10 +471,10 @@ describe("POST /api/db/profile", () => {
     });
     // The two other aggregates are not sent to be refused a second time.
     expect(sent.slice(1)).toEqual([
-      'SELECT COUNT(*) AS total_count, COUNT(bio) AS non_null_count, COUNT(DISTINCT bio) AS distinct_count, MIN(bio) AS min_value, MAX(bio) AS max_value FROM "APP"."EMP"',
-      'SELECT COUNT(*) AS total_count, COUNT(bio) AS non_null_count FROM "APP"."EMP"',
-      'SELECT COUNT(*) AS null_count FROM "APP"."EMP" WHERE bio IS NULL',
-      'SELECT bio FROM "APP"."EMP" LIMIT 50',
+      'SELECT COUNT(*) AS total_count, COUNT("bio") AS non_null_count, COUNT(DISTINCT "bio") AS distinct_count, MIN("bio") AS min_value, MAX("bio") AS max_value FROM "APP"."EMP"',
+      'SELECT COUNT(*) AS total_count, COUNT("bio") AS non_null_count FROM "APP"."EMP"',
+      'SELECT COUNT(*) AS null_count FROM "APP"."EMP" WHERE "bio" IS NULL',
+      'SELECT "bio" FROM "APP"."EMP" LIMIT 50',
     ]);
   });
 
