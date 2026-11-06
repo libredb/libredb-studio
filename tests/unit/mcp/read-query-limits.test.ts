@@ -27,6 +27,7 @@ import {
   classifyReadQueryFailure,
   fenceRefusalText,
   inSqlPaging,
+  MCP_TIMEOUT_BOUNDS_MS,
   moreRowsThanPageableHint,
   nextPageHint,
   offsetRefusalText,
@@ -107,6 +108,17 @@ describe("the texts", () => {
     ).toBe(
       "run_read_query cannot run on this connection: the engine has no read-only statement path. It runs on PostgreSQL and SQLite.",
     );
+  });
+
+  test("the timeout answer offers more time only below the most timeout_ms allows", () => {
+    expect(MCP_TIMEOUT_BOUNDS_MS.max).toBe(30_000);
+    expect(timeoutText(500)).toBe(
+      "The statement did not finish within timeout_ms (500 ms). Narrow it, or raise timeout_ms up to 30000.",
+    );
+    expect(timeoutText(29_999)).toBe(
+      "The statement did not finish within timeout_ms (29999 ms). Narrow it, or raise timeout_ms up to 30000.",
+    );
+    expect(timeoutText(30_000)).toBe("The statement did not finish within timeout_ms (30000 ms). Narrow it.");
   });
 
   // #1462: an ExecutionProfileError message (postgres.ts's assertAgentRoleIsUnprivileged,
