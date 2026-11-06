@@ -1003,6 +1003,12 @@ describe("docs/MCP.md, Plugin and skill", () => {
     expect(sparse?.split(" --sparse ")[1]?.split(" ")).toEqual([".claude-plugin", ...roots]);
   });
 
+  test("names the read-only copy a workflow keeps for Anthropic's directory, next to the one place the plugin is published", () => {
+    expect(section).toContain(
+      "this repository's own marketplace, `libredb`, is the one place it is published.\nA workflow copies the plugin folder and the repository's LICENSE to the root of [libredb/libredb-studio-claude-plugin](https://github.com/libredb/libredb-studio-claude-plugin) whenever either changes on `main`, because Anthropic's plugin directory validates only a repository of fewer than 10,000 files and folders, and this one holds more.\nThe copy is read-only and no marketplace: install the plugin from `libredb` as below, and change it here, never there.\n",
+    );
+  });
+
   test("names the plugin's README as what says what the plugin sends where, and as its privacy statement", () => {
     expect(section).toContain(
       "The plugin's [README](../plugins/libredb-studio/README.md) says what the plugin sends where, and its Privacy section is the plugin's privacy statement.\n",

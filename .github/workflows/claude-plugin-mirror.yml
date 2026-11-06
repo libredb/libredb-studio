@@ -1,0 +1,104 @@
+name: Claude Plugin Mirror
+
+# Keeps libredb/libredb-studio-claude-plugin, a read-only copy of the Claude
+# Code plugin, equal to plugins/libredb-studio on main plus the repository's
+# LICENSE, both at the copy's root. Anthropic's plugin directory validates a
+# repository only when it holds fewer than 10,000 files and folders, and this
+# one holds more (https://claude.com/docs/plugins/pre-submission-checklist,
+# "Repository too large to validate"), so a submission names the copy. The
+# plugin is changed here, with its tests and docs/MCP.md, "Plugin and skill";
+# nobody edits the copy, and the next sync replaces anything committed there
+# by hand, on top of it.
+#
+# scripts/sync-claude-plugin-mirror.sh builds the copy's tree from main's
+# committed objects alone: the plugin folder's entries as they are, and
+# LICENSE beside them. When that tree differs from the copy's main it pushes
+# one commit, authored as github-actions[bot] and naming main's commit,
+# without force, so the copy's history stays linear and a copy that moved in
+# the meantime refuses the push. When it does not differ it pushes nothing,
+# and a dry-run push still proves that the token can push.
+#
+# A push to main that touches the plugin, LICENSE, this workflow or the script
+# starts it, and so does Run workflow on main; any other ref fails at once. It
+# checks out main as it is when the job runs, not the commit that started it,
+# so a re-run of an old run never brings an older plugin back.
+#
+# PLUGIN_MIRROR_TOKEN pushes to the copy; the workflow's GITHUB_TOKEN cannot
+# write to another repository. It is a fine-grained personal access token:
+# resource owner libredb, access to libredb/libredb-studio-claude-plugin only,
+# Contents read and write, with an expiry. It lives in the claude-plugin-mirror
+# environment, which only main can deploy to, so a workflow on another branch
+# never reads it. Without it the run fails: a copy that quietly stopped
+# following main would be submitted stale. Forks skip the job: they have
+# neither the copy nor the token.
+#
+# No third-party code runs here: actions/checkout pinned by commit, then git
+# and the runner's gh, whose credential helper hands the token to git when the
+# push asks for it, so it is never in a URL, a file or the log.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/libredb-studio/**"
+      - LICENSE
+      - .github/workflows/claude-plugin-mirror.yml
+      - scripts/sync-claude-plugin-mirror.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One sync at a time: two runs that read the copy's main before either
+  # pushed would build on the same commit, and the second push would be
+  # refused. Each run syncs main as it is then, so whichever runs last leaves
+  # the copy equal to main.
+  group: claude-plugin-mirror
+  cancel-in-progress: false
+
+env:
+  MIRROR: libredb/libredb-studio-claude-plugin
+
+jobs:
+  sync:
+    name: Sync plugins/libredb-studio to libredb/libredb-studio-claude-plugin
+    if: github.repository == 'libredb/libredb-studio'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: claude-plugin-mirror
+    steps:
+      - name: Refuse a ref other than main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::The copy follows main alone: run this workflow on main, not '$REF'."
+            exit 1
+          fi
+
+      - name: Require PLUGIN_MIRROR_TOKEN
+        env:
+          # Presence only: the token's value never reaches this step.
+          TOKEN_PRESENT: ${{ secrets.PLUGIN_MIRROR_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$TOKEN_PRESENT" != "true" ]; then
+            echo "::error::PLUGIN_MIRROR_TOKEN is not set for this job, so nothing can be pushed to ${MIRROR}. docs/DISTRIBUTION.md, \"CI secrets that gate publishing\", says what it needs."
+            exit 1
+          fi
+
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+
+      - name: Push the plugin to libredb/libredb-studio-claude-plugin
+        env:
+          GH_TOKEN: ${{ secrets.PLUGIN_MIRROR_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          bash scripts/sync-claude-plugin-mirror.sh . "$RUNNER_TEMP/claude-plugin-mirror" "https://github.com/${MIRROR}.git"
