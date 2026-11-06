@@ -499,7 +499,8 @@ bearer_token_env_var = "LIBREDB_MCP_TOKEN"
 
 ### Cursor
 
-Not verified live.
+Verified live on 2026-11-06 with Cursor 3.27.22 on Linux.
+That run, against a local Studio, had the server in `~/.cursor/mcp.json` with the token written into its `Authorization` header rather than read through `${env:LIBREDB_MCP_TOKEN}`, and Cursor called `list_connections`, `inspect_schema` and `run_read_query`, each answered.
 
 In `.cursor/mcp.json`:
 
@@ -575,6 +576,8 @@ Do not commit a settings file that holds a token.
 ### OpenCode
 
 Verified live on 2026-09-26 with OpenCode 1.18.31, 1.18.32 and 2.0.18, on Linux and Windows.
+Verified live on 2026-11-06 with OpenCode 2.2.5 on Linux.
+That run, against a local Studio, had the server under `mcp.servers` with `oauth: false` in `~/.config/opencode/opencode.json` and the token written into its `Authorization` header rather than read through `{env:LIBREDB_MCP_TOKEN}`, and OpenCode called `list_connections`, `inspect_schema` and `run_read_query`, each answered.
 
 In `opencode.json`, as a remote server under `mcp.servers`, where OpenCode 2 looks for servers and OpenCode 1 reads them too ([OpenCode's MCP servers page](https://opencode.ai/docs/mcp-servers), and [the OpenCode 2 page](https://opencode.ai/v2/docs/mcp-servers)); `oauth: false` turns off the OAuth sign-in OpenCode would otherwise attempt, and `{env:...}` reads the token from the environment:
 

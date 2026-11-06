@@ -460,6 +460,21 @@ describe("docs/MCP.md", () => {
     for (const section of sections) expect(section).toMatch(/Verified live on \S+ with |Not verified live\./);
   });
 
+  test("records the live Cursor run, and that the ${env:...} form was not part of it", () => {
+    const cursor = MCP_DOC.split(/^### /m).find((section) => section.startsWith("Cursor\n"));
+    expect(cursor).toContain(
+      "Verified live on 2026-11-06 with Cursor 3.27.22 on Linux.\nThat run, against a local Studio, had the server in `~/.cursor/mcp.json` with the token written into its `Authorization` header rather than read through `${env:LIBREDB_MCP_TOKEN}`, and Cursor called `list_connections`, `inspect_schema` and `run_read_query`, each answered.\n",
+    );
+    expect(cursor).not.toContain("Not verified live.");
+  });
+
+  test("records the live OpenCode 2.2.5 run, and that the {env:...} form was not part of it", () => {
+    const opencode = MCP_DOC.split(/^### /m).find((section) => section.startsWith("OpenCode\n"));
+    expect(opencode).toContain(
+      "Verified live on 2026-11-06 with OpenCode 2.2.5 on Linux.\nThat run, against a local Studio, had the server under `mcp.servers` with `oauth: false` in `~/.config/opencode/opencode.json` and the token written into its `Authorization` header rather than read through `{env:LIBREDB_MCP_TOKEN}`, and OpenCode called `list_connections`, `inspect_schema` and `run_read_query`, each answered.\n",
+    );
+  });
+
   test("mentions a batch only in the line that says batches are refused", () => {
     expect(MCP_DOC.split("\n").filter((line) => /batch/i.test(line))).toEqual([
       "- JSON-RPC batches are refused: a request body that is a JSON array gets 400 and `-32600`.",
