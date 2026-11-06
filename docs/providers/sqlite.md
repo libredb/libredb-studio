@@ -1747,7 +1747,7 @@ so hard links cannot alias reserved files. Other user database files beside them
 SQLite connections are refused when the server-derived file-access posture is denied,
 including agent handles. HTTP and MCP derive that posture from the verified role and
 managed connection: non-admin callers and seeds shared with non-admin roles are denied.
-Where it is denied, MCP's `list_connections` lists the seed with `read_tool: null` and an `unavailable` sentence that says what an operator changes, and `inspect_schema` refuses it before anything is acquired ([MCP.md](../MCP.md#opting-connections-in)).
+Where it is denied, MCP's `list_connections` lists the seed with `read_tool: null` and an `unavailable` sentence that says what an operator changes, and `inspect_schema` and every statement tool refuse it with that sentence before anything is acquired ([MCP.md](../MCP.md#opting-connections-in)).
 SQLite's adapters cannot confine statement-level file access, so a denied connection
 cannot be opened safely. Administrators retain SQLite access on private connections.
 Embedded callers using the cached factory must explicitly pass `{ allowExternalFileAccess: true }`

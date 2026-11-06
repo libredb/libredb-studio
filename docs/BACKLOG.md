@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D460, U17 · 339
+- [Drivers and connections](#drivers-and-connections) — D1-D461, U17 · 340
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B171 · 82
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP25 · 24
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 25
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
 
 ---
@@ -4524,6 +4524,16 @@ Measured 2026-11-05 through `POST /api/db/query` with the real driver and an adm
 Found 2026-11-05 by the review of the change that reads a shared seed's file-access audience from its operator roles.
 
 **Done when:** the SQLite refusal names a connection another role can use the way the DuckDB one does, for example "SQLite connections open only for an administrator on a connection no other role can use, because this driver cannot confine statement-level file access", every test that pins the sentence (in `tests/integration/mcp/context.test.ts`, `tests/integration/db/reserved-storage-paths.test.ts`, `tests/isolated/factory.test.ts`, `tests/unit/db/refuses-denied-file-access.test.ts`, `tests/integration/mcp/list-connections.test.ts` and `e2e/embedded-samples.spec.ts`) asserts the new wording, one of them for an administrator on a seed offered to `["admin", "user"]`, and any document that quotes the sentence follows it.
+
+### D461. On an on-disk SQLite seed an infinite REAL cell reaches an MCP client as `null`
+
+`docs/MCP.md`'s Limits says a NaN, Infinity or -Infinity cell in a `run_read_query` answer is the string `"NaN"`, `"Infinity"` or `"-Infinity"`, and that it used to be `null`, which a client could not tell from SQL NULL.
+On an on-disk SQLite seed the read runs in the worker child of `src/lib/db/providers/sql/sqlite-worker.ts`, whose answer crosses one JSON line (`JSON.stringify(resp)` in the worker script), and `ser` in that script, the child's copy of `serializeCell`, tags BigInt and bytes but not non-finite numbers, so `JSON.stringify` writes an infinity as `null` before the parent's `deserializeCell` or the MCP serializer ever sees it.
+Measured 2026-11-06 through `run_read_query` on an opted-in on-disk SQLite seed: `SELECT 1e999, -1e999, 1e308 * 10` answered `null` three times, the same as a SQL NULL, while `typeof(1e999)` answered `'real'` and `CAST(1e999 AS TEXT)` answered `'Inf'`; DuckDB answered `"Infinity"` and `"-Infinity"`.
+SQLite stores no NaN, so only the two infinities are affected.
+Found 2026-11-06 by the final local check of MCP phase 1 (#2252).
+
+**Done when:** the worker carries a non-finite number across its JSON line and an MCP answer on an on-disk SQLite seed shows `"Infinity"` and `"-Infinity"`, with a test on the worker path and the provider triad kept (`docs/providers/sqlite.md`, `tests/integration/db/sqlite-provider.test.ts`).
 
 ## Value interpolation
 
@@ -9809,15 +9819,24 @@ Found 2026-11-05 in the review of #2255.
 
 **Done when:** such a seed is refused when the seed file loads, or is listed with `read_tool: null` and an `unavailable` sentence and left out of every token's `tools/list`, decided from a record beside the providers rather than a type-id branch, with a test that lists it and opens it under both MCP profiles.
 
-### MCP25. A statement tool's not-served refusal names `run_read_query` for a SQLite seed no MCP open serves
+### MCP26. A localhost-name `Origin` is refused on `POST /api/mcp`, though the docs say one passes
 
-`notServedText` in `src/lib/mcp/tools/run-statement.ts` names the tool that serves the connection's engine (`mcpStatementToolFor`), or `inspect_schema` where none does, and never asks `mcpConnectionUnavailable`.
-So a statement tool that does not serve SQLite, called on a SQLite seed that is unavailable to the caller, answers "this tool does not serve SQLite; use run_read_query there", while `list_connections` lists that seed with `read_tool: null` and `unavailable`, a token whose only seed it is lists no `run_read_query`, and `inspect_schema` refuses the seed too.
-`docs/MCP.md` says the tool named in that refusal is the one the connection's `read_tool` names, or `inspect_schema` where it is `null`, which this case contradicts.
-Measured 2026-11-05 on `main` with `run_cypher_read` and a user token on a SQLite seed offered to `["user"]`.
-Found 2026-11-05 while planning #2255.
+`docs/MCP.md`'s Limits says a request to the MCP endpoint that carries an `Origin` passes only from a localhost name or an `ALLOWED_ORIGINS` host.
+`proxy` in `src/proxy.ts` runs the app-wide `checkOrigin` (`src/lib/api/origin-check.ts`) before the MCP gate, and it passes an `Origin` on a `POST` only when its host and port equal the request's `Host` or are in `ALLOWED_ORIGINS`, so the localhost names `mcpOriginAllowlist` in `src/lib/mcp/origin-policy.ts` adds are never reached on a `POST`.
+Measured 2026-11-06 with Studio on `http://127.0.0.1:<port>`, `HOSTNAME` 127.0.0.1 and no `ALLOWED_ORIGINS`: an `initialize` with a valid token and `Origin` `http://localhost:6274`, `http://127.0.0.1:6274`, `http://localhost:<port>` or `http://[::1]:<port>` each answered 403 `ORIGIN_MISMATCH`, and only an `Origin` equal to the request's `Host` passed.
+Open PR #2251 rewrites the first sentence of that `docs/MCP.md` bullet, so a change to the bullet waits for that PR.
+Found 2026-11-06 by the final local check of MCP phase 1 (#2252).
 
-**Done when:** a statement tool that does not serve such a connection answers that the connection is not available to MCP, naming no tool, `docs/MCP.md` says so beside the not-served refusal, and a test calls such a tool on such a seed.
+**Done when:** the docs and the code agree, either by letting the localhost names through on the MCP path or by saying that only an `Origin` equal to the request's `Host` or in `ALLOWED_ORIGINS` passes, with a test through `proxy` that holds the rule the docs state.
+
+### MCP27. An `offset` on `VALUES`, `TABLE` or `EXPLAIN` is refused without the SQL paging the docs promise
+
+`docs/MCP.md`'s Limits says a query with its own `LIMIT` or `TOP`, and `VALUES`, `TABLE` or `EXPLAIN`, cannot be paged with `offset`, and that the answer says how to page it in that engine's SQL.
+`offsetRefusalText` in `src/lib/mcp/tools/read-query-limits.ts` answers every statement its analyzer does not read as a `SELECT` with `NOT_PAGEABLE_TEXT`, "This statement's result cannot be paged. Call again without offset.", which names no SQL paging; only a `SELECT` gets the engine's SQL paging.
+Measured 2026-11-06 through `run_read_query` with `offset` 1: `VALUES (1), (2), (3)` on SQLite and DuckDB, `TABLE products` on DuckDB, `EXPLAIN SELECT * FROM orders` on SQLite and `EXPLAIN SELECT * FROM products` on DuckDB each answered that sentence, while a `max_rows` 1 cut without `offset` answered "Page it in SQL: LIMIT n OFFSET m." for `VALUES` on both engines, `TABLE` on DuckDB and `EXPLAIN` on SQLite.
+Found 2026-11-06 by the final local check of MCP phase 1 (#2252).
+
+**Done when:** the refusal names the engine's SQL paging for those forms, or the `docs/MCP.md` sentence says only a query with its own `LIMIT` or `TOP` gets it, with a test per form.
 
 ---
 

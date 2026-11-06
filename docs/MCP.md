@@ -19,7 +19,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
   - `list_connections` lists the connections opted in for MCP that your token's role may use, without credentials.
     It works for every engine but Oxia, Firestore, Modbus and NETCONF, whose connections the seed file cannot opt in.
     Each connection's `read_tool` names the statement tool below that runs a statement on it, and is `null` where `inspect_schema` is the only read or where the connection carries `unavailable`.
-    `unavailable` is a sentence that says why no tool can read the connection and what an operator changes, and `inspect_schema` refuses that connection with it as soon as the connection resolves, before anything is acquired.
+    `unavailable` is a sentence that says why no tool can read the connection and what an operator changes, and `inspect_schema` and every statement tool refuse that connection with it as soon as the connection resolves, before anything is acquired.
     A SQLite seed carries it for every token but an admin's, and for an admin's token too where the seed's `roles` name any role but admin ([Opting connections in](#opting-connections-in)).
     A connection's `database` is left out on MQTT and Sparkplug B, where that setting is a stored value, the discovery topic filter or the group id, as the language's facet declares (`withholdsDatabase`).
   - `inspect_schema` lists one connection's tables with their columns and, on request, their indexes.
@@ -56,6 +56,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
     Runs on the engines listed below with the forms each takes; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.
     It serves an engine only where `AGENT_EXECUTION_ENGINES` in `src/lib/agent/engine-support.ts` lists it, the engine is offered to MCP, and `MCP_STATEMENT_READ` in `src/lib/db/compatibility.ts` opens statement reads on it, so an engine that joins `AGENT_EXECUTION_ENGINES` stays closed here until a change of its own opens it.
     It refuses every engine outside that list as soon as the connection resolves, before anything is acquired, answering "this tool does not serve <engine>; use <tool> there", where the tool is the one the connection's `read_tool` names, or `inspect_schema` where it is `null`.
+    A connection that carries `unavailable` gets that sentence instead, from every statement tool, naming no tool.
     Elasticsearch SQL has no `OFFSET`, so there `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says to page by key instead: `ORDER BY` a unique field, and for the next page add `WHERE` that field `>` the last value read.
     CQL has no `OFFSET` either, so on Apache Cassandra `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says how to page without one: keep a `LIMIT`, and for the next page add `WHERE token(<partition key>) > token(<the last one read>)`, or within one partition `WHERE <clustering column> > <the last value read>`.
     Each engine takes these, as its row in `src/lib/db/providers/sql/read-query-forms.ts` names them:
