@@ -707,6 +707,7 @@ OpenAI's [plugin guide](https://developers.openai.com/plugins/build/plugins) sai
 
 | Status | Meaning |
 |---|---|
+| 307 | The address is outside `/api`, such as one that leaves `/api` out, so Studio sends it to its sign-in page; a client that follows the redirect reports an HTML answer or an unexpected content type, and the address to use ends in `/api/mcp` |
 | 401 | No `Authorization: Bearer` header, or a token that does not verify: expired, minted before the label changed, or minted for another address (a changed `LIBREDB_MCP_URL`, or under npx a changed `--host` or `--port`); the audit reason says `mcp_token_invalid`, or `mcp_channel_unconfigured` when the label or the URL is unset |
 | 403 | The request's `Origin`, or on a loopback bind its `Host`, is not allowed |
 | 404 | MCP is off on this server, switched off or held off by governance mode; a client that falls back to the older HTTP+SSE transport retries with `GET` and reports a transport error rather than "disabled" |
