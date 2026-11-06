@@ -956,6 +956,14 @@ describe("docs/MCP.md, Plugin and skill", () => {
     );
   });
 
+  test("names every step a recorded run did not take: the in-session commands, the GitHub source, the read recipe and the updates", () => {
+    if (/^Verified live on/m.test(section)) {
+      expect(section).toContain(
+        "The in-session commands, the GitHub source with `--sparse`, the `read` recipe and the update commands below were not run, since the marketplace reaches GitHub only when this change merges.\n",
+      );
+    }
+  });
+
   test("installs from this repository's marketplace by the names its manifest declares", () => {
     expect(section).toContain(`/plugin marketplace add ${repository}\n/plugin install ${pluginId()}\n`);
     expect(section).toContain(`claude plugin install ${pluginId()} --config mcp_url=${DOC_URL}\n`);
@@ -977,7 +985,7 @@ describe("docs/MCP.md, Plugin and skill", () => {
 
   test("says Claude Code's credential store keeps the token, and where the address goes", () => {
     expect(section).toContain(
-      "Claude Code keeps the token in its credential store, the macOS Keychain or `.credentials.json` in its configuration directory, so it never goes into `settings.json`, `.mcp.json`, this repository, an environment variable or the chat; the address goes to `pluginConfigs` in your user `settings.json`.",
+      "Claude Code keeps the token in its credential store, the macOS Keychain or `.credentials.json` in its configuration directory, so it never goes into `settings.json`, `.mcp.json`, this repository or the chat, and since the plugin declares no hook, no process gets it in an environment variable; the address goes to `pluginConfigs` in your user `settings.json`.",
     );
   });
 
