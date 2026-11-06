@@ -25,7 +25,15 @@ export interface CountFinding {
 
 /** The files read at all. */
 export const inCountScope = (() => {
-  const included = matchesAny(["**/README*.md", "docs/**/*.md", "src/**", "tests/**", "e2e/**", ".env.example"]);
+  const included = matchesAny([
+    "**/README*.md",
+    "docs/**/*.md",
+    "plugins/**/*.md",
+    "src/**",
+    "tests/**",
+    "e2e/**",
+    ".env.example",
+  ]);
   const excluded = matchesAny(["tests/fixtures/**"]);
   return (path: string): boolean => included(path) && !excluded(path);
 })();
@@ -33,6 +41,7 @@ export const inCountScope = (() => {
 /** The files read on every line. */
 export const isMcpOwned = matchesAny([
   "docs/MCP.md",
+  "plugins/**/*.md",
   "src/lib/mcp/**",
   "tests/**/mcp/**",
   "tests/helpers/mcp-*.ts",

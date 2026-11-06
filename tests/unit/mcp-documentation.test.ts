@@ -4,7 +4,7 @@
  * them.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { MCP_EXPOSABLE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
@@ -915,5 +915,110 @@ describe("docs/SEED_CONNECTIONS.md", () => {
     expect(seed).toContain(
       `\`mcp: true\` lets an MCP client list the connection, inspect its schema and read it with \`${tool}\`.`,
     );
+  });
+});
+
+/** The text of docs/MCP.md's second-level section `heading`, from its heading up to the next one. */
+function sectionOf(heading: string): string {
+  const start = MCP_DOC.indexOf(`\n## ${heading}\n`);
+  if (start === -1) return "";
+  const end = MCP_DOC.indexOf("\n## ", start + 1);
+  return MCP_DOC.slice(start + 1, end === -1 ? undefined : end + 1);
+}
+
+interface Marketplace {
+  readonly name: string;
+  readonly plugins: ReadonlyArray<{ readonly name: string; readonly source: string }>;
+}
+
+/** The repository's marketplace manifest, read when a test needs it. */
+const marketplace = (): Marketplace => JSON.parse(read(".claude-plugin/marketplace.json")) as Marketplace;
+
+describe("docs/MCP.md, Plugin and skill", () => {
+  const section = sectionOf("Plugin and skill");
+  /** The marketplace's GitHub repository, `owner/repo`, which is this one. */
+  const repository = new URL(
+    (JSON.parse(read("package.json")) as { repository: { url: string } }).repository.url,
+  ).pathname.slice(1);
+  const pluginId = (): string => `${marketplace().plugins[0]?.name}@${marketplace().name}`;
+
+  test("comes right after Client configuration and its client sections, and before Limits", () => {
+    const headings = MCP_DOC.split("\n").filter((line) => line.startsWith("## "));
+    const at = headings.indexOf("## Plugin and skill");
+    expect(at).toBeGreaterThan(0);
+    expect(headings[at - 1]).toBe("## Client configuration");
+    expect(headings[at + 1]).toBe("## Limits");
+  });
+
+  test("says what a recorded run verified, with its date and Claude Code version, or that none did", () => {
+    expect(section).toMatch(
+      /^(?:Verified live on \d{4}-\d{2}-\d{2} with Claude Code \d+\.\d+\.\d+\.|Not verified live\.)$/m,
+    );
+  });
+
+  test("names every step a recorded run did not take: the in-session commands, the GitHub source, the read recipe and the updates", () => {
+    if (/^Verified live on/m.test(section)) {
+      expect(section).toContain(
+        "The in-session commands, the GitHub source with `--sparse`, the `read` recipe and the update commands below were not part of that run.\n",
+      );
+    }
+  });
+
+  test("installs from this repository's marketplace by the names its manifest declares", () => {
+    expect(section).toContain(`/plugin marketplace add ${repository}\n/plugin install ${pluginId()}\n`);
+    expect(section).toContain(`claude plugin install ${pluginId()} --config mcp_url=${DOC_URL}\n`);
+    expect(section).toContain(`claude plugin configure ${pluginId()} --values-stdin`);
+  });
+
+  test("checks out only the directories that hold the marketplace and its plugins", () => {
+    const sparse = section
+      .split("\n")
+      .find((line) => line.startsWith(`claude plugin marketplace add ${repository} --sparse `));
+    const roots = new Set(marketplace().plugins.map((entry) => entry.source.replace(/^\.\//, "").split("/")[0]));
+    expect(sparse?.split(" --sparse ")[1]?.split(" ")).toEqual([".claude-plugin", ...roots]);
+  });
+
+  test("saves the token from standard input, never as a --config value", () => {
+    expect(section).toContain("save the token from standard input, never as a `--config` value");
+    expect(section).not.toMatch(/mcp_token=/);
+  });
+
+  test("says Claude Code's credential store keeps the token, and where the address goes", () => {
+    expect(section).toContain(
+      "Claude Code keeps the token in its credential store, the macOS Keychain or `.credentials.json` in its configuration directory, so it never goes into `settings.json`, `.mcp.json`, this repository or the chat, and since the plugin declares no hook, no process gets it in an environment variable; the address goes to `pluginConfigs` in your user `settings.json`.",
+    );
+  });
+
+  test("says to use the plugin or a manual libredb entry, not both, the server key both declare", () => {
+    expect(section).toContain("Use the plugin or a manual `libredb` entry, not both.");
+    const snippet = mcpClientConfigs(DOC_URL).find((config) => config.id === "claude-code-json")?.snippet ?? "{}";
+    const plugin = JSON.parse(read("plugins/libredb-studio/.claude-plugin/plugin.json"));
+    expect(Object.keys(JSON.parse(snippet).mcpServers)).toEqual(["libredb"]);
+    expect(Object.keys(plugin.mcpServers)).toEqual(["libredb"]);
+  });
+
+  test("names the skill directory other hosts copy, and has Codex take the skill rather than the plugin", () => {
+    const directory = /copy `([^`]+\/)` into the host's skills directory/.exec(section)?.[1];
+    expect(directory).toBeDefined();
+    expect(existsSync(path.join(ROOT, directory ?? "", "SKILL.md"))).toBe(true);
+    expect(section).toContain("so in Codex copy the skill directory rather than install the plugin");
+  });
+
+  test("is the section the skill sends its reader to", () => {
+    expect(read("plugins/libredb-studio/skills/libredb-studio/SKILL.md")).toContain("its Plugin and skill section");
+  });
+});
+
+describe("docs/MCP.md, Gemini CLI", () => {
+  test("carries the dated note of Google's own announcement on individual sign-ins and Antigravity CLI", () => {
+    const gemini = MCP_DOC.split(/^### /m).find((part) => part.startsWith("Gemini CLI\n")) ?? "";
+    expect(gemini).toContain(
+      "Google's announcement of 2026-05-19, [Transitioning Gemini CLI to Antigravity CLI](https://developers.googleblog.com/en/an-important-update-transitioning-gemini-cli-to-antigravity-cli/), says that from 2026-06-18 Gemini CLI no longer serves",
+    );
+    expect(gemini).toContain("Gemini Code Assist for individuals, and points those users to Antigravity CLI.\n");
+    expect(gemini).toContain(
+      "It also says Google keeps supporting Gemini CLI for paid Gemini API keys and Gemini Code Assist Standard or Enterprise licences.\n",
+    );
+    expect(gemini).toContain("Antigravity CLI has not been checked against Studio.");
   });
 });

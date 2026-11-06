@@ -1,0 +1,16 @@
+{
+  "name": "libredb-studio",
+  "displayName": "LibreDB Studio",
+  "description": "Read schemas and run bounded, read-only statements through your LibreDB Studio, which keeps the credentials and runs no model.",
+  "author": { "name": "LibreDB" },
+  "homepage": "https://github.com/libredb/libredb-studio/blob/main/docs/MCP.md",
+  "repository": "https://github.com/libredb/libredb-studio",
+  "license": "MIT",
+  "userConfig": {
+    "mcp_url": { "type": "string", "title": "Studio MCP URL", "description": "Your Studio's LIBREDB_MCP_URL, ending in /api/mcp", "required": true },
+    "mcp_token": { "type": "string", "title": "MCP token", "description": "A token minted on your Studio's /settings/mcp screen", "required": true, "sensitive": true }
+  },
+  "mcpServers": {
+    "libredb": { "type": "http", "url": "${user_config.mcp_url}", "headers": { "Authorization": "Bearer ${user_config.mcp_token}" } }
+  }
+}
