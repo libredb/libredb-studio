@@ -604,8 +604,9 @@ For the first few seconds after that service starts, `opencode mcp list` can say
 
 The `libredb-studio` skill tells a client how to use these tools: what to check before the first call, the order of calls, the limits and what each refusal means.
 The Claude Code plugin installs that skill together with the `libredb` server entry, and this repository's own marketplace, `libredb`, is the one place it is published.
+The plugin's [README](../plugins/libredb-studio/README.md) says what the plugin sends where, and its Privacy section is the plugin's privacy statement.
 
-Verified live on 2026-11-06 with Claude Code 2.1.318.
+Verified live on 2026-11-06 with Claude Code 2.1.319.
 That run, from a local checkout against a local Studio, validated both manifests, added the marketplace, installed the plugin with the address, saved the token through standard input, and saw `claude mcp list` connect with a minted token, fail after a wrong one replaced it and connect again with a new one; the token was then in `.credentials.json` alone, with mode 0600, and the address alone in `pluginConfigs`.
 The in-session commands, the GitHub source with `--sparse`, the `read` recipe and the update commands below were not part of that run.
 
@@ -617,6 +618,7 @@ In a Claude Code session:
 ```
 
 Claude Code asks for your Studio's MCP address, its `LIBREDB_MCP_URL`, and for a token minted on the settings screen, which it masks as you type.
+Give an https address unless Studio runs on the same computer, because the token travels in the header of every request.
 
 From a shell, add the marketplace with a sparse checkout of the directories it needs, and install the plugin with your Studio's address:
 

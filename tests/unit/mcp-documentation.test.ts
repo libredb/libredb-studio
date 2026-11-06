@@ -975,6 +975,12 @@ describe("docs/MCP.md, Plugin and skill", () => {
     );
   });
 
+  test("records the run on the plugin with its README, icon and listing links, and what that run did", () => {
+    expect(section).toContain(
+      "Verified live on 2026-11-06 with Claude Code 2.1.319.\nThat run, from a local checkout against a local Studio, validated both manifests, added the marketplace, installed the plugin with the address, saved the token through standard input, and saw `claude mcp list` connect with a minted token, fail after a wrong one replaced it and connect again with a new one; the token was then in `.credentials.json` alone, with mode 0600, and the address alone in `pluginConfigs`.\n",
+    );
+  });
+
   test("names every step a recorded run did not take: the in-session commands, the GitHub source, the read recipe and the updates", () => {
     if (/^Verified live on/m.test(section)) {
       expect(section).toContain(
@@ -995,6 +1001,19 @@ describe("docs/MCP.md, Plugin and skill", () => {
       .find((line) => line.startsWith(`claude plugin marketplace add ${repository} --sparse `));
     const roots = new Set(marketplace().plugins.map((entry) => entry.source.replace(/^\.\//, "").split("/")[0]));
     expect(sparse?.split(" --sparse ")[1]?.split(" ")).toEqual([".claude-plugin", ...roots]);
+  });
+
+  test("names the plugin's README as what says what the plugin sends where, and as its privacy statement", () => {
+    expect(section).toContain(
+      "The plugin's [README](../plugins/libredb-studio/README.md) says what the plugin sends where, and its Privacy section is the plugin's privacy statement.\n",
+    );
+    expect(existsSync(path.join(ROOT, "plugins/libredb-studio/README.md"))).toBe(true);
+  });
+
+  test("asks for an https address unless Studio runs on the same computer, right after Claude Code asks for it", () => {
+    expect(section).toContain(
+      "which it masks as you type.\nGive an https address unless Studio runs on the same computer, because the token travels in the header of every request.\n",
+    );
   });
 
   test("saves the token from standard input, never as a --config value", () => {

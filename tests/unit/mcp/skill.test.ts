@@ -12,6 +12,10 @@
  * the address and the token, the token is a required, sensitive option that no file of the repository holds, and no
  * manifest carries a version, which would hold every user on one copy of the skill. Neither Claude Code nor an Agent
  * Skills validator runs in CI, so this file is the guard; the validators' output is in the pull request.
+ *
+ * The plugin also carries what a listing in Anthropic's plugin directory reads from the plugin folder alone: a README
+ * of at least 40 words outside code blocks whose Privacy section is the plugin's privacy statement, Studio's own app
+ * icon, and https documentation, support and privacy links inside this repository.
  */
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -42,7 +46,12 @@ const PLUGIN_DIR = "plugins/libredb-studio";
 const PLUGIN_FILE = `${PLUGIN_DIR}/.claude-plugin/plugin.json`;
 const SKILL_DIR = `${PLUGIN_DIR}/skills/libredb-studio`;
 const SKILL_FILE = `${SKILL_DIR}/SKILL.md`;
+const README_FILE = `${PLUGIN_DIR}/README.md`;
 const GUIDE_URL = "https://github.com/libredb/libredb-studio/blob/main/docs/MCP.md";
+/** Studio's app icon, which the plugin's icon copies byte for byte. */
+const APP_ICON_FILE = "public/web-app-icon-512x512.png";
+/** This repository's GitHub address, from package.json. */
+const REPOSITORY_URL = (json("package.json").repository as { url: string }).url;
 
 /** The frontmatter fields the Agent Skills format defines; a skill carries no other. */
 const STANDARD_FIELDS = ["name", "description", "license", "compatibility", "metadata", "allowed-tools"];
@@ -102,6 +111,28 @@ function keysOf(value: unknown, keys: string[] = []): string[] {
     }
   }
   return keys;
+}
+
+/** The lines of `text` outside fenced blocks that hold more than one sentence, as `line: text`. */
+const twoSentenceLines = (text: string): string[] =>
+  proseLines(text)
+    .filter((piece) => /[.!?]["')\]]*\s+\S/.test(words(piece.text).replace(/^\s*(?:[-*+]|\d+\.)\s+/, "")))
+    .map((piece) => `${piece.line}: ${piece.text}`);
+
+/** The anchor GitHub gives a Markdown heading's text. */
+const headingAnchor = (heading: string): string =>
+  heading
+    .toLowerCase()
+    .replace(/[^a-z0-9 -]/g, "")
+    .replace(/ /g, "-");
+
+/** The fenced block that follows the line `lead` in `text`, without its fences. */
+function fencedAfter(text: string, lead: string): string {
+  const lines = text.split("\n");
+  const at = lines.indexOf(lead);
+  const open = lines.findIndex((line, index) => index > at && line.startsWith("```"));
+  const close = lines.findIndex((line, index) => index > open && line.startsWith("```"));
+  return at === -1 || open === -1 || close === -1 ? "" : lines.slice(open + 1, close).join("\n");
 }
 
 /** Every file under a directory, relative to it, sorted. */
@@ -188,10 +219,7 @@ describe("the skill's frontmatter", () => {
 describe("the skill's text", () => {
   test("stays under 200 lines, one sentence on each line outside fenced blocks", () => {
     expect(SKILL.replace(/\n$/, "").split("\n").length).toBeLessThan(200);
-    const twoSentences = proseLines(SKILL)
-      .filter((piece) => /[.!?]["')\]]*\s+\S/.test(words(piece.text).replace(/^\s*(?:[-*+]|\d+\.)\s+/, "")))
-      .map((piece) => `${piece.line}: ${piece.text}`);
-    expect(twoSentences).toEqual([]);
+    expect(twoSentenceLines(SKILL)).toEqual([]);
   });
 
   test("names every metadata tool and no statement tool", () => {
@@ -284,8 +312,13 @@ describe("the plugin", () => {
   const plugin = json(PLUGIN_FILE);
   const userConfig = plugin.userConfig as Record<string, Record<string, unknown>>;
 
-  test("holds its manifest and the skill, and nothing else: no .mcp.json, script or reference file", () => {
-    expect(filesUnder(PLUGIN_DIR)).toEqual([".claude-plugin/plugin.json", "skills/libredb-studio/SKILL.md"]);
+  test("holds its manifest, its icon, its README and the skill, and nothing else: no .mcp.json, script or reference file", () => {
+    expect(filesUnder(PLUGIN_DIR)).toEqual([
+      ".claude-plugin/icon.png",
+      ".claude-plugin/plugin.json",
+      "README.md",
+      "skills/libredb-studio/SKILL.md",
+    ]);
   });
 
   test("declares no hook, server process, monitor, command or agent, which would run code or get the token in its environment", () => {
@@ -293,11 +326,15 @@ describe("the plugin", () => {
       "author",
       "description",
       "displayName",
+      "documentationUrl",
       "homepage",
+      "icon",
       "license",
       "mcpServers",
       "name",
+      "privacyPolicyUrl",
       "repository",
+      "supportUrl",
       "userConfig",
     ]);
   });
@@ -333,6 +370,12 @@ describe("the plugin", () => {
     }
   });
 
+  test("asks for an https address unless Studio runs on the same computer", () => {
+    expect(userConfig.mcp_url.description).toBe(
+      "Your Studio's LIBREDB_MCP_URL, ending in /api/mcp: https, unless Studio runs on this computer",
+    );
+  });
+
   test("holds no credential in a header: each value is a scheme and an option reference", () => {
     const servers = Object.values(plugin.mcpServers as Record<string, { headers?: Record<string, string> }>);
     expect(servers.length).toBeGreaterThan(0);
@@ -345,7 +388,182 @@ describe("the plugin", () => {
 
   test("says what it does in Studio's words, never read-only SQL", () => {
     expect(String(plugin.description)).toContain("bounded, read-only statements");
+    // Studio calls a model for its own AI features when an LLM provider is set, so "runs no model" holds only for MCP.
+    expect(String(plugin.description)).toContain("runs no model for MCP");
+    expect(String(plugin.description).replaceAll("runs no model for MCP", "")).not.toContain("runs no model");
     expect(String(plugin.description)).not.toMatch(/\bread-only SQL\b/i);
+  });
+});
+
+describe("the plugin's directory listing", () => {
+  const plugin = json(PLUGIN_FILE);
+  const readme = (): string => read(README_FILE);
+
+  test("links only https addresses inside this repository: its home, its documentation, its issues and its privacy statement", () => {
+    expect(REPOSITORY_URL).toStartWith("https://github.com/");
+    for (const key of ["homepage", "repository", "documentationUrl", "supportUrl", "privacyPolicyUrl"]) {
+      const url = new URL(String(plugin[key]));
+      expect(url.protocol).toBe("https:");
+      expect(`${url.origin}${url.pathname}`.startsWith(REPOSITORY_URL)).toBe(true);
+    }
+    expect(plugin.supportUrl).toBe(`${REPOSITORY_URL}/issues`);
+    expect(plugin.termsOfServiceUrl).toBeUndefined();
+  });
+
+  test("points its documentation at docs/MCP.md's Plugin and skill section and its privacy policy at the README's Privacy section", () => {
+    const target = (key: string, heading: string, file: string): void => {
+      const url = new URL(String(plugin[key]));
+      expect(`${url.origin}${url.pathname}`).toBe(`${REPOSITORY_URL}/blob/main/${file}`);
+      expect(url.hash).toBe(`#${headingAnchor(heading)}`);
+      expect(read(file).split("\n")).toContain(`## ${heading}`);
+    };
+    target("documentationUrl", "Plugin and skill", "docs/MCP.md");
+    target("privacyPolicyUrl", "Privacy", README_FILE);
+  });
+
+  test("shows Studio's app icon: a square PNG of 512 to 2048 px a side, under 2 MB, at a ./ path inside the plugin", () => {
+    const icon = String(plugin.icon);
+    expect(icon.startsWith("./")).toBe(true);
+    expect(icon.split("/")).not.toContain("..");
+    const bytes = readFileSync(path.join(ROOT, PLUGIN_DIR, icon));
+    expect(bytes.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    expect(bytes.toString("latin1", 12, 16)).toBe("IHDR");
+    const width = bytes.readUInt32BE(16);
+    const height = bytes.readUInt32BE(20);
+    expect(width).toBe(height);
+    expect(width).toBeGreaterThanOrEqual(512);
+    expect(width).toBeLessThanOrEqual(2048);
+    expect(bytes.length).toBeLessThan(2 * 1024 * 1024);
+    expect(bytes.equals(readFileSync(path.join(ROOT, APP_ICON_FILE)))).toBe(true);
+  });
+
+  test("has a README of at least 40 words outside code blocks, one sentence on each line", () => {
+    const prose = proseLines(readme())
+      .map((piece) => words(piece.text))
+      .join(" ");
+    expect(prose.split(/\s+/).filter((word) => /\w/.test(word)).length).toBeGreaterThanOrEqual(40);
+    expect(twoSentenceLines(readme())).toEqual([]);
+  });
+
+  test("says in its Privacy section where the token, the statements and the answers go, for whoever runs the Studio it is given", () => {
+    const lines = readme().split("\n");
+    const start = lines.indexOf("## Privacy");
+    const end = lines.findIndex((line, index) => index > start && line.startsWith("## "));
+    const privacy = start === -1 ? [] : lines.slice(start, end === -1 ? undefined : end);
+    for (const sentence of [
+      "This section is the plugin's privacy statement.",
+      "The plugin sends schema requests, statements and your token only to the Studio address you configure, and to no one else.",
+      "Whoever runs the Studio at that address is its operator, usually you or your organization.",
+      "That Studio runs each call and records it in its audit log, which is kept as long as its operator keeps its logs.",
+      "The answers reach Claude as part of your conversation.",
+      "LibreDB, the project, receives, keeps or shares nothing through the plugin, unless the Studio you configure is one the project runs, such as a demo, where the project is that Studio's operator.",
+      "Claude Code keeps the token in its credential store and the address in your settings.",
+      "The plugin runs no code of its own: no hook, no script and no server process.",
+    ]) {
+      expect(privacy).toContain(sentence);
+    }
+  });
+
+  test("opens by naming the Studio it connects to as usually, not always, one you or your organization run", () => {
+    expect(readme().split("\n")[2]).toBe(
+      "This plugin connects Claude Code to a [LibreDB Studio](https://github.com/libredb/libredb-studio), the database IDE, usually one that you or your organization run.",
+    );
+    expect(readme()).not.toMatch(/\byour own\b/);
+  });
+
+  test("says Studio runs no model for MCP, since it calls one for its own AI features when an LLM provider is set", () => {
+    expect(readme().split("\n")).toContain(
+      "Studio keeps the database credentials, runs no model for MCP, and answers only on the connections its operator opted in to MCP.",
+    );
+    expect(readme().replaceAll("runs no model for MCP", "")).not.toContain("runs no model");
+  });
+
+  test("points each need at the section of Studio's MCP guide that explains it", () => {
+    expect(readme().split("\n")).toContain(
+      `Studio's MCP guide explains both, in [Enabling it](${GUIDE_URL}#enabling-it) and [Getting a token](${GUIDE_URL}#getting-a-token), and its [Plugin and skill](${GUIDE_URL}#plugin-and-skill) section explains how to install the plugin from a shell.`,
+    );
+    const guide = read("docs/MCP.md").split("\n");
+    const anchors = [...readme().matchAll(/\]\(([^)]*)\)/g)]
+      .map((match) => match[1] ?? "")
+      .filter((destination) => destination.startsWith(`${GUIDE_URL}#`))
+      .map((destination) => destination.slice(GUIDE_URL.length + 1));
+    expect(anchors.length).toBeGreaterThan(0);
+    const headingAnchors = guide
+      .filter((line) => /^#{2,3} /.test(line))
+      .map((line) => headingAnchor(line.replace(/^#+ /, "")));
+    for (const anchor of anchors) expect(headingAnchors).toContain(anchor);
+  });
+
+  test("claims for its example prompts only the connections they need, and for Troubleshooting only what it covers", () => {
+    const lines = readme().split("\n");
+    expect(lines).toContain(
+      "Each of these works on a connection opted in to MCP that holds tables and takes statements:",
+    );
+    expect(lines).toContain(
+      `The [Troubleshooting](${GUIDE_URL}#troubleshooting) section of Studio's MCP guide explains the statuses a client gets when the address, the token or the server's setup is wrong.`,
+    );
+    expect(readme()).not.toMatch(/\bany Studio\b/);
+    expect(readme()).not.toMatch(/\beach answer\b/);
+  });
+
+  test("says only Claude Code loads the server, and asks for an https address", () => {
+    const lines = readme().split("\n");
+    expect(lines).toContain(
+      "Claude Code loads the plugin's MCP server; claude.ai chat ignores a server whose address comes from a plugin option, and Cowork one that references an option with no default, as every option of this plugin is, so on both the plugin gives the skill alone.",
+    );
+    expect(lines).toContain(
+      "Give an https address unless Studio runs on the same computer, because the token travels in the header of every request.",
+    );
+    // Cowork ignores a server that references an option with no default, which the README says every option is.
+    for (const option of Object.values(plugin.userConfig as Record<string, Record<string, unknown>>)) {
+      expect(option.default).toBeUndefined();
+    }
+  });
+
+  test("installs with the in-session lines docs/MCP.md gives", () => {
+    const lines = fencedAfter(readme(), "In a Claude Code session:");
+    expect(lines).toContain("/plugin install ");
+    expect(lines).toBe(fencedAfter(read("docs/MCP.md"), "In a Claude Code session:"));
+  });
+
+  test("gives three example prompts", () => {
+    const lines = readme().split("\n");
+    const start = lines.indexOf("## Example prompts");
+    const end = lines.findIndex((line, index) => index > start && line.startsWith("## "));
+    expect(lines.slice(start, end).filter((line) => line.startsWith("- "))).toHaveLength(3);
+  });
+
+  test("links only absolute https addresses, since a listing shows this file alone", () => {
+    const destinations = [...readme().matchAll(/\]\(([^)]*)\)/g)].map((match) => match[1]);
+    expect(destinations.length).toBeGreaterThan(0);
+    for (const destination of destinations) expect(new URL(destination).protocol).toBe("https:");
+    // An autolink, a reference definition or a bare address carries a scheme too, inside a link or not.
+    const addresses = [...readme().matchAll(/\b[a-z][a-z0-9+.-]*:\/\/[^\s)>\]]*/gi)].map((match) => match[0]);
+    expect(addresses.length).toBeGreaterThan(0);
+    expect(addresses.filter((address) => !address.startsWith("https://"))).toEqual([]);
+    for (const [, reference] of readme().matchAll(/^\s*\[[^\]]+\]:\s*(\S+)/gm)) {
+      expect(new URL(reference ?? "").protocol).toBe("https:");
+    }
+    // A raw HTML link or image carries its address in an attribute, which no Markdown scan above reads.
+    for (const [, value] of readme().matchAll(/\b(?:href|src)\s*=\s*["']?([^"'\s>]+)/gi)) {
+      expect(new URL(value ?? "").protocol).toBe("https:");
+    }
+  });
+
+  test("shows no token: no placeholder, no bearer value and nothing shaped like a signed token", () => {
+    expect(readme()).not.toContain("${");
+    expect(readme()).not.toMatch(/Bearer\s+\S/);
+    expect(readme()).not.toMatch(/eyJ[\w-]+/);
+    expect(readme()).not.toMatch(/[A-Za-z0-9_+=-]{40,}/);
+  });
+
+  test("names no engine, never says read-only SQL and never uses the word agent", () => {
+    // "LibreDB, the project," is the project the privacy statement says receives nothing, never the LibreDB engine.
+    expect(namedLabels(readme().replace("LibreDB, the project,", " "), LABELS)).toEqual([]);
+    expect(readme()).toContain("bounded, read-only statements");
+    expect(readme()).not.toMatch(/\bread-only SQL\b/i);
+    const stray = proseLines(readme()).filter((piece) => /\bagents?\b/i.test(words(piece.text)));
+    expect(stray).toEqual([]);
   });
 });
 
