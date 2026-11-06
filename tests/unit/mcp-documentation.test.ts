@@ -959,7 +959,7 @@ describe("docs/MCP.md, Plugin and skill", () => {
   test("names every step a recorded run did not take: the in-session commands, the GitHub source, the read recipe and the updates", () => {
     if (/^Verified live on/m.test(section)) {
       expect(section).toContain(
-        "The in-session commands, the GitHub source with `--sparse`, the `read` recipe and the update commands below were not run, since the marketplace reaches GitHub only when this change merges.\n",
+        "The in-session commands, the GitHub source with `--sparse`, the `read` recipe and the update commands below were not part of that run.\n",
       );
     }
   });
