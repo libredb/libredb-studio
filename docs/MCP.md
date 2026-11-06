@@ -604,6 +604,8 @@ For the first few seconds after that service starts, `opencode mcp list` can say
 
 The `libredb-studio` skill tells a client how to use these tools: what to check before the first call, the order of calls, the limits and what each refusal means.
 The Claude Code plugin installs that skill together with the `libredb` server entry, and this repository's own marketplace, `libredb`, is the one place it is published.
+A workflow copies the plugin folder and the repository's LICENSE to the root of [libredb/libredb-studio-claude-plugin](https://github.com/libredb/libredb-studio-claude-plugin) whenever either changes on `main`, because Anthropic's plugin directory validates only a repository of fewer than 10,000 files and folders, and this one holds more.
+The copy is read-only and no marketplace: install the plugin from `libredb` as below, and change it here, never there.
 The plugin's [README](../plugins/libredb-studio/README.md) says what the plugin sends where, and its Privacy section is the plugin's privacy statement.
 
 Verified live on 2026-11-06 with Claude Code 2.1.319.
