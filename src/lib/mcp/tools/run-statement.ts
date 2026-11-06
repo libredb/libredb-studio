@@ -14,6 +14,7 @@ import {
   type McpCallRecord,
   type McpToolAuditReason,
 } from "../audit";
+import { mcpConnectionUnavailable } from "../availability";
 import {
   MCP_CONNECTIONS_UNREADABLE,
   MCP_CONNECTIONS_UNREADABLE_TEXT,
@@ -60,7 +61,7 @@ import {
  * The one core every MCP statement tool runs (#246): one read-only statement, on an engine that
  * can bound it itself, in the arm's language.
  *
- * The order is run_read_query's, unchanged: signal, resolve, the served-engine gate, canonicalize, fence, the decision
+ * The order is run_read_query's: signal, resolve, availability, the served-engine gate, canonicalize, fence, the decision
  * record, `acquire(connection, "agent-read-only")`, `providerInDatabase`, for an arm that pages the provider's
  * `prepareQuery` with the row cap and offset, `queryReadOnly` under the provider budgets, the cut to max_rows and the
  * result cap, the outcome record.
@@ -69,7 +70,8 @@ import {
  * out for an engine without one; this module never calls query(), and that is what makes every statement tool's
  * readOnlyHint true. A profile refusal, from the acquisition or from a provider that proves its principal before every
  * statement, is answered in the tool's own sentence; the second kind quotes database names, so it comes behind the
- * untrusted-data notice. An engine the arm does not serve is refused before anything is
+ * untrusted-data notice. A connection no MCP open can serve for the caller is refused first, with the sentence
+ * list_connections lists it with, naming no tool. An engine the arm does not serve is refused before anything is
  * acquired, naming the tool that does serve it, and the arm's fence then runs as defence in depth. One deadline, the
  * call's start plus timeout_ms, covers acquisition and execution; neither a cancel nor the deadline stops a statement
  * already running (docs/BACKLOG.md D128), they end the wait.
@@ -330,6 +332,10 @@ export async function runStatement(
     return refuse(record, "mcp_connections_unreadable", MCP_CONNECTIONS_UNREADABLE_TEXT);
   if (connection === null) return refuse(record, "mcp_connection_not_visible", MCP_NOT_VISIBLE_TEXT);
   const resolved: McpCallRecord = { ...record, connectionName: connection.seedId };
+  // Ahead of the served-engine gate and of any acquisition: a connection no MCP open can serve for this caller is
+  // refused with the sentence list_connections lists it with, whichever tool is called, and no provider is built.
+  const unavailable = mcpConnectionUnavailable(tool.context.caller, connection);
+  if (unavailable !== null) return refuse(resolved, "mcp_execution_failed", unavailable);
   // Ahead of the fence, so the answer names the engine rather than the statement, and of any
   // acquisition, so no provider is built or dialled for an engine this tool does not serve.
   if (!arm.types.includes(connection.type)) {

@@ -37,7 +37,9 @@ import {
   RunReadQueryInputSchema,
   runReadQuery,
 } from "../../helpers/run-read-query";
-import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { MCP_STATEMENT_TOOLS, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import { mcpConnectionUnavailable } from "@/lib/mcp/availability";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import {
@@ -138,7 +140,10 @@ function direct(
   return runReadQuery(RunReadQueryInputSchema.parse(args) as McpStatementInput, { context: caller, signal });
 }
 
-/** A context over one opted-in connection of the given engine that hands out the given provider. */
+/**
+ * A context over one opted-in connection of the given engine that hands out the given provider. The connection is
+ * offered to admins alone, so an admin's MCP open of a SQLite one is available.
+ */
 function fakeContext(provider: Partial<DatabaseProvider>, type: DatabaseType = "sqlite"): McpConnectionContext {
   const connection = {
     id: "seed:fake",
@@ -147,7 +152,7 @@ function fakeContext(provider: Partial<DatabaseProvider>, type: DatabaseType = "
     seedId: "fake",
     managed: true,
     mcp: true,
-    roles: ["*"],
+    roles: ["admin"],
     createdAt: new Date(),
   } as ManagedConnection;
   return {
@@ -586,6 +591,109 @@ describe("the boundary", () => {
       failing.restore();
     }
   });
+});
+
+describe("a connection no MCP open can serve for the caller", () => {
+  // The posture is read through editorExecutionContext, so a developer's GOVERNANCE_SOURCE is set aside.
+  let savedGovernance: string | undefined;
+  beforeEach(() => {
+    savedGovernance = process.env.GOVERNANCE_SOURCE;
+    delete process.env.GOVERNANCE_SOURCE;
+    writeSeedFile(dir, [{ id: "shared", type: "sqlite", database: join(dir, "shop.db"), roles: ["admin", "user"] }]);
+  });
+  afterEach(() => {
+    if (savedGovernance === undefined) delete process.env.GOVERNANCE_SOURCE;
+    else process.env.GOVERNANCE_SOURCE = savedGovernance;
+  });
+
+  const ADMIN = { username: "alice", role: "admin" } as const;
+  const USER = { username: "bob", role: "user" } as const;
+
+  /** The sentence list_connections lists the seed with for `caller`, then `tool`'s answer on it, in one session. */
+  async function listedThenCalled(caller: typeof ADMIN | typeof USER, tool: string, args: Record<string, unknown>) {
+    const session = await connectClient(handlerServe(testAuthInfo(caller)), { negotiation: "legacy" });
+    try {
+      const listed = (await session.client.callTool({ name: "list_connections", arguments: {} })) as Answered;
+      const [row] = listed.structuredContent?.connections ?? [];
+      getServerAuditBuffer().clear();
+      const answer = (await session.client.callTool({ name: tool, arguments: args })) as Answered;
+      return { unavailable: row?.unavailable as string | undefined, answer };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /** The decision a refused call records, and nothing after it. */
+  const refusedDecision = (action: string) => [
+    expect.objectContaining({
+      action,
+      target: "mcp/decision",
+      result: "failure",
+      reason: "mcp_execution_failed",
+      connectionName: "shared",
+    }),
+  ];
+
+  test.each([
+    ["an admin", ADMIN],
+    ["a user", USER],
+  ] as const)(
+    "run_read_query answers %s token with the sentence list_connections lists, before anything is acquired",
+    async (_, caller) => {
+      const acquisitions = countMethod(McpConnectionContext.prototype, "acquire");
+      const builds = countMethod(SQLiteProvider.prototype, "validate");
+      try {
+        const { unavailable, answer } = await listedThenCalled(caller, "run_read_query", {
+          connection_id: "seed:shared",
+          sql: "SELECT 1",
+        });
+        expect(unavailable).toBeString();
+        expect(answer.isError).toBe(true);
+        expect(answer.content).toEqual([{ type: "text", text: unavailable as string }]);
+        expect(answer.content.map((block) => block.text)).not.toContain(MCP_UNTRUSTED_NOTICE);
+        expect(answer.structuredContent).toBeUndefined();
+        expect(mcpEvents()).toEqual(refusedDecision("run_read_query"));
+        expect([acquisitions.calls, builds.calls]).toEqual([0, 0]);
+      } finally {
+        acquisitions.restore();
+        builds.restore();
+      }
+    },
+  );
+
+  test.each([
+    ["an admin", ADMIN],
+    ["a user", USER],
+  ] as const)(
+    "every statement tool that does not serve SQLite answers %s token with the same sentence, naming no tool",
+    async (_, caller) => {
+      const unavailable = mcpConnectionUnavailable(
+        caller,
+        (await new McpConnectionContext(caller).resolve("seed:shared")) as ManagedConnection,
+      );
+      expect(unavailable).toBeString();
+      const others = servingStatementArms().filter((arm) => !arm.types.includes("sqlite"));
+      expect(others.length).toBeGreaterThan(0);
+      const acquisitions = countMethod(McpConnectionContext.prototype, "acquire");
+      try {
+        for (const arm of others) {
+          getServerAuditBuffer().clear();
+          const args = { connection_id: "seed:shared", max_rows: 100, timeout_ms: 30_000, [arm.argument]: "SELECT 1" };
+          // oxlint-disable-next-line no-await-in-loop -- one tool after the other, each with its own audit events
+          const answer = await runStatement(arm, args as McpStatementInput, {
+            context: new McpConnectionContext(caller),
+            signal: new AbortController().signal,
+          });
+          expect(answer).toEqual({ isError: true, content: [{ type: "text", text: unavailable as string }] });
+          for (const tool of MCP_STATEMENT_TOOLS) expect(answer.content[0].text).not.toContain(tool);
+          expect(mcpEvents()).toEqual(refusedDecision(arm.tool));
+        }
+        expect(acquisitions.calls).toBe(0);
+      } finally {
+        acquisitions.restore();
+      }
+    },
+  );
 });
 
 describe("the deadline and the signal", () => {

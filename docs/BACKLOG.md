@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B171 · 82
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP25 · 24
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP24 · 23
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
 
 ---
@@ -9808,16 +9808,6 @@ Measured 2026-11-05 on `main` for an admin token on a SQLite and on a DuckDB see
 Found 2026-11-05 in the review of #2255.
 
 **Done when:** such a seed is refused when the seed file loads, or is listed with `read_tool: null` and an `unavailable` sentence and left out of every token's `tools/list`, decided from a record beside the providers rather than a type-id branch, with a test that lists it and opens it under both MCP profiles.
-
-### MCP25. A statement tool's not-served refusal names `run_read_query` for a SQLite seed no MCP open serves
-
-`notServedText` in `src/lib/mcp/tools/run-statement.ts` names the tool that serves the connection's engine (`mcpStatementToolFor`), or `inspect_schema` where none does, and never asks `mcpConnectionUnavailable`.
-So a statement tool that does not serve SQLite, called on a SQLite seed that is unavailable to the caller, answers "this tool does not serve SQLite; use run_read_query there", while `list_connections` lists that seed with `read_tool: null` and `unavailable`, a token whose only seed it is lists no `run_read_query`, and `inspect_schema` refuses the seed too.
-`docs/MCP.md` says the tool named in that refusal is the one the connection's `read_tool` names, or `inspect_schema` where it is `null`, which this case contradicts.
-Measured 2026-11-05 on `main` with `run_cypher_read` and a user token on a SQLite seed offered to `["user"]`.
-Found 2026-11-05 while planning #2255.
-
-**Done when:** a statement tool that does not serve such a connection answers that the connection is not available to MCP, naming no tool, `docs/MCP.md` says so beside the not-served refusal, and a test calls such a tool on such a seed.
 
 ---
 

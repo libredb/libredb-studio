@@ -687,16 +687,25 @@ describe("docs/MCP.md", () => {
     );
   });
 
-  test("defines unavailable beside read_tool, and says inspect_schema refuses such a connection", () => {
+  test("defines unavailable beside read_tool, and says inspect_schema and every statement tool refuse such a connection", () => {
     const lines = MCP_DOC.split("\n");
     const at = lines.findIndex((line) =>
       line.startsWith("    Each connection's `read_tool` names the statement tool below"),
     );
     expect(lines.slice(at, at + 3)).toEqual([
       "    Each connection's `read_tool` names the statement tool below that runs a statement on it, and is `null` where `inspect_schema` is the only read or where the connection carries `unavailable`.",
-      "    `unavailable` is a sentence that says why no tool can read the connection and what an operator changes, and `inspect_schema` refuses that connection with it as soon as the connection resolves, before anything is acquired.",
+      "    `unavailable` is a sentence that says why no tool can read the connection and what an operator changes, and `inspect_schema` and every statement tool refuse that connection with it as soon as the connection resolves, before anything is acquired.",
       "    A SQLite seed carries it for every token but an admin's, and for an admin's token too where the seed's `roles` name any role but admin ([Opting connections in](#opting-connections-in)).",
     ]);
+  });
+
+  test("says, beside the not-served refusal, that an unavailable connection gets its sentence and no tool's name", () => {
+    const lines = MCP_DOC.split("\n");
+    const at = lines.findIndex((line) => line.startsWith("    It refuses every engine outside that list as soon as"));
+    expect(lines[at]).toContain('answering "this tool does not serve <engine>; use <tool> there"');
+    expect(lines[at + 1]).toBe(
+      "    A connection that carries `unavailable` gets that sentence instead, from every statement tool, naming no tool.",
+    );
   });
 
   test("states the SQLite seed requirement beside the PostgreSQL and SQL Server ones", () => {
@@ -708,7 +717,7 @@ describe("docs/MCP.md", () => {
 
   test("docs/providers/sqlite.md says how MCP lists and refuses a SQLite seed under the denied posture", () => {
     expect(read("docs/providers/sqlite.md")).toContain(
-      "Where it is denied, MCP's `list_connections` lists the seed with `read_tool: null` and an `unavailable` sentence that says what an operator changes, and `inspect_schema` refuses it before anything is acquired ([MCP.md](../MCP.md#opting-connections-in)).",
+      "Where it is denied, MCP's `list_connections` lists the seed with `read_tool: null` and an `unavailable` sentence that says what an operator changes, and `inspect_schema` and every statement tool refuse it with that sentence before anything is acquired ([MCP.md](../MCP.md#opting-connections-in)).",
     );
   });
 
