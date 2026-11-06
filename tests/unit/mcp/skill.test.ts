@@ -169,6 +169,7 @@ describe("the skill's frontmatter", () => {
     expect(description.length).toBeLessThanOrEqual(1024);
     expect(description).toContain("bounded, read-only statements");
     expect(description).toMatch(/\buse it when\b/i);
+    expect(description).toContain("answers 401, 404, a redirect to Studio's sign-in page, -32603,");
     expect(namedLabels(description, LABELS)).toEqual([]);
   });
 
@@ -261,6 +262,15 @@ describe("the skill's text", () => {
     expect(line("404")).toBe(
       "A 404 means MCP is off on that Studio, or the configured address is not Studio's MCP address.",
     );
+  });
+
+  test("lays a redirect to the sign-in page on an address outside /api, right after the 404 line", () => {
+    const lines = BODY.split("\n");
+    const redirect = lines.findIndex((text) => text.startsWith("A redirect to "));
+    expect(lines[redirect]).toBe(
+      "A redirect to Studio's sign-in page, which a client may report as an HTML answer or an unexpected content type, means the configured address is outside /api, so it is not Studio's MCP address.",
+    );
+    expect(lines[redirect - 1]).toStartWith("A 404 means ");
   });
 
   test("links Studio's MCP guide, which is the plugin's homepage", () => {

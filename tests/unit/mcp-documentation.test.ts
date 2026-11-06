@@ -181,6 +181,16 @@ describe("docs/MCP.md", () => {
     expect(row).toContain("cannot be read or parsed");
   });
 
+  test("has a Troubleshooting row for the 307 an address outside /api gets, in status order before the 401", () => {
+    const lines = MCP_DOC.split("\n");
+    const redirect = lines.findIndex((line) => line.startsWith("| 307 |"));
+    expect(lines[redirect]).toBe(
+      "| 307 | The address is outside `/api`, such as one that leaves `/api` out, so Studio sends it to its sign-in page; a client that follows the redirect reports an HTML answer or an unexpected content type, and the address to use ends in `/api/mcp` |",
+    );
+    expect(lines[redirect - 1]).toBe("|---|---|");
+    expect(lines[redirect + 1]).toStartWith("| 401 |");
+  });
+
   test("says inspect_schema's Redis walk can delete an expired key and publish an expired event, its hint unchanged", () => {
     expect(MCP_DOC).toContain(
       "    On Redis its one bounded `SCAN` walk, on a primary, deletes each expired key it meets and, on a server whose `notify-keyspace-events` holds the expired class, publishes an `expired` event for it, as a read of that key would (measured on Redis 8.10.2 and Valkey 9.1.2 on 2026-11-05), and `inspect_schema` stays annotated read-only there, as `run_redis_read` does.",

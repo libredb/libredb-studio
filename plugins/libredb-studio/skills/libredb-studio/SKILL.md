@@ -1,6 +1,6 @@
 ---
 name: libredb-studio
-description: Read the schemas of a LibreDB Studio's database connections and run bounded, read-only statements on them through its MCP server, starting with list_connections and inspect_schema; use it when the user asks about the tables, columns, keys or rows of a connection their Studio serves over MCP, or when a call to that server answers 401, 404, -32603, an unavailable connection or a refusal.
+description: Read the schemas of a LibreDB Studio's database connections and run bounded, read-only statements on them through its MCP server, starting with list_connections and inspect_schema; use it when the user asks about the tables, columns, keys or rows of a connection their Studio serves over MCP, or when a call to that server answers 401, 404, a redirect to Studio's sign-in page, -32603, an unavailable connection or a refusal.
 license: MIT
 compatibility: Needs a LibreDB Studio server with MCP switched on, its MCP address, which ends in /api/mcp, configured in this client, and a token minted on that Studio's MCP settings screen.
 ---
@@ -18,6 +18,7 @@ Studio runs no model for MCP: the model is the one in this client, and these too
 
 A 401 means the token is missing, expired, revoked or minted for another Studio address, or the configured address is not exactly Studio's MCP address, which ends in /api/mcp, so check the address before the user mints a new token on Studio's MCP settings screen and saves it in this client's configuration.
 A 404 means MCP is off on that Studio, or the configured address is not Studio's MCP address.
+A redirect to Studio's sign-in page, which a client may report as an HTML answer or an unexpected content type, means the configured address is outside /api, so it is not Studio's MCP address.
 An empty connection list means no connection is opted in for the token's role, and an operator adds `mcp: true` to a seed connection to opt one in.
 A `tools/list` answered with the JSON-RPC error `-32603`, or a tool answering that the connection configuration could not be read, means Studio cannot read its seed file, and the operator finds the cause in the server log.
 A connection that carries `unavailable` cannot be read by any tool: report its sentence, which says what an operator changes, and call no tool on it.

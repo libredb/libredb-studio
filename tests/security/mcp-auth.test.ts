@@ -155,6 +155,21 @@ describe("through proxy(), the rest of the application", () => {
     expect((await response.json()).code).toBe("AUTH_REQUIRED");
   });
 
+  test("redirects a bearer POST to an address outside /api to the sign-in page, as docs/MCP.md's 307 row says", async () => {
+    const addresses = ["/mcp", "/v1/mcp"];
+    const responses = await Promise.all(
+      addresses.map((address) => proxy(mcpRequest("POST", { authorization: "Bearer not-a-real-token" }, address))),
+    );
+    for (const [index, response] of responses.entries()) {
+      const address = addresses[index];
+      expect(response.status).toBe(307);
+      const location = new URL(response.headers.get("location") ?? "", "http://localhost:3000");
+      expect(location.pathname).toBe("/login");
+      expect(location.searchParams.get("next")).toBe(address);
+      expect(response.headers.get("www-authenticate")).toBeNull();
+    }
+  });
+
   test("does not open the drive path for an MCP token", async () => {
     const request = new NextRequest(`http://localhost:3000${AGENT_DRIVE_PATH}`, {
       headers: { host: "localhost:3000" },
