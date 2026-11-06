@@ -119,8 +119,10 @@ export function offsetRefusalText(sql: string, type: DatabaseType): string {
   return `This query has its own ${rowLimit?.own ?? "LIMIT or TOP"}, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ${paging}.`;
 }
 
+/** The timeout answer of every statement tool; more time is offered only below the most `timeout_ms` allows. */
 export function timeoutText(timeoutMs: number): string {
-  return `The statement did not finish within timeout_ms (${timeoutMs} ms). Narrow it, or raise timeout_ms up to ${MCP_TIMEOUT_BOUNDS_MS.max}.`;
+  const more = timeoutMs < MCP_TIMEOUT_BOUNDS_MS.max ? `, or raise timeout_ms up to ${MCP_TIMEOUT_BOUNDS_MS.max}` : "";
+  return `The statement did not finish within timeout_ms (${timeoutMs} ms). Narrow it${more}.`;
 }
 
 export function nextPageHint(nextOffset: number): string {

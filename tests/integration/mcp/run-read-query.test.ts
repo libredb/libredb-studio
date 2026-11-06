@@ -4,7 +4,7 @@
  * and B, the result cap C with byte_size, one deadline over acquisition and execution, the
  * untrusted-content notice, and the decision recorded before anything is acquired.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -591,6 +591,11 @@ describe("the boundary", () => {
 describe("the deadline and the signal", () => {
   const TIMEOUT_LOG = "MCP run_read_query answered a provider failure as the timeout";
 
+  // A test that times out never reaches its own finally, so a fake clock it set would otherwise outlive it.
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   test("pins today's behaviour, not a goal: a long SQLite statement blocks the process, so it is answered only after it ends, with the timeout answer, and a timer set beside it fires only after it too", async () => {
     // This test pins the OLD blocking behaviour, so it forces the synchronous driver
     // (LIBREDB_SQLITE_WORKER=0) locally: the statement blocks the process here, while
@@ -712,6 +717,28 @@ describe("the deadline and the signal", () => {
       expect(Date.now() - started).toBeLessThan(5_000);
       expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
     } finally {
+      gate.release();
+      // The held call runs to its end before afterEach closes the provider under it.
+      await gate.finished;
+      gate.restore();
+    }
+  });
+
+  test("a statement held past the most timeout_ms allows is answered without an offer of more time", async () => {
+    const gate = gateMethod(DuckDBProvider.prototype, "queryReadOnly");
+    try {
+      // The deadline timer is set under the fake clock, so the 30 s bound is reached without waiting for it.
+      jest.useFakeTimers();
+      const pending = direct({ connection_id: "seed:slow", sql: "SELECT answer FROM answers", timeout_ms: 30_000 });
+      await gate.entered;
+      jest.advanceTimersByTime(30_000);
+      const result = await pending;
+      expect(result.content).toEqual([
+        { type: "text", text: "The statement did not finish within timeout_ms (30000 ms). Narrow it." },
+      ]);
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
+    } finally {
+      jest.useRealTimers();
       gate.release();
       // The held call runs to its end before afterEach closes the provider under it.
       await gate.finished;
