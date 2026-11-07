@@ -1,11 +1,44 @@
 import "../../setup-dom";
 import { mockToastError, mockToastSuccess } from "../../helpers/mock-sonner";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor, type RenderResult } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
-import { AuthenticatorSettings } from "@/components/auth/AuthenticatorSettings";
+
+function MockQrCode({ value, ...rest }: { value: string } & Record<string, unknown>) {
+  return <svg data-testid="totp-qr-code" data-value={value} {...rest} />;
+}
+
+mock.module("qrcode.react", () => ({
+  QRCodeSVG: MockQrCode,
+}));
+
+const { AuthenticatorSettings } = await import("@/components/auth/AuthenticatorSettings");
 
 type Posted = { action?: string; password?: string; code?: string };
+
+const TOTP_ENROLMENT_QR_TEST_ID = "totp-qr";
+const TOTP_ENROLMENT_QR_LABEL = "Scan to add LibreDB to your authenticator app";
+
+async function beginTotpEnrolment(
+  view: RenderResult,
+  otpauthUrl: string | null,
+  secret = "SECRETVALUE",
+): Promise<void> {
+  await waitFor(() => expect(view.getByText("Off")).toBeTruthy());
+  fireEvent.change(view.getByLabelText("Current password"), { target: { value: "right" } });
+  fireEvent.click(view.getByRole("button", { name: "Set up authenticator" }));
+  await waitFor(() => expect(view.getByTestId("totp-secret").textContent).toBe(secret));
+  if (otpauthUrl) {
+    expect(view.getByRole("link", { name: otpauthUrl }).getAttribute("href")).toBe(otpauthUrl);
+  }
+}
+
+function expectLightEnrolmentQrContainer(view: RenderResult): HTMLElement {
+  const container = view.getByTestId(TOTP_ENROLMENT_QR_TEST_ID);
+  expect(container.className).toContain("bg-white");
+  expect(container.className).toMatch(/\bp-[1-9]/);
+  return container;
+}
 
 describe("AuthenticatorSettings", () => {
   beforeEach(() => {
@@ -269,5 +302,97 @@ describe("AuthenticatorSettings", () => {
     fireEvent.click(view.getByRole("button", { name: "Turn off authenticator" }));
     await waitFor(() => expect(view.getByText("Off")).toBeTruthy());
     expect(onChange).toHaveBeenCalledTimes(2);
+  });
+
+  describe("TOTP enrolment QR (#1826)", () => {
+    test("passes the begin otpauth url to the QR renderer", async () => {
+      const otpauthUrl = "otpauth://totp/LibreDB%20Studio:admin@libredb.org?secret=SECRETVALUE&issuer=LibreDB%20Studio";
+      mockGlobalFetch({
+        "/api/auth/totp": (req) =>
+          req.method === "GET"
+            ? { json: { available: true, enabled: false } }
+            : { json: { secret: "SECRETVALUE", otpauthUrl } },
+      });
+
+      const view = render(<AuthenticatorSettings />);
+      await beginTotpEnrolment(view, otpauthUrl);
+
+      expect(view.getByTestId("totp-qr-code").getAttribute("data-value")).toBe(otpauthUrl);
+    });
+
+    test("exposes the enrolment QR as an image with an accessible name and a light quiet-zone container", async () => {
+      const otpauthUrl = "otpauth://totp/LibreDB:me?secret=SECRETVALUE";
+      mockGlobalFetch({
+        "/api/auth/totp": (req) =>
+          req.method === "GET"
+            ? { json: { available: true, enabled: false } }
+            : { json: { secret: "SECRETVALUE", otpauthUrl } },
+      });
+
+      const view = render(<AuthenticatorSettings />);
+      await beginTotpEnrolment(view, otpauthUrl);
+
+      const container = expectLightEnrolmentQrContainer(view);
+      const qrImage = view.getByRole("img", { name: TOTP_ENROLMENT_QR_LABEL });
+      expect(container.contains(qrImage)).toBe(true);
+    });
+
+    test("omits the QR when the server sends no otpauth url but still shows the key", async () => {
+      mockGlobalFetch({
+        "/api/auth/totp": async (req) => {
+          if (req.method === "GET") return { json: { available: true, enabled: false } };
+          return { json: { secret: "SECRETVALUE" } };
+        },
+      });
+
+      const view = render(<AuthenticatorSettings />);
+      await beginTotpEnrolment(view, null);
+      expect(view.queryByTestId(TOTP_ENROLMENT_QR_TEST_ID)).toBeNull();
+      expect(view.queryByRole("img", { name: TOTP_ENROLMENT_QR_LABEL })).toBeNull();
+      expect(view.queryByRole("link")).toBeNull();
+    });
+
+    test("clears the enrolment QR after the code is confirmed", async () => {
+      let enabled = false;
+      const otpauthUrl = "otpauth://totp/LibreDB:me?secret=SECRETVALUE";
+      mockGlobalFetch({
+        "/api/auth/totp": async (req) => {
+          if (req.method === "GET") return { json: { available: true, enabled } };
+          const body = (await req.json()) as Posted;
+          if (body.action === "begin") return { json: { secret: "SECRETVALUE", otpauthUrl } };
+          enabled = true;
+          return { json: { ok: true } };
+        },
+      });
+
+      const view = render(<AuthenticatorSettings />);
+      await beginTotpEnrolment(view, otpauthUrl);
+      expect(view.getByTestId(TOTP_ENROLMENT_QR_TEST_ID)).toBeTruthy();
+
+      fireEvent.change(view.getByLabelText("Authentication code"), { target: { value: "123456" } });
+      fireEvent.click(view.getByRole("button", { name: "Confirm code" }));
+      await waitFor(() => expect(view.getByText("On")).toBeTruthy());
+      expect(view.queryByTestId(TOTP_ENROLMENT_QR_TEST_ID)).toBeNull();
+      expect(view.queryByRole("img", { name: TOTP_ENROLMENT_QR_LABEL })).toBeNull();
+    });
+
+    test("clears the enrolment QR when setup is cancelled", async () => {
+      const otpauthUrl = "otpauth://totp/LibreDB:me?secret=SECRETVALUE";
+      mockGlobalFetch({
+        "/api/auth/totp": (req) =>
+          req.method === "GET"
+            ? { json: { available: true, enabled: false } }
+            : { json: { secret: "SECRETVALUE", otpauthUrl } },
+      });
+
+      const view = render(<AuthenticatorSettings />);
+      await beginTotpEnrolment(view, otpauthUrl);
+      expect(view.getByTestId(TOTP_ENROLMENT_QR_TEST_ID)).toBeTruthy();
+
+      fireEvent.click(view.getByRole("button", { name: "Cancel" }));
+      expect(view.queryByTestId(TOTP_ENROLMENT_QR_TEST_ID)).toBeNull();
+      expect(view.queryByRole("img", { name: TOTP_ENROLMENT_QR_LABEL })).toBeNull();
+      expect(view.queryByTestId("totp-secret")).toBeNull();
+    });
   });
 });

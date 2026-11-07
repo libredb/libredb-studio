@@ -76,9 +76,9 @@ Add a manual (key-based) entry with:
 
 Those are every app's defaults, so in practice you only paste the key.
 
-Prefer to scan a QR code? Build the standard URI yourself and render it with any offline QR tool —
-Studio does not mint one, because doing so would mean the server handing the shared secret back
-over HTTP after startup:
+On the environment-variable path, Studio does not mint a QR code, because doing so would mean the
+server handing the shared secret back over HTTP after startup. Accounts in the server store get one
+under Sign-in security. Build the standard URI yourself and render it with any offline QR tool:
 
 ```
 otpauth://totp/LibreDB%20Studio:admin@libredb.org?secret=YOUR_SECRET_HERE&issuer=LibreDB%20Studio
@@ -117,6 +117,7 @@ After that the row is the secret: changing the environment variable does not cha
 `ADMIN_PASSWORD_RESET=true` is the exception for the env admin, and applies `ADMIN_TOTP_SECRET` (or no factor) along with the password; see [STORAGE.md](./STORAGE.md#accounts).
 
 Every account sets up its own authenticator under the user menu → Sign-in security (`/settings/authenticator`); an admin also finds it at the foot of Admin → Accounts.
+Setup there shows a QR of the same `otpauth` URL, drawn in the browser.
 Setting one up asks for the current password, and turning one off asks for the current password and a current code, so a stolen session cookie can neither remove the factor nor replace it.
 A wrong password or code there is charged to the same budgets as a failed login.
 An admin clears someone else's factor with `PATCH /api/admin/accounts/<email>` `{"clearTotp":true}`, for example when a phone is lost.
