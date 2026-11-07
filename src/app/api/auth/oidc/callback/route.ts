@@ -97,9 +97,9 @@ export async function GET(request: Request) {
     const oidcConfig = getOIDCConfig();
     const config = await discoverProvider(oidcConfig);
 
-    // Reconstruct callback URL with public origin for token exchange
+    // Use the same callback path as the login route, regardless of the request's path.
     const internalUrl = new URL(request.url);
-    const callbackUrl = new URL(`${internalUrl.pathname}${internalUrl.search}`, origin);
+    const callbackUrl = new URL(`${withBasePath("/api/auth/oidc/callback")}${internalUrl.search}`, origin);
 
     const exchange = await exchangeCode(config, callbackUrl, oidcState.code_verifier, oidcState.state, oidcState.nonce);
 
