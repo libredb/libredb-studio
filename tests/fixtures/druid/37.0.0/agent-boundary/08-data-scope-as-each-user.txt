@@ -1,0 +1,230 @@
+# druid-basic-security, as admin: two lookups, which no permission of the authorizer names
+> as admin: POST /proxy/coordinator/druid/coordinator/v1/lookups/config {}
+  202 {}
+> as admin: POST /proxy/coordinator/druid/coordinator/v1/lookups/config {"__default":{"libredb_country_names":{"version":"v1","lookupExtractorFactory":{"type":"map","map":{"TR":"Turkey","DE":"Germany","US":"United States"}}},"libredb_status_labels":{"version":"v1","lookupExtractorFactory":{"type":"map","map":{"1":"active","2":"archived"}}}}}
+  202 {"__default":{"libredb_country_names":{"version":"v1","lookupExtractorFactory":{"type":"map","map":{"TR":"Turkey","DE":"Germany","US":"United States"}}},"libredb_status_labels":{"version":"v1","lookupExtractorFactory":{"type":"map","map":{"1":"active","2":"archived"}}}}}
+# the Broker loads the lookups on its own polling period
+(waited 120000 ms)
+# what a SELECT reaches beyond the datasources, as agent_ro
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT * FROM sys.segments LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["segment_id","datasource","start","end","size","version","partition_num","num_replicas","num_rows","is_active","is_published","is_available","is_realtime","is_overshadowed","shard_spec","dimensions","metrics","projections","last_compaction_state","replication_factor"],["libredb_agent_data_2026-01-01T00:00:00.000Z_2026-01-02T00:00:00.000Z_2026-11-02T07:23:17.084Z","libredb_agent_data","2026-01-01T00:00:00.000Z","2026-01-02T00:00:00.000Z",2842483,"2026-11-02T07:23:17.084Z",0,1,1000000,1,1,1,0,0,"{\"type\":\"numbered\",\"partitionNum\":0,\"partitions\":0}","[\"x\",\"y\",\"s\"]","[]",null,null,2]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT * FROM sys.tasks LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["task_id","group_id","type","datasource","created_time","queue_insertion_time","status","runner_status","duration","location","host","plaintext_port","tls_port","error_msg"],["query-<uuid>-worker0_0","query-<uuid>","query_worker","libredb_agent_data","2026-11-02T07:23:12.241Z","1970-01-01T00:00:00.000Z","SUCCESS","NONE",6866,"<host:port>","172.21.0.7",8101,-1,null]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT * FROM sys.supervisors LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["supervisor_id","datasource","state","detailed_state","healthy","type","source","suspended","spec"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT * FROM sys.server_segments LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  403 {"Access-Check-Result":"Insufficient permission to view servers: Unauthorized"}
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.servers","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  403 {"Access-Check-Result":"Insufficient permission to view servers: Unauthorized"}
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.server_properties","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  403 {"Access-Check-Result":"Insufficient permission to view servers: Unauthorized"}
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM U&\"\\0073ys\".segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[1]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM SYS.segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Object 'SYS' not found; did you mean 'sys'? (line [1], column [27])","context":{"sourceType":"sql","line":"1","column":"27","endLine":"1","endColumn":"38"}}
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM druid.sys.segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Object 'sys' not found within 'druid' (line [1], column [27])","context":{"sourceType":"sql","line":"1","column":"27","endLine":"1","endColumn":"44"}}
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT * FROM lookup.libredb_country_names","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["k","v"],["TR","Turkey"],["DE","Germany"],["US","United States"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT LOOKUP('US', 'libredb_country_names') AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],["United States"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM libredb_agent_data WHERE LOOKUP(s, 'libredb_country_names') = 'Turkey'","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[0]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY 1, 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["TABLE_SCHEMA","TABLE_NAME"],["INFORMATION_SCHEMA","COLUMNS"],["INFORMATION_SCHEMA","ROUTINES"],["INFORMATION_SCHEMA","SCHEMATA"],["INFORMATION_SCHEMA","TABLES"],["druid","libredb_agent_data"],["lookup","libredb_country_names"],["lookup","libredb_status_labels"],["sys","segments"],["sys","server_properties"],["sys","server_segments"],["sys","servers"],["sys","supervisors"],["sys","tasks"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT * FROM INFORMATION_SCHEMA.SCHEMATA","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["CATALOG_NAME","SCHEMA_NAME","SCHEMA_OWNER","DEFAULT_CHARACTER_SET_CATALOG","DEFAULT_CHARACTER_SET_SCHEMA","DEFAULT_CHARACTER_SET_NAME","SQL_PATH"],["druid","druid",null,null,null,null,null],["druid","INFORMATION_SCHEMA",null,null,null,null,null],["druid","lookup",null,null,null,null,null],["druid","sys",null,null,null,null,null],["druid","view",null,null,null,null,null]]
+
+# what a SELECT reaches beyond the datasources, as agent_state
+> as agent_state: POST /druid/v2/sql {"query":"SELECT * FROM sys.segments LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["segment_id","datasource","start","end","size","version","partition_num","num_replicas","num_rows","is_active","is_published","is_available","is_realtime","is_overshadowed","shard_spec","dimensions","metrics","projections","last_compaction_state","replication_factor"],["libredb_agent_data_2026-01-01T00:00:00.000Z_2026-01-02T00:00:00.000Z_2026-11-02T07:23:17.084Z","libredb_agent_data","2026-01-01T00:00:00.000Z","2026-01-02T00:00:00.000Z",2842483,"2026-11-02T07:23:17.084Z",0,1,1000000,1,1,1,0,0,"{\"type\":\"numbered\",\"partitionNum\":0,\"partitions\":0}","[\"x\",\"y\",\"s\"]","[]",null,null,2]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT * FROM sys.tasks LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["task_id","group_id","type","datasource","created_time","queue_insertion_time","status","runner_status","duration","location","host","plaintext_port","tls_port","error_msg"],["query-<uuid>-worker0_0","query-<uuid>","query_worker","libredb_agent_data","2026-11-02T07:23:12.241Z","1970-01-01T00:00:00.000Z","SUCCESS","NONE",6866,"<host:port>","172.21.0.7",8101,-1,null]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT * FROM sys.supervisors LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["supervisor_id","datasource","state","detailed_state","healthy","type","source","suspended","spec"]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT * FROM sys.server_segments LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["server","segment_id"],["<host:port>","libredb_agent_data_2026-01-01T00:00:00.000Z_2026-01-02T00:00:00.000Z_2026-11-02T07:23:17.084Z"]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.servers","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[6]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.server_properties","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[513]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM U&\"\\0073ys\".segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[1]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM SYS.segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Object 'SYS' not found; did you mean 'sys'? (line [1], column [27])","context":{"sourceType":"sql","line":"1","column":"27","endLine":"1","endColumn":"38"}}
+> as agent_state: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM druid.sys.segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Object 'sys' not found within 'druid' (line [1], column [27])","context":{"sourceType":"sql","line":"1","column":"27","endLine":"1","endColumn":"44"}}
+> as agent_state: POST /druid/v2/sql {"query":"SELECT * FROM lookup.libredb_country_names","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["k","v"],["TR","Turkey"],["DE","Germany"],["US","United States"]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT LOOKUP('US', 'libredb_country_names') AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],["United States"]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM libredb_agent_data WHERE LOOKUP(s, 'libredb_country_names') = 'Turkey'","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[0]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY 1, 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["TABLE_SCHEMA","TABLE_NAME"],["INFORMATION_SCHEMA","COLUMNS"],["INFORMATION_SCHEMA","ROUTINES"],["INFORMATION_SCHEMA","SCHEMATA"],["INFORMATION_SCHEMA","TABLES"],["druid","libredb_agent_data"],["lookup","libredb_country_names"],["lookup","libredb_status_labels"],["sys","segments"],["sys","server_properties"],["sys","server_segments"],["sys","servers"],["sys","supervisors"],["sys","tasks"]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT * FROM INFORMATION_SCHEMA.SCHEMATA","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["CATALOG_NAME","SCHEMA_NAME","SCHEMA_OWNER","DEFAULT_CHARACTER_SET_CATALOG","DEFAULT_CHARACTER_SET_SCHEMA","DEFAULT_CHARACTER_SET_NAME","SQL_PATH"],["druid","druid",null,null,null,null,null],["druid","INFORMATION_SCHEMA",null,null,null,null,null],["druid","lookup",null,null,null,null,null],["druid","sys",null,null,null,null,null],["druid","view",null,null,null,null,null]]
+
+# what a SELECT reaches beyond the datasources, as agent_rw
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT * FROM sys.segments LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["segment_id","datasource","start","end","size","version","partition_num","num_replicas","num_rows","is_active","is_published","is_available","is_realtime","is_overshadowed","shard_spec","dimensions","metrics","projections","last_compaction_state","replication_factor"],["libredb_agent_data_2026-01-01T00:00:00.000Z_2026-01-02T00:00:00.000Z_2026-11-02T07:23:17.084Z","libredb_agent_data","2026-01-01T00:00:00.000Z","2026-01-02T00:00:00.000Z",2842483,"2026-11-02T07:23:17.084Z",0,1,1000000,1,1,1,0,0,"{\"type\":\"numbered\",\"partitionNum\":0,\"partitions\":0}","[\"x\",\"y\",\"s\"]","[]",null,null,2]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT * FROM sys.tasks LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["task_id","group_id","type","datasource","created_time","queue_insertion_time","status","runner_status","duration","location","host","plaintext_port","tls_port","error_msg"],["query-<uuid>-worker0_0","query-<uuid>","query_worker","libredb_agent_other","2026-11-02T07:24:37.747Z","1970-01-01T00:00:00.000Z","SUCCESS","NONE",6566,"<host:port>","172.21.0.7",8101,-1,null]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT * FROM sys.supervisors LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["supervisor_id","datasource","state","detailed_state","healthy","type","source","suspended","spec"]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT * FROM sys.server_segments LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["server","segment_id"],["<host:port>","libredb_agent_data_2026-01-01T00:00:00.000Z_2026-01-02T00:00:00.000Z_2026-11-02T07:23:17.084Z"]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.servers","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[6]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.server_properties","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[513]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM U&\"\\0073ys\".segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[2]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM SYS.segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Object 'SYS' not found; did you mean 'sys'? (line [1], column [27])","context":{"sourceType":"sql","line":"1","column":"27","endLine":"1","endColumn":"38"}}
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM druid.sys.segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Object 'sys' not found within 'druid' (line [1], column [27])","context":{"sourceType":"sql","line":"1","column":"27","endLine":"1","endColumn":"44"}}
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT * FROM lookup.libredb_country_names","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["k","v"],["TR","Turkey"],["DE","Germany"],["US","United States"]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT LOOKUP('US', 'libredb_country_names') AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],["United States"]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM libredb_agent_data WHERE LOOKUP(s, 'libredb_country_names') = 'Turkey'","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[0]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY 1, 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["TABLE_SCHEMA","TABLE_NAME"],["INFORMATION_SCHEMA","COLUMNS"],["INFORMATION_SCHEMA","ROUTINES"],["INFORMATION_SCHEMA","SCHEMATA"],["INFORMATION_SCHEMA","TABLES"],["druid","libredb_agent_data"],["druid","libredb_agent_other"],["lookup","libredb_country_names"],["lookup","libredb_status_labels"],["sys","segments"],["sys","server_properties"],["sys","server_segments"],["sys","servers"],["sys","supervisors"],["sys","tasks"]]
+
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT * FROM INFORMATION_SCHEMA.SCHEMATA","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["CATALOG_NAME","SCHEMA_NAME","SCHEMA_OWNER","DEFAULT_CHARACTER_SET_CATALOG","DEFAULT_CHARACTER_SET_SCHEMA","DEFAULT_CHARACTER_SET_NAME","SQL_PATH"],["druid","druid",null,null,null,null,null],["druid","INFORMATION_SCHEMA",null,null,null,null,null],["druid","lookup",null,null,null,null,null],["druid","sys",null,null,null,null,null],["druid","view",null,null,null,null,null]]
+
+# what a SELECT reaches beyond the datasources, as admin
+> as admin: POST /druid/v2/sql {"query":"SELECT * FROM sys.segments LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["segment_id","datasource","start","end","size","version","partition_num","num_replicas","num_rows","is_active","is_published","is_available","is_realtime","is_overshadowed","shard_spec","dimensions","metrics","projections","last_compaction_state","replication_factor"],["libredb_agent_data_2026-01-01T00:00:00.000Z_2026-01-02T00:00:00.000Z_2026-11-02T07:23:17.084Z","libredb_agent_data","2026-01-01T00:00:00.000Z","2026-01-02T00:00:00.000Z",2842483,"2026-11-02T07:23:17.084Z",0,1,1000000,1,1,1,0,0,"{\"type\":\"numbered\",\"partitionNum\":0,\"partitions\":0}","[\"x\",\"y\",\"s\"]","[]",null,null,2]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT * FROM sys.tasks LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["task_id","group_id","type","datasource","created_time","queue_insertion_time","status","runner_status","duration","location","host","plaintext_port","tls_port","error_msg"],["query-<uuid>-worker0_0","query-<uuid>","query_worker","libredb_agent_other","2026-11-02T07:24:37.747Z","1970-01-01T00:00:00.000Z","SUCCESS","NONE",6566,"<host:port>","172.21.0.7",8101,-1,null]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT * FROM sys.supervisors LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["supervisor_id","datasource","state","detailed_state","healthy","type","source","suspended","spec"]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT * FROM sys.server_segments LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["server","segment_id"],["<host:port>","libredb_agent_data_2026-01-01T00:00:00.000Z_2026-01-02T00:00:00.000Z_2026-11-02T07:23:17.084Z"]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.servers","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[6]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.server_properties","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[513]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM U&\"\\0073ys\".segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[2]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM SYS.segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Object 'SYS' not found; did you mean 'sys'? (line [1], column [27])","context":{"sourceType":"sql","line":"1","column":"27","endLine":"1","endColumn":"38"}}
+> as admin: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM druid.sys.segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Object 'sys' not found within 'druid' (line [1], column [27])","context":{"sourceType":"sql","line":"1","column":"27","endLine":"1","endColumn":"44"}}
+> as admin: POST /druid/v2/sql {"query":"SELECT * FROM lookup.libredb_country_names","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["k","v"],["TR","Turkey"],["DE","Germany"],["US","United States"]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT LOOKUP('US', 'libredb_country_names') AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],["United States"]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM libredb_agent_data WHERE LOOKUP(s, 'libredb_country_names') = 'Turkey'","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[0]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY 1, 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["TABLE_SCHEMA","TABLE_NAME"],["INFORMATION_SCHEMA","COLUMNS"],["INFORMATION_SCHEMA","ROUTINES"],["INFORMATION_SCHEMA","SCHEMATA"],["INFORMATION_SCHEMA","TABLES"],["druid","libredb_agent_data"],["druid","libredb_agent_other"],["lookup","libredb_country_names"],["lookup","libredb_status_labels"],["sys","segments"],["sys","server_properties"],["sys","server_segments"],["sys","servers"],["sys","supervisors"],["sys","tasks"]]
+
+> as admin: POST /druid/v2/sql {"query":"SELECT * FROM INFORMATION_SCHEMA.SCHEMATA","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["CATALOG_NAME","SCHEMA_NAME","SCHEMA_OWNER","DEFAULT_CHARACTER_SET_CATALOG","DEFAULT_CHARACTER_SET_SCHEMA","DEFAULT_CHARACTER_SET_NAME","SQL_PATH"],["druid","druid",null,null,null,null,null],["druid","INFORMATION_SCHEMA",null,null,null,null,null],["druid","lookup",null,null,null,null,null],["druid","sys",null,null,null,null,null],["druid","view",null,null,null,null,null]]
+
+# what the planner says a statement reads (EXPLAIN PLAN FOR), as agent_ro: a native plan names its dataSources, a system table or INFORMATION_SCHEMA plans as Calcite's own scan, and RESOURCES lists only datasources
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT x FROM libredb_agent_data LIMIT 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"scan\",\"dataSource\":{\"type\":\"table\",\"name\":\"libredb_agent_data\"},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"resultFormat\":\"compactedList\",\"limit\":2,\"columns\":[\"x\"],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"},\"columnTypes\":[\"LONG\"],\"granularity\":{\"type\":\"all\"},\"legacy\":false},\"signature\":[{\"name\":\"x\",\"type\":\"LONG\"}],\"columnMappings\":[{\"queryColumn\":\"x\",\"outputColumn\":\"x\"}]}]","[{\"name\":\"libredb_agent_data\",\"type\":\"DATASOURCE\"}]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"scan\",\"dataSource\":{\"type\":\"inline\",\"columnNames\":[\"a\"],\"columnTypes\":[\"LONG\"],\"rows\":[[1]]},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"resultFormat\":\"compactedList\",\"columns\":[\"a\"],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"},\"columnTypes\":[\"LONG\"],\"granularity\":{\"type\":\"all\"},\"legacy\":false},\"signature\":[{\"name\":\"a\",\"type\":\"LONG\"}],\"columnMappings\":[{\"queryColumn\":\"a\",\"outputColumn\":\"a\"}]}]","[]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT COUNT(*) FROM (SELECT x FROM libredb_agent_data UNION ALL SELECT x FROM libredb_agent_data)","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"timeseries\",\"dataSource\":{\"type\":\"union\",\"dataSources\":[{\"type\":\"table\",\"name\":\"libredb_agent_data\"},{\"type\":\"table\",\"name\":\"libredb_agent_data\"}]},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"granularity\":{\"type\":\"all\"},\"aggregations\":[{\"type\":\"count\",\"name\":\"a0\"}],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"}},\"signature\":[{\"name\":\"a0\",\"type\":\"LONG\"}],\"columnMappings\":[{\"queryColumn\":\"a0\",\"outputColumn\":\"EXPR$0\"}]}]","[{\"name\":\"libredb_agent_data\",\"type\":\"DATASOURCE\"}]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT u.v FROM libredb_agent_data, UNNEST(MV_TO_ARRAY(s)) AS u(v) LIMIT 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"scan\",\"dataSource\":{\"type\":\"unnest\",\"base\":{\"type\":\"table\",\"name\":\"libredb_agent_data\"},\"virtualColumn\":{\"type\":\"expression\",\"name\":\"j0.unnest\",\"expression\":\"\\\"s\\\"\",\"outputType\":\"STRING\"},\"unnestFilter\":null},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"resultFormat\":\"compactedList\",\"limit\":2,\"columns\":[\"j0.unnest\"],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"},\"columnTypes\":[\"STRING\"],\"granularity\":{\"type\":\"all\"},\"legacy\":false},\"signature\":[{\"name\":\"j0.unnest\",\"type\":\"STRING\"}],\"columnMappings\":[{\"queryColumn\":\"j0.unnest\",\"outputColumn\":\"v\"}]}]","[{\"name\":\"libredb_agent_data\",\"type\":\"DATASOURCE\"}]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT s FROM libredb_agent_data WHERE s IN (SELECT s FROM libredb_agent_data WHERE x = 1) LIMIT 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"scan\",\"dataSource\":{\"type\":\"join\",\"left\":{\"type\":\"table\",\"name\":\"libredb_agent_data\"},\"right\":{\"type\":\"query\",\"query\":{\"queryType\":\"groupBy\",\"dataSource\":{\"type\":\"table\",\"name\":\"libredb_agent_data\"},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"filter\":{\"type\":\"equals\",\"column\":\"x\",\"matchValueType\":\"LONG\",\"matchValue\":1},\"granularity\":{\"type\":\"all\"},\"dimensions\":[{\"type\":\"default\",\"dimension\":\"s\",\"outputName\":\"d0\",\"outputType\":\"STRING\"}],\"limitSpec\":{\"type\":\"NoopLimitSpec\"},\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"}}},\"rightPrefix\":\"j0.\",\"condition\":\"(\\\"s\\\" == \\\"j0.d0\\\")\",\"joinType\":\"INNER\"},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"resultFormat\":\"compactedList\",\"limit\":2,\"columns\":[\"s\"],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"},\"columnTypes\":[\"STRING\"],\"granularity\":{\"type\":\"all\"},\"legacy\":false},\"signature\":[{\"name\":\"s\",\"type\":\"STRING\"}],\"columnMappings\":[{\"queryColumn\":\"s\",\"outputColumn\":\"s\"}]}]","[{\"name\":\"libredb_agent_data\",\"type\":\"DATASOURCE\"}]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT COUNT(*) FROM sys.segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["BindableAggregate(group=[{}], EXPR$0=[COUNT()])\n  BindableTableScan(table=[[sys, segments]])\n","[]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT COUNT(*) AS n FROM U&\"\\0073ys\".segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["BindableAggregate(group=[{}], n=[COUNT()])\n  BindableTableScan(table=[[sys, segments]])\n","[]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["BindableAggregate(group=[{}], EXPR$0=[COUNT()])\n  BindableTableScan(table=[[INFORMATION_SCHEMA, COLUMNS]])\n","[]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT t.TABLE_NAME FROM INFORMATION_SCHEMA.TABLES t JOIN sys.segments s ON t.TABLE_NAME = s.datasource","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["BindableProject(TABLE_NAME=[$0])\n  BindableJoin(condition=[=($0, $1)], joinType=[inner])\n    BindableProject(TABLE_NAME=[$2])\n      BindableTableScan(table=[[INFORMATION_SCHEMA, TABLES]])\n    BindableTableScan(table=[[sys, segments]], projects=[[1]])\n","[]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT * FROM lookup.libredb_country_names","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"scan\",\"dataSource\":{\"type\":\"lookup\",\"lookup\":\"libredb_country_names\"},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"resultFormat\":\"compactedList\",\"columns\":[\"k\",\"v\"],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"},\"columnTypes\":[\"STRING\",\"STRING\"],\"granularity\":{\"type\":\"all\"},\"legacy\":false},\"signature\":[{\"name\":\"k\",\"type\":\"STRING\"},{\"name\":\"v\",\"type\":\"STRING\"}],\"columnMappings\":[{\"queryColumn\":\"k\",\"outputColumn\":\"k\"},{\"queryColumn\":\"v\",\"outputColumn\":\"v\"}]}]","[]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT d.s, l.v FROM libredb_agent_data d JOIN lookup.libredb_country_names l ON d.s = l.k LIMIT 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"scan\",\"dataSource\":{\"type\":\"join\",\"left\":{\"type\":\"table\",\"name\":\"libredb_agent_data\"},\"right\":{\"type\":\"lookup\",\"lookup\":\"libredb_country_names\"},\"rightPrefix\":\"j0.\",\"condition\":\"(\\\"s\\\" == \\\"j0.k\\\")\",\"joinType\":\"INNER\"},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"resultFormat\":\"compactedList\",\"limit\":2,\"columns\":[\"s\",\"j0.v\"],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"},\"columnTypes\":[\"STRING\",\"STRING\"],\"granularity\":{\"type\":\"all\"},\"legacy\":false},\"signature\":[{\"name\":\"s\",\"type\":\"STRING\"},{\"name\":\"j0.v\",\"type\":\"STRING\"}],\"columnMappings\":[{\"queryColumn\":\"s\",\"outputColumn\":\"s\"},{\"queryColumn\":\"j0.v\",\"outputColumn\":\"v\"}]}]","[{\"name\":\"libredb_agent_data\",\"type\":\"DATASOURCE\"}]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT s, LOOKUP(s, 'libredb_country_names') AS n FROM libredb_agent_data LIMIT 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"scan\",\"dataSource\":{\"type\":\"table\",\"name\":\"libredb_agent_data\"},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"virtualColumns\":[{\"type\":\"expression\",\"name\":\"v0\",\"expression\":\"lookup(\\\"s\\\",'libredb_country_names')\",\"outputType\":\"STRING\"}],\"resultFormat\":\"compactedList\",\"limit\":2,\"columns\":[\"s\",\"v0\"],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"},\"columnTypes\":[\"STRING\",\"STRING\"],\"granularity\":{\"type\":\"all\"},\"legacy\":false},\"signature\":[{\"name\":\"s\",\"type\":\"STRING\"},{\"name\":\"v0\",\"type\":\"STRING\"}],\"columnMappings\":[{\"queryColumn\":\"s\",\"outputColumn\":\"s\"},{\"queryColumn\":\"v0\",\"outputColumn\":\"n\"}]}]","[{\"name\":\"libredb_agent_data\",\"type\":\"DATASOURCE\"}]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT LOOKUP('US', 'libredb_country_names') AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"scan\",\"dataSource\":{\"type\":\"inline\",\"columnNames\":[\"ZERO\"],\"columnTypes\":[\"LONG\"],\"rows\":[[0]]},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"virtualColumns\":[{\"type\":\"expression\",\"name\":\"v0\",\"expression\":\"'United States'\",\"outputType\":\"STRING\"}],\"resultFormat\":\"compactedList\",\"columns\":[\"v0\"],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"},\"columnTypes\":[\"STRING\"],\"granularity\":{\"type\":\"all\"},\"legacy\":false},\"signature\":[{\"name\":\"v0\",\"type\":\"STRING\"}],\"columnMappings\":[{\"queryColumn\":\"v0\",\"outputColumn\":\"a\"}]}]","[]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT x FROM libredb_agent_data WHERE LOOKUP(s, 'libredb_country_names') = 'Turkey' LIMIT 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"scan\",\"dataSource\":{\"type\":\"table\",\"name\":\"libredb_agent_data\"},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"resultFormat\":\"compactedList\",\"limit\":1,\"filter\":{\"type\":\"equals\",\"column\":\"s\",\"matchValueType\":\"STRING\",\"matchValue\":\"TR\"},\"columns\":[\"x\"],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"},\"columnTypes\":[\"LONG\"],\"granularity\":{\"type\":\"all\"},\"legacy\":false},\"signature\":[{\"name\":\"x\",\"type\":\"LONG\"}],\"columnMappings\":[{\"queryColumn\":\"x\",\"outputColumn\":\"x\"}]}]","[{\"name\":\"libredb_agent_data\",\"type\":\"DATASOURCE\"}]","{\"statementType\":\"SELECT\"}"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT COUNT(*) FROM libredb_agent_other","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  403 {"Access-Check-Result":"Unauthorized"}
+# paging with LIMIT and OFFSET under the native engine, as agent_ro
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT x FROM libredb_agent_data LIMIT 3 OFFSET 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["x"],[0],[0],[0]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT s, COUNT(*) AS n FROM libredb_agent_data GROUP BY s ORDER BY s LIMIT 3 OFFSET 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["s","n"],["aaaaaaaaaaaaaaaaaa10",1000],["aaaaaaaaaaaaaaaaaa100",1000],["aaaaaaaaaaaaaaaaaa101",1000]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM libredb_agent_data LIMIT 3 OFFSET 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT x FROM libredb_agent_data ORDER BY x LIMIT 3 OFFSET 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"general","persona":"USER","category":"INVALID_INPUT","errorMessage":"Query could not be planned. A possible reason is [SQL query requires ordering a table by non-time column [[x]], which is not supported.]","context":{}}
+> as agent_ro: POST /druid/v2/sql {"query":"VALUES (1), (2)","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["EXPR$0"],[1],[2]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"TABLE libredb_agent_data","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["__time","x","y","s"],["2026-01-01T00:00:00.000Z",0,0,"aaaaaaaaaaaaaaaaaa0"],["2026-01-01T00:00:00.000Z",0,1,"aaaaaaaaaaaaaaaaaa1"],["2026-01-01T00:00:00.000Z",0,2,"aaaaaaaaaaaaaaaaaa2"],["2026-01-01T00:00:00.000Z",0,3,"aaaaaaaaaaaaaaaaaa3"],["2026-01-01T00:00:00.000Z",0,4,"aaaaaaaaaaaaaaaaaa4"],["2026-01-01T00:00:00.000Z",0,5,"aaaaaaaaaaaaaaaaaa5"],["2026-01-01T00:00:00.000Z",0,6,"aaaaaaaaaaaaaaaaaa6"],["2026-01-01T00:00:00.000Z",0,7,"aaaaaaaaaaaaaaaaaa7"],["2026-01-01T00:00:00.000Z",0,8,"aaaaaaaaaaaaaaaaaa8"],["2026-01-01T00:00:00.000Z",0,9,"aaaaaaaaaaaaaaaaaa9"],["2026-01-01T00:00:00.000Z",0,10,"aaaaaaaaaaaaaaaaaa10"],["2026-01-01T00:00:00.000Z",0,11,"aaaaaaaaaaaaaaaaaa11"],["2026-01-01T00:00:00.000Z",0,12,"aaaaaaaaaaaaaaaaaa12"],["2026-01-01T00:00:00.000Z",0,13,"aaaaaaaaaaaaaaaaaa13"],["2026-01-01T00:00:00.000Z",0,14,"aaaaaaaaaaaaaaaaaa14"],["2026-01-01T00:00:00.000Z",0,15,"aaaaaaaaaaaaaaaaaa15"],["2026-01-01T00:00:00.000Z",0,16,"aaaaaaaaaaaaaaaaaa16"],["2026-01-01T00:00:00.000Z",0,17,"aaaaaaaaaaaaaaaaaa17"],["2026-01-01T00:00:00.000Z",0,18,"aaaaaaaaaaaaaaaaaa18"],["2026-01-01T00:00:00.000Z",0,19,"aaaaaaaaaaaaaaaaaa19"],["2026-01-01T00:00:00.000Z",0,20,"aaaaaaaaaaaaaaaaaa20"],["2026-01-01T00:00:00.000Z",0,21,"aaaaaaaaaaaaaaaaaa21"],["2026-01-01T00:00:00.000Z",0,22,"aaaaaaaaaaaaaaaaaa22"],["2026-01-01T00:00:00.000Z",0,23,"aaaaaaaaaaaaaaaaaa23"],["2026-01-01T00:00:00.000Z",0,24,"aaaaaaaaaaaaaaaaaa24"],["2026-01-01T00:00:00.000Z",0,25,"aaaaaaaaaaaaaaaaaa25"],["2026-01-01T00:00:00.000Z",0,26,"aaaaaaaaaaaaaaaaaa26"],["2026-01-01T00:00:00.000Z",0,27,"aaaaaaaaaaaaaaaaaa27"], ...(60670025 chars)

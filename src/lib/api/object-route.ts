@@ -202,13 +202,12 @@ async function readDefaultBody(req: NextRequest): Promise<Record<string, unknown
  * early rather than failing the request.
  *
  * WHERE THAT TRUNCATION IS REACHED FROM, re-measured by grep against the installed next 16.3.4 in
- * this checkout, because an earlier revision of this docblock got it backwards. `next-server.js:1289`
+ * this checkout, because an earlier revision of this docblock got it backwards. `NextNodeServer` in `next-server.js`
  * calls `getCloneableBody` on every non-upgrade request, with `experimental.proxyClientMaxBodySize`
  * as the only override, but that call only REGISTERS the wrapper on the request meta and counts
- * nothing. The count and the truncation live entirely inside `cloneBodyStream`, `body-streams.js:80`
- * to `:118`, and `cloneBodyStream` has exactly THREE call sites: `next-server.js:1210`, which is
+ * nothing. The count and the truncation live entirely inside `cloneBodyStream`, in `getCloneableBody` of `body-streams.js`, and `cloneBodyStream` has exactly THREE call sites: `NextNodeServer.runMiddleware` in `next-server.js`, which is
  * inside the middleware adapter invocation, `adapterFn({ ..., page: 'middleware' })`;
- * `web/sandbox/sandbox.js:94`; and `lib/router-server.js:417` for a proxied request. So the INSTALL
+ * the request the sandbox builds in `web/sandbox/sandbox.js`; and the `proxyRequest` call in `lib/router-server.js` for a proxied request. So the INSTALL
  * is unconditional and the TRUNCATION is conditional on middleware actually running. The outcome for
  * this repository is the same either way, because `src/proxy.ts` IS a middleware, and the truncated
  * clone is what the route then reads: `cloneBodyStream` assigns its second stream to `buffered`, and
@@ -717,9 +716,9 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * was the only engine that had landed; the day-one set is now three and the count was re-measured
  * rather than the digit bumped, because what it counts is what the paragraph is for.
  *
- * The day-one producers of `edit` are: `providers/sql/postgres.ts:4485`, gated on
- * `kindAcceptsSourceEdits(capabilities, kind)`; `providers/sql/trino/index.ts:1342` and
- * `providers/keyvalue/redis.ts:2403`, both gated on `spec.acceptsSourceEdits === true`, which is the
+ * The day-one producers of `edit` are: `PostgresProvider.readObjectSource` in `providers/sql/postgres.ts`, gated on
+ * `kindAcceptsSourceEdits(capabilities, kind)`; `TrinoProvider.readObjectSource` in `providers/sql/trino/index.ts` and
+ * `RedisProvider.readObjectSource` in `providers/keyvalue/redis.ts`, both gated on `spec.acceptsSourceEdits === true`, which is the
  * same fact read through the same declaration. Later engines may produce it too, as etcd does for a
  * key in `providers/keyvalue/etcd/objects.ts`. Every producer sits on the READABLE arm, verified rather
  * than assumed: no producer attaches `edit` to a part carrying `unavailable`.
@@ -732,7 +731,7 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * Rule 2's producer set GREW and its character changed, which is the part a bumped digit would have
  * hidden. On PostgreSQL it is a by-product: that site spreads `truncated` and `edit` from a single
  * read, so a routine over `SOURCE_CHARACTER_LIMIT` reaches it. On Redis it is a DECIDED POSITION,
- * stated at `redis.ts:2396-2402`: the affordance is offered on a truncated part deliberately, because
+ * stated at `RedisProvider.readObjectSource` in `redis.ts`: the affordance is offered on a truncated part deliberately, because
  * the bound is the CALLER's and the same object read without one is whole, so a provider that withheld
  * it there would be answering a property of the REQUEST as a property of the object. Rule 2 is what
  * makes that position safe on the standalone path, and the pane's predicate and `buildObjectEdit`'s
@@ -744,25 +743,25 @@ function boundText(part: ObjectSourcePart, limit: number): ObjectSourcePart {
  * That was an obligation ON THE EDIT-PLAN ROUTE and BOTH HALVES OF IT HAVE LANDED, so what follows
  * names the enforcer of each half and where it sits, MEASURED by grep at this commit.
  *
- * THE KIND, at `src/app/api/db/objects/edit-plan/route.ts:89`: that route calls
+ * THE KIND, at `POST` in `src/app/api/db/objects/edit-plan/route.ts`: that route calls
  * `requireEditableKind(provider.getCapabilities(), kind, ...)` before it reaches the builder, on the
  * CONNECTED provider and never on the client's copy of the declaration, and its comment there cites
- * this docblock by name as the reason. `src/app/api/db/objects/edit-apply/route.ts:148` asks the same
+ * this docblock by name as the reason. `POST` in `src/app/api/db/objects/edit-apply/route.ts` asks the same
  * question of the plan's kind, so neither half of the write path takes a caller's word for it.
  *
- * THE BOUND, on both sides of the same constant. `edit-plan/route.ts:74` refuses a SUBMITTED text
+ * THE BOUND, on both sides of the same constant. `POST` in `edit-plan/route.ts` refuses a SUBMITTED text
  * longer than `EDIT_CHARACTER_LIMIT`, and all three day-one providers refuse a READ definition longer
- * than it inside `buildObjectEdit`: `providers/sql/postgres.ts:4653`, `providers/keyvalue/redis.ts:2493`
- * and `providers/sql/trino/index.ts:1536`. The second is what closes the class rather than narrowing
+ * than it inside `buildObjectEdit`: `PostgresProvider.buildObjectEdit` in `providers/sql/postgres.ts`, `RedisProvider.buildObjectEdit` in `providers/keyvalue/redis.ts`
+ * and `TrinoProvider.buildObjectEdit` in `providers/sql/trino/index.ts`. The second is what closes the class rather than narrowing
  * it: a plan is minted only from the build's own read, so a definition the pane could only have shown
  * truncated never reaches a plan at all, whatever the client POSTs.
  *
- * EVERY `path:line` ABOVE IS PINNED BY A TEST, because "measured at this commit" is a claim that
- * expires at the next one and nothing in CI reads a code comment. One of these pointers rotted by
- * twelve lines inside the very branch that wrote this paragraph, from an insertion above it in the
- * provider file it names. `tests/unit/lib/api/object-route-edit.test.ts` greps the anchor each citation
- * means, derives the number this docblock must be writing and fails with it, so a correct
- * renumbering costs nothing here and a stale one cannot reach `main`.
+ * EVERY SITE ABOVE IS NAMED, NOT NUMBERED, AND PINNED BY A TEST, because "measured at this commit" is a
+ * claim that expires at the next one and nothing in CI reads a code comment. A hand-copied line number
+ * here once rotted by twelve lines inside the very branch that wrote this paragraph, from an insertion
+ * above it in the provider file it names. `tests/unit/lib/api/object-route-edit.test.ts` holds that each
+ * named method and route handler exists in the file this docblock says, and that no citation escapes its
+ * table.
  *
  * So this function decides what the UI is OFFERED, and the two edit routes decide what the server
  * ACCEPTS.

@@ -16,7 +16,7 @@
  * So: a symbol whose docblock names a requirement must be reachable from `src`. Code with no
  * requirement in its docblock is not asked about at all.
  */
-import { test } from "bun:test";
+import { beforeAll, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expectEqual, expectTruthy, strippedSource } from "./helpers";
@@ -47,9 +47,9 @@ function requirementBound(): Bound[] {
   return found;
 }
 
-/** Every mention of `name` under `src`, minus the line that declares it. */
-function callersInSrc(name: string): number {
-  let seen = 0;
+/** Every line of every `.ts` and `.tsx` file under `src`. */
+function srcLines(): string[] {
+  const lines: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name);
@@ -61,15 +61,25 @@ function callersInSrc(name: string): number {
       // Comments and strings removed first: a name that appears only in a comment is not a caller,
       // and counting one made this band pass on an export with no caller at all, which is the very
       // thing it exists to find. Measured with a probe whose only other mention was a comment.
-      for (const line of strippedSource(readFileSync(path, "utf8")).split("\n")) {
-        if (!new RegExp(`\\b${name}\\b`).test(line)) continue;
-        if (new RegExp(`export (?:async )?(?:function|const|class) ${name}\\b`).test(line)) continue;
-        seen += 1;
-      }
+      lines.push(...strippedSource(readFileSync(path, "utf8")).split("\n"));
     }
   };
   walk(SRC);
-  return seen;
+  return lines;
+}
+
+// Read once, with its own budget: every name asked about walked the whole tree again, 511 ms for the first test
+// here and 3.4 s on one busy core, inside the 5000 ms default.
+let SRC_LINES: readonly string[] = [];
+beforeAll(() => {
+  SRC_LINES = srcLines();
+}, 60_000);
+
+/** Every mention of `name` under `src`, minus the line that declares it. */
+function callersInSrc(name: string): number {
+  const mention = new RegExp(`\\b${name}\\b`);
+  const declaration = new RegExp(`export (?:async )?(?:function|const|class) ${name}\\b`);
+  return SRC_LINES.filter((line) => mention.test(line) && !declaration.test(line)).length;
 }
 
 test("every export that carries a requirement is reachable from src", () => {

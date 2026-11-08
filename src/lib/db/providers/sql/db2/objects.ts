@@ -29,6 +29,7 @@ import {
   requireSourceKind,
 } from "../../../object-kinds";
 import { comparePaths } from "../../../object-path";
+import type { Db2ColumnMeta } from "./driver";
 import { QueryError } from "../../../errors";
 import {
   CONTAINERS_SQL,
@@ -39,7 +40,6 @@ import {
   LIST_SEQUENCES_SQL,
   LIST_TABLES_SQL,
   LIST_TRIGGERS_SQL,
-  OBJECT_COLUMNS_SQL,
   OBJECT_FOREIGN_KEYS_SQL,
   OBJECT_INDEXES_SQL,
   ROUTINE_SOURCE,
@@ -51,6 +51,10 @@ import {
   VIEW_SOURCE,
   bulkDetailSql,
   bulkTargetSql,
+  type ColumnSource,
+  DECFLOAT_DESCRIBABLE_SQL,
+  decfloatPrecisions,
+  isUndescribedDecfloat,
   objectDetailFromRows,
   objectStatus,
   sourceLength,
@@ -65,6 +69,10 @@ export interface CatalogReader {
   read(sql: string, params: unknown[]): Promise<Record<string, unknown>[]>;
   /** The database's code page, for the text `read` leaves as bytes. */
   codePage(): Promise<number>;
+  /** Where a relation's columns are read from, which the provider picks by its execution profile (`catalog.ts`). */
+  readonly columns: ColumnSource;
+  /** A zero-row describe of one base table: each column's driver metadata, and no row. */
+  describe(schema: string, table: string): Promise<readonly Db2ColumnMeta[]>;
 }
 
 /** Db2's identity for the shared container-path refusal. */
@@ -211,6 +219,36 @@ export async function listObjects(
 // Detail
 // ============================================================================
 
+/**
+ * Fills in, on the value-free source, the precision of every DECFLOAT column of a base table the session may read, by a
+ * zero-row describe of that table; `nameOf` reads which table a row belongs to. A view is never described, since a
+ * describe revalidates an invalid one, and neither is a table the session may not read, which Db2 refuses; their
+ * DECFLOAT columns keep no precision. The rows are changed in place.
+ */
+async function describeDecfloats(
+  reader: CatalogReader,
+  schema: string,
+  kind: string,
+  rows: readonly Record<string, unknown>[],
+  nameOf: (row: Record<string, unknown>) => string,
+): Promise<void> {
+  if (!reader.columns.describesDecfloat || TABLE_TYPES[kind] !== "T") return;
+  const waiting = new Set(rows.filter(isUndescribedDecfloat).map(nameOf));
+  if (waiting.size === 0) return;
+  for (const readable of await reader.read(DECFLOAT_DESCRIBABLE_SQL, [schema])) {
+    const table = String(readable.NAME);
+    if (!waiting.has(table)) continue;
+    // oxlint-disable-next-line no-await-in-loop -- the describes share the one client, one at a time.
+    const precisions = decfloatPrecisions(await reader.describe(schema, table));
+    for (const row of rows) {
+      const precision = precisions.get(String(row.COLUMN_NAME));
+      if (nameOf(row) === table && isUndescribedDecfloat(row) && precision !== undefined) {
+        row.DECFLOAT_PRECISION = precision;
+      }
+    }
+  }
+}
+
 /** The three detail reads of one relation, in sequence on the one client. */
 export async function describeObject(
   reader: CatalogReader,
@@ -224,11 +262,19 @@ export async function describeObject(
   if (spec.hasColumns !== true) return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
 
   const schema = schemaSegment(capabilities, path);
-  const binds = [schema, path[path.length - 1]];
-  const columns = await reader.read(OBJECT_COLUMNS_SQL, binds);
+  const name = path[path.length - 1];
+  const binds = [schema, name];
+  const columns = await reader.read(reader.columns.object, binds);
+  await describeDecfloats(reader, schema, kind, columns, () => name);
   const foreignKeys = await reader.read(OBJECT_FOREIGN_KEYS_SQL, binds);
   const indexes = await reader.read(OBJECT_INDEXES_SQL, binds);
-  return objectDetailFromRows(path, schema, { columns, foreignKeys, indexes }, await reader.codePage());
+  return objectDetailFromRows(
+    path,
+    schema,
+    { columns, foreignKeys, indexes },
+    await reader.codePage(),
+    reader.columns.type,
+  );
 }
 
 /** The rows of one bulk read grouped by the object they belong to. */
@@ -274,7 +320,9 @@ export async function describeObjects(
 
   const statements = bulkDetailSql(bounded);
   const detailBinds = [...binds, schema];
-  const columns = byObjectName(await reader.read(statements.columns, detailBinds));
+  const columnRows = await reader.read(reader.columns.bulk(bounded), detailBinds);
+  await describeDecfloats(reader, schema, kind, columnRows, (row) => String(row.OBJECT_NAME));
+  const columns = byObjectName(columnRows);
   const foreignKeys = byObjectName(await reader.read(statements.foreignKeys, detailBinds));
   const indexes = byObjectName(await reader.read(statements.indexes, detailBinds));
   const codePage = await reader.codePage();
@@ -291,6 +339,7 @@ export async function describeObjects(
           indexes: indexes.get(name) ?? [],
         },
         codePage,
+        reader.columns.type,
       );
     })
     .sort((left, right) => comparePaths(left.path, right.path));

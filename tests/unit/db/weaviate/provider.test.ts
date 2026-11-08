@@ -104,6 +104,7 @@ function contextOf(
     version: version(serverVersion),
     paths: { get: (kind) => known.get(kind), set: (kind, path) => void known.set(kind, path) },
     scoped,
+    readsObjects: true,
   };
 }
 
@@ -133,7 +134,15 @@ describe("declarations", () => {
       defaultPort: 8080,
       containerLevels: [],
       objectKinds: WEAVIATE_OBJECT_KINDS,
-      enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/providers/vector/weaviate/routes.ts", symbol: "WEAVIATE_ROUTES" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: { reach: "absent" },
+        transaction: { reach: "absent" },
+      },
       agentCredential: "token",
       metadataOnly: WEAVIATE_METADATA_ONLY,
       schemaRefreshPattern: "(?!)",

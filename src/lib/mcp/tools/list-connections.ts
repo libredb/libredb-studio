@@ -3,9 +3,11 @@ import { z } from "zod";
 import { isFileBased } from "@/lib/db-ui-config";
 import type { ManagedConnection } from "@/lib/seed";
 import { newMcpCorrelationId, recordMcpDecision, type McpCallRecord } from "../audit";
+import { mcpConnectionUnavailable } from "../availability";
 import {
   MCP_CONNECTIONS_UNREADABLE,
   MCP_CONNECTIONS_UNREADABLE_TEXT,
+  type McpCaller,
   type McpConnectionContext,
   type McpToolCall,
 } from "../context";
@@ -18,13 +20,17 @@ import {
   resultBytes,
   type ToolResult,
 } from "../output";
-import { MCP_STATEMENT_TOOLS, mcpStatementToolFor } from "./statement-arms";
+import { MCP_STATEMENT_TOOLS, mcpStatementToolFor, mcpWithholdsDatabase } from "./statement-arms";
 
 /**
  * list_connections (#246): the connections this deployment opted in for MCP that the token's role
  * may use, without credentials and without a server-side file path, paged under the result cap.
  * Each names its read_tool, the statement tool that serves its engine, read from the same
  * served-engine resolver the tools register and gate on, or null where none does.
+ * A connection no MCP open can serve for this caller (`mcpConnectionUnavailable`, `src/lib/mcp/availability.ts`) lists
+ * null too, with `unavailable`, the sentence that says why and what an operator changes.
+ * A connection whose database setting is a stored value on its engine (a topic filter, a group id),
+ * as its language's facet says, lists no database.
  *
  * Connection metadata comes from the operator's seed file, not from anyone who can write to a
  * database, so the result carries no untrusted-content notice. No provider is called, so one audit
@@ -44,6 +50,7 @@ export const ListedConnectionSchema = z.object({
   database: z.string().optional(),
   environment: z.string().optional(),
   read_tool: z.enum(MCP_STATEMENT_TOOLS).nullable(),
+  unavailable: z.string().optional(),
 });
 
 const ListConnectionsOutputSchema = z.object({
@@ -58,22 +65,26 @@ type ListedConnection = z.infer<typeof ListedConnectionSchema>;
 
 const LIST_CONNECTIONS_TITLE = "List connections";
 export const LIST_CONNECTIONS_DESCRIPTION =
-  "List the database connections this deployment opted in for MCP that your token's role may use, without credentials. Works for every engine. Each connection's read_tool names the tool that runs a statement on it, or is null where inspect_schema is the only read. An empty list means no connection is opted in: an operator adds mcp: true to a seed connection. Pages with offset; has_more and next_offset say when more connections exist.";
+  "List the database connections this deployment opted in for MCP that your token's role may use, without credentials. Works for every engine. Each connection's read_tool names the tool that runs a statement on it, or is null where inspect_schema is the only read. A connection that carries unavailable cannot be read by any tool, and unavailable says why and what an operator changes. An empty list means no connection is opted in: an operator adds mcp: true to a seed connection. Pages with offset; has_more and next_offset say when more connections exist.";
 
 /** The file name alone, cut after the last / or \, so no server-side path reaches the client. */
 function fileName(path: string): string {
   return path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 }
 
-function listed(connection: ManagedConnection): ListedConnection {
+function listed(connection: ManagedConnection, caller: McpCaller): ListedConnection {
   const { database, environment } = connection;
+  const unavailable = mcpConnectionUnavailable(caller, connection);
   return {
     id: connection.id,
     name: connection.name,
     engine: connection.type,
-    ...(database === undefined ? {} : { database: isFileBased(connection.type) ? fileName(database) : database }),
+    ...(database === undefined || mcpWithholdsDatabase(connection.type)
+      ? {}
+      : { database: isFileBased(connection.type) ? fileName(database) : database }),
     ...(environment === undefined ? {} : { environment }),
-    read_tool: mcpStatementToolFor(connection.type),
+    read_tool: unavailable === null ? mcpStatementToolFor(connection.type) : null,
+    ...(unavailable === null ? {} : { unavailable }),
   };
 }
 
@@ -116,7 +127,7 @@ async function listConnections(args: ListConnectionsInput, call: McpToolCall): P
   }
   const matching = visible
     .filter((connection) => args.environment === "all" || connection.environment === args.environment)
-    .map(listed);
+    .map((connection) => listed(connection, call.context.caller));
   const result = page(matching, args.offset);
   return recordOrRefuse(() => recordMcpDecision(record, result.isError ? "mcp_result_too_large" : undefined)) ?? result;
 }

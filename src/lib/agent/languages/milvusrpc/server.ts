@@ -12,7 +12,7 @@ import { MILVUSRPC_TOOL_OVERRIDES } from "./definitions";
 const MILVUSRPC_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowType, string>>> = Object.freeze({
   investigation: [
     'Read the server with run_read_query, one Milvus REST v2 request at a time: POST /v2/vectordb/collections/list, then collections/describe with {"collectionName": "..."} for its fields, their types and indexes, and collections/get_stats, collections/get_load_state, partitions/list, indexes/list, aliases/list and databases/list for the rest.',
-    "Name a collection as collections/list lists it, in the connection's own database: a dbName naming another is refused.",
+    "Name a collection as collections/list lists it, in the connection's own database: a dbName naming another, a collection the list does not hold and an alias where a collection's name stands are refused, and aliases/list names the collection whose aliases it reads.",
     "Answers carry names, counts and flags only: no stored field value or vector is read, so queries, gets and searches are refused, and what this run establishes is the store's shape and counts.",
     "Report what the evidence supports, and nothing further.",
   ].join(" "),

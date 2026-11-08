@@ -62,7 +62,15 @@ describe("declarations", () => {
       supportsResultPagination: false,
       supportsTransactions: false,
       declaresForeignKeys: false,
-      enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/providers/document/firestore/requests.ts", symbol: "buildRequest" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: { reach: "absent" },
+        transaction: { reach: "absent" },
+      },
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

@@ -19,7 +19,8 @@
  * partition's earliest and end offsets, never a record's key, value, headers or timestamp, a broker's host and port,
  * a config, a log directory or a consumer group. On a handle opened for any agent-mode profile every other surface
  * goes through that client too (`agent-surface.ts`): the editor's read and an object's source are refused, and what
- * needs a withheld read answers its reason. MCP read stays closed on this engine.
+ * needs a withheld read answers its reason, and a platform's own topics are withheld. MCP's `run_kafka_read` reads
+ * through the same `queryReadOnly`.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
@@ -51,6 +52,7 @@ import type {
   TableStats,
 } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { noWritePath } from "@/lib/db/write-reach";
 import {
   KAFKA_AGENT_TOPIC_COLUMNS,
   KAFKA_METADATA_ONLY,
@@ -58,7 +60,7 @@ import {
   kafkaAgentResult,
   runKafkaAgentRead,
 } from "./agent-metadata-read";
-import { readKafkaAgentStatement } from "./agent-statement";
+import { isWithheldKafkaTopic, KAFKA_AGENT_SENTENCES, readKafkaAgentStatement } from "./agent-statement";
 import {
   agentCountObjects,
   agentDescribeObject,
@@ -76,6 +78,16 @@ import { createPlatformaticClient, loadPlatformatic } from "./platformatic-clien
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET, type ReadLimits, readMessages } from "./read";
 import { parseReadRequest } from "./request";
 import { toQueryResult } from "./results";
+
+/**
+ * No write path on any route: every request the client sends is one of the read APIs of `KAFKA_READ_APIS`, the editor's
+ * text is a read request `parseReadRequest` admits or refuses, and nothing produces, commits, joins a group or creates
+ * a topic.
+ */
+const KAFKA_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/stream/kafka/platformatic-client.ts",
+  symbol: "KAFKA_READ_APIS",
+});
 
 /** How a real connection gets its client: the library, loaded once for the process. */
 const defaultCreateClient = async (options: KafkaConnectionOptions): Promise<KafkaReadClient> =>
@@ -107,6 +119,31 @@ function unloadableLibrary(error: unknown): KafkaError | undefined {
     "invalid-config",
     `The Kafka client library could not be loaded: the module "${specifier}" it requires does not resolve in this installation. See docs/providers/kafka.md section 2.5`,
   );
+}
+
+/**
+ * The connect's probe, failed as a connect timeout once the budget runs out. The probe settles on its
+ * own later, when the client it runs on is closed, and that late answer is dropped.
+ */
+async function withinConnectBudget<T>(probe: Promise<T>, budgetMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new KafkaError("network", "The broker could not be reached (connect-timeout)", {
+            nodeCode: "connect-timeout",
+          }),
+        ),
+      budgetMs,
+    );
+  });
+  probe.catch(() => undefined);
+  try {
+    return await Promise.race([probe, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Every read is held to the same bounds (spec 5.4, K5). */
@@ -162,10 +199,21 @@ export class KafkaProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     // Assigned before setConnected(true) and cleared with setConnected(false), so a connected provider has one.
     const client = this.client!;
+    // A platform's own topic is never named to the broker, and never answered when the broker lists it.
+    const refuseWithheld = (topics: readonly string[]) => {
+      if (topics.some(isWithheldKafkaTopic)) throw new QueryError(KAFKA_AGENT_SENTENCES.platform, this.type);
+    };
     return {
-      metadata: (topics) => client.metadata(topics),
-      listTopics: () => client.listTopics(),
-      offsets: (topic, at) => client.offsets(topic, at),
+      metadata: async (topics) => {
+        refuseWithheld(topics ?? []);
+        const answer = await client.metadata(topics);
+        return { ...answer, topics: answer.topics.filter((topic) => !isWithheldKafkaTopic(topic.name)) };
+      },
+      listTopics: async () => (await client.listTopics()).filter((name) => !isWithheldKafkaTopic(name)),
+      offsets: async (topic, at) => {
+        refuseWithheld([topic]);
+        return client.offsets(topic, at);
+      },
     };
   }
 
@@ -202,6 +250,9 @@ export class KafkaProvider extends BaseDatabaseProvider {
       supportsExplain: false,
       supportsTransactions: false,
       supportsMaintenance: false,
+      // Nothing this product offers writes to Kafka, so a connection is read-only whatever its flag says, and the
+      // flag is accepted.
+      writeReach: KAFKA_WRITE_REACH,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: false,
@@ -276,8 +327,10 @@ export class KafkaProvider extends BaseDatabaseProvider {
         throw unloadableLibrary(error) ?? error;
       });
       // One forced read of the brokers proves a broker answers the protocol at this address, with
-      // this credential, while the user is still looking at the connection form.
-      await client.metadata([]);
+      // this credential, while the user is still looking at the connection form. It runs under the
+      // query timeout as a whole: the library retries the read, and the ApiVersions read inside it,
+      // after a delay of its own, which the connect and request timeouts bound one attempt at a time.
+      await withinConnectBudget(client.metadata([]), this.queryTimeout);
     } catch (error) {
       const failure = toDatabaseError(error, this.bootstrap, this.queryTimeout);
       // A client that was built holds sockets, so a connect that fails after it closes them (spec

@@ -77,7 +77,6 @@ describe("declarations", () => {
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsTransactions: false,
-      enforcesReadOnly: true,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

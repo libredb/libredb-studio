@@ -21,6 +21,7 @@
  * hold its own copy of the data.
  */
 import type { DatabaseType } from "@/lib/types";
+import type { WriteReach } from "./write-reach";
 
 /**
  * The drivers we ship, i.e. the engines that have a provider, a doc page and an
@@ -253,109 +254,141 @@ export function isExternalDatabaseType(type: DatabaseType): boolean {
   return EXTERNAL[type] === true;
 }
 
+/** A total record with every value mapped, keyed exactly as the record it was mapped from. */
+function mapEntries<K extends string, V, W>(record: Readonly<Record<K, V>>, map: (value: V) => W): Record<K, W> {
+  return Object.fromEntries(Object.entries<V>(record).map(([key, value]) => [key, map(value)])) as Record<K, W>;
+}
+
 /**
- * Which shipped engines keep a read-only connection's promise: their provider refuses every write,
- * object edit and maintenance operation before any request while the connection's `readOnly` is true
- * (#1089). The static answer `ProviderCapabilities.enforcesReadOnly` gives once a provider is built.
+ * What Studio can write on each shipped engine, one of `WriteReach`'s three values (`./write-reach.ts`): `none`, no
+ * code in the provider can send a write on any write path; `guarded`, every write path it has is refused by a named
+ * gate while read-only mode holds; `open`, at least one path sends a write no Studio gate refuses. A fact about
+ * Studio's code, not about the engine or the role a connection signs in as. The static answer
+ * `summarizeWriteReach(ProviderCapabilities.writeReach)` gives once a provider is built.
  *
- * Static because every reader decides before a provider exists: the seed schema refuses
- * `readOnly: true` at load where this answers false, `assertReadOnlyHonoured` in
- * `src/lib/db/factory.ts` refuses it before anything is built or dialled, and the connection form
- * draws its toggle, and writes the field, only where this answers true. Refused rather than ignored,
- * because a mode an engine ignores lists a connection as read-only and sends its writes.
+ * Static because its readers decide before a provider exists, as `READ_ONLY_ENFORCED`'s do, which is derived from it
+ * below. An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering,
+ * and `tests/unit/db/write-reach-capability.test.ts` holds every entry equal to what that engine's provider declares,
+ * and holds a `none` provider to declaring no write capability on any path. Frozen like the records above it.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
- * answering, and `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to
- * what that engine's provider declares, so the two cannot drift. Frozen like the records above it.
+ * It is not an MCP criterion and no MCP code reads it: whether a machine client may read an engine is
+ * `MCP_EXPOSABLE`'s answer, which holds on every engine whatever its reach.
  */
-export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
-  postgres: false,
-  bigquery: false,
-  snowflake: false,
-  spark: false,
-  mysql: false,
-  sqlite: false,
-  libsql: false,
-  duckdb: false,
-  oracle: false,
-  db2: false,
-  mssql: false,
-  clickhouse: false,
-  druid: false,
-  trino: false,
-  cassandra: false,
-  elasticsearch: false,
-  opensearch: false,
-  mongodb: false,
-  couchbase: false,
-  redis: false,
-  prometheus: false,
-  kafka: false,
+export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.freeze({
+  postgres: "open",
+  bigquery: "open",
+  snowflake: "open",
+  spark: "open",
+  mysql: "open",
+  sqlite: "open",
+  libsql: "open",
+  duckdb: "open",
+  oracle: "open",
+  db2: "open",
+  mssql: "open",
+  clickhouse: "open",
+  // Druid native SQL refuses a write, but that is the engine's grammar: Studio sends the statement the editor holds.
+  druid: "open",
+  trino: "open",
+  cassandra: "open",
+  // As Druid: the SQL grammar has no write, and Studio sends whatever the editor holds.
+  elasticsearch: "open",
+  // As Elasticsearch, and the server's own DELETE can be switched on in 2.x.
+  opensearch: "open",
+  mongodb: "open",
+  couchbase: "open",
+  redis: "open",
+  // Read-only whatever the flag says: the transport requests only the closed endpoint table `PATHS`, every one a read,
+  // and a live run left the TSDB's series count unchanged after every provider surface.
+  prometheus: "none",
+  // Read-only whatever the flag says: the client sends only the read APIs of `KAFKA_READ_APIS`, and a live run left the
+  // topic list, every end offset and every group's committed offsets unchanged after every provider surface.
+  kafka: "none",
   // The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit
-  // and maintenance operation before any request while the mode holds.
-  etcd: true,
+  // and maintenance operation before any request while the mode holds (`write-policy.ts`).
+  etcd: "guarded",
   // Read-only whatever the flag says: this version of the provider refuses every write before it is sent,
   // offers no object edit and no maintenance operation, so a connection marked read-only keeps the promise.
-  neo4j: true,
+  neo4j: "none",
   // Its provider refuses Load and Release before any request while the mode holds, and every v1 console request is
   // a read (vector-family E8).
-  milvus: true,
+  milvus: "guarded",
   // Every v1 console request is a read and the provider has no maintenance operation, and while the mode holds it
   // refuses every route that is not a read before any request (vector-family spec 4.4).
-  qdrant: true,
+  qdrant: "none",
   // As Qdrant (#1566 spec 3.5): every console request is a read, the provider has no maintenance operation, and it
   // refuses every route that is not a read, and every request that would wake a cold tenant, before any request.
-  weaviate: true,
+  weaviate: "none",
   // Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`influxql-policy.ts`) is the only
   // boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW`
   // or `EXPLAIN` before any request; the route table reaches no write endpoint.
-  influxdb: true,
+  influxdb: "none",
   // Read-only whatever the flag says: the closed route table reaches no write, configure, token, cache or plugin
   // endpoint, the SQL policy refuses every statement that does not lead with a read keyword before any request, and
   // the 3.12 planner refuses every write besides.
-  influxdb3: true,
+  influxdb3: "none",
   // Read-only whatever the flag says: the adapter's stub holds only `GetShardAssignments`, `Read`, `List`, `RangeScan`
   // and `Health/Check` (O8), and the parser refuses every write verb by name, naming the read-only mode while it
   // holds (O1).
-  oxia: true,
+  oxia: "none",
   // No read-only mode: the provider sends the statement the editor holds, as Db2's does.
-  databend: false,
+  databend: "open",
   // Read-only whatever the flag says: the console's closed command table reaches no write, and the provider sends only
   // GET and HEAD.
-  s3: true,
+  s3: "none",
   // Read-only whatever the flag says: the request policy admits GET and the three self reviews only, before any
   // socket, and the provider offers no object edit and no maintenance operation.
-  kubernetes: true,
+  kubernetes: "none",
   // Structural rather than a mode: the encoder has no function that writes a PUBLISH, so there is no
   // write to enforce against. The valve repeats the check on the bytes.
-  mqtt: true,
+  mqtt: "none",
   // Read-only whatever the flag says: the client builds only the read requests of its closed table, before any
   // socket, and the provider offers no object edit and no maintenance operation.
-  firestore: true,
+  firestore: "none",
   // Read-only whatever the flag says: the management client's closed route table holds GET routes only, and the AMQP
   // client has no encoder for a publish, a get, a reject or any queue or exchange method, so no request path writes.
-  rabbitmq: true,
+  rabbitmq: "none",
   // Structural rather than a mode: the client seam names eight read services and none of them writes, so there
   // is no write to enforce against (`src/lib/db/providers/industrial/opcua/client.ts`).
-  opcua: true,
+  opcua: "none",
   // Structural rather than a mode: the request table holds nine routes and every one of them is a GET, so there
   // is no write to enforce against (`src/lib/db/providers/industrial/mtconnect/routes.ts`).
-  mtconnect: true,
+  mtconnect: "none",
   // Structural rather than configured: the encoder names four read function codes and device
   // identification, and there is no code in the provider that can build a write (#1723 MB-S1,
   // `src/lib/db/providers/industrial/modbus/valve.ts` re-checks every outbound byte).
-  modbus: true,
+  modbus: "none",
   // Structural rather than a mode: the request builder writes four read bodies and `<close-session>`, and no
   // function in the provider builds an `<edit-config>` or any other write
   // (`src/lib/db/providers/network/netconf/requests.ts`).
-  netconf: true,
-  snmp: true,
+  netconf: "none",
+  // Structural rather than a mode: the statement grammar holds four read commands (get, next, walk, table), and the
+  // valve refuses a Set PDU on every datagram it can read (`src/lib/db/providers/network/snmp/valve.ts`).
+  snmp: "none",
   // Structural rather than a mode, and the structure is an absence: `encoder.ts` encodes CONNECT, SUBSCRIBE,
   // UNSUBSCRIBE, PINGREQ and DISCONNECT and has no function that writes a PUBLISH, while the CONNECT takes no
   // will parameter at all, so no later edit can register a death certificate by passing a value (5.4).
-  sparkplug: true,
-  libredb: false,
+  sparkplug: "none",
+  // Studio's own store: the editor sends `put` and `delete`, and no gate refuses them on a connection.
+  libredb: "open",
 });
+
+/**
+ * Which shipped engines keep a read-only connection's promise: their provider refuses every write,
+ * object edit and maintenance operation before any request while the connection's `readOnly` is true
+ * (#1089). The static answer `summarizeWriteReach` gives from a built provider's `writeReach`.
+ *
+ * Static because its reader decides before a provider exists: `assertReadOnlyHonoured` in
+ * `src/lib/db/factory.ts` refuses `readOnly: true` before anything is built or dialled where this answers
+ * false. The seed schema and the connection form read `WRITE_REACH` itself, which gives the same answer.
+ * Refused rather than ignored, because a mode an engine ignores lists a connection as read-only and sends its
+ * writes.
+ *
+ * Derived from `WRITE_REACH`, so there is one hand-written answer: true wherever the reach is not `open`.
+ * `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to the summary of that engine's
+ * provider's `writeReach`, so the two cannot drift. Frozen like the records above it.
+ */
+export const READ_ONLY_ENFORCED = Object.freeze(mapEntries(WRITE_REACH, (reach) => reach !== "open"));
 
 /**
  * Which shipped engines open their editor handle under a file-access posture: their provider reads
@@ -386,6 +419,70 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
   // The engine whose editor handle opens under the posture: external access off for every role but
   // admin, and for every role on a seed a non-admin role can use. SQLite refuses a denied handle instead.
   duckdb: true,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
+  snmp: false,
+  sparkplug: false,
+  libredb: false,
+});
+
+/**
+ * Which shipped engines refuse to open a handle at all when its file-access posture is denied, rather
+ * than confining it. SQLite's `connect()` refuses before any file I/O because its drivers cannot confine
+ * statement-level file access, while DuckDB, the other engine that reads the posture, opens the handle
+ * with external access off. A true row is always a `READS_FILE_ACCESS_POSTURE` engine.
+ *
+ * Static because MCP decides before any provider exists: `list_connections` and `inspect_schema` ask,
+ * through `mcpConnectionUnavailable` in `src/lib/mcp/availability.ts`, whether any open of a listed
+ * connection can succeed for its caller, and no provider declares the fact. Reading `connection.type`
+ * there was the alternative and is forbidden by `CLAUDE.md`.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * answering, and `tests/unit/db/refuses-denied-file-access.test.ts` holds every row to what `connect()`
+ * does under the context an MCP open gives a caller whose file access is denied. Frozen like the records
+ * above it.
+ */
+export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  // Its open refuses a denied handle before any file I/O.
+  sqlite: true,
+  libsql: false,
+  // It reads the posture too, and confines a denied handle instead of refusing it.
+  duckdb: false,
   oracle: false,
   db2: false,
   mssql: false,
@@ -490,10 +587,10 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
  * product does not honour fails the file instead of listing a connection. Static for the reason
  * `READ_ONLY_ENFORCED` is: the seed file is validated before any provider exists.
  *
- * The etcd provider (#1089) is the engine this record exists for: MCP is outside its first version, so
- * its entry answers false, and that entry lands with the provider's registration, which the compiler
- * forces. Each entry that answers false carries its reason beside it, so the record below is the list; every
- * other engine answers true. An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join
+ * The etcd provider (#1089) is the engine this record was made for, MCP being outside its first version until a
+ * change of its own offered it. An entry lands with its provider's registration, which the compiler forces. Each
+ * entry that answers false carries its reason beside it, so the record below is the list; every other engine answers
+ * true. An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join
  * without someone answering, and frozen like the records above it.
  */
 export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
@@ -519,77 +616,81 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   redis: true,
   prometheus: true,
   kafka: true,
-  // The first engine MCP is not offered for (#1089 E12): key names and values carry secrets, the provider's read-only
-  // query path is agent mode's alone and reads metadata only, and no MCP surface is decided for it yet (BACKLOG B136),
-  // so a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
-  etcd: false,
-  // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
-  // `run_read_query` does not serve it, because the provider implements no `queryReadOnly`.
+  // Offered with every answer metadata only, as agent mode reads it: key names and values carry secrets, so
+  // `inspect_schema` lists no key prefix, since every agent-mode handle withholds them, and `run_etcd_read` answers
+  // the closed table's names, counts and sizes under a user the server proves reads only, on no Kubernetes storage
+  // prefix and not on every key.
+  etcd: true,
+  // Offered for the metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4), and for
+  // `run_cypher_read`, which MCP_STATEMENT_READ opens on it.
   neo4j: true,
-  // Offered for the two metadata tools (vector-family E17); `run_read_query` does not serve it, because the provider
-  // implements no `queryReadOnly`.
+  // Offered for the metadata tools (vector-family E17), and for `run_milvus_read`, which MCP_STATEMENT_READ opens on
+  // it.
   milvus: true,
-  // Offered for the two metadata tools, carrying names and types only (vector-family spec 4.4); `run_read_query` does not
-  // serve it, because the provider implements no `queryReadOnly`.
+  // Offered for the metadata tools, carrying names and types only (vector-family spec 4.4), and for
+  // `run_qdrant_read`, which MCP_STATEMENT_READ opens on it.
   qdrant: true,
-  // As Milvus and Qdrant (#1566 spec 3.5): offered for the two metadata tools; tenant names are a collection's detail,
-  // listed in its Source up to 1,024 as Milvus lists partitions, and `run_read_query` does not serve it.
+  // As Milvus and Qdrant (#1566 spec 3.5): offered for the metadata tools, and for `run_weaviate_read`, which reads
+  // one metadata request under the agent's own boundary; inspect_schema lists a collection's properties and vectors and
+  // never its tenants or aliases.
   weaviate: true,
-  // Both offered for the two metadata tools (InfluxDB spec I13); `run_read_query` does not serve either, because
-  // neither provider implements `queryReadOnly`.
+  // Both offered for the metadata tools, which list database, measurement and column names and types only. Both
+  // providers implement `queryReadOnly` for agent mode; `run_read_query` serves InfluxDB 3's SQL, opened by
+  // MCP_STATEMENT_READ, and no MCP statement tool reads InfluxQL, so `influxdb` stays closed there (BACKLOG B94).
   influxdb: true,
   influxdb3: true,
-  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), the
-  // provider's read-only query path is agent mode's alone and reads metadata only, and no MCP surface is decided for
-  // it yet (BACKLOG B100).
+  // Closed: the 0.18.0 server authorizes nothing, so a token reads, writes and deletes every key of every namespace
+  // and the provider's closed table would be the only layer between an MCP client and the cluster; Oxia key paths
+  // name Pulsar tenants, namespaces and topics, and no MCP surface that lists no key name is designed (BACKLOG B100).
   oxia: false,
   databend: true,
-  // Closed, as etcd's and Oxia's: agent mode reads S3's metadata, and no MCP surface that lists buckets but never an
-  // object key is designed yet (BACKLOG B104).
-  s3: false,
+  // Offered with every answer metadata only, as agent mode reads it, and only under the seed's agent read key, which
+  // MCP_AGENT_CREDENTIAL_REQUIRED requires: object keys are withheld, so `inspect_schema` refuses an S3 connection by
+  // name, since a bucket declares no relation kind, and `run_s3_read` answers bucket names, counts and flags under that
+  // key's grants.
+  s3: true,
   // Offered with every answer machine-redacted: `run_kubectl_read` runs the agent's
   // `queryReadOnly`, whose output masks every Secret name, and `inspect_schema` lists relations alone, which no
   // Kubernetes kind is, so no object name, a Secret's included, reaches it.
   kubernetes: true,
-  // Agent mode reads MQTT through a window whose every answer says a topic not seen may still exist, with topic
-  // names and payloads withheld; no MCP surface that reads through the same window, completeness sentence and
-  // projection is designed yet (BACKLOG B164).
-  mqtt: false,
-  // Closed, as etcd's, Oxia's and S3's: agent mode reads Firestore's metadata within a run's read allowance, every read
-  // is billed to the user's project, and no MCP surface that lists collections but never a document id is designed yet
-  // (BACKLOG B107).
+  // Offered with every answer metadata only, as agent mode reads it: topic names and payloads are withheld, so
+  // `inspect_schema` refuses an MQTT connection by name, since a broker declares no relation kind, and `run_mqtt_read`
+  // answers one window's totals or one named topic's counts and flags, with its window and the completeness sentence.
+  mqtt: true,
+  // Closed: every read is billed to the user's project, an MCP call has an allowance of its own and nothing bounds
+  // billed reads across calls, `inspect_schema` carries no allowance, so no collection listing reaches it, and a
+  // production viewer role is not measured (BACKLOG B107).
   firestore: false,
-  // Offered for the two metadata tools, carrying stream names and the fixed read columns only; `run_read_query` does
-  // not serve it: the provider's read-only query path is agent mode's alone and reads metadata only, and
-  // MCP_STATEMENT_READ keeps MCP read closed on it (BACKLOG B108).
+  // Offered for the metadata tools, carrying stream names and the fixed read columns only, and for
+  // `run_rabbitmq_read`, which reads through agent mode's metadata-only path: each message's offset and body size,
+  // never a message value (BACKLOG B108).
   rabbitmq: true,
-  // Outside this version, as for etcd, Oxia, S3 and MQTT. Agent mode reads values with their
-  // engineering units and withholds the server's configuration, role identities and session
-  // diagnostics, one session per read; no MCP surface that reads through the same withheld set and
-  // units lookup is designed yet (BACKLOG B162).
-  opcua: false,
-  // Offered for the metadata tools, which acquire an agent-mode handle and so read the device model with the agent's
-  // adapter connections withheld; `run_read_query` does not serve it: MCP_STATEMENT_READ keeps MCP read closed on it
-  // (BACKLOG B163).
+  // Offered only beneath the read roots its seed declares, which READ_ROOTS_REQUIRED holds MCP to: an OPC UA server
+  // declares no relation kind, so `inspect_schema` refuses an OPC UA connection by name, and `run_opcua_read` answers
+  // every node outside the roots exactly as a missing one.
+  opcua: true,
+  // Offered for the metadata tools and run_mtconnect_read, which acquire an agent-mode handle and so read the device
+  // model with the agent's adapter connections withheld.
   mtconnect: true,
-  // MCP is outside this provider's first version. A read also needs the register map kept with
-  // the connection, because Modbus has no discovery and a name means only what that document
-  // says it means, so an MCP client has nothing to form a read from on its own. Agent mode reads
-  // the device paced and counted per run, and no MCP surface that paces a device is designed yet
-  // (BACKLOG B160).
+  // Closed: agent mode reads the device paced per device and counted per run, and MCP has no run, so nothing would
+  // bound a client's device requests across calls; a cancelled call keeps the device's lane until its read's own
+  // deadline; and no MCP surface lists the register map's points, so a client could form only a block read whose
+  // decoding it guesses (BACKLOG B160).
   modbus: false,
   // Closed: agent mode reads NETCONF configuration and state with keys, password hashes, access rules and every node
-  // the device's own YANG marks nacm:default-deny-all withheld, and no MCP surface that withholds them is designed yet;
-  // a read-only account still reads password hashes and keystore entries, which is why the catalog carries names only
-  // (docs/providers/netconf.md 6.3, BACKLOG B159).
+  // the device's own YANG marks nacm:default-deny-all withheld by Studio alone, since a read-only account still reads
+  // password hashes and keystore entries (docs/providers/netconf.md 6.3), and nothing on the device is proved to hold
+  // them out; the rest is the device's whole configuration (BACKLOG B159).
   netconf: false,
-  // Closed: agent mode reads SNMP values with the SNMP security modules withheld, and no MCP surface that
-  // withholds them is designed yet (BACKLOG B158).
-  snmp: false,
-  // Agent mode reads Sparkplug through a window whose every answer says an edge node or device not seen may still
-  // exist, with ids, metric names and values withheld; no MCP surface that reads through the same window,
-  // completeness sentence and projection is designed yet (BACKLOG B165).
-  sparkplug: false,
+  // Offered as agent mode reads it: values are the device's own readings, and the withheld subtrees (the security and
+  // target modules, the running processes, the commands the agent runs and the vendor copy tables) are decided on every
+  // answer, so `inspect_schema` lists the bundled catalog's tables and scalar groups, none inside a withheld subtree,
+  // and `run_snmp_read` steps over or answers withheld every one a read reaches.
+  snmp: true,
+  // Offered with every answer metadata only, as agent mode reads it: ids, metric names and values are withheld, so
+  // `inspect_schema` answers an empty page, since an agent-mode handle declares no kind, and `run_sparkplug_read`
+  // answers one window's totals or one named object's counts, with its window and the completeness sentence.
+  sparkplug: true,
   libredb: true,
 });
 
@@ -600,9 +701,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * `MCP_EXPOSABLE` offers it and this record answers true (`src/lib/mcp/tools/served-engines.ts`), so an engine that
  * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
  *
- * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
- * for MongoDB, whose command `run_mongo_command` reads, and for Kubernetes, whose kubectl line `run_kubectl_read` reads
- * under the agent's machine redaction. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
+ * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
  */
@@ -613,93 +712,330 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   spark: false,
   mysql: true,
   sqlite: true,
-  // Agent mode executes statements on libSQL, and MCP read stays closed on it until a change of its own opens it.
-  libsql: false,
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, a token proven at open to be read-only
+  // and refused every write by the server (docs/providers/libsql.md section 3.6).
+  libsql: true,
   duckdb: true,
-  // Agent mode executes statements on Oracle, and MCP read stays closed on it until a change of its own opens it.
-  oracle: false,
-  // Agent mode executes statements on Db2, and MCP read stays closed on it until a change of its own opens it.
-  db2: false,
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, a user set READ ONLY, checked before
+  // every statement on that statement's own session to reach nothing READ ONLY leaves open and to hold no grant on a
+  // schema Oracle maintains beyond the policy catalogs (docs/providers/oracle.md section 5.7).
+  oracle: true,
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, a user checked before every statement,
+  // on the statement's own connection, to hold nothing but CONNECT and SELECT (docs/providers/db2.md section 10.1).
+  db2: true,
   mssql: true,
-  // Agent mode executes statements on ClickHouse, and MCP read stays closed on it until a change of its own opens it.
-  clickhouse: false,
-  // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it.
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, `readonly = 1` on every request and a
+  // user proven at open to hold only reads (docs/providers/clickhouse.md section 5.6).
+  clickhouse: true,
+  // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it: a
+  // LOOKUP of a literal key is kept out by the statement fence alone (BACKLOG B151).
   druid: false,
+  // Agent mode executes statements on Trino, and MCP read stays closed on it: the read-only access control lets every
+  // identity read other users' query text in `system.runtime.queries`, and only the statement fence keeps it out
+  // (BACKLOG B166).
   trino: false,
-  // Agent mode executes statements on Cassandra, and MCP read stays closed on it until a change of its own opens it.
-  cassandra: false,
-  // Agent mode executes statements on Elasticsearch, and MCP read stays closed on it until a change of its own opens it.
-  elasticsearch: false,
-  // Agent mode executes statements on OpenSearch, and MCP read stays closed on it until a change of its own opens it.
-  opensearch: false,
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, a role proven before every statement to
+  // hold only SELECT on the connection's keyspace, on a server that enforces it, and a provider check that sends one
+  // SELECT of that keyspace or of system_schema (docs/providers/cassandra.md section 14).
+  cassandra: true,
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, the SQL endpoint's grammar, which holds
+  // no write, on a server checked at open to be the release line whose write refusals were captured
+  // (docs/providers/elasticsearch.md section 5.9). OpenSearch, served by the same provider directory, has a row of its own.
+  elasticsearch: true,
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, the SQL plugin's refusal of every write,
+  // on a server whose DELETE is proved off and whose release line was checked at open, with a statement check that
+  // keeps hidden and dot-led indices from each statement (docs/providers/opensearch.md section 5.9).
+  opensearch: true,
   mongodb: true,
-  // Agent mode executes statements on Couchbase, and MCP read stays closed on it until a change of its own opens it.
-  couchbase: false,
-  // Agent mode executes metadata-only reads on Redis, and MCP read stays closed on it until a change of its own opens
-  // it.
-  redis: false,
-  // Agent mode executes PromQL reads on Prometheus, with the flags and every URL's userinfo and query string withheld,
-  // and MCP read stays closed on it until a change of its own opens it (BACKLOG B161).
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, a user whose only roles are query_select
+  // on named scopes of the bucket, checked at open and again before every statement on a server proven to enforce it,
+  // and a fence that sends one SELECT (docs/providers/couchbase.md section 15).
+  couchbase: true,
+  // Opened on its own: run_redis_read runs under the boundary agent mode uses, the closed table of metadata reads and
+  // an ACL user the server refuses every write probe before every command, on that command's own connection, with
+  // every answer projected to counts, types and sizes (docs/providers/redis.md section 16).
+  redis: true,
+  // Closed: Prometheus has no principal that narrows a read, so the connection's credential reaches every series the
+  // TSDB stores, and no layer independent of reading the expression narrows it; agent mode reads under that reach with
+  // the flags and every URL's userinfo and query string withheld (BACKLOG B161).
   prometheus: false,
-  // Agent mode executes metadata-only reads on Kafka, and MCP read stays closed on it until a change of its own opens
-  // it (BACKLOG B157).
-  kafka: false,
-  // Agent mode executes metadata-only reads on etcd, and MCP read stays closed on it until a change of its own opens
-  // it.
-  etcd: false,
-  // Agent mode executes statements on Neo4j, and MCP read stays closed on it until a change of its own opens it.
-  neo4j: false,
-  // Agent mode executes metadata-only reads on Milvus, and MCP read stays closed on it until a change of its own
-  // opens it.
-  milvus: false,
-  // Agent mode executes metadata-only reads on Qdrant, and MCP read stays closed on it until a change of its own
-  // opens it.
-  qdrant: false,
-  // Agent mode executes metadata-only reads on Weaviate, and MCP read stays closed on it until a change of its own
-  // opens it.
-  weaviate: false,
-  // Agent mode executes statements on InfluxDB, and MCP read stays closed on it until a change of its own opens it.
+  // Opened on its own: run_kafka_read runs under the boundary agent mode uses, a client that holds the Metadata and
+  // ListOffsets reads alone, answered metadata-only with a platform's own topics withheld
+  // (docs/providers/kafka.md section 16).
+  kafka: true,
+  // Opened on its own: run_etcd_read runs under the boundary agent mode uses, the provider's closed table of metadata
+  // reads and a user the server shows, before every command, to hold no root role and only READ, on no Kubernetes
+  // storage prefix and not on every key, with every answer projected to names, counts and sizes
+  // (docs/providers/etcd.md section 15.7).
+  etcd: true,
+  // Opened on its own: run_cypher_read runs under the boundary agent mode uses, on Enterprise Edition only, a user the
+  // server proves before every statement to hold only reads, no LOAD and no extension it can execute, and the
+  // server's own classification of every statement (docs/providers/neo4j.md section 15).
+  neo4j: true,
+  // Opened on its own: run_milvus_read runs under the boundary agent mode uses, the provider's closed RPC table and a
+  // user the server proves read-only before every request, every call naming a collection sent only when the user's own
+  // collection list holds it, every answer projected to names, counts and flags (docs/providers/milvus.md, section
+  // Agent mode).
+  milvus: true,
+  // Opened on its own: run_qdrant_read runs under the boundary agent mode uses, the provider's closed table of read
+  // routes and a key the server refuses an empty alias update and an empty point delete on every collection it lists,
+  // before every request, with every answer projected to names, counts and flags (docs/providers/qdrant.md, section
+  // Agent mode).
+  qdrant: true,
+  // Opened on its own: run_weaviate_read runs under the boundary agent mode uses, the provider's closed table of read
+  // requests and a key the server proves before every read to hold the viewer role's read actions only, answered
+  // through the metadata-only projection (docs/providers/weaviate.md section 15).
+  weaviate: true,
+  // Agent mode executes InfluxQL on InfluxDB, and MCP read stays closed on it: on 1.x a catalog SHOW's database scope
+  // rests on the agent's statement reader alone, and no layer that reads the answer can hold it (BACKLOG B94).
   influxdb: false,
-  // Agent mode executes statements on InfluxDB 3, and MCP read stays closed on it until a change of its own opens it.
-  influxdb3: false,
-  // Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it until a change of its own opens
-  // it.
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, the 3.12 Core planner's write refusals
+  // on a server checked at open to be that line, behind the read policy and the system schema fence
+  // (docs/providers/influxdb3.md section 3.5).
+  influxdb3: true,
+  // Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it: the server authorizes nothing,
+  // so the closed table would be the only layer between an MCP client and every key (BACKLOG B100).
   oxia: false,
   databend: false,
-  // Agent mode executes metadata-only reads on S3, and MCP read stays closed on it until a change of its own opens it
-  // (BACKLOG B104).
-  s3: false,
+  // Opened on its own: run_s3_read runs under the boundary agent mode uses, the provider's closed table of six metadata
+  // reads over a transport that sends GET and HEAD only, with every answer projected to names, counts and flags, never an
+  // object key or value, signed with the seed's agent read key alone, whose grants hold the bucket scope
+  // (docs/providers/s3.md section 15.7).
+  s3: true,
   kubernetes: true,
-  // Agent mode executes window reads on MQTT, metadata only, and MCP read stays closed on it until a change of its own
-  // opens it (BACKLOG B164).
-  mqtt: false,
-  // Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it until a change of its own
-  // opens it (BACKLOG B107).
+  // Opened on its own: run_mqtt_read runs under the boundary agent mode uses, the provider's closed five-packet
+  // encoder and valve, which send no PUBLISH and no Will, with every answer projected to one window's counts and flags,
+  // never a topic name or a payload, and carrying its window and the completeness sentence as notes
+  // (docs/providers/mqtt.md section 15).
+  mqtt: true,
+  // Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it: every read is billed and
+  // nothing bounds billed reads across MCP calls (BACKLOG B107).
   firestore: false,
-  // Agent mode executes metadata-only stream reads on RabbitMQ, and MCP read stays closed on it until a change of its
-  // own opens it.
-  rabbitmq: false,
-  // Agent mode executes reads with engineering units on OPC UA, and MCP read stays closed on it until a change of its
-  // own opens it (BACKLOG B162).
-  opcua: false,
-  // Agent mode executes request lines of nine GET routes on MTConnect, and MCP read stays closed on it until a change of
-  // its own opens it (BACKLOG B163).
-  mtconnect: false,
-  // Agent mode executes paced reads on Modbus, and MCP read stays closed on it until a change of its own opens it
-  // (BACKLOG B160).
+  // Opened on its own: run_rabbitmq_read runs under the boundary agent mode uses, the provider's structural closed
+  // table (a read client that encodes no take, publish, purge or declare, the stream-only type check before any frame
+  // and the `x-stream-offset` 406 backstop), answered metadata only, each message's offset and body size; message values
+  // stay withheld (docs/providers/rabbitmq.md section 17, BACKLOG B108).
+  rabbitmq: true,
+  // Opened on its own: run_opcua_read runs under the boundary agent mode uses, the provider's read-only client over a
+  // session opened per read, reading only beneath the seed's read roots, proved by a walk down from them on that
+  // session, with every other node id answered as a missing one and nothing sent for it (docs/providers/opcua.md
+  // section 15).
+  opcua: true,
+  // Opened on its own: run_mtconnect_read runs under the boundary agent mode uses, the provider's closed table of nine
+  // GET routes, with the agent's adapter connections withheld from every answer (docs/providers/mtconnect.md section 14).
+  mtconnect: true,
+  // Agent mode executes paced reads on Modbus, and MCP read stays closed on it: no bound on device requests across
+  // calls, no lane release on cancel and no register-map surface exist for MCP yet (BACKLOG B160).
   modbus: false,
-  // Agent mode executes reads on NETCONF with the withheld nodes pruned, and MCP read stays closed on it until a
-  // change of its own opens it (BACKLOG B159).
+  // Agent mode executes reads on NETCONF with the withheld nodes pruned, and MCP read stays closed on it: the pruning
+  // is Studio's alone, with no device layer proved to hold the secrets out (BACKLOG B159).
   netconf: false,
-  // Agent mode executes reads on SNMP with the SNMP security modules withheld, and MCP read stays closed on it
-  // until a change of its own opens it (BACKLOG B158).
+  // Opened on its own: run_snmp_read runs under the boundary agent mode uses, the agent's client of Get, GetNext and
+  // GetBulk alone behind the valve, with every withheld subtree decided by the prefix of every identifier an answer
+  // carries, and its reasons carried as notes; a v2c community is no principal, so the agent's own view and Studio's
+  // withheld set are the data scope (docs/providers/snmp.md section 14).
+  snmp: true,
+  // Opened on its own: run_sparkplug_read runs under the boundary agent mode uses, the provider's closed encoder, which
+  // sends no PUBLISH, command or Will, with every answer projected to one window's counts and flags, never an id, a
+  // metric name or a value, and carrying its window and the completeness sentence as notes
+  // (docs/providers/sparkplug.md section 15).
+  sparkplug: true,
+  // Opened on its own: run_libredb_read runs under the boundary agent mode uses, a read-only handle of its own for every
+  // command, opened through Studio's read-only file adapter, which takes no lock and cannot write; the seed names the
+  // one file it reads, Studio's own storage and credential files are refused as a target, and the file's reserved
+  // internal namespace is left out of every answer (docs/providers/libredb.md section 15).
+  libredb: true,
+});
+
+/**
+ * Which shipped engines change state the engine keeps when MCP's `inspect_schema` reads them, though it writes no
+ * data: a Databend Cloud call resumes a suspended warehouse, which bills while it runs, and an operations open of a
+ * LibreDB file takes its exclusive lock and keeps it until the handle has been idle for 30 minutes (docs/MCP.md,
+ * "Limits"). A token whose `tools/list` reaches such an engine is told `readOnlyHint: false` and
+ * `destructiveHint: false` on `inspect_schema` (`metadataReadAnnotations` in `src/lib/mcp/tools/annotations.ts`);
+ * every other tool keeps its read-only hint.
+ *
+ * Not derived from `ProviderCapabilities.resumesBilledCompute`: Snowflake declares that flag yet lists its catalog
+ * with `SHOW` statements that need no running warehouse (docs/providers/snowflake.md), and Databend declares it per
+ * connection, from its Warehouse and its host, while `tools/list` decides before any provider exists and builds
+ * none. So the row is per engine, and a self-hosted Databend server is marked as well, as docs/providers/databend.md
+ * says.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held by
+ * `tests/unit/mcp/annotations.test.ts`, which also holds its true rows to the engines docs/MCP.md and the provider
+ * docs name for the hint.
+ */
+export const MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  // A Databend Cloud call resumes a suspended warehouse, which bills while it runs; the row is per engine, so a
+  // self-hosted server, which never bills, is marked too.
+  databend: true,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
   snmp: false,
-  // Agent mode executes window reads on Sparkplug, metadata only, and MCP read stays closed on it until a change of
-  // its own opens it (BACKLOG B165).
   sparkplug: false,
-  // Agent mode executes statements on LibreDB, and MCP read stays closed on it until a change of its own opens it.
+  // The operations open holds the file's exclusive lock until the handle has been idle for 30 minutes.
+  libredb: true,
+});
+/**
+ * Which shipped engines MCP reads only under an agent credential of the seed's own, `agentUser` and `agentPassword`,
+ * never under the connection's login: on such an engine the agent credential's grants are what bound what an MCP
+ * client reads, so a seed opted into MCP without one would be read under the wider principal. Read in two places and
+ * nowhere else: the seed schema refuses `mcp: true` without an agent credential at load, and the MCP context refuses
+ * to acquire such a connection without one at open, with `AGENT_CREDENTIAL_REQUIRED`.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held true only where
+ * `MCP_EXPOSABLE` offers the engine and `SEED_AGENT_CREDENTIAL` (src/lib/db/connection-fields.ts) gives a seed of it an
+ * agent credential, by `tests/unit/db/compatibility.test.ts`.
+ */
+export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  // The agent read key's grants are the only layer that holds the buckets an MCP client reaches: the connection's own
+  // key may read every bucket, and S3 has no read-only principal Studio can prove.
+  s3: true,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: false,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
+  snmp: false,
+  sparkplug: false,
   libredb: false,
 });
+
+/**
+ * Which shipped engines agent mode and MCP read only beneath read roots a seed declares (`agentReadRoots`), never
+ * across the whole server: on such an engine the roots are what bound what an agent or an MCP client reads, so a
+ * connection without them is not read at all. Read by every layer outside the provider, so none branches on the type
+ * id: the runs route refuses an agent-mode Start whose workflow sends statements on a connection without roots, the seed
+ * schema refuses `mcp: true` without roots at load, the MCP context refuses to acquire such a connection at open with
+ * `READ_ROOTS_REQUIRED`, and a governed record, which carries no roots, is never opted in to MCP.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held true exactly where
+ * `SEED_ONLY_FIELDS` (src/lib/db/connection-fields.ts) names `agentReadRoots`, by `tests/unit/db/compatibility.test.ts`.
+ */
+export const READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: false,
+  bigquery: false,
+  snowflake: false,
+  spark: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  weaviate: false,
+  influxdb: false,
+  influxdb3: false,
+  oxia: false,
+  databend: false,
+  s3: false,
+  kubernetes: false,
+  mqtt: false,
+  firestore: false,
+  rabbitmq: false,
+  opcua: true,
+  mtconnect: false,
+  modbus: false,
+  netconf: false,
+  snmp: false,
+  sparkplug: false,
+  libredb: false,
+});
+
+/**
+ * The refusal of an agent-mode Start whose workflow sends statements, on a connection of an engine `READ_ROOTS_REQUIRED`
+ * names that declares no read roots. Worded without naming an engine, since the runs route answers it for every engine
+ * the record names.
+ */
+export const READ_ROOTS_REQUIRED_SENTENCE =
+  "This connection declares no read roots: agent mode reads its engine only beneath read roots an operator declares on its seed entry (agentReadRoots). Nothing was sent.";
 
 /**
  * Which shipped engines' connection form offers a URI mode (Spec A section 7): the answer

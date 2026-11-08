@@ -128,9 +128,9 @@ The forty-third row is the embedded LibreDB store: it ships inside the image.
 | **Couchbase** | none, HTTP | SQL++ query editor, bucket/scope/collection browser, cluster health |
 | **Firestore** | none, REST | Read-only Admin SDK query chain |
 | **ClickHouse** | none, HTTP | Full SQL IDE over the HTTP interface, part/compression sizes, `system.*` monitoring |
-| **Apache Druid** | none, HTTP | Read-only SQL IDE over the SQL endpoint, datasource and segment browser |
-| **Elasticsearch** | none, HTTP | Read-only SQL IDE over `_sql`, mapping-driven index/field explorer, cluster health with per-index document counts and store sizes |
-| **OpenSearch** | none, HTTP | The same read-only IDE over `_plugins/_sql`, from the same provider module; `LIMIT … OFFSET` paging works here |
+| **Apache Druid** | none, HTTP | SQL IDE over the SQL endpoint, datasource and segment browser |
+| **Elasticsearch** | none, HTTP | SQL IDE over `_sql`, mapping-driven index/field explorer, cluster health with per-index document counts and store sizes |
+| **OpenSearch** | none, HTTP | The same SQL IDE over `_plugins/_sql`, from the same provider module; `LIMIT … OFFSET` paging works here |
 | **Trino** | none, HTTP | Full SQL IDE over the client protocol, every configured catalog in one tree, `EXPLAIN (FORMAT JSON)` plans, `system.runtime` monitoring and query cancellation |
 | **Databend** | none, HTTP | SQL IDE over its own query API, self-hosted or a Databend Cloud warehouse; `system.*` monitoring and `KILL QUERY`. No keys, so no inline row edits |
 | **BigQuery** | none, REST | GoogleSQL; EXPLAIN is a dry run |
@@ -154,8 +154,9 @@ The forty-third row is the embedded LibreDB store: it ships inside the image.
 | **OPC UA** | `node-opcua-client` | Read-only address-space browser; node values and raw history |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
-**Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing.
-Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, SNMP, Oxia, S3-compatible object storage and Kubernetes are read-only too: Studio calls only read APIs.
+**No write in the grammar.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE`, so inline editing and DDL show as unsupported.
+The limit is the engine's: Studio sends what the editor holds, with no read-only mode there.
+Firestore, Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, SNMP, Oxia, S3-compatible object storage and Kubernetes are read-only: Studio calls only read APIs.
 
 ### Engines with no provider of their own
 
@@ -196,7 +197,7 @@ Details, probed versions and each caveat: [`docs/providers/README.md`](https://g
 - **Professional SQL IDE** - Monaco editor (VS Code engine), schema-aware autocomplete, multi-tab workspace, Visual EXPLAIN.
 - **Interactive ER diagrams** - real FK edges, cardinality, auto-layout (ELK.js), PNG/SVG export.
 - **Schema diff & migration** - compare snapshots/connections and generate migration SQL.
-- **Read-only DB agent** - state a goal; it cites results. 3 workflows (investigate/optimize/assess), statement/time caps, no writes. **Agent mode executes on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT and Sparkplug B**, each under a read-only boundary. Plan mode runs nothing, grounds all. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [What leaves the machine](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
+- **Read-only DB agent** - state a goal; it cites results. 3 workflows (investigate/optimize/assess), statement/time caps, no writes. **Agent mode executes on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino**, each under a read-only boundary. Plan mode runs nothing, grounds all. Standalone image only. [Guide](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_GUIDE.md) · [Data flow](https://github.com/libredb/libredb-studio/blob/main/docs/AGENT_DATA_FLOW.md).
 - **Model-backed helpers** - query safety analysis, EXPLAIN-in-plain-English, AI-generated schema docs, data-profile summaries. Gemini / OpenAI / Ollama / custom; with no `LLM_*` variables, no AI call is made. A key is required for Gemini and OpenAI only: Ollama and a custom endpoint count as configured without one.
 - **Pro data grid** - millions of virtualized rows, inline editing, column filters, pivot table, CSV/JSON export.
 - **Data visualization** - 8 chart types with aggregation and saved-chart dashboards.

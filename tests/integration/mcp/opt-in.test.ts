@@ -1,7 +1,7 @@
 /**
  * Which connections an MCP token reaches (#246): only seed entries that opt in with mcp: true,
  * within the role filter, never the built-in samples; and a seed file that cannot be loaded is an
- * explicit error on every tool, while initialize and tools/list, which read no connection, work.
+ * explicit error on every tool and on tools/list, while initialize and server/discover, which read no connection, work.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -11,9 +11,11 @@ import { getServerAuditBuffer } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { MCP_CONNECTIONS_UNREADABLE_TEXT } from "@/lib/mcp/context";
 import { MCP_NOT_VISIBLE_TEXT } from "@/lib/mcp/output";
+import { servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { resetCache } from "@/lib/seed";
 import { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
 
 pinMcpTestEnvironment();
 
@@ -34,6 +36,21 @@ afterEach(async () => {
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
+
+/** A statement as text, and one as a command document: every statement tool's input schema admits one of them. */
+const STATEMENTS: readonly unknown[] = ["SELECT 1", { ping: 1 }];
+
+/** Arguments `tool`'s input schema admits: none, a connection, or a connection and one statement. */
+function admittedArguments(tool: string): Record<string, unknown> {
+  if (tool === "list_connections") return {};
+  const arm = servingStatementArms().find((serving) => serving.tool === tool);
+  if (arm === undefined) return { connection_id: "seed:shop" };
+  for (const statement of STATEMENTS) {
+    const args = { connection_id: "seed:shop", [arm.argument]: statement };
+    if (arm.inputSchema.safeParse(args).success) return args;
+  }
+  throw new Error(`no statement in STATEMENTS is admitted by ${tool}'s input schema`);
+}
 
 async function callTool(serve: typeof admin, name: string, args: Record<string, unknown>) {
   const session = await connectClient(serve);
@@ -122,12 +139,9 @@ describe("a seed file that cannot be loaded", () => {
       brokenSeed(kind);
       const errorLog = spyOn(logger, "error").mockImplementation(() => {});
       try {
-        for (const [tool, args] of [
-          ["list_connections", {}],
-          ["inspect_schema", { connection_id: "seed:shop" }],
-          ["run_read_query", { connection_id: "seed:shop", sql: "SELECT 1" }],
-        ] as const) {
-          const result = await callTool(admin, tool, args);
+        // Every registered tool, each with arguments its input schema admits, so the answer is the seed file's.
+        for (const tool of registeredMcpToolNames()) {
+          const result = await callTool(admin, tool, admittedArguments(tool));
           expect(result).toMatchObject({
             isError: true,
             content: [{ type: "text", text: MCP_CONNECTIONS_UNREADABLE_TEXT }],
@@ -137,11 +151,9 @@ describe("a seed file that cannot be loaded", () => {
         const events = getServerAuditBuffer()
           .getAll()
           .filter((event) => event.type === "mcp_operation");
-        expect(events.map((event) => [event.action, event.reason])).toEqual([
-          ["list_connections", "mcp_connections_unreadable"],
-          ["inspect_schema", "mcp_connections_unreadable"],
-          ["run_read_query", "mcp_connections_unreadable"],
-        ]);
+        expect(events.map((event) => [event.action, event.reason])).toEqual(
+          registeredMcpToolNames().map((tool) => [tool, "mcp_connections_unreadable"]),
+        );
         expect(errorLog).toHaveBeenCalled();
         expect(errorLog.mock.calls.every(([message]) => message === "Could not load managed connections for MCP")).toBe(
           true,
@@ -153,16 +165,21 @@ describe("a seed file that cannot be loaded", () => {
   );
 
   test.each(["legacy", "pinned"] as const)(
-    "leaves initialize, server/discover and tools/list working, because nothing reads the seed file until a tool asks (%s)",
+    "leaves initialize and server/discover working, and answers tools/list with -32603 and the unreadable sentence (%s)",
     async (negotiation) => {
       // The legacy client connects with initialize, the pinned one with server/discover.
       brokenSeed("not-json");
+      const errorLog = spyOn(logger, "error").mockImplementation(() => {});
       const session = await connectClient(admin, { negotiation });
       try {
         expect(session.client.getProtocolEra()).toBe(negotiation === "legacy" ? "legacy" : "modern");
-        expect((await session.client.listTools()).tools).toHaveLength(5);
+        await expect(session.client.listTools()).rejects.toMatchObject({
+          code: -32603,
+          message: MCP_CONNECTIONS_UNREADABLE_TEXT,
+        });
       } finally {
         await session.close();
+        errorLog.mockRestore();
       }
     },
   );

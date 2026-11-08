@@ -11,6 +11,10 @@ The pinned server for every measurement below is Netopeer2 2.8.7 with sysrepo, b
 run as `libredb-1724-live`. Two servers were measured in all: Netopeer2 and a second NETCONF
 server used only to check that a rule was not one implementation's habit.
 
+| | |
+|---|---|
+| **Write reach** | none: the request builder, `buildRpc`, writes four read operations and `<close-session>`, and no `<edit-config>`; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 A NETCONF server stands in front of a router, a switch or any device that keeps its configuration
@@ -209,7 +213,7 @@ the cost of each existing call site immediately.
 
 ### 3.8 The read-only mode
 
-`enforcesReadOnly: true`, and it is structural: see section 1.
+The `writeReach` is `none`, and it is structural: see section 1.
 
 ## 4. Connection
 
@@ -380,7 +384,7 @@ refusal rather than answering empty: a maintenance operation would be a write.
 
 Declared: two container levels, the two object kinds, the `keyScan` declaration, its own
 `queryDialect`, the default port 830, a schema refresh pattern that matches nothing, and
-`enforcesReadOnly: true`.
+a `writeReach` of `none`.
 
 The dialect is declared rather than omitted, and the cost of omitting it was measured rather than
 argued: `resolveTabType` gives every provider whose `queryLanguage` is `"json"` and which declares

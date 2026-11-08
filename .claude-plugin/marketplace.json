@@ -1,0 +1,13 @@
+{
+  "name": "libredb",
+  "owner": { "name": "LibreDB" },
+  "description": "LibreDB Studio for Claude Code: the libredb-studio skill and the MCP entry for your own Studio.",
+  "plugins": [
+    {
+      "name": "libredb-studio",
+      "source": "./plugins/libredb-studio",
+      "description": "Read schemas and run bounded, read-only statements on the connections a Studio operator opted in to MCP.",
+      "category": "database"
+    }
+  ]
+}

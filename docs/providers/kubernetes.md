@@ -4,10 +4,14 @@ The `kubernetes` type-id: a read-only browser and kubectl-subset console for one
 Source: [`src/lib/db/providers/platform/kubernetes/`](../../src/lib/db/providers/platform/kubernetes/), and the browser-side kubeconfig import in [`src/lib/kubernetes/kubeconfig-import.ts`](../../src/lib/kubernetes/kubeconfig-import.ts).
 Tests: [`tests/unit/db/kubernetes/`](../../tests/unit/db/kubernetes/), [`tests/integration/db/kubernetes-provider.test.ts`](../../tests/integration/db/kubernetes-provider.test.ts) and [`e2e/kubernetes-provider.spec.ts`](../../e2e/kubernetes-provider.spec.ts).
 
+| | |
+|---|---|
+| **Write reach** | none: the request policy, `admitRequest`, admits `GET` and the three self reviews only, before any socket; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 Studio reads one Kubernetes cluster: a tree of the `Cluster` pseudo-container and the namespaces, a YAML view of every built-in object, Describe and Logs on a row, and a console that speaks a subset of kubectl.
-It is read-only in this version, whatever the connection's read-only box says: no request it can send writes, runs a program or opens a stream, and no Secret value reaches any surface.
+It is read-only in this version, whatever the connection's `readOnly` says: no request it can send writes, runs a program or opens a stream, and no Secret value reaches any surface.
 It needs no driver and no Kubernetes library: requests go over Studio's shared `node:https` transport, and the kubeconfig import reads YAML in the browser with the `yaml` package Studio already ships.
 
 ### Concept mapping
@@ -363,7 +367,7 @@ No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: this version reads 
 
 ## 9. Capabilities, AI and MCP
 
-- `enforcesReadOnly`; the read-only box changes nothing, because nothing writes.
+- `writeReach` of `none`; the dialog draws a fixed Read-only label and no box, because nothing writes.
 
 Plan mode:
 - Plan mode sees the namespaces it walked, the kinds, their counts and object names; it walks the Default namespace and `Cluster` only and is told how many other namespaces it did not read.
@@ -407,7 +411,7 @@ MCP:
 - MCP clients read a Kubernetes connection with `run_kubectl_read`, the tool the kubectl language declares in its MCP facet (`src/lib/agent/languages/kubectl/mcp.ts`), built into `MCP_STATEMENT_ARMS` by `src/lib/mcp/tools/statement-arms.ts`: one line, read and admitted by the agent's own kubectl adapter, under the `agent-read-only` profile and `queryReadOnly`, so its answer is the machine projection above, Secret names included, and never the editor's.
 - Its admission refuses what an agent run's does, exec, writes and the paging line among them, before anything is acquired; a watch is refused by the machine read; a read past the 1000-row budget is refused with the command's own row-cap advice, and it takes no `offset` and no `database` ([`docs/MCP.md`](../MCP.md)).
 - `inspect_schema` refuses a Kubernetes connection by name and names `run_kubectl_read` in its refusal: it lists the kinds an engine declares as relations, and every Kubernetes kind is `config`, so it has no table to list; the refusal is answered as soon as the connection resolves, before anything is acquired or sent, so no object name, a Secret's included, reaches it.
-- A seed may opt a Kubernetes connection in with `mcp: true`; its `password`, the ServiceAccount token, is the identity every MCP read runs as, because a seed carries no separate agent token.
+- A seed may opt a Kubernetes connection in with `mcp: true`; every MCP read runs as its agent token, `agentPassword` ([an agent credential](../SEED_CONNECTIONS.md#an-agent-credential)), when it sets one, and as its `password`, the ServiceAccount token, otherwise.
 - The operations workflow opens on Kubernetes in both modes, as on every engine, because it sends no statement; its reports of sessions, slow queries, health, storage, table statistics and index usage come back empty or N/A here.
 
 ### 9.1 Agent language pack

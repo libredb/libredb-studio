@@ -11,7 +11,7 @@
  * `probe_shapes`), so the fake speaks exactly what the server speaks.
  *
  * THIS FILE'S JOB IS THE DIVERGENCE. One implementation serves two type-ids
- * (`src/lib/db/providers/sql/search/index.ts:11-16`), and the Elasticsearch
+ * (the header of `src/lib/db/providers/sql/search/index.ts`), and the Elasticsearch
  * sibling covers the behaviour the two share; what is asserted here is what
  * OpenSearch does DIFFERENTLY, so that "two type-ids, one implementation" is a
  * tested claim rather than an assumption. The seven measured differences the
@@ -19,33 +19,33 @@
  *
  * - The success envelope is `schema`/`datarows` with `total` and `size` beside it,
  *   not Elasticsearch's `columns`/`rows` with no count at all
- *   (`http-transport.ts:554-557`).
+ *   (`DIALECTS` in `http-transport.ts`).
  * - `SELECT customer AS who` declares `{"name":"customer","alias":"who"}` here and
  *   `{"name":"who"}` on Elasticsearch, so reading `name` alone would put the WRONG
- *   label on the same statement's column (`http-transport.ts:719-731`).
+ *   label on the same statement's column (`describeColumns` in `http-transport.ts`).
  * - A missing index is HTTP **404** (`IndexNotFoundException`) where Elasticsearch
  *   answers HTTP 400 - the same typo, two statuses, which is why categorisation is
- *   body-driven (`http-transport.ts:35-42`).
+ *   body-driven (the header of `http-transport.ts`).
  * - The SQL plugin names its faults with JAVA CLASSES
  *   (`SQLFeatureNotSupportedException`, `SemanticCheckException`,
  *   `EOFParserException`, ...) while the CORE REST layer keeps Elasticsearch's
  *   lineage and answers `index_not_found_exception` in snake_case, so one product
  *   speaks both vocabularies depending on which endpoint replied
- *   (`http-transport.ts:570-577`).
+ *   (`DIALECTS` in `http-transport.ts`).
  * - `SELECT 1 AS c, 2 AS c` is REFUSED here (`IllegalArgumentException`, "Multiple
  *   entries with same key") and answers 200 with three columns named `c` on
  *   Elasticsearch, so the seam's uniqueness invariant is load-bearing on exactly
- *   one of the two products (`http-transport.ts:24-31`).
+ *   one of the two products (the header of `http-transport.ts`).
  * - `LIMIT n OFFSET m` is accepted here and is a syntax error on Elasticsearch,
- *   which is the one behavioural difference ABOVE the wire (`index.ts:225-230`).
+ *   which is the one behavioural difference ABOVE the wire (`SearchProduct` in `index.ts`).
  * - A stock node ships system indices the dot rule alone does not catch:
  *   `.plugins-ml-config` AND `top_queries-<date>-<n>`, so two of four indices on a
  *   cluster holding two probe indices are not the user's
- *   (`http-transport.ts:427-439`).
+ *   (`DOT_PREFIXED` in `http-transport.ts`).
  *
  * Where a divergence is only visible below the provider - a fault CATEGORY, for
  * instance, since four of them collapse onto one `QueryError` by design
- * (`index.ts:685-689`) - the transport is driven directly. That is the seam the
+ * (`SearchProvider.query` in `index.ts`) - the transport is driven directly. That is the seam the
  * categorisation lives on, and asserting it through a class that erases it would
  * have tested nothing.
  */
@@ -56,6 +56,16 @@ import type { DatabaseProvider, ProviderExecutionContext, ReadOnlyStatementBudge
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { ElasticsearchProvider, OpenSearchProvider } from "@/lib/db/providers/sql/search";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
+import {
+  CHARACTER_REFUSAL,
+  COMMENT_REFUSAL,
+  DOT_INDEX_REFUSAL,
+  EXCLUSION_REFUSAL,
+  hiddenTargetRefusal,
+  STATEMENT_REFUSAL,
+  SUBQUERY_REFUSAL,
+  unresolvedRefusal,
+} from "@/lib/db/providers/sql/search/opensearch-agent-index-fence";
 import { type SearchErrorCategory, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import {
@@ -69,6 +79,15 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import type { McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
+import type { ManagedConnection } from "@/lib/seed";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 // ============================================================================
@@ -144,7 +163,7 @@ const ORDERS_BODY = JSON.stringify({
  * `SELECT address, items FROM probe_shapes` - and it SUCCEEDS.
  *
  * Elasticsearch refuses the same projection ("Cannot use field [address] type
- * [object] only its subfields", HTTP 400). `introspect.ts:70-80` deliberately does
+ * [object] only its subfields", HTTP 400). `SEARCH_CONTAINER_TYPES` in `introspect.ts` deliberately does
  * NOT branch on that: the starter query projects leaves on both products, because a
  * query that works on one type-id and fails on the other is worse than one that
  * works on both. The schema assertions below are what hold that decision in place.
@@ -163,7 +182,7 @@ const CONTAINERS_BODY = JSON.stringify({
 // ----------------------------------------------------------------------------
 // Paging, measured by walking a cursor to its end
 // ----------------------------------------------------------------------------
-// `{"query":"SELECT id FROM top_queries-2026.08.18-74305","fetch_size":30}` over
+// `{"query":"SELECT id FROM `top_queries-2026.08.18-74305`","fetch_size":30}` over
 // 67 documents answered THREE pages: 30 rows + cursor + total, then 30 rows +
 // cursor and NOTHING else, then 7 rows and no cursor. So a later page carries no
 // `schema`, no `total` and no `size` - exactly the shape Elasticsearch's later
@@ -199,7 +218,7 @@ const PAGE_THREE_BODY = JSON.stringify({ datarows: [["3c1f1d19-0a4b-4a52-9f6a-2b
 // `reason` is a CONSTANT banner here ("Invalid SQL query") and `details` holds the
 // only text specific to the failure, which is the reverse of Elasticsearch, whose
 // `reason` is the good text ("line 1:15: Unknown index [nope_missing]") and which
-// has no `details` at all. `http-transport.ts:806-817` prefers the detail for
+// has no `details` at all. `faultMessage` in `http-transport.ts` prefers the detail for
 // exactly that reason.
 // ============================================================================
 
@@ -228,7 +247,7 @@ const MISSING_INDEX_BODY = JSON.stringify({
  *
  * The SQL plugin above answers `IndexNotFoundException` for the same missing
  * index; the CORE REST layer keeps Elasticsearch's lineage. Both are measured, and
- * `http-transport.ts:590-591` lists both spellings for that reason.
+ * `DIALECTS` in `http-transport.ts` lists both spellings for that reason.
  */
 const MAPPING_NOT_FOUND_BODY = JSON.stringify({
   error: {
@@ -246,7 +265,7 @@ const MAPPING_NOT_FOUND_BODY = JSON.stringify({
  * What OpenSearch answers a request for ELASTICSEARCH's SQL endpoint: HTTP 405,
  * and `error` as a STRING where a real engine fault spells it as an object. That
  * JSON type is the "this is not that product / the SQL plugin is not installed"
- * discriminator (`http-transport.ts:43-50`).
+ * discriminator (the header of `http-transport.ts`).
  */
 const WRONG_ENDPOINT_BODY = JSON.stringify({
   error: "Incorrect HTTP method for uri [/_sql?format=json] and method [POST], allowed: [PUT, DELETE, HEAD, GET]",
@@ -404,7 +423,7 @@ const SHAPES_MAPPING_BODY = JSON.stringify({
  * `GET /` - and `version.distribution` is the member Elasticsearch does not send
  * at all. The fork added it so a client could tell the two apart, so its presence
  * here and its absence there are both readings of the payload
- * (`http-transport.ts:344-357`).
+ * (`VERSION_FIELDS` in `http-transport.ts`).
  */
 const ROOT_BODY = JSON.stringify({
   name: "898fbd5c381a",
@@ -650,6 +669,16 @@ function defaultReply(path: string, body: Record<string, unknown> | null): Reply
   }
 
   if (path === "/") return ok(ROOT_BODY);
+  // The agent open's login check: the default node runs with its security plugin off, which registers no such endpoint.
+  if (path === "/_plugins/_security/api/permissionsinfo") {
+    return {
+      status: 400,
+      body: '{"error":"no handler found for uri [/_plugins/_security/api/permissionsinfo] and method [GET]"}',
+    };
+  }
+  // The agent statement check's two questions about a statement's index expression.
+  if (path.startsWith("/_resolve/index/")) return resolveReply(path);
+  if (path.includes("/_field_caps?")) return fieldCapsReply(path);
   // 3.8.0 does not recognize the DELETE setting, so the filtered read answers nothing, and its result limit is the
   // default (both measured).
   if (path.startsWith("/_cluster/settings") && path.endsWith("plugins.query.size_limit")) {
@@ -698,6 +727,70 @@ function defaultReply(path: string, body: Record<string, unknown> | null): Reply
   throw new Error(`the fake cluster was asked for an unrouted path: ${path}`);
 }
 
+/**
+ * What a stock 3.8.0 node seeded per docs/providers/opensearch.md section 11.4 resolves `*` to with the SQL endpoint's
+ * expansion (measured 2026-11-02): visible indices whose names start with a dot among them, and its field
+ * capabilities read the same concrete indices.
+ */
+const STOCK_RESOLVE_BODY = JSON.stringify({
+  indices: [
+    { name: ".plugins-ml-config", attributes: ["open"] },
+    { name: "probe_orders", aliases: ["probe_orders_alias"], attributes: ["open"] },
+    { name: "top_queries-2026.08.18-74305", attributes: ["open"] },
+  ],
+  aliases: [{ name: "probe_orders_alias", indices: ["probe_orders"] }],
+  data_streams: [],
+});
+
+/** The query insights plugin's index on that node: no leading dot and no hidden mark. */
+const STOCK_INSIGHTS = { name: "top_queries-2026.08.18-74305", attributes: ["open"] };
+
+/** The index expression a resolution or a field capabilities path names, decoded. */
+function expressionOf(path: string, prefix: string, suffix: string): string {
+  const raw = path.slice(prefix.length, path.indexOf(suffix, prefix.length));
+  return decodeURIComponent(raw);
+}
+
+/**
+ * The server's own resolution: `*` as a stock node answers it, a name with `no_such` in it as nothing (measured: 200
+ * with three empty lists), the alias over `probe_orders` as that alias, and any other name as one visible index.
+ */
+function resolveReply(path: string): Reply {
+  const expression = expressionOf(path, "/_resolve/index/", "?");
+  if (expression === "*") return ok(STOCK_RESOLVE_BODY);
+  if (expression.includes("no_such")) return ok('{"indices":[],"aliases":[],"data_streams":[]}');
+  if (expression === "probe_orders_alias") {
+    return ok('{"indices":[],"aliases":[{"name":"probe_orders_alias","indices":["probe_orders"]}],"data_streams":[]}');
+  }
+  if (expression === "t*") return ok(JSON.stringify({ indices: [STOCK_INSIGHTS], aliases: [], data_streams: [] }));
+  if (expression === "probe_insights_view") {
+    return ok(
+      JSON.stringify({
+        indices: [],
+        aliases: [{ name: "probe_insights_view", indices: [STOCK_INSIGHTS.name] }],
+        data_streams: [],
+      }),
+    );
+  }
+  return ok(JSON.stringify({ indices: [{ name: expression, attributes: ["open"] }], aliases: [], data_streams: [] }));
+}
+
+/** The indices the SQL endpoint reads for an expression, consistent with {@link resolveReply}. */
+function fieldCapsReply(path: string): Reply {
+  const expression = expressionOf(path, "/", "/_field_caps");
+  if (expression === "*") {
+    return ok('{"indices":[".plugins-ml-config","probe_orders","top_queries-2026.08.18-74305"],"fields":{}}');
+  }
+  if (expression.includes("no_such")) return ok('{"indices":[],"fields":{}}');
+  const read =
+    expression === "probe_orders_alias"
+      ? "probe_orders"
+      : expression === "t*" || expression === "probe_insights_view"
+        ? STOCK_INSIGHTS.name
+        : expression;
+  return ok(JSON.stringify({ indices: [read], fields: {} }));
+}
+
 /** Route a statement onto the measured answer for it. */
 function sqlReply(sql: string): Reply {
   if (sql === "SELECT 1") return ok(PROBE_BODY);
@@ -712,7 +805,7 @@ function sqlReply(sql: string): Reply {
   if (sql.includes("nope_missing")) return { status: 404, body: MISSING_INDEX_BODY };
   if (sql.includes(" AS who")) return ok(ALIASED_BODY);
   if (sql.includes("address")) return ok(CONTAINERS_BODY);
-  if (sql.includes("top_queries")) return ok(PAGE_ONE_BODY);
+  if (sql.includes("top_queries") || sql.includes("probe_paged")) return ok(PAGE_ONE_BODY);
 
   return ok(ORDERS_BODY);
 }
@@ -850,7 +943,7 @@ describe("OpenSearch envelope", () => {
     // then 7 rows and no cursor. Later pages have no column declaration on them, so
     // the names have to come from page one - and here they are rebuilt against the
     // OTHER rows key, which is the part that is specific to this product.
-    const result = await transport().query("SELECT id FROM top_queries-2026.08.18-74305");
+    const result = await transport().query("SELECT id FROM `top_queries-2026.08.18-74305`");
 
     expect(result.fieldNames).toEqual(["id"]);
     expect(result.rows).toHaveLength(5);
@@ -873,7 +966,7 @@ describe("OpenSearch envelope", () => {
 describe("OpenSearch faults", () => {
   /**
    * Every name here is a JAVA CLASS, and every row was measured with one probe
-   * against the live plugin. The table in `http-transport.ts:588-601` is doing real
+   * against the live plugin. The table in `DIALECTS` in `http-transport.ts` is doing real
    * work: nothing about `EOFParserException` reads as "syntax" to anything but that
    * table, and nothing about `SQLFeatureNotSupportedException` reads as the answer
    * to a MISTYPED keyword - which is what it is here, while Elasticsearch calls the
@@ -1249,7 +1342,7 @@ describe("OpenSearchProvider query", () => {
     // statements - which is why `toQueryResult` drops it knowingly.
     const provider = await connectProvider();
 
-    const result = await provider.query("SELECT id FROM top_queries-2026.08.18-74305");
+    const result = await provider.query("SELECT id FROM `top_queries-2026.08.18-74305`");
 
     expect(result.rowCount).toBe(5);
     expect(result.fields).toEqual(["id"]);
@@ -1559,7 +1652,7 @@ describe("object surface", () => {
     // ONE declaration constant serves both type-ids, so this expectation is written out
     // here rather than compared against the other product's, for the same reason the
     // source test above is. The three kinds are the ones `describeObject` reads
-    // `_mapping` for (`search/index.ts:1251`, gated on `SEARCH_MAPPED_KINDS` at `:478`).
+    // `_mapping` for (`search/index.ts`, gated on `SEARCH_MAPPED_KINDS`).
     expect(
       kinds
         .filter((kind) => kind.hasColumns === true)
@@ -1577,7 +1670,7 @@ describe("object surface", () => {
 
     // The declaration against the engine's own answer, one kind each way. A data stream
     // row's columns are the mapping of its CURRENT backing index, which is what the
-    // transport takes (`search/http-transport.ts:1283`).
+    // transport takes (`SearchHttpTransport.mapping` in `search/http-transport.ts`).
     const stream = await provider.describeObject(["probe_stream"], "stream");
     expect(stream.columns.length).toBeGreaterThan(0);
     for (const column of stream.columns) {
@@ -2537,6 +2630,7 @@ describe("OpenSearchProvider agent profile open", () => {
       "/_plugins/_sql DELETE FROM libredb_delete_probe_<nonce>",
       "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
       "/",
+      "/_plugins/_security/api/permissionsinfo",
     ]);
   });
 
@@ -2676,6 +2770,92 @@ describe("OpenSearchProvider agent profile open", () => {
 // queryReadOnly: the agent read-only profile's statement path
 // ============================================================================
 
+/**
+ * The open's login probes, measured on 3.8.0 with security on: the security plugin's own answer to whether the login
+ * administers it, and a document delete by query and an index close on one fresh name, each refused with 403 by the
+ * plugin's permission check for a login that may not, and answered 404 (no such index) for one that may.
+ */
+describe("OpenSearchProvider agent profile open: the login probes", () => {
+  const securityOn = (user: string, apiAccess: boolean, passes: { byQuery: boolean; close: boolean }) => {
+    const missing = (path: string) => ({
+      status: 404,
+      body: JSON.stringify({
+        error: { type: "index_not_found_exception", reason: `no such index [${path.split("/")[1]}]` },
+        status: 404,
+      }),
+    });
+    const forbidden = {
+      status: 403,
+      body: '{"error":{"type":"security_exception","reason":"no permissions"},"status":403}',
+    };
+    replyFor = (path, body) => {
+      if (path === "/_plugins/_security/api/permissionsinfo") {
+        return ok(JSON.stringify({ user_name: user, has_api_access: apiAccess, disabled_endpoints: {} }));
+      }
+      if (path.endsWith("/_delete_by_query")) return passes.byQuery ? missing(path) : forbidden;
+      if (path.endsWith("/_close")) return passes.close ? missing(path) : forbidden;
+      return defaultReply(path, body);
+    };
+  };
+
+  test("admits a login the plugin refuses both probes and no administration, after the version read", async () => {
+    securityOn("libredb_agent", false, { byQuery: false, close: false });
+
+    expect(await openAgent()).toBeInstanceOf(OpenSearchProvider);
+    expect(
+      sentRequests()
+        .slice(-4)
+        .map((request) => request.replace(/[0-9a-f]{32}/, "<hex>")),
+    ).toEqual([
+      "/",
+      "/_plugins/_security/api/permissionsinfo",
+      "/libredb_write_probe_<hex>/_delete_by_query",
+      "/libredb_write_probe_<hex>/_close",
+    ]);
+  });
+
+  test.each([
+    [
+      "admin",
+      true,
+      { byQuery: true, close: true },
+      "may call the security plugin's REST API, and passed the delete by query on a fresh index name, and passed the index close on a fresh index name",
+    ],
+    ["libredb_wr", false, { byQuery: true, close: false }, "passed the delete by query on a fresh index name"],
+    ["libredb_mg", false, { byQuery: false, close: true }, "passed the index close on a fresh index name"],
+    ["libredb_sec", true, { byQuery: false, close: false }, "may call the security plugin's REST API"],
+  ] as const)("refuses %s, naming what it may do", async (user, apiAccess, passes, findings) => {
+    securityOn(user, apiAccess, passes);
+
+    const error = await openAgent();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toBe(
+      `The agent read-only profile refuses an OpenSearch login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user ${user} ${findings}, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads`,
+    );
+  });
+
+  test("refuses the profile when the check fails, in the server's words", async () => {
+    overridePath("/_plugins/_security/api/permissionsinfo", ok("[]"));
+
+    const error = await openAgent();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toBe(
+      "The agent read-only profile needs OpenSearch's own answer to what this login may do, and the check failed, so the connection is refused: OpenSearch answered a permissions answer the client could not read",
+    );
+  });
+
+  test("the operations profile probes nothing", async () => {
+    securityOn("admin", true, { byQuery: true, close: true });
+
+    expect(await openAgent({ readOnly: true, sendsStatements: false })).toBeInstanceOf(OpenSearchProvider);
+    expect(sentPaths).toEqual(["/_plugins/_sql"]);
+  });
+});
+
 describe("OpenSearchProvider.queryReadOnly", () => {
   async function agentProvider(execution: ProviderExecutionContext = AGENT_PROFILE): Promise<OpenSearchProvider> {
     const provider = new OpenSearchProvider(makeConnection(), {}, execution);
@@ -2704,11 +2884,73 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(sentBodies.at(-1)).toEqual({ query: "SELECT id, customer, total FROM probe_orders" });
   });
 
+  // The statement check runs on OpenSearch too: its reader, then the server's own resolution of the one index
+  // expression and the SQL endpoint's, each asked as the login before the statement is sent.
+  test("asks the server about the statement's index expression, in its two resolutions, before sending it", async () => {
+    const provider = await agentProvider();
+    const before = sentPaths.length;
+
+    await provider.queryReadOnly("SELECT id FROM probe_orders_alias", AGENT_BUDGET);
+
+    expect(sentPaths.slice(before)).toEqual([
+      "/_resolve/index/probe_orders_alias?expand_wildcards=open",
+      "/probe_orders_alias/_field_caps?fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open",
+      "/_resolve/index/probe_orders?expand_wildcards=open",
+      "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
+      "/_plugins/_sql",
+    ]);
+    expect(sentBodies.at(-1)).toEqual({ query: "SELECT id FROM probe_orders_alias" });
+  });
+
+  test.each([
+    ["SELECT id FROM `.opendistro_security`", DOT_INDEX_REFUSAL],
+    ["SELECT id FROM probe_orders /* note */", COMMENT_REFUSAL],
+    ["SELECT id FROM `probe_*,-probe_shapes`", EXCLUSION_REFUSAL],
+    ['SELECT id FROM "probe_orders"', CHARACTER_REFUSAL],
+    ["SHOW TABLES LIKE %", STATEMENT_REFUSAL],
+    ["DESCRIBE TABLES LIKE %", STATEMENT_REFUSAL],
+  ])("refuses %p before anything is sent", async (sql, sentence) => {
+    const provider = await agentProvider();
+    const before = sentPaths.length;
+
+    const error = await refusal(provider.queryReadOnly(sql, AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe(sentence);
+    expect(sentPaths.length).toBe(before);
+  });
+
+  test.each([
+    ["SELECT COUNT(*) AS n FROM `*`", hiddenTargetRefusal("*")],
+    ["SELECT id FROM zq_no_such_index", unresolvedRefusal("zq_no_such_index")],
+    // The query insights plugin's index carries no dot and no hidden mark: its family is what marks it.
+    [
+      "SELECT source, indices FROM `top_queries-2026.08.18-74305` LIMIT 2",
+      hiddenTargetRefusal("top_queries-2026.08.18-74305"),
+    ],
+    ["SELECT * FROM `t*`", hiddenTargetRefusal("t*")],
+    ["SELECT * FROM `security-auditlog-2026.11.02`", hiddenTargetRefusal("security-auditlog-2026.11.02")],
+    ["SELECT * FROM ubi_queries", hiddenTargetRefusal("ubi_queries")],
+    ["SELECT * FROM probe_insights_view", hiddenTargetRefusal("probe_insights_view")],
+    ["DESCRIBE TABLES LIKE 'top_queries-2026.08.18-74305'", hiddenTargetRefusal("top_queries-2026.08.18-74305")],
+  ])("refuses %p after the server's resolution, with no statement sent", async (sql, sentence) => {
+    const provider = await agentProvider();
+    const before = sentPaths.length;
+
+    const error = await refusal(provider.queryReadOnly(sql, AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe(sentence);
+    expect(
+      sentPaths.slice(before).every((path) => path.startsWith("/_resolve/index/") || path.includes("/_field_caps")),
+    ).toBe(true);
+  });
+
   test("refuses an answer past the row budget, after closing the cursor that answer left open", async () => {
     const provider = await agentProvider();
 
     const error = await refusal(
-      provider.queryReadOnly("SELECT id FROM top_queries-2026.08.18-74305", { ...AGENT_BUDGET, maxResultRows: 1 }),
+      provider.queryReadOnly("SELECT id FROM probe_paged", { ...AGENT_BUDGET, maxResultRows: 1 }),
     );
 
     expect(error).toBeInstanceOf(QueryError);
@@ -2720,7 +2962,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
   test("follows the cursor while the answer stays inside the budget", async () => {
     const provider = await agentProvider();
 
-    const result = await provider.queryReadOnly("SELECT id FROM top_queries-2026.08.18-74305", AGENT_BUDGET);
+    const result = await provider.queryReadOnly("SELECT id FROM probe_paged", AGENT_BUDGET);
 
     expect(result.rowCount).toBe(5);
   });
@@ -2778,9 +3020,15 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(error.message).toBe(
       "Read-only execution exceeded the row budget: OpenSearch answers at most 50 rows (plugins.query.size_limit) and cuts the rest without saying so, so an answer that reaches it is refused",
     );
+    const check = (name: string) => [
+      `/_resolve/index/${name}?expand_wildcards=open`,
+      `/${name}/_field_caps?fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open`,
+    ];
     expect(sentRequests().slice(before)).toEqual([
+      ...check("probe_fifty"),
       "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
       "/_plugins/_sql SELECT id FROM probe_fifty",
+      ...check("probe_fifty"),
       "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
       "/_plugins/_sql SELECT id FROM probe_fifty",
     ]);
@@ -2802,6 +3050,8 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     );
     expect(error.message).toEndWith("(HTTP 403)");
     expect(sentRequests().slice(before)).toEqual([
+      "/_resolve/index/probe_orders?expand_wildcards=open",
+      "/probe_orders/_field_caps?fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open",
       "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
     ]);
   });
@@ -2811,7 +3061,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     const provider = await agentProvider();
 
     const error = await refusal(
-      provider.queryReadOnly("SELECT id FROM top_queries-2026.08.18-74305", { ...AGENT_BUDGET, maxResultRows: 1 }),
+      provider.queryReadOnly("SELECT id FROM probe_paged", { ...AGENT_BUDGET, maxResultRows: 1 }),
     );
 
     expect(error.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
@@ -2828,6 +3078,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(error.message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed$/);
   });
 
+  // The index is resolved before the statement is sent and can be removed between the two, a residual the check names.
   test("an engine refusal keeps the engine's words", async () => {
     const provider = await agentProvider();
 
@@ -2864,14 +3115,28 @@ describe("OpenSearchProvider.queryReadOnly", () => {
 
   test.each(
     WRITE_REFUSALS_3_8.filter((entry) => !READ_ANSWERS.has(entry.name)).map((entry) => [entry.name, entry] as const),
-  )("%s: refused by the engine in its own words, never as rows", async (_name, entry) => {
+  )("%s: refused by the statement check before it is sent", async (_name, entry) => {
     const provider = await agentProvider();
     overridePath("/_plugins/_sql", { status: entry.status, body: entry.body });
+    const before = sentPaths.length;
 
     const error = await refusal(provider.queryReadOnly(entry.request.body.query, AGENT_BUDGET));
 
-    expect(error).toBeInstanceOf(QueryError);
-    expect(error.message).toContain(captureError(entry).details);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    // A second statement holds a `;`, outside the statement's character set; every other write is no SELECT.
+    expect(error.message).toBe(entry.request.body.query.includes(";") ? CHARACTER_REFUSAL : STATEMENT_REFUSAL);
+    expect(sentPaths.length).toBe(before);
+  });
+
+  test("the one SELECT-shaped capture reads one visible index, so it is sent, and the plugin answers it as a read", async () => {
+    const entry = WRITE_REFUSALS_3_8.find((capture) => capture.name === "write-refusal/select-into");
+    if (entry === undefined) throw new Error("no capture");
+    const provider = await agentProvider();
+    overridePath("/_plugins/_sql", { status: entry.status, body: entry.body });
+
+    const result = await provider.queryReadOnly(entry.request.body.query, AGENT_BUDGET);
+
+    expect(result.rowCount).toBe((JSON.parse(entry.body) as { datarows: unknown[] }).datarows.length);
     expect(sentBodies.at(-1)).toEqual(entry.request.body);
   });
 });
@@ -2897,12 +3162,11 @@ const CATALOG_READS = readCaptures<CatalogReadCapture>("3.8.0/catalog-read");
  * `queryReadOnly` under the agent profile.
  */
 describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnly", () => {
-  test("four composed DESCRIBE TABLES statements were captured", () => {
+  test("three composed DESCRIBE TABLES statements were captured", () => {
     expect(CATALOG_READS.map((entry) => [entry.name, entry.status])).toEqual([
       ["catalog-read/columns-alias", 200],
       ["catalog-read/columns-missing", 404],
       ["catalog-read/columns-table", 200],
-      ["catalog-read/columns", 200],
     ]);
     for (const entry of CATALOG_READS) expect(entry.request.body.query).toStartWith("DESCRIBE TABLES LIKE ");
   });
@@ -2925,7 +3189,21 @@ describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnl
     },
   );
 
-  test("a name the node does not hold is the engine's refusal, in its words", async () => {
+  // Every table is `*`, which reaches the indices whose names start with a dot on a stock node: the overlay never
+  // composes it, and the reader refuses it when it arrives anyway, before any request.
+  test("the every-table read is refused by the reader, before anything is sent", async () => {
+    const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    await agent.connect();
+    const before = sentPaths.length;
+
+    const error = await agent.queryReadOnly("DESCRIBE TABLES LIKE %", AGENT_BUDGET).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(STATEMENT_REFUSAL);
+    expect(sentPaths.length).toBe(before);
+  });
+
+  test("a name the node does not hold is refused as resolving to none, before the command is sent", async () => {
     const entry = CATALOG_READS.find((capture) => capture.name === "catalog-read/columns-missing");
     if (entry === undefined) throw new Error("no capture");
     const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
@@ -2934,7 +3212,244 @@ describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnl
 
     const error = await agent.queryReadOnly(entry.request.body.query, AGENT_BUDGET).catch((caught: unknown) => caught);
 
-    expect(error).toBeInstanceOf(QueryError);
-    expect((error as Error).message).toContain("no such index [zq_no_such_index]");
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(unresolvedRefusal("zq_no_such_index"));
+  });
+});
+
+// ============================================================================
+// MCP run_read_query on an OpenSearch connection
+// ============================================================================
+
+/**
+ * `run_read_query` serves OpenSearch under the boundary agent mode uses: the connection is acquired under the agent
+ * read-only profile, whose open proves the DELETE off, checks the release line and, with security on, probes the
+ * login, and every statement goes through `queryReadOnly`, whose statement check runs before the plugin, which refuses
+ * every write. The MCP fence in front is defence in depth; the tool is driven here through its own handler against the
+ * canned cluster.
+ */
+describe("MCP run_read_query on an OpenSearch connection", () => {
+  const SEED = {
+    id: "seed:fork-search",
+    name: "fork-search",
+    type: "opensearch",
+    seedId: "fork-search",
+    managed: true,
+    mcp: true,
+    roles: ["*"],
+    host: "127.0.0.1",
+    port: 9200,
+    user: "libredb_seed",
+    password: "not-a-real-password",
+    createdAt: new Date(0),
+  } as ManagedConnection;
+
+  let acquired: ExecutionProfile[] = [];
+
+  /** A context over the one seed, opening each acquisition by its profile, as the factory does. */
+  const context = {
+    caller: { username: "alice", role: "admin" },
+    visibleConnections: async () => [SEED],
+    resolve: async () => SEED,
+    acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
+      acquired.push(profile);
+      const provider = new OpenSearchProvider(makeConnection(), {}, executionContextFor(profile));
+      await provider.connect();
+      return provider;
+    },
+  } as unknown as McpConnectionContext;
+
+  function call(args: Record<string, unknown>) {
+    const parsed = RunReadQueryInputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runReadQuery(parsed, { context, signal: new AbortController().signal });
+  }
+
+  /** The same tool with its statement fence removed, so a statement reaches the boundary under test. */
+  const UNFENCED: McpStatementArm = { ...mcpStatementArm("run_read_query"), fence: () => null };
+
+  function unfenced(args: Record<string, unknown>) {
+    const parsed = UNFENCED.inputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runStatement(UNFENCED, parsed, { context, signal: new AbortController().signal });
+  }
+
+  /** The statements sent to the SQL endpoint, the open's probes left out. */
+  const statements = (): string[] =>
+    sentBodies
+      .map((body) => body?.query)
+      .filter((query): query is string => typeof query === "string")
+      .filter((query) => query !== "SELECT 1" && !query.startsWith("DELETE FROM libredb_delete_probe_"));
+
+  const keys = (count: number, from = 1) =>
+    ok(
+      JSON.stringify({
+        schema: [{ name: "k", type: "keyword" }],
+        datarows: Array.from({ length: count }, (_, i) => [`k${i + from}`]),
+        total: count,
+        size: count,
+        status: 200,
+      }),
+    );
+
+  /** Answer `statement` with `reply`, and every other request as the canned cluster does. */
+  function answer(statement: string, reply: Reply): void {
+    replyFor = (path, body) => (body?.query === statement ? reply : defaultReply(path, body));
+  }
+
+  const STATEMENTS = readQueryFormsOf("opensearch").statements;
+  const fenced = (code: string) =>
+    `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: ${STATEMENTS}.`;
+  const refusedUnsent = (sentence: string) => ({
+    content: [
+      { type: "text" as const, text: `The statement was refused before it reached the database: ${sentence}.` },
+    ],
+    isError: true as const,
+  });
+
+  beforeEach(() => {
+    acquired = [];
+  });
+
+  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/opensearch.md"), "utf8");
+
+    expect(MCP_STATEMENT_READ.opensearch).toBe(true);
+    expect(MCP_STATEMENT_READ.elasticsearch).toBe(true);
+    expect(RUN_READ_QUERY_ENGINES).toContain("OpenSearch");
+    expect(doc).toContain("`MCP_STATEMENT_READ.opensearch` is true");
+    expect(doc).not.toContain("MCP's statement read stays closed");
+    expect(doc.replaceAll("`", "")).toContain(`It runs ${STATEMENTS}`);
+  });
+
+  test("reads rows under the agent profile after the statement check, and names the next offset", async () => {
+    answer("SELECT k FROM probe_buckets ORDER BY k LIMIT 3", keys(3));
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets ORDER BY k", max_rows: 2 });
+
+    expect(result.isError).toBeUndefined();
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(sentPaths).toContain("/_resolve/index/probe_buckets?expand_wildcards=open");
+    expect(statements()).toEqual(["SELECT k FROM probe_buckets ORDER BY k LIMIT 3"]);
+    expect(result.structuredContent).toMatchObject({
+      connection_id: SEED.id,
+      rows: [{ k: "k1" }, { k: "k2" }],
+      row_count: 2,
+      truncated: true,
+      truncated_by: "max_rows",
+      pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
+      hint: "Call again with offset 2 for the next page.",
+    });
+    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+  });
+
+  test("pages with OFFSET, which the statement check admits after the FROM", async () => {
+    answer("SELECT k FROM probe_buckets ORDER BY k LIMIT 3 OFFSET 2", keys(3, 3));
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets ORDER BY k", max_rows: 2, offset: 2 });
+
+    expect(statements()).toEqual(["SELECT k FROM probe_buckets ORDER BY k LIMIT 3 OFFSET 2"]);
+    expect(result.structuredContent).toMatchObject({
+      rows: [{ k: "k3" }, { k: "k4" }],
+      pagination: { offset: 2, limit: 2, hasMore: true, nextOffset: 4, wasLimited: true },
+    });
+  });
+
+  test("an offset on a query with its own LIMIT is refused before the statement is sent", async () => {
+    const result = await call({ sql: "SELECT k FROM probe_buckets ORDER BY k LIMIT 5", offset: 2 });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: LIMIT n OFFSET m.",
+        },
+      ],
+      isError: true,
+    });
+    expect(statements()).toEqual([]);
+  });
+
+  test.each([
+    ["INSERT INTO probe_orders (id, customer) VALUES (2, 'probe')", "NON_READ_STATEMENT"],
+    ["UPDATE probe_orders SET customer = 'x' WHERE id = 1", "NON_READ_STATEMENT"],
+    ["DELETE FROM probe_orders", "NON_READ_STATEMENT"],
+    ["CREATE TABLE libredb_t (id BIGINT)", "NON_READ_STATEMENT"],
+    ["DROP TABLE probe_orders", "NON_READ_STATEMENT"],
+    ["ALTER TABLE probe_orders ADD COLUMN libredb INT", "NON_READ_STATEMENT"],
+    ["TRUNCATE TABLE probe_orders", "NON_READ_STATEMENT"],
+    ["MERGE INTO probe_orders USING probe_orders AS s ON true WHEN MATCHED THEN DELETE", "NON_READ_STATEMENT"],
+    ["SELECT * INTO libredb_into FROM probe_orders", "SIDE_EFFECT_KEYWORD"],
+    ["EXPLAIN DELETE FROM probe_orders", "SIDE_EFFECT_KEYWORD"],
+    ["WITH x AS (SELECT 1) DELETE FROM probe_orders", "NON_READ_STATEMENT"],
+    ["SELECT 1; DELETE FROM probe_orders", "MULTIPLE_STATEMENTS"],
+    ["SHOW TABLES LIKE %", "NON_READ_STATEMENT"],
+    ["DESCRIBE TABLES LIKE %", "NON_READ_STATEMENT"],
+  ])("%p is refused at admission, before anything is acquired or sent", async (sql, code) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual({ content: [{ type: "text", text: fenced(code) }], isError: true });
+    expect(acquired).toEqual([]);
+    expect(sentPaths).toEqual([]);
+  });
+
+  // The fence removed, each captured write goes through queryReadOnly: the statement check refuses each before it is
+  // sent, as no SELECT or as a `;` outside its character set, but the SELECT-shaped one, which reads one visible index
+  // and is answered by the plugin as a read.
+  test.each(
+    WRITE_REFUSALS_3_8.filter((entry) => entry.name !== "write-refusal/select-into").map(
+      (entry) => [entry.name, entry] as const,
+    ),
+  )("%s: with the fence removed, the statement check refuses it unsent", async (_name, entry) => {
+    const sql = entry.request.body.query;
+
+    const result = await unfenced({ sql });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(result).toEqual(refusedUnsent(sql.includes(";") ? CHARACTER_REFUSAL : STATEMENT_REFUSAL));
+    expect(statements()).toEqual([]);
+  });
+
+  // Each passes the MCP fence and is refused by the provider's statement check before it is sent.
+  test.each([
+    ["SELECT COUNT(*) AS n FROM `.opendistro_security`", DOT_INDEX_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM probe_orders /* x */", COMMENT_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM probe_orders WHERE id IN (SELECT id FROM probe_hidden)", SUBQUERY_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM "probe_orders"', CHARACTER_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM `probe_*,-probe_shapes`", EXCLUSION_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM `*`", hiddenTargetRefusal("*")],
+  ])("%p passes the MCP fence and is refused by the provider before it is sent", async (sql, sentence) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual(refusedUnsent(sentence));
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(statements()).toEqual([]);
+  });
+
+  test("a seed login the open's probes find too broad is refused at open, in the tool's sentence", async () => {
+    replyFor = (path, body) => {
+      if (path === "/_plugins/_security/api/permissionsinfo") {
+        return ok('{"user_name":"admin","has_api_access":true,"disabled_endpoints":{}}');
+      }
+      if (path.endsWith("/_delete_by_query") || path.endsWith("/_close")) {
+        return {
+          status: 404,
+          body: '{"error":{"type":"index_not_found_exception","reason":"no such index [libredb_write_probe_x]"},"status":404}',
+        };
+      }
+      return defaultReply(path, body);
+    };
+
+    const result = await call({ sql: "SELECT COUNT(*) AS n FROM probe_buckets" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: `run_read_query cannot run on this connection: The agent read-only profile refuses an OpenSearch login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user admin may call the security plugin's REST API, and passed the delete by query on a fresh index name, and passed the index close on a fresh index name, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+        },
+      ],
+      isError: true,
+    });
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(statements()).toEqual([]);
   });
 });

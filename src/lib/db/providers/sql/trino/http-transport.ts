@@ -44,6 +44,7 @@
 
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectForeignLink, rejectRedirect } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { BodyLimitExceededError, readBoundedText } from "@/lib/db/http/bounded-body";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 // A `bigint` column arrives as an UNQUOTED JSON number and this protocol has no
@@ -65,6 +66,7 @@ import {
   type TrinoTransport,
   TrinoTransportError,
   type TrinoWarning,
+  TrinoAnswerTooLargeError,
 } from "./transport";
 
 // ============================================================================
@@ -124,7 +126,29 @@ const HEADER_SUFFIXES = Object.freeze({
   CATALOG: "Catalog",
   SCHEMA: "Schema",
   TIME_ZONE: "Time-Zone",
+  /**
+   * The transaction a statement runs in, sent on its submission: `NONE` to open one, the id the server answered to
+   * run inside it, and absent for autocommit, which is how the editor sends every statement.
+   */
+  TRANSACTION_ID: "Transaction-Id",
+  /** Answered by the statement that opened a transaction, carrying its id. */
+  STARTED_TRANSACTION_ID: "Started-Transaction-Id",
+  /** Answered `true` by a statement that ended the transaction it ran in. */
+  CLEAR_TRANSACTION_ID: "Clear-Transaction-Id",
 } as const);
+
+/**
+ * The transaction header's value that asks for none yet, which is what lets `START TRANSACTION` open one. Measured on
+ * 476: sent with it, `START TRANSACTION READ ONLY` answers the started id; the protocol client sends the same.
+ */
+const NO_TRANSACTION = "NONE";
+
+/** The clear header's value on a statement that ended its transaction. */
+const TRANSACTION_CLEARED = "true";
+
+/** The statements of the agent path's transaction, sent only by this file. */
+const BEGIN_READ_ONLY_SQL = "START TRANSACTION READ ONLY";
+const ROLLBACK_SQL = "ROLLBACK";
 
 /**
  * What the cluster records as the origin of every statement.
@@ -195,6 +219,14 @@ const MILLIS_PER_SECOND = 1_000;
  * failure mode being avoided is a truncation nobody was told about.
  */
 const MAX_PAGES = 5_000;
+
+/**
+ * What a page's body may hold beyond the row bytes a caller's `maxRowBytes` still leaves: the page's own envelope, its
+ * id, links, column declaration, progress report and remarks, which the cap does not count. A body is read under that
+ * bound as it arrives, so no page larger than the rows still allowed plus this is ever held whole. A page's envelope is
+ * a few kilobytes; one past a mebibyte is refused as an answer too large.
+ */
+export const TRINO_PAGE_ENVELOPE_BYTES = 1024 * 1024;
 
 /** How much of a plain-text refusal is quoted back to the user. */
 const MESSAGE_LIMIT = 300;
@@ -685,6 +717,34 @@ function retryDelayMs(status: number, retryAfter: string | null, attempt: number
 interface HttpOutcome {
   status: number;
   text: string;
+  headers: Headers;
+}
+
+/** One page of an exchange, with the response headers it came with. */
+interface PageAnswer {
+  page: Record<string, unknown>;
+  headers: Headers;
+}
+
+/**
+ * The bound a request's body is read under: the caller's `maxRowBytes` (`cap`), the row bytes the pages before it
+ * already held (`accepted`), and so what is left of the cap plus a page's envelope. Absent, a body is read whole.
+ */
+interface BodyBudget {
+  cap: number;
+  accepted: number;
+}
+
+/**
+ * The bound for the answers to Studio's own control requests (`START TRANSACTION`, `ROLLBACK` and the cancel), which
+ * carry no rows: each is read under the page envelope allowance alone, so no such answer is ever held whole either.
+ */
+const CONTROL_BODY_BUDGET: BodyBudget = { cap: 0, accepted: 0 };
+
+/** A completed exchange, with the transaction it started, if any. */
+interface Exchange {
+  result: TrinoQueryResult;
+  startedTransactionId: string | null;
 }
 
 export class TrinoHttpTransport implements TrinoTransport {
@@ -738,8 +798,38 @@ export class TrinoHttpTransport implements TrinoTransport {
   }
 
   public async query(sql: string, options: TrinoQueryOptions = {}): Promise<TrinoQueryResult> {
-    const first = await this.submit(sql, options);
-    const queryId = textField(first, RESULT_FIELDS.ID);
+    return (await this.exchange(sql, options, options.transactionId)).result;
+  }
+
+  public async beginReadOnlyTransaction(signal?: AbortSignal): Promise<string> {
+    const { startedTransactionId } = await this.exchange(
+      BEGIN_READ_ONLY_SQL,
+      { signal, maxRowBytes: 0 },
+      NO_TRANSACTION,
+    );
+    if (startedTransactionId === null) {
+      throw new TrinoTransportError(
+        "engine",
+        `${this.dialect.displayName} answered ${BEGIN_READ_ONLY_SQL} without starting a transaction`,
+      );
+    }
+    return startedTransactionId;
+  }
+
+  public async rollback(transactionId: string, signal?: AbortSignal): Promise<void> {
+    const { result } = await this.exchange(ROLLBACK_SQL, { signal, maxRowBytes: 0 }, transactionId);
+    if (!result.endedTransaction) {
+      throw new TrinoTransportError(
+        "engine",
+        `${this.dialect.displayName} answered ${ROLLBACK_SQL} without ending the transaction`,
+      );
+    }
+  }
+
+  /** One statement to completion, under `transaction` as the transaction header, or none when it is undefined. */
+  private async exchange(sql: string, options: TrinoQueryOptions, transaction: string | undefined): Promise<Exchange> {
+    const first = await this.submit(sql, options, transaction);
+    const queryId = textField(first.page, RESULT_FIELDS.ID);
     if (queryId === null) {
       throw new TrinoTransportError(
         "unreachable",
@@ -752,7 +842,7 @@ export class TrinoHttpTransport implements TrinoTransport {
     options.onQueryStarted?.(queryId);
 
     try {
-      return await this.follow(first, queryId, options.signal);
+      return await this.follow(first, queryId, options);
     } catch (error) {
       // Fact 6: abandoning the loop leaves the statement running on the cluster to
       // completion. Every exit path that is not a completed answer - an abort, a
@@ -768,6 +858,7 @@ export class TrinoHttpTransport implements TrinoTransport {
       endpointUrl(this.origin, `${QUERY_PATH}/${encodeURIComponent(queryId)}`),
       { method: "DELETE", headers: this.sessionHeaders() },
       signal,
+      CONTROL_BODY_BUDGET,
     );
   }
 
@@ -790,11 +881,7 @@ export class TrinoHttpTransport implements TrinoTransport {
    * from the latest page that has one, which is the most complete; and the remarks
    * are keyed, because the same remark repeats on every page.
    */
-  private async follow(
-    first: Record<string, unknown>,
-    queryId: string,
-    signal?: AbortSignal,
-  ): Promise<TrinoQueryResult> {
+  private async follow(first: PageAnswer, queryId: string, options: TrinoQueryOptions): Promise<Exchange> {
     const positional: unknown[] = [];
     const warnings = new Map<string, TrinoWarning>();
     let fieldNames: string[] | null = null;
@@ -802,9 +889,16 @@ export class TrinoHttpTransport implements TrinoTransport {
     let operation: string | null = null;
     let affectedRows: number | null = null;
     let stats: TrinoExecutionStats = UNREPORTED_STATS;
-    let page = first;
+    let startedTransactionId: string | null = null;
+    let endedTransaction = false;
+    let bytes = 0;
+    let answer = first;
 
     for (let visited = 1; ; visited += 1) {
+      const { page, headers } = answer;
+      startedTransactionId ??= headers.get(this.header(HEADER_SUFFIXES.STARTED_TRANSACTION_ID));
+      endedTransaction ||= headers.get(this.header(HEADER_SUFFIXES.CLEAR_TRANSACTION_ID)) === TRANSACTION_CLEARED;
+
       const failure = pageFailure(this.dialect, page);
       if (failure !== null) throw failure;
 
@@ -814,7 +908,15 @@ export class TrinoHttpTransport implements TrinoTransport {
         columnTypes = declared.types;
       }
 
-      positional.push(...readData(this.dialect, page));
+      const data = readData(this.dialect, page);
+      positional.push(...data);
+      if (options.maxRows !== undefined && positional.length > options.maxRows) {
+        throw new TrinoAnswerTooLargeError("rows", positional.length, options.maxRows);
+      }
+      if (options.maxRowBytes !== undefined && data.length > 0) {
+        bytes += Buffer.byteLength(JSON.stringify(data));
+        if (bytes > options.maxRowBytes) throw new TrinoAnswerTooLargeError("bytes", bytes, options.maxRowBytes);
+      }
       for (const warning of readWarnings(page)) warnings.set(`${warning.code}\u0000${warning.message}`, warning);
       operation = textField(page, RESULT_FIELDS.UPDATE_TYPE) ?? operation;
       affectedRows = numberField(page, RESULT_FIELDS.UPDATE_COUNT) ?? affectedRows;
@@ -830,7 +932,12 @@ export class TrinoHttpTransport implements TrinoTransport {
       }
 
       rejectForeignLink(next, this.origin);
-      page = await this.request(next, { method: "GET", headers: this.pollHeaders() }, signal);
+      answer = await this.request(
+        next,
+        { method: "GET", headers: this.pollHeaders() },
+        options.signal,
+        options.maxRowBytes === undefined ? undefined : { cap: options.maxRowBytes, accepted: bytes },
+      );
     }
 
     if (fieldNames === null && positional.length > 0) {
@@ -841,28 +948,33 @@ export class TrinoHttpTransport implements TrinoTransport {
     }
 
     return {
-      rows: fieldNames === null ? [] : positional.map((row) => toRow(this.dialect, fieldNames, row)),
-      fieldNames,
-      columnTypes,
-      queryId,
-      operation,
-      affectedRows,
-      warnings: [...warnings.values()],
-      stats,
+      result: {
+        rows: fieldNames === null ? [] : positional.map((row) => toRow(this.dialect, fieldNames, row)),
+        fieldNames,
+        columnTypes,
+        queryId,
+        operation,
+        affectedRows,
+        warnings: [...warnings.values()],
+        stats,
+        endedTransaction,
+      },
+      startedTransactionId,
     };
   }
 
-  private async submit(sql: string, options: TrinoQueryOptions): Promise<Record<string, unknown>> {
+  private async submit(sql: string, options: TrinoQueryOptions, transaction: string | undefined): Promise<PageAnswer> {
     return await this.request(
       endpointUrl(this.origin, STATEMENT_PATH),
       // The grammar comes from the DESCRIPTOR's type-id, like everything else that
       // differs between the products this transport can speak to.
       {
         method: "POST",
-        headers: this.submitHeaders(options),
+        headers: this.submitHeaders(options, transaction),
         body: withoutTerminator(sql, resolveSqlGrammar(this.dialect.id)),
       },
       options.signal,
+      options.maxRowBytes === undefined ? undefined : { cap: options.maxRowBytes, accepted: 0 },
     );
   }
 
@@ -887,10 +999,11 @@ export class TrinoHttpTransport implements TrinoTransport {
    * required in the initial POST request, and not when following the nextUri
    * links".
    */
-  private submitHeaders(options: TrinoQueryOptions): Record<string, string> {
+  private submitHeaders(options: TrinoQueryOptions, transaction: string | undefined): Record<string, string> {
     const catalog = options.catalog ?? this.catalog;
     const schema = options.schema ?? this.schema;
     return {
+      ...(transaction === undefined ? {} : { [this.header(HEADER_SUFFIXES.TRANSACTION_ID)]: transaction }),
       ...this.sessionHeaders(),
       "content-type": SQL_CONTENT_TYPE,
       [this.header(HEADER_SUFFIXES.TIME_ZONE)]: CLIENT_TIME_ZONE,
@@ -928,8 +1041,13 @@ export class TrinoHttpTransport implements TrinoTransport {
     return `X-${this.dialect.headerPrefix}-${suffix}`;
   }
 
-  private async request(url: string, init: RequestInit, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    const outcome = await this.send(url, init, signal);
+  private async request(
+    url: string,
+    init: RequestInit,
+    signal: AbortSignal | undefined,
+    budget: BodyBudget | undefined,
+  ): Promise<PageAnswer> {
+    const outcome = await this.send(url, init, signal, budget);
     const page = asRecord(parseJson(outcome.text));
     if (page === null) {
       throw new TrinoTransportError(
@@ -941,32 +1059,38 @@ export class TrinoHttpTransport implements TrinoTransport {
       );
     }
 
-    return page;
+    return { page, headers: outcome.headers };
   }
 
   /**
    * One request, retried while the protocol says the failure was intermittent.
    *
    * The body is drained as text before anything is decided, so a refusal and a
-   * result are read the same way.
+   * result are read the same way, and under a budget each attempt's body, a refusal's
+   * as well as a page's, is read under the same bound as it arrives.
    */
-  private async send(url: string, init: RequestInit, signal?: AbortSignal): Promise<HttpOutcome> {
+  private async send(url: string, init: RequestInit, signal?: AbortSignal, budget?: BodyBudget): Promise<HttpOutcome> {
     for (let attempt = 1; ; attempt += 1) {
       let response: Response;
       let text: string;
       try {
         // A followed redirect would carry the credential to wherever it points.
         response = await httpTransportFetch(url, { ...init, redirect: "manual", ...(signal ? { signal } : {}) });
-        text = await response.text();
+        text = await (budget === undefined
+          ? response.text()
+          : readBoundedText(response, budget.cap - budget.accepted + TRINO_PAGE_ENVELOPE_BYTES));
       } catch (error) {
         if (error instanceof DatabaseConfigError) throw error;
+        if (error instanceof BodyLimitExceededError && budget !== undefined) {
+          throw new TrinoAnswerTooLargeError("bytes", budget.accepted + error.bytesRead, budget.cap);
+        }
         // A refused socket, an unresolvable host, an abort and a body that stopped
         // arriving all land here, and all have to leave as the seam's error type.
         throw requestFailure(this.dialect, error, signal);
       }
 
       rejectRedirect(response, url);
-      if (response.ok) return { status: response.status, text };
+      if (response.ok) return { status: response.status, text, headers: response.headers };
 
       const wait = retryDelayMs(response.status, response.headers.get(RETRY_AFTER_HEADER), attempt);
       if (wait === null) throw responseFailure(this.dialect, response.status, text);

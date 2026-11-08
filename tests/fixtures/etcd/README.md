@@ -123,6 +123,18 @@ The containers are removed when the run ends; `ETCD_PREFIX` names them and `ETCD
 - `<principal>.json`: per principal, its roles' permissions, the reads the agent's table and proof would send, the write probes, and the server's keys, revision and leases read as root before and after them: `root`, `root-role` (a user holding the root role), `reader-all` (READ on every key), `reader-range` (READ on `/app/`), `readwrite-range` and `write-range` (READ on `/app/`, and READWRITE or WRITE on `/scratch/`) and `no-roles`.
 - `midrun.json`: a READ-only role read, then WRITE granted to it by root, then the same token reading the role again and writing.
 
+## The MCP data scope
+
+`v3.7.2/mcp-scope/` holds what etcd v3.7.2 answered the raw requests behind MCP's `run_etcd_read` data-scope probes, which `tests/unit/db/etcd/mcp-scope.test.ts` replays.
+Its `run.sh` starts two digest-pinned single-member servers of its own, both serving TLS with a certificate it makes for `127.0.0.1` and removes, one it turns authentication on for and one left with it off, and runs `tests/live/etcd-mcp-boundary.ts`, which seeds them, creates the users and roles with passwords generated for the run, replays the agent boundary through the MCP tool's own handler, and writes the raw answers.
+It refuses to write a capture or print a line that holds any form of a password it sent or a token it received; no capture holds either.
+The containers are removed when the run ends; `ETCD_PREFIX` names them and `ETCD_AUTH_PORT` and `ETCD_OPEN_PORT` pick their loopback ports.
+
+- `secret-present-reader-app.json`, `secret-absent-reader-app.json` and `outside-reader-app.json`: a user reading `/app/` sends a `Range` of a Kubernetes Secret's key that exists, of one that does not, and of a key of another prefix.
+- `lease-list-reader-app.json` and `lease-keys-registry-reader-app.json`: the same user lists the leases, and reads the keys of a lease that holds a `/registry/` key.
+- `status-reader-app.json`, `alarm-list-reader-app.json` and `member-list-reader-app.json`: the same user reads the cluster's status, alarms and members.
+- `role-read-<grant>.json`: a user reads its own role's permissions: READ on every key, on `/registry/`, on one Secret's key, on `/`, and on one key of `/app/`.
+
 ## Catalog
 
 <!-- generated:catalog -->

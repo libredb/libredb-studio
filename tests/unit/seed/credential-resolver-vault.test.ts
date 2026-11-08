@@ -17,7 +17,13 @@ import {
 import { resetVaultCache, VaultError } from "@/lib/seed/vault-client";
 import type { SeedConnection } from "@/lib/seed/types";
 
+const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
+const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
+
 const REFERENCE = "${vault:secret/data/prod/postgres#password}";
+
+/** What the logger was asked to warn, each call as the arguments it was handed. */
+const warnings = (): unknown[][] => warn.mock.calls as unknown as unknown[][];
 
 function secretResponse(password: string): Response {
   return new Response(JSON.stringify({ data: { data: { password } } }), {
@@ -179,6 +185,59 @@ describe("credential-resolver vault scheme", () => {
     );
 
     expect(resolved.dataServers).toBe("a.internal:6648,b.internal:6648");
+  });
+
+  it("resolves a ${vault:...} reference in both halves of an agent credential", async () => {
+    process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+    process.env.VAULT_TOKEN = "not-a-real-token";
+
+    const resolved = await resolveVaultCredentials(
+      {
+        ...baseConn,
+        agentUser: "${vault:secret/data/agent#user}",
+        agentPassword: "${vault:secret/data/agent#password}",
+      },
+      {
+        fetch: (async () =>
+          new Response(
+            JSON.stringify({ data: { data: { user: "agent_reader", password: STAND_IN_AGENT_PASSWORD } } }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            },
+          )) as unknown as typeof fetch,
+      },
+    );
+
+    expect([resolved.agentUser, resolved.agentPassword]).toEqual(["agent_reader", STAND_IN_AGENT_PASSWORD]);
+  });
+
+  it("warns once, naming agentPassword and never its value, for a plaintext agent password", () => {
+    const conn = { ...baseConn, id: "plain", agentUser: "agent", agentPassword: STAND_IN_AGENT_PASSWORD };
+    resolveConnectionCredentials(conn);
+    resolveConnectionCredentials(conn);
+    expect(warnings()).toEqual([
+      [
+        "Seed connection has plaintext agentPassword, use ${ENV_VAR} syntax",
+        { route: "seed/credential-resolver", connectionId: "plain" },
+      ],
+    ]);
+  });
+
+  it("warns for a plaintext password and a plaintext agent password on one connection, once each", () => {
+    const conn = {
+      ...baseConn,
+      id: "both",
+      password: STAND_IN_PASSWORD,
+      agentPassword: STAND_IN_AGENT_PASSWORD,
+    };
+    resolveConnectionCredentials(conn);
+    resolveConnectionCredentials(conn);
+    expect(warnings().map(([message]) => message)).toEqual([
+      "Seed connection has plaintext password, use ${ENV_VAR} syntax",
+      "Seed connection has plaintext agentPassword, use ${ENV_VAR} syntax",
+    ]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("not-a-real");
   });
 
   it("resolves a ${vault:...} reference in region", async () => {

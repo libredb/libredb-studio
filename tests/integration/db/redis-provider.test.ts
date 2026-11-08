@@ -155,6 +155,17 @@ const MOCK_KEY_TYPES: Record<string, string> = { "session:abc": "hash" };
 let databasesReply: string[] = ["databases", "16"];
 
 /**
+ * When set, `CONFIG` rejects with this error instead of answering `databasesReply` (#2163).
+ *
+ * Measured on valkey 9.1.3 through ioredis 5.11.1: a server started with
+ * `--rename-command CONFIG ""` rejects `CONFIG GET databases` with a `ReplyError` "ERR unknown
+ * command 'CONFIG', with args beginning with: 'GET' 'databases'", and an ACL user created with
+ * `-config` gets a `ReplyError` "NOPERM User noconf has no permissions to run the 'config|get'
+ * command".
+ */
+let configFailure: unknown = null;
+
+/**
  * One library, in the exact RESP2 shape ioredis hands back: a flat key/value list per
  * library, measured against redis 8.10.0 holding `docker/redis-init/01-object-fixture.redis`.
  * The nested `functions` entry is the library's registered functions and is deliberately
@@ -363,6 +374,10 @@ let pingFailure: Error | null = null;
 
 /** When set, `SLOWLOG` is refused with this sentence, as it is for an ACL user without `+slowlog`. */
 let slowlogRefusal: string | null = null;
+
+/** Server error replies to `SCAN` and `SELECT`, as an ACL user without the command is refused each. */
+let scanReplyRefusal: string | null = null;
+let selectRefusal: string | null = null;
 
 /** Keys whose `TYPE` the server refuses, as an ACL user without `+type` is refused. */
 const typeRefusals = new Set<string>();
@@ -589,7 +604,8 @@ mock.module("ioredis", () => {
      * redis 8.10.0 refuses `SELECT 99` with on a stock 16-database server.
      */
     async select(db: number) {
-      if (db >= Number(databasesReply[1])) throw new Error("ERR DB index is out of range");
+      if (selectRefusal !== null) throw replyError(selectRefusal);
+      if (db >= Number(databasesReply[1])) throw replyError("ERR DB index is out of range");
       this._db = db;
       this._state.database = db;
       return "OK";
@@ -641,6 +657,7 @@ mock.module("ioredis", () => {
       scanCalls += 1;
       scanArgv.push({ cursor, args });
       if (scanRefusal !== null) throw new Error(scanRefusal);
+      if (scanReplyRefusal !== null) throw replyError(scanReplyRefusal);
       if (scanPages !== null) return scanPage(scanPages, cursor, args);
       if (scanOverflows) return ["42", [...(MOCK_KEYS_BY_DB[this._db] ?? []), ...OVERFLOW_KEYS]];
       return ["0", MOCK_KEYS_BY_DB[this._db] ?? []];
@@ -753,7 +770,10 @@ mock.module("ioredis", () => {
       // substitution is the only reading of the state this connection can be given, so the
       // mock has to make it or a provider that never asks would pass.
       if (this._inMulti) return "QUEUED";
-      if (cmd === "CONFIG") return databasesReply;
+      if (cmd === "CONFIG") {
+        if (configFailure !== null) throw configFailure;
+        return databasesReply;
+      }
       if (cmd === "SLOWLOG" && slowlogRefusal !== null) throw replyError(slowlogRefusal);
       if (cmd === "FUNCTION") {
         if (mockCall !== null) return await mockCall(command, ...args);
@@ -2395,7 +2415,7 @@ describe("RedisProvider", () => {
 
     test("the doc names BOTH routes that call this, and says the editor path is now covered", () => {
       // This test used to pin the opposite, and the change is the point. `use-query-execution.ts`
-      // keeps a Redis buffer off `/api/db/multi-query` by gating that endpoint on `dialectIsSql`,
+      // keeps a Redis buffer off `/api/db/multi-query` by gating that endpoint on `runsAsScript`,
       // read from this capability, so an editor run goes to `/api/db/query`. That route ended
       // nothing while the ender named one shared client (D74 measured the naive `finally` there
       // destroying other callers' committed work). D87 bound the ender to a call scope the route
@@ -2683,7 +2703,51 @@ describe("RedisProvider", () => {
       mockCallResults.SLOWLOG = MOCK_SLOWLOG_ENTRIES;
       scanPages = null;
       mockClientList = MOCK_CLIENT_LIST;
+      configFailure = null;
+      scanReplyRefusal = null;
+      selectRefusal = null;
       await agent.disconnect();
+    });
+
+    /** What Redis 8.10.2 refuses a `~* +@read` user each command with, naming the user. */
+    const refusedTo = (command: string) =>
+      `NOPERM User agent_reader has no permissions to run the '${command}' command`;
+
+    // The editor handle's refusal shapes are pinned under listContainers (#2163); this pins the agent-mode handle to the same list.
+    test("a user refused CONFIG GET lists the session database alone on an agent-mode handle", async () => {
+      configFailure = replyError(refusedTo("config|get"));
+      const session = new RedisProvider({ ...baseConfig, database: "2" }, {}, OPERATIONS);
+      await session.connect();
+      expect(await session.listContainers()).toEqual([{ path: ["2"], name: "2", level: 0, isSessionDefault: true }]);
+      await session.disconnect();
+    });
+
+    test("a refusal of the object surface on an agent-mode handle names the command and never the user", async () => {
+      scanReplyRefusal = refusedTo("scan");
+      const refused = (await agent.listObjects(["0"], "keyspace").then(
+        () => undefined,
+        (error: unknown) => error,
+      )) as Error;
+      expect(refused).toBeInstanceOf(QueryError);
+      expect(refused.message).toBe(
+        "Redis refused the read: the connection's ACL user does not hold the 'scan' command it needs (NOPERM).",
+      );
+      await provider.connect();
+      await expect(provider.listObjects(["0"], "keyspace")).rejects.toThrow(refusedTo("scan"));
+    });
+
+    test("a SELECT refused on an agent-mode handle names the command and never the user", async () => {
+      selectRefusal = refusedTo("select");
+      const numbered = new RedisProvider({ ...baseConfig, database: "1" }, {}, OPERATIONS);
+      await expect(numbered.connect()).rejects.toThrow(
+        "Redis refused database 1: the connection's ACL user does not hold the 'select' command it needs (NOPERM).",
+      );
+      selectRefusal = "NOPERM No permissions to access a key";
+      await expect(numbered.connect()).rejects.toThrow(
+        "Redis refused database 1: the connection's ACL user may not access a key or channel it needs (NOPERM).",
+      );
+      selectRefusal = "ERR DB index is out of range";
+      await expect(numbered.connect()).rejects.toThrow("Redis refused database 1: ERR DB index is out of range");
     });
 
     test("a slow-log entry carries the command name, the argument count and the timing, never an argument", async () => {
@@ -3005,6 +3069,7 @@ describe("RedisProvider", () => {
 
     beforeEach(async () => {
       databasesReply = ["databases", "16"];
+      configFailure = null;
       functionListReply = MOCK_FUNCTION_LIST;
       functionWithCodeReply = MOCK_FUNCTION_WITHCODE;
       functionRefusal = null;
@@ -3309,9 +3374,35 @@ describe("RedisProvider", () => {
       expect(containers.every((container) => container.level === 0)).toBe(true);
     });
 
-    test("a refused CONFIG GET raises rather than inventing a database list", async () => {
+    test("a CONFIG GET reply with no databases value raises rather than inventing a database list", async () => {
       databasesReply = [];
       await expect(provider.listContainers()).rejects.toThrow(/CONFIG GET databases/);
+    });
+
+    // #2163: a server that refuses the command still has the connection in one database.
+    test("a server that does not know CONFIG lists the session database alone", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "3" });
+      await provider.connect();
+      configFailure = replyError("ERR unknown command 'CONFIG', with args beginning with: 'GET' 'databases'");
+
+      expect(await provider.listContainers()).toEqual([{ path: ["3"], name: "3", level: 0, isSessionDefault: true }]);
+      expect(commandsSent()).toContain("CONFIG GET databases");
+    });
+
+    test("an ACL user refused CONFIG lists the session database alone", async () => {
+      configFailure = replyError("NOPERM User noconf has no permissions to run the 'config|get' command");
+
+      expect(await provider.listContainers()).toEqual([{ path: ["0"], name: "0", level: 0, isSessionDefault: true }]);
+    });
+
+    test("any other CONFIG GET error reply still raises", async () => {
+      configFailure = replyError("LOADING Valkey is loading the dataset in memory");
+      await expect(provider.listContainers()).rejects.toThrow(/LOADING/);
+    });
+
+    test("a transport failure on CONFIG GET still raises rather than listing one database", async () => {
+      configFailure = new Error("Connection is closed.");
+      await expect(provider.listContainers()).rejects.toThrow("Connection is closed.");
     });
 
     test("counts both kinds, seeded at zero before either read answers", async () => {

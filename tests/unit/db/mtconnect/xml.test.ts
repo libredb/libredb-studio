@@ -506,3 +506,31 @@ describe("the bounds are the measured ones, and they sit above the real document
     expect(MTC_XML_BOUNDS.maxElements).toBeGreaterThan(60_000 * 4);
   });
 });
+
+describe("an element keeps where each child sits in its own text", () => {
+  const utf8 = (text: string) => new TextEncoder().encode(text);
+
+  test("the tree reader records, per child, how much of the parent's text came before it", () => {
+    const result = readMtconnectXml(utf8("<a>x<b>in</b>y<![CDATA[z]]><c/>&amp;</a>"));
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.root.text).toBe("xyz&");
+    expect(result.root.childOffsets).toEqual([1, 3]);
+    expect(result.root.children[0]?.childOffsets).toEqual([]);
+  });
+
+  test("the stream walker records it for an observation's children too", () => {
+    const children: Array<readonly MtcElement[]> = [];
+    const result = streamMtconnectObservations(
+      utf8(
+        '<MTConnectStreams><Streams><DeviceStream name="d"><ComponentStream component="Path"><Events><VariableDataSet dataItemId="v">a<Entry key="k">1<Cell key="c">2</Cell></Entry>b</VariableDataSet></Events></ComponentStream></DeviceStream></Streams></MTConnectStreams>',
+      ),
+      (observation) => {
+        children.push(observation.children);
+      },
+    );
+    expect(result.ok).toBe(true);
+    const [entries] = children;
+    expect(entries?.[0]?.text).toBe("1");
+    expect(entries?.[0]?.childOffsets).toEqual([1]);
+  });
+});

@@ -69,6 +69,18 @@ describe("mapNeo4jError", () => {
     );
   });
 
+  test("forbidden: a QueryError naming the user's privileges, never a write, with the server's words", () => {
+    // What the server answered the proved reader for LOAD CSV (agent-boundary/agent/load-csv-file).
+    const source = capturedErrorOf("agent-boundary/agent/load-csv-file");
+    expect(source.category).toBe("forbidden");
+    expect(source.code).toBe("Neo.ClientError.Security.Forbidden");
+    const mapped = mapNeo4jError(source) as QueryError;
+    expect(mapped).toBeInstanceOf(QueryError);
+    expect(mapped.message).toBe(`The server refused this statement for this user's privileges: ${source.message}`);
+    expect(mapped.message).not.toContain("write");
+    expect(mapped.detail).toBe("Neo.ClientError.Security.Forbidden");
+  });
+
   test("syntax: a QueryError with the server's message and code", () => {
     const source = capturedErrorOf("error-syntax");
     expect(source.category).toBe("syntax");

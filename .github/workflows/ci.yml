@@ -159,9 +159,6 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Record the Node 24 binary for Snowflake runtime coverage
-        run: echo "NODE24_BINARY=$(command -v node)" >> "$GITHUB_ENV"
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -204,34 +201,47 @@ jobs:
       - name: Enforce 100% line coverage
         run: bun run coverage:check
 
-      # Production runs on Node 26.10.0 (the Dockerfile's runner stage), and the byte transport's refusal of a
-      # link-local DNS answer with DB_HTTP_BLOCK_PRIVATE_HOSTS off rests on that runtime's Agent using the
-      # transport's own lookup, so the transport's runtime cases run once more on exactly that version, and so do
-      # the RabbitMQ AMQP dial's and the MQTT dial's, whose egress rests on the same runtime's lookup handling.
-      # The suite and its coverage above stay on Node 24.
-      - name: Setup Node 26.10.0 for the transport runtime cases
+      # Production runs the Node release the Dockerfile's runner stage names, and the byte transport's refusal of a
+      # link-local DNS answer with DB_HTTP_BLOCK_PRIVATE_HOSTS off rests on that runtime's Agent using the transport's
+      # own lookup, so the transport's runtime cases run once more on exactly that release, and so do the RabbitMQ AMQP
+      # dial's and the MQTT dial's, whose egress rests on the same runtime's lookup handling, the S3 client wire cases,
+      # and the Snowflake key cases, whose missing and wrong passphrase codes come from that release's OpenSSL.
+      # The suite above runs every one of these files on Node 24, the engines floor, so they are not run on it again.
+      # The release is read from the Dockerfiles when the job runs, not written here: Dependabot moves the image's Node
+      # and never this file, and a literal here stayed at 26.10.0 through four image bumps from #1696 on.
+      # Dockerfile.alpine's runner stage must name the same release, or this step fails; Dockerfile.alpine-slim is not
+      # read, because its runner is plain Alpine with Alpine's own nodejs package and names no Node release.
+      # tests/unit/ci-image-node.test.ts runs this step's shell against the Dockerfiles.
+      - name: Read the Node release of the Dockerfile runner stages
+        id: image-node
+        shell: bash
+        run: |
+          runner_node() {
+            sed -n 's/^FROM node:\([^-[:space:]]*\)-[^[:space:]]* AS runner$/\1/p' "$1"
+          }
+          debian="$(runner_node Dockerfile)"
+          alpine="$(runner_node Dockerfile.alpine)"
+          if ! [[ "$debian" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=Dockerfile::The runner stage must be one FROM node:<major>.<minor>.<patch>-<variant> AS runner line; read '${debian//$'\n'/ }'."
+            exit 1
+          fi
+          if [ "$alpine" != "$debian" ]; then
+            echo "::error file=Dockerfile.alpine::The runner stage runs Node '${alpine//$'\n'/ }' and Dockerfile's runs $debian; the two images must ship one Node release."
+            exit 1
+          fi
+          echo "version=$debian" >> "$GITHUB_OUTPUT"
+
+      - name: Setup the image's Node for the runtime cases
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "26.10.0"
+          node-version: ${{ steps.image-node.outputs.version }}
 
-      - name: Record the Node 26.10.0 binary for Snowflake runtime coverage
-        run: echo "NODE2610_BINARY=$(command -v node)" >> "$GITHUB_ENV"
-
-      - name: Run the transport runtime cases, the S3 client wire cases, the RabbitMQ and MQTT dial cases and the Snowflake key cases on Node 26.10.0
+      - name: Run the transport runtime cases, the S3 client wire cases, the RabbitMQ and MQTT dial cases and the Snowflake key cases on the image's Node
+        env:
+          IMAGE_NODE: ${{ steps.image-node.outputs.version }}
         run: |
-          test "$(node --version)" = "v26.10.0"
+          test "$(node --version)" = "v$IMAGE_NODE"
           NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts tests/unit/db/rabbitmq/dial-runtimes.test.ts tests/unit/db/mqtt/dial-runtimes.test.ts tests/unit/db/snowflake/key-runtimes.test.ts
-
-      # OpenSSL 4 reports an ASN.1 wrong-tag code when a wrong passphrase decrypts PKCS#8 to invalid bytes.
-      - name: Setup Node 26.12.1 for the Snowflake key runtime cases
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "26.12.1"
-
-      - name: Run the Snowflake key runtime cases on Node 26.12.1
-        run: |
-          test "$(node --version)" = "v26.12.1"
-          NODE_TRANSPORT_NODES="$NODE24_BINARY:$NODE2610_BINARY:$(command -v node)" bun tests/run-tests.ts tests/unit/db/snowflake/key-runtimes.test.ts
 
       - name: Upload coverage artifact
         # always(): keep the lcov available for debugging when coverage:check
@@ -435,7 +445,7 @@ jobs:
   # The product's reason to exist, end to end: boot the app, create a real
   # PostgreSQL connection through the modal, run SQL, see rows. Split out of the
   # e2e job because the spec starts its own throwaway postgres with
-  # `docker run -p 127.0.0.1:54329:5432` - that binds the HOST loopback, and a
+  # `docker run -p 127.0.0.1::5432` - that binds the HOST loopback, and a
   # container job has its own network namespace and cannot reach it. Keeping
   # this on the bare runner is what lets the spec stay free of any CI-only
   # branch, which is the whole point of a test that claims to exercise the real
@@ -469,20 +479,28 @@ jobs:
         # SQLite in `bun run test`, against a real PostgreSQL: its casts, row locks and ON CONFLICT
         # behaviour under concurrency are what the multi-replica guarantees rest on, and a mocked
         # pg cannot show them. Superuser, because one case deletes an account with foreign keys off.
+        # The host port is Docker's pick and the name is per run: a fixed loopback port inside the ephemeral range
+        # (32768-60999) can be held by a client socket, open or in TIME_WAIT, and Docker then refuses the bind
+        # with "address already in use", as 54332 did for the check below on PR #2216.
         run: |
-          docker run -d --rm --name passkey-contract-pg -e POSTGRES_PASSWORD=contract -p 127.0.0.1:55432:5432 postgres:17
+          pg="passkey-contract-pg-$(openssl rand -hex 4)"
+          trap 'docker rm -f "$pg" > /dev/null' EXIT
+          docker run -d --rm --name "$pg" -e POSTGRES_PASSWORD=contract -p 127.0.0.1::5432 postgres:17
+          port="$(docker port "$pg" 5432/tcp | head -n 1)"
+          port="${port##*:}"
+          export LIBREDB_LIVE_POSTGRES_URL="postgresql://postgres:contract@127.0.0.1:${port}/postgres?sslmode=disable"
           # The image's first start runs a temporary server on its Unix socket only, stops it and starts the real
           # one, so a psql over the socket can answer from the temporary server and the contract's TCP connection
           # then lands in the restart ("Connection terminated unexpectedly"). Wait on TCP, where only the real
           # server listens, and stop here if it never does.
           ready=""
           for i in $(seq 1 60); do
-            docker exec passkey-contract-pg pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && { ready=yes; break; }
+            docker exec "$pg" pg_isready -q -h 127.0.0.1 -p 5432 -U postgres && { ready=yes; break; }
             sleep 1
           done
           if [ -z "$ready" ]; then
             echo "PostgreSQL accepted no TCP connection within 60 s"
-            docker logs passkey-contract-pg
+            docker logs "$pg"
             exit 1
           fi
           bun tests/live/passkey-store-postgres.ts
@@ -493,15 +511,12 @@ jobs:
           # manifest, read by the real snapshot loader as libredb_studio. Any failed case exits non-zero and fails the
           # step; later governance slices add their cases to the same script.
           bun tests/live/governance-live-check.ts
-          docker rm -f passkey-contract-pg
-        env:
-          LIBREDB_LIVE_POSTGRES_URL: postgresql://postgres:contract@127.0.0.1:55432/postgres?sslmode=disable
 
       - name: PostgreSQL agent read-only live check
         # The agent's PostgreSQL read-only profile against a real server, through the production factory
         # and the resolved agent role: a write and a multi-command string must both be refused. The
         # integration suite proves the same rules against a mock, which cannot see a pg driver or server
-        # change. The script starts and removes its own container.
+        # change. The script starts and removes its own container, on a host port Docker picks.
         run: bun tests/live/postgres-read-only-live.ts
 
       - name: Install Playwright browsers
@@ -603,13 +618,16 @@ jobs:
           # The digest reaches the suite, so the image this step runs and the image the fixture documents
           # cannot drift apart: `tests/unit/db/opcua/live-environment.test.ts` compares them.
           export OPCUA_LIVE_DIGEST="${image#*@}"
-          export LIBREDB_OPCUA_LIVE_URL="opc.tcp://127.0.0.1:54840/"
           trap 'docker rm -f libredb-ci-opcua > /dev/null' EXIT
           # Loopback only. Without the host address Docker publishes on 0.0.0.0, and this server is
           # started --autoaccept --unsecuretransport: it would accept any client on every interface of
-          # the runner.
-          docker run -d --name libredb-ci-opcua -p 127.0.0.1:54840:50000 "$image" \
+          # the runner. The host port is Docker's pick: a fixed one inside the ephemeral range
+          # (32768-60999) can be held by a client socket, open or in TIME_WAIT, and
+          # Docker then refuses the bind with "address already in use".
+          docker run -d --name libredb-ci-opcua -p 127.0.0.1::50000 "$image" \
             --pn=50000 --autoaccept --unsecuretransport --ut --sph --hn --slownodes=3 --fastnodes=3
+          port="$(docker port libredb-ci-opcua 50000/tcp | head -n 1)"
+          export LIBREDB_OPCUA_LIVE_URL="opc.tcp://127.0.0.1:${port##*:}/"
 
           # 1. The server's own statement. opc-plc prints this once the simulation is up.
           logged=""
@@ -1314,7 +1332,7 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
         with:
           args: >
             -Dsonar.projectVersion=${{ steps.pkg.outputs.version }}

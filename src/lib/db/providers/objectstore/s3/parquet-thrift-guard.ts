@@ -2,7 +2,7 @@
  * A structural check of Thrift compact bytes. Browser-safe and pure. It walks one
  * struct without building values and never allocates per declared element: a list may declare at most the bytes left
  * (every compact element takes at least one), a binary at most the bytes left, nesting at most `maxDepth`, and only
- * the types hyparquet reads (thrift.js:6-16). Every footer and page header passes it before any hyparquet parser sees
+ * the types hyparquet reads (the type constants at the top of hyparquet 1.32.0's `src/thrift.js`). Every footer and page header passes it before any hyparquet parser sees
  * it. A caller may also cap the list elements and the fields of the whole struct, since hyparquet builds an object or
  * a value for each list element and a property for each field.
  *
@@ -209,7 +209,7 @@ export interface PageHeaderFacts {
   readonly headerBytes: number;
 }
 
-/** The field holding the value count of each page type, as hyparquet's readPage reads it (column.js:96-141). */
+/** The field holding the value count of each page type, as hyparquet's readPage reads it (`readPage` in hyparquet 1.32.0's `src/column.js`). */
 const COUNT_HOLDER: Readonly<Record<number, number>> = { 0: 5, 2: 7, 3: 8 };
 
 /** The page header fields the facts read; the reader records no other. */

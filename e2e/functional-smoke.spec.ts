@@ -2,19 +2,22 @@
  * Functional smoke: the product's reason to exist, end to end - boot the real
  * app, log in, create a PostgreSQL connection through the real connection
  * modal, run a SQL query, and see the rows in the results grid. This is the
- * invariant no change may break (the maintainer loop runs it as the last step
- * before declaring a milestone complete; CI runs it with the regular E2E job).
+ * invariant no change may break (CI runs it in the functional-smoke job).
  *
  * The spec manages its own throwaway PostgreSQL container. Without a Docker
- * daemon the spec SKIPS (annotated) - fine for a dev machine; the loop's
- * close-out wrapper (loop/scripts/functional-smoke.sh) hard-fails on missing
- * Docker instead, so the loop can never pass this gate vacuously.
+ * daemon the spec SKIPS (annotated) - fine for a dev machine.
  */
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
-const PG_CONTAINER = "libredb-functional-smoke-pg";
-const PG_PORT = 54329;
+/**
+ * Per run, and on a loopback port Docker picks: a fixed host port inside the ephemeral range (32768-60999) can be held
+ * by a client socket, open or in TIME_WAIT, and Docker then refuses the bind with "address already in use".
+ */
+const PG_CONTAINER = `libredb-functional-smoke-pg-${randomBytes(4).toString("hex")}`;
+/** Set once the container is up. */
+let pgPort = 0;
 const PG_PASSWORD = "smoke-pg-password";
 
 function docker(args: string[]): string {
@@ -30,14 +33,17 @@ function dockerAvailable(): boolean {
   }
 }
 
+/** The host port Docker published for the container's 5432, from `docker port`'s `127.0.0.1:49153`. */
+function publishedPort(container: string): number {
+  const binding = docker(["port", container, "5432/tcp"]).trim().split("\n")[0] ?? "";
+  const port = Number(binding.slice(binding.lastIndexOf(":") + 1));
+  if (!Number.isInteger(port) || port <= 0) throw new Error(`Docker published no port for ${container}: "${binding}"`);
+  return port;
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function startSeededPostgres(): Promise<void> {
-  try {
-    docker(["rm", "-f", PG_CONTAINER]);
-  } catch {
-    // no stale container - fine
-  }
   docker([
     "run",
     "-d",
@@ -47,9 +53,10 @@ async function startSeededPostgres(): Promise<void> {
     "-e",
     `POSTGRES_PASSWORD=${PG_PASSWORD}`,
     "-p",
-    `127.0.0.1:${PG_PORT}:5432`,
+    "127.0.0.1::5432",
     "postgres:16-alpine",
   ]);
+  pgPort = publishedPort(PG_CONTAINER);
   // Readiness is proven by the seed itself succeeding, not by pg_isready:
   // the official image's init sequence starts a TEMPORARY server (which
   // pg_isready happily reports ready) and then restarts - a seed racing that
@@ -106,7 +113,7 @@ test.describe("Functional smoke: connect to PostgreSQL and run a query", () => {
     await dialog.locator("text=PostgreSQL").first().click();
     await dialog.locator("#name").fill("Smoke PG");
     await dialog.locator("#host").fill("127.0.0.1");
-    await dialog.locator("#port").fill(String(PG_PORT));
+    await dialog.locator("#port").fill(String(pgPort));
     await dialog.locator("#user").fill("postgres");
     await dialog.locator("#password").fill(PG_PASSWORD);
     await dialog.locator("#database").fill("postgres");

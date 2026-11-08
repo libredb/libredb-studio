@@ -72,9 +72,10 @@ const context = (op: QdrantOp, phase: "connect" | "request" = "request"): Qdrant
 
 /**
  * The agent boundary captures are written by their own run.sh in a shape of their own, and
- * tests/unit/db/qdrant/agent-captures.test.ts holds them; so are the probe script and its directory.
+ * tests/unit/db/qdrant/agent-captures.test.ts holds them; so are the probe script and its directory. The MCP scope
+ * captures are written by tests/live/qdrant-mcp-boundary.ts, and tests/unit/db/qdrant/mcp-scope.test.ts holds them.
  */
-const AGENT_BOUNDARY = /^(?:1\.19\.1\/agent-boundary\/|agent-boundary-probe\.mjs$)/;
+const AGENT_BOUNDARY = /^(?:1\.19\.1\/(?:agent-boundary|mcp-scope)\/|agent-boundary-probe\.mjs$)/;
 
 function filesOnDisk(): string[] {
   return readdirSync(QDRANT_FIXTURES_DIR, { recursive: true, withFileTypes: true })

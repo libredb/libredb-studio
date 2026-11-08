@@ -412,6 +412,7 @@ describe("a DataSet entry the captures do not hold", () => {
     attributes,
     children,
     text,
+    childOffsets: children.map(() => text.length),
   });
 
   test("an entry marked removed reads as null rather than as an empty value", () => {
@@ -421,7 +422,13 @@ describe("a DataSet entry the captures do not hold", () => {
   });
 
   test("an entry holding cells reads as a row of its cells, keyed by cell", () => {
-    const cell = (key: string, text: string) => ({ name: "Cell", attributes: { key }, children: [], text });
+    const cell = (key: string, text: string) => ({
+      name: "Cell",
+      attributes: { key },
+      children: [],
+      text,
+      childOffsets: [],
+    });
     const row = buildRow(
       observation([
         {
@@ -429,6 +436,7 @@ describe("a DataSet entry the captures do not hold", () => {
           attributes: { key: "T1" },
           children: [cell("LENGTH", "120"), cell("DIAMETER", "12")],
           text: "",
+          childOffsets: [0, 0],
         },
         entry({ key: "T2" }, "plain"),
       ]),
@@ -445,10 +453,11 @@ describe("a DataSet entry the captures do not hold", () => {
           name: "Entry",
           attributes: { key: "T1" },
           children: [
-            { name: "Cell", attributes: { key: "LENGTH" }, children: [], text: "120" },
-            { name: "Cell", attributes: {}, children: [], text: "orphan" },
+            { name: "Cell", attributes: { key: "LENGTH" }, children: [], text: "120", childOffsets: [] },
+            { name: "Cell", attributes: {}, children: [], text: "orphan", childOffsets: [] },
           ],
           text: "",
+          childOffsets: [0, 0],
         },
       ]),
       model(),

@@ -6504,7 +6504,7 @@ describe("object surface", () => {
    * The column declaration, both directions (#789, columns under an object row).
    *
    * DERIVED from `RELKIND_BY_KIND` rather than transcribed, so there is one writer: that map
-   * is what `describeObject` itself gates on (`postgres.ts:2970`), and a kind that is not a key
+   * is what `describeObject` itself gates on (`PostgresProvider.listObjects` in `postgres.ts`), and a kind that is not a key
    * in it returns three empty arrays without asking the server. The second assertion is the one
    * that matters over time: a kind added to `objectKinds` later cannot quietly gain a twisty
    * that opens on nothing.
@@ -6597,7 +6597,7 @@ describe("object surface", () => {
       //
       // The rows are the DRIVER'S rows and the naming is left to `postgres.ts`, which is
       // the whole point: the provider spells a name schema-qualified except in `public`
-      // (`postgres.ts:2022`), so a fixture that returned finished names would assert the
+      // (`PostgresProvider.getCapabilities` in `postgres.ts`), so a fixture that returned finished names would assert the
       // fixture's spelling rather than the engine's. `public.audit_log` is the spelling
       // PostgreSQL NEVER produces, and this epic has already taken a Critical for writing
       // it, so the `public` row is here to be stripped: it reaches the reading as a bare

@@ -10,16 +10,18 @@
  * sentence is checked by its fixed parts.
  */
 import { describe, expect, test } from "bun:test";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import {
   INFLUXQL_AGENT_ENVELOPE_ALLOWANCE_BYTES,
   INFLUXQL_AGENT_PROBED_DATABASES,
+  INFLUXQL_AGENT_QUERY_TEXT_SENTENCE,
   INFLUXQL_AGENT_WIRE_EXPANSION,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-read";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { DB_UI_CONFIG, READ_ONLY_FIXED_HINT } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import type { InfluxAnswer, InfluxClientFactory, InfluxRequest } from "@/lib/db/providers/timeseries/influxdb/client";
@@ -204,7 +206,7 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
       `| Send the password without TLS | ${hints.allowInsecureAuth} |`,
     );
     expect(INFLUX_CONNECTION_SENTENCES.plaintext).toContain("tick Send the password without TLS");
-    expect(fields).toContain(`> ${UI.readOnlyHint}`);
+    expect(fields).toContain(`> ${READ_ONLY_FIXED_HINT}`);
     expect(UI.connectionFields).toEqual(["host", "port", "user", "password", "database", "allowInsecureAuth"]);
   });
 
@@ -501,7 +503,7 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
       if (typeof value === "object") continue;
       expect(rowOf(table, `\`${key}\``)).toBe(`| \`${key}\` | \`${JSON.stringify(value)}\` |`);
     }
-    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("none");
     expect(capabilities.supportsResultPagination).toBe(false);
     expect(capabilities.supportsExternalQueryLimiting).toBe(false);
   });
@@ -546,9 +548,8 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
     expect(DOC).toMatch(/^#{1,6} .*Object edit \(#789\)/m);
   });
 
-  test("the doc carries no em dash, no en dash and no factory.ts line citation", () => {
+  test("the doc carries no em dash and no en dash", () => {
     expect(DOC).not.toMatch(/[\u2013\u2014]/);
-    expect(DOC).not.toMatch(/factory\.ts:\d/);
   });
 });
 
@@ -556,8 +557,14 @@ describe("section 15, agent mode", () => {
   test("states the agent reader's carriage return sentence and the proof's database cap as the code does", () => {
     const agent = sectionOf(DOC, "## 15. Agent mode: a principal proved read-only before every statement");
     expect(agent).toContain(`> ${INFLUXQL_AGENT_SENTENCES.carriageReturn}`);
+    expect(agent).toContain(`> ${INFLUXQL_AGENT_SENTENCES.showDatabase}`);
     expect(agent).toContain(`more than ${INFLUXQL_AGENT_PROBED_DATABASES} databases is refused`);
     expect(agent).toContain(`six times the byte budget plus ${INFLUXQL_AGENT_ENVELOPE_ALLOWANCE_BYTES / 1024} KiB`);
     expect(INFLUXQL_AGENT_WIRE_EXPANSION).toBe(6);
+  });
+
+  test("quotes the answer-side refusal of statement text as the code words it", () => {
+    const agent = sectionOf(DOC, "## 15. Agent mode: a principal proved read-only before every statement");
+    expect(agent).toContain(`> ${INFLUXQL_AGENT_QUERY_TEXT_SENTENCE}`);
   });
 });

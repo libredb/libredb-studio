@@ -44,7 +44,7 @@ updates:
       prefix: "chore(deps)"
       prefix-development: "chore(deps-dev)"
 
-    # Both groups batch minor and patch only, which means a major that is not
+    # Every group batches minor and patch only, which means a major that is not
     # ignored below arrives as its own pull request. That is deliberate, not an
     # oversight: batching majors with routine updates makes one pull request that
     # cannot be merged as a unit - refusing recharts 3 would also hold back the
@@ -53,20 +53,56 @@ updates:
     # of 2026-08-15 across ~1170 installed packages, and open-pull-requests-limit
     # caps how many wait at once.
     #
-    # UNVERIFIED under `bun`: the options reference lists `dependency-type`
-    # inside `groups` for bundler, composer, mix, maven, npm and pip - bun is not
-    # named. The published schema does not restrict it per ecosystem, so this
-    # config is valid either way and cannot break the Actions or Docker blocks
-    # below. If the first bun run ignores it, both groups match everything and
-    # the production/development split collapses into one pull request; the fix
-    # is then to separate them with `patterns` instead. Cosmetic either way -
-    # check the grouping on the first run before assuming it took.
+    # `dependency-type` under `bun` works, despite the warning. The options
+    # reference lists it inside `groups` for bundler, composer, mix, maven, npm
+    # and pip only, and every bun run logs "The 'dependency-type' option is not
+    # supported for the 'bun' package manager ... This option will be ignored"
+    # (update jobs 1672062153 and 1673702438, Actions runs 41381574627 and
+    # 41433090980, 2026-11-02). It is not ignored: that
+    # check only writes the warning, while DependencyGroup#contains? in
+    # dependabot-core applies the rule for every package manager. Both runs
+    # split the two groups cleanly: #2167 and #2188 hold production
+    # dependencies only, #2168 development ones only. If a later Dependabot
+    # release starts doing what the warning says, both groups match everything
+    # and the split collapses into one pull request; separate them with
+    # `patterns` then.
     groups:
+      # The node-opcua trio, in one pull request of its own. node-opcua-client
+      # and node-opcua-certificate-manager ship and node-opcua-server is the
+      # devDependency the integration suite starts, so without this group they
+      # split across the production and development pull requests whenever
+      # both sides have an update. They move together and to one version
+      # (781e89b6c, docs/providers/opcua.md section 2.1): a client and server
+      # on different releases install a second node-opcua-types, whose classes
+      # then register twice.
+      #
+      # Group order does not decide this, whatever the options reference says
+      # about "the first group that it matches". dependabot-core ranks every
+      # group that contains a dependency by pattern specificity, and a group
+      # with no `patterns` scores 500 against 97 for "node-opcua-*"
+      # (PatternSpecificityCalculator). With this group first, update job
+      # 1673702438 (Actions run 41433090980) still logged "Skipping
+      # node-opcua-client for group 'node-opcua' - belongs to more specific
+      # group 'production'", the same for the other two, then "Skipping update
+      # group for 'node-opcua' as it does not match any allowed dependencies".
+      # So the two groups below exclude the trio with `exclude-patterns`,
+      # which makes them stop containing it at all.
+      #
+      # It does not make the three share a version: Dependabot offers each
+      # package its own newest release, and the monorepo publishes a package
+      # only when it changes (there is no node-opcua-certificate-manager
+      # 2.187.18), so check that all three land on one version before merging.
+      node-opcua:
+        applies-to: version-updates
+        patterns: ["node-opcua-*"]
+        update-types: ["minor", "patch"]
+
       # What ships. Kept separate from tooling because a reviewer weighs these
       # against "does the editor still work in a browser", not "does lint pass".
       production:
         applies-to: version-updates
         dependency-type: "production"
+        exclude-patterns: ["node-opcua-*"]
         update-types: ["minor", "patch"]
 
       # What never leaves CI or a developer's machine. Safe to batch wide: the
@@ -74,6 +110,7 @@ updates:
       development:
         applies-to: version-updates
         dependency-type: "development"
+        exclude-patterns: ["node-opcua-*"]
         update-types: ["minor", "patch"]
 
     ignore:
@@ -116,6 +153,39 @@ updates:
       # this version (see tsup.config.ts). Moving it is an export-quality
       # decision to make in a browser, not a version bump.
       - dependency-name: "@zumer/snapdom"
+
+      # db2-node 1.0.26 and 1.0.27 intermittently fail a statement with
+      # QRYNOPRM on a live Db2, where 1.0.25 passes the live check 8 of 8
+      # (docs/BACKLOG.md P11). Our unit tests mock the driver, so the bump goes
+      # green in CI, and the weekly production group proposed it again in #1966
+      # and #2167, to be held by hand. Only these two versions are ignored, so a
+      # later release is still proposed, and it is measured live before it
+      # merges. Remove this entry when P11 closes.
+      - dependency-name: "db2-node"
+        versions: ["1.0.26", "1.0.27"]
+
+      # neo4j-driver-lite 6.3.0 waits for the agent-boundary captures of
+      # tests/live/neo4j-agent-captures.ts, which need Neo4j Enterprise, whose
+      # licence only the person running them can accept (docs/BACKLOG.md P13).
+      # The weekly production group proposed it in #2167 and again in #2188, to
+      # be held by hand each time. Only this version is ignored, so a later
+      # release is still proposed, and it is measured before it merges. Remove
+      # this entry when the pin moves and P13 closes.
+      - dependency-name: "neo4j-driver-lite"
+        versions: ["6.3.0"]
+
+      # Held at the major @simplewebauthn/server depends on (^2.1.0 as of
+      # 14.0.3). tests/helpers/attestation-chain.ts builds attestation chains
+      # with it, and tests/unit/lib/passkey/dependency-floor.test.ts fails unless
+      # this range equals the server's own, so both resolve to one copy. Two
+      # copies register into the one shared tsyringe container and the first to
+      # load answers for both: measured with x509 3 beside the server's x509 2
+      # (#2169), certificate generation fails with "Cannot get schema for
+      # 'AlgorithmIdentifier' target", and node-opcua-crypto, split off onto its
+      # own nested copy, fails the same way once the server has loaded. Lift
+      # this when a server release moves to x509 3.
+      - dependency-name: "@peculiar/x509"
+        update-types: ["version-update:semver-major"]
 
   # ------------------------------------------------------- VS Code extension
   # vscode-extension/ is an npm package with its own package-lock.json (vsce

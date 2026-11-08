@@ -194,7 +194,12 @@ export function pathMemory(initial: Partial<Record<WeaviatePathKind, WeaviatePat
 /** A surface context over `answering`, recording every request it sends. */
 export function surfaceContext(
   answering: Answering,
-  over: { readonly version?: string; readonly scoped?: boolean; readonly paths?: WeaviatePathState } = {},
+  over: {
+    readonly version?: string;
+    readonly scoped?: boolean;
+    readonly paths?: WeaviatePathState;
+    readonly readsObjects?: boolean;
+  } = {},
 ): { readonly context: WeaviateSurfaceContext<WeaviateOp>; readonly calls: LoggedCall[] } {
   const calls: LoggedCall[] = [];
   const signal = new AbortController().signal;
@@ -209,6 +214,7 @@ export function surfaceContext(
       version: version(over.version ?? "1.40.2"),
       paths: over.paths ?? pathMemory(),
       scoped: over.scoped ?? false,
+      readsObjects: over.readsObjects ?? true,
     },
   };
 }

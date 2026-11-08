@@ -2,7 +2,7 @@
 # Re-records every capture in this directory, in file order, on a fresh digest-pinned apache/druid:37.0.0 cluster:
 #
 #   tests/fixtures/druid/37.0.0/agent-boundary/run.sh unsecured   # 00 to 03, allowAll, the repo's druid profile
-#   tests/fixtures/druid/37.0.0/agent-boundary/run.sh secured     # 04 to 07, druid-basic-security
+#   tests/fixtures/druid/37.0.0/agent-boundary/run.sh secured     # 04 to 08, druid-basic-security
 #
 # Each run starts cluster.yml (the seven services of database-compose.yml's druid profile) under its own compose
 # project, DRUID_PROJECT, default libredb-druid-agent, with the Router on 127.0.0.1:DRUID_ROUTER_PORT, default 18888,
@@ -10,7 +10,7 @@
 # metadata store's, the admin's, the internal client's and the users' passwords are generated here for the run,
 # unless the environment already sets them, and handed to the cluster and probe.mjs in the environment; no capture
 # prints any of them. Each capture depends on the ones before it in its run: 00 writes the million-row datasource
-# 03 cancels a read of, and 04 makes the users 05 to 07 sign in as. 03's seconds differ run to run.
+# 03 cancels a read of, and 04 makes the users 05 to 08 sign in as. 03's seconds differ run to run.
 set -euo pipefail
 mode="$1"
 dir="$(cd "$(dirname "$0")" && pwd)"
@@ -56,4 +56,5 @@ else
   run 05-own-permissions-as-each-user
   run 06-writes-and-reads-as-each-user
   run 07-cancel-as-each-user
+  run 08-data-scope-as-each-user
 fi

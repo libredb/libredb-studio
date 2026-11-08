@@ -28,9 +28,19 @@ export interface SeedFieldRefusal {
   readonly sentence: string;
 }
 
-/** The fields a load check reads, as the file writes them: every one may be absent or a `${...}` reference. */
+/**
+ * The fields a load check reads, as the file writes them: every text one may be absent or a `${...}` reference, and
+ * `mcp` is the connection's MCP opt-in. `agentUser` and `agentPassword` are the seed's agent credential, the principal
+ * its agent profiles and MCP sign in as when it carries one. `agentReadRoots` is an OPC UA seed's read roots as the
+ * file writes them, not yet known to be a list of strings, which the engine's check decides.
+ */
 export type SeedCheckedFields = Readonly<
-  Partial<Record<"host" | "user" | "authMethod" | "privateKey" | "password" | "role", string>>
+  Partial<
+    Record<"host" | "user" | "authMethod" | "privateKey" | "password" | "role" | "agentUser" | "agentPassword", string>
+  > & {
+    readonly mcp?: boolean;
+    readonly agentReadRoots?: unknown;
+  }
 >;
 
 /**

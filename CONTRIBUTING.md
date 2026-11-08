@@ -18,6 +18,18 @@ Each translated README also carries a translation-lag banner: a blockquote above
 
 ## How Can I Contribute?
 
+### Issues and pull requests come from real users
+
+LibreDB Studio is maintained by volunteers, and every issue and pull request is read by a person.
+We expect them to come from people who use LibreDB Studio: a bug you hit while working with it, a feature you need, a fix for a problem you ran into.
+
+We close, without review, issues and pull requests that are opened by a bot or an autonomous agent, or that come from scanning the source code for edge cases rather than from using the product.
+The same applies to batches of reports opened minutes apart from one template, whether or not each finding is technically correct.
+An account that keeps doing this after being told is blocked from the libredb organization.
+
+Using an AI tool to help you write a report or a patch is fine.
+What we ask is that you used the product, reproduced the problem yourself, and stand behind what you submit.
+
 ### Reporting Bugs
 
 Before creating bug reports, please check the existing issues to avoid duplicates. When you create a bug report, include as many details as possible:
@@ -55,6 +67,8 @@ Feature suggestions are welcome! Please provide:
      && bun run readme:check && bun run chart:check && bun run channels:showcase:check \
      && bun run security:check && bun run test && bun run build
    ```
+
+   `bun run typecheck` and `bun run build` give Node a 6 GB heap themselves, because a first run without the incremental cache outgrows the default of about 4 GB, so you do not need to set `NODE_OPTIONS`.
 
    **CI is the merge gate.** If you cannot run a command locally, list that command and the reason
    under a `Testing` heading in your PR body; submit the PR, and a maintainer will approve the fork's

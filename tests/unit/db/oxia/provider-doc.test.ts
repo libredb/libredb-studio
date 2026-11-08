@@ -16,8 +16,15 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import {
+  connectionFieldHint,
+  DB_UI_CONFIG,
+  hostUriSchemes,
+  offersSshTunnel,
+  READ_ONLY_FIXED_HINT,
+} from "@/lib/db-ui-config";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED, WRITE_REACH } from "@/lib/db/compatibility";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { CREDENTIAL_WARNINGS, credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
@@ -708,6 +715,7 @@ describe("docs/providers/oxia.md quotes what the provider's modules say", () => 
       objectKinds: "`OXIA_OBJECT_KINDS`",
       keyScan: "`OXIA_KEY_SCAN`",
       metadataOnly: "`OXIA_METADATA_ONLY`",
+      writeReach: "`OXIA_WRITE_REACH`",
     };
     for (const [key, value] of Object.entries(capabilities)) {
       let cell = written[key];
@@ -890,8 +898,9 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
     expect(config.defaultPort).toBe(String(OXIA_DEFAULT_PORT));
   });
 
-  test("P2. the read-only hint in section 3.5 is the dialog's", () => {
-    expect(flat(sectionOf(DOC, "### 3.5 The read-only mode"))).toContain(readOnlyHint(DB_UI_CONFIG.oxia));
+  test("P2. the sentence under the fixed Read-only label in section 3.5 is the dialog's", () => {
+    expect(WRITE_REACH.oxia).toBe("none");
+    expect(flat(sectionOf(DOC, "### 3.5 The read-only mode"))).toContain(READ_ONLY_FIXED_HINT);
   });
 
   test("P3. the credential warning is the record's, and a seed without a token is not refused", () => {
@@ -908,7 +917,7 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
     const built = await createDatabaseProvider(oxiaConnection());
     expect(built).toBeInstanceOf(OxiaProvider);
     expect(built.getCapabilities()).toEqual(provider.getCapabilities());
-    expect(READ_ONLY_ENFORCED.oxia).toBe(provider.getCapabilities().enforcesReadOnly === true);
+    expect(READ_ONLY_ENFORCED.oxia).toBe(summarizeWriteReach(provider.getCapabilities().writeReach) !== "open");
     expect(offersSshTunnel("oxia")).toBe(true);
     expect(flat(sectionOf(DOC, "### 4.5 SSH tunnel"))).toContain(
       "The dialog offers the SSH tunnel on every Oxia connection",
@@ -1018,7 +1027,7 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
       "- **Oxia has no authorization.** A token that authenticates reads and writes every namespace, so Studio's read-only mode is a property of what Studio sends (it has no write call at all, row 3.15), never of the token. A standalone server has no authentication. An advertised leader decides where reads go, which row 3.14 bounds, and a Data servers entry is the operator's statement that the token may go there.",
     );
     expect(knownLimit("**A statement the editor refuses is never sent and never written to history.**")).toContain(
-      "The Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3 and Kubernetes rows declare both (rows 3.11, 3.12, 3.15, 3.18, 3.20 and 3.25); no other shipped engine declares either.",
+      "The Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3, Kubernetes and Firestore rows declare both, and the Redis row declares a refusal and no bound; no other shipped engine declares either.",
     );
   });
 

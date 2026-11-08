@@ -3,7 +3,7 @@
  *
  * THE GAP. This provider declares no `queryDialect`. It cannot: the dialect union is itself a
  * registration surface, a member arrives with three records, and
- * `docs/ADDING_A_PROVIDER.md:1088` says "the build fails until all three exist". Measured:
+ * the "Quick Reference Checklist" section of `docs/ADDING_A_PROVIDER.md` says "the build fails until all three exist". Measured:
  * declaring `queryDialect: "modbus"` before those records exist does not typecheck.
  *
  * The cost is not hidden. A `json` provider with no dialect of its own is given MongoDB's tab
@@ -13,14 +13,15 @@
  * look at is a gap that ships.
  */
 import { describe, expect, test } from "bun:test";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import {
   atBoundary,
   MODBUS_NO_MAP_INVENTORY_SENTENCE,
   MODBUS_NO_REVOCATION_SENTENCE,
-  MODBUS_READ_ONLY_HINT,
   ModbusProvider,
 } from "@/lib/db/providers/industrial/modbus/index";
 import { ModbusMapError } from "@/lib/db/providers/industrial/modbus/register-map";
+import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import { ModbusRequestError } from "@/lib/db/providers/industrial/modbus/pdu";
 import { ModbusDecodeError } from "@/lib/db/providers/industrial/modbus/values";
 import { ModbusValveDefect } from "@/lib/db/providers/industrial/modbus/valve";
@@ -122,7 +123,7 @@ describe("the dialect, and the gap it closed", () => {
 describe("the declarations", () => {
   test("read only is enforced and no maintenance is offered", () => {
     const caps = provider().getCapabilities();
-    expect(caps.enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(caps.writeReach)).toBe("none");
     expect(caps.supportsMaintenance).toBe(false);
     expect(caps.maintenanceOperations).toEqual([]);
   });
@@ -348,7 +349,7 @@ describe("what the provider refuses rather than fakes", () => {
 describe("a refusal is a QueryError, because the product treats it differently", () => {
   /**
    * Measured rather than assumed: `isQueryError` tests `instanceof QueryError`, and at least one
-   * reader (`platform/kubernetes/objects.ts:348`) turns a `QueryError` into `{ unavailable }` while
+   * reader (`countKind` in `platform/kubernetes/objects.ts`) turns a `QueryError` into `{ unavailable }` while
    * letting anything else propagate as an unexpected failure. A refusal thrown as a plain `Error`
    * therefore reaches the user as a crash instead of as the sentence it carries. The first version
    * of the provider threw plain errors; these tests exist so that cannot come back.
@@ -415,9 +416,10 @@ describe("every capability this provider does not have, asserted on the real cla
 });
 
 describe("the sentences the product has to say out loud", () => {
-  test("the read only hint says the device enforces nothing", () => {
-    expect(MODBUS_READ_ONLY_HINT).toContain("device enforces nothing");
-    expect(MODBUS_READ_ONLY_HINT).toContain("can write to it");
+  test("the dialog's Host hint says the device enforces nothing, beside the fixed Read-only label", () => {
+    const hint = CONNECTION_FORM.modbus.fieldHints?.host;
+    expect(hint).toContain("device enforces nothing");
+    expect(hint).toContain("can write to it");
   });
 
   test("the mbaps sentence says revocation is not checked, and names both runtimes", () => {

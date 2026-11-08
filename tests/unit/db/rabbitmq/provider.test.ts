@@ -3,6 +3,7 @@
  * its production seams with no I/O.
  */
 import { describe, expect, test } from "bun:test";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { AMQP_PORT_EMPTY_CAUTION } from "@/lib/db/providers/stream/rabbitmq/errors";
@@ -29,7 +30,6 @@ describe("declarations", () => {
     expect(capabilities).toMatchObject({
       queryLanguage: "json",
       queryDialect: "rabbitmq",
-      enforcesReadOnly: true,
       supportsExplain: false,
       supportsTransactions: false,
       supportsMaintenance: false,
@@ -45,7 +45,7 @@ describe("declarations", () => {
       schemaRefreshPattern: "(?!)",
       defaultPort: 15672,
     });
-    expect(READ_ONLY_ENFORCED.rabbitmq).toBe(capabilities.enforcesReadOnly === true);
+    expect(READ_ONLY_ENFORCED.rabbitmq).toBe(summarizeWriteReach(capabilities.writeReach) !== "open");
   });
 
   test("one container level, the virtual host, and three static kinds", () => {
@@ -121,7 +121,7 @@ describe("seams", () => {
 
   test("the factory keeps a read-only connection's mode, because the provider enforces it", async () => {
     const provider = await createDatabaseProvider(rabbitmqConnection({ readOnly: true }));
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
   });
 });
 

@@ -1,0 +1,756 @@
+{
+  "measured": "2026-11-03",
+  "server": "prom/prometheus@sha256:6976aa8a60fec930796ce5772b8d12da7a318a5daa8d40d69c5c7819a05eeed7, --web.enable-admin-api --web.enable-remote-write-receiver --web.enable-lifecycle, no scrape job",
+  "readOnlyConnectionAccepted": true,
+  "surfaces": [
+    {
+      "surface": "read-only connection: connect",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: listObjects metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: describeObjects metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: describeObject metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: readObjectSource metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: listObjects rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: describeObjects rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: describeObject rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: readObjectSource rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: listObjects recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: describeObjects recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: describeObject recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: readObjectSource recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: listObjects alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: describeObjects alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: describeObject alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: readObjectSource alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: listObjects scrape_pool",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: describeObjects scrape_pool",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: listObjects target",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: describeObjects target",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: listContainers",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: countObjects",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: getHealth",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: getOverview",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: getPerformanceMetrics",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: getSlowQueries",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: getActiveSessions",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: getTableStats",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: getIndexStats",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: getStorageStats",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: getMonitoringData",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: runMaintenance vacuum",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: runMaintenance analyze",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: runMaintenance reindex",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: runMaintenance optimize",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: runMaintenance check",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: runMaintenance kill",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "read-only connection: query",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: connect",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: listObjects metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: describeObjects metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: describeObject metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: readObjectSource metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: listObjects rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: describeObjects rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: describeObject rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: readObjectSource rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: listObjects recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: describeObjects recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: describeObject recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: readObjectSource recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: listObjects alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: describeObjects alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: describeObject alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: readObjectSource alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: listObjects scrape_pool",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: describeObjects scrape_pool",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: listObjects target",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: describeObjects target",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: listContainers",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: countObjects",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: getHealth",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: getOverview",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: getPerformanceMetrics",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: getSlowQueries",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: getActiveSessions",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: getTableStats",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: getIndexStats",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: getStorageStats",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: getMonitoringData",
+      "ok": false,
+      "error": "DatabaseError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: runMaintenance vacuum",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: runMaintenance analyze",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: runMaintenance reindex",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: runMaintenance optimize",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: runMaintenance check",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: runMaintenance kill",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent read-only profile: queryReadOnly",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: connect",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: listObjects metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: describeObjects metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: describeObject metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: readObjectSource metric",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: listObjects rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: describeObjects rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: describeObject rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: readObjectSource rule_group",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: listObjects recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: describeObjects recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: describeObject recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: readObjectSource recording_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: listObjects alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: describeObjects alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: describeObject alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: readObjectSource alerting_rule",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: listObjects scrape_pool",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: describeObjects scrape_pool",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: listObjects target",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: describeObjects target",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: listContainers",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: countObjects",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: getHealth",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: getOverview",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: getPerformanceMetrics",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: getSlowQueries",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: getActiveSessions",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: getTableStats",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: getIndexStats",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: getStorageStats",
+      "ok": true,
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: getMonitoringData",
+      "ok": false,
+      "error": "DatabaseError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: runMaintenance vacuum",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: runMaintenance analyze",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: runMaintenance reindex",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: runMaintenance optimize",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: runMaintenance check",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    },
+    {
+      "surface": "agent operations profile: runMaintenance kill",
+      "ok": false,
+      "error": "QueryError",
+      "seriesBefore": 4,
+      "seriesAfter": 4
+    }
+  ],
+  "studioLeftSeriesUnchanged": true,
+  "requestsByStudio": 94,
+  "sentByStudio": [
+    "GET /-/healthy",
+    "GET /-/ready",
+    "GET /api/v1/label/__name__/values",
+    "GET /api/v1/labels",
+    "GET /api/v1/metadata",
+    "GET /api/v1/rules",
+    "GET /api/v1/scrape_pools",
+    "GET /api/v1/series",
+    "GET /api/v1/status/buildinfo",
+    "GET /api/v1/status/flags",
+    "GET /api/v1/status/runtimeinfo",
+    "GET /api/v1/status/tsdb",
+    "GET /api/v1/targets",
+    "POST /api/v1/query"
+  ],
+  "rawWrite": {
+    "status": 204,
+    "seriesBefore": 4,
+    "seriesAfter": 5
+  }
+}

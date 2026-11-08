@@ -260,7 +260,15 @@ describe("declarations", () => {
       supportsTransactions: false,
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
-      enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/providers/timeseries/influxdb/influxql-policy.ts", symbol: "evaluateInfluxql" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: { reach: "absent" },
+        transaction: { reach: "absent" },
+      },
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

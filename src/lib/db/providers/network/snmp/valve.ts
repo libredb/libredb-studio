@@ -11,7 +11,7 @@
  * scoped PDU is encrypted before it reaches the socket: measured against `net-snmp` 3.29.2 on
  * 13 October 2026, the outgoing message's msgData field is an encryptedPDU (tag 0x04) and the
  * PDU type is not in the datagram at all. Encryption happens in the library's message builder
- * (`index.js:1685`) and the socket it is given is created later (`index.js:2132`), so there is
+ * (in its `index.js`) and the socket it is given is created later, in the session that sends the message, so there is
  * no point between the two a caller reaches without patching the library. The valve therefore
  * returns "opaque" for that case rather than guessing, and the seam carries the guarantee
  * there. It still covers v2c, authNoPriv, and the discovery leg of an authPriv session, which

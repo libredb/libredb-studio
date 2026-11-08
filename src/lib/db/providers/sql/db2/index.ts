@@ -72,7 +72,16 @@ import {
   verifyAgentPrincipal,
 } from "./agent-read";
 import { db2Capabilities, db2Labels } from "./capabilities";
-import { CODE_PAGE_SQL, decodeCatalogRow } from "./catalog";
+import {
+  CODE_PAGE_SQL,
+  type ColumnSource,
+  codePageOfCharacterSet,
+  decodeCatalogRow,
+  SYSCAT_COLUMNS,
+  VALUE_FREE_CODE_PAGE_SQL,
+  VALUE_FREE_COLUMNS,
+  zeroRowDescribeSql,
+} from "./catalog";
 import {
   type CaFileSystem,
   type Db2Connection,
@@ -138,11 +147,16 @@ export class Db2Provider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
-  /** The object surface's way to the catalog: decoded rows, and the code page they need. */
-  private readonly reader: objects.CatalogReader = {
-    read: (sql, params) => this.readCatalog(sql, params),
-    codePage: () => this.codePage(),
-  };
+  /**
+   * Whether this provider reads columns and the code page from the value-free sources (`catalog.ts`): under every agent
+   * profile (`readOnly`), the operations profile's `inspect_schema` and grounding included, since the agent user's seed
+   * revokes `SYSCAT.COLUMNS`, whose `HIGH2KEY` and `LOW2KEY` hold stored values. Chosen here by the profile, never by
+   * an error; every other handle keeps the catalog's reads whole.
+   */
+  private readonly valueFree: boolean;
+
+  /** The object surface's way to the catalog: decoded rows, the code page they need, and the column source. */
+  private readonly reader: objects.CatalogReader;
 
   constructor(
     config: Db2Connection,
@@ -152,6 +166,15 @@ export class Db2Provider extends SQLBaseProvider {
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.valueFree = execution.readOnly === true;
+    const columns: ColumnSource = this.valueFree ? VALUE_FREE_COLUMNS : SYSCAT_COLUMNS;
+    this.reader = {
+      read: (sql, params) => this.readCatalog(sql, params),
+      codePage: () => this.codePage(),
+      columns,
+      describe: async (schema, table) =>
+        (await this.connected().query(zeroRowDescribeSql(schema, table), undefined)).columns,
+    };
     this.loadDriver = seams.loadDriver ?? loadDb2Driver;
     this.caFileSystem = seams.caFileSystem ?? NODE_CA_FILE_SYSTEM;
     this.validate();
@@ -511,9 +534,14 @@ export class Db2Provider extends SQLBaseProvider {
     return result.rows.map((row) => decodeCatalogRow(row, codePage));
   }
 
-  /** The database's code page, read once per connection. */
+  /** The database's code page, read once per connection, from the source the profile reads. */
   private async codePage(): Promise<number> {
     if (this.codePageValue !== undefined) return this.codePageValue;
+    if (this.valueFree) {
+      const result = await this.connected().query(VALUE_FREE_CODE_PAGE_SQL, undefined);
+      this.codePageValue = codePageOfCharacterSet(result.rows[0]?.CHARACTER_SET_NAME);
+      return this.codePageValue;
+    }
     const result = await this.connected().query(CODE_PAGE_SQL, undefined);
     const codePage = result.rows[0]?.CODEPAGE;
     if (typeof codePage !== "number") {

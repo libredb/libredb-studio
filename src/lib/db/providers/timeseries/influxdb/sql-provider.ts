@@ -108,6 +108,16 @@ import {
   pingNeedsHealth,
   readPing,
 } from "./versions";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the SQL policy refuses every statement that does not lead with a read keyword before any
+ * request.
+ */
+const INFLUX_SQL_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/timeseries/influxdb/sql-policy.ts",
+  symbol: "evaluateInfluxSql",
+});
 
 const INFLUXDB3: InfluxType = "influxdb3";
 
@@ -261,7 +271,7 @@ export class InfluxDB3Provider extends SQLBaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // The route table plus the engine (I8).
-      enforcesReadOnly: true,
+      writeReach: INFLUX_SQL_WRITE_REACH,
       // The agent's own credential is a token alone, as the connection's is: this type takes no user.
       agentCredential: "token",
       supportsMaintenance: false,

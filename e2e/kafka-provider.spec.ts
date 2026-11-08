@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * Gate 2 and gate 5 for the Apache Kafka provider (#1088).
@@ -95,6 +96,28 @@ test.describe("Apache Kafka in the connection dialog", () => {
     const result = dialog.getByTestId("connection-test-result");
     await expect(result).toContainText("needs a SASL mechanism", { timeout: 15000 });
     await expect(result).not.toContainText("requires TLS");
+  });
+
+  test("shows a fixed Read-only label and no checkbox, since Studio has no write path on this engine", async ({
+    page,
+  }) => {
+    const dialog = page.locator('[role="dialog"]');
+    await dialog.getByRole("button", { name: "Apache Kafka", exact: true }).click();
+
+    await expect(dialog.locator("#host")).toBeVisible();
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
+  });
+
+  test("an engine Studio can write draws no read-only control at all", async ({ page }) => {
+    // The control for the label above: PostgreSQL's reach is open, so the same locators find nothing.
+    const dialog = page.locator('[role="dialog"]');
+    await dialog.getByRole("button", { name: "PostgreSQL", exact: true }).click();
+
+    await expect(dialog.locator("#host")).toBeVisible();
+    await expect(dialog.locator("#readOnly-label")).toHaveCount(0);
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
   });
 
   test("another engine draws its Database box and SSH Tunnel toggle", async ({ page }) => {

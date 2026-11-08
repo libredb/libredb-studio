@@ -1,0 +1,7 @@
+# as the user the file rules grant the pg query table function to: a schema in the shared lake catalog, a SECURITY DEFINER view over a pass-through dblink write, and a view that names no security, all in autocommit
+> [owner, autocommit] CREATE SCHEMA "lake"."views"
+  OK [] []
+> [owner, autocommit] CREATE VIEW "lake"."views"."pass_through" SECURITY DEFINER AS SELECT * FROM TABLE("pg"."system"."query"(query => 'SELECT * FROM dblink_exec(''dbname=postgres user=postgres'', ''INSERT INTO public.rp_t VALUES (301)'') AS r'))
+  OK [] []
+> [owner, autocommit] CREATE VIEW "lake"."views"."plain" AS SELECT 1 AS a
+  OK [] []

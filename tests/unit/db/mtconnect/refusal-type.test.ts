@@ -2,7 +2,7 @@
  * What TYPE a refusal is when it leaves this provider (#1722).
  *
  * WHY THE TYPE AND NOT THE MESSAGE. MEASURED on `origin/main`:
- * `providers/platform/kubernetes/objects.ts:348` turns a `QueryError` or a `TimeoutError` into
+ * `countKind` in `providers/platform/kubernetes/objects.ts` turns a `QueryError` or a `TimeoutError` into
  * `{ unavailable: error.message }` and re-throws everything else, and `src/lib/db/errors.ts`
  * defines `isQueryError` as `instanceof QueryError`. A refusal thrown as a plain `Error` is
  * therefore handled as an unexpected failure, and the sentence it carries never reaches the

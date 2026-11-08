@@ -234,10 +234,16 @@ describe("the query path (spec 5)", () => {
     },
   );
 
-  test("a write is refused by the policy and makes no run", async () => {
+  // Every write the editor could send is refused by the policy before Bolt sees it: not even the EXPLAIN runs.
+  test.each([
+    ["CREATE", "CREATE (n:Person {name: 'x'})"],
+    ["MERGE", "MERGE (n:Person {name: 'x'})"],
+    ["LOAD CSV", "LOAD CSV FROM 'file:///not-a-real-file.csv' AS row RETURN row"],
+    ["TERMINATE TRANSACTIONS", "TERMINATE TRANSACTIONS 'not-a-real-transaction'"],
+  ])("a %s is refused by the policy and makes no run", async (_, statement) => {
     const { provider, calls } = await connected();
     const before = calls.length;
-    await expect(provider.query("CREATE (n:Person {name: 'x'})")).rejects.toThrow(QueryError);
+    await expect(provider.query(statement)).rejects.toThrow(QueryError);
     expect(calls.length).toBe(before);
     await provider.disconnect();
   });

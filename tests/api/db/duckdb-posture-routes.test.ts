@@ -87,6 +87,7 @@ const handlers: Record<string, Handler> = {
   "objects/source": (await import("@/app/api/db/objects/source/route")).POST as Handler,
   "keys/scan": (await import("@/app/api/db/keys/scan/route")).POST as Handler,
   "provider-meta": (await import("@/app/api/db/provider-meta/route")).POST as Handler,
+  "statement/analyze": (await import("@/app/api/db/statement/analyze/route")).POST as Handler,
   "test-connection": (await import("@/app/api/db/test-connection/route")).POST as Handler,
 };
 const fleetHealth = (await import("@/app/api/admin/fleet-health/route")).POST as Handler;
@@ -101,13 +102,14 @@ const EXTRA: Record<string, Record<string, unknown>> = {
   cancel: { queryId: "q-1" },
   maintenance: { type: "vacuum" },
   "maintenance/preview": { type: "vacuum", target: "t" },
+  "statement/analyze": { text: "SELECT 1", selection: { start: 0, end: 0 }, cursor: 0 },
 };
 
 /** The routes refused to every role but admin before any provider is opened. */
 const ADMIN_ONLY = new Set(["maintenance", "maintenance/preview"]);
 
 /** The routes that build their own provider rather than take a cached one. */
-const BUILDS_ITS_OWN = new Set(["provider-meta", "test-connection"]);
+const BUILDS_ITS_OWN = new Set(["provider-meta", "statement/analyze", "test-connection"]);
 
 const workDir = mkdtempSync(join(tmpdir(), "libredb-duckdb-posture-routes-"));
 const seedConfigFile = join(workDir, "seed-connections.json");
@@ -117,6 +119,13 @@ writeFileSync(
     version: "1",
     connections: [
       { id: "duck-shared", name: "Shared", type: "duckdb", database: join(workDir, "shared.duckdb"), roles: ["*"] },
+      {
+        id: "duck-pair",
+        name: "Pair",
+        type: "duckdb",
+        database: join(workDir, "pair.duckdb"),
+        roles: ["admin", "user"],
+      },
       { id: "duck-admin", name: "Admin", type: "duckdb", database: join(workDir, "admin.duckdb"), roles: ["admin"] },
     ],
   }),
@@ -170,6 +179,11 @@ describe("each handle-opening route passes the posture the session and the conne
   test.each(ROUTES)("%s: an admin on a seed every role can use is denied too", async (route) => {
     role = "admin";
     expect(await postureFrom(route, { connectionId: "seed:duck-shared" })).toEqual({ allowExternalFileAccess: false });
+  });
+
+  test.each(ROUTES)("%s: an admin on a seed offered to admin and user is denied too", async (route) => {
+    role = "admin";
+    expect(await postureFrom(route, { connectionId: "seed:duck-pair" })).toEqual({ allowExternalFileAccess: false });
   });
 
   test.each(ROUTES)("%s: an admin on a seed only admins can use keeps the full reach", async (route) => {
@@ -272,6 +286,12 @@ describe("POST /api/admin/fleet-health passes the same posture for each connecti
         managed: true,
         seedId: "duck-shared",
       }),
+    ).toEqual({ allowExternalFileAccess: false });
+  });
+
+  test("a managed seed offered to admin and user is resolved, and denied", async () => {
+    expect(
+      await fleetPosture({ id: "seed:duck-pair", name: "Pair", type: "duckdb", managed: true, seedId: "duck-pair" }),
     ).toEqual({ allowExternalFileAccess: false });
   });
 

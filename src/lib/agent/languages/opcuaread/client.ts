@@ -8,15 +8,15 @@ import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
 import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
 
-/** What is withheld and why, in the words the posture uses; the server's sentence names each node id. */
-const WITHHELD =
-  "Withheld, with everything beneath them, because they hold certificates, account names, role identities and every open session's client, user identity and endpoint, are the server's ServerConfiguration, RoleSet and session diagnostics and its PubSub security groups and key push targets; a value read naming one answers it withheld, a browse steps over it and names it, and a history read or browse of one is refused.";
+/** What agent mode reads and what it never does, in the words the posture uses. */
+const READ_ROOTS =
+  "It reads only beneath the read roots the connection's operator declared on its seed entry, and every other node, the server's configuration, roles and sessions among them, answers as a node the server does not hold, with nothing sent for it.";
 
 /**
  * Agent mode on OPC UA: the boundary is the provider's structural closed seam, a client that holds the read services
  * alone, Browse, BrowseNext, Read and HistoryRead, with no Write, Call, node management or subscription in it. Its
- * answers carry the server's process values, each with its engineering units, and never anything of the withheld
- * nodes, which the body names.
+ * answers carry the server's process values, each with its engineering units, and only beneath the connection's read
+ * roots.
  */
 function opcuareadReadsPosture(bounds: StatementBudgets): AgentPosture {
   const rows = bounds.maxResultRows;
@@ -26,7 +26,7 @@ function opcuareadReadsPosture(bounds: StatementBudgets): AgentPosture {
     headline: "Reads only",
     qualifier: `${rows} rows and ${seconds} s per read, one session per read, over a client that sends only Browse, BrowseNext, Read and HistoryRead`,
     title: "Agent mode reads the OPC UA server's values, history and address space, and never writes or calls a method",
-    body: `Agent mode runs OPC UA reads it wrote itself, each one JSON request: the current values of the nodes it names, one node's raw history, or the children of one node. It answers the server's values as the console renders them, each with its node's engineering units and EU range as the server publishes them, or "no units published" where it publishes none, never a unit Studio guessed, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. ${WITHHELD} Each read opens its own session and closes it, so nothing is held between reads. Studio's agent client holds only Browse, BrowseNext, Read and HistoryRead, so it cannot write a value, call a method, change a node or subscribe. Nothing reaches your editor.`,
+    body: `Agent mode runs OPC UA reads it wrote itself, each one JSON request: the current values of the nodes it names, one node's raw history, or the children of one node. It answers the server's values as the console renders them, each with its node's engineering units and EU range as the server publishes them, or "no units published" where it publishes none, never a unit Studio guessed, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. ${READ_ROOTS} Each read opens its own session and closes it, so nothing is held between reads. Studio's agent client holds only Browse, BrowseNext, Read and HistoryRead, so it cannot write a value, call a method, change a node or subscribe. Nothing reaches your editor.`,
   };
 }
 
@@ -51,7 +51,7 @@ export const OPCUAREAD_CLIENT_PACK = Object.freeze({
     noun: "request",
     argument: "statement",
     writes:
-      "every Write, method Call, node change and subscription, and every read of the server's configuration, role identities and session diagnostics",
+      "every Write, method Call, node change and subscription, and every read outside the connection's read roots",
     reached: "the server",
     defect: "your request",
     adviceKeys: Object.freeze([]),

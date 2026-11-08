@@ -132,6 +132,8 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/base-provider.ts",
     "src/lib/db/object-kinds.ts",
     "src/lib/db/providers/sql/read-only-budget.ts",
+    // The shared write-reach declaration helpers, a pure module that names no engine.
+    "src/lib/db/write-reach.ts",
   ],
   sql: [
     ...CONNECTION_OUTSIDE,
@@ -146,6 +148,7 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/object-kinds.ts",
     "src/lib/db/providers/sql/sql-base.ts",
     "src/lib/db/providers/sql/read-only-budget.ts",
+    "src/lib/db/write-reach.ts",
   ],
   grammar: ["src/lib/db/sql-grammar/"],
   contract: ["src/lib/db/migration-ddl/"],

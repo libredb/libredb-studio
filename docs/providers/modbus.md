@@ -10,6 +10,10 @@ This document describes what the provider does TODAY. Where a part is built and 
 from the product, the section says so in those words rather than describing the intention as if it
 were behaviour.
 
+| | |
+|---|---|
+| **Write reach** | none: the valve, `assertOutboundAllowed`, admits only the read function codes and device identification on every outbound frame; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 Modbus is a register protocol, not a database protocol. A device holds four tables of 65,536 items
@@ -153,8 +157,9 @@ Host, Port and the register map ([section 3.1](#31-the-register-map-is-the-data-
 
 Modbus TCP defines no authentication: no user, no password, no token. The form offers none because
 there is none to offer. What protects a device is MODBUS/TCP Security or a network path you
-control, and the read-only hint in the connection dialog says exactly that rather than implying
-Studio's posture protects the device.
+control. The connection dialog's fixed Read-only label says only that Studio has no write path on
+the device, and the Host field's hint says the rest: the device enforces nothing of its own, so
+anything else that reaches its port can still write to it.
 
 ### 4.3 Unit ids
 

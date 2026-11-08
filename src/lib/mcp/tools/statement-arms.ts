@@ -16,13 +16,16 @@ import {
 import { languageServer } from "@/lib/agent/languages/server";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
+import type { McpReach } from "../context";
 import { checkReadOnlyStatement } from "../guards/execution-fence";
 import { MCP_UNTRUSTED_NOTICE } from "../output";
 import { DATABASE_ARGUMENT_DESCRIPTION } from "./database-choice";
 import {
   fenceRefusalText,
+  MCP_TIMEOUT_BOUNDS_MS,
   moreRowsThanPageableHint,
   ROW_OVER_CAP_TEXT,
+  tooLargeTextsOf,
   type ReadOnlyRefusalKind,
 } from "./read-query-limits";
 import { mcpStatementEngines } from "./served-engines";
@@ -68,13 +71,23 @@ export interface McpStatementArm {
    * holds it to every served engine's own relation kinds.
    */
   readonly holdsNoTables: boolean;
+  /**
+   * True where the provider's warnings on this arm's answers are Studio's own sentences an answer must carry, so they
+   * reach the client as `notes`; the language's facet declares it, and every other arm's answers carry no warning.
+   */
+  readonly answersWarnings: boolean;
+  /**
+   * True where a connection's database setting is a stored value on this language's engines, so list_connections leaves
+   * it out; the language's facet declares it.
+   */
+  readonly withholdsDatabase: boolean;
   readonly description: string;
   /** The argument as the one statement text every later step reads, or null when it carries no statement. */
   canonicalize(raw: unknown): string | null;
   /** The defence-in-depth fence's refusal of `statement` on `type`, in this server's words, or null when admitted. */
   fence(statement: string, type: DatabaseType): string | null;
-  /** The budget refusals in this language's words; a refusal left out answers with the shared SQL text. */
-  tooLarge(statement: string): TooLargeTexts;
+  /** The budget refusals in this language's and `type`'s words; a refusal left out answers with the shared SQL text. */
+  tooLarge(statement: string, type: DatabaseType): TooLargeTexts;
   /** The answer when even the first row does not fit the result cap. */
   readonly rowOverCap: string;
   /** The hint when more rows exist than the result holds and no next offset can be named. */
@@ -92,7 +105,17 @@ const CONNECTION_ID = z.string().min(1, "connection_id is required");
 const DATABASE = z.string().min(1).optional().describe(DATABASE_ARGUMENT_DESCRIPTION);
 const MAX_ROWS = z.number().int().min(1).max(500).default(100);
 const OFFSET = z.number().int().min(0).default(0);
-const TIMEOUT_MS = z.number().int().min(500).max(30000).default(10000);
+const TIMEOUT_MS = z.number().int().min(MCP_TIMEOUT_BOUNDS_MS.min).max(MCP_TIMEOUT_BOUNDS_MS.max).default(10000);
+
+/** The timeout of a tool whose reads need more than the shared least: refused below it, in the facet's words. */
+function leastTimeoutMs(tool: string, least: { readonly ms: number; readonly why: string }) {
+  return z
+    .number()
+    .int()
+    .min(least.ms, `timeout_ms must be at least ${least.ms} for ${tool}: ${least.why}`)
+    .max(MCP_TIMEOUT_BOUNDS_MS.max)
+    .default(10000);
+}
 const SHARED_LIMITS =
   "Returns at most max_rows rows (default 100, at most 500) and at most 32 KiB; truncated and pagination.hasMore say when rows were cut";
 
@@ -100,7 +123,8 @@ const engineNames = (types: readonly DatabaseType[]) => namedList(types.map((typ
 
 /**
  * An arm's input: the connection, a `database` where the facet takes one, the statement under the language's own
- * argument, the row cap, an `offset` where the arm pages, and the timeout, in the order tools/list shows them.
+ * argument, the row cap, an `offset` where the arm pages, and the timeout, from the facet's least where it declares
+ * one, in the order tools/list shows them.
  */
 function statementInputSchema(facet: AgentLanguageMcpFacet, argument: AgentStatementArgument): z.ZodObject {
   const shape = {
@@ -109,7 +133,7 @@ function statementInputSchema(facet: AgentLanguageMcpFacet, argument: AgentState
     [argument]: facet.statementInput,
     max_rows: MAX_ROWS,
     ...(facet.paging === "offset" ? { offset: OFFSET } : {}),
-    timeout_ms: TIMEOUT_MS,
+    timeout_ms: facet.leastTimeout === undefined ? TIMEOUT_MS : leastTimeoutMs(facet.tool, facet.leastTimeout),
   };
   return facet.strictInput ? z.strictObject(shape) : z.object(shape);
 }
@@ -121,7 +145,7 @@ const READ_ONLY_STATEMENT_READER = {
     const violation = checkReadOnlyStatement(statement);
     return violation === null ? null : fenceRefusalText(violation, type);
   },
-  tooLarge: () => ({}),
+  tooLarge: (_statement: string, type: DatabaseType) => tooLargeTextsOf(type),
   rowOverCap: ROW_OVER_CAP_TEXT,
   moreRows: (_statement: string, type: DatabaseType) => moreRowsThanPageableHint(type),
 } satisfies Pick<McpStatementArm, "canonicalize" | "fence" | "tooLarge" | "rowOverCap" | "moreRows">;
@@ -150,8 +174,8 @@ function languageAdmissionReader(
     // that limit again and be cut again, so it names the rows that fitted and how to read past them.
     moreRows(statement: string, _type: DatabaseType, { maxRows, shown, cut }: MoreRowsCut) {
       return cut === "result_bytes"
-        ? `More rows exist than the 32 KiB result limit holds, and ${shown} of them fitted; this tool does not page with offset. ${own.fewerFields} to fit more rows, and to ${own.readPast(shown)}`
-        : `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(statement, String(maxRows))} To ${own.readPast(shown)}`;
+        ? `More rows exist than the 32 KiB result limit holds, and ${shown} of them fitted; this tool does not page with offset. ${own.fewerFields} to fit more rows, and to ${own.readPast(shown, cut, statement)}`
+        : `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(statement, String(maxRows))} To ${own.readPast(shown, cut, statement)}`;
     },
   };
 }
@@ -171,6 +195,8 @@ function statementArm(language: AgentStatementLanguageId, facet: AgentLanguageMc
     types,
     engines,
     holdsNoTables: facet.holdsNoTables,
+    answersWarnings: "answersWarnings" in facet && facet.answersWarnings === true,
+    withholdsDatabase: "withholdsDatabase" in facet && facet.withholdsDatabase === true,
     description: `${facet.describe({ engines, limits: SHARED_LIMITS })} ${MCP_UNTRUSTED_NOTICE}`,
     ...(facet.fence === "read-only-statement"
       ? READ_ONLY_STATEMENT_READER
@@ -218,6 +244,17 @@ export function servingStatementArms(
   return Object.values(arms).filter((arm): arm is McpStatementArm => arm !== null && arm.types.length > 0);
 }
 
+/**
+ * The serving arms that serve an engine in `reached`, in record order: the statement tools one token's tools/list
+ * holds. A registry read only, since each arm's `types` already come from the served-engine resolver.
+ */
+export function listedStatementArms(
+  reached: McpReach,
+  arms: Readonly<Record<AgentStatementLanguageId, McpStatementArm | null>> = MCP_STATEMENT_ARMS,
+): readonly McpStatementArm[] {
+  return servingStatementArms(arms).filter((arm) => arm.types.some((type) => reached.has(type)));
+}
+
 /** The arm that serves `type`, or null where no statement tool serves it. */
 function servingArmFor(type: DatabaseType): McpStatementArm | null {
   const language = AGENT_STATEMENT_LANGUAGE[type];
@@ -228,6 +265,15 @@ function servingArmFor(type: DatabaseType): McpStatementArm | null {
 /** The tool that runs a statement on `type`, or null where no statement tool serves it and inspect_schema is the read. */
 export function mcpStatementToolFor(type: DatabaseType): McpStatementTool | null {
   return servingArmFor(type)?.tool ?? null;
+}
+
+/**
+ * Whether list_connections leaves `type`'s database setting out of a connection's row: true where the arm its language
+ * declares, serving or not, says that setting is a stored value.
+ */
+export function mcpWithholdsDatabase(type: DatabaseType): boolean {
+  const language = AGENT_STATEMENT_LANGUAGE[type];
+  return language !== null && MCP_STATEMENT_ARMS[language]?.withholdsDatabase === true;
 }
 
 /**

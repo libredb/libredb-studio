@@ -25,7 +25,7 @@ import {
 } from "@/lib/db/http/egress-policy";
 import { QueryError } from "@/lib/db/errors";
 import { randomBytes } from "node:crypto";
-import { decodeResponse, encodePdu, encodeRequest, type Response } from "./message";
+import { decodeResponse, encodePdu, encodeRequest, type Response, SnmpAnswerTooLargeError } from "./message";
 import { localizedKey, SALT_BYTES, type AuthHash } from "./usm";
 import { advanced, estimatedTime, startClock, windowVerdict, type EngineClock } from "./time-window";
 import { PDU_REPORT } from "./valve";
@@ -40,7 +40,13 @@ import {
   type SecurityLevel,
   type V3Keys,
 } from "./v3-message";
-import { failureFromSilence, failureFromSocket, USM_REPORT_OIDS, type SnmpFailure } from "./errors";
+import {
+  failureFromOversizedAnswer,
+  failureFromSilence,
+  failureFromSocket,
+  USM_REPORT_OIDS,
+  type SnmpFailure,
+} from "./errors";
 import { createGuardedSocketFactory, type ClientFacingSocket, type GuardedTarget } from "./transport";
 
 /**
@@ -90,9 +96,9 @@ export async function resolveTarget(host: string, port: number): Promise<Resolve
   });
   // The two checks are not applied the same way, and copying the shared transport's shape is
   // the point rather than a detail. `assertPublicLiteralHost` consults the flag itself and
-  // returns when it is off (`egress-policy.ts:82`), but `assertPublicDnsAnswers` does NOT: it
+  // returns when it is off (`egress-policy.ts`), but `assertPublicDnsAnswers` does NOT: it
   // refuses loopback and private answers unconditionally, because the shared transport only
-  // installs it when the flag is on (`guardedNodeOptions`, line 130). Calling it unconditionally
+  // installs it when the flag is on (`guardedNodeOptions`). Calling it unconditionally
   // here refused every agent reached by name on a local network even with the flag off, which
   // is the common case; a test with a name rather than a literal is what found it.
   if (blockPrivateHosts()) assertPublicDnsAnswers(answers);
@@ -229,6 +235,12 @@ export async function openExchange(options: ExchangeOptions): Promise<Exchange> 
         response = answer.response;
       }
     } catch (error) {
+      // An answer past the most objects one request asks for names its request, and ends it as too large now rather
+      // than as silence at the deadline: the agent did answer.
+      if (error instanceof SnmpAnswerTooLargeError) {
+        waiting.get(error.requestId)?.settle(failureFromOversizedAnswer());
+        return;
+      }
       // A datagram this process cannot READ is dropped rather than failing the request it might
       // belong to: the kernel has already told us it came from the agent, and a request that is
       // still waiting ends at its own deadline with a sentence that lists what silence can mean.

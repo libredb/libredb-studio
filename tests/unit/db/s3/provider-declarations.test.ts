@@ -4,6 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { S3_KEY_SCAN } from "@/lib/db/providers/objectstore/s3/key-scan";
 import { S3_METADATA_ONLY } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
@@ -43,7 +44,15 @@ describe("declarations", () => {
       supportsTransactions: false,
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
-      enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/providers/objectstore/s3/console/commands.ts", symbol: "S3_COMMAND_TABLE" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: { reach: "absent" },
+        transaction: { reach: "absent" },
+      },
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,
@@ -54,6 +63,7 @@ describe("declarations", () => {
       keyScan: S3_KEY_SCAN,
       schemaRefreshPattern: "(?!)",
       metadataOnly: S3_METADATA_ONLY,
+      agentCredential: "dedicated-user",
     });
     expect(asked()).toBe(0);
   });
@@ -82,7 +92,9 @@ describe("declarations", () => {
   });
 });
 
-test("READ_ONLY_ENFORCED.s3 equals the capability", () => {
+test("READ_ONLY_ENFORCED.s3 equals the summary of the declared write reach", () => {
   expect(READ_ONLY_ENFORCED.s3).toBe(true);
-  expect(READ_ONLY_ENFORCED.s3).toBe(declaredOnly().provider.getCapabilities().enforcesReadOnly === true);
+  expect(READ_ONLY_ENFORCED.s3).toBe(
+    summarizeWriteReach(declaredOnly().provider.getCapabilities().writeReach) !== "open",
+  );
 });

@@ -1,0 +1,40 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-11-02",
+    "runtime": "bun 1.4.4",
+    "rpc": "ListDatabases",
+    "principal": "root",
+    "rights": "the built-in root user",
+    "surface": "ListDatabases",
+    "request": {}
+  },
+  "outcome": "pass",
+  "payload": {
+    "db_names": [
+      "default",
+      "scope_db_a",
+      "scope_db_b"
+    ],
+    "created_timestamp": [
+      "1793639342377964126",
+      "1793639344223123499",
+      "1793639344236412771"
+    ],
+    "db_ids": [
+      "1",
+      "470191791767815155",
+      "470191791767815157"
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

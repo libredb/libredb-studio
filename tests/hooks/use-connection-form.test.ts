@@ -178,7 +178,7 @@ mock.module("@/lib/db-ui-config", () => ({
   offersSslPanel: (type: string) => type !== "bigquery" && type !== "firestore",
 }));
 
-import { CONNECTION_FORM_DEFAULTS, offersReadOnlyToggle, useConnectionForm } from "@/hooks/use-connection-form";
+import { CONNECTION_FORM_DEFAULTS, readOnlyControl, useConnectionForm } from "@/hooks/use-connection-form";
 import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import { ENVIRONMENT_LABELS, type DatabaseConnection, type DatabaseType } from "@/lib/types";
 import {
@@ -188,7 +188,8 @@ import {
   DATABEND_SSLMODE_NOTICES,
   databendNotAppliedNotice,
 } from "@/lib/connection-string-parser";
-import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES, WRITE_REACH } from "@/lib/db/compatibility";
+import { providerCacheKey } from "@/lib/db/provider-cache-key";
 import { CONNECTION_FORM, CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
 import { BODY_CONNECTION_FIELDS, initialFieldValues } from "@/lib/db/connection-fields";
 
@@ -1113,6 +1114,22 @@ describe("useConnectionForm", () => {
     // their "edited" copy by hand rather than through the editor that produces it.
     const served = { ...seedCopy, createdAt: seedCopy.createdAt.toISOString() };
     expect(resolveAgentRunConnectionId(saved, { loaded: true, seeds: [served] })).toEqual({ id: "seed:sample" });
+  });
+
+  // Read roots never reach the browser, so they decide nothing here: the run resolves the seed's own roots on the
+  // server, and an editable copy without them is still the seed.
+  test("an OPC UA seed's editable copy without read roots stays eligible", () => {
+    const copy = {
+      id: "seed:plant",
+      name: "Plant",
+      type: "opcua",
+      host: "opc.tcp://plc.ornek.net:4840/",
+      seedId: "plant",
+      managed: false,
+      createdAt: new Date(),
+    } as DatabaseConnection;
+    const served = { ...copy, agentReadRoots: ["nsu=urn:plant;s=Line1"], createdAt: copy.createdAt.toISOString() };
+    expect(resolveAgentRunConnectionId(copy, { loaded: true, seeds: [served] })).toEqual({ id: "seed:plant" });
   });
 
   /*
@@ -2568,15 +2585,94 @@ describe("useConnectionForm", () => {
     expect(result.current.readOnly).toBe(false);
   });
 
-  test("offers no Read-only toggle on an engine whose provider does not enforce the mode", () => {
+  test("draws no read-only control on an engine whose reach is open", () => {
     const { result } = renderHook(() => useConnectionForm(defaultProps));
-    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]);
-    // Vacuity, by name: an empty population would offer nothing and pass.
-    expect(refusing).toContain("postgres");
-    for (const type of refusing) {
+    const open = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "open");
+    // Vacuity, by name: an empty population would draw nothing and pass.
+    expect(open).toContain("postgres");
+    for (const type of open) {
       act(() => result.current.setType(type));
-      expect({ type, offered: result.current.readOnlyOffered }).toEqual({ type, offered: false });
+      expect({ type, control: result.current.readOnlyControl }).toEqual({ type, control: "none" });
     }
+  });
+
+  test("draws the fixed Read-only label on every engine Studio has no write path on, and the toggle on every guarded one", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+    const none = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "none");
+    const guarded = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "guarded");
+    expect(none).toContain("qdrant");
+    expect(guarded).toContain("etcd");
+    for (const type of none) {
+      act(() => result.current.setType(type));
+      expect({ type, control: result.current.readOnlyControl }).toEqual({ type, control: "fixed" });
+    }
+    for (const type of guarded) {
+      act(() => result.current.setType(type));
+      expect({ type, control: result.current.readOnlyControl }).toEqual({ type, control: "toggle" });
+    }
+  });
+
+  test("never writes readOnly for an engine Studio has no write path on, ticked or loaded", async () => {
+    // A state left ticked by a guarded engine, and the stored field of an edited connection, both stay out: the
+    // field changes no write there.
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
+    );
+    const none = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "none");
+    for (const type of none) {
+      act(() => result.current.setType("etcd"));
+      act(() => result.current.setReadOnly(true));
+      act(() => result.current.setType(type));
+      expect(result.current.readOnly).toBe(true);
+      onConnect.mockClear();
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onConnect).toHaveBeenCalledTimes(1);
+      expect({ type, written: "readOnly" in onConnect.mock.calls[0][0] }).toEqual({ type, written: false });
+    }
+  });
+
+  test("saving a stored read-only Qdrant connection drops the field, which keys one new read-write provider", async () => {
+    // A stored connection holding readOnly: true still loads, since the server accepts it on every engine whose
+    // reach is not open; saved from the form it loses the field, so its cache key moves from read-only to
+    // read-write once, the same key an absent field already has. Qdrant has no write path either way.
+    const stored: DatabaseConnection = {
+      id: "c-qdrant",
+      name: "Vectors",
+      type: "qdrant",
+      host: "qdrant.internal",
+      port: 6333,
+      readOnly: true,
+      createdAt: new Date(0),
+    };
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: stored,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+    expect(result.current.readOnly).toBe(true);
+    expect(result.current.readOnlyControl).toBe("fixed");
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    const saved = onConnect.mock.calls[0][0];
+    expect("readOnly" in saved).toBe(false);
+
+    const { readOnly: _dropped, ...withoutField } = stored;
+    const [before, after, absent] = await Promise.all([
+      providerCacheKey(stored),
+      providerCacheKey({ ...stored, readOnly: saved.readOnly }),
+      providerCacheKey(withoutField),
+    ]);
+    expect(after).not.toBe(before);
+    expect(after).toBe(absent);
   });
 
   test("offers the Read-only toggle on etcd, whose provider enforces the mode, and writes a tick as readOnly: true (#1089)", async () => {
@@ -2585,7 +2681,7 @@ describe("useConnectionForm", () => {
       useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
     );
     act(() => result.current.setType("etcd"));
-    expect(result.current.readOnlyOffered).toBe(true);
+    expect(result.current.readOnlyControl).toBe("toggle");
     act(() => result.current.setReadOnly(true));
     await act(async () => {
       await result.current.handleConnect();
@@ -2602,7 +2698,7 @@ describe("useConnectionForm", () => {
     act(() => result.current.setType("etcd"));
     act(() => result.current.setReadOnly(true));
     act(() => result.current.setType("postgres"));
-    expect(result.current.readOnlyOffered).toBe(false);
+    expect(result.current.readOnlyControl).toBe("none");
     await act(async () => {
       await result.current.handleConnect();
     });
@@ -2622,7 +2718,22 @@ describe("useConnectionForm", () => {
     };
     const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: seedCopy }));
     expect(result.current.type).toBe("etcd");
-    expect(result.current.readOnlyOffered).toBe(false);
+    expect(result.current.readOnlyControl).toBe("none");
+  });
+
+  test("a copy of a Qdrant seed draws the fixed Read-only label, which states a fact the operator cannot change", () => {
+    const seedCopy: DatabaseConnection = {
+      id: "seed:prod-qdrant",
+      seedId: "prod-qdrant",
+      name: "Prod Qdrant",
+      type: "qdrant",
+      host: "qdrant.internal",
+      port: 6333,
+      createdAt: new Date(0),
+    };
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: seedCopy }));
+    expect(result.current.type).toBe("qdrant");
+    expect(result.current.readOnlyControl).toBe("fixed");
   });
 
   test("populates the Cassandra localDataCenter in edit mode", () => {
@@ -3538,7 +3649,7 @@ describe("useConnectionForm", () => {
   });
 });
 
-describe("offersReadOnlyToggle (#1089)", () => {
+describe("readOnlyControl (#1089)", () => {
   const own: DatabaseConnection = { id: "own", name: "Own", type: "postgres", createdAt: new Date(0) };
   const seedCopy: DatabaseConnection = {
     id: "seed:prod",
@@ -3548,20 +3659,27 @@ describe("offersReadOnlyToggle (#1089)", () => {
     createdAt: new Date(0),
   };
 
-  test("offers the toggle on a new connection and on one of the user's own, where the engine enforces the mode", () => {
-    expect(offersReadOnlyToggle(true, null)).toBe(true);
-    expect(offersReadOnlyToggle(true, undefined)).toBe(true);
-    expect(offersReadOnlyToggle(true, own)).toBe(true);
+  test("the toggle on a new connection and on one of the user's own, where every write path is gated", () => {
+    expect(readOnlyControl("guarded", null)).toBe("toggle");
+    expect(readOnlyControl("guarded", undefined)).toBe("toggle");
+    expect(readOnlyControl("guarded", own)).toBe("toggle");
   });
 
-  test("never on a copy of a seed, whose id the server re-resolves from the operator's file", () => {
+  test("no toggle on a copy of a guarded seed, whose id the server re-resolves from the operator's file", () => {
     // The server discards the copy's fields, so a toggle there would change nothing it claims to.
-    expect(offersReadOnlyToggle(true, seedCopy)).toBe(false);
+    expect(readOnlyControl("guarded", seedCopy)).toBe("none");
   });
 
-  test("never where the engine does not enforce the mode", () => {
-    expect(offersReadOnlyToggle(false, null)).toBe(false);
-    expect(offersReadOnlyToggle(false, own)).toBe(false);
+  test("the fixed label where Studio has no write path, a seed copy included, since nothing can change it", () => {
+    expect(readOnlyControl("none", null)).toBe("fixed");
+    expect(readOnlyControl("none", own)).toBe("fixed");
+    expect(readOnlyControl("none", seedCopy)).toBe("fixed");
+  });
+
+  test("nothing where a write path is open", () => {
+    expect(readOnlyControl("open", null)).toBe("none");
+    expect(readOnlyControl("open", own)).toBe("none");
+    expect(readOnlyControl("open", seedCopy)).toBe("none");
   });
 });
 

@@ -1,0 +1,6 @@
+DROP TABLE APP.LIBREDB_PS_CHECK
+DB20000I  The SQL command completed successfully.
+
+DROP TABLE APP.LIBREDB_PS_REORG
+DB20000I  The SQL command completed successfully.
+

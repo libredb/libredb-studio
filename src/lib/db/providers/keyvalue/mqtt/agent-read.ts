@@ -75,7 +75,8 @@ interface WindowFacts {
 /**
  * How long the window ran: from the connection's ready, where its clock starts, to the end of the read. Studio's window
  * is `MQTT_READ_BUDGET_MS`; a budget or the broker can end it sooner, and a timer can fire a millisecond late, so the
- * answer reports the time the window really ran rather than the constant.
+ * answer reports the time the window really ran rather than the constant. A timer can also fire early, and an early one
+ * is armed again for the rest, so a window the time budget ended is never short of `MQTT_READ_BUDGET_MS`.
  */
 function windowMs(outcome: MqttReadOutcome): number {
   return outcome.elapsedMs - (outcome.readyAtMs ?? 0);

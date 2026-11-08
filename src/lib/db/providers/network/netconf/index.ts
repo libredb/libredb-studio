@@ -61,6 +61,15 @@ import { netconfAgentResult, runNetconfAgentReadWithin } from "./agent-read";
 import { readNetconfAgentStatement } from "./agent-statement";
 import { NETCONF_AGENT_WITHHELD } from "./agent-surface";
 import { NETCONF_METADATA_ONLY } from "./agent-withheld";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the request builder writes four read operations and close-session, and no edit-config.
+ */
+const NETCONF_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/network/netconf/requests.ts",
+  symbol: "buildRpc",
+});
 
 export { parseReadRequest } from "./read-request";
 import type { TopLevelNode } from "./reader";
@@ -222,7 +231,7 @@ export class NetconfProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Structural: this provider has no code that can write to a device.
-      enforcesReadOnly: true,
+      writeReach: NETCONF_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,
@@ -325,7 +334,7 @@ export class NetconfProvider extends BaseDatabaseProvider {
       // empty module where the truth is that the read was refused.
       //
       // Which errors answer here and which rise is the house rule at
-      // `providers/platform/kubernetes/objects.ts:348`, and its reason is scope: an error that
+      // `countKind` in `providers/platform/kubernetes/objects.ts`, and its reason is scope: an error that
       // spoils this one read answers for this kind alone, while one that spoils the whole
       // connection has to rise, or every module would read "unavailable" while the connection
       // itself still looked healthy. An earlier version caught everything and turned it into a
@@ -425,7 +434,7 @@ export class NetconfProvider extends BaseDatabaseProvider {
     const pattern = options.pattern ?? "";
     /*
      * THE PATTERN IS SPLIT AT ITS LAST SEPARATOR, which is the rule the OPC UA port reached first
-     * and for the same measured reason (`industrial/opcua/key-scan.ts:241`). Everything up to and
+     * and for the same measured reason (`levelScope` in `industrial/opcua/key-scan.ts`). Everything up to and
      * including that separator is the level to browse, and the WHOLE pattern is what an entry of
      * that level must begin with.
      *
@@ -448,7 +457,7 @@ export class NetconfProvider extends BaseDatabaseProvider {
     if (datastore === undefined || datastore === "") throw new QueryError(SENTENCES.keyPrefix);
     const nodes = parseKeyPath(rest.join(NETCONF_KEY_SEPARATOR));
     // A datastore's own top level is not a level this engine can browse: `children` names a node
-    // (`reader.ts:178`), because an unfiltered read of a datastore is the one read this provider
+    // (`DeviceReaderImpl.topLevelNodes` in `reader.ts`), because an unfiltered read of a datastore is the one read this provider
     // does not send. So `running/ietf-interfaces:interfaces` is refused BY NAME rather than
     // answered with nothing, and the sentence names the separator the panel's own placeholder
     // teaches.
@@ -494,7 +503,7 @@ export class NetconfProvider extends BaseDatabaseProvider {
    * The Source tab's text (#789), which the declaration promises.
    *
    * `readObjectSource` is optional on the provider interface, so omitting it compiles; what it does
-   * NOT do is stay invisible. MEASURED in `src/lib/api/object-route.ts:549`: the route answers 400,
+   * NOT do is stay invisible. MEASURED in `requireSourceReader` in `src/lib/api/object-route.ts`: the route answers 400,
    * `netconf declares no readable source for kind "node"`, for a provider that declares the kind
    * and omits the method, and its docblock names that exact case.
    *

@@ -246,9 +246,28 @@ const INFLUXQL_AGENT_PARTIAL_SENTENCE =
   "Read-only execution was refused: InfluxDB marked this result partial, so the server cut it at its max-row-limit";
 
 /**
- * A `/query` answer as the agent's fields and rows, or the refusal: a result the server marked partial, then the
- * shared row bound, the cell bound and the byte bound. The shaper reads one row past the row budget, so a result one
- * row over it is refused, never cut.
+ * The refusal of an answer holding statement text. On 1.13.1 a user granted READ on one database is answered
+ * `SHOW QUERIES` with every running statement on the server, another user's included, and `SHOW CONTINUOUS QUERIES`
+ * with the text an administrator wrote (`show-queries-during-admin-read-reader`, `show-continuous-queries-reader`).
+ * The agent's reader refuses both statements before anything is sent; this sentence is the second layer, read from
+ * the answer alone, so no spelling the reader missed can carry that text out.
+ */
+export const INFLUXQL_AGENT_QUERY_TEXT_SENTENCE =
+  "Read-only execution was refused: this answer has the shape of SHOW QUERIES or SHOW CONTINUOUS QUERIES, which carry statements the server's principals wrote, and an agent read never returns one";
+
+/**
+ * Whether a series carries statement text: a `query` column in a series not led by `time`. Every SELECT result leads
+ * with `time`, and no catalog read an agent sends has a `query` column, while SHOW QUERIES (`qid`, `query`, ... in
+ * every 1.x release) and SHOW CONTINUOUS QUERIES (`name`, `query`) have one and lead with something else.
+ */
+function holdsStatementText(columns: readonly string[]): boolean {
+  return columns[0] !== "time" && columns.includes("query");
+}
+
+/**
+ * A `/query` answer as the agent's fields and rows, or the refusal: an answer holding statement text, a result the
+ * server marked partial, then the shared row bound, the cell bound and the byte bound. The shaper reads one row past
+ * the row budget, so a result one row over it is refused, never cut.
  */
 export function shapeInfluxqlAgentAnswer(
   text: string,
@@ -261,6 +280,10 @@ export function shapeInfluxqlAgentAnswer(
     { rowCut: budget.maxResultRows + 1, cellBudget: INFLUX_CELL_BUDGET },
     secretForms,
   );
+  // Read from the columns alone, never the statement: refused whatever was sent, before a row is counted.
+  if (shaped.seriesColumns.some(holdsStatementText)) {
+    throw new QueryError(INFLUXQL_AGENT_QUERY_TEXT_SENTENCE, "influxdb", statement);
+  }
   // The server's own cut (its max-row-limit) leaves the last result partial: refused like Studio's own cut.
   if (shaped.partial) throw new QueryError(INFLUXQL_AGENT_PARTIAL_SENTENCE, "influxdb", statement);
   const rows = [...shaped.rows];

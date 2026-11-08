@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * The SNMP entry in a real browser (#1721).
@@ -123,8 +124,9 @@ test.describe("SNMP in the connection dialog", () => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "SNMP", exact: true }).click();
 
-    // Read-only by construction rather than by a setting, and the sentence says which construction:
-    // a reader who sees "read-only" beside a tick box may reasonably think the tick turns it off.
-    await expect(dialog.getByText("SNMP connections are read-only", { exact: false })).toBeVisible();
+    // Studio has no write path on SNMP, so the dialog draws the fixed label and its shared sentence, never a tick box.
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
+    await expect(dialog.locator("#readOnly")).toHaveCount(0);
   });
 });

@@ -9,18 +9,27 @@ import type { ProviderCapabilities } from "@/lib/db/types";
 import { OPCUA_DEFAULT_PORT } from "./constants";
 import { OPCUA_KEY_SCAN } from "./key-scan";
 import { OPCUA_OBJECT_KIND_SPECS } from "./objects";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the editor's request is a value or history read, and the client seam names eight read
+ * services only.
+ */
+const OPCUA_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/industrial/opcua/read-request.ts",
+  symbol: "readRequest",
+});
 
 export const OPCUA_CAPABILITIES: ProviderCapabilities = Object.freeze({
   /**
    * Read-only, and structurally so: the client seam in `client.ts` names eight services and none of
-   * them writes. The connection's read-only checkbox cannot turn writing on, because there is
-   * nothing to turn on.
+   * them writes. No setting can turn writing on, because there is nothing to turn on.
    *
    * On a plant floor this is not a nicety. Measured on the issue's first fixture, an anonymous
    * session wrote a variable with status Good and 448 of 460 methods reported UserExecutable true
    * to it, among them ResetToServerDefaults. The server will not stop a client; this does.
    */
-  enforcesReadOnly: true,
+  writeReach: OPCUA_WRITE_REACH,
 
   /** One JSON read request, the Kafka shape, in its own dialect so no connection falls through. */
   queryLanguage: "json",

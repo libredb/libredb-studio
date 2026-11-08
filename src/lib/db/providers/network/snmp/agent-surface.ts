@@ -2,8 +2,9 @@
  * What an SNMP handle opened for an agent-mode profile answers outside `queryReadOnly`.
  *
  * The object surface (`countObjects`, `listObjects`, `describeObject`, `describeObjects`) is the bundled catalog on
- * every handle: it sends nothing, and none of the withheld subtrees is in it, since the bundled modules define none
- * of them. Health is the console's own Get of `sysDescr.0` and `sysUpTime.0`, the same read an agent may send. Every
+ * every handle, and it sends nothing. On an agent-mode handle an object inside a withheld subtree is left out of it
+ * and refused by name with its reason: of the bundled modules, only HOST-RESOURCES-MIB defines one, `hrSWRun`'s table
+ * and scalar group, so the inventory offers no read the reader withholds. Health is the console's own Get of `sysDescr.0` and `sysUpTime.0`, the same read an agent may send. Every
  * other reading an agent-mode handle would answer with a figure the provider filled in without asking the agent (a
  * zero, an empty list) answers its reason instead, so the model is told what it was not shown rather than reading an
  * absence as the device's own answer; the console, which reads any subtree, is refused. The editor's handles keep

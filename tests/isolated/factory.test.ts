@@ -52,19 +52,31 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative as relativePath } from "node:path";
 import type { DatabaseConnection, EditorExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { ConnectionError, DatabaseConfigError, ExecutionProfileError, TimeoutError } from "@/lib/db/errors";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  ExecutionProfileError,
+  RefusedBeforeSendError,
+  TimeoutError,
+} from "@/lib/db/errors";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import { removeOwnerProviders } from "@/lib/db/owner-removal";
 import { logger } from "@/lib/logger";
 import { encryptSecret } from "@/lib/storage/encryption";
+import { projectSeedConnection } from "@/lib/seed/connection-filter";
 import type { SSHTunnelConfig } from "@/lib/types";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
+import { TrinoTransportError } from "@/lib/db/providers/sql/trino/transport";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
+
+const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
+const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
 
 // The SQLite agent-profile tests below construct the read-only profile for its
 // query_only boundary, not to exercise the child transport. The worker's node:sqlite
@@ -572,7 +584,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("firestore");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("firestore");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -770,7 +782,7 @@ describe("createDatabaseProvider", () => {
         rows: [{ role: "agent_ro", resource: "<keyspace probe>", permission: "SELECT" }],
         fieldNames: ["role", "resource", "permission"],
       },
-      "SELECT 1": { rows: [{ x: 1 }], fieldNames: ["x"] },
+      "SELECT x FROM probe.t": { rows: [{ x: 1 }], fieldNames: ["x"] },
     };
     const openAgentTransport = () => ({
       kind: "native" as const,
@@ -789,12 +801,14 @@ describe("createDatabaseProvider", () => {
     for (const provider of [profiled, editor]) {
       Object.assign(provider, { openAgentTransport, ensureConnected: () => undefined, transport: {} });
     }
-    await expect(editor.queryReadOnly("SELECT 1", AGENT_BUDGET)).rejects.toThrow(
+    await expect(editor.queryReadOnly("SELECT x FROM probe.t", AGENT_BUDGET)).rejects.toThrow(
       "Read-only execution requires a provider opened under the agent read-only profile",
     );
     expect(sent).toEqual([]);
-    await expect(profiled.queryReadOnly("SELECT 1", AGENT_BUDGET)).resolves.toMatchObject({ rows: [{ x: 1 }] });
-    expect(sent.at(-1)).toBe("SELECT 1");
+    await expect(profiled.queryReadOnly("SELECT x FROM probe.t", AGENT_BUDGET)).resolves.toMatchObject({
+      rows: [{ x: 1 }],
+    });
+    expect(sent.at(-1)).toBe("SELECT x FROM probe.t");
   });
 
   test("the execution context rides along to couchbase: queryReadOnly answers only under the agent profile", async () => {
@@ -835,13 +849,78 @@ describe("createDatabaseProvider", () => {
     expect(sent.at(-1)).toBe("SELECT 1");
   });
 
+  test("the execution context rides along to trino: queryReadOnly answers only under the agent profile", async () => {
+    const conn = makeConnection("trino", { port: 8080, database: "tpch" });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
+    const editor = await createDatabaseProvider(conn);
+    if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
+    // A transport under the read-only access control, which refuses every function, table procedure and catalog
+    // management, on a server with one catalog that lists none, so only the context tells the two apart.
+    const sent: string[] = [];
+    const answer = (fieldNames: string[], rows: unknown[][]) => ({
+      rows: rows.map((row) => Object.fromEntries(fieldNames.map((name, at) => [name, row[at]]))),
+      fieldNames,
+      columnTypes: null,
+      queryId: "20261101_000000_00001_libre",
+      operation: null,
+      affectedRows: null,
+      warnings: [],
+      stats: {
+        state: null,
+        elapsedMs: 1,
+        cpuMs: null,
+        queuedMs: null,
+        processedRows: null,
+        processedBytes: null,
+        peakMemoryBytes: null,
+      },
+      endedTransaction: false,
+    });
+    const transport = {
+      beginReadOnlyTransaction: async () => "tx",
+      rollback: async () => undefined,
+      query: async (statement: string) => {
+        sent.push(statement);
+        if (statement === "SHOW CATALOGS") return answer(["Catalog"], [["system"]]);
+        if (statement.startsWith("SHOW FUNCTIONS")) return answer(["Function", "Function Type"], []);
+        if (statement.startsWith("SELECT * FROM TABLE(")) {
+          throw new TrinoTransportError(
+            "unknown-object",
+            "line 1:21: Table function not registered",
+            "FUNCTION_NOT_FOUND",
+          );
+        }
+        if (statement.startsWith("DROP CATALOG")) {
+          throw new TrinoTransportError("auth", "Access Denied: Cannot drop catalog", "PERMISSION_DENIED");
+        }
+        if (statement.startsWith("ALTER TABLE")) {
+          throw new TrinoTransportError(
+            "auth",
+            "Access Denied: Cannot execute table procedure LIBREDB_NO_SUCH_PROCEDURE on system.runtime.nodes",
+            "PERMISSION_DENIED",
+          );
+        }
+        return answer(["x"], [[1]]);
+      },
+    };
+    for (const provider of [profiled, editor]) {
+      Object.assign(provider, { ensureConnected: () => undefined, transport });
+    }
+    await expect(editor.queryReadOnly("SELECT 1", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(sent).toEqual([]);
+    await expect(profiled.queryReadOnly("SELECT 1", AGENT_BUDGET)).resolves.toMatchObject({ rows: [{ x: 1 }] });
+    expect(sent.at(-1)).toBe("SELECT 1");
+  });
+
   test("the execution context rides along to druid: queryReadOnly answers only under the agent profile", async () => {
     const conn = makeConnection("druid", { port: 8888 });
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
     const editor = await createDatabaseProvider(conn);
     if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
-    // A transport answering the engine probe with the native engine's refusal and the statement with one row, so only
-    // the context tells the two apart.
+    // A transport answering the engine probe with the native engine's refusal, the planner's question with a plan of
+    // inline rows, and the statement with one row, so only the context tells the two apart.
     const sent: string[] = [];
     const transport = {
       agentQuery: async (statement: string) => {
@@ -852,8 +931,12 @@ describe("createDatabaseProvider", () => {
             "INVALID_INPUT",
           );
         }
+        const planned = {
+          PLAN: JSON.stringify([{ query: { queryType: "scan", dataSource: { type: "inline", rows: [[1]] } } }]),
+          RESOURCES: "[]",
+        };
         return {
-          rows: [{ x: 1 }],
+          rows: [statement.startsWith("EXPLAIN PLAN FOR\n") ? planned : { x: 1 }],
           fieldNames: ["x"],
           sqlTypes: {},
           nativeTypes: {},
@@ -1134,7 +1217,7 @@ describe("createDatabaseProvider", () => {
     const capabilities = provider.getCapabilities();
     expect(capabilities.queryLanguage).toBe("sql");
     expect(capabilities.explainFormat).toBe("databend-text");
-    expect(capabilities.enforcesReadOnly).toBeUndefined();
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("open");
     expect(capabilities.resumesBilledCompute).toBeUndefined();
     expect(provider.isConnected()).toBe(false);
   });
@@ -1196,7 +1279,7 @@ describe("createDatabaseProvider", () => {
     const capabilities = provider.getCapabilities();
     expect(capabilities.queryLanguage).toBe("influxql");
     expect(capabilities.queryDialect).toBeUndefined();
-    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("none");
     expect(capabilities.supportsMaintenance).toBe(false);
     expect(provider.isConnected()).toBe(false);
   });
@@ -1217,7 +1300,7 @@ describe("createDatabaseProvider", () => {
     const capabilities = provider.getCapabilities();
     expect(capabilities.queryLanguage).toBe("sql");
     expect(capabilities.queryDialect).toBeUndefined();
-    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(capabilities.writeReach)).toBe("none");
     expect(capabilities.supportsMaintenance).toBe(false);
     expect(provider.isConnected()).toBe(false);
   });
@@ -1261,7 +1344,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("etcd");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("etcd");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("guarded");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1290,7 +1373,7 @@ describe("createDatabaseProvider", () => {
     expect(provider).toBeDefined();
     expect(provider.type).toBe("neo4j");
     expect(provider.getCapabilities().queryLanguage).toBe("cypher");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1310,7 +1393,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("qdrant");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("qdrant");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.getCapabilities().supportsMaintenance).toBe(false);
     expect(provider.isConnected()).toBe(false);
   });
@@ -1329,7 +1412,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("weaviate");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("weaviate");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.getCapabilities().supportsMaintenance).toBe(false);
     expect(provider.isConnected()).toBe(false);
   });
@@ -1352,7 +1435,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("oxia");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("oxia");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1361,7 +1444,7 @@ describe("createDatabaseProvider", () => {
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     const provider = await createDatabaseProvider(conn);
     expect(provider.type).toBe("oxia");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
   });
 
   test("the factory error lists oxia among the supported types, after etcd and before prometheus", async () => {
@@ -1377,7 +1460,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("milvus");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("milvus");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("guarded");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1400,7 +1483,7 @@ describe("createDatabaseProvider", () => {
     const provider = await createDatabaseProvider(conn);
     expect(provider.type).toBe("kubernetes");
     expect(provider.getCapabilities().queryDialect).toBe("kubectl");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1447,7 +1530,7 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("s3");
     expect(provider.getCapabilities().queryLanguage).toBe("json");
     expect(provider.getCapabilities().queryDialect).toBe("s3");
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
     expect(provider.isConnected()).toBe(false);
   });
 
@@ -1796,7 +1879,7 @@ describe("getOrCreateProvider", () => {
 // Reported privately 2026-09-20 and reproduced here before anything was changed.
 //
 // `getOrCreateProvider` keyed `providerCache` on `connection.id`, and that id arrives in the
-// request body: `resolveConnection` (`src/lib/seed/resolve-connection.ts:22-24`) hands an inline
+// request body: `resolveConnection` (`src/lib/seed/resolve-connection.ts`) hands an inline
 // `connection` back verbatim, id included, so any signed-in caller can name any id. Naming one
 // another session already opened returned THAT session's live provider, still authenticated as
 // them, without ever comparing the credentials the caller sent. A `seed:` id is an operator-chosen
@@ -3184,17 +3267,26 @@ describe("acquireExecutionProfileProvider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
-  test("refuses trino the agent's read-only profile, the gate the explain-analyze descriptor's capability check is not", async () => {
+  test("trino refuses an executed plan before anything is sent, the gate the explain-analyze descriptor's capability check is not", async () => {
     // `sql.explain.analyze` requires only `supportsExplain`, which Trino declares for the editor's Explain button, so
-    // the refusal of a plan execution on Trino is this profile gate: no `queryReadOnly`.
+    // the refusal of a plan execution on Trino's agent path is the provider's statement fence: only a SELECT is sent.
     expect(sqlExplainAnalyzeDescriptor.requiredCapabilities).toEqual(["supportsExplain"]);
-    const error: unknown = await acquireExecutionProfileProvider(
-      makeConnection("trino", { id: "trino-profile" }),
-      "agent-read-only",
-    ).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(ExecutionProfileError);
-    expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
-    expect(getExecutionProfileCacheStats().size).toBe(0);
+    const provider = await createDatabaseProvider(
+      makeConnection("trino", { port: 8080, database: "tpch" }),
+      {},
+      { readOnly: true, sendsStatements: true },
+    );
+    if (provider.queryReadOnly === undefined) throw new Error("no queryReadOnly");
+    const sent: string[] = [];
+    Object.assign(provider, {
+      ensureConnected: () => undefined,
+      transport: { query: async (statement: string) => sent.push(statement) },
+    });
+    const error: unknown = await provider
+      .queryReadOnly("EXPLAIN ANALYZE SELECT 1", AGENT_BUDGET)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(sent).toEqual([]);
   });
 
   test("serves the SAME engine under the operations profile, whose open proves nothing", async () => {
@@ -3328,6 +3420,71 @@ describe("acquireExecutionProfileProvider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
+  /**
+   * A seed delivers its agent credential as plaintext once resolved, never sealed, and the factory reads it through
+   * readSecret as it reads a stored one. Projected from a seed, so the test fails if the projection drops a field.
+   */
+  test("opens every profile of a seed connection under its resolved agent credential, and one without under its own", async () => {
+    const seed = {
+      id: "pg-seed",
+      name: "pg-seed",
+      type: "postgres" as const,
+      host: "localhost",
+      port: 5432,
+      database: "testdb",
+      user: "owner",
+      password: STAND_IN_OWNER_PASSWORD,
+      roles: ["*"],
+    };
+    const withAgent = projectSeedConnection(
+      { ...seed, agentUser: "agent_ro", agentPassword: STAND_IN_AGENT_PASSWORD },
+      ["admin"],
+    );
+    for (const profile of ["agent-read-only", "agent-operations", "agent-handover"] as const) {
+      const provider = await acquireExecutionProfileProvider(withAgent, profile);
+      expect([profile, provider.config.user, provider.config.password]).toEqual([
+        profile,
+        "agent_ro",
+        STAND_IN_AGENT_PASSWORD,
+      ]);
+    }
+    const own = await acquireExecutionProfileProvider(
+      projectSeedConnection({ ...seed, id: "pg-seed-own" }, ["admin"]),
+      "agent-read-only",
+    );
+    expect([own.config.user, own.config.password]).toEqual(["owner", STAND_IN_OWNER_PASSWORD]);
+  });
+
+  test("refuses a plaintext agent password that reads as a sealed envelope, naming no value", async () => {
+    // A value whose text before the first colon is v and digits is read as an envelope, so this plaintext is refused
+    // where the same text as `password` would open (docs/SEED_CONNECTIONS.md says so).
+    const conn = projectSeedConnection(
+      {
+        id: "pg-seed-envelope",
+        name: "pg-seed-envelope",
+        type: "postgres",
+        host: "localhost",
+        user: "owner",
+        agentUser: "agent_ro",
+        agentPassword: ["v2", "x"].join(":"),
+        roles: ["*"],
+      },
+      ["admin"],
+    );
+
+    const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
+
+    expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+    expect((error as Error).message).toBe(
+      'Connection "seed:pg-seed-envelope" configures an agent credential that cannot be resolved',
+    );
+    const sealed = await acquireExecutionProfileProvider(
+      { ...conn, id: "seed:pg-seed-sealed", agentPassword: encryptSecret(STAND_IN_AGENT_PASSWORD) },
+      "agent-read-only",
+    );
+    expect(sealed.config.password).toBe(STAND_IN_AGENT_PASSWORD);
+  });
+
   test("denies an agent user without a password (fail closed)", async () => {
     const conn = pgConn({ id: "pg-user-only", agentUser: "agent_ro" });
 
@@ -3412,7 +3569,7 @@ describe("acquireExecutionProfileProvider", () => {
   /**
    * The agent credential forms past the user-and-password pair and the token (PR 0.7): `"none"`, which libredb
    * declares, `"service-account-key"`, which BigQuery declares, the token form on Weaviate and Qdrant, and
-   * `"dedicated-user"`, which no shipped engine declares yet, so a PostgreSQL provider is given it here. Every refusal
+   * `"dedicated-user"`, which S3 declares and a PostgreSQL provider is given here as well. Every refusal
    * lands before the provider connects, which each test holds by stubbing `connect` and asserting it never ran.
    */
   describe("agent credential forms", () => {
@@ -3645,6 +3802,40 @@ describe("acquireExecutionProfileProvider", () => {
         expect(error.message).toBe(
           'Connection "pg-dedicated-half" configures an incomplete agent credential (user and password are both required)',
         );
+      });
+    });
+
+    describe("dedicated-user on S3, the engine that declares it", () => {
+      const s3Conn = (overrides: Partial<DatabaseConnection>) =>
+        makeConnection("s3", { port: 9000, database: undefined, user: "AKIDCONNECTIONKEY", ...overrides });
+
+      test("refuses an agent access key ID that names the connection's own key, before it connects", async () => {
+        const conn = s3Conn({ id: "s3-same-key", agentUser: "akidconnectionkey", agentPassword: "agent-secret" });
+        const connect = await connectStubbed(conn);
+        try {
+          const error = await refusal(conn);
+
+          expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+          expect(error.message).toBe(
+            'Connection "s3-same-key" configures the connection\'s own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user',
+          );
+          expect(connect).not.toHaveBeenCalled();
+        } finally {
+          connect.mockRestore();
+        }
+      });
+
+      test("signs with an agent access key ID of its own and its secret", async () => {
+        const conn = s3Conn({ id: "s3-agent-key", agentUser: "AKIDAGENTKEY", agentPassword: "agent-secret" });
+        const connect = await connectStubbed(conn);
+        try {
+          const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+
+          expect(agent.config.user).toBe("AKIDAGENTKEY");
+          expect(agent.config.password).toBe("agent-secret");
+        } finally {
+          connect.mockRestore();
+        }
       });
     });
 

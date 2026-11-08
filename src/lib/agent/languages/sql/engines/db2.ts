@@ -3,8 +3,8 @@
  * Server tier, read only through `engineServerDialect` in `languages/engines/server.ts`.
  *
  * The catalog is read from the `SYSCAT` views, which every user may read on a fresh database and which list every
- * object, not only those the user may read. Each is named `SYSCAT.<view>`, so an object in the user's schema or a
- * public alias cannot stand in for it. The system's own tables (`SYSCAT.TABLES.OWNERTYPE` S) are left out of every
+ * object, not only those the user may read, and the columns from `SYSIBM.COLUMNS`, which keeps no stored value. Each
+ * is named by its schema, so an object in the user's schema or a public alias cannot stand in for it. The system's own tables (`SYSCAT.TABLES.OWNERTYPE` S) are left out of every
  * read, by that catalog fact rather than by a schema name: a schema created implicitly, by a CREATE in a schema that
  * does not exist, is itself owned by SYSIBM, while its tables are owned by their creator (measured). Names are trimmed,
  * since db2-node hands a padded CHAR
@@ -28,17 +28,34 @@ function narrowing(selector: AgentCatalogSelector, schema: string, table: string
   return equalsClause(schema, selector.schema, "schema", "db2") + equalsClause(table, selector.table, "table", "db2");
 }
 
+/** The ISO type names `SYSIBM.COLUMNS` answers, spelled as the catalog's own type names (measured on 12.1.0.0). */
+const ISO_TYPE_NAMES: readonly (readonly [string, string])[] = [
+  ["CHARACTER VARYING", "VARCHAR"],
+  ["GRAPHIC VARYING", "VARGRAPHIC"],
+  ["CHARACTER LARGE OBJECT", "CLOB"],
+  ["DOUBLE-BYTE CHARACTER LARGE OBJECT", "DBCLOB"],
+  ["BINARY LARGE OBJECT", "BLOB"],
+  ["DOUBLE PRECISION", "DOUBLE"],
+];
+
 /**
- * The column inventory, one row per column, in each table's own column order, views included. `data_type` is the
- * catalog's type name, and `is_nullable` its Y or N; `COLNO` counts from 0, so the position adds one.
+ * The column inventory, one row per column, in each table's own column order, views included. It reads
+ * `SYSIBM.COLUMNS`, which keeps no stored value, rather than `SYSCAT.COLUMNS`, whose `HIGH2KEY` and `LOW2KEY` hold
+ * the second highest and lowest value of every column and which the agent user's seed revokes from PUBLIC.
+ * `data_type` is the type name as the catalog spells it, a distinct type's by its own name, and `is_nullable` Y or N.
  */
 function composeDb2Columns(selector: AgentCatalogSelector): string {
+  const typeName =
+    "CASE c.DATA_TYPE " +
+    ISO_TYPE_NAMES.map(([iso, name]) => `WHEN '${iso}' THEN '${name}' `).join("") +
+    "WHEN 'USER-DEFINED' THEN c.UDT_NAME ELSE c.DATA_TYPE END";
   return (
-    'SELECT RTRIM(c.TABSCHEMA) AS "table_schema", c.TABNAME AS "table_name", c.COLNAME AS "column_name", ' +
-    'RTRIM(c.TYPENAME) AS "data_type", c.NULLS AS "is_nullable", c.COLNO + 1 AS "ordinal_position" ' +
-    `FROM SYSCAT.COLUMNS c WHERE ${db2UserTable("c.TABSCHEMA", "c.TABNAME")}` +
-    narrowing(selector, "c.TABSCHEMA", "c.TABNAME") +
-    " ORDER BY c.TABSCHEMA, c.TABNAME, c.COLNO"
+    'SELECT RTRIM(c.TABLE_SCHEMA) AS "table_schema", c.TABLE_NAME AS "table_name", c.COLUMN_NAME AS "column_name", ' +
+    `${typeName} AS "data_type", CASE c.IS_NULLABLE WHEN 'YES' THEN 'Y' ELSE 'N' END AS "is_nullable", ` +
+    'c.ORDINAL_POSITION AS "ordinal_position" ' +
+    `FROM SYSIBM.COLUMNS c WHERE ${db2UserTable("c.TABLE_SCHEMA", "c.TABLE_NAME")}` +
+    narrowing(selector, "c.TABLE_SCHEMA", "c.TABLE_NAME") +
+    " ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION"
   );
 }
 

@@ -135,6 +135,7 @@ describe("shapeInfluxqlBody over the captures", () => {
           cut: false,
           warnings: [],
           partial: false,
+          seriesColumns: [],
         });
       });
 

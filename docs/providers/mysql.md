@@ -21,6 +21,7 @@
 | **Source** | [`src/lib/db/providers/sql/mysql.ts`](../../src/lib/db/providers/sql/mysql.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/mysql-provider.test.ts`](../../tests/integration/db/mysql-provider.test.ts) |
+| **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, maintenance (`analyze`, `optimize`, `check`, `kill`) and the transaction route all send writes |
 
 ---
 
@@ -678,7 +679,7 @@ value: `?ssl=true`, `?ssl=1`, `?useSSL=true` → **`verify-system`**; `?ssl=fals
 The rule (D26, stated in `readBooleanTLS`) is that a boolean maps onto the mode matching what the
 engine's own driver does with it, never onto a weaker one — and the driver this provider uses is
 mysql2, which defaults `rejectUnauthorized` to `true` for any `ssl` object it is handed
-(`node_modules/mysql2/lib/connection_config.js:171`). `verify-system` is that behaviour exactly:
+(`ConnectionConfig` in mysql2 3.24.6's `lib/connection_config.js`). `verify-system` is that behaviour exactly:
 verified, with no CA certificate to find. The mapping was `require` until `verify-system` existed —
 `rejectUnauthorized: false` ([mysql.ts](../../src/lib/db/providers/sql/mysql.ts)), encrypted with the
 chain unchecked — because the only verifying modes on the form were the two that demand a PEM.

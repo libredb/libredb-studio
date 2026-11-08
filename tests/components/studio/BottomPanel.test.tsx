@@ -603,7 +603,7 @@ describe("BottomPanel", () => {
    * renders an offer it is handed — and none of them can see the wiring between them.
    *
    * Measured: with `supportsResultPagination` replaced by a literal `false` at
-   * `BottomPanel.tsx:574` the whole suite stayed green, 18678 tests, because those lines
+   * `BottomPanel` in `BottomPanel.tsx` the whole suite stayed green, 18678 tests, because those lines
    * execute either way and 100% line coverage cannot tell a right value from a wrong one.
    * The Load More control could be dead on every engine, or offered on Cassandra, and
    * nothing would say so. That is acceptance criteria 1 and 4, so they are asserted here.

@@ -97,10 +97,12 @@ services:
 
       # -----------------------------------------------------------------------
       # MCP SERVER: off unless LIBREDB_MCP_ENABLED says on. An AI client of your
-      # own reads schemas and runs read-only SQL at /api/mcp with a token minted on
-      # the settings screen. The URL is the address clients use, with your
-      # BASE_PATH, and every token is bound to it; changing the label revokes
-      # every token at once. See docs/MCP.md.
+      # own reads schemas and runs bounded, read-only statements in each
+      # engine's own language at /api/mcp with a token minted on the settings
+      # screen. MCP needs no LLM provider: the model runs in the client. The URL
+      # is the address clients use, with your BASE_PATH, and every token is
+      # bound to it; changing the label revokes every token at once. See
+      # docs/MCP.md.
       # -----------------------------------------------------------------------
       # LIBREDB_MCP_ENABLED: "true"
       # LIBREDB_MCP_URL: ${LIBREDB_MCP_URL:-http://localhost:3000/api/mcp}

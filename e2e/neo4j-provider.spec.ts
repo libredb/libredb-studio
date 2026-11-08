@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * Gate 5 for the Neo4j provider (#424): the connection dialog offers it, draws its fields, and refuses
@@ -61,16 +62,14 @@ test.describe("Neo4j in the connection dialog", () => {
     await expect(dialog.getByText("SSH Tunnel", { exact: true })).toBeVisible();
   });
 
-  test("says under the Read-only toggle that the connection is read-only whatever it says", async ({ page }) => {
+  test("draws a fixed Read-only label, since the connection is read-only whatever it says", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "Neo4j", exact: true }).click();
 
-    await expect(
-      dialog.getByText(
-        "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    // A fixed label and no box: Studio has no write path on this engine, so there is no mode to choose.
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
   });
 
   test("a routing neo4j:// URI in Host is refused before any socket opens (spec E7)", async ({ page }) => {

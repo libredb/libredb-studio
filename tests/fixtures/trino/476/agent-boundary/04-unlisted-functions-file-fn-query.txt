@@ -1,0 +1,11 @@
+# table function names no catalog lists, called with the proof's probe: the name is looked up before the permission check, so a name that does not resolve answers FUNCTION_NOT_FOUND under every access control and proves nothing about one that does
+> [read-only transaction] SELECT * FROM TABLE("pg"."system"."libredb_no_such_function"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'pg.system.libredb_no_such_function' not registered
+> [read-only transaction] SELECT * FROM TABLE("pg"."libredb_no_such_schema"."query"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'pg.libredb_no_such_schema.query' not registered
+> [read-only transaction] SELECT * FROM TABLE("lake"."system"."query"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'lake.system.query' not registered
+> [read-only transaction] SELECT * FROM TABLE("libredb_no_such_catalog"."system"."query"(libredb_no_such_argument => 1))
+  CATALOG_NOT_FOUND: line 1:21: Catalog 'libredb_no_such_catalog' not found
+> [read-only transaction] SHOW FUNCTIONS FROM "lake"."system"
+  OK ["Function","Return Type","Argument Types","Function Type","Deterministic","Description"] []

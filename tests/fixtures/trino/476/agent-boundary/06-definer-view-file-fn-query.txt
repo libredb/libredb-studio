@@ -1,0 +1,16 @@
+# the PostgreSQL table before, read through the pg catalog
+> [autocommit] SELECT a FROM pg.public.rp_t ORDER BY a
+  OK ["a"] [[1],[102],[103],[105],[106]]
+# as the connection's user, which no rule grants a function: the definer view over a pass-through dblink write, inside a read-only transaction, as the agent path sends it
+> [read-only transaction] SELECT * FROM "lake"."views"."pass_through"
+  INVALID_VIEW: line 1:15: Failed analyzing stored view 'lake.views.pass_through': Access Denied: Cannot execute function pg.system.query
+# how a view's security reads: SHOW CREATE VIEW names it, a view that named none reads as DEFINER, and information_schema.views does not carry it
+> [read-only transaction] SHOW CREATE VIEW "lake"."views"."pass_through"
+  OK ["Create View"] [["CREATE VIEW \"lake\".\"views\".\"pass_through\" SECURITY DEFINER AS\nSELECT *\nFROM\n  TABLE(\"pg\".\"system\".\"query\"(\n      query => 'SELECT * FROM dblink_exec(''dbname=postgres user=postgres'', ''INSERT INTO public.rp_t VALUES (301)'') AS r'))"]]
+> [read-only transaction] SHOW CREATE VIEW "lake"."views"."plain"
+  OK ["Create View"] [["CREATE VIEW \"lake\".\"views\".\"plain\" SECURITY DEFINER AS\nSELECT 1 a"]]
+> [read-only transaction] SELECT table_schema, table_name FROM "lake"."information_schema"."views" ORDER BY table_name
+  OK ["table_schema","table_name"] [["views","pass_through"],["views","plain"]]
+# the PostgreSQL table after: 301 listed means the view's write landed
+> [autocommit] SELECT a FROM pg.public.rp_t ORDER BY a
+  OK ["a"] [[1],[102],[103],[105],[106]]

@@ -99,6 +99,13 @@ import {
 import { type OrderVerdict, verdictIsProvisional } from "./order";
 import { oxiaResult } from "./results";
 import { detectKeyOrder, limitedOxiaClient, listRange, type OxiaSurface, readKeyAnywhere } from "./walks";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/** No write path on any route: the gRPC stub holds only the read RPCs, so no write RPC can be called. */
+const OXIA_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/keyvalue/oxia/grpc-client.ts",
+  symbol: "allowlistedServices",
+});
 
 /** One process-wide table for every Oxia provider: 4 calls per provider, 16 per process, a queue of 64 (SB1-9.1). */
 const oxiaLimiter = engineLimiter("oxia", OXIA_LIMITER_OPTIONS);
@@ -201,7 +208,7 @@ export class OxiaProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Read-only whatever the flag says: the stub holds only reads, and the parser refuses every write verb (O1).
-      enforcesReadOnly: true,
+      writeReach: OXIA_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

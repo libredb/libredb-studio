@@ -15,7 +15,7 @@
 | **Default port** | `15672`, the Management port; the AMQP port, `5672`, is a field of its own and may stay empty to browse only |
 | **Connection string** | Not supported; an `https://` management address pasted into Host is taken ([§4.1](#41-fields)) |
 | **SSH tunnel** | Refused: one tunnel carries one port, and the management API and AMQP use two |
-| **Writes** | None, and none can be sent ([§3.1](#31-read-only-by-construction)) |
+| **Write reach** | none: the AMQP codec's outbound check, `isAllowedOutbound`, admits no publish, get, reject or queue or exchange method, and the management client's routes are `GET` only ([§3.1](#31-read-only-by-construction)); there is no object edit, maintenance or transaction route |
 | **Maintenance** | None |
 | **Query cancellation** | Supported: Stop ends a read, and a read stopped after it started returns the rows read so far with a warning ([§5.5](#55-stop-reasons-and-warnings)) |
 | **Supported versions** | RabbitMQ 4.2 and later; an older broker is refused naming its version |
@@ -68,7 +68,7 @@ Two endpoints serve one connection, on one host and one TLS setting:
 The read client has encoders for the protocol header, `connection.start-ok`, `tune-ok`, `open`, `close`, `close-ok`, `channel.open`, `channel.close-ok`, `basic.qos`, `basic.consume`, `basic.ack`, `basic.cancel-ok` and the heartbeat frame, and for nothing else.
 No encoder exists for `basic.get`, `basic.reject`, `basic.nack`, `basic.recover`, `basic.publish`, or any `queue.*`, `exchange.*`, `tx.*` or `confirm.*` method, and a unit test holds the encoder table to that list and finds exactly one socket write site.
 The management route table is GET only and has no route that takes a message.
-A connection is read-only whether or not its read-only box is ticked.
+A connection is read-only whatever its `readOnly` says, and the dialog draws a fixed Read-only label with no box.
 
 ### 3.2 An own read client, with no way to write
 
@@ -212,6 +212,7 @@ A declared body above 512 MiB is refused as a protocol violation before any body
 A read that reaches its row limit ends without a warning.
 Every other stop is one warning, listed first: no message within 1 s (which is not proof that the stream ends there), the 8 MiB result limit, the 64 MiB transfer limit, the broker's cancel, the broker closing the connection, the time limit, and Stop.
 A read stops at `min(Query Timeout, 30 s)`.
+Once deliveries flow, the read also checks that time at every frame it reads, so a broker that keeps the socket full cannot hold it past the limit: Bun and Node run a due timer only after the batch of socket reads in hand, and a timer alone let a loaded read walk up to 21 more chunks after its limit, measured by R-S10 in `tests/unit/db/rabbitmq/hostile-peers.test.ts`.
 
 ### 5.6 Messages the broker cannot convert (541)
 
@@ -280,7 +281,7 @@ No node name and no other principal's name is shown.
 - The plan-mode inventory names each object by its virtual host, a dot and its name, so the stream `orders` reaches the model as `/.orders`; the request language it is given says that `"stream"` takes only the part after `/.`.
 - MCP `inspect_schema` makes 2 GETs per call (`/api/vhosts` and the chosen virtual host's Streams page), plus `connect()`'s 2 on a fresh instance; above 500 streams it sees the Streams folder's 500 names as the whole list, and a stream outside them is reached only by a typed read.
 - MCP matches a named virtual host case-insensitively, so of `Billing` and `billing` a call naming `billing` reads the one listed first.
-- There is no MCP `run_read_query` for RabbitMQ: `MCP_STATEMENT_READ.rabbitmq` is false, and the `rabbitread` language declares no MCP statement tool (B108).
+- MCP clients read a stream with `run_rabbitmq_read`, through the agent read-only profile, read request, closed table and projection an agent read uses, so an MCP answer carries each message's offset and body size only; which message values a model may read is still open (B108) ([§17.6](#176-mcp-read)).
 
 ## 9. What Studio costs the broker
 
@@ -540,6 +541,7 @@ CI runs it in the Functional Smoke job against a fresh 4.3.6 broker; 4.2.9 is ru
 - 2026-10-12, a 50 ms round trip: 10 stored messages read in full, stopped idle after 1,425 ms.
 - 2026-10-12, a vhost of 520 classic queues, 1 quorum queue and 510 streams filled in 5,296 ms; the Streams folder held 500 streams.
 - 2026-10-31, RabbitMQ 4.3.6 and 4.2.9, the agent boundary capture: a read-only user's `basic.get`, acked consume, `queue.purge` and management purge and get each removed messages; the agent's reads answered offsets and body sizes only and left every queue as it was; the 406 backstop held on a classic and a quorum queue declared under a stream's name.
+- 2026-11-02, RabbitMQ 4.3.6, the MCP boundary capture: `run_rabbitmq_read` answered offsets and body sizes only for six starts, refused another virtual host in the same words for a stream that exists, one that does not and a virtual host that does not exist, and left every queue as it was; the administrator's raw `basic.get` removed one message.
 <!-- live-record:end -->
 
 ### 14.5 The agent boundary capture
@@ -610,8 +612,13 @@ The answer is built from the read loop's raw messages, never from a rendered row
 An AMQP 0-9-1 delivery from a stream carries no other metadata the agent may read: measured on both versions, it holds the `x-stream-offset` header and the publisher's own properties, and no chunk time (`editor`), so a start by time selects messages by the time the broker stored them, but no answer states that time.
 RabbitMQ declares `ProviderCapabilities.metadataOnly`: every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts), and a cell that does not fit its column withholds the whole answer, naming the column and never the value.
 A read that stops at its limit answers, and so does one that stops with no message within 1 s, the stream's end as far as the read can tell, with the one fixed sentence that says it is not proof of the end.
+An MCP answer carries no warning text, so `run_rabbitmq_read`'s description says that an early stop on an idle stream is not proof of the stream's end and that `next` answers only messages published after the read starts.
 Every other stop refuses the answer rather than cutting it: the deadline (the time budget's refusal), the 8 MiB Studio holds for one read, the 64 MiB one read may transfer, a stop, the broker's cancel or close, and the 541 close at a message the broker cannot convert, which names how many messages it read first and never the message.
 A failure before the broker started the read is the time budget's refusal when the deadline ended it, and otherwise one of [§11](#11-error-handling)'s own sentences, each picked by a reply code or a fixed pattern and never quoting the broker.
+One exception: a virtual host the user may not use and a virtual host or stream that does not exist are refused in one sentence, "Virtual host {vhost} does not exist, this user has no permissions on it, or it has no queue, stream or exchange {stream}: name a stream this user may read."
+Measured on 4.3.6, the type check answers a virtual host that exists without permission with 404 `not_found` and one that does not exist with 404 `Object Not Found`, so §11's two sentences would tell a virtual host the user cannot list apart from a missing one.
+A type check answered `Object Not Found` is followed by one GET of the exchange route for the name, since an exchange holds no queue.
+An exchange of the name in a virtual host the user may use is refused as not a stream, "{stream} is not a stream; Studio reads streams only.", and an exchange GET answered not found keeps the one sentence; a virtual host the user may not use answers the type check with `not_found`, so no exchange GET is sent for it, and its exchanges are refused in the one sentence (`scope.exchange`, `scope.otherVhostExchange`).
 A result past the byte budget is refused, never cut, and an estimating plan is refused.
 
 Each agent-mode path reads this much:
@@ -621,7 +628,7 @@ Each agent-mode path reads this much:
 | Investigation reads | agent read-only profile | one stream read, projected to offsets and body sizes |
 | Investigation grounding, plan-mode grounding, the operations workflow and MCP `inspect_schema` | either agent profile | virtual host, stream, queue and exchange names and counts, and a stream's columns `offset` and `body_bytes`; never a message, an argument, a binding or a policy |
 | Operations readings | operations profile | health and the overview, version and alarm state only; the sessions, slow-query, table, index and storage readings answer empty with no GET ([§7](#7-monitoring-and-health)) |
-| MCP `run_read_query` | none | closed: `MCP_STATEMENT_READ.rabbitmq` is false |
+| MCP `run_rabbitmq_read` | agent read-only profile | one stream read, projected to offsets and body sizes, as an investigation read |
 
 On a handle of either agent profile the editor's read and an object's source are refused; an editor handle keeps every read and renders every message cell.
 
@@ -636,11 +643,37 @@ This overlay overrides no Shared member, so every Shared member is the `rabbitre
 The family offers the investigation workflow, through `run_read_query` with one read request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the broker composes no plan and no profile, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a RabbitMQ read request: the family declares no MCP facet, and `MCP_STATEMENT_READ.rabbitmq` is false (B108).
+MCP clients run a RabbitMQ read request with `run_rabbitmq_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/rabbitread/mcp.ts`](../../src/lib/agent/languages/rabbitread/mcp.ts)), and `MCP_STATEMENT_READ.rabbitmq` is true ([§17.6](#176-mcp-read)).
 
 ### 17.5 Tests
 
 - `tests/unit/db/rabbitmq/agent-statement.test.ts`: the read every admitted request is read to, and every refusal before the network in agent mode's own words.
 - `tests/unit/db/rabbitmq/agent-metadata-read.test.ts`: the projection, every stop answered or refused, and the wording of a failure.
-- `tests/unit/db/rabbitmq/agent-provider.test.ts`: the profile, the whole AMQP conversation of an admitted read against a fake broker, no marker of a body, header, property or routing key in any answer, the type check and the 406 backstop, every stop refused, the budgets, and the editor's surfaces on either agent profile.
+- `tests/unit/db/rabbitmq/agent-provider.test.ts`: the profile, the whole AMQP conversation of an admitted read against a fake broker, no marker of a body, header, property or routing key in any answer, the type check, the exchange GET after a type check answered not found, and the 406 backstop, every stop refused, the budgets, and the editor's surfaces on either agent profile.
 - `tests/unit/db/rabbitmq/agent-boundary.test.ts`: the captures as the boundary test, with the broker honouring every refused take and purge as the positive control, every queue's message count unchanged by an agent read, and no captured marker in an agent answer.
+- `tests/integration/mcp/run-rabbitmq-read.test.ts`: `run_rabbitmq_read` on the real provider over the management stub and a fake broker, through the real route and seed file: a read answered offsets and body sizes behind the untrusted-content notice with no marker, a cut at `max_rows` naming the next offset, each request the admission refuses refused before anything is acquired, a classic queue at the type check, an editor handle, the other engines' tools, a timeout, a cancel, and a later call on the same provider waiting for the cancelled read's slot.
+- `tests/unit/db/rabbitmq/mcp-boundary.test.ts`: the MCP capture of §17.6 as the MCP boundary test.
+
+### 17.6 MCP read
+
+MCP's `run_rabbitmq_read` reads through the same path as an agent read: it acquires the connection under the agent read-only profile, reads and admits the request with the same adapter, and calls `queryReadOnly`, so the boundary is the structural closed table of §17.1 and every answer is §17.3's projection ([`docs/MCP.md`](../MCP.md)).
+No seed user is proven read-only, because none can be: a read permission also grants a take and a purge, so the tool serves any user, the administrator included.
+[`tests/fixtures/rabbitmq/4.3.6/mcp-boundary/run.sh`](../../tests/fixtures/rabbitmq/4.3.6/mcp-boundary/run.sh) starts a fresh digest-pinned broker, and [`tests/live/rabbitmq-mcp-boundary.ts`](../../tests/live/rabbitmq-mcp-boundary.ts) drives the tool's own handler with the factory's acquisition and writes `mcp-boundary.json` beside the script, with no password in it.
+
+What an MCP client reads is decided in two layers, measured there as a user tagged `management` with read permission on one stream of `/`, no configure or write permission, and no permission on a second virtual host:
+
+| Item | Stopped by | Measured |
+| --- | --- | --- |
+| A message's body, headers, properties and routing key | layer 2: the metadata-only projection, built on the answer whatever the request said | no marker in any answer (`accepted`, `cut`, `scope`) |
+| A take, publish, purge or declare | layer 2: the read client, which encodes none, and the admission before it | every queue's count unchanged; the administrator's raw `basic.get` removed one (`control`) |
+| A classic or quorum queue | layer 2: the type check before any frame, and the 406 backstop | refused at the type check, and with the type check answered as a stream, by the 406 (`boundary`) |
+| A stream of a virtual host the user has no permission on | layer 1: the broker, and the agent's one refusal sentence | refused in the same words whether the stream exists and whether the virtual host exists: "Virtual host ... does not exist, this user has no permissions on it, or it has no queue, stream or exchange ...: name a stream this user may read." (`scope.otherVhostStream`, `scope.otherVhostMissing`, `scope.absentVhostStream`) |
+| A stream of its own virtual host outside its read pattern | layer 1: the broker | refused: "This user may not read stream ...: its read permission pattern on ... does not match the name." |
+| An exchange's name | layer 2: the type check and the exchange GET after it | refused as not a stream in its own virtual host (`scope.exchange`), and in the one sentence in a virtual host the user has no permission on (`scope.otherVhostExchange`) |
+| Another virtual host's streams, for the administrator | nothing: the broker lets it read every virtual host | answered offsets and body sizes only (`scope.broadOtherVhost`) |
+
+Within a virtual host the user may use, a stream outside its read pattern and a name that does not exist are refused in different words, so the user learns which names exist there; MCP `inspect_schema` lists those stream names to the same user anyway.
+So opt in a user with read permission on the streams of one virtual host and nothing more: the administrator reads every virtual host's offsets and sizes.
+A cancel ends MCP's wait at once, and the read runs on until it reaches its `limit`, finds no message for 1 s, or meets its deadline, the time left of `timeout_ms`, measured as a cancel answered at 300 ms while a read fed a message every 400 ms settled at its 2,000 ms deadline (`cancel`).
+Until then the read keeps the seed's one read slot, since the provider reads one stream at a time and the MCP calls on a seed share one provider, so a later call on that seed waits for it, and one whose `timeout_ms` ends first is answered as the timeout with no AMQP connection of its own (`cancel.waiting`).
+The deadline frees the slot: a call made after the read settled reads, on an AMQP connection of its own (`cancel.after`).

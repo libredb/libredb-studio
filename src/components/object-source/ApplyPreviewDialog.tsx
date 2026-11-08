@@ -99,7 +99,7 @@ export interface ApplyPreviewDialogProps {
   readonly onClose: () => void;
 }
 
-/** `1234` becomes `1,234`, on the object tree's precedent at `flatten.ts:309`. */
+/** `1234` becomes `1,234`, on the object tree's precedent at `formatCount` in `flatten.ts`. */
 function counted(value: number): string {
   return value.toLocaleString("en-US");
 }
@@ -274,7 +274,7 @@ function applyFrame(state: ApplyPreviewState): {
  *
  * MEASURED in Chromium on 2026-09-14, on EVERY successful apply driven through the UI:
  * `TextModel got disposed before DiffEditorWidget model got reset`. NO COUNT is claimed for it and
- * X21's "one console error per apply" is not repeated: `diffEditorWidget.js:233-240` subscribes
+ * X21's "one console error per apply" is not repeated: `DiffEditorWidget` in monaco-editor 0.57.0's `diffEditorWidget.js` subscribes
  * `onWillDispose` to BOTH models, so the sentence is raised once per model DISPOSAL rather than
  * once per apply, and the browser reading was of the sentence's presence.
  * `@monaco-editor/react`'s unmount reads `editor.getModel()`, disposes `original` and `modified`
@@ -325,7 +325,7 @@ function ReleasedDiffEditor({
   return <>{children}</>;
 }
 
-/** The warning grammar the pane already uses for a truncated part (`ObjectSourceView.tsx:491-497`). */
+/** The warning grammar the pane already uses for a truncated part (`ObjectSourceView` in `ObjectSourceView.tsx`). */
 function WarningRow({ testId, children }: { testId: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <div
@@ -533,7 +533,7 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
           {state.kind === "building" && (
             // `output` rather than a div with role="status": it carries the live region natively,
-            // which is what this repository's jsx-a11y gate asks for (`LazyView.tsx:25`).
+            // which is what this repository's jsx-a11y gate asks for (`ViewLoading` in `LazyView.tsx`).
             <output
               className="flex items-center gap-2 py-6 text-sm text-fg-muted"
               data-testid="object-source-apply-building"

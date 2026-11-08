@@ -302,7 +302,7 @@ describe("druidNativeStrategy", () => {
 
   // Druid's EXPLAIN never executes the statement, so analyze has no separate form
   // to build. Returning null for it would kill the Explain button outright: the
-  // direct action always builds with mode "analyze" (use-query-execution.ts:165)
+  // direct action always builds with mode "analyze" (`useQueryExecution` in use-query-execution.ts)
   // and refuses the run when the strategy declines. sqlite-queryplan.ts and
   // couchbase-json.ts return the estimate for both modes for the same reason.
   test("buildSql returns the same plan in analyze mode, matching the SQLite and Couchbase strategies", () => {

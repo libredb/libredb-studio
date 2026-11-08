@@ -36,8 +36,13 @@
  * layout.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { TrinoHttpTransport } from "@/lib/db/providers/sql/trino/http-transport";
-import { TRINO_DIALECT, type TrinoErrorCategory, TrinoTransportError } from "@/lib/db/providers/sql/trino/transport";
+import { TRINO_PAGE_ENVELOPE_BYTES, TrinoHttpTransport } from "@/lib/db/providers/sql/trino/http-transport";
+import {
+  TRINO_DIALECT,
+  TrinoAnswerTooLargeError,
+  type TrinoErrorCategory,
+  TrinoTransportError,
+} from "@/lib/db/providers/sql/trino/transport";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 
@@ -1622,5 +1627,244 @@ describe("TrinoHttpTransport spooled results", () => {
     const result = await makeTransport().query("SELECT 1");
 
     expect(result.rows).toEqual([]);
+  });
+});
+
+// ============================================================================
+// The agent path: a read-only transaction and answer caps
+// ============================================================================
+
+/**
+ * The transaction headers, measured on 476 (`tests/fixtures/trino/476/agent-boundary/`, capture 03):
+ * `START TRANSACTION READ ONLY` sent with the transaction header `NONE` answers a started id in a response header, a
+ * statement sent with that id runs inside the transaction, and a `ROLLBACK` sent with it answers the clear header. The
+ * id below is constructed, in the shape the server answered.
+ */
+const TRANSACTION_ID = "0b6f3c2e-1d4a-4c8e-9f00-000000000001";
+const DONE_PAGE = `{"id":"${QUERY_ID}","columns":[],"stats":${FINISHED_STATS},"warnings":[]}`;
+
+function withHeaders(page: string, headers: Record<string, string>): () => Response {
+  return () => respond(page, { headers });
+}
+
+describe("TrinoHttpTransport read-only transactions", () => {
+  test("opens one with START TRANSACTION READ ONLY under the transaction header NONE and answers its id", async () => {
+    handler = withHeaders(DONE_PAGE, { "X-Trino-Started-Transaction-Id": TRANSACTION_ID });
+
+    const id = await makeTransport().beginReadOnlyTransaction();
+
+    expect(id).toBe(TRANSACTION_ID);
+    expect(firstCall().body).toBe("START TRANSACTION READ ONLY");
+    expect(firstCall().headers["X-Trino-Transaction-Id"]).toBe("NONE");
+  });
+
+  test("refuses an answer that started no transaction, so nothing runs outside one", async () => {
+    sequence(DONE_PAGE);
+
+    const error = await captureError(() => makeTransport().beginReadOnlyTransaction());
+
+    expect(error.category).toBe("engine");
+    expect(error.message).toBe("Trino answered START TRANSACTION READ ONLY without starting a transaction");
+  });
+
+  test("a statement inside one carries its id, and the editor's statements carry no transaction header", async () => {
+    const transport = makeTransport();
+    await transport.query("SELECT 1", { transactionId: TRANSACTION_ID });
+    await transport.query("SELECT 2");
+
+    expect(calls[0]?.headers["X-Trino-Transaction-Id"]).toBe(TRANSACTION_ID);
+    expect(Object.keys(calls[1]?.headers ?? {}).some((name) => name.includes("Transaction"))).toBe(false);
+  });
+
+  test("reports a statement whose answer ended the transaction it ran in", async () => {
+    handler = withHeaders(DONE_PAGE, { "X-Trino-Clear-Transaction-Id": "true" });
+    const ended = await makeTransport().query("COMMIT", { transactionId: TRANSACTION_ID });
+    sequence(SINGLE_PAGE);
+    const kept = await makeTransport().query("SELECT 1", { transactionId: TRANSACTION_ID });
+
+    expect(ended.endedTransaction).toBe(true);
+    expect(kept.endedTransaction).toBe(false);
+  });
+
+  test("rolls one back with ROLLBACK under its id", async () => {
+    handler = withHeaders(DONE_PAGE, { "X-Trino-Clear-Transaction-Id": "true" });
+
+    await makeTransport().rollback(TRANSACTION_ID);
+
+    expect(firstCall().body).toBe("ROLLBACK");
+    expect(firstCall().headers["X-Trino-Transaction-Id"]).toBe(TRANSACTION_ID);
+  });
+
+  test("refuses a rollback the server did not answer as ending the transaction", async () => {
+    sequence(DONE_PAGE);
+
+    const error = await captureError(() => makeTransport().rollback(TRANSACTION_ID));
+
+    expect(error.category).toBe("engine");
+    expect(error.message).toBe("Trino answered ROLLBACK without ending the transaction");
+  });
+});
+
+describe("TrinoHttpTransport answer caps", () => {
+  const ROWS_PAGE = `{"id":"${QUERY_ID}","nextUri":"${RUNNING_LINK}","columns":${VERSION_COLUMNS},"data":[["a"],["b"],["c"]],"stats":${RUNNING_STATS},"warnings":[]}`;
+
+  test("stops reading past the row cap, cancels the statement and says so", async () => {
+    sequence(ROWS_PAGE);
+
+    let caught: unknown;
+    try {
+      await makeTransport().query("SELECT v FROM t", { maxRows: 2 });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(TrinoAnswerTooLargeError);
+    expect((caught as TrinoAnswerTooLargeError).limit).toBe("rows");
+    expect((caught as TrinoAnswerTooLargeError).seen).toBe(3);
+    // One page read, then the statement's own cancellation: the next link is never followed.
+    expect(calls.map((call) => call.method)).toEqual(["POST", "DELETE"]);
+    expect(lastCall().url).toBe(`http://127.0.0.1:8080/v1/query/${QUERY_ID}`);
+  });
+
+  test("answers a result at the row cap", async () => {
+    sequence(SINGLE_PAGE);
+
+    const result = await makeTransport().query("SELECT 1", { maxRows: 1 });
+
+    expect(result.rows).toEqual([{ _col0: "476" }]);
+  });
+
+  test("stops reading past the byte cap, counting each page's rows as they arrived", async () => {
+    sequence(ROWS_PAGE);
+    // [["a"],["b"],["c"]] is 19 bytes of JSON.
+
+    let caught: unknown;
+    try {
+      await makeTransport().query("SELECT v FROM t", { maxRowBytes: 18 });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(TrinoAnswerTooLargeError);
+    expect((caught as TrinoAnswerTooLargeError).limit).toBe("bytes");
+    expect((caught as TrinoAnswerTooLargeError).seen).toBe(19);
+    expect(calls.map((call) => call.method)).toEqual(["POST", "DELETE"]);
+  });
+
+  test("answers rows at the byte cap, and counts no page's envelope", async () => {
+    sequence(...VERSION_PAGES);
+
+    // [["476"]] is 9 bytes; the five pages around it are hundreds.
+    const result = await makeTransport().query("SELECT version()", { maxRowBytes: 9 });
+
+    expect(result.rows).toEqual([{ _col0: "476" }]);
+  });
+
+  /** A body that hands out 64 KiB of spaces on every pull and never ends, recording its pulls and its cancellation. */
+  function endlessBody() {
+    const seen = { pulls: 0, cancelled: false };
+    const chunk = new Uint8Array(64 * 1024).fill(0x20);
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          seen.pulls += 1;
+          controller.enqueue(chunk);
+        },
+        cancel() {
+          seen.cancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return { body, seen };
+  }
+
+  async function tooLarge(run: () => Promise<unknown>): Promise<TrinoAnswerTooLargeError> {
+    try {
+      await run();
+    } catch (error) {
+      expect(error).toBeInstanceOf(TrinoAnswerTooLargeError);
+      return error as TrinoAnswerTooLargeError;
+    }
+    throw new Error("the transport answered where it should have refused");
+  }
+
+  test("refuses a first page larger than the cap while reading it, without pulling the rest of its body", async () => {
+    const { body, seen } = endlessBody();
+    handler = () => new Response(body, { headers: { "content-type": "application/json" } });
+
+    const error = await tooLarge(() => makeTransport().query("SELECT v FROM t", { maxRowBytes: 1024 }));
+
+    // The read stops at the first 64 KiB chunk past the cap and the page's envelope allowance.
+    const limit = 1024 + TRINO_PAGE_ENVELOPE_BYTES;
+    expect(error.limit).toBe("bytes");
+    expect(error.cap).toBe(1024);
+    expect(error.seen).toBe(Math.ceil((limit + 1) / (64 * 1024)) * 64 * 1024);
+    expect(seen.pulls).toBe(Math.ceil((limit + 1) / (64 * 1024)));
+    expect(seen.cancelled).toBe(true);
+    expect(calls.map((call) => call.method)).toEqual(["POST"]);
+  });
+
+  test("bounds a later page by what the pages before it left of the cap, and cancels the statement", async () => {
+    const { body, seen } = endlessBody();
+    // A first page whose rows are 1 MiB of JSON, all within its own read, so what it accepted is what the next read
+    // may not have.
+    const value = "x".repeat(1024 * 1024 - 6);
+    const accepted = Buffer.byteLength(JSON.stringify([[value]]));
+    let served = 0;
+    handler = () => {
+      served += 1;
+      return served === 1
+        ? respond(
+            `{"id":"${QUERY_ID}","nextUri":"${RUNNING_LINK}","columns":${VERSION_COLUMNS},"data":[["${value}"]],"stats":${RUNNING_STATS},"warnings":[]}`,
+          )
+        : new Response(body);
+    };
+
+    // One byte of the cap and the envelope allowance remain for the second page.
+    const error = await tooLarge(() => makeTransport().query("SELECT v FROM t", { maxRowBytes: accepted + 1 }));
+
+    const pulls = Math.ceil((1 + TRINO_PAGE_ENVELOPE_BYTES + 1) / (64 * 1024));
+    expect(accepted).toBe(1024 * 1024);
+    expect(error.seen).toBe(accepted + pulls * 64 * 1024);
+    expect(seen.pulls).toBe(pulls);
+    expect(seen.cancelled).toBe(true);
+    expect(calls.map((call) => call.method)).toEqual(["POST", "GET", "DELETE"]);
+  });
+
+  test("bounds a refusal's body the same way, and retries nothing past the cap", async () => {
+    const { body, seen } = endlessBody();
+    // Constructed: a 503 the protocol says to retry, whose body never ends.
+    handler = () => new Response(body, { status: 503 });
+
+    const error = await tooLarge(() => makeTransport().query("SELECT v FROM t", { maxRowBytes: 1024 }));
+
+    expect(error.limit).toBe("bytes");
+    expect(seen.cancelled).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
+  test.each([
+    ["START TRANSACTION", (transport: ReturnType<typeof makeTransport>) => transport.beginReadOnlyTransaction()],
+    ["ROLLBACK", (transport: ReturnType<typeof makeTransport>) => transport.rollback("txn-1")],
+    ["the cancel", (transport: ReturnType<typeof makeTransport>) => transport.cancel(QUERY_ID)],
+  ])("bounds the body %s is answered with to the envelope allowance", async (_name, run) => {
+    const { body, seen } = endlessBody();
+    handler = () => new Response(body, { headers: { "content-type": "application/json" } });
+
+    const error = await tooLarge(() => run(makeTransport()));
+
+    expect(error.limit).toBe("bytes");
+    expect(seen.pulls).toBe(Math.ceil((TRINO_PAGE_ENVELOPE_BYTES + 1) / (64 * 1024)));
+    expect(seen.cancelled).toBe(true);
+  });
+
+  test("reads a page whose envelope is larger than what the cap leaves, within the allowance", async () => {
+    sequence(SINGLE_PAGE);
+
+    // [["476"]] is 9 bytes; the page around it is hundreds, all within the envelope allowance.
+    const result = await makeTransport().query("SELECT version()", { maxRowBytes: 9 });
+
+    expect(result.rows).toEqual([{ _col0: "476" }]);
   });
 });

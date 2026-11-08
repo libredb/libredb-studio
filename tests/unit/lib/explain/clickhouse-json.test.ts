@@ -187,7 +187,7 @@ describe("clickhouseJsonStrategy", () => {
   // ClickHouse EXPLAIN never executes the statement, so there is no analyze
   // equivalent to build. Returning null instead would kill the Explain button
   // outright: the direct action always builds with mode "analyze"
-  // (use-query-execution.ts:165) and refuses the run when the strategy declines.
+  // (`useQueryExecution` in use-query-execution.ts) and refuses the run when the strategy declines.
   // sqlite-queryplan.ts and couchbase-json.ts return the estimate for both modes
   // for the same reason.
   test("buildSql returns the estimate plan in analyze mode, matching the SQLite and Couchbase strategies", () => {

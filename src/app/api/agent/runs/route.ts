@@ -18,6 +18,7 @@ import { threadContextFor } from "@/lib/agent/thread-context";
 import {
   AGENT_TERMINAL_STATUSES,
   AGENT_WORKFLOW_PRESENTS_ANSWER,
+  AGENT_WORKFLOW_SENDS_STATEMENTS,
   DEFAULT_AGENT_WORKFLOW_TYPE,
   type AgentRunFailureReason,
   type AgentRunMode,
@@ -29,6 +30,7 @@ import {
 import { createErrorResponse } from "@/lib/api/errors";
 import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
+import { READ_ROOTS_REQUIRED, READ_ROOTS_REQUIRED_SENTENCE } from "@/lib/db/compatibility";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { resolveConfig } from "@/lib/llm/utils/config";
 import { guardRoute } from "@/lib/api/require-session";
@@ -136,7 +138,7 @@ const WORKFLOW_READINGS: ReadonlySet<string> = new Set<AgentRunWorkflowReading>(
  * list, which is a `"use client"` module a route may not import, so the extraction is
  * written twice on purpose and the two must stay equal.
  */
-type AgentStartRefusalCode = Extract<AgentRunFailureReason, "engine-unsupported">;
+type AgentStartRefusalCode = Extract<AgentRunFailureReason, "engine-unsupported" | "read-roots-required">;
 
 function badRequest(message: string, refused?: AgentStartRefusalCode): NextResponse {
   return NextResponse.json({ error: message, ...(refused === undefined ? {} : { refused }) }, { status: 400 });
@@ -379,6 +381,21 @@ export async function POST(req: Request) {
         // the only one that carries a code (#513).
         "engine-unsupported",
       );
+    }
+    /*
+      An engine agent mode reads only beneath read roots its seed declares (READ_ROOTS_REQUIRED), on a connection that
+      declares none: refused here, before a run exists, for the reason the engine refusal above is. The provider would
+      refuse the profile at its first acquisition, but an engine that declares no object kinds is grounded without one,
+      so without this the run would open, take its first model turn and fail at its first read. Only a workflow that
+      sends statements in agent mode: plan mode and the operations workflow read nothing beneath roots, and open.
+    */
+    if (
+      mode === "agent" &&
+      AGENT_WORKFLOW_SENDS_STATEMENTS[requestedWorkflow] &&
+      READ_ROOTS_REQUIRED[connection.type] &&
+      connection.agentReadRoots === undefined
+    ) {
+      return badRequest(READ_ROOTS_REQUIRED_SENTENCE, "read-roots-required");
     }
     // The hand-over replays the answer's statement in the user's editor; a variant that cannot auto-execute (every
     // kubectl variant: a kubectl answer is never run on the editor's terms) refuses the setting rather than persisting

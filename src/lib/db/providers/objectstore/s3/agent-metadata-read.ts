@@ -33,7 +33,13 @@ import {
 import type { QueryResult, QueryWarning, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { S3AgentOperation, S3AgentPlan } from "./agent-statement";
 import type { ObjectHead, S3AgentClient, S3CallOptions, VersioningState } from "./client";
-import { S3_KEY_SCAN_MAX_COUNT, S3_MAX_BUCKETS_READ, S3_TYPE } from "./constants";
+import {
+  S3_AGENT_BUCKET_CHECK_CONCURRENCY,
+  S3_AGENT_BUCKET_CHECK_MAX,
+  S3_KEY_SCAN_MAX_COUNT,
+  S3_MAX_BUCKETS_READ,
+  S3_TYPE,
+} from "./constants";
 import { S3ServerError } from "./errors";
 
 /** One bucket as the listing answers it. */
@@ -52,12 +58,14 @@ export type S3AgentAnswer =
       readonly pinned?: true;
       /** Names holding "/", which are counted and never listed. */
       readonly invalidNames?: number;
+      /** Listed buckets whose HEAD the server did not answer for this key, which are counted and never named. */
+      readonly withheld?: number;
     }
-  | { readonly op: "head-bucket"; readonly bucket: string; readonly exists: boolean; readonly region: string | null }
+  | { readonly op: "head-bucket"; readonly bucket: string; readonly exists: true; readonly region: string | null }
   | { readonly op: "get-bucket-location"; readonly bucket: string; readonly location: string }
   | { readonly op: "get-bucket-versioning"; readonly bucket: string; readonly state: VersioningState }
   | { readonly op: "summary"; readonly bucket: string; readonly objects: number; readonly bytes: number }
-  | { readonly op: "head-object"; readonly bucket: string; readonly head: ObjectHead | undefined };
+  | { readonly op: "head-object"; readonly bucket: string; readonly head: ObjectHead };
 
 /** A server time as Studio's ISO form, or null for one it could not read, never the header's own text. */
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
@@ -104,15 +112,10 @@ const SUMMARY: MetadataProjection<SummaryAnswer> = [
 type HeadObjectAnswer = Extract<S3AgentAnswer, { op: "head-object" }>;
 const HEAD_OBJECT: MetadataProjection<HeadObjectAnswer> = [
   { column: "bucket", kind: "name", read: (a) => a.bucket },
-  { column: "exists", kind: "flag", read: (a) => a.head !== undefined },
-  { column: "size_bytes", kind: "count", optional: true, read: (a) => a.head?.size ?? null },
-  { column: "last_modified", kind: "name", optional: true, read: (a) => isoOrNull(a.head?.lastModified ?? null) },
-  {
-    column: "storage_class",
-    kind: "name",
-    optional: true,
-    read: (a) => storageClassOrNull(a.head?.storageClass ?? null),
-  },
+  { column: "exists", kind: "flag", read: () => true },
+  { column: "size_bytes", kind: "count", optional: true, read: (a) => a.head.size },
+  { column: "last_modified", kind: "name", optional: true, read: (a) => isoOrNull(a.head.lastModified) },
+  { column: "storage_class", kind: "name", optional: true, read: (a) => storageClassOrNull(a.head.storageClass) },
 ];
 
 const PROJECTIONS = Object.freeze({
@@ -133,6 +136,7 @@ const NOT_PASSED_ON =
 export const S3_AGENT_FAILURE_SENTENCES = {
   denied: `The server refused this connection's key the read. ${NOT_PASSED_ON}`,
   missingBucket: `The bucket does not exist, or this connection's key may not see it. ${NOT_PASSED_ON}`,
+  notFound: `The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. ${NOT_PASSED_ON}`,
   region: `The bucket is in another region than the one this connection signs for. ${NOT_PASSED_ON}`,
   unsupported: `The server does not implement this read. ${NOT_PASSED_ON}`,
   status: (status: number): string => `The server refused the read with HTTP ${status}. ${NOT_PASSED_ON}`,
@@ -141,6 +145,10 @@ export const S3_AGENT_FAILURE_SENTENCES = {
   tooLarge: `The server's answer to the read is larger than Studio reads for one request. ${NOT_PASSED_ON}`,
   closed: "The connection was closed while the read ran, so it was not answered.",
   bucketsCut: `The server holds more buckets than one listing answers (${S3_MAX_BUCKETS_READ.toLocaleString("en-US")}), so the listing was refused rather than answered in part.`,
+  withheldBuckets: (count: number): string =>
+    `${count} listed ${count === 1 ? "bucket is" : "buckets are"} not named: a HEAD of ${count === 1 ? "it" : "each"} signed with this connection's key was refused, or answered that it is missing or in another region, so the server's grants do not show this key may read ${count === 1 ? "it" : "them"}.`,
+  bucketChecksOver: (listed: number): string =>
+    `This key lists ${listed.toLocaleString("en-US")} buckets, more than the ${S3_AGENT_BUCKET_CHECK_MAX} agent mode checks against the key's grants for one listing, one HEAD each, so the listing was refused rather than answered in part or sent more checks. Read a bucket you name with head-bucket, or pin the connection to one bucket.`,
   invalidBucketNames: (count: number): string =>
     `${count} bucket ${count === 1 ? "name holds" : "names hold"} a "/", which no S3 bucket name holds, so ${count === 1 ? "it is" : "they are"} counted here and not listed.`,
   summaryOverRows: (allowed: number): string =>
@@ -151,8 +159,6 @@ export const S3_AGENT_FAILURE_SENTENCES = {
     "The bucket holds an object whose name is not text, which the server answers without its size, so Studio cannot total the bucket: the summary was refused rather than answered in part.",
   pinned:
     "This connection is pinned to one bucket, so no bucket listing was sent: the pinned bucket is answered, and its creation time is not read.",
-  notFoundNote:
-    "A HEAD that finds nothing does not say whether the key or the bucket is missing: read the bucket with aws s3api head-bucket to tell them apart.",
 } as const;
 
 /** What a read runs under: the request's budget, its call (the deadline and the session's end) and the pin. */
@@ -162,8 +168,15 @@ export interface S3AgentReadContext {
   readonly pinnedBucket?: string;
 }
 
-const isNotFound = (error: unknown): error is S3ServerError =>
-  error instanceof S3ServerError && error.status === 404 && error.problem === undefined;
+/**
+ * A server's answer that a named bucket or key is missing or not readable. A server may refuse a bucket the key is
+ * granted nothing on with 403 and answer one that does not exist with 404, as Garage does, while MinIO's lineage
+ * answers both 403 to a key its policy scopes; and a HEAD of a key cannot tell a missing bucket from a missing key.
+ * The status alone decides, whatever the body holds: a body that is not S3's error XML, or one sent compressed, for
+ * one of the two statuses would otherwise tell them apart.
+ */
+const isMissingOrRefused = (error: unknown): error is S3ServerError =>
+  error instanceof S3ServerError && (error.status === 403 || error.status === 404);
 
 /**
  * A whole bucket's object count and total size: every page of the bucket with no prefix and no delimiter, each asking
@@ -198,36 +211,108 @@ async function summarize(client: S3AgentClient, bucket: string, context: S3Agent
   }
 }
 
-/** The answer of one admitted read, through the agent's client alone. */
+/**
+ * The answer of one admitted read, through the agent's client alone. A read that names a bucket or a key answers a
+ * bucket or a key that is missing and one the key may not read in one sentence, `notFound`, whatever the server sent,
+ * so no named read is an oracle for a bucket or an object past what the key's grants let it list: only an answer the
+ * server gave the key is passed on.
+ */
 export async function runS3AgentRead(
   client: S3AgentClient,
   plan: S3AgentPlan,
   context: S3AgentReadContext,
 ): Promise<S3AgentAnswer> {
+  if (plan.op === "list-buckets") return listBuckets(client, context);
+  try {
+    return await readNamed(client, plan, context);
+  } catch (error) {
+    if (isMissingOrRefused(error)) throw new QueryError(S3_AGENT_FAILURE_SENTENCES.notFound, S3_TYPE);
+    throw error;
+  }
+}
+
+async function listBuckets(client: S3AgentClient, context: S3AgentReadContext): Promise<S3AgentAnswer> {
+  if (context.pinnedBucket !== undefined)
+    return { op: "list-buckets", buckets: [{ name: context.pinnedBucket }], pinned: true };
+  const { buckets, withheld, invalidNames } = await readableBuckets(client, context.call);
+  const allowed = context.budget.maxResultRows;
+  if (buckets.length > allowed) throw new QueryError(rowBudgetSentence(buckets.length, allowed), S3_TYPE);
+  return {
+    op: "list-buckets",
+    buckets,
+    ...(invalidNames === 0 ? {} : { invalidNames }),
+    ...(withheld === 0 ? {} : { withheld }),
+  };
+}
+
+/** The buckets an agent-mode listing may name, and how many it counts without naming. */
+export interface S3ReadableBuckets {
+  readonly buckets: readonly S3AgentBucket[];
+  /** Listed buckets the server did not show this key may read. */
+  readonly withheld: number;
+  /** Listed names holding "/", which no S3 bucket name holds. */
+  readonly invalidNames: number;
+}
+
+/**
+ * A HEAD's answer that leaves a bucket unnamed: a refusal or a missing bucket (403, 404), or a bucket in another region
+ * than the one the connection signs for (a 301, which the transport refuses to follow). None of them shows a grant.
+ */
+const withholdsBucket = (error: unknown): boolean =>
+  (error instanceof S3ServerError && (error.status === 403 || error.status === 404 || error.status === 301)) ||
+  (error instanceof TransportError && error.kind === "redirect");
+
+/**
+ * The buckets the signing key may read, checked by the server: one ListBuckets, then one HeadBucket per listed bucket
+ * with the same key, at most `S3_AGENT_BUCKET_CHECK_CONCURRENCY` at once. A listing answers every bucket name to a key
+ * holding s3:ListAllMyBuckets on Silo and RustFS, the buckets it is granted nothing on included, while a HEAD is
+ * answered only where the key's grants allow the bucket (docs/providers/s3.md, "What a key's grants reach"), so only a
+ * bucket whose HEAD succeeds is named, and the rest are counted. A key that lists more than `S3_AGENT_BUCKET_CHECK_MAX`
+ * buckets is refused before any HEAD is sent, and a HEAD answered any other way refuses the listing, the HEADs still
+ * waiting unsent.
+ */
+export async function readableBuckets(client: S3AgentClient, call: S3CallOptions): Promise<S3ReadableBuckets> {
+  const listing = await client.listBuckets(call);
+  if (listing.truncated) throw new QueryError(S3_AGENT_FAILURE_SENTENCES.bucketsCut, S3_TYPE);
+  const listed = listing.buckets;
+  if (listed.length > S3_AGENT_BUCKET_CHECK_MAX)
+    throw new QueryError(S3_AGENT_FAILURE_SENTENCES.bucketChecksOver(listed.length), S3_TYPE);
+  const readable: boolean[] = listed.map(() => false);
+  let next = 0;
+  let failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < listed.length) {
+      const index = next;
+      next += 1;
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- each worker sends one HEAD at a time, so the checks stay bounded.
+        await client.headBucket(listed[index].name, call);
+        readable[index] = true;
+      } catch (error) {
+        if (!withholdsBucket(error)) {
+          failed = true;
+          throw error;
+        }
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(S3_AGENT_BUCKET_CHECK_CONCURRENCY, listed.length) }, worker));
+  const buckets = listed.filter((_, index) => readable[index]);
+  return { buckets, withheld: listed.length - buckets.length, invalidNames: listing.invalidNames.length };
+}
+
+/** One read that names a bucket, and for head-object a key. */
+async function readNamed(
+  client: S3AgentClient,
+  plan: Exclude<S3AgentPlan, { op: "list-buckets" }>,
+  context: S3AgentReadContext,
+): Promise<S3AgentAnswer> {
   const { call } = context;
   switch (plan.op) {
-    case "list-buckets": {
-      if (context.pinnedBucket !== undefined)
-        return { op: "list-buckets", buckets: [{ name: context.pinnedBucket }], pinned: true };
-      const listing = await client.listBuckets(call);
-      if (listing.truncated) throw new QueryError(S3_AGENT_FAILURE_SENTENCES.bucketsCut, S3_TYPE);
-      const allowed = context.budget.maxResultRows;
-      if (listing.buckets.length > allowed)
-        throw new QueryError(rowBudgetSentence(listing.buckets.length, allowed), S3_TYPE);
-      return {
-        op: "list-buckets",
-        buckets: listing.buckets,
-        ...(listing.invalidNames.length === 0 ? {} : { invalidNames: listing.invalidNames.length }),
-      };
+    case "head-bucket": {
+      const head = await client.headBucket(plan.bucket, call);
+      return { op: "head-bucket", bucket: plan.bucket, exists: true, region: head.bucketRegion };
     }
-    case "head-bucket":
-      try {
-        const head = await client.headBucket(plan.bucket, call);
-        return { op: "head-bucket", bucket: plan.bucket, exists: true, region: head.bucketRegion };
-      } catch (error) {
-        if (isNotFound(error)) return { op: "head-bucket", bucket: plan.bucket, exists: false, region: null };
-        throw error;
-      }
     case "get-bucket-location":
       return { op: plan.op, bucket: plan.bucket, location: await client.getBucketLocation(plan.bucket, call) };
     case "get-bucket-versioning":
@@ -235,14 +320,7 @@ export async function runS3AgentRead(
     case "summary":
       return summarize(client, plan.bucket, context);
     case "head-object":
-      try {
-        return { op: "head-object", bucket: plan.bucket, head: await client.headObject(plan.bucket, plan.key, call) };
-      } catch (error) {
-        // MinIO and its forks name a missing bucket in a header; any other 404 is a key the HEAD did not find.
-        if (isNotFound(error) && error.code !== "NoSuchBucket")
-          return { op: "head-object", bucket: plan.bucket, head: undefined };
-        throw error;
-      }
+      return { op: "head-object", bucket: plan.bucket, head: await client.headObject(plan.bucket, plan.key, call) };
   }
 }
 
@@ -257,6 +335,8 @@ function project(answer: S3AgentAnswer): {
       if (answer.pinned === true) warnings.push({ message: S3_AGENT_FAILURE_SENTENCES.pinned });
       if (answer.invalidNames !== undefined)
         warnings.push({ message: S3_AGENT_FAILURE_SENTENCES.invalidBucketNames(answer.invalidNames) });
+      if (answer.withheld !== undefined)
+        warnings.push({ message: S3_AGENT_FAILURE_SENTENCES.withheldBuckets(answer.withheld) });
       return { projected: projectMetadata(BUCKETS, answer.buckets), warnings };
     }
     case "head-bucket":
@@ -268,10 +348,7 @@ function project(answer: S3AgentAnswer): {
     case "summary":
       return { projected: projectMetadata(SUMMARY, [answer]), warnings: [] };
     case "head-object":
-      return {
-        projected: projectMetadata(HEAD_OBJECT, [answer]),
-        warnings: answer.head === undefined ? [{ message: S3_AGENT_FAILURE_SENTENCES.notFoundNote }] : [],
-      };
+      return { projected: projectMetadata(HEAD_OBJECT, [answer]), warnings: [] };
   }
 }
 

@@ -1,0 +1,1130 @@
+{
+  "server": "garage",
+  "image": "dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020",
+  "date": "2026-11-03",
+  "region": "garage",
+  "scoped": "a key made for the run, holding scoped-policy.json beside this server's directory",
+  "broad": "a key made for the run, holding tests/fixtures/s3/agent-boundary/reader-policy.json",
+  "unlisted": "a key made for the run, holding unlisted-policy.json beside this server's directory",
+  "buckets": {
+    "granted": "scope-granted",
+    "versions": "scope-versions",
+    "objectsOnly": "scope-objects-only",
+    "other": "scope-other",
+    "public": "scope-public",
+    "missing": "scope-missing"
+  },
+  "agent": [
+    {
+      "statement": "aws s3api list-buckets",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "created"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "created": "2026-11-03T16:13:19.547Z"
+        },
+        {
+          "bucket": "scope-objects-only",
+          "created": "2026-11-03T16:13:19.781Z"
+        },
+        {
+          "bucket": "scope-versions",
+          "created": "2026-11-03T16:13:19.662Z"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-granted",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "exists": true,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-granted",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "location"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "location": "garage"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-granted",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "status",
+        "mfa_delete"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "status": "never enabled",
+          "mfa_delete": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://scope-granted --recursive --summarize",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "objects": 1,
+          "total_size_bytes": 17
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-granted --key present.txt",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "exists": true,
+          "size_bytes": 17,
+          "last_modified": "2026-11-03T16:13:20.000Z",
+          "storage_class": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-granted --key absent.txt",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-versions",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-versions",
+          "exists": true,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-versions",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "location"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-versions",
+          "location": "garage"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-versions",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "status",
+        "mfa_delete"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-versions",
+          "status": "never enabled",
+          "mfa_delete": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://scope-versions --recursive --summarize",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-versions",
+          "objects": 1,
+          "total_size_bytes": 17
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-versions --key present.txt",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-versions",
+          "exists": true,
+          "size_bytes": 17,
+          "last_modified": "2026-11-03T16:13:20.000Z",
+          "storage_class": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-versions --key absent.txt",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-objects-only",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-objects-only",
+          "exists": true,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-objects-only",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "location"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-objects-only",
+          "location": "garage"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-objects-only",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "status",
+        "mfa_delete"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-objects-only",
+          "status": "never enabled",
+          "mfa_delete": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://scope-objects-only --recursive --summarize",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-objects-only",
+          "objects": 1,
+          "total_size_bytes": 17
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-objects-only --key present.txt",
+      "as": "scoped",
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-objects-only",
+          "exists": true,
+          "size_bytes": 17,
+          "last_modified": "2026-11-03T16:13:20.000Z",
+          "storage_class": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-objects-only --key absent.txt",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-other",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-other",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-other",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3 ls s3://scope-other --recursive --summarize",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-other --key present.txt",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-other --key absent.txt",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-public",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-public",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-public",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3 ls s3://scope-public --recursive --summarize",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-public --key present.txt",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-public --key absent.txt",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-missing",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-missing",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-missing",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3 ls s3://scope-missing --recursive --summarize",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-missing --key present.txt",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-missing --key absent.txt",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-versions --key gone.txt",
+      "as": "scoped",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api list-buckets",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "created"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "created": "2026-11-03T16:13:19.547Z"
+        },
+        {
+          "bucket": "scope-objects-only",
+          "created": "2026-11-03T16:13:19.781Z"
+        },
+        {
+          "bucket": "scope-other",
+          "created": "2026-11-03T16:13:19.898Z"
+        },
+        {
+          "bucket": "scope-public",
+          "created": "2026-11-03T16:13:19.964Z"
+        },
+        {
+          "bucket": "scope-versions",
+          "created": "2026-11-03T16:13:19.662Z"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-granted",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "exists": true,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-granted",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "location"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "location": "garage"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-granted",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "status",
+        "mfa_delete"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "status": "never enabled",
+          "mfa_delete": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://scope-granted --recursive --summarize",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "objects": 1,
+          "total_size_bytes": 17
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-granted --key present.txt",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "exists": true,
+          "size_bytes": 17,
+          "last_modified": "2026-11-03T16:13:20.000Z",
+          "storage_class": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-granted --key absent.txt",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-versions",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-versions",
+          "exists": true,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-versions",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "location"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-versions",
+          "location": "garage"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-versions",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "status",
+        "mfa_delete"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-versions",
+          "status": "never enabled",
+          "mfa_delete": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://scope-versions --recursive --summarize",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-versions",
+          "objects": 1,
+          "total_size_bytes": 17
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-versions --key present.txt",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-versions",
+          "exists": true,
+          "size_bytes": 17,
+          "last_modified": "2026-11-03T16:13:20.000Z",
+          "storage_class": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-versions --key absent.txt",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-objects-only",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-objects-only",
+          "exists": true,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-objects-only",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "location"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-objects-only",
+          "location": "garage"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-objects-only",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "status",
+        "mfa_delete"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-objects-only",
+          "status": "never enabled",
+          "mfa_delete": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://scope-objects-only --recursive --summarize",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-objects-only",
+          "objects": 1,
+          "total_size_bytes": 17
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-objects-only --key present.txt",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-objects-only",
+          "exists": true,
+          "size_bytes": 17,
+          "last_modified": "2026-11-03T16:13:20.000Z",
+          "storage_class": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-objects-only --key absent.txt",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-other",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-other",
+          "exists": true,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-other",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "location"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-other",
+          "location": "garage"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-other",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "status",
+        "mfa_delete"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-other",
+          "status": "never enabled",
+          "mfa_delete": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://scope-other --recursive --summarize",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-other",
+          "objects": 1,
+          "total_size_bytes": 17
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-other --key present.txt",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-other",
+          "exists": true,
+          "size_bytes": 17,
+          "last_modified": "2026-11-03T16:13:20.000Z",
+          "storage_class": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-other --key absent.txt",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-public",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-public",
+          "exists": true,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-public",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "location"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-public",
+          "location": "garage"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-public",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "status",
+        "mfa_delete"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-public",
+          "status": "never enabled",
+          "mfa_delete": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://scope-public --recursive --summarize",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-public",
+          "objects": 1,
+          "total_size_bytes": 17
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-public --key present.txt",
+      "as": "broad",
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-public",
+          "exists": true,
+          "size_bytes": 17,
+          "last_modified": "2026-11-03T16:13:20.000Z",
+          "storage_class": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-public --key absent.txt",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-missing",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket scope-missing",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket scope-missing",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3 ls s3://scope-missing --recursive --summarize",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-missing --key present.txt",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-missing --key absent.txt",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket scope-versions --key gone.txt",
+      "as": "broad",
+      "refused": "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api list-buckets",
+      "as": "unlisted",
+      "fields": [
+        "bucket",
+        "created"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "created": "2026-11-03T16:13:19.547Z"
+        },
+        {
+          "bucket": "scope-objects-only",
+          "created": "2026-11-03T16:13:19.781Z"
+        },
+        {
+          "bucket": "scope-versions",
+          "created": "2026-11-03T16:13:19.662Z"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket scope-granted",
+      "as": "unlisted",
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "scope-granted",
+          "exists": true,
+          "region": null
+        }
+      ]
+    }
+  ],
+  "raw": [
+    {
+      "call": "HeadBucket scope-granted",
+      "as": "scoped",
+      "status": 200
+    },
+    {
+      "call": "HeadObject scope-granted/present.txt",
+      "as": "scoped",
+      "status": 200
+    },
+    {
+      "call": "HeadObject scope-granted/absent.txt",
+      "as": "scoped",
+      "status": 404
+    },
+    {
+      "call": "HeadBucket scope-versions",
+      "as": "scoped",
+      "status": 200
+    },
+    {
+      "call": "HeadObject scope-versions/present.txt",
+      "as": "scoped",
+      "status": 200
+    },
+    {
+      "call": "HeadObject scope-versions/absent.txt",
+      "as": "scoped",
+      "status": 404
+    },
+    {
+      "call": "HeadBucket scope-objects-only",
+      "as": "scoped",
+      "status": 200
+    },
+    {
+      "call": "HeadObject scope-objects-only/present.txt",
+      "as": "scoped",
+      "status": 200
+    },
+    {
+      "call": "HeadObject scope-objects-only/absent.txt",
+      "as": "scoped",
+      "status": 404
+    },
+    {
+      "call": "HeadBucket scope-other",
+      "as": "scoped",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-other/present.txt",
+      "as": "scoped",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-other/absent.txt",
+      "as": "scoped",
+      "status": 403
+    },
+    {
+      "call": "HeadBucket scope-public",
+      "as": "scoped",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-public/present.txt",
+      "as": "scoped",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-public/absent.txt",
+      "as": "scoped",
+      "status": 403
+    },
+    {
+      "call": "HeadBucket scope-missing",
+      "as": "scoped",
+      "status": 404
+    },
+    {
+      "call": "HeadObject scope-missing/present.txt",
+      "as": "scoped",
+      "status": 404
+    },
+    {
+      "call": "HeadObject scope-missing/absent.txt",
+      "as": "scoped",
+      "status": 404
+    },
+    {
+      "call": "HeadBucket scope-granted",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-granted/present.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-granted/absent.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadBucket scope-versions",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-versions/present.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-versions/absent.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadBucket scope-objects-only",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-objects-only/present.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-objects-only/absent.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadBucket scope-other",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-other/present.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-other/absent.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadBucket scope-public",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-public/present.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-public/absent.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadBucket scope-missing",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-missing/present.txt",
+      "as": "anonymous",
+      "status": 403
+    },
+    {
+      "call": "HeadObject scope-missing/absent.txt",
+      "as": "anonymous",
+      "status": 403
+    }
+  ],
+  "oracle": {
+    "ungrantedBucketLikeMissing": {
+      "aws s3api head-bucket --bucket <bucket>": true,
+      "aws s3api get-bucket-location --bucket <bucket>": true,
+      "aws s3api get-bucket-versioning --bucket <bucket>": true,
+      "aws s3 ls s3://<bucket> --recursive --summarize": true,
+      "aws s3api head-object --bucket <bucket> --key present.txt": true,
+      "aws s3api head-object --bucket <bucket> --key absent.txt": true
+    },
+    "ungrantedPresentKeyLikeAbsent": true,
+    "objectsOnlyPresentKeyLikeAbsent": false
+  },
+  "leaks": []
+}

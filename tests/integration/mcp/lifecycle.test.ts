@@ -1,19 +1,19 @@
 /**
  * What the MCP server promises about its lifecycle (#246), through the route with a token minted at
- * run time: one McpServer for each request the SDK serves and none for a request refused before
+ * run time: one server for each request the SDK serves and none for a request refused before
  * it; one provider for concurrent first calls on one connection and profile; no deprecated feature
  * used (logging, sampling, roots); one source for the server's version; and a handler that still
  * serves after every earlier test has torn down.
  *
- * Servers are counted by McpServer.prototype.registerTool, which the factory calls four times per
- * server; providers by the real SQLite provider's connect.
+ * Servers are counted by Server.prototype.connect, which the SDK calls once on the server it builds for each request
+ * it serves, an McpServer's included; providers by the real SQLite provider's connect.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { createMcpHandler, McpServer, Server } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import * as route from "@/app/api/mcp/route";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
@@ -38,6 +38,7 @@ import {
   routeServe,
   type ServeRequest,
 } from "../../helpers/mcp-harness";
+import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { mintTestToken, useMcpChannel } from "../../helpers/mcp-token";
 
 pinMcpTestEnvironment();
@@ -79,13 +80,13 @@ const runQuery = (id: number) => ({
 });
 
 async function serversBuiltBy(send: () => Promise<Response>): Promise<number> {
-  const registrations = countMethod(McpServer.prototype, "registerTool");
+  const connects = countMethod(Server.prototype, "connect");
   try {
     const response = await send();
     await response.text();
-    return registrations.calls / 5;
+    return connects.calls;
   } finally {
-    registrations.restore();
+    connects.restore();
   }
 }
 
@@ -184,7 +185,7 @@ describe("one server per served request", () => {
     ).toBe(0);
   });
 
-  test("tools/list builds no provider, and answers the registration order every time", async () => {
+  test("tools/list builds no provider, and answers the token's own list in registration order every time", async () => {
     const connects = countMethod(SQLiteProvider.prototype, "connect");
     try {
       const replies = await Promise.all(
@@ -193,13 +194,9 @@ describe("one server per served request", () => {
         ),
       );
       for (const reply of replies) {
-        expect(reply.result?.tools.map((tool: { name: string }) => tool.name)).toEqual([
-          "list_connections",
-          "inspect_schema",
-          "run_read_query",
-          "run_kubectl_read",
-          "run_mongo_command",
-        ]);
+        expect(reply.result?.tools.map((tool: { name: string }) => tool.name)).toEqual(
+          listedMcpToolNames(new Set(["sqlite"])),
+        );
       }
       expect(connects.calls).toBe(0);
     } finally {
@@ -461,6 +458,8 @@ describe("the module-scope handler", () => {
   test("still serves after every earlier test in this file has torn down its clients", async () => {
     const response = await serve(legacyPost({ jsonrpc: "2.0", id: 99, method: "tools/list" }, { token }));
     expect(response.status).toBe(200);
-    expect((await readJsonRpc(response)).result?.tools).toHaveLength(5);
+    expect((await readJsonRpc(response)).result?.tools.map((tool: { name: string }) => tool.name)).toEqual(
+      listedMcpToolNames(new Set(["sqlite"])),
+    );
   });
 });

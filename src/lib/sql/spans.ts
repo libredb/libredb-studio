@@ -25,9 +25,9 @@
  * grammar (S1), which is why the list of readers deliberately left alone is down to
  * one:
  *
- * - `alias-extractor.ts:134-135` blanks literals with a regex that honours
+ * - `preprocessSql` in `alias-extractor.ts` blanks literals with a regex that honours
  *   BACKSLASH escapes, which this module reports as undeterminable instead unless
- *   the grammar declares `backslashAlwaysEscapes` (see `readQuoted`). Its comment strip (lines 130-132) knows `--` and the block form
+ *   the grammar declares `backslashAlwaysEscapes` (see `readQuoted`). Its comment strip knows `--` and the block form
  *   and no dialect at all, so it does not know `//` either. Its job is autocomplete,
  *   where a wrong alias costs a suggestion; here a wrong literal boundary costs a
  *   bound on a write - or, at the splitter, a fragment that gets executed.
@@ -399,8 +399,22 @@ function readAlternateQuoted(sql: string, index: number, tagLength: number): Sql
  * one-unit read.
  */
 function continuesWord(sql: string, index: number, wholeCodePoint = false): boolean {
-  const before = wholeCodePoint ? Array.from(sql.slice(Math.max(0, index - 2), index)).pop() : sql[index - 1];
+  const before = wholeCodePoint ? codePointBefore(sql, index) : sql[index - 1];
   return before !== undefined && (IDENTIFIER_PART.test(before) || before === "$");
+}
+
+/**
+ * The code point that ends at `index`: a surrogate pair whole, any other code unit alone, `undefined` at the start.
+ * Read off the two code units rather than by splitting the text before `index` into code points, which allocated an
+ * array at every `r` of a Spark text and was most of the cost of reading one.
+ */
+function codePointBefore(sql: string, index: number): string | undefined {
+  const last = sql.charCodeAt(index - 1);
+  if (index >= 2 && last >= 0xdc00 && last <= 0xdfff) {
+    const first = sql.charCodeAt(index - 2);
+    if (first >= 0xd800 && first <= 0xdbff) return sql.slice(index - 2, index);
+  }
+  return sql[index - 1];
 }
 
 /**
@@ -612,7 +626,16 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   if (grammar.tripleQuotedStrings && (ch === "'" || ch === '"') && sql.startsWith(ch.repeat(3), index)) {
     return readTripleQuoted(sql, index, ch, ch === "'" ? "string" : "quoted-identifier");
   }
-  if (ch === "'") return readQuoted(sql, index, "'", "string", literalBackslash);
+  // `singleQuoteBackslashEscapes` overrides the backslash reading of `'…'` alone, as its double-quote twin does below.
+  if (ch === "'") {
+    const stringBackslash =
+      grammar.singleQuoteBackslashEscapes === undefined
+        ? literalBackslash
+        : grammar.singleQuoteBackslashEscapes
+          ? "escapes"
+          : "never";
+    return readQuoted(sql, index, "'", "string", stringBackslash);
+  }
   // `"` is a quoted identifier in every dialect this project supports except
   // MySQL with its default settings, where it is a string - and therefore takes
   // backslash escapes. Either way it is an opaque literal and the doubling rule is

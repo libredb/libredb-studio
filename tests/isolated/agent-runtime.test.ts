@@ -23,6 +23,9 @@ import { AgentRunServiceError } from "@/lib/agent/run-service";
 import { LLMAuthError, LLMConfigError, LLMRateLimitError } from "@/lib/llm/types";
 import { type ExecutionProfileDenyCode, ExecutionProfileError } from "@/lib/db/errors";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { filterByRoles } from "@/lib/seed/connection-filter";
+import { seedRolesOf } from "@/lib/seed/roles";
+import type { SeedConnection } from "@/lib/seed/types";
 import * as realFactory from "@/lib/db/factory";
 import type { AgentToolResources } from "@/lib/agent/investigation";
 import { TABLE_LABELS } from "../fixtures/provider-labels";
@@ -221,6 +224,51 @@ describe("driveAgentRun", () => {
       {},
       { allowExternalFileAccess: false },
     );
+  });
+
+  test("an admin's run on a seed offered to admin and user acquires under the posture a user's run gets", async () => {
+    // The drive resolves the run actor's own copy of the seed, which names only the roles that actor holds, so an
+    // admin's copy of a seed offered to ["admin", "user"] reads ["admin"]. The acquirer's posture is still the one the
+    // operator's roles decide (docs/providers/duckdb.md 3.16), so every run on that seed acquires one handle.
+    const warehouse = (roles: string[]): SeedConnection => ({
+      id: "warehouse",
+      name: "Warehouse",
+      type: "duckdb",
+      database: "/srv/data/warehouse.duckdb",
+      roles,
+    });
+    async function acquirerPosture(role: "admin" | "user", roles: string[], runId: string): Promise<unknown> {
+      const [copy] = filterByRoles([warehouse(roles)], seedRolesOf({ role }));
+      if (copy === undefined) throw new Error(`a ${role} run cannot resolve a seed offered to ${roles.join(", ")}`);
+      mockResolveConnection.mockImplementation(async () => copy);
+      const service = await getAgentRunService();
+      await service.start({
+        mode: "agent",
+        actor: { sessionId: role, role },
+        connectionId: "seed:warehouse",
+        objective: "which region sells most",
+        runId,
+      });
+      await driveAgentRun(runId);
+      const { resources } = investigationCalls[investigationCalls.length - 1];
+      mockAcquireExecutionProfileProvider.mockClear();
+      await resources.acquireProvider(resources.connection, "agent-read-only");
+      return mockAcquireExecutionProfileProvider.mock.calls[0]?.[3];
+    }
+
+    try {
+      expect(await acquirerPosture("admin", ["admin", "user"], "arun_posture_admin_pair")).toEqual({
+        allowExternalFileAccess: false,
+      });
+      expect(await acquirerPosture("user", ["admin", "user"], "arun_posture_user_pair")).toEqual({
+        allowExternalFileAccess: false,
+      });
+      expect(await acquirerPosture("admin", ["admin"], "arun_posture_admin_only")).toEqual({
+        allowExternalFileAccess: true,
+      });
+    } finally {
+      mockResolveConnection.mockImplementation(async () => CONNECTION);
+    }
   });
 
   test("reads the run's declarations from a provider built as an agent-mode handle, never as an editor one", async () => {
@@ -481,6 +529,9 @@ describe("a drive that fails before the loop", () => {
     PROFILE_SERVER_UNENFORCED: "server-authorization-off",
     AGENT_CREDENTIAL_UNRESOLVABLE: "agent-credential-unusable",
     AGENT_CREDENTIAL_WITH_CONNECTION_STRING: "agent-credential-unusable",
+    CONNECTION_SECRET_UNRESOLVABLE: "connection-unresolvable",
+    AGENT_CREDENTIAL_REQUIRED: "agent-credential-unusable",
+    READ_ROOTS_REQUIRED: "read-roots-required",
   } as const satisfies Record<ExecutionProfileDenyCode, AgentRunFailureReason>;
 
   test.each(Object.entries(REASON_OF_DENY_CODE) as [ExecutionProfileDenyCode, AgentRunFailureReason][])(

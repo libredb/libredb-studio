@@ -3,8 +3,8 @@
  *
  * READ-ONLY IS STRUCTURAL HERE, NOT A MODE. The encoder has five packets and no function that writes a PUBLISH;
  * CONNECT has no parameter for a Will; and the valve re-checks every outbound byte before it reaches the socket.
- * `enforcesReadOnly` is therefore true whatever the connection's flag says, and there is no path that could make
- * it false.
+ * Its write reach is therefore `none` whatever the connection's flag says, and there is no path that could make
+ * it anything else.
  *
  * ONE READ FILLS THE PANEL. A session subscribes once, collects what the broker delivers until one of our own
  * budgets ends it, and leaves. The panel's tree is drawn from that read; a refresh replaces it with a new one,
@@ -15,7 +15,8 @@
  * same encoder and valve, and each answer projected to counts and flags (`agent-read.ts`), never a topic name or a
  * payload, and always with the window it listened for and the sentence that a topic not seen may still exist. On a
  * handle opened for any agent-mode profile, connecting is a handshake that subscribes to nothing, and every other
- * surface answers its reason (`agent-surface.ts`). MCP read stays closed on this engine.
+ * surface answers its reason (`agent-surface.ts`). MCP's `run_mqtt_read` reads through this same `queryReadOnly` on an
+ * agent read-only handle, and its answers carry the window and the completeness sentence as notes.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
@@ -71,6 +72,16 @@ import {
   mqttSourceDocument,
 } from "./objects";
 import { readTopics, type MqttReadOutcome, type MqttSessionOptions, type MqttTransportFactory } from "./session";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the encoder has no PUBLISH function, and the valve refuses any other packet on the
+ * bytes.
+ */
+const MQTT_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/keyvalue/mqtt/valve.ts",
+  symbol: "guardOutboundPacket",
+});
 
 const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
 const NO_ESTIMATE = "MQTT composes no estimating plan for the agent";
@@ -148,7 +159,7 @@ export class MqttProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Structural: this provider has no code that can write to a broker.
-      enforcesReadOnly: true,
+      writeReach: MQTT_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

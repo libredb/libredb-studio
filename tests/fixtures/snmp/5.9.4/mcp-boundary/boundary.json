@@ -1,0 +1,207 @@
+{
+  "$captured": {
+    "image": "libredb-fixture/snmp:5.9.4",
+    "date": "2026-11-03",
+    "runtime": "bun 1.4.4",
+    "communities": "census: view of 1; broad: view of 1 but hrDevice (1.3.6.1.2.1.25.3) and hrSWInstalled (1.3.6.1.2.1.25.6); crossing: hrSystem, hrSWRun and hrSWRunPerf (1.3.6.1.2.1.25.1, .4 and .5); narrow: view of the system group alone; writer: read-write view of 1 (made per run, not recorded)",
+    "markers": "a running process's arguments, an SNMPv3 user's keys, two notification targets' communities, and the extend, exec and procfix directives' commands"
+  },
+  "census": {
+    "instances": 3951,
+    "marked": 65,
+    "markedOutsideWithheld": 0,
+    "markedByWithheldSubtree": {
+      "HOST-RESOURCES-MIB::hrSWRun": 1,
+      "NET-SNMP-AGENT-MIB::nsExtensions": 26,
+      "NET-SNMP-VACM-MIB": 12,
+      "SNMP-TARGET-MIB": 2,
+      "SNMP-USER-BASED-SM-MIB": 11,
+      "SNMP-VIEW-BASED-ACM-MIB": 9,
+      "UCD-SNMP-MIB::extTable": 3,
+      "UCD-SNMP-MIB::prErrFixCmd": 1
+    }
+  },
+  "reads": {
+    "get sysDescr.0 sysUpTime.0": {
+      "isError": false,
+      "rows": 2,
+      "notes": [],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    },
+    "next sysDescr.0": {
+      "isError": false,
+      "rows": 1,
+      "notes": [],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    },
+    "walk system": {
+      "isError": false,
+      "rows": 37,
+      "notes": [],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    },
+    "table ifEntry": {
+      "isError": false,
+      "rows": 2,
+      "notes": [],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    }
+  },
+  "withheld": {
+    "walk host": {
+      "isError": false,
+      "rows": 100,
+      "notes": [
+        "HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4) is withheld from agent mode: it holds the running processes' names, paths and parameters, whose command lines can carry credentials, so no value or instance of it is read or answered."
+      ],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    },
+    "walk 1.3.6.1.4.1.2021": {
+      "isError": false,
+      "rows": 100,
+      "notes": [
+        "UCD-SNMP-MIB::prErrFixCmd (1.3.6.1.4.1.2021.2.1.103) is withheld from agent mode: it holds the command line the agent runs to fix a missing process, which can carry credentials, so no value or instance of it is read or answered.",
+        "UCD-SNMP-MIB::extTable (1.3.6.1.4.1.2021.8) is withheld from agent mode: it holds the commands the agent runs for its exec directives and what they print, either of which can carry credentials, so no value or instance of it is read or answered."
+      ],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    },
+    "walk 1.3.6.1.6.3": {
+      "isError": false,
+      "rows": 8,
+      "notes": [
+        "SNMP-TARGET-MIB (1.3.6.1.6.3.12) is withheld from agent mode: it holds the addresses notifications and proxied requests are sent to, and the security names that reach them, so no value or instance of it is read or answered.",
+        "SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13) is withheld from agent mode: it holds the notification filters and the targets they name, so no value or instance of it is read or answered.",
+        "SNMP-PROXY-MIB (1.3.6.1.6.3.14) is withheld from agent mode: it holds the proxy forwarding rules and the security names they map, so no value or instance of it is read or answered.",
+        "SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15) is withheld from agent mode: it holds the SNMPv3 user names and their key-change objects, so no value or instance of it is read or answered.",
+        "SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) is withheld from agent mode: it holds the access control tables, indexed by the security names that may read or write each view, so no value or instance of it is read or answered.",
+        "SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18) is withheld from agent mode: it holds the community strings and the security names they map to, so no value or instance of it is read or answered."
+      ],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    },
+    "get hrSWRunParameters.7 sysName.0": {
+      "isError": false,
+      "rows": 2,
+      "notes": [
+        "HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4) is withheld from agent mode: it holds the running processes' names, paths and parameters, whose command lines can carry credentials, so no value or instance of it is read or answered."
+      ],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    },
+    "next 1.3.6.1.2.1.25.3.99": {
+      "isError": false,
+      "rows": 1,
+      "notes": [
+        "HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4) is withheld from agent mode: it holds the running processes' names, paths and parameters, whose command lines can carry credentials, so no value or instance of it is read or answered."
+      ],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    },
+    "next 1.3.6.1.4.1.8072.1.2.99999": {
+      "isError": false,
+      "rows": 1,
+      "notes": [
+        "NET-SNMP-AGENT-MIB::nsExtensions (1.3.6.1.4.1.8072.1.3) is withheld from agent mode: it holds the commands the agent runs for its extend directives, their arguments and what they print, any of which can carry credentials, so no value or instance of it is read or answered."
+      ],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    },
+    "next 1.3.6.1.4.1.2021.8": {
+      "isError": false,
+      "rows": 1,
+      "notes": [
+        "UCD-SNMP-MIB::extTable (1.3.6.1.4.1.2021.8) is withheld from agent mode: it holds the commands the agent runs for its exec directives and what they print, either of which can carry credentials, so no value or instance of it is read or answered."
+      ],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    }
+  },
+  "crossing": {
+    "isError": false,
+    "rows": 15,
+    "notes": [
+      "HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4) is withheld from agent mode: it holds the running processes' names, paths and parameters, whose command lines can carry credentials, so no value or instance of it is read or answered."
+    ],
+    "carriesMarker": false,
+    "carriesCommunity": false,
+    "rawInside": 28,
+    "truncatedBy": null,
+    "before": 7,
+    "inside": 0,
+    "after": 8,
+    "hrSWRunPerf": true
+  },
+  "scope": {
+    "narrowSystem": {
+      "isError": false,
+      "rows": 1,
+      "notes": [],
+      "carriesMarker": false,
+      "carriesCommunity": false
+    },
+    "outsideViewType": "noSuchObject",
+    "missingType": "noSuchObject",
+    "narrowWalkOfMib2Rows": 37
+  },
+  "refused": [
+    {
+      "request": "a set",
+      "code": "request",
+      "ownWords": true,
+      "fenced": "The command was refused before it reached the agent (request). `set` is not a co"
+    },
+    {
+      "request": "a walk inside the community module",
+      "code": "withheld",
+      "ownWords": true,
+      "fenced": "The command was refused before it reached the agent (withheld). A walk of 1.3.6."
+    },
+    {
+      "request": "a table of the running processes",
+      "code": "withheld",
+      "ownWords": true,
+      "fenced": "The command was refused before it reached the agent (withheld). A table of 1.3.6"
+    },
+    {
+      "request": "a walk of the extend directives",
+      "code": "withheld",
+      "ownWords": true,
+      "fenced": "The command was refused before it reached the agent (withheld). A walk of 1.3.6."
+    },
+    {
+      "request": "a walk of the exec directives",
+      "code": "withheld",
+      "ownWords": true,
+      "fenced": "The command was refused before it reached the agent (withheld). A walk of 1.3.6."
+    },
+    {
+      "request": "a trap",
+      "code": "request",
+      "ownWords": true,
+      "fenced": "The command was refused before it reached the agent (request). `trap` is not a c"
+    },
+    {
+      "request": "Net-SNMP's tool syntax",
+      "code": "request",
+      "ownWords": true,
+      "fenced": "The command was refused before it reached the agent (request). `snmpget` is not "
+    }
+  ],
+  "overBudget": "The result has more than 1000 rows, the most this server reads for one call. Ask for at most 1000 rows: get and next answer one row per object they name, walk one row per instance under its subtree an",
+  "writes": {
+    "rawSetChangedSysContact": true,
+    "unfencedToolSetChangedSysContact": false
+  },
+  "limits": {
+    "leastTimeoutAnsweredMs": 502,
+    "leastReadEndedMs": 469,
+    "cancelAnsweredMs": 1003,
+    "cancelReadEndedMs": 2965
+  }
+}

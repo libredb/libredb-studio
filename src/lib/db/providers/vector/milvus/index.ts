@@ -114,6 +114,25 @@ import {
 } from "./objects";
 import { milvusAgentUser, proveMilvusReadOnly } from "./read-only-proof";
 import { type MilvusVersion, readMilvusVersion } from "./versions";
+import { declareWriteReach } from "@/lib/db/write-reach";
+
+/**
+ * Load and Release, the only state changes Studio sends, are refused by `refuseReadOnly` while read-only mode holds,
+ * before any request; every route of the console's route table is a read, and there is no object edit and no
+ * transaction route.
+ */
+const MILVUS_WRITE_REACH = declareWriteReach({
+  editor: {
+    reach: "absent",
+    proof: { module: "src/lib/db/providers/vector/milvus/routes.ts", symbol: "MILVUS_ROUTES" },
+  },
+  objectEdit: { reach: "absent" },
+  maintenance: {
+    reach: "gated",
+    gate: { module: "src/lib/db/providers/vector/milvus/write-policy.ts", symbol: "refuseReadOnly" },
+  },
+  transaction: { reach: "absent" },
+});
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: a Milvus request has no placeholders";
 const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
@@ -206,7 +225,7 @@ export class MilvusProvider extends BaseDatabaseProvider {
       // One level, the database, and every address names it: the shape assertContainerPathShape checks (#1147).
       containerPathShapes: "exact",
       objectKinds: MILVUS_OBJECT_KINDS,
-      enforcesReadOnly: true,
+      writeReach: MILVUS_WRITE_REACH,
       // Scalar, vector and dynamic field values are stored values: the agent's answers carry names, counts and flags.
       metadataOnly: MILVUS_METADATA_ONLY,
       schemaRefreshPattern: MILVUS_SCHEMA_REFRESH_PATTERN,
@@ -398,10 +417,18 @@ export class MilvusProvider extends BaseDatabaseProvider {
   // Object surface, answered by objects.ts
   // ==========================================================================
 
-  /** The databases; nothing nests under one, which answers with no call. */
+  /**
+   * The databases; nothing nests under one, which answers with no call. A handle opened under an execution profile
+   * lists the connection's own database alone, with no call, since an agent request reads that database and no other:
+   * so MCP's `inspect_schema` and the agent's catalog read the seed's database, as `run_milvus_read` does.
+   */
   public async listContainers(parent?: readonly string[]): Promise<Container[]> {
     const { session, context } = this.surface();
     if (parent !== undefined && parent.length > 0) return [];
+    if (this.execution.readOnly === true) {
+      const database = session.options.database;
+      return [{ path: [database], name: database, level: 0, isSessionDefault: true }];
+    }
     return listMilvusDatabases(session.client, context);
   }
 

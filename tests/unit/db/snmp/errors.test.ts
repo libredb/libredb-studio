@@ -12,6 +12,7 @@ import type { SnmpFailure } from "@/lib/db/providers/network/snmp/errors";
 import {
   ERROR_STATUS,
   USM_REPORT_OIDS,
+  failureFromOversizedAnswer,
   failureFromReport,
   failureFromSilence,
   failureFromSocket,
@@ -59,6 +60,16 @@ describe("an error-status is read as a number", () => {
   });
   test("an unknown status keeps its number", () => {
     expect(failureFromStatus(42)?.reason).toContain("42");
+  });
+});
+
+describe("an answer past the most objects one request asks for", () => {
+  test("is its own failure, too large to read, never retried", () => {
+    expect(failureFromOversizedAnswer()).toEqual({
+      kind: "answerTooLarge",
+      reason: "the agent answered with more objects than one request here asks for, so the answer was refused unread",
+      retryable: false,
+    });
   });
 });
 

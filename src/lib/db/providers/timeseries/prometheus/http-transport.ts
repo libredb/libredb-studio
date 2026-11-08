@@ -109,7 +109,7 @@ export const RESPONSE_BYTE_CAP = 32 * 1024 * 1024;
  * Each is spelled whole rather than assembled from a prefix, so this table is the complete record of what
  * the provider can reach.
  */
-const PATHS = Object.freeze({
+export const PATHS = Object.freeze({
   QUERY: "/api/v1/query",
   // The only label-values path the provider reads. `__name__` is a legacy name, so the escape is the
   // identity, and it still goes through promql.ts, the one builder of a label path (#1085 S4).

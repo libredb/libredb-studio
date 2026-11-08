@@ -336,7 +336,13 @@ export async function POST(req: NextRequest) {
         // at once would be twenty concurrent scans of the user's database.
         for (const col of profiled) {
           columnProfiles.push(
-            await profileSqlColumn(provider, safeTable, col, quoteIdentifier(col, capabilities), totalRows),
+            await profileSqlColumn(
+              provider,
+              safeTable,
+              col,
+              quoteIdentifier(col, capabilities, { always: true }),
+              totalRows,
+            ),
           );
         }
 
@@ -344,7 +350,7 @@ export async function POST(req: NextRequest) {
         // through the same limiter the editor's statements go through: `LIMIT 5` written here
         // was a syntax error on Oracle, SQL Server and Db2.
         const topCols = profiled.slice(0, 5);
-        const safeCols = topCols.map((c) => quoteIdentifier(c, capabilities)).join(", ");
+        const safeCols = topCols.map((c) => quoteIdentifier(c, capabilities, { always: true })).join(", ");
         try {
           const sample = provider.prepareQuery(`SELECT ${safeCols} FROM ${safeTable}`, { limit: 5 });
           const sampleResult = await provider.query(sample.query);

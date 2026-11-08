@@ -1,0 +1,16 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-11-02T15:19:36.891Z",
+    "database": null
+  },
+  "principal": "no_access: agent_reader and no_access (DENY ACCESS ON DATABASE neo4j)",
+  "surface": "verify",
+  "outcome": "pass",
+  "result": {
+    "address": "127.0.0.1:17687",
+    "agent": "Neo4j/5.26.31",
+    "protocolVersion": "5.5"
+  }
+}

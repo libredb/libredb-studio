@@ -252,6 +252,8 @@ describe("foldLedgerEntries", () => {
     "profile-target-unsupported":
       "Agent mode runs on this engine, but not against this server or target: a compatible server whose read-only enforcement is not measured, such as FerretDB on the MongoDB wire or Percona on the MySQL wire, or an in-memory database. Plan mode and the operations workflow still work.",
     "connection-unresolvable": "This run's database connection no longer resolves on the server.",
+    "read-roots-required":
+      "This connection declares no read roots, so agent mode cannot read it: an operator adds agentReadRoots to its seed entry. Plan mode still drafts requests for the editor.",
     internal: "The server could not carry this run. The reason is in the server log.",
   } as const satisfies Record<AgentRunFailureReason, string>;
 
@@ -269,9 +271,9 @@ describe("foldLedgerEntries", () => {
   );
 
   test("no sentence a MongoDB run can reach names an agent credential or the plan that admits a statement", () => {
-    // A run opens on a seed id and no seed declares an agent credential (B85), so a MongoDB run cannot reach the
-    // credential reason, and every other sentence must give advice it can follow: no credential field and no
-    // SQL Server SHOWPLAN step, neither of which a MongoDB connection has.
+    // Only the credential reason names an agent credential, which a MongoDB run reaches only on a seed that sets one,
+    // and every other sentence must give advice any MongoDB run can follow: no credential field and no SQL Server
+    // SHOWPLAN step, neither of which a MongoDB connection without an agent credential has.
     const reachable = (Object.keys(FAILURE_SENTENCE_OF) as AgentRunFailureReason[]).filter(
       (reason) => reason !== "agent-credential-unusable",
     );

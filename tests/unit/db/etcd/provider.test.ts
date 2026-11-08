@@ -376,7 +376,21 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
       containerLevels: [],
       objectKinds: ETCD_OBJECT_KINDS,
       keyScan: ETCD_KEY_SCAN,
-      enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "gated",
+          gate: { module: "src/lib/db/providers/keyvalue/etcd/write-policy.ts", symbol: "refuseBeforeSend" },
+        },
+        objectEdit: {
+          reach: "gated",
+          gate: { module: "src/lib/db/providers/keyvalue/etcd/write-policy.ts", symbol: "refuseReadOnly" },
+        },
+        maintenance: {
+          reach: "gated",
+          gate: { module: "src/lib/db/providers/keyvalue/etcd/write-policy.ts", symbol: "refuseReadOnly" },
+        },
+        transaction: { reach: "absent" },
+      },
       metadataOnly: ETCD_METADATA_ONLY,
       schemaRefreshPattern: ETCD_SCHEMA_REFRESH_PATTERN,
     };

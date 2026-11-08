@@ -1728,7 +1728,7 @@ export class OracleProvider extends SQLBaseProvider {
       objectKinds: [
         // `hasColumns` on the three kinds and no more, and it is written out rather than
         // derived from `role === "relation"` even though the two agree here (#789).
-        // `describeObject` gates on the role at `oracle/index.ts:2015`, so a sequence answers no
+        // `describeObject` gates on the role at `OracleProvider.query` in `oracle/index.ts`, so a sequence answers no
         // columns at all - the opposite of PostgreSQL's sequence, which answers last_value,
         // log_cnt and is_called. Same kind id, opposite answer, so the fact is the
         // provider's to state and the tree draws a twisty on nothing else.

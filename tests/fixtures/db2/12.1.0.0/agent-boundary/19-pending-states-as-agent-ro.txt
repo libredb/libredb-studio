@@ -1,0 +1,60 @@
+SELECT VARCHAR(TABNAME, 18) AS TABNAME, STATUS FROM SYSCAT.TABLES WHERE TABSCHEMA = 'APP' AND TABNAME LIKE 'LIBREDB_PS_%' ORDER BY 1
+
+TABNAME            STATUS
+------------------ ------
+LIBREDB_PS_CHECK   C     
+LIBREDB_PS_REORG   N     
+
+  2 record(s) selected.
+
+
+SELECT * FROM APP.LIBREDB_PS_CHECK WHERE 1 = 0
+
+ID          C_DF                    
+----------- ------------------------
+
+  0 record(s) selected.
+
+
+SELECT * FROM APP.LIBREDB_PS_REORG WHERE 1 = 0
+
+ID          C_DF                                      
+----------- ------------------------------------------
+
+  0 record(s) selected.
+
+
+SELECT * FROM APP.LIBREDB_PS_CHECK
+
+ID          C_DF                    
+----------- ------------------------
+SQL0668N  Operation not allowed for reason code "1" on table 
+"APP.LIBREDB_PS_CHECK".  SQLSTATE=57007
+
+SELECT * FROM APP.LIBREDB_PS_REORG
+
+ID          C_DF                                      
+----------- ------------------------------------------
+
+  0 record(s) selected.
+
+
+SELECT VARCHAR(TABNAME, 18) AS TABNAME, REORG_PENDING FROM SYSIBMADM.ADMINTABINFO WHERE TABSCHEMA = 'APP' AND TABNAME LIKE 'LIBREDB_PS_%' ORDER BY 1
+
+TABNAME            REORG_PENDING
+------------------ -------------
+LIBREDB_PS_CHECK   N            
+LIBREDB_PS_REORG   Y            
+
+  2 record(s) selected.
+
+
+SELECT VARCHAR(TABNAME, 18) AS TABNAME, REORG_PENDING FROM TABLE (SYSPROC.ADMIN_GET_TAB_INFO('APP', 'LIBREDB_PS_REORG')) AS t
+
+TABNAME            REORG_PENDING
+------------------ -------------
+LIBREDB_PS_REORG   Y            
+
+  1 record(s) selected.
+
+

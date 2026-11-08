@@ -104,9 +104,10 @@ export function McpSettings() {
       <header className="space-y-1">
         <h1 className="text-lg font-semibold text-fg-bright">MCP</h1>
         <p>
-          An AI client of your own reads the opted-in connections of this server and runs read-only SQL with a token
-          minted for you.
+          An AI client of your own reads the opted-in connections of this server and runs bounded, read-only statements
+          in each engine&apos;s own language with a token minted for you.
         </p>
+        <p>The model runs in your client, so MCP needs no LLM provider on this server.</p>
       </header>
 
       <section aria-labelledby="mcp-status" className="space-y-2">

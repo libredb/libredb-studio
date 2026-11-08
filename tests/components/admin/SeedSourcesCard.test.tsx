@@ -305,7 +305,7 @@ describe("SeedSourcesCard", () => {
   });
 
   // The request is held open by hand, so it is still in flight when the card unmounts (pattern:
-  // tests/components/admin/PlatformDiscoveryCard.test.tsx:335-379).
+  // the test "unmounting mid-request leaves nothing behind: no render, no warning, no further refresh" in tests/components/admin/PlatformDiscoveryCard.test.tsx).
   test("unmounting mid-request leaves nothing behind: no render, no warning, no further refresh", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {

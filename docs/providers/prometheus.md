@@ -18,7 +18,7 @@
 | **Connection pooling** | None. Each call is one stateless request; queries share a per-connection limit instead ([§3.4](#34-the-servers-query-slots-are-shared)) |
 | **Connection string** | Not supported. `http://` and `https://` already parse as ClickHouse ([§4.5](#45-no-connection-string)) |
 | **EXPLAIN** | None. `/api/v1/parse_query` is experimental upstream, so no plan view is offered |
-| **Writes** | None, and none are offered. Studio calls only the read endpoints listed in [§6.1](#every-endpoint-call-with-its-parameters) |
+| **Write reach** | none: the transport requests only the closed endpoint table `PATHS`, every one a read listed in [§6.1](#every-endpoint-call-with-its-parameters), and builds no admin, remote-write, OTLP or lifecycle endpoint; there is no object edit, maintenance or transaction route, so every connection is read-only and a read-only one is accepted |
 | **Transactions** | Not applicable |
 | **Maintenance** | None. The admin API (series deletion, snapshots, tombstones) and the lifecycle endpoints (`/-/quit`, `/-/reload`) are never called |
 | **Query cancellation** | Yes: `cancelQuery(queryId)` aborts that query's request, and the server ends the evaluation at its next checkpoint; a query still waiting for one of the connection's query slots leaves the queue without reaching the server (M1, [§5.5](#55-timeout-and-cancellation)) |
@@ -615,6 +615,7 @@ A direct call of `runMaintenance` is refused with a `QueryError` saying that com
 ### `getCapabilities()` ([`index.ts`](../../src/lib/db/providers/timeseries/prometheus/index.ts))
 
 - `queryLanguage: "promql"`, no `queryDialect`.
+- `writeReach`, which declares the editor absent with the closed endpoint table `PATHS` in [`http-transport.ts`](../../src/lib/db/providers/timeseries/prometheus/http-transport.ts) as its proof, and object edit, maintenance and transactions absent ([§11.4](#114-write-reach-measured-live)).
 - `createTable`: absent; the provider declares no `createTable`.
 - `supportsExplain`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
 - `declaresForeignKeys: false`, `statementTerminator: "none"`, `defaultPort: 9090`, `containerLevels: []`, `maintenanceOperations: []`, and the six object kinds of [§6.1](#61-the-object-surface-789).
@@ -700,6 +701,19 @@ curl -s 'localhost:9090/api/v1/query?query=up'
 
 The configuration in `docker/prometheus/` produces every kind, status and identity edge above: a self-scrape job, an unreachable target, a target not scraped yet, two targets sharing an `instance`, a recording rule, a firing and a pending alert, two alerts with one name in one group, two files declaring a group of the same name, a UTF-8 label name, and metrics named like PromQL keywords.
 `prometheus-auth` (port 9091) is the same image with basic auth, for the 401 path.
+
+### 11.4 Write reach, measured live
+
+Prometheus's write reach is `none`: the transport requests only the paths of the frozen table `PATHS`, and none of them is under `/api/v1/admin/`, `/api/v1/write`, `/api/v1/otlp/`, `/-/reload` or `/-/quit`.
+[`write-reach.test.ts`](../../tests/unit/db/prometheus/write-reach.test.ts) holds that three ways: the table's values, every method of the transport driven through a recording sender (the requested paths are exactly the table's, the instant query the only POST), and a parse of `http-transport.ts` that finds no path handed to the URL builder or a path helper except a member of `PATHS`, no literal starting with `/` outside the table, no use of the global `URL`, and the sender reached only through `exchange`, itself reached only from `probe` and `read`.
+The integration test drives every surface of a `readOnly: true` connection opened through the factory and holds each request to the same table.
+
+The live run is [`tests/fixtures/prometheus/v3.13.3/write-reach/run.sh`](../../tests/fixtures/prometheus/v3.13.3/write-reach/run.sh): a fresh `prom/prometheus:v3.13.3` by digest, with `--web.enable-admin-api`, `--web.enable-remote-write-receiver` and `--web.enable-lifecycle` on and no scrape job, so its series come from rules alone and its TSDB head's series count moves when a new series is written, by remote write or OTLP.
+The count does not see the admin and lifecycle endpoints: a series deletion, a snapshot, a tombstone clean or a reload leaves it where it was.
+Those are shown absent by the recorded request list instead, `sentByStudio`, which holds every request Studio sent in the run.
+[`tests/live/prometheus-write-reach.ts`](../../tests/live/prometheus-write-reach.ts) reads that count before and after every surface of a read-only connection, of the agent read-only profile and of the agent operations profile, and records it in `write-reach.json`.
+Measured 2026-11-03: 116 surfaces, the count 4 before and after each, every request in `sentByStudio` a GET of a table path or the instant query's POST, so no admin or lifecycle endpoint was asked; one raw remote write sent by the script afterwards answered 204 and moved the count to 5, which is the control that a write would have been seen.
+The test replays that capture.
 
 ---
 
@@ -846,7 +860,7 @@ Plan mode's safety strip is the family's own (`posture.plan` in [`client.ts`](..
 The editor language id stays `promql`, and the fence alias `promql` names this engine.
 VictoriaMetrics is served by the same provider and the same type-id, so it takes the same agent path; it was measured beside Prometheus in the capture, and its own admin and import endpoints are not on the table either.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs PromQL: the family declares no MCP facet and `MCP_STATEMENT_READ.prometheus` is false ([B161](../BACKLOG.md#b161-prometheuss-agent-reads-withhold-the-flags-and-url-secrets-and-it-has-no-mcp-statement-read)); `MCP_EXPOSABLE.prometheus` stays true for the metadata tools, which read through the same projection, and `READ_ONLY_ENFORCED.prometheus` is unchanged.
+No MCP tool runs PromQL: the family declares no MCP facet and `MCP_STATEMENT_READ.prometheus` is false ([B161](../BACKLOG.md#b161-prometheuss-agent-reads-withhold-the-flags-and-url-secrets-and-it-has-no-mcp-statement-read)); `MCP_EXPOSABLE.prometheus` stays true for the metadata tools, which read through the same projection, and no MCP code reads the write reach record.
 
 ---
 

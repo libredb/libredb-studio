@@ -98,14 +98,17 @@ const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 const IMPORTERS = ["docker/kafka/seed-binary.ts", "src/lib/db/providers/stream/kafka/platformatic-client.ts"];
 /**
  * The files outside the provider that take the adapter's loader, loadPlatformatic(), and so the
- * real library: the adapter's own tests, the real TLS handshakes, and the provider's integration
- * test. Another file that imports loadPlatformatic, or the whole adapter module, fails the guard,
- * and so does a file listed here that no longer takes it.
+ * real library: the adapter's own tests, the real TLS handshakes, the write-reach test's recording
+ * listener and its live run, and the provider's integration test. Another file that imports
+ * loadPlatformatic, or the whole adapter module, fails the guard, and so does a file listed here
+ * that no longer takes it.
  */
 const LOADER_TAKERS = [
   "tests/integration/db/kafka-provider.test.ts",
+  "tests/live/kafka-write-reach.ts",
   "tests/unit/db/kafka/platformatic-client.test.ts",
   "tests/unit/db/kafka/tls-handshake.test.ts",
+  "tests/unit/db/kafka/write-reach.test.ts",
 ];
 /** The fixture seed, a script whose top level writes records and transactions with the library's Producer. */
 const SEED = "docker/kafka/seed-binary.ts";
@@ -315,6 +318,7 @@ const UNUSED_MEMBERS = new Set([
 ]);
 /** The adapter's exports, none of which holds the library: it leaves only as loadPlatformatic()'s pinned answer. */
 const ADAPTER_EXPORTS = new Set([
+  "KAFKA_READ_APIS",
   "KAFKA_SENTINEL_GROUP_ID",
   "PlatformaticLib",
   "createPlatformaticClient",
@@ -2696,10 +2700,7 @@ describe("the agent read path reaches Metadata and ListOffsets alone", () => {
     const index = read("index.ts");
     expect(
       agentClientKeys(
-        index.replace(
-          "listTopics: () => client.listTopics(),",
-          "listTopics: () => client.listTopics(),\n      fetch: client.fetch,",
-        ),
+        index.replace("      listTopics: async () =>", "      fetch: client.fetch,\n      listTopics: async () =>"),
       ),
     ).toEqual(["fetch", "listTopics", "metadata", "offsets"]);
     expect(

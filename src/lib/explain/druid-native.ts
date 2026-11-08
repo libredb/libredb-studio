@@ -294,7 +294,7 @@ export const druidNativeStrategy: ExplainStrategy = {
   // Druid's EXPLAIN never executes the statement, so there is nothing different to
   // build for analyze. Declining that mode would disable the feature instead of
   // narrowing it - the direct Explain action always builds with mode "analyze"
-  // (use-query-execution.ts:165) and refuses the run when the strategy returns null -
+  // (`useQueryExecution` in use-query-execution.ts) and refuses the run when the strategy returns null -
   // so both modes return the same plan, as the SQLite and Couchbase strategies do.
   buildSql(sql) {
     // Druid's EXPLAIN never executes the statement, and its SQL cannot write at all

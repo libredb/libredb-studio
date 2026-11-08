@@ -1,15 +1,17 @@
 /**
  * Read-only mode, from the connection to the provider's own client. A provider built as the factory builds it, with
- * no injected client factory, refuses Load and Release and sends nothing, whether the mode was set on the connection
- * or by an execution profile; every read still answers; and the same Load on a writable connection is sent, so the
- * refusal above is the mode's and not a client that sends nothing.
+ * no injected client factory, refuses Load and Release and sends nothing, whether the mode was set on the connection,
+ * by an execution profile or in the operator's seed file (loaded, resolved and built through `getOrCreateProvider`);
+ * every read still answers; and the same Load on a writable connection is sent, so the refusal above is the mode's and
+ * not a client that sends nothing.
  *
  * The one unit file that substitutes `grpc-client.ts` with `mock.module()`: the provider's default client factory is
  * the adapter, and no other seam reaches the client it builds. bun's module mocks are process-wide and have no undo,
  * and the test runner gives this file a process of its own (tests/run-tests.ts), so the substitution reaches no other
  * file.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import path from "node:path";
 import { readOnlySentence } from "@/lib/db/providers/vector/milvus/write-policy";
 import type { DatabaseConnection, ProviderExecutionContext } from "@/lib/db/types";
 import {
@@ -34,8 +36,17 @@ mock.module("@/lib/db/providers/vector/milvus/grpc-client", () => ({
   },
 }));
 
-// After the substitution, so the provider reads the substituted adapter.
+process.env.SEED_CONFIG_PATH = path.resolve(
+  import.meta.dir,
+  "../../../fixtures/seed-connections/milvus-read-only-config.yaml",
+);
+process.env.MILVUS_READER_PASSWORD = "not-a-real-password";
+
+// After the substitution, so the provider and the factory read the substituted adapter.
 const { MilvusProvider } = await import("@/lib/db/providers/vector/milvus/index");
+const { clearProviderCache, getOrCreateProvider } = await import("@/lib/db/factory");
+const { resetCache } = await import("@/lib/seed");
+const { resolveConnection } = await import("@/lib/seed/resolve-connection");
 
 const CONNECTION: DatabaseConnection = {
   id: "milvus-read-only",
@@ -57,7 +68,12 @@ async function connected(connection: DatabaseConnection, execution: ProviderExec
 const sentAfter = (client: FakeMilvusClient, mark: number) => client.calls.slice(mark).map((call) => call.method);
 
 beforeEach(() => {
+  resetCache();
   clients.length = 0;
+});
+
+afterEach(async () => {
+  await clearProviderCache();
 });
 
 describe("a read-only Milvus connection, down to the client the adapter built", () => {
@@ -76,6 +92,21 @@ describe("a read-only Milvus connection, down to the client the adapter built", 
       expect(sentAfter(client, mark)).toEqual([]);
     },
   );
+
+  test("set in the operator's seed file: the mode survives the load and the resolver, and Load and Release are refused with nothing sent", async () => {
+    const connection = await resolveConnection({ connectionId: "seed:vectors-read" }, { role: "user", username: "u" });
+    expect(connection).toMatchObject({ seedId: "vectors-read", type: "milvus", readOnly: true });
+    const provider = await getOrCreateProvider(connection);
+    expect(clients).toHaveLength(1);
+    const [client] = clients;
+    const mark = client.calls.length;
+    await Promise.all(
+      (["load", "release"] as const).map((operation) =>
+        expect(provider.runMaintenance(operation, "docs_int64", "default")).rejects.toThrow(readOnlySentence("seed")),
+      ),
+    );
+    expect(sentAfter(client, mark)).toEqual([]);
+  });
 
   test("every read still answers in read-only mode, and the Load preview is refused as the Load is", async () => {
     const { provider, client, mark } = await connected({ ...CONNECTION, readOnly: true });

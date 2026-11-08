@@ -268,7 +268,7 @@ describe("splitStatements", () => {
     });
 
     test("tracks lines with comments spanning multiple lines", () => {
-      // After "SELECT 1;", whitespace skip crosses the \n (line 1),
+      // After "SELECT 1;", whitespace skip crosses the \n of the first line,
       // then the comment block starts — statementStartLine is set to 1.
       const result = splitStatements("SELECT 1;\n/* comment\nspanning\nlines */\nSELECT 2;");
       expect(result[0].startLine).toBe(0);
@@ -276,7 +276,7 @@ describe("splitStatements", () => {
     });
 
     test("tracks lines with single-line comments", () => {
-      // After "SELECT 1;", whitespace skip crosses the \n (line 1),
+      // After "SELECT 1;", whitespace skip crosses the \n of the first line,
       // then "-- skip" starts — statementStartLine is set to 1.
       const result = splitStatements("SELECT 1;\n-- skip\nSELECT 2;");
       expect(result[0].startLine).toBe(0);

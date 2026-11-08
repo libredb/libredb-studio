@@ -13,7 +13,7 @@ Two files change, both shared surfaces, so neither is edited here.
 
 ## 1. `playwright.config.ts`
 
-**a.** The shared `chromium` project's `testIgnore`, line 76 at the time of writing, gains one
+**a.** The shared `chromium` project's `testIgnore` gains one
 name. The pattern is one alternation list; add `sparkplug-provider` beside `mqtt-provider`:
 
 ```

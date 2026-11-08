@@ -1,0 +1,258 @@
+DESCRIBE SELECT * FROM SYSIBM.COLUMNS
+
+ Column Information
+
+ Number of columns: 34
+
+ SQL type              Type length  Column name                     Name length
+ --------------------  -----------  ------------------------------  -----------
+ 448   VARCHAR                 128  TABLE_CATALOG                            13
+ 448   VARCHAR                 128  TABLE_SCHEMA                             12
+ 448   VARCHAR                 128  TABLE_NAME                               10
+ 448   VARCHAR                 128  COLUMN_NAME                              11
+ 496   INTEGER                   4  ORDINAL_POSITION                         16
+ 449   VARCHAR                2000  COLUMN_DEFAULT                           14
+ 448   VARCHAR                   3  IS_NULLABLE                              11
+ 448   VARCHAR                 128  DATA_TYPE                                 9
+ 497   INTEGER                   4  CHARACTER_MAXIMUM_LENGTH                 24
+ 497   INTEGER                   4  CHARACTER_OCTET_LENGTH                   22
+ 497   INTEGER                   4  NUMERIC_PRECISION                        17
+ 497   INTEGER                   4  NUMERIC_PRECISION_RADIX                  23
+ 497   INTEGER                   4  NUMERIC_SCALE                            13
+ 497   INTEGER                   4  DATETIME_PRECISION                       18
+ 449   VARCHAR                 128  INTERVAL_TYPE                            13
+ 497   INTEGER                   4  INTERVAL_PRECISION                       18
+ 449   VARCHAR                 128  CHARACTER_SET_CATALOG                    21
+ 449   VARCHAR                 128  CHARACTER_SET_SCHEMA                     20
+ 449   VARCHAR                 128  CHARACTER_SET_NAME                       18
+ 449   VARCHAR                 128  COLLATION_CATALOG                        17
+ 449   VARCHAR                 128  COLLATION_SCHEMA                         16
+ 449   VARCHAR                 128  COLLATION_NAME                           14
+ 449   VARCHAR                 128  DOMAIN_CATALOG                           14
+ 449   VARCHAR                 128  DOMAIN_SCHEMA                            13
+ 449   VARCHAR                 128  DOMAIN_NAME                              11
+ 449   VARCHAR                 128  UDT_CATALOG                              11
+ 449   VARCHAR                 128  UDT_SCHEMA                               10
+ 449   VARCHAR                 128  UDT_NAME                                  8
+ 449   VARCHAR                 128  SCOPE_CATALOG                            13
+ 449   VARCHAR                 128  SCOPE_SCHEMA                             12
+ 449   VARCHAR                 128  SCOPE_NAME                               10
+ 497   INTEGER                   4  MAXIMUM_CARDINALITY                      19
+ 448   VARCHAR                 128  DTD_IDENTIFIER                           14
+ 448   VARCHAR                   3  IS_SELF_REFERENCING                      19
+
+
+DESCRIBE SELECT * FROM SYSIBM.SQLCOLUMNS
+
+ Column Information
+
+ Number of columns: 25
+
+                                                                    Name                Data type  Schema                      Name
+ SQL type              Type length  Column name                     length  Lob length  schema     length  Data type name      length
+ --------------------  -----------  ------------------------------  ------  ----------  ---------  ------  ------------------  --------
+ 449   VARCHAR                 128  TABLE_CAT                            9           0  SYSIBM          6  VARCHAR                    7
+ 448   VARCHAR                 128  TABLE_SCHEM                         11           0  SYSIBM          6  VARCHAR                    7
+ 448   VARCHAR                 128  TABLE_NAME                          10           0  SYSIBM          6  VARCHAR                    7
+ 448   VARCHAR                 128  COLUMN_NAME                         11           0  SYSIBM          6  VARCHAR                    7
+ 500   SMALLINT                  2  DATA_TYPE                            9           0  SYSIBM          6  SMALLINT                   8
+ 448   VARCHAR                 261  TYPE_NAME                            9           0  SYSIBM          6  VARCHAR                    7
+ 496   INTEGER                   4  COLUMN_SIZE                         11           0  SYSIBM          6  INTEGER                    7
+ 497   INTEGER                   4  BUFFER_LENGTH                       13           0  SYSIBM          6  INTEGER                    7
+ 501   SMALLINT                  2  DECIMAL_DIGITS                      14           0  SYSIBM          6  SMALLINT                   8
+ 501   SMALLINT                  2  NUM_PREC_RADIX                      14           0  SYSIBM          6  SMALLINT                   8
+ 500   SMALLINT                  2  NULLABLE                             8           0  SYSIBM          6  SMALLINT                   8
+ 449   VARCHAR                 254  REMARKS                              7           0  SYSIBM          6  VARCHAR                    7
+ 409   CLOB                      0  COLUMN_DEF                          10       65536  SYSIBM          6  CLOB                       4
+ 500   SMALLINT                  2  SQL_DATA_TYPE                       13           0  SYSIBM          6  SMALLINT                   8
+ 501   SMALLINT                  2  SQL_DATETIME_SUB                    16           0  SYSIBM          6  SMALLINT                   8
+ 497   INTEGER                   4  CHAR_OCTET_LENGTH                   17           0  SYSIBM          6  INTEGER                    7
+ 496   INTEGER                   4  ORDINAL_POSITION                    16           0  SYSIBM          6  INTEGER                    7
+ 448   VARCHAR                   3  IS_NULLABLE                         11           0  SYSIBM          6  VARCHAR                    7
+ 500   SMALLINT                  2  JDBC_DATA_TYPE                      14           0  SYSIBM          6  SMALLINT                   8
+ 449   VARCHAR                 128  SCOPE_CATLOG                        12           0  SYSIBM          6  VARCHAR                    7
+ 449   VARCHAR                 128  SCOPE_SCHEMA                        12           0  SYSIBM          6  VARCHAR                    7
+ 449   VARCHAR                 128  SCOPE_TABLE                         11           0  SYSIBM          6  VARCHAR                    7
+ 501   SMALLINT                  2  SOURCE_DATA_TYPE                    16           0  SYSIBM          6  SMALLINT                   8
+ 449   VARCHAR                   8  DBNAME                               6           0  SYSIBM          6  VARCHAR                    7
+ 500   SMALLINT                  2  PSEUDO_COLUMN                       13           0  SYSIBM          6  SMALLINT                   8
+
+
+SELECT VARCHAR(TABLE_SCHEMA, 8) AS TABLE_SCHEMA, VARCHAR(TABLE_NAME, 28) AS TABLE_NAME, VARCHAR(COLUMN_NAME, 10) AS COLUMN_NAME FROM SYSIBM.COLUMNS WHERE COLUMN_NAME IN ('COLVALUE', 'HIGH2KEY', 'LOW2KEY') ORDER BY 1, 2, 3
+
+TABLE_SCHEMA TABLE_NAME                   COLUMN_NAME
+------------ ---------------------------- -----------
+SYSCAT       COLDIST                      COLVALUE   
+SYSCAT       COLDISTPARTITIONSTATS        COLVALUE   
+SYSCAT       COLGROUPDIST                 COLVALUE   
+SYSCAT       COLPARTITIONSTATS            HIGH2KEY   
+SYSCAT       COLPARTITIONSTATS            LOW2KEY    
+SYSCAT       COLUMNS                      HIGH2KEY   
+SYSCAT       COLUMNS                      LOW2KEY    
+SYSCAT       SYSCOLUMNS_UNION             HIGH2KEY   
+SYSCAT       SYSCOLUMNS_UNION             LOW2KEY    
+SYSIBM       SYSCOLDIST                   COLVALUE   
+SYSIBM       SYSCOLDISTPARTITIONSTATS     COLVALUE   
+SYSIBM       SYSCOLGROUPDIST              COLVALUE   
+SYSIBM       SYSCOLPARTITIONSTATS         HIGH2KEY   
+SYSIBM       SYSCOLPARTITIONSTATS         LOW2KEY    
+SYSIBM       SYSCOLUMNS                   HIGH2KEY   
+SYSIBM       SYSCOLUMNS                   LOW2KEY    
+SYSSTAT      COLDIST                      COLVALUE   
+SYSSTAT      COLDISTPARTITIONSTATS        COLVALUE   
+SYSSTAT      COLGROUPDIST                 COLVALUE   
+SYSSTAT      COLPARTITIONSTATS            HIGH2KEY   
+SYSSTAT      COLPARTITIONSTATS            LOW2KEY    
+SYSSTAT      COLUMNS                      HIGH2KEY   
+SYSSTAT      COLUMNS                      LOW2KEY    
+
+  23 record(s) selected.
+
+
+SELECT VARCHAR(CHARACTER_SET_NAME, 20) AS CHARACTER_SET_NAME FROM SYSIBM.COLUMNS WHERE TABLE_SCHEMA = 'SYSIBM' AND TABLE_NAME = 'SYSDUMMY1' AND COLUMN_NAME = 'IBMREQD'
+
+CHARACTER_SET_NAME  
+--------------------
+IBM1208             
+
+  1 record(s) selected.
+
+
+SELECT VARCHAR(COLUMN_NAME, 10) AS COLUMN_NAME, VARCHAR(CHARACTER_SET_NAME, 20) AS CHARACTER_SET_NAME FROM SYSIBM.COLUMNS WHERE TABLE_SCHEMA = 'APP' AND TABLE_NAME = 'LIBREDB_VF_TYPES' ORDER BY ORDINAL_POSITION
+
+COLUMN_NAME CHARACTER_SET_NAME  
+----------- --------------------
+ID          -                   
+C_DF16      -                   
+C_DF34      -                   
+C_VC32      IBM1208             
+C_G32       IBM0                
+C_VCBIT     IBM0                
+C_BIN       -                   
+C_VBIN      -                   
+C_MONEY     -                   
+C_NUM       -                   
+C_FLOAT     -                   
+C_TEXT      IBM1208             
+C_TS        -                   
+C_DBCLOB    IBM0                
+C_DATE      -                   
+
+  15 record(s) selected.
+
+
+VALUES HEX(U&'\00E9')
+
+1   
+----
+C3A9
+
+  1 record(s) selected.
+
+
+SELECT VARCHAR(TABLE_NAME, 18) AS TABLE_NAME, VARCHAR(COLUMN_NAME, 11) AS COLUMN_NAME, VARCHAR(DATA_TYPE, 34) AS DATA_TYPE, CHARACTER_MAXIMUM_LENGTH AS CML, CHARACTER_OCTET_LENGTH AS COL, NUMERIC_PRECISION AS NP, NUMERIC_SCALE AS NS, DATETIME_PRECISION AS DP, VARCHAR(IS_NULLABLE, 3) AS NUL, ORDINAL_POSITION AS POS, VARCHAR(COLUMN_DEFAULT, 30) AS COLUMN_DEFAULT, LENGTH(COLUMN_DEFAULT) AS DL FROM SYSIBM.COLUMNS WHERE TABLE_SCHEMA = 'APP' AND TABLE_NAME IN ('LIBREDB_VF_TYPES', 'LIBREDB_VF_HIDDEN', 'LIBREDB_VF_VIEW', 'ORDERS') ORDER BY 1, POS
+
+TABLE_NAME         COLUMN_NAME DATA_TYPE                          CML         COL         NP          NS          DP          NUL POS         COLUMN_DEFAULT                 DL         
+------------------ ----------- ---------------------------------- ----------- ----------- ----------- ----------- ----------- --- ----------- ------------------------------ -----------
+LIBREDB_VF_HIDDEN  ID          INTEGER                                      -           -          10           0           - NO            1 -                                        -
+LIBREDB_VF_HIDDEN  C_DF16      DECFLOAT                                     -           -           -           -           - YES           2 -                                        -
+LIBREDB_VF_HIDDEN  C_DF34      DECFLOAT                                     -           -           -           -           - YES           3 -                                        -
+LIBREDB_VF_TYPES   ID          INTEGER                                      -           -          10           0           - NO            1 -                                        -
+LIBREDB_VF_TYPES   C_DF16      DECFLOAT                                     -           -           -           -           - YES           2 -                                        -
+LIBREDB_VF_TYPES   C_DF34      DECFLOAT                                     -           -           -           -           - YES           3 -                                        -
+LIBREDB_VF_TYPES   C_VC32      CHARACTER VARYING                           80          80           -           -           - YES           4 -                                        -
+LIBREDB_VF_TYPES   C_G32       GRAPHIC                                     10          20           -           -           - YES           5 -                                        -
+LIBREDB_VF_TYPES   C_VCBIT     CHARACTER VARYING                            8           8           -           -           - YES           6 -                                        -
+LIBREDB_VF_TYPES   C_BIN       BINARY                                       -           -           -           -           - YES           7 -                                        -
+LIBREDB_VF_TYPES   C_VBIN      VARBINARY                                    -           -           -           -           - YES           8 -                                        -
+LIBREDB_VF_TYPES   C_MONEY     USER-DEFINED                                 -           -           -           -           - YES           9 -                                        -
+LIBREDB_VF_TYPES   C_NUM       DECIMAL                                      -           -           7           3           - YES          10 -                                        -
+LIBREDB_VF_TYPES   C_FLOAT     DOUBLE PRECISION                             -           -          53           -           - YES          11 -                                        -
+LIBREDB_VF_TYPES   C_TEXT      CHARACTER VARYING                           30          30           -           -           - YES          12 'it''s'                                  7
+LIBREDB_VF_TYPES   C_TS        TIMESTAMP                                    -           -           -           -           3 YES          13 CURRENT TIMESTAMP                       17
+LIBREDB_VF_TYPES   C_DBCLOB    DOUBLE-BYTE CHARACTER LARGE OBJECT        2048        4096           -           -           - YES          14 -                                        -
+LIBREDB_VF_TYPES   C_DATE      DATE                                         -           -           -           -           0 YES          15 '2024-01-01'                            12
+LIBREDB_VF_VIEW    ID          INTEGER                                      -           -          10           0           - NO            1 -                                        -
+LIBREDB_VF_VIEW    C_DF34      DECFLOAT                                     -           -           -           -           - YES           2 -                                        -
+ORDERS             ID          INTEGER                                      -           -          10           0           - NO            1 -                                        -
+ORDERS             CUSTOMER_ID INTEGER                                      -           -          10           0           - YES           2 -                                        -
+ORDERS             TOTAL       DECIMAL                                      -           -          12           2           - YES           3 0                                        1
+ORDERS             NOTE        CHARACTER VARYING                          200         200           -           -           - YES           4 -                                        -
+
+  24 record(s) selected.
+
+
+SELECT VARCHAR(TABLE_NAME, 18) AS TABLE_NAME, VARCHAR(COLUMN_NAME, 10) AS COLUMN_NAME, VARCHAR(DATA_TYPE, 14) AS DATA_TYPE, VARCHAR(UDT_SCHEMA, 8) AS UDT_SCHEMA, VARCHAR(UDT_NAME, 20) AS UDT_NAME, HEX(UDT_NAME) AS UDT_NAME_HEX FROM SYSIBM.COLUMNS WHERE TABLE_SCHEMA = 'APP' AND TABLE_NAME = 'LIBREDB_VF_TYPES' AND UDT_NAME IS NOT NULL
+
+TABLE_NAME         COLUMN_NAME DATA_TYPE      UDT_SCHEMA UDT_NAME             UDT_NAME_HEX                                                                                                                                                                                                                                                    
+------------------ ----------- -------------- ---------- -------------------- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+LIBREDB_VF_TYPES   C_MONEY     USER-DEFINED   APP        LIBREDB_VF_MONEY     4C4942524544425F56465F4D4F4E4559                                                                                                                                                                                                                                
+
+  1 record(s) selected.
+
+
+SELECT VARCHAR(TABLE_NAME, 18) AS TABLE_NAME, VARCHAR(COLUMN_NAME, 10) AS COLUMN_NAME, VARCHAR(TYPE_NAME, 26) AS TYPE_NAME, COLUMN_SIZE, DECIMAL_DIGITS, NULLABLE, VARCHAR(COLUMN_DEF, 30) AS COLUMN_DEF FROM SYSIBM.SQLCOLUMNS WHERE TABLE_SCHEM = 'APP' AND TABLE_NAME IN ('LIBREDB_VF_TYPES', 'LIBREDB_VF_HIDDEN') ORDER BY 1, ORDINAL_POSITION
+
+TABLE_NAME         COLUMN_NAME TYPE_NAME                  COLUMN_SIZE DECIMAL_DIGITS NULLABLE COLUMN_DEF                    
+------------------ ----------- -------------------------- ----------- -------------- -------- ------------------------------
+LIBREDB_VF_HIDDEN  ID          INTEGER                             10              0        0 -                             
+LIBREDB_VF_TYPES   ID          INTEGER                             10              0        0 -                             
+LIBREDB_VF_TYPES   C_VC32      VARCHAR                             80              -        1 -                             
+LIBREDB_VF_TYPES   C_G32       GRAPHIC                             10              -        1 -                             
+LIBREDB_VF_TYPES   C_VCBIT     VARCHAR () FOR BIT DATA              8              -        1 -                             
+LIBREDB_VF_TYPES   C_BIN       BINARY                               8              -        1 -                             
+LIBREDB_VF_TYPES   C_VBIN      VARBINARY                           40              -        1 -                             
+LIBREDB_VF_TYPES   C_MONEY     "APP"."LIBREDB_VF_MONEY"             9              2        1 -                             
+LIBREDB_VF_TYPES   C_NUM       DECIMAL                              7              3        1 -                             
+LIBREDB_VF_TYPES   C_FLOAT     DOUBLE                              53              -        1 -                             
+LIBREDB_VF_TYPES   C_TEXT      VARCHAR                             30              -        1 'it''s'                       
+LIBREDB_VF_TYPES   C_TS        TIMESTAMP                           23              3        1 CURRENT TIMESTAMP             
+LIBREDB_VF_TYPES   C_DBCLOB    DBCLOB                            2048              -        1 -                             
+LIBREDB_VF_TYPES   C_DATE      DATE                                10              -        1 '2024-01-01'                  
+
+  14 record(s) selected.
+
+
+SELECT VARCHAR(k.TABNAME, 18) AS TABNAME, VARCHAR(k.COLNAME, 10) AS COLNAME, k.COLSEQ FROM SYSCAT.KEYCOLUSE k JOIN SYSCAT.TABCONST c ON c.CONSTNAME = k.CONSTNAME AND c.TABSCHEMA = k.TABSCHEMA AND c.TABNAME = k.TABNAME WHERE c.TYPE = 'P' AND k.TABSCHEMA = 'APP' AND k.TABNAME IN ('LIBREDB_VF_TYPES', 'LIBREDB_VF_HIDDEN', 'ORDERS') ORDER BY 1, 3
+
+TABNAME            COLNAME    COLSEQ
+------------------ ---------- ------
+LIBREDB_VF_HIDDEN  ID              1
+LIBREDB_VF_TYPES   ID              1
+ORDERS             ID              1
+
+  3 record(s) selected.
+
+
+DESCRIBE SELECT * FROM APP.LIBREDB_VF_TYPES WHERE 1 = 0
+
+ Column Information
+
+ Number of columns: 15
+
+                                                                    Name                Data type  Schema                      Name
+ SQL type              Type length  Column name                     length  Lob length  schema     length  Data type name      length
+ --------------------  -----------  ------------------------------  ------  ----------  ---------  ------  ------------------  --------
+ 496   INTEGER                   4  ID                                   2           0  SYSIBM          6  INTEGER                    7
+ 997   DECFLOAT                  8  C_DF16                               6           0  SYSIBM          6  DECFLOAT                   8
+ 997   DECFLOAT                 16  C_DF34                               6           0  SYSIBM          6  DECFLOAT                   8
+ 449   VARCHAR                  80  C_VC32                               6           0  SYSIBM          6  VARCHAR                    7
+ 469   GRAPHIC                  10  C_G32                                5           0  SYSIBM          6  GRAPHIC                    7
+ 449   VARCHAR                   8  C_VCBIT                              7           0  SYSIBM          6  VARCHAR                    7
+ 913   BINARY                    8  C_BIN                                5           0  SYSIBM          6  BINARY                     6
+ 909   VARBINARY                40  C_VBIN                               6           0  SYSIBM          6  VARBINARY                  9
+ 485   DECIMAL                9, 2  C_MONEY                              7           0  APP             3  LIBREDB_VF_MONEY          16
+ 485   DECIMAL                7, 3  C_NUM                                5           0  SYSIBM          6  DECIMAL                    7
+ 481   DOUBLE                    8  C_FLOAT                              7           0  SYSIBM          6  DOUBLE                     6
+ 449   VARCHAR                  30  C_TEXT                               6           0  SYSIBM          6  VARCHAR                    7
+ 393   TIMESTAMP                23  C_TS                                 4           0  SYSIBM          6  TIMESTAMP                  9
+ 413   DBCLOB                    0  C_DBCLOB                             8        2048  SYSIBM          6  DBCLOB                     6
+ 385   DATE                     10  C_DATE                               6           0  SYSIBM          6  DATE                       4
+
+
+SELECT * FROM APP.LIBREDB_VF_HIDDEN WHERE 1 = 0
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "APP.LIBREDB_VF_HIDDEN".  
+SQLSTATE=42501
+

@@ -3,7 +3,7 @@
  *
  * THIS IS A PER-PROCESS LIMITER BY DESIGN. Do not replace it with a distributed one, and do not
  * present it anywhere as one. The Helm chart defaults to replicaCount: 1 with autoscaling and the
- * PDB off (charts/libredb-studio/values.yaml:19), the Dockerfile runs a single `node server.js`,
+ * PDB off (`replicaCount` in charts/libredb-studio/values.yaml), the Dockerfile runs a single `node server.js`,
  * and the storage abstraction (src/lib/storage/types.ts) is a per-user blob store whose
  * read-modify-write cycle is unsuitable for counters. Where the counters are per process, the
  * limits are per replica; multi-replica operators are directed to enforce at the ingress, and
@@ -146,15 +146,19 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   //
   // RE-COUNTED 2026-10-15, when admin/governance joined: one more direct call site.
   //
-  // THIRTY-FIVE route files today, and there are three ways in, which is why one grep under-counts.
-  // Directly, twenty-five route files that pass bucket: "query" to guardRoute themselves
-  // (grep -rl 'bucket: "query"' src/app/api/ answers twenty-five files; grep -c on the same list
+  // RE-COUNTED 2026-11-04, when db/statement/analyze joined (#2204): one more direct call site. The
+  // same count found db/keys/scan, which reaches this bucket through handleObjectRequest as the
+  // object routes do and was never counted, so the total had been one short since it joined.
+  //
+  // THIRTY-SEVEN route files today, and there are three ways in, which is why one grep under-counts.
+  // Directly, twenty-six route files that pass bucket: "query" to guardRoute themselves
+  // (grep -rl 'bucket: "query"' src/app/api/ answers twenty-six files; grep -c on the same list
   // finds one call site in each but auth/passkey and auth/totp, which have one per method, two
-  // each, so twenty-seven call sites): admin/accounts, admin/accounts/[email], admin/discovery,
+  // each, so twenty-eight call sites): admin/accounts, admin/accounts/[email], admin/discovery,
   // admin/fleet-health, admin/governance, admin/seed-sources, auth/passkey, auth/totp, db/cancel,
   // db/disconnect, db/health, db/maintenance, db/maintenance/preview, db/monitoring, db/multi-query,
-  // db/pool-stats, db/profile, db/provider-meta, db/query, db/test-connection, db/transaction,
-  // mcp/token, and the
+  // db/pool-stats, db/profile, db/provider-meta, db/query, db/statement/analyze, db/test-connection,
+  // db/transaction, mcp/token, and the
   // three storage routes (storage, storage/[collection], storage/migrate). Note db/health: only its
   // POST is metered, because the GET is the container health probe and takes no connection. mcp/token
   // runs no query: its POST is metered here because the credential it mints reaches this workload,
@@ -166,7 +170,9 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // from the route directories under src/app/api/db/objects/ and not from a grep, which is the
   // whole reason this second paragraph exists: those nine carry no literal to find. All nine
   // directories exist; this passage used to say seven did, because the count moved ahead of the
-  // last two routes landing, and a reader who counts today gets nine.
+  // last two routes landing, and a reader who counts today gets nine. db/keys/scan is the tenth:
+  // it is not an object route, but it hands its request to handleObjectRequest all the same, so
+  // grep -rl 'handleObjectRequest(' src/app/api/ answers ten files.
   // And by calling consumeRateLimit("query", ...) with no bucket literal at all, which is what
   // POST /api/mcp does: it verifies a bearer token instead of a session, so it cannot use
   // guardRoute, and it charges one slot per authenticated POST before reading the body, keyed on

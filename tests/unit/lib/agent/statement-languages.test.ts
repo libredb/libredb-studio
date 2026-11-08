@@ -6,6 +6,7 @@ import { fingerprintKubectl, kubectlRowCapAdvice } from "@/lib/agent/languages/k
 import { fingerprintLibredbkv, libredbkvRowCapAdvice } from "@/lib/agent/languages/libredbkv/adapter";
 import { fingerprintMongo, mongoRowCapAdvice } from "@/lib/agent/languages/mongo/adapter";
 import { fingerprintWeaviateapi, weaviateapiRowCapAdvice } from "@/lib/agent/languages/weaviateapi/adapter";
+import { WEAVIATEAPI_MCP_FACET } from "@/lib/agent/languages/weaviateapi/mcp";
 import { fingerprintQdrantapi, qdrantapiRowCapAdvice } from "@/lib/agent/languages/qdrantapi/adapter";
 import { fingerprintMilvusrpc, milvusrpcRowCapAdvice } from "@/lib/agent/languages/milvusrpc/adapter";
 import { fingerprintRediscli, rediscliRowCapAdvice } from "@/lib/agent/languages/rediscli/adapter";
@@ -491,6 +492,16 @@ describe("the weaviateapi language's server adapter and admission", () => {
     );
   });
 
+  test("the agent's statement tool and the MCP tool describe a verbose node read alike, as the collections on each node", () => {
+    const verbose = "?output=verbose for the collections on each node";
+    const agent = languageServerPack("weaviateapi").toolOverrides.investigation?.run_read_query?.description ?? "";
+    const mcp = WEAVIATEAPI_MCP_FACET.describe({ engines: "Weaviate", limits: "Limits" });
+    for (const description of [agent, mcp]) {
+      expect(description).toContain(verbose);
+      expect(description).not.toMatch(/shard rows|shard and object counts/);
+    }
+  });
+
   test("the fingerprint is total: a refused request is identified by its raw text, so it is refused again", () => {
     const raw = "GET /v1/objects?class=Note";
     expect(fingerprintWeaviateapi(raw)).toBe(fingerprintWeaviateapi(raw));
@@ -740,7 +751,7 @@ describe("the milvusrpc language's server adapter and admission", () => {
       collections: "POST /v2/vectordb/collections/list",
       collection: describe_('{"collectionName": "docs"}'),
       partitions: 'POST /v2/vectordb/partitions/list\n{"collectionName": "docs"}',
-      aliases: "POST /v2/vectordb/aliases/list",
+      aliases: 'POST /v2/vectordb/aliases/list\n{"collectionName": "docs"}',
     };
     expect([...AGENT_LANGUAGE_COPY.milvusrpc.adviceKeys].sort()).toEqual([
       "aliases",
@@ -753,6 +764,27 @@ describe("the milvusrpc language's server adapter and admission", () => {
       expect(milvusrpcRowCapAdvice(requestFor[key] as string, "200"), key).not.toBe(generic);
       expect(milvusrpcRowCapAdvice(requestFor[key] as string, "200"), key).toContain("Ask for at most 200 rows");
     }
+  });
+
+  test("a budget of one row says row, not rows, in every sentence", () => {
+    expect(milvusrpcRowCapAdvice("POST /v2/vectordb/databases/list", "1")).toBe(
+      "Ask for at most 1 row: read the connection's own database with databases/describe instead of the whole list, and run it again.",
+    );
+    expect(milvusrpcRowCapAdvice("POST /v2/vectordb/collections/list", "1")).toBe(
+      "Ask for at most 1 row: read one collection with collections/describe instead of the whole list, and run it again.",
+    );
+    expect(milvusrpcRowCapAdvice(describe_('{"collectionName": "docs"}'), "1")).toBe(
+      "Ask for at most 1 row: read the collection's indexes with indexes/list, or its row count with collections/get_stats, instead of every field, and run it again.",
+    );
+    expect(milvusrpcRowCapAdvice('POST /v2/vectordb/partitions/list\n{"collectionName": "docs"}', "1")).toBe(
+      "Ask for at most 1 row: read the collection's load state or row count instead of every partition, and run it again.",
+    );
+    expect(milvusrpcRowCapAdvice('POST /v2/vectordb/aliases/list\n{"collectionName": "docs"}', "1")).toBe(
+      "Ask for at most 1 row: read one alias with aliases/describe and an aliasName instead of the collection's whole list, and run it again.",
+    );
+    expect(milvusrpcRowCapAdvice("POST /v2/vectordb/entities/query", "1")).toBe(
+      "Ask for at most 1 row: read one collection instead of the whole list, and run it again.",
+    );
   });
 
   test("a request without advice of its own, or one that is refused, gets the generic sentence", () => {
@@ -1289,7 +1321,7 @@ describe("the fsquery language's server adapter and admission", () => {
 describe("the snmpget language's server adapter and admission", () => {
   const READ = "get sysDescr.0";
   const WITHHELD =
-    "Withheld from agent mode are SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules; every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable, and a walk that covers a withheld module steps over that module and answers the rest. Nothing of a withheld module is read or answered.";
+    "Withheld from agent mode are SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules, and HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4), the running processes, NET-SNMP-AGENT-MIB::nsExtensions (1.3.6.1.4.1.8072.1.3), UCD-SNMP-MIB::extTable (1.3.6.1.4.1.2021.8) and UCD-SNMP-MIB::prErrFixCmd (1.3.6.1.4.1.2021.2.1.103), the commands the agent runs and what they print, and CISCO-CONFIG-COPY-MIB (1.3.6.1.4.1.9.9.96) and CISCO-FLASH-MIB::ciscoFlashCopyTable (1.3.6.1.4.1.9.9.10.1.2.1), the file copies and their servers' logins, since a command line, a script's output and a copy's login can carry credentials; every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable, and a walk that covers a withheld module steps over that module and answers the rest. Nothing of a withheld module is read or answered.";
 
   test("the fingerprint is the plan the reader sends, so one read written two ways is one identity", () => {
     const one = fingerprintSnmpget(READ);
@@ -1309,6 +1341,9 @@ describe("the snmpget language's server adapter and admission", () => {
     expect(AGENT_LANGUAGE_COPY.snmpget.adviceKeys).toEqual([]);
     expect(snmpgetRowCapAdvice(READ, "2")).toBe(
       "Ask for at most 2 rows: get and next answer one row per object they name, walk one row per instance under its subtree and table one row per index, so walk a narrower subtree (one column, such as ifDescr, rather than ifEntry) or name the instances with get.",
+    );
+    expect(snmpgetRowCapAdvice(READ, "1")).toBe(
+      "Ask for at most 1 row: get and next answer one row per object they name, walk one row per instance under its subtree and table one row per index, so walk a narrower subtree (one column, such as ifDescr, rather than ifEntry) or name the instances with get.",
     );
     expect(languageServer("snmpget").shapeAdvice).toContain("a valid console command");
   });

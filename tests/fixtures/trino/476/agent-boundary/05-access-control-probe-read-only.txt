@@ -1,0 +1,7 @@
+# a table procedure no connector registers, on a table every server has: the read-only access control refuses table procedures to every identity before the procedure is looked up, and file-based access control never refuses one, so the lookup answers
+> [read-only transaction] ALTER TABLE "system"."runtime"."nodes" EXECUTE libredb_no_such_procedure
+  PERMISSION_DENIED: Access Denied: Cannot execute table procedure LIBREDB_NO_SUCH_PROCEDURE on system.runtime.nodes
+> [autocommit] ALTER TABLE "system"."runtime"."nodes" EXECUTE libredb_no_such_procedure
+  PERMISSION_DENIED: Access Denied: Cannot execute table procedure LIBREDB_NO_SUCH_PROCEDURE on system.runtime.nodes
+> [owner, read-only transaction] ALTER TABLE "system"."runtime"."nodes" EXECUTE libredb_no_such_procedure
+  PERMISSION_DENIED: Access Denied: Cannot execute table procedure LIBREDB_NO_SUCH_PROCEDURE on system.runtime.nodes

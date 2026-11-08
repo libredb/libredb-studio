@@ -74,6 +74,8 @@ const UNSERVED_OFFERS: Readonly<Partial<Record<DatabaseType, readonly AgentToolN
   couchbase: ["inspect_plan", "profile_table"],
   // And on Druid, for the same reason.
   druid: ["inspect_plan", "profile_table"],
+  // And on Trino, for the same reason.
+  trino: ["inspect_plan", "profile_table"],
 };
 
 /**

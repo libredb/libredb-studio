@@ -290,9 +290,9 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Couchbase | `couchbase` | Document (SQL++) | [providers/couchbase.md](./providers/couchbase.md) |
 | Google Cloud Firestore | `firestore` | Document (the Admin SDK query chain, read-only) | [providers/firestore.md](./providers/firestore.md) |
 | ClickHouse | `clickhouse` | SQL | [providers/clickhouse.md](./providers/clickhouse.md) |
-| Apache Druid | `druid` | SQL (read-only) | [providers/druid.md](./providers/druid.md) |
-| Elasticsearch | `elasticsearch` | Search (SQL, read-only) | [providers/elasticsearch.md](./providers/elasticsearch.md) |
-| OpenSearch | `opensearch` | Search (SQL, read-only) | [providers/opensearch.md](./providers/opensearch.md) |
+| Apache Druid | `druid` | SQL (analytics, over HTTP) | [providers/druid.md](./providers/druid.md) |
+| Elasticsearch | `elasticsearch` | Search (SQL) | [providers/elasticsearch.md](./providers/elasticsearch.md) |
+| OpenSearch | `opensearch` | Search (SQL) | [providers/opensearch.md](./providers/opensearch.md) |
 | Trino | `trino` | SQL (federated query engine) | [providers/trino.md](./providers/trino.md) |
 | Snowflake | `snowflake` | SQL (analytics, the SQL API v2 over HTTP) | [providers/snowflake.md](./providers/snowflake.md) |
 | Apache Spark | `spark` | SQL (analytics, Spark Connect over gRPC) | [providers/spark.md](./providers/spark.md) |
@@ -320,6 +320,79 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | SNMP | `snmp` | Device (managed objects over UDP, read-only) | [providers/snmp.md](./providers/snmp.md) |
 | Sparkplug B | `sparkplug` | Industrial (one MQTT broker, read-only) | [providers/sparkplug.md](./providers/sparkplug.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
+
+## Write reach
+
+What a Studio user can change on each engine through Studio, and what stops it, is `WRITE_REACH` in [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts).
+It is a fact about Studio's code, not about the engine, the deployment or the role a connection signs in as: a PostgreSQL connection whose role holds only `SELECT` is still `open`, because the boundary there is the database role ([GOVERNANCE.md](./GOVERNANCE.md)).
+
+A write path is a Studio server route that can send the engine a request that changes stored data, schema or server state.
+There are four:
+
+- `editor`: `POST /api/db/query` and `POST /api/db/multi-query`, which every surface that builds a statement and runs it reaches too: inline row edit, Import, Generate Test Data and Create Table.
+- `objectEdit`: `POST /api/db/objects/edit-apply`, through a provider's `buildObjectEdit` and `applyObjectEdit`.
+- `maintenance`: `POST /api/db/maintenance`, admin only, through `supportsMaintenance` and `maintenanceOperations`; an operation that changes server state is a write, a session `kill` and Milvus Load and Release included.
+- `transaction`: `POST /api/db/transaction`, offered wherever a provider has the transaction methods.
+
+Schema Diff migration DDL is shown and copied, never run; plan mode drafts and never runs; and the agent and MCP open every handle read-only under their own boundary, `queryReadOnly`, which this record does not describe.
+The browser's destructive-statement confirmation is not a gate: Proceed skips it.
+
+Each engine takes one of three values:
+
+- `none`: on every path the provider has no code that can send a write, whatever the connection's `readOnly` says. The editor path names a structural proof: a closed route or command table, a request encoder with no write function, or a statement policy that refuses every non-read before any request. An engine whose only refusal is its own grammar is not `none`.
+- `guarded`: the provider has at least one write path, and a named gate refuses every one of them before any request while read-only mode holds, set on the connection, on the seed, or by an agent execution profile.
+- `open`: at least one path sends a write that no Studio gate refuses.
+
+A seed and a connection may set `readOnly: true` wherever the value is not `open`, and it is refused on every `open` engine at load and before anything is built or dialled.
+On a `none` engine the flag changes no write, and the connection form shows a fixed Read-only label instead of a checkbox.
+A read-only seed still needs a managed connection and a credential its type does not mark unsafe, on every engine that takes the flag ([SECURITY.md](./SECURITY.md) row 3.8).
+Each provider doc states the same value in its `Write reach` row, and `tests/unit/db/write-reach-docs.test.ts` holds this table and those rows equal to the record and to every gate and proof symbol a provider declares.
+
+| Provider | type-id | Write reach | Paths, and the gate or proof |
+|----------|---------|-------------|------------------------------|
+| PostgreSQL | `postgres` | open | editor, with inline edit, Import, test data and Create Table; object edit of functions and procedures; maintenance (vacuum, analyze, reindex, kill); transactions |
+| MySQL | `mysql` | open | editor, with inline edit, Import, test data and Create Table; maintenance (analyze, optimize, check, kill); transactions |
+| Oracle | `oracle` | open | editor, with inline edit, Import, test data and Create Table; maintenance (analyze, optimize, kill); transactions |
+| Db2 LUW | `db2` | open | editor, with inline edit, Import and test data; maintenance (analyze, optimize); transactions |
+| Microsoft SQL Server | `mssql` | open | editor, with inline edit, Import, test data and Create Table; maintenance (analyze, check, optimize, kill); transactions |
+| SQLite | `sqlite` | open | editor, with inline edit, Import, test data and Create Table; maintenance (vacuum, analyze, reindex, check) |
+| libSQL | `libsql` | open | editor, with inline edit, Import, test data and Create Table; maintenance (reindex, check) |
+| DuckDB | `duckdb` | open | editor, with inline edit, Import, test data and Create Table; maintenance (vacuum, analyze, optimize) |
+| Redis | `redis` | open | editor; object edit of functions; maintenance (analyze) |
+| MongoDB | `mongodb` | open | editor write operations, with Import and test data; maintenance (vacuum, analyze, check, kill) |
+| Couchbase | `couchbase` | open | editor, with Import; maintenance (analyze, reindex, kill) |
+| Google Cloud Firestore | `firestore` | none | editor: `buildRequest` builds only the read requests of a closed table; no other path |
+| ClickHouse | `clickhouse` | open | editor; maintenance (optimize, analyze, kill) |
+| Apache Druid | `druid` | open | editor: Studio sends the statement the editor holds; Druid SQL refuses a write, which is the engine's boundary, not Studio's |
+| Elasticsearch | `elasticsearch` | open | editor: Studio sends the statement the editor holds; the SQL grammar has no write, which is the engine's boundary, not Studio's |
+| OpenSearch | `opensearch` | open | editor: as Elasticsearch, and the grammar's `DELETE` is switched on or off by a cluster setting |
+| Trino | `trino` | open | editor, with Import and Create Table; object edit of functions; maintenance (kill) |
+| Snowflake | `snowflake` | open | editor |
+| Apache Spark | `spark` | open | editor |
+| Apache Cassandra | `cassandra` | open | editor, with Import |
+| Databend | `databend` | open | editor; maintenance (kill) |
+| Prometheus | `prometheus` | none | editor: `PATHS` is the closed endpoint table the transport requests, with no admin, remote-write, OTLP or lifecycle endpoint; no other path |
+| InfluxDB (InfluxQL) | `influxdb` | none | editor: `evaluateInfluxql` refuses every statement that is not one read before any request; no other path |
+| InfluxDB 3 (SQL) | `influxdb3` | none | editor: `evaluateInfluxSql` refuses every statement that does not lead with a read keyword before any request; no other path |
+| Apache Kafka | `kafka` | none | editor: `KAFKA_READ_APIS` is the client's API key set, every one a read, with no produce, topic, config, offset-commit or group-membership API, and `parseReadRequest` admits a read request only; no other path |
+| RabbitMQ | `rabbitmq` | none | editor: `isAllowedOutbound` admits no publish and no queue or exchange method on the AMQP connection, and the management routes are reads; no other path |
+| etcd | `etcd` | guarded | editor: `refuseBeforeSend` refuses `put`, `del` and `lease revoke`; object edit and maintenance (compact, defragment, disarm): `refuseReadOnly`; no transaction path |
+| Neo4j | `neo4j` | none | editor: `checkCypherRead` refuses every statement that is not a read before any request; no other path |
+| Milvus | `milvus` | guarded | editor: `MILVUS_ROUTES`, a closed table of read routes; maintenance (Load, Release): `refuseReadOnly`; no object edit or transaction path |
+| Qdrant | `qdrant` | none | editor: `QDRANT_ROUTES`, a closed table of read routes; no other path |
+| Weaviate | `weaviate` | none | editor: `WEAVIATE_ROUTES`, a closed table of read routes; no other path |
+| Oxia | `oxia` | none | editor: `allowlistedServices`, the read methods and the health check the gRPC client takes its methods from; no other path |
+| S3-compatible object storage | `s3` | none | editor: `S3_COMMAND_TABLE`, a closed table of read commands sent as GET and HEAD; no other path |
+| Kubernetes | `kubernetes` | none | editor: `admitRequest` admits GET and the three self reviews only, before any socket; no other path |
+| BigQuery | `bigquery` | open | editor |
+| MQTT | `mqtt` | none | editor: `guardOutboundPacket` admits no PUBLISH, and the encoder has no function that writes one; no other path |
+| OPC UA | `opcua` | none | editor: `readRequest` reads the editor text into a read request, and the client names eight services, none of which writes; no other path |
+| MTConnect | `mtconnect` | none | editor: `MTC_ROUTES`, a closed table of GET routes; no other path |
+| Modbus | `modbus` | none | editor: `assertOutboundAllowed` admits only four read function codes and device identification on every outbound frame; no other path |
+| NETCONF | `netconf` | none | editor: `buildRpc` builds four read bodies and `<close-session>`, and no `<edit-config>`; no other path |
+| SNMP | `snmp` | none | editor: `parseStatement` reads four read commands, and the valve refuses a Set PDU; no other path |
+| Sparkplug B | `sparkplug` | none | editor: `PACKET`, the encoder's packet set, holds no PUBLISH, and its CONNECT takes no will; no other path |
+| LibreDB | `libredb` | open | editor: `put` and `delete`, which no gate refuses on a connection |
 
 ## Core Interface
 

@@ -15,10 +15,17 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
+import {
+  connectionFieldHint,
+  DB_UI_CONFIG,
+  hostUriSchemes,
+  offersSshTunnel,
+  READ_ONLY_FIXED_HINT,
+} from "@/lib/db-ui-config";
 import {
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
+  MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
   MCP_STATEMENT_READ,
   READ_ONLY_ENFORCED,
@@ -33,6 +40,7 @@ import {
   type NodeByteTransport,
   TransportError,
 } from "@/lib/db/http/node-transport";
+import { S3_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
 import type { S3ClientContext } from "@/lib/db/providers/objectstore/s3/client";
 import { buildS3ConnectionOptions } from "@/lib/db/providers/objectstore/s3/connection-options";
 import { S3_COMMAND_TABLE, type S3FlagSpec } from "@/lib/db/providers/objectstore/s3/console/commands";
@@ -211,7 +219,9 @@ const OUTLINE: readonly string[] = [
   "### 15.2 What an agent command may be",
   "### 15.3 Metadata only",
   "### 15.4 Agent language pack",
-  "### 15.5 Tests",
+  "### 15.5 What a key's grants reach",
+  "### 15.6 Tests",
+  "### 15.7 MCP read",
 ];
 
 /** The "Before you connect" block, exactly. */
@@ -488,16 +498,21 @@ describe("docs/providers/s3.md: the connection, as the dialog and the builder st
   test("12. the read-only mode and machine access are what the records say", () => {
     expect(READ_ONLY_ENFORCED.s3).toBe(true);
     const mode = flat(sectionOf(DOC, "### 3.5 The read-only mode"));
-    expect(mode).toContain(readOnlyHint(DB_UI_CONFIG.s3));
+    expect(mode).toContain(READ_ONLY_FIXED_HINT);
     expect(mode).toContain("`READ_ONLY_ENFORCED.s3` is true");
-    expect(MCP_EXPOSABLE.s3).toBe(false);
-    expect(MCP_STATEMENT_READ.s3).toBe(false);
+    expect(MCP_EXPOSABLE.s3).toBe(true);
+    expect(MCP_STATEMENT_READ.s3).toBe(true);
+    expect(MCP_AGENT_CREDENTIAL_REQUIRED.s3).toBe(true);
     expect(AGENT_EXECUTION_ENGINES).toContain("s3");
     const machine = flat(sectionOf(DOC, "### 3.6 Machine access"));
-    expect(machine).toContain("Agent mode reads metadata only, and MCP stays closed");
-    expect(machine).toContain("`MCP_EXPOSABLE.s3` is false");
-    expect(machine).toContain("`MCP_STATEMENT_READ.s3` is false");
+    expect(machine).toContain(
+      "Agent mode and MCP read metadata only, and MCP reads only under an agent read key of its own: `MCP_AGENT_CREDENTIAL_REQUIRED.s3` is true",
+    );
+    expect(machine).toContain("`MCP_EXPOSABLE.s3` and `MCP_STATEMENT_READ.s3` are true, so MCP `run_s3_read` reads it");
     expect(machine).toContain("no agent-mode path lists a key");
+    expect(machine).toContain(
+      'S3 declares the `"dedicated-user"` form, so an agent access key ID equal to the connection\'s own, compared without case or surrounding space, is refused at load and at open, since it names the same key.',
+    );
   });
 
   test("13. section 4.3 lists the shared SSL panel's modes in the dialog's order", () => {
@@ -1193,7 +1208,7 @@ const S3_ENTRIES: Readonly<Record<string, string>> = {
   D274: "Large Parquet row groups preview fewer columns or none",
   U109: "The object tree is not paged, so an account with thousands of buckets lists them in one folder",
   // U110 ("Databend declares a User placeholder the dialog never draws") was settled by SF-039 and deleted.
-  B104: "S3's agent reads are metadata only, and it has no MCP surface",
+  B104: "S3's agent and MCP reads are metadata only until a ruling opens object keys and values",
 };
 
 describe("the backlog record of the S3 provider", () => {
@@ -1233,8 +1248,64 @@ describe("the backlog record of the S3 provider", () => {
     expect(b103).toBeGreaterThan(-1);
     expect(b104).toBeGreaterThan(b103);
     expect(AGENT_DOC).toContain(
-      "- **B104**: S3's `s3api` statement language reads metadata only, through six GET and HEAD reads alone, so no object key the request did not name, body, user metadata, tag, ETag, version id, owner, ACL, policy or endpoint reaches an agent answer, a bucket is counted whole and never by prefix, and data analysis, query optimization and database assessment are not offered; MCP is not offered for it (`MCP_EXPOSABLE.s3` is false) and it has no MCP statement tool (`MCP_STATEMENT_READ.s3` is false), so MCP `run_read_query` refuses it, because no MCP surface that lists buckets but never returns an object key is designed yet (`docs/providers/s3.md` sections 3.6 and 15).",
+      "- **B104**: S3's `s3api` statement language reads metadata only, through six GET and HEAD reads alone, so no object key the request did not name, body, user metadata, tag, ETag, version id, owner, ACL, policy or endpoint reaches an agent or MCP `run_s3_read` answer, a bucket is counted whole and never by prefix, MCP reads it only under the seed's agent read key, and data analysis, query optimization and database assessment are not offered, until a ruling of its own decides which object keys and values may be read (`docs/providers/s3.md` sections 3.6, 15 and 15.7).",
     );
+  });
+
+  test("37a. section 15.3 names both MCP paths, and section 15.5 cites the scope captures of three servers", () => {
+    const metadata = flat(sectionOf(DOC, "### 15.3 Metadata only"));
+    expect(metadata).toContain(
+      "| MCP `run_s3_read` | agent read-only profile, under the seed's agent read key | one read of [section 15.2](#152-what-an-agent-command-may-be)'s table, projected as above, with the provider's warnings as its notes ([section 15.7](#157-mcp-read)) |",
+    );
+    expect(metadata).toContain(
+      "| MCP `inspect_schema` | none | refused by name, pointing at `run_s3_read`, before anything is acquired, since S3 declares no relation kind |",
+    );
+    const scope = flat(sectionOf(DOC, "### 15.5 What a key's grants reach"));
+    for (const set of ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"]) {
+      expect(existsSync(path.join(ROOT, `tests/fixtures/s3/agent-scope/${set}/scope.json`))).toBe(true);
+      expect(existsSync(path.join(ROOT, `tests/fixtures/s3/agent-scope/${set}/run.sh`))).toBe(true);
+    }
+    expect(scope).toContain("[`tests/live/s3-agent-scope.ts`](../../tests/live/s3-agent-scope.ts)");
+    expect(scope).toContain("[`tests/fixtures/s3/agent-scope/`](../../tests/fixtures/s3/agent-scope/)");
+  });
+
+  test("37c. section 15.7 cites the MCP live check, its seed file and a capture per server, and the two layers", () => {
+    const mcp = flat(sectionOf(DOC, "### 15.7 MCP read"));
+    for (const set of ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"])
+      expect(existsSync(path.join(ROOT, `tests/fixtures/s3/agent-scope/${set}/mcp.json`))).toBe(true);
+    expect(mcp).toContain("[`tests/live/s3-mcp-agent-key.ts`](../../tests/live/s3-mcp-agent-key.ts)");
+    expect(mcp).toContain("[`mcp-seed.json`](../../tests/fixtures/s3/agent-scope/mcp-seed.json)");
+    expect(mcp).toContain("(`MCP_AGENT_CREDENTIAL_REQUIRED.s3`)");
+    expect(mcp).toContain("The server's grants to the agent read key decide which buckets a call reaches");
+    expect(mcp).toContain("Studio's projection decides what of a reachable bucket is answered");
+    expect(readFileSync(path.join(ROOT, "tests/fixtures/s3/agent-scope/mcp-seed.json"), "utf8")).not.toMatch(
+      /"(?:user|password|agentUser|agentPassword)": "(?!\$\{)/,
+    );
+  });
+
+  test("37b. every scope capture answers a bucket or key the key may not read as it answers a missing one", () => {
+    for (const set of ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"]) {
+      const capture = JSON.parse(read(`tests/fixtures/s3/agent-scope/${set}/scope.json`)) as {
+        readonly agent: readonly { readonly statement: string; readonly as: string; readonly refused?: string }[];
+        readonly oracle: {
+          readonly ungrantedBucketLikeMissing: Readonly<Record<string, boolean>>;
+          readonly ungrantedPresentKeyLikeAbsent: boolean;
+          readonly objectsOnlyPresentKeyLikeAbsent: boolean;
+        };
+        readonly leaks: readonly string[];
+      };
+      expect(Object.values(capture.oracle.ungrantedBucketLikeMissing)).toEqual([true, true, true, true, true, true]);
+      expect(capture.oracle.ungrantedPresentKeyLikeAbsent).toBe(true);
+      // GetObject alone lets the key learn whether an object exists, so head-object may tell it too.
+      expect(capture.oracle.objectsOnlyPresentKeyLikeAbsent).toBe(false);
+      const unreadable = capture.agent.filter(
+        (record) => record.as === "scoped" && /(--bucket |s3:\/\/)scope-(other|missing)(\s|$)/.test(record.statement),
+      );
+      expect(unreadable, set).toHaveLength(12);
+      for (const record of unreadable)
+        expect(record.refused, record.statement).toBe(S3_AGENT_FAILURE_SENTENCES.notFound);
+      expect(capture.leaks).toEqual([]);
+    }
   });
 });
 
@@ -1346,7 +1417,7 @@ describe("docs/SECURITY.md: the S3 rows and limits", () => {
       "Qdrant, Weaviate, InfluxDB (InfluxQL), InfluxDB 3 (SQL), S3-compatible object storage and Kubernetes HTTP requests",
     );
     expect(knownLimit("**A statement the editor refuses is never sent and never written to history.**")).toContain(
-      "The Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3 and Kubernetes rows declare both (rows 3.11, 3.12, 3.15, 3.18, 3.20 and 3.25); no other shipped engine declares either.",
+      "The Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3, Kubernetes and Firestore rows declare both, and the Redis row declares a refusal and no bound; no other shipped engine declares either.",
     );
     const s3 = knownLimit("**S3-compatible object storage is reached over a REST client of Studio's own.**");
     expect(s3).toContain("14 minutes of skew were accepted and 20 refused on MinIO, Silo and RustFS");
@@ -1436,7 +1507,7 @@ describe("README.md and its translations", () => {
 
   test("45. each README numeral counts its own denominator", () => {
     expect(readme).toContain(`${Word(engines)} engines share one interface:`);
-    expect(readme).toContain(`Three of the ${word(engines)} are read-only because their own SQL is`);
+    expect(readme).toContain(`Three of the ${word(engines)} have no write in their own SQL`);
     expect(readme).toContain(`- **${Word(engines)} engines, one interface**:`);
     expect(readme).toContain(`> **${Word(WIRE_COMPATIBLE_ENGINES.length)} more engines have no driver of their own.**`);
     expect(readme).toContain(`The ${word(engines)} above are the drivers this build ships.`);
@@ -1500,7 +1571,7 @@ describe("DOCKERHUB.md", () => {
     expect(SHIPPED_DATABASE_TYPES).toHaveLength(EXTERNAL_DATABASE_TYPES.length + 1);
     expect(hub).toContain(`The ${ordinal(SHIPPED_DATABASE_TYPES.length)} row is the embedded LibreDB store`);
     expect(hub).toContain(
-      "Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, SNMP, Oxia, S3-compatible object storage and Kubernetes are read-only too",
+      "Prometheus, InfluxDB, Apache Kafka, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, SNMP, Oxia, S3-compatible object storage and Kubernetes are read-only: Studio calls only read APIs",
     );
     expect(hub).toContain(`of one of the ${word(EXTERNAL_DATABASE_TYPES.length)} drivers above`);
   });
@@ -1650,20 +1721,13 @@ describe("docs/SEED_CONNECTIONS.md and the seed schema agree on s3", () => {
     expect(rowOf(seed, "`connections[].database`")).toContain("S3: the optional pinned bucket");
     expect(rowOf(seed, "`connections[].user`")).toContain("S3: the access key ID");
     expect(rowOf(seed, "`connections[].password`")).toContain("S3: the secret access key");
-    expect(rowOf(seed, "`connections[].readOnly`")).toContain(
-      "InfluxDB 3 (SQL), Oxia, S3-compatible object storage and Kubernetes)",
-    );
-    expect(seed).toContain("both InfluxDB types', Oxia's, S3's and Kubernetes's do today");
-    expect(rowOf(seed, "`connections[].mcp`")).toContain(
-      "An etcd, Oxia, S3, Kubernetes, MQTT, Firestore or OPC UA connection refuses `mcp: true` when the file loads",
-    );
-    expect(seed).toContain(
-      "| `mcp: true` on an etcd, Oxia, S3 or Kubernetes connection | The whole file fails like any invalid config, and the error names `mcp` and the type, `etcd`, `oxia`, `s3` or `kubernetes` |",
-    );
-    expect(seed.split("`dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`")).toHaveLength(3);
+    // The readOnly row names no engine: it points at the Write reach table, whose S3 row the record holds.
+    expect(rowOf(seed, "`connections[].readOnly`")).toContain("[write reach](DATABASE_PROVIDERS.md#write-reach)");
+    expect(seed).toContain("both InfluxDB types, Oxia, S3 and Kubernetes keep it (");
+    expect(seed.split("`dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `amqpPort`")).toHaveLength(3);
   });
 
-  test("55. a seed written from the s3 rows loads and resolves, and mcp: true on it is refused", () => {
+  test("55. a seed written from the s3 rows loads and resolves, and mcp: true on it is refused without an agent key", () => {
     const connection = {
       id: "s3-doc",
       name: "S3 doc",
@@ -1695,8 +1759,14 @@ describe("docs/SEED_CONNECTIONS.md and the seed schema agree on s3", () => {
     const refused = SeedConfigSchema.safeParse({ version: "1", connections: [{ ...connection, mcp: true }] });
     expect(refused.success).toBe(false);
     expect(refused.error?.issues.map((issue) => issue.message)).toContain(
-      "mcp is not offered for s3: the product does not expose this engine to MCP clients. Remove mcp from this connection.",
+      'Seed connection "s3-doc" sets mcp: true on s3 without a read credential of its own (agentUser and agentPassword): MCP reads this engine only under that credential, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.',
     );
+    const agentKey = { agentUser: "studio-agent", agentPassword: "${S3_DOC_AGENT_SECRET}" };
+    const opted = SeedConfigSchema.safeParse({
+      version: "1",
+      connections: [{ ...connection, ...agentKey, mcp: true }],
+    });
+    expect(opted.success, JSON.stringify(opted.error?.issues)).toBe(true);
   });
 });
 

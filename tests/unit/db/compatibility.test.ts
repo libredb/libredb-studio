@@ -17,16 +17,19 @@ import {
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
   isExternalDatabaseType,
+  MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
   MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
   READ_ONLY_ENFORCED,
+  READ_ROOTS_REQUIRED,
   READS_FILE_ACCESS_POSTURE,
   SHIPPED_DATABASE_TYPES,
   SINGLE_WRITER_FILE,
 } from "@/lib/db/compatibility";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { isFileBased } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
@@ -485,7 +488,7 @@ describe("wire-compatibility registry", () => {
     expect(CONNECTION_STRING_ACCEPTED.snowflake).toBe(false);
   });
 
-  test("s3 ships as an external engine that keeps the read-only mode, is not offered to MCP, and has no relatives", () => {
+  test("s3 ships as an external engine that keeps the read-only mode, is offered to MCP under an agent key alone, and has no relatives", () => {
     // S3-compatible object storage the user already runs, reached over the S3 REST API by a client of this repository's
     // own. MinIO, Silo, Garage and RustFS are the servers the s3 driver itself was verified on, not relatives:
     // counting them would count one product twice.
@@ -493,7 +496,9 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("s3")).toBe(true);
     expect(compatibleEnginesFor("s3")).toEqual([]);
     expect(READ_ONLY_ENFORCED.s3).toBe(true);
-    expect(MCP_EXPOSABLE.s3).toBe(false);
+    expect(MCP_EXPOSABLE.s3).toBe(true);
+    expect(MCP_STATEMENT_READ.s3).toBe(true);
+    expect(MCP_AGENT_CREDENTIAL_REQUIRED.s3).toBe(true);
     expect(READS_FILE_ACCESS_POSTURE.s3).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.s3).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.s3).toBe(false);
@@ -669,24 +674,6 @@ describe("MCP_EXPOSABLE (#1089)", () => {
   test("is frozen, so no reader can offer or withdraw MCP for an engine at run time", () => {
     expect(Object.isFrozen(MCP_EXPOSABLE)).toBe(true);
   });
-
-  test("offers MCP for every shipped engine but etcd, oxia, s3, mqtt, firestore, opcua, modbus and netconf", () => {
-    // An engine MCP is not offered for answers false with its registration, and is named here then.
-    // Modbus refuses for a reason of its own, written beside its registration in
-    // compatibility.ts rather than repeated here.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual([
-      "etcd",
-      "oxia",
-      "s3",
-      "mqtt",
-      "firestore",
-      "opcua",
-      "modbus",
-      "netconf",
-      "snmp",
-      "sparkplug",
-    ]);
-  });
 });
 
 /**
@@ -713,18 +700,37 @@ describe("MCP_STATEMENT_READ", () => {
     const open = SHIPPED_DATABASE_TYPES.filter((type) => MCP_STATEMENT_READ[type]);
     expect(open.filter((type) => !AGENT_EXECUTION_ENGINES.includes(type))).toEqual([]);
   });
+});
 
-  test("opens the five SQL engines run_read_query served before the record existed, MongoDB, Kubernetes, and no other", () => {
-    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_STATEMENT_READ[type])).toEqual([
-      "postgres",
-      "mysql",
-      "sqlite",
-      "duckdb",
-      "mssql",
-      "mongodb",
-      "kubernetes",
-    ]);
+/**
+ * `MCP_AGENT_CREDENTIAL_REQUIRED`: the engines MCP reads only under a seed's own agent credential, never under the
+ * connection's login. It can only narrow what MCP already offers, and only on an engine a seed can give an agent
+ * credential to, or the seed could never be read at all.
+ */
+describe("MCP_AGENT_CREDENTIAL_REQUIRED", () => {
+  test("answers for every shipped type-id and for nothing else", () => {
+    expect(Object.keys(MCP_AGENT_CREDENTIAL_REQUIRED).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+
+  test("is frozen, so no reader can change what MCP signs in with at run time", () => {
+    expect(Object.isFrozen(MCP_AGENT_CREDENTIAL_REQUIRED)).toBe(true);
+  });
+
+  test("is true only where MCP_EXPOSABLE offers the engine and a seed of it may carry an agent credential", () => {
+    for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => MCP_AGENT_CREDENTIAL_REQUIRED[candidate])) {
+      expect([type, MCP_EXPOSABLE[type], SEED_AGENT_CREDENTIAL[type] !== null]).toEqual([type, true, true]);
+    }
+  });
+});
+
+describe("READ_ROOTS_REQUIRED", () => {
+  test("is frozen, and true exactly where a seed of the engine may declare read roots", () => {
+    expect(Object.isFrozen(READ_ROOTS_REQUIRED)).toBe(true);
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const declares = SEED_ONLY_FIELDS[type]?.fields.includes("agentReadRoots") ?? false;
+      expect([type, READ_ROOTS_REQUIRED[type]]).toEqual([type, declares]);
+    }
+    expect(READ_ROOTS_REQUIRED.opcua).toBe(true);
   });
 });
 

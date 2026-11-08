@@ -20,7 +20,7 @@
  *   index reports JSON `null` for both while still saying `"status":"close"`.
  *
  * The fake's `query()` THROWS on purpose. Introspection reading a statement would be
- * a design regression, not a test failure: `introspect.ts:9-16` records that
+ * a design regression, not a test failure: the header of `introspect.ts` records that
  * `SELECT *` describes the statement rather than the index - measured, an index
  * mapping `flattened` and `nested` answers `SELECT *` with `{"columns":[],"rows":[[]]}` -
  * so the mapping is the only honest source.
@@ -30,11 +30,15 @@ import { isSystemIndex, SEARCH_CONTAINER_TYPES, toColumns } from "@/lib/db/provi
 import { ELASTICSEARCH_PRODUCT, OPENSEARCH_PRODUCT } from "@/lib/db/providers/sql/search/index";
 import type {
   SearchClusterHealth,
+  SearchDataStreamMarks,
   SearchIndexInfo,
+  SearchLoginReach,
+  SearchLoginWrites,
   SearchMappingField,
   SearchObjectDefinition,
   SearchObjectInfo,
   SearchQueryResult,
+  SearchResolvedTargets,
   SearchTransport,
 } from "@/lib/db/providers/sql/search/transport";
 import { SearchTransportError } from "@/lib/db/providers/sql/search/transport";
@@ -70,7 +74,7 @@ function index(name: string, overrides: Partial<SearchIndexInfo> = {}): SearchIn
     status: "open",
     // Both products mark their own with a leading dot; the transport also flags
     // OpenSearch's date-suffixed query-insights index, which carries none
-    // (`http-transport.ts:263-264`). Introspection reads the flag, never the name.
+    // (`DOT_PREFIXED` in `http-transport.ts`). Introspection reads the flag, never the name.
     isSystem: false,
     ...overrides,
   };
@@ -157,6 +161,24 @@ function createTransport(options: FakeOptions = {}) {
     sqlDeleteSetting: (): Promise<{ setting: string; enabled: boolean | null }> => {
       throw new Error("introspection read a cluster setting");
     },
+    loginReach: (): Promise<SearchLoginReach | null> => {
+      throw new Error("introspection checked the login");
+    },
+    loginWrites: (): Promise<SearchLoginWrites | null> => {
+      throw new Error("introspection probed the login");
+    },
+    resolveTargets: (): Promise<SearchResolvedTargets> => {
+      throw new Error("introspection resolved an agent statement's index expression");
+    },
+    sqlTableIndices: (): Promise<string[]> => {
+      throw new Error("introspection resolved an agent statement's table the way the SQL endpoint does");
+    },
+    hiddenAliases: (): Promise<string[]> => {
+      throw new Error("introspection read an alias's mark");
+    },
+    dataStreamMarks: (): Promise<SearchDataStreamMarks[]> => {
+      throw new Error("introspection read a data stream's marks");
+    },
     unrefusedSqlDelete: (): Promise<string | null> => {
       throw new Error("introspection sent a DELETE probe");
     },
@@ -203,7 +225,7 @@ describe("the container decision", () => {
     expect([...SEARCH_CONTAINER_TYPES]).toEqual(["object", "nested"]);
   });
 
-  // One definition is the point (`introspect.ts:86-89`): the completion and
+  // One definition is the point (`SEARCH_CONTAINER_TYPES` in `introspect.ts`): the completion and
   // labelling surfaces have to agree with the schema tree about what a column is.
   test("is frozen, so no caller can widen it at runtime", () => {
     expect(Object.isFrozen(SEARCH_CONTAINER_TYPES)).toBe(true);
@@ -230,10 +252,10 @@ describe("the unprojectable types decision (#1459)", () => {
 
 describe("isSystemIndex", () => {
   /**
-   * The rule is deliberately the flag and nothing more (`introspect.ts:150-154`).
+   * The rule is deliberately the flag and nothing more (`isSystemIndex` in `introspect.ts`).
    * The NAME shapes that produce the flag - the leading dot both products use by
    * convention, and OpenSearch's date-suffixed query-insights index - are
-   * `http-transport.ts:263-264,751`, which is where a test of the rule itself
+   * `DOT_PREFIXED` in `http-transport.ts`, which is where a test of the rule itself
    * belongs; what is verified here is that introspection adds no second opinion.
    */
   test.each<[string, string]>([

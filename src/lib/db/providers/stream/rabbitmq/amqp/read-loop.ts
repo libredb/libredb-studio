@@ -7,6 +7,10 @@
  * run signal), the broker's basic.cancel, its close or the socket's end, and RABBITMQ_IDLE_MS without a byte that is not
  * a heartbeat. A message in progress at a stop is not a row.
  *
+ * The deadline is also read off the clock at every frame event after consume-ok, against `deadlineAt`: a runtime runs
+ * a due timer only after the batch of socket reads in hand (up to 32 reads in Node), so the signal alone let a flooding
+ * peer keep the walk going for chunks past the deadline.
+ *
  * A row limit, idle or a server cancel ends with connection.close and a short wait for close-ok; the budget, the wire
  * cap, the deadline and a cancel drop the socket without waiting, because close-ok would come only after the body the
  * read refuses to take. Every exit destroys the socket and clears every timer. There is no retry and no reconnect.
@@ -64,6 +68,8 @@ export interface StreamReadInput {
   readonly signal: AbortSignal;
   /** The deadline in seconds, for the sentences. */
   readonly deadlineSeconds: number;
+  /** The instant on `clock` at which the run signal's deadline falls. */
+  readonly deadlineAt: number;
   /** From the type check, for the no-replica sentences. */
   readonly replicas: { readonly online: readonly string[]; readonly members: readonly string[] };
   readonly dial: AmqpDial;
@@ -207,6 +213,10 @@ export async function readStream(input: StreamReadInput): Promise<StreamReadOutc
   }
 
   function onDelivery(event: FrameEvent): void {
+    if (stopped === null && input.clock.now() >= input.deadlineAt) {
+      stop({ kind: "deadline" });
+      return;
+    }
     if (event.type === "inbound") {
       wire += event.bytes;
       // After a graceful stop the close still reads until close-ok; the cap bounds those bytes as well.

@@ -12,7 +12,7 @@ import { holdsAccountWorkspace, SOURCE_DRAFTS_KEY } from "@/lib/storage/local-st
  *
  * DECISION H2, and it is the constraint this file exists to satisfy: the draft lives under its
  * OWN bounded key, with its own budget, its own try/catch and a VISIBLE failure, and the
- * workspace blob is not touched. `src/hooks/use-tab-manager.ts:213` writes that blob with no
+ * workspace blob is not touched. `useTabManager` in `src/hooks/use-tab-manager.ts` writes that blob with no
  * try/catch inside a 500 ms timer, and a throw there stops tab persistence for the WHOLE
  * workspace in silence, which is filed defect X14: it was reproduced through the product's own
  * New tab button, with zero toasts, zero alerts and the word "quota" nowhere in the document.
@@ -21,7 +21,7 @@ import { holdsAccountWorkspace, SOURCE_DRAFTS_KEY } from "@/lib/storage/local-st
  * THE BOUND IS IN CHARACTERS, because the unit is ambiguous by a factor of two here. MEASURED on
  * Chrome 152: the origin ceiling is exactly 5,242,880 UTF-16 code units, counted as the sum of
  * `key.length + value.length` over every key, which is 5 MiB of CHARACTERS and twice the byte
- * budget the phrase "about 5 MiB" at `use-tab-manager.ts:52` is usually read as.
+ * budget the phrase "about 5 MiB" at `PersistedTabState` in `use-tab-manager.ts` is usually read as.
  *
  * EVICTION COUNTS ITS OWN KEYS AND NEVER ASKS THE BROWSER. MEASURED on Chrome 152:
  * `navigator.storage.estimate()` reported `usage: 0` while localStorage held 5,242,880

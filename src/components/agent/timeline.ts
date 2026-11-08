@@ -513,14 +513,17 @@ const FAILURE_SENTENCES = {
   "engine-unsupported": "The agent cannot run on this database engine: it offers no read-only execution profile.",
   // Names the credential, because that is the only thing to fix and the engine is
   // not at fault: this refusal reaches PostgreSQL and SQLite too (B47).
+  // Names the seed entry's field, because that is the only thing to fix: the engine and the credential are not at fault.
+  "read-roots-required":
+    "This connection declares no read roots, so agent mode cannot read it: an operator adds agentReadRoots to its seed entry. Plan mode still drafts requests for the editor.",
   "agent-credential-unusable":
     "This connection's agent credential cannot be used: check that it has the form its database takes (an agent user and password; an agent token or service-account key alone where the database takes one; an agent user other than the connection's own where it asks for one; none where it takes none), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
   // Names the principal, because the engine is supported and the credential was
   // applied: the profile refused the principal it opened as. Folded into the engine
   // sentence, an operator connected as `sa` was told to change engines. The principal
   // is a database user or a token depending on the engine, so the sentence names both
-  // and the repair is a narrower credential on the connection itself, since no run can
-  // carry an agent credential (B85).
+  // and the repair is a narrower credential: the connection's own, or the agent credential
+  // its seed sets, which the run signs in as whenever there is one.
   "agent-principal-refused":
     "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain, so the profile refused it. Connect with a credential that holds only read privileges.",
   // The opposite repair to the sentence above: one more privilege, never a narrower credential.
@@ -1017,6 +1020,7 @@ function describeFailureReason(reason: AgentRunFailureReason): string {
  */
 const CONNECTION_REFUSALS: ReadonlySet<AgentRunFailureReason> = new Set<AgentRunFailureReason>([
   "agent-credential-unusable",
+  "read-roots-required",
   "agent-principal-refused",
   "agent-principal-underprivileged",
   "server-authorization-off",

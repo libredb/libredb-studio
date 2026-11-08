@@ -1175,6 +1175,147 @@
           "It is the only setting this model carries and the only one it needed: all six cells read 5/5 at 0.3, each on the first attempt, with no other field moved."
         ]
       }
+    },
+    {
+      "id": "bonsai-2:2b",
+      "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 3:00 · Optimize 43s · Assess 1:13 · Operate 37s · Analyze 53s · Plan 14s (medians of the passing runs), 911 MB on disk. Investigate and plan locked at the compiled defaults; optimize and analyze needed temperature 0.3 with both hold limits raised; operate and assess locked at the defaults, but only after the blank-`locator` refusal fixed in this branch stopped rejecting complete citations — that cell read 1/5 before it and 5/5 after, and forty of its refusals were that one field. The spread inside one model is the finding: its plan turn is the fastest of the three sizes here and its investigate turn is seven times the 4b's, on the same snapshot.",
+      "settings": {
+        "sampling": {
+          "temperature": 0.3,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": true,
+        "verdictHoldLimit": 5,
+        "compareHoldLimit": 5
+      },
+      "rationale": {
+        "sampling": [
+          "Optimize read 2/5 and analyze 1/5 at the compiled temperature of 0, and the losses are the same answer re-sent: at 0 the retry after a notice reproduces the turn, so nothing the hold says can change what comes back. Both cells read 5/5 under the document that raises it to 0.3.",
+          "Measured as part of the four-field document rather than on its own: this model's cells were closed by the document, and no single-field run was taken to separate the four. The argument for it is the field's purpose below plus the document's own reading, not an isolation figure."
+        ],
+        "refusalExamples": [
+          "Its report calls earn INVALID_TOOL_INPUT rather than arriving absent, so the run is being told a type and not a shape. This is the smallest model on the roster and the one least able to infer the second from the first.",
+          "Measured as part of the four-field document rather than on its own: this model's cells were closed by the document, and no single-field run was taken to separate the four. The argument for it is the field's purpose below plus the document's own reading, not an isolation figure."
+        ],
+        "verdictHoldLimit": [
+          "Analyze at the defaults reads 1/5 with its losses earning a verifier shortfall rather than a malformed report, which is the state the hold exists to talk a run out of. Five is the value the hold is reachable at: a run about to pass never meets it.",
+          "Measured as part of the four-field document rather than on its own: this model's cells were closed by the document, and no single-field run was taken to separate the four. The argument for it is the field's purpose below plus the document's own reading, not an isolation figure."
+        ],
+        "compareHoldLimit": [
+          "Carried for the same reason the field exists at all - a report filed over several plans without comparing them - and raised with the verdict hold because the two bound the same loop.",
+          "Measured as part of the four-field document rather than on its own: this model's cells were closed by the document, and no single-field run was taken to separate the four. The argument for it is the field's purpose below plus the document's own reading, not an isolation figure."
+        ]
+      }
+    },
+    {
+      "id": "bonsai-2:4b",
+      "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 25s · Optimize 1:11 · Assess 37s · Operate 29s · Analyze 58s · Plan 59s (medians of the passing runs), 1.6 GB on disk. Four of the six locked at the compiled defaults on the first attempt. Plan needed temperature 0.3 alone and optimize needed it with both hold limits raised, so the profile carries the union of the two and every cell holds under it. This size caught a harness fault rather than a model fault: at 4/5 the measurement driver re-ran the same document indefinitely, and the optimize cell spent eight hours in a loop that could not lock. It closed the day that loop was fixed.",
+      "settings": {
+        "sampling": {
+          "temperature": 0.3,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": true,
+        "verdictHoldLimit": 5,
+        "compareHoldLimit": 5
+      },
+      "rationale": {
+        "sampling": [
+          "The one field measured alone on this model, and the one that closed a cell by itself: plan read 0/5 at temperature 0 and 5/5 at 0.3, with nothing else moved.",
+          "Optimize read 0/5 at the defaults and 2/5 under an intermediate document before closing at 5/5 under the four below, so 0.3 is the floor the other three sit on."
+        ],
+        "refusalExamples": [
+          "Optimize is the cell that needed them: 0/5 at the defaults, where the losses are report calls refused by type with the shape left unstated.",
+          "Measured as part of the four-field document rather than on its own: this model's cells were closed by the document, and no single-field run was taken to separate the four. The argument for it is the field's purpose below plus the document's own reading, not an isolation figure."
+        ],
+        "verdictHoldLimit": [
+          "Raised with the compare hold for the optimize cell, which reaches a verdict shortfall rather than a malformed report. Five is reachable only by a run already earning one.",
+          "Measured as part of the four-field document rather than on its own: this model's cells were closed by the document, and no single-field run was taken to separate the four. The argument for it is the field's purpose below plus the document's own reading, not an isolation figure."
+        ],
+        "compareHoldLimit": [
+          "The optimize surface is where a run holds several plans and files a report without comparing them, and 1 is the bound that cell lost against.",
+          "Measured as part of the four-field document rather than on its own: this model's cells were closed by the document, and no single-field run was taken to separate the four. The argument for it is the field's purpose below plus the document's own reading, not an isolation figure."
+        ]
+      }
+    },
+    {
+      "id": "bonsai-2:9b",
+      "measured": "6/6 modes locked, 30/30 runs passed at these settings. Investigate 19s · Optimize 1:10 · Assess 1:20 · Operate 28s · Analyze 55s · Plan 56s (medians of the passing runs), 3.2 GB on disk. Investigate, plan and analyze locked at the compiled defaults. Optimize needed the refusal examples; operate and assess needed quiet agent turns — the same remedy the plan turn has carried since `gemma4:12b` earned it, asked for here on surfaces that deliberately do not get it by default. Twice the 4b's weights buys nothing on this roster's questions: it is slower than the 4b over the six cells, and the two profiles share no field, which is the argument for measuring a size rather than inheriting its family's answer.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": true,
+        "suppressAgentReasoning": true
+      },
+      "rationale": {
+        "refusalExamples": [
+          "Measured alone on the cell that needed it: optimize read 4/5 at the compiled defaults and 5/5 with the examples, nothing else moved.",
+          "Its one baseline loss is a refused report rather than a timeout, which is the state showing the shape answers and naming the type does not."
+        ],
+        "suppressAgentReasoning": [
+          "Measured alone on two cells: assess read 1/5 at the defaults and 5/5 quiet; operate read 3/5 at the defaults, 4/5 under an intermediate document, and 5/5 quiet.",
+          "The losses are the illness this switch was written for on `gemma4:12b` - the turn spent thinking, no tool invoked, nothing filed - appearing here on agent surfaces rather than on the plan turn, which is why the plan-only sibling field is not set."
+        ]
+      }
+    },
+    {
+      "id": "gemma4:e4b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults, every cell on its first attempt and the whole model inside half an hour. Investigate 12s · Optimize 49s · Assess 1:34 · Operate 40s · Analyze 29s · Plan 9s (medians of the passing runs), 9.5 GB on disk. Nothing was spent on it: it came off the library listing as an untried size of a family already measured at 12b, 26b and 31b, and it cleared the board on what the product already sends. The other three sizes each carry a setting of their own and this one carries none. It is quicker over the six cells than the 26b and the 31b and slower than the 12b, which stays the size to reach for in this family.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      }
+    },
+    {
+      "id": "lfm3:1.7b",
+      "measured": "6/6 modes locked, 30/30 runs passed at the compiled defaults. Investigate 43s · Optimize 4:13 · Assess 1:58 · Operate 1:23 · Analyze 1:09 · Plan 36s (medians of the passing runs), 1.7 GB on disk. Four cells locked back to back inside thirty minutes; assess and optimize each read 4/5 first and locked on a re-roll of the same document, which is what a 4/5 at fixed settings means. It is slow for its size rather than cheap: its optimize cell is the longest of the five models added here, and the passing runs in it call tools, read what comes back and cite it. Take it where the constraint is memory rather than latency.",
+      "settings": {
+        "sampling": {
+          "temperature": 0,
+          "topP": 1
+        },
+        "unreportedCallCeiling": 12,
+        "reportReminderLimit": 1,
+        "planStatementRetries": 0,
+        "presentReminderLimit": 1,
+        "retryEmptyTurn": false,
+        "retryUnreadStop": false,
+        "suppressPlanReasoning": false,
+        "refusalExamples": false
+      }
     }
   ]
 }

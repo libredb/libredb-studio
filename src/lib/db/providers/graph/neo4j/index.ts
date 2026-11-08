@@ -16,7 +16,9 @@
  * user reads only (`agent-boundary.ts`), and `queryReadOnly` answers only on such a handle: the statement is read by
  * `readNeo4jAgentStatement` (`agent-statement.ts`) and refused before anything is sent when it is not an agent read,
  * then the user is proved again under the statement's own deadline, with no verdict kept from the open or the call
- * before, then the statement takes the editor's road (the statement gate, one READ run on the connection's database).
+ * before, then the statement takes the editor's road (the statement gate, one READ run on the connection's database),
+ * except that the gate classifies an allowed SHOW form too, so the database forms, which the server classifies as
+ * administration, are refused.
  * A result past the row or byte budget is refused, never cut. Every other handle, the operations profile's included,
  * opens unproved, so plan mode keeps grounding on a user that can write.
  */
@@ -67,6 +69,13 @@ import {
 } from "./monitoring-reads";
 import { NEO4J_POLICY_PROFILE } from "./profile";
 import { neo4jStatementGate } from "./statement-gate";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the shared Cypher read policy refuses every statement that is not a read before any Bolt
+ * request.
+ */
+const NEO4J_WRITE_REACH = noWritePath({ module: "src/lib/db/graph/cypher/read-policy.ts", symbol: "checkCypherRead" });
 
 /** Bolt's registered port. */
 const NEO4J_DEFAULT_PORT = 7687;
@@ -134,7 +143,7 @@ export class Neo4jProvider extends GraphBaseProvider {
       declaresForeignKeys: false,
       // A label is a name the server holds, not a grouping this server derived.
       tablesAreDerivedGroupings: false,
-      enforcesReadOnly: true,
+      writeReach: NEO4J_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,
@@ -221,12 +230,13 @@ export class Neo4jProvider extends GraphBaseProvider {
         throw this.providerFailure(error);
       }
       // One row past the budget is read, so a result the budget cannot hold is known to be one.
-      const { result, executionTime } = await this.runVerdict(reading.verdict, {
-        database,
-        timeoutMs: budget.statementTimeoutMs,
-        maxRows: budget.maxResultRows,
-        signal,
-      });
+      // The server classifies every agent statement, a SHOW form's too: the database forms are administration to it,
+      // and their answer names the address of every server holding a database, so they are refused.
+      const { result, executionTime } = await this.runVerdict(
+        reading.verdict,
+        { database, timeoutMs: budget.statementTimeoutMs, maxRows: budget.maxResultRows, signal },
+        true,
+      );
       if (result.truncated) {
         const atLeast = budget.maxResultRows + 1;
         throw new QueryError(

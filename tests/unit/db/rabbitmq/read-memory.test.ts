@@ -102,6 +102,7 @@ async function measure(
         limit: 500,
         signal: AbortSignal.timeout(30_000),
         deadlineSeconds: 30,
+        deadlineAt: clock.now() + 30_000,
         replicas: { online: [], members: [] },
         dial,
         clock,

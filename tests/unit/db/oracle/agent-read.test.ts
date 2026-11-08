@@ -12,7 +12,8 @@
  * database whose function is not Oracle's, and no fine-grained auditing policy anywhere with an audit condition or a
  * handler that is not Oracle's, read from two catalogs the user must be able to read, no sequence that is not Oracle's
  * and none of its own, no network or server-file package and no directory, no system privilege but CREATE SESSION,
- * and no database link. Every dictionary view is named SYS.<view>, so nothing in the user's schema and no PUBLIC
+ * no database link, and no grant, its own or a role's, on a schema Oracle maintains beyond the two catalogs it reads.
+ * Every dictionary view is named SYS.<view>, so nothing in the user's schema and no PUBLIC
  * synonym stands in for it. Each refusal names the statements that would lift it, or the policies it found.
  */
 import { describe, expect, test } from "bun:test";
@@ -101,6 +102,20 @@ function notOracles(owner: string, name: string, proof: (alias: string) => strin
   );
 }
 
+/**
+ * A grant `p` on an object of a schema Oracle maintains, other than a directory (item 10's) and the two policy catalogs
+ * the check itself reads. Here the schema's flag is enough, since it only ever refuses.
+ */
+const ORACLE_SCHEMA_GRANT =
+  "EXISTS (SELECT 1 FROM SYS.ALL_USERS s WHERE s.USERNAME = p.TABLE_SCHEMA AND s.ORACLE_MAINTAINED = 'Y') " +
+  "AND NVL(p.TYPE, '-') <> 'DIRECTORY' " +
+  "AND NOT (p.TABLE_SCHEMA = 'SYS' AND p.TABLE_NAME IN ('DBA_POLICIES', 'DBA_AUDIT_POLICIES') AND p.PRIVILEGE = 'SELECT')";
+
+/** The roles the user or PUBLIC holds by a grant the dictionary lists, and every role granted under one of them. */
+const TRACED_ROLES =
+  "(SELECT t.GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS t UNION SELECT u.GRANTED_ROLE FROM SYS.ROLE_ROLE_PRIVS u " +
+  "START WITH u.ROLE IN (SELECT v.GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS v) CONNECT BY PRIOR u.GRANTED_ROLE = u.ROLE)";
+
 /** Every check statement, whole: a change of any join, filter or view the check reads fails the test that pins it. */
 const EXPECTED_STATEMENTS: Readonly<Record<Statement, string>> = {
   readOnly: "SELECT USERNAME, READ_ONLY FROM SYS.USER_USERS",
@@ -152,11 +167,22 @@ const EXPECTED_STATEMENTS: Readonly<Record<Statement, string>> = {
     "(SELECT USERNAME AS GRANTEE, PRIVILEGE FROM SYS.USER_SYS_PRIVS UNION ALL SELECT ROLE, PRIVILEGE FROM SYS.ROLE_SYS_PRIVS) g " +
     "ON g.PRIVILEGE = p.PRIVILEGE WHERE p.PRIVILEGE <> 'CREATE SESSION' ORDER BY 1, 2",
   links: "SELECT OWNER, DB_LINK FROM SYS.ALL_DB_LINKS ORDER BY 1, 2",
+  dictionary:
+    "SELECT 'OBJECT' AS KIND, p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.PRIVILEGE " +
+    "FROM SYS.ALL_TAB_PRIVS p WHERE (p.GRANTEE = USER OR p.GRANTEE IN (SELECT ROLE FROM SYS.SESSION_ROLES) " +
+    `AND p.GRANTEE NOT IN ${TRACED_ROLES}) AND ${ORACLE_SCHEMA_GRANT} ` +
+    "UNION SELECT 'ROLE', g.USERNAME, NULL, g.GRANTED_ROLE, NULL FROM SYS.USER_ROLE_PRIVS g " +
+    "WHERE EXISTS (SELECT 1 FROM SYS.ALL_TAB_PRIVS p WHERE p.GRANTEE IN (SELECT g.GRANTED_ROLE FROM SYS.DUAL " +
+    "UNION ALL SELECT r.GRANTED_ROLE FROM SYS.ROLE_ROLE_PRIVS r START WITH r.ROLE = g.GRANTED_ROLE " +
+    `CONNECT BY PRIOR r.GRANTED_ROLE = r.ROLE) AND ${ORACLE_SCHEMA_GRANT}) ORDER BY 1, 2, 3, 4, 5`,
 };
 
-/** The dictionary views `sql` names without a schema: an ALL_, USER_, DBA_, SESSION_ or ROLE_ name not after a dot. */
+/**
+ * The dictionary views `sql` names without a schema: an ALL_, USER_, DBA_, SESSION_ or ROLE_ name not after a dot, and
+ * not a string literal, which names a view as data rather than reading it.
+ */
 function unqualifiedDictionaryViews(sql: string): string[] {
-  return [...sql.matchAll(/(?<![\w.$#])(?:ALL|USER|DBA|SESSION|ROLE)_[A-Z_$#]+/g)].map((match) => match[0]);
+  return [...sql.matchAll(/(?<![\w.$#'])(?:ALL|USER|DBA|SESSION|ROLE)_[A-Z_$#]+/g)].map((match) => match[0]);
 }
 
 /** What each FROM and JOIN of `sql` reads, a subquery left out. */
@@ -178,6 +204,7 @@ const CLEAN: Readonly<Record<Statement, Rows>> = {
   reach: [],
   systemPrivileges: [],
   links: [],
+  dictionary: [],
 };
 
 /** A reader that answers each check statement from `answers` over the clean principal, and records what it sent. */
@@ -221,10 +248,11 @@ describe("verifyAgentPrincipal", () => {
   test("every reading of an object's Oracle-maintained flag is the one shared proof, never the flag alone", () => {
     // A local object Oracle marked keeps the flag when an administrator replaces it, and an object created under
     // `_oracle_script` is marked; SHARING reads NONE on both, where Oracle's own objects in a PDB are linked.
+    // The one other reading is a schema's flag in ALL_USERS, in the dictionary check, which only ever refuses.
     const flag = /\b\w+\.ORACLE_MAINTAINED\b/g;
     let proofs = 0;
     for (const [name, sql] of Object.entries(AGENT_PRINCIPAL_STATEMENTS)) {
-      const bare = [oraclesByKind("m"), oracles("o"), oracles("m")].reduce(
+      const bare = [oraclesByKind("m"), oracles("o"), oracles("m"), ORACLE_SCHEMA_GRANT].reduce(
         (left, proof) => left.split(proof).join(""),
         sql,
       );
@@ -283,6 +311,9 @@ describe("verifyAgentPrincipal", () => {
       ),
     ).toEqual(["SESSION_ROLES"]);
     expect(readSources("SELECT 1 FROM USER_USERS JOIN r ON 1 = 1")).toEqual(["USER_USERS", "r"]);
+    expect(unqualifiedDictionaryViews("SELECT 1 FROM SYS.ALL_TAB_PRIVS p WHERE p.TABLE_NAME = 'DBA_USERS'")).toEqual(
+      [],
+    );
   });
 
   test("every check statement is one query with no terminator and no bind", () => {
@@ -767,6 +798,53 @@ describe("verifyAgentPrincipal", () => {
     });
   });
 
+  describe("no grant on a schema Oracle maintains beyond the two policy catalogs", () => {
+    // READ ONLY stops writes, not reads: a grant on the dictionary, the audit trail or the dynamic performance views,
+    // direct or through a role such as SELECT_CATALOG_ROLE or AUDIT_VIEWER, reads what PUBLIC cannot (measured).
+    test("refuses a direct grant, naming its revoke", async () => {
+      const error = await refusal({
+        dictionary: [{ KIND: "OBJECT", GRANTEE: "APP_RO", OWNER: "SYS", NAME: "DBA_USERS", PRIVILEGE: "SELECT" }],
+      });
+      expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(error.message).toBe(
+        'The agent read-only execution profile refuses the Oracle user APP_RO: it holds a privilege on an object of a schema Oracle maintains, beyond SELECT on SYS.DBA_POLICIES and SYS.DBA_AUDIT_POLICIES, which reads what every user of the database may not, such as the dictionary, the audit trail or other sessions. Run, as an administrator: REVOKE SELECT ON "SYS"."DBA_USERS" FROM "APP_RO".',
+      );
+    });
+
+    test("refuses a role that holds one, however deep, naming the revoke of the role the user holds", async () => {
+      const error = await refusal({
+        dictionary: [
+          { KIND: "ROLE", GRANTEE: "APP_RO", OWNER: null, NAME: "SELECT_CATALOG_ROLE", PRIVILEGE: null },
+          { KIND: "ROLE", GRANTEE: "PUBLIC", OWNER: null, NAME: "AUDIT_VIEWER", PRIVILEGE: null },
+        ],
+      });
+      expect(error.message).toContain(
+        'Run, as an administrator: REVOKE "SELECT_CATALOG_ROLE" FROM "APP_RO"; REVOKE "AUDIT_VIEWER" FROM PUBLIC.',
+      );
+    });
+
+    // A grant through an enabled role the check cannot trace back to a grant the user or PUBLIC holds is still found
+    // (fail closed), named by the role that holds it, since no role revoke can be named for it.
+    test("refuses a grant held through a session role it cannot trace, naming the grant's own revoke", async () => {
+      const error = await refusal({
+        dictionary: [{ KIND: "OBJECT", GRANTEE: "UNTRACED_ROLE", OWNER: "SYS", NAME: "USER$", PRIVILEGE: "SELECT" }],
+      });
+      expect(error.message).toContain('Run, as an administrator: REVOKE SELECT ON "SYS"."USER$" FROM "UNTRACED_ROLE".');
+    });
+
+    test("reads the user's own grants and the roles it holds, never PUBLIC's own grants, and spares the two catalogs", () => {
+      // What PUBLIC may read every user of the database reads; Oracle's PUBLIC grants are the vendor's boundary. Every
+      // session role's grant is read: a traced role is named as the role to revoke, any other by its grant.
+      expect(AGENT_PRINCIPAL_STATEMENTS.dictionary).toContain(
+        "WHERE (p.GRANTEE = USER OR p.GRANTEE IN (SELECT ROLE FROM SYS.SESSION_ROLES) AND p.GRANTEE NOT IN ",
+      );
+      expect(AGENT_PRINCIPAL_STATEMENTS.dictionary).not.toContain("'PUBLIC'");
+      expect(AGENT_PRINCIPAL_STATEMENTS.dictionary).toContain(
+        "AND NOT (p.TABLE_SCHEMA = 'SYS' AND p.TABLE_NAME IN ('DBA_POLICIES', 'DBA_AUDIT_POLICIES') AND p.PRIVILEGE = 'SELECT')",
+      );
+    });
+  });
+
   test("names every finding of every check in one refusal", async () => {
     const error = await refusal({
       readOnly: [{ USERNAME: "APP_RO", READ_ONLY: "NO" }],
@@ -803,6 +881,8 @@ describe("verifyAgentPrincipal", () => {
     ["reach", [{ GRANTEE: "APP_RO", OWNER: "SYS", NAME: "UTL_TCP", OBJECT_TYPE: "PACKAGE" }]],
     ["systemPrivileges", [{ GRANTEE: "APP_RO" }]],
     ["links", [{ OWNER: "PUBLIC" }]],
+    ["dictionary", [{ KIND: "OBJECT", GRANTEE: "APP_RO", OWNER: "SYS", NAME: "USER$" }]],
+    ["dictionary", [{ KIND: "ROLE", GRANTEE: "APP_RO", OWNER: null, NAME: null, PRIVILEGE: null }]],
   ] as const)("refuses an unreadable %s row rather than skipping it", async (check, rows) => {
     const error = await refusal({ [check]: rows });
     expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");

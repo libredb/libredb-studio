@@ -5,7 +5,8 @@
  * Two halves. `answerFailure` and `graphqlFailure` read an answer into a `WeaviateError` with a category, keeping
  * the server's words as `detail`. `toProviderError` words that error, or the shared transport's, as one of the
  * repository's error classes: Studio's sentence first, the server's words after it, and every server text passes
- * `serverText` first, so a text that holds any form of the configured secret is withheld whole.
+ * `serverText` first, so a text that holds any form of the configured secret is withheld whole. A handle opened under
+ * an execution profile words every failure with Studio's sentence alone.
  *
  * Weaviate answers three error shapes, all measured on 1.37.4 and 1.40.2: `{"error":[{"message"}]}` from its
  * handlers, `{"code","message"}` from the router for a path it does not serve, and `{"errors":[{"message"}]}` from
@@ -42,6 +43,11 @@ export interface WeaviateErrorContext {
   readonly timeoutMs: number;
   /** `secretForms` of the connection's secret. */
   readonly secretForms: readonly string[];
+  /**
+   * Whether the server's words are left out of every sentence: on a handle opened under an execution profile, whose
+   * reader is a model or an MCP client, since the words name the key's user and echo what the request carried.
+   */
+  readonly withholdServerWords: boolean;
 }
 
 function messagesOf(value: unknown): readonly string[] {
@@ -140,9 +146,9 @@ export function retryAfterSeconds(retryAfter: string | null): number | undefined
   return Number(retryAfter);
 }
 
-/** The server's words after Studio's, withheld whole when they hold any form of the secret. */
+/** The server's words after Studio's, withheld whole when they hold any form of the secret or the context withholds them. */
 function after(detail: string, context: WeaviateErrorContext): string {
-  if (detail === "") return "";
+  if (detail === "" || context.withholdServerWords) return "";
   const text = serverText(detail, context.secretForms);
   const shown = text.length > MAX_SERVER_TEXT ? `${text.slice(0, MAX_SERVER_TEXT)} (cut)` : text;
   return ` (Weaviate: ${shown})`;

@@ -8,8 +8,12 @@
  * hold nothing but CONNECT and SELECT that reaches past the read: no other authority; no write, DDL, schema, tablespace, sequence, role-admin,
  * pass-through or session-user privilege; no EXECUTE on code that is not IBM's, which runs with its owner's authority,
  * nor on an IBM function, or a module holding one, whose own catalog row reads EXTERNAL_ACTION E or SQL_DATA_ACCESS M,
- * unless capture 10 lists it as measured reading only (procedures are admitted: no agent statement can call one); no
- * view that calls such code, reads a view or alias the check cannot follow or a nickname, or is not valid; and no row
+ * unless capture 10 lists it as measured reading only (procedures are admitted: no agent statement can call one), nor
+ * on an IBM function or module through a user's grant the database's own grants do not match, which is what opens
+ * the monitor readers of other sessions' statements; no view that calls such code, reads an IBM object the user
+ * could not read itself, a view or alias the check cannot follow or a nickname, or is not valid; no SELECT on the
+ * catalog's distribution statistics, which hold stored values of every table's columns, nor on an IBM table or view
+ * through such a user's grant; and no row
  * permission or column mask anywhere in the database that is not IBM's. IBM's is the object's own OWNERTYPE, never its
  * schema. Every catalog view is named SYSCAT.<view>. Each refusal names the statements that would lift it, or the
  * controls it found.
@@ -72,9 +76,65 @@ const keepsToTheCall = (alias: string) =>
   `OR ${alias}.ROUTINESCHEMA = 'SYSPROC' AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
   `AND ${alias}.SPECIFICNAME IN (${MEASURED_READERS.map((name) => `'${name}'`).join(", ")}))`;
 
-/** IBM's routine, and a procedure, which no agent statement can call, or a routine that keeps to the call. */
+/**
+ * The table or view named by `schema` and `name` is IBM's and holds a COLVALUE, HIGH2KEY or LOW2KEY column: the
+ * distribution statistics, or the column statistics' second highest and lowest values. Read through SYSIBM.COLUMNS,
+ * which lists IBM's own objects and keeps no stored value, since the seed revokes SYSCAT.COLUMNS from PUBLIC.
+ */
+const storedValues = (schema: string, name: string) =>
+  "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSIBM.COLUMNS c ON c.TABLE_SCHEMA = t.TABSCHEMA " +
+  `AND c.TABLE_NAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
+  "AND c.COLUMN_NAME IN ('COLVALUE', 'HIGH2KEY', 'LOW2KEY'))";
+
+/**
+ * The session's grantees hold the routine `alias` names through a grant the database made for itself (GRANTORTYPE S),
+ * or it is in SYSIBM or SYSFUN, whose functions Db2 runs for any user without a grant. Measured on 12.1.0.0: IBM's 97
+ * monitor, environment and audit readers in SYSPROC, MON_GET_PKG_CACHE_STMT among them, read EXTERNAL_ACTION N and
+ * SQL_DATA_ACCESS N, and a fresh database grants them to no one, so a user's grant, or a view of an owner who may
+ * call one, is what opens other sessions' statements.
+ */
+const grantedByDb2 = (alias: string) =>
+  `(${alias}.ROUTINESCHEMA IN ('SYSIBM', 'SYSFUN') OR EXISTS (SELECT 1 FROM SYSCAT.ROUTINEAUTH e ${held("e")} ` +
+  `WHERE e.SCHEMA = ${alias}.ROUTINESCHEMA AND (e.SPECIFICNAME = ${alias}.SPECIFICNAME ` +
+  `OR e.SPECIFICNAME IS NULL AND e.ROUTINETYPE = ${alias}.ROUTINETYPE) AND e.EXECUTEAUTH <> 'N' ` +
+  "AND e.GRANTORTYPE = 'S'))";
+
+/** The session's grantees may SELECT from the table or view named through a grant the database made for itself. */
+const readableByGrant = (schema: string, name: string) =>
+  `EXISTS (SELECT 1 FROM SYSCAT.TABAUTH e ${held("e")} WHERE e.TABSCHEMA = ${schema} AND e.TABNAME = ${name} ` +
+  "AND e.SELECTAUTH <> 'N' AND e.GRANTORTYPE = 'S')";
+
+/** The table or view named is IBM's and the session may not read it through a grant the database made. */
+const unreadableIbm = (schema: string, name: string) =>
+  `EXISTS (SELECT 1 FROM SYSCAT.TABLES b WHERE b.TABSCHEMA = ${schema} AND b.TABNAME = ${name} ` +
+  `AND b.OWNERTYPE = 'S') AND NOT ${readableByGrant(schema, name)}`;
+
+/** The ROUTINEPARMS row `parm` is of a distinct type in the routine's own schema whose source is IBM's. */
+const distinctTypeOf = (parm: string, alias: string) =>
+  `EXISTS (SELECT 1 FROM SYSCAT.DATATYPES y WHERE y.TYPESCHEMA = ${parm}.TYPESCHEMA AND y.TYPENAME = ${parm}.TYPENAME ` +
+  `AND y.TYPESCHEMA = ${alias}.ROUTINESCHEMA AND y.METATYPE = 'T' AND y.SOURCESCHEMA = 'SYSIBM')`;
+
+/**
+ * A function Db2 generated for a distinct type, a cast or a comparison: ORIGIN S, owned by the type's owner, its
+ * parameters and result each the distinct type or an IBM type, and implemented by IBM's function or by none. Measured
+ * on 12.1.0.0: Db2 grants PUBLIC EXECUTE on each, and refuses to drop, alter or replace one (SQL0658N).
+ */
+const generatedForDistinctType = (alias: string) =>
+  `COALESCE(${alias}.ORIGIN, '') = 'S' AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
+  `AND (${alias}.IMPLEMENTATION IS NULL OR ${alias}.IMPLEMENTATION LIKE 'SYSIBM.%') ` +
+  `AND EXISTS (SELECT 1 FROM SYSCAT.ROUTINEPARMS w WHERE w.ROUTINESCHEMA = ${alias}.ROUTINESCHEMA ` +
+  `AND w.SPECIFICNAME = ${alias}.SPECIFICNAME AND ${distinctTypeOf("w", alias)}) ` +
+  `AND NOT EXISTS (SELECT 1 FROM SYSCAT.ROUTINEPARMS w WHERE w.ROUTINESCHEMA = ${alias}.ROUTINESCHEMA ` +
+  `AND w.SPECIFICNAME = ${alias}.SPECIFICNAME AND COALESCE(w.TYPESCHEMA, '') <> 'SYSIBM' ` +
+  `AND NOT ${distinctTypeOf("w", alias)})`;
+
+/**
+ * IBM's routine or one Db2 generated for a distinct type, and a procedure, which no agent statement can call, or a
+ * routine that keeps to the call.
+ */
 const admittedRoutine = (alias: string) =>
-  `COALESCE(${alias}.OWNERTYPE, '') = 'S' AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
+  `(COALESCE(${alias}.OWNERTYPE, '') = 'S' OR ${generatedForDistinctType(alias)}) ` +
+  `AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
 
 const PINNED: Record<Statement, string> = {
   user: "SELECT CAST(SESSION_USER AS VARCHAR(128)) AS USERNAME FROM SYSIBM.SYSDUMMY1",
@@ -123,10 +183,12 @@ const PINNED: Record<Statement, string> = {
     `a.SCHEMA, COALESCE(a.SPECIFICNAME, '*') AS NAME FROM SYSCAT.ROUTINEAUTH a ${held("a")} ` +
     "WHERE a.EXECUTEAUTH <> 'N' AND EXISTS (SELECT 1 FROM SYSCAT.ROUTINES r WHERE r.ROUTINESCHEMA = a.SCHEMA " +
     "AND (r.SPECIFICNAME = a.SPECIFICNAME OR a.SPECIFICNAME IS NULL AND r.ROUTINETYPE = a.ROUTINETYPE) " +
-    `AND NOT (${admittedRoutine("r")})) ` +
+    `AND NOT (${admittedRoutine("r")} AND (COALESCE(r.ROUTINETYPE, '') = 'P' OR ${grantedByDb2("r")}))) ` +
     "UNION ALL SELECT m.GRANTEE, m.GRANTEETYPE, 'EXECUTE', 'MODULE', m.MODULESCHEMA, m.MODULENAME " +
     `FROM SYSCAT.MODULEAUTH m ${held("m")} WHERE m.EXECUTEAUTH <> 'N' ` +
     "AND NOT EXISTS (SELECT 1 FROM SYSCAT.MODULES d WHERE d.MODULEID = m.MODULEID AND d.OWNERTYPE = 'S' " +
+    `AND EXISTS (SELECT 1 FROM SYSCAT.MODULEAUTH e ${held("e")} WHERE e.MODULEID = d.MODULEID ` +
+    "AND e.EXECUTEAUTH <> 'N' AND e.GRANTORTYPE = 'S') " +
     "AND NOT EXISTS (SELECT 1 FROM SYSCAT.ROUTINES r WHERE r.ROUTINEMODULEID = d.MODULEID AND NOT (" +
     "(COALESCE(r.OWNERTYPE, '') = 'S' OR COALESCE(r.ORIGIN, '') = 'S') " +
     `AND (COALESCE(r.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall("r")})))) ` +
@@ -151,23 +213,39 @@ const PINNED: Record<Statement, string> = {
     "WHERE x.TYPE = 'N' OR x.TYPE IN ('V', 'W') AND (NOT EXISTS (SELECT 1 FROM SYSCAT.VIEWS v " +
     "WHERE v.VIEWSCHEMA = x.TABSCHEMA AND v.VIEWNAME = x.TABNAME AND v.VALID = 'Y') " +
     "OR EXISTS (SELECT 1 FROM SYSCAT.TABDEP d WHERE d.TABSCHEMA = x.TABSCHEMA AND d.TABNAME = x.TABNAME AND NOT (" +
-    "d.BTYPE IN ('T', 'S', 'U', 'H', 'L', 'O', 'R') " +
-    "OR d.BTYPE IN ('V', 'W') AND (EXISTS (SELECT 1 FROM SYSCAT.TABLES b WHERE b.TABSCHEMA = d.BSCHEMA " +
-    "AND b.TABNAME = d.BNAME AND b.OWNERTYPE = 'S') " +
+    `d.BTYPE IN ('T', 'S', 'U', 'H', 'L', 'O', 'R') AND NOT ${storedValues("d.BSCHEMA", "d.BNAME")} ` +
+    `AND NOT (${unreadableIbm("d.BSCHEMA", "d.BNAME")}) ` +
+    `OR d.BTYPE IN ('V', 'W') AND NOT ${storedValues("d.BSCHEMA", "d.BNAME")} ` +
+    "AND (EXISTS (SELECT 1 FROM SYSCAT.TABLES b WHERE b.TABSCHEMA = d.BSCHEMA " +
+    `AND b.TABNAME = d.BNAME AND b.OWNERTYPE = 'S') AND ${readableByGrant("d.BSCHEMA", "d.BNAME")} ` +
     "OR EXISTS (SELECT 1 FROM ROOTS o WHERE o.TABSCHEMA = d.BSCHEMA AND o.TABNAME = d.BNAME)) " +
     "OR d.BTYPE = 'F' AND EXISTS (SELECT 1 FROM SYSCAT.ROUTINES f WHERE f.ROUTINESCHEMA = d.BSCHEMA " +
-    `AND f.SPECIFICNAME = d.BNAME AND ${admittedRoutine("f")}) ` +
+    `AND f.SPECIFICNAME = d.BNAME AND ${admittedRoutine("f")} AND ${grantedByDb2("f")}) ` +
     "OR d.BTYPE = 'A' AND EXISTS (SELECT 1 FROM SYSCAT.TABLES s WHERE s.TABSCHEMA = d.BSCHEMA " +
     "AND s.TABNAME = d.BNAME AND s.TYPE = 'A' AND EXISTS (SELECT 1 FROM ROOTS o " +
     "WHERE o.TABSCHEMA = s.BASE_TABSCHEMA AND o.TABNAME = s.BASE_TABNAME)) " +
     "OR d.BTYPE = 'v' AND EXISTS (SELECT 1 FROM SYSCAT.VARIABLES g WHERE g.VARSCHEMA = d.BSCHEMA " +
     "AND g.VARNAME = d.BNAME AND g.OWNERTYPE = 'S')))) ORDER BY 3, 4, 1",
+  statistics:
+    `WITH ${GRANTEES} ` +
+    "SELECT a.GRANTEE, a.GRANTEETYPE, 'SELECT' AS PRIVILEGE, 'TABLE' AS KIND, a.TABSCHEMA AS SCHEMA, " +
+    `a.TABNAME AS NAME FROM SYSCAT.TABAUTH a ${held("a")} WHERE a.SELECTAUTH <> 'N' ` +
+    `AND (${storedValues("a.TABSCHEMA", "a.TABNAME")} OR ${unreadableIbm("a.TABSCHEMA", "a.TABNAME")}) ORDER BY 5, 6, 1`,
   controls:
     "SELECT CONTROLSCHEMA AS SCHEMA, CONTROLNAME AS NAME, TABSCHEMA, TABNAME FROM SYSCAT.CONTROLS " +
     "WHERE OWNERTYPE <> 'S' ORDER BY 3, 4, 1, 2",
 };
 
-const ORDER: readonly Statement[] = ["user", "contexts", "authorities", "privileges", "code", "reach", "controls"];
+const ORDER: readonly Statement[] = [
+  "user",
+  "contexts",
+  "authorities",
+  "privileges",
+  "code",
+  "reach",
+  "statistics",
+  "controls",
+];
 
 /** A reader answering each check from `answers`, the user AGENT_RO by default, recording what it was sent. */
 function reader(answers: Partial<Record<Statement, Rows>> = {}) {
@@ -327,6 +405,7 @@ describe("verifyAgentPrincipal", () => {
         privilege("AGENT_RO", "U", "EXECUTE", "FUNCTION", "APP", "WRITE_LEDGER"),
         privilege("PUBLIC", "G", "EXECUTE", "PROCEDURE", "SYSPROC", "ADMIN_CMD"),
         privilege("PUBLIC", "G", "EXECUTE", "FUNCTION", "SYSTOOLS", "*"),
+        privilege("AGENT_RO", "U", "EXECUTE", "FUNCTION", "SYSPROC", "MON_GET_PKG_CACHE_STMT"),
         privilege("AGENT_RO", "U", "EXECUTE", "METHOD", "APP", "POINT_X"),
         privilege("PUBLIC", "G", "EXECUTE", "MODULE", "SYSIBMADM", "DBMS_JOB"),
         privilege("PUBLIC", "G", "EXECUTE", "PACKAGE", "NULLID", "SYSSH200"),
@@ -335,11 +414,13 @@ describe("verifyAgentPrincipal", () => {
     });
     expect(error.message).toBe(
       "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may execute code that is not IBM's, " +
-        "which runs with its owner's authority, or an IBM function, or a module holding one, whose own catalog row " +
-        "says it acts outside the call or modifies data. Run, as an administrator: " +
+        "which runs with its owner's authority, an IBM function, or a module holding one, whose own catalog row " +
+        "says it acts outside the call or modifies data, or one only a grant a user made lets it execute, such as a " +
+        "monitor function that reads other sessions' statements. Run, as an administrator: " +
         'REVOKE EXECUTE ON SPECIFIC FUNCTION "APP"."WRITE_LEDGER" FROM USER "AGENT_RO" RESTRICT; ' +
         'REVOKE EXECUTE ON SPECIFIC PROCEDURE "SYSPROC"."ADMIN_CMD" FROM PUBLIC RESTRICT; ' +
         'REVOKE EXECUTE ON FUNCTION "SYSTOOLS".* FROM PUBLIC RESTRICT; ' +
+        'REVOKE EXECUTE ON SPECIFIC FUNCTION "SYSPROC"."MON_GET_PKG_CACHE_STMT" FROM USER "AGENT_RO" RESTRICT; ' +
         'REVOKE EXECUTE ON SPECIFIC METHOD "APP"."POINT_X" FROM USER "AGENT_RO" RESTRICT; ' +
         'REVOKE EXECUTE ON MODULE "SYSIBMADM"."DBMS_JOB" FROM PUBLIC; ' +
         'REVOKE EXECUTE ON PACKAGE "NULLID"."SYSSH200" FROM PUBLIC; ' +
@@ -356,11 +437,41 @@ describe("verifyAgentPrincipal", () => {
     });
     expect(error.message).toBe(
       "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may read a view that calls code that " +
-        "is not IBM's or an IBM function that acts outside the call or modifies data, or reads a view or alias the " +
-        "check cannot follow, a view that is not valid, or a nickname, " +
-        "which reads another server; each runs with its owner's authority. Run, as an administrator: " +
+        "is not IBM's, an IBM function that acts outside the call or modifies data, or one the database's own grants " +
+        "do not let the user call, or reads the catalog's distribution or column statistics, an IBM table or view the " +
+        "database's own grants do not let the user read, or a view or alias the check cannot follow, a view that is " +
+        "not valid, or a nickname, which reads another server; each runs with its owner's authority. " +
+        "Run, as an administrator: " +
         'REVOKE SELECT ON TABLE "APP"."CALLS_CODE" FROM USER "AGENT_RO"; ' +
         'REVOKE SELECT ON TABLE "APP"."REMOTE_ORDERS" FROM PUBLIC.',
+    );
+  });
+
+  // Measured on 12.1.0.0: a fresh database lets PUBLIC read the catalog's distribution statistics, whose COLVALUE
+  // column holds the most frequent values and the quantiles of every table's columns, so the least-privilege user read
+  // values of a table it holds no SELECT on.
+  // Measured on 12.1.0.0 as well: a fresh database grants SELECT on the SYSIBMADM monitor views, such as
+  // MON_CURRENT_SQL, to no one, and a user's grant on one let the least-privilege user read the sessions' statements.
+  test("a grant that reads the distribution statistics or an IBM view no grant of the database's opens refuses it", async () => {
+    const error = await refusal({
+      statistics: [
+        privilege("PUBLIC", "G", "SELECT", "TABLE", "SYSCAT", "COLDIST"),
+        privilege("AGENT_RO", "U", "SELECT", "TABLE", "SYSIBM", "SYSCOLGROUPDIST"),
+        privilege("AGENT_RO", "U", "SELECT", "TABLE", "SYSIBMADM", "MON_CURRENT_SQL"),
+        privilege("PUBLIC", "G", "SELECT", "TABLE", "SYSCAT", "COLUMNS"),
+      ],
+    });
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toBe(
+      "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may read the catalog's distribution " +
+        "or column statistics, which hold stored values of every table's columns, whether or not it may read the " +
+        "table, or an " +
+        "IBM table or view only a grant a user made lets it read, such as a monitor view of other sessions' " +
+        "statements. " +
+        'Run, as an administrator: REVOKE SELECT ON TABLE "SYSCAT"."COLDIST" FROM PUBLIC; ' +
+        'REVOKE SELECT ON TABLE "SYSIBM"."SYSCOLGROUPDIST" FROM USER "AGENT_RO"; ' +
+        'REVOKE SELECT ON TABLE "SYSIBMADM"."MON_CURRENT_SQL" FROM USER "AGENT_RO"; ' +
+        'REVOKE SELECT ON TABLE "SYSCAT"."COLUMNS" FROM PUBLIC.',
     );
   });
 

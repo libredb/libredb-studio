@@ -14,7 +14,7 @@
 | **Default port**       | None: the endpoint is always `firestore.googleapis.com:443`                                       |
 | **Connection string**  | Not supported                                                                                     |
 | **EXPLAIN**            | `firestore-explain`: Query Explain, plan only from the button; not offered on an emulator server  |
-| **Writes**             | None: the provider can send no write request                                                      |
+| **Write reach** | none: the request builder, `buildRequest`, builds only the read requests of its closed table, before any socket; there is no object edit, maintenance or transaction route |
 | **Transactions**       | None                                                                                              |
 | **Maintenance**        | None                                                                                              |
 | **Query cancellation** | Supported: the request is aborted                                                                 |
@@ -97,7 +97,7 @@ Source tab: one `get` and one subcollection listing.
 
 The transport admits seven requests and refuses everything else before any socket: the database resource (`GET`), `documents.get`, `documents.listDocuments`, `listCollectionIds`, `runQuery`, `runAggregationQuery` and `batchGet`.
 Each is matched on method, path shape, verb, query parameter names and top-level body keys, so `transaction`, `newTransaction`, `readTime`, `recursive` and `requestOptions` never leave Studio, and no transaction is opened.
-`READ_ONLY_ENFORCED.firestore` is true and the provider declares `enforcesReadOnly`.
+`READ_ONLY_ENFORCED.firestore` is true and the provider's `writeReach` is `none`.
 A `batchGet` mask may name no field, which asks for each document's name and times alone; agent mode's document read sends that form and no other mask ([section 15](#15-agent-mode)).
 
 ### 3.2 REST, no SDK
@@ -136,6 +136,7 @@ The Explain panel's AI tab sends the statement and the plan, which names indexed
 There is no host, port, SSL panel, SSH tunnel or connection string.
 Collection and document ids are non-empty, at most 1,500 bytes of UTF-8, hold no `/`, are not `.` or `..`, and do not match `__.*__`, except that a document id `__id<digits>__` from a Datastore import is accepted; every id an answer carries is checked the same way before it is shown or reused.
 A custom connection keeps its credential in the browser's local storage in plain text by design, so a shared deployment should use an operator seed ([SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md)).
+A Firestore seed takes no agent credential (`SEED_AGENT_CREDENTIAL.firestore` in `src/lib/db/connection-fields.ts` is null), so a seed that sets `agentUser` or `agentPassword` is refused at load: the service-account key is the whole credential, with no user beside it, and the provider declares no form that takes an agent key alone (D442).
 
 ### 4.2 Credentials
 
@@ -461,7 +462,7 @@ Health and pulse reuse the connect probe; the overview and the monitoring panels
 | `supportsResultPagination`, `supportsExternalQueryLimiting` | false |
 | `createTable` | absent |
 | `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsTransactions`, `supportsMaintenance` | false |
-| `enforcesReadOnly` | true |
+| `writeReach` | none: the editor absent with its proof, `buildRequest`, and object edit, maintenance and transactions absent |
 | `containerLevels` | none |
 | `objectKinds` | `collection` (relation), `document` (Keys panel, Source tab, JSON) |
 | `keyScan` | separator `/`, opaque cursor, prefix pattern, no total, levels rooted at `collection`, 100 by default and 1,000 at most |

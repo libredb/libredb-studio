@@ -16,6 +16,10 @@ import {
 } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
 import type { S3AgentPlan } from "@/lib/db/providers/objectstore/s3/agent-statement";
 import { createS3AgentClient } from "@/lib/db/providers/objectstore/s3/client";
+import {
+  S3_AGENT_BUCKET_CHECK_CONCURRENCY,
+  S3_AGENT_BUCKET_CHECK_MAX,
+} from "@/lib/db/providers/objectstore/s3/constants";
 import { S3ServerError } from "@/lib/db/providers/objectstore/s3/errors";
 import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
@@ -23,6 +27,7 @@ import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { LimiterTicket, ProviderLimiter } from "@/lib/db/utils/bounded-limiter";
 import {
   bucketsXml,
+  errorXml,
   type FakeS3Handler,
   fakeS3Transport,
   objectsXml,
@@ -52,9 +57,21 @@ function harness(handler: FakeS3Handler) {
 
 const result = (answer: S3AgentAnswer, budget = BUDGET) => s3AgentResult(answer, budget, "statement", 1);
 
+/**
+ * A server that lists `names` and answers each bucket's HEAD with `heads[name]`, a 200 when unset: the bucket listing
+ * names a bucket only when the server answers its HEAD for this key.
+ */
+function lister(names: readonly string[], heads: Readonly<Record<string, () => ReturnType<FakeS3Handler>>> = {}) {
+  return (request: Parameters<FakeS3Handler>[0]): ReturnType<FakeS3Handler> => {
+    if (request.target.path === "/") return xmlAnswer(bucketsXml(names));
+    const head = heads[request.target.path.slice(1)];
+    return head === undefined ? { status: 200 } : head();
+  };
+}
+
 describe("the bucket listing", () => {
-  test("answers every bucket's name and creation time, from one ListBuckets", async () => {
-    const { fake, run } = harness(() => xmlAnswer(bucketsXml(["archive", "sales"])));
+  test("answers every bucket the key may read by name and creation time: one ListBuckets, then one HEAD per bucket", async () => {
+    const { fake, run } = harness(lister(["archive", "sales"]));
     const answer = await run({ op: "list-buckets" });
     expect(result(answer)).toEqual({
       fields: ["bucket", "created"],
@@ -65,39 +82,127 @@ describe("the bucket listing", () => {
       rowCount: 2,
       executionTime: 1,
     });
-    expect(fake.lines()).toEqual(["GET /?max-buckets=10000"]);
+    expect(fake.lines()).toEqual(["GET /?max-buckets=10000", "HEAD /archive", "HEAD /sales"]);
+  });
+
+  test("a listed bucket whose HEAD the key is refused is not named, and is counted in a note that names none", async () => {
+    // Three listed buckets, one readable: Silo and RustFS list every bucket to a key holding s3:ListAllMyBuckets.
+    const refused = () => xmlAnswer(errorXml("AccessDenied", `Access Denied to ${MARKER}`), 403);
+    const { fake, run } = harness(
+      lister(["granted", `${MARKER}-a`, `${MARKER}-b`], {
+        [`${MARKER}-a`]: refused,
+        [`${MARKER}-b`]: refused,
+      }),
+    );
+    const answered = result(await run({ op: "list-buckets" }));
+    expect(answered.rows).toEqual([{ bucket: "granted", created: "2026-10-09T13:13:17.442Z" }]);
+    expect(answered.warnings).toEqual([{ message: S3_AGENT_FAILURE_SENTENCES.withheldBuckets(2) }]);
+    expect(JSON.stringify(answered)).not.toContain(MARKER);
+    expect(fake.lines()).toHaveLength(4);
+  });
+
+  test("a 403, a 404 and a region redirect each withhold the bucket, whatever the body holds", async () => {
+    const { run } = harness(
+      lister(["ok", "denied", "gone", "moved", "redirected"], {
+        denied: () => ({ status: 403, body: `<html>${MARKER}</html>`, contentType: "text/html" }),
+        gone: () => ({ status: 404 }),
+        moved: () => ({ status: 301, headers: [["x-amz-bucket-region", "eu-west-1"]] }),
+        redirected: () => {
+          throw new TransportError("redirect", `Refused a redirect to ${MARKER}`);
+        },
+      }),
+    );
+    const answered = result(await run({ op: "list-buckets" }));
+    expect(answered.rows).toEqual([{ bucket: "ok", created: "2026-10-09T13:13:17.442Z" }]);
+    expect(answered.warnings).toEqual([{ message: S3_AGENT_FAILURE_SENTENCES.withheldBuckets(4) }]);
+  });
+
+  test("the note's wording, for one bucket and for several", () => {
+    expect(S3_AGENT_FAILURE_SENTENCES.withheldBuckets(1)).toBe(
+      "1 listed bucket is not named: a HEAD of it signed with this connection's key was refused, or answered that it is missing or in another region, so the server's grants do not show this key may read it.",
+    );
+    expect(S3_AGENT_FAILURE_SENTENCES.withheldBuckets(3)).toBe(
+      "3 listed buckets are not named: a HEAD of each signed with this connection's key was refused, or answered that it is missing or in another region, so the server's grants do not show this key may read them.",
+    );
+  });
+
+  test("any other answer to a HEAD refuses the whole listing, and no further HEAD is sent", async () => {
+    const names = Array.from({ length: 12 }, (_, index) => `b${index}`);
+    const { fake, run } = harness(lister(names, { b0: () => ({ status: 503 }) }));
+    const failure = await run({ op: "list-buckets" }).catch((e: unknown) => e);
+    expect(s3AgentFailure(failure, BUDGET)?.message).toBe(S3_AGENT_FAILURE_SENTENCES.status(503));
+    // b0's failure stops each worker after the HEAD it had in flight.
+    expect(fake.lines().length).toBeLessThan(names.length + 1);
+  });
+
+  test("checks at most S3_AGENT_BUCKET_CHECK_CONCURRENCY buckets at once", async () => {
+    let inFlight = 0;
+    let most = 0;
+    const names = Array.from({ length: 10 }, (_, index) => `b${index}`);
+    const { run } = harness(async (request) => {
+      if (request.target.path === "/") return xmlAnswer(bucketsXml(names));
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      inFlight -= 1;
+      return { status: 200 };
+    });
+    expect(result(await run({ op: "list-buckets" })).rowCount).toBe(10);
+    expect(most).toBe(S3_AGENT_BUCKET_CHECK_CONCURRENCY);
+  });
+
+  test("a key that lists exactly the check bound is checked bucket by bucket; one more is refused with no HEAD sent", async () => {
+    const names = (count: number) => Array.from({ length: count }, (_, index) => `b${index}`);
+    const at = harness(lister(names(S3_AGENT_BUCKET_CHECK_MAX)));
+    expect(result(await at.run({ op: "list-buckets" }, { ...BUDGET, maxResultRows: 500 })).rowCount).toBe(
+      S3_AGENT_BUCKET_CHECK_MAX,
+    );
+    expect(at.fake.lines()).toHaveLength(S3_AGENT_BUCKET_CHECK_MAX + 1);
+    const over = harness(lister(names(S3_AGENT_BUCKET_CHECK_MAX + 1)));
+    const failure = await over.run({ op: "list-buckets" }).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(QueryError);
+    expect((failure as Error).message).toBe(S3_AGENT_FAILURE_SENTENCES.bucketChecksOver(S3_AGENT_BUCKET_CHECK_MAX + 1));
+    expect(over.fake.lines()).toEqual(["GET /?max-buckets=10000"]);
+  });
+
+  test("the bound's refusal says what to read instead", () => {
+    expect(S3_AGENT_FAILURE_SENTENCES.bucketChecksOver(150)).toBe(
+      "This key lists 150 buckets, more than the 100 agent mode checks against the key's grants for one listing, one HEAD each, so the listing was refused rather than answered in part or sent more checks. Read a bucket you name with head-bucket, or pin the connection to one bucket.",
+    );
   });
 
   test("a pinned connection answers its bucket with no request, and says the creation time was not read", async () => {
-    const { fake, run } = harness(() => xmlAnswer(bucketsXml(["other"])));
+    const { fake, run } = harness(lister(["other"]));
     const answered = result(await run({ op: "list-buckets" }, BUDGET, "sales"));
     expect(answered.rows).toEqual([{ bucket: "sales", created: null }]);
     expect(answered.warnings?.[0].message).toContain("pinned to one bucket");
     expect(fake.lines()).toEqual([]);
   });
 
-  test("more buckets than the row budget is refused, never cut; exactly the budget is answered", async () => {
-    const names = ["a1", "a2", "a3"];
-    const at = harness(() => xmlAnswer(bucketsXml(names)));
+  test("more readable buckets than the row budget is refused, never cut; exactly the budget is answered", async () => {
+    const names = ["a1", "a2", "a3", "a4"];
+    const at = harness(lister(names, { a4: () => ({ status: 403 }) }));
     expect(result(await at.run({ op: "list-buckets" }, { ...BUDGET, maxResultRows: 3 })).rowCount).toBe(3);
-    const over = harness(() => xmlAnswer(bucketsXml(names)));
+    const over = harness(lister(names, { a4: () => ({ status: 403 }) }));
     const failure = await over.run({ op: "list-buckets" }, { ...BUDGET, maxResultRows: 2 }).catch((e: unknown) => e);
     expect(failure).toBeInstanceOf(QueryError);
     expect((failure as Error).message.startsWith(ROW_BUDGET_PREFIX)).toBe(true);
   });
 
-  test("a listing the server cut is refused rather than answered in part", async () => {
-    const { run } = harness(() => xmlAnswer(bucketsXml(["a"], { continuationToken: "next" })));
+  test("a listing the server cut is refused rather than answered in part, with no HEAD sent", async () => {
+    const { fake, run } = harness(() => xmlAnswer(bucketsXml(["a"], { continuationToken: "next" })));
     const failure = await run({ op: "list-buckets" }).catch((e: unknown) => e);
     expect((failure as Error).message).toBe(S3_AGENT_FAILURE_SENTENCES.bucketsCut);
+    expect(fake.lines()).toEqual(["GET /?max-buckets=10000"]);
   });
 
-  test("names holding a slash are counted in a warning, never listed", async () => {
-    const { run } = harness(() => xmlAnswer(bucketsXml(["ok", "bad/name"])));
+  test("names holding a slash are counted in a warning, never listed or checked", async () => {
+    const { fake, run } = harness(lister(["ok", "bad/name"]));
     const answered = result(await run({ op: "list-buckets" }));
     expect(answered.rows).toEqual([{ bucket: "ok", created: "2026-10-09T13:13:17.442Z" }]);
     expect(answered.warnings?.[0].message).toBe(S3_AGENT_FAILURE_SENTENCES.invalidBucketNames(1));
     expect(JSON.stringify(answered)).not.toContain("bad/name");
+    expect(fake.lines()).toEqual(["GET /?max-buckets=10000", "HEAD /ok"]);
   });
 });
 
@@ -108,13 +213,6 @@ describe("one bucket's reads", () => {
       { bucket: "sales", exists: true, region: "eu-central-1" },
     ]);
     expect(fake.lines()).toEqual(["HEAD /sales"]);
-  });
-
-  test("head-bucket of a missing bucket answers exists false", async () => {
-    const { run } = harness(() => ({ status: 404 }));
-    expect(result(await run({ op: "head-bucket", bucket: "gone" })).rows).toEqual([
-      { bucket: "gone", exists: false, region: null },
-    ]);
   });
 
   test("the location and the versioning status", async () => {
@@ -286,21 +384,77 @@ describe("one object's head", () => {
     ]);
     expect(JSON.stringify(answered)).not.toContain(MARKER);
   });
+});
 
-  test("a 404 is exists false, with the note that a HEAD cannot tell a missing bucket from a missing key", async () => {
-    const { run } = harness(() => ({ status: 404, headers: [["x-amz-delete-marker", "true"]] }));
-    const answered = result(await run({ op: "head-object", bucket: "s", key: "k" }));
-    expect(answered.rows).toEqual([
-      { bucket: "s", exists: false, size_bytes: null, last_modified: null, storage_class: null },
-    ]);
-    expect(answered.warnings).toEqual([{ message: S3_AGENT_FAILURE_SENTENCES.notFoundNote }]);
-    expect(JSON.stringify(answered)).not.toContain("delete");
+/**
+ * A server may answer a bucket the key is granted nothing on with 403 and a bucket that does not exist with 404, as
+ * Garage does, so every read that names a bucket or a key answers the two, and a missing key, in one sentence: an
+ * agent's read never tells a key that a bucket or an object it may not read exists.
+ */
+describe("a named bucket or key that is missing or not readable", () => {
+  const NAMED: readonly S3AgentPlan[] = [
+    { op: "head-bucket", bucket: "s" },
+    { op: "get-bucket-location", bucket: "s" },
+    { op: "get-bucket-versioning", bucket: "s" },
+    { op: "summary", bucket: "s" },
+    { op: "head-object", bucket: "s", key: "k" },
+  ];
+  const ANSWERS: readonly [string, () => ReturnType<FakeS3Handler>][] = [
+    ["a 403", () => xmlAnswer(errorXml("AccessDenied", `Access Denied to ${MARKER}`), 403)],
+    ["a bare 404", () => ({ status: 404 })],
+    ["a 404 behind a delete marker", () => ({ status: 404, headers: [["x-amz-delete-marker", "true"]] })],
+    ["a 404 named NoSuchBucket", () => ({ status: 404, headers: [["x-minio-error-code", "NoSuchBucket"]] })],
+    ["a NoSuchKey body", () => xmlAnswer(errorXml("NoSuchKey", `The key ${MARKER} does not exist`), 404)],
+    // A body that is not S3's error XML, or one sent compressed, must not tell a 403 from a 404 either.
+    [
+      "a 403 whose body is not S3 XML",
+      () => ({ status: 403, body: `<html>${MARKER}</html>`, contentType: "text/html" }),
+    ],
+    [
+      "a 404 whose body is not S3 XML",
+      () => ({ status: 404, body: `<html>${MARKER}</html>`, contentType: "text/html" }),
+    ],
+    ["a 403 sent compressed", () => ({ ...xmlAnswer(errorXml("AccessDenied", MARKER), 403), contentEncoding: "gzip" })],
+    ["a 404 sent compressed", () => ({ ...xmlAnswer(errorXml("NoSuchBucket", MARKER), 404), contentEncoding: "gzip" })],
+  ];
+
+  test.each(NAMED.map((plan) => [plan.op, plan] as const))("%s answers each one in one sentence", async (_op, plan) => {
+    const failures = await Promise.all(
+      ANSWERS.map(([, answer]) =>
+        harness(answer)
+          .run(plan)
+          .catch((e: unknown) => e),
+      ),
+    );
+    for (const failure of failures) {
+      expect(failure).toBeInstanceOf(QueryError);
+      expect((failure as Error).message).toBe(S3_AGENT_FAILURE_SENTENCES.notFound);
+      expect(s3AgentFailure(failure, BUDGET)).toBeUndefined();
+    }
   });
 
-  test("a 404 the server names as a missing bucket is refused as one", async () => {
-    const { run } = harness(() => ({ status: 404, headers: [["x-minio-error-code", "NoSuchBucket"]] }));
-    const failure = await run({ op: "head-object", bucket: "s", key: "k" }).catch((e: unknown) => e);
-    expect(s3AgentFailure(failure, BUDGET)?.message).toBe(S3_AGENT_FAILURE_SENTENCES.missingBucket);
+  test("the sentence says the read cannot tell a missing bucket or key from one the key may not read", () => {
+    expect(S3_AGENT_FAILURE_SENTENCES.notFound).toBe(
+      "The bucket or the key does not exist, or this connection's key may not read it: agent mode answers each of these alike, so a read never tells which. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name.",
+    );
+  });
+
+  test("a 401 and any other status keep their own sentences", async () => {
+    const cases = [
+      [401, S3_AGENT_FAILURE_SENTENCES.denied],
+      [400, S3_AGENT_FAILURE_SENTENCES.status(400)],
+      [503, S3_AGENT_FAILURE_SENTENCES.status(503)],
+    ] as const;
+    const failures = await Promise.all(
+      cases.map(([status]) =>
+        harness(() => ({ status }))
+          .run({ op: "head-object", bucket: "s", key: "k" })
+          .catch((e: unknown) => e),
+      ),
+    );
+    cases.forEach(([, sentence], index) => {
+      expect(s3AgentFailure(failures[index], BUDGET)?.message).toBe(sentence);
+    });
   });
 });
 

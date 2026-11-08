@@ -3958,7 +3958,21 @@ export function recommendChangeTool(
       `agent tool layer: no recommendation card owns the recommend_change schema ${family} offers for ${context.workflowType}`,
     );
   }
-  const parsed = parseToolInput(card.inputSchema, card.prepare === undefined ? input : card.prepare(input));
+  /*
+    The two evidence readers wrap the CARD's prepared input, not the raw one. The card's `prepare`
+    hook is where a displaced field is moved back, and these two answer a different question one
+    layer in — which arm a citation belongs under, and whether an optional pointer arrived blank —
+    so they have to see what the schema will see. Both are the same readers `compose_report` runs,
+    for the same reason: this tool takes the same evidence shape.
+  */
+  const parsed = parseToolInput(
+    card.inputSchema,
+    readUndiscriminatedEvidence(
+      withoutBlankLocators(card.prepare === undefined ? input : card.prepare(input)),
+      run.events,
+      context.workflowType,
+    ),
+  );
   if (!parsed.ok) {
     const advice = card.refuseParse?.(input, parsed.problems, run.events, context.modelId);
     return invalidEvidenceInput(parsed.problems, advice?.example, advice?.shape);
@@ -4028,11 +4042,29 @@ function producedArtifact(events: readonly AgentRunEvent[], correlationId: strin
  * ledger back, never the model's arguments, so a refusal cannot become a channel for a model
  * to see anything it did not produce. And it is only ever read by a run that has already
  * failed the citation check, so no passing run's behaviour can change.
+ *
+ * `ARTIFACT_EVENTS` rather than `tool-completed` alone, so this offer and `producedArtifact` accept
+ * the same four kinds — the set exists to be read in both places, and a reading citable under one
+ * and unadvertised by the other is the gap it was factored out to prevent.
+ *
+ * DISTINCT ids, and that is not a tidiness rule: one reading can be carried by two events. A
+ * `profile_table` call writes `tool-completed` to settle its step AND `table-profiled` to carry the
+ * profile, both bearing the same correlation id, so reading the set without collapsing duplicates
+ * spends the five slots below twice over. Captured off the wire 2026-10-19 on `bonsai-2:9b`
+ * database-assessment, where a run that had profiled NINE tables was offered
+ * `662fd694…, 662fd694…, 02c4e9a5…, 02c4e9a5…, 45d54ac1…` — three distinct ids in five slots. The
+ * model picked across them, spliced the front of one onto the tail of another, and was refused four
+ * times for the id it had invented.
  */
 function citableEvidence(events: readonly AgentRunEvent[]): string | undefined {
+  const seen = new Set<string>();
   const ids: string[] = [];
   for (const event of events) {
-    if (event.kind === "tool-completed") ids.unshift(event.artifact.correlationId);
+    if (!ARTIFACT_EVENTS.has(event.kind) || !("artifact" in event)) continue;
+    const { correlationId } = event.artifact;
+    if (seen.has(correlationId)) continue;
+    seen.add(correlationId);
+    ids.unshift(correlationId);
   }
   const snapshot = events.find((event) => event.kind === "context-captured");
   const offer = ids.slice(0, 5);
@@ -4087,6 +4119,119 @@ const AGENT_WORKFLOW_ACCEPTS_SNAPSHOT_CITATION: Readonly<Record<AgentRunWorkflow
   "data-analysis": false,
 } satisfies Record<AgentRunWorkflowType, boolean>);
 
+/**
+ * An optional `locator` that arrived BLANK, dropped before the schema is asked.
+ *
+ * Measured 2026-10-18 on `bonsai-2:2b` operations: FORTY `INVALID_TOOL_INPUT` refusals in one
+ * five-run cell, every one `claims.0.evidence.0.locator: too small`, the cell at 1/5. The citation
+ * beside it was complete and verifiable every time.
+ *
+ * `locator` is optional on both arms of `evidenceSchema`, and its description — `Add "locator" only
+ * to point at a part of it.` — is an invitation to leave it blank. A model with nothing to point at
+ * answers that with the empty string, which carries exactly the information omitting the field
+ * carries. `.min(1)` then refuses the whole call over it, and `too small` is zod's wording for a
+ * string length: it does not say the field is optional, so nothing in the refusal reaches the one
+ * move that works. The same call arrived forty times.
+ *
+ * Dropped rather than allowed through, and never by relaxing `.min(1)`: a locator that IS sent has
+ * to point at something, so `locator: ""` must not reach a report as a citation pointing nowhere.
+ * A locator of the wrong TYPE is still refused by name — that one is a mistake, not a blank.
+ *
+ * Outside `readMisfiledEvidence` and ahead of its workflow gate, because this fault has nothing to
+ * do with snapshot citations and the cell it was measured on is `operations`, which that gate turns
+ * off. Handles both evidence-bearing shapes: `claims[].evidence[]` and a bare `evidence[]`.
+ */
+function withoutBlankLocators(input: unknown): unknown {
+  if (typeof input !== "object" || input === null) return input;
+  const readReference = (reference: unknown): unknown => {
+    if (typeof reference !== "object" || reference === null) return reference;
+    const { locator, ...rest } = reference as Record<string, unknown>;
+    return typeof locator === "string" && locator.trim() === "" ? rest : reference;
+  };
+  const readHolder = (holder: Record<string, unknown>): Record<string, unknown> =>
+    Array.isArray(holder.evidence) ? { ...holder, evidence: holder.evidence.map(readReference) } : holder;
+  const record = input as Record<string, unknown>;
+  const claimed = Array.isArray(record.claims)
+    ? {
+        ...record,
+        claims: record.claims.map((claim) =>
+          typeof claim === "object" && claim !== null ? readHolder(claim as Record<string, unknown>) : claim,
+        ),
+      }
+    : record;
+  return readHolder(claimed);
+}
+
+/**
+ * The ARM of a citation, settled from the id when the model did not settle it with `source`.
+ *
+ * Measured 2026-10-18 on `bonsai-2:2b` database-assessment: 68 refusals in one five-run cell, the
+ * cell at 0/5, and probing `compose_report` with each candidate input shows every one of them was
+ * unanswerable:
+ *
+ *   - Both ids in one reference. Strict parsing reports the SURPLUS one, so the advice names the
+ *     other arm; once the model moves `source` there, the first id is the surplus one and the
+ *     advice reverses. Neither sentence ever says to drop one, so the two can be exchanged for as
+ *     long as the deadline allows.
+ *   - `source` absent, misspelled, or carrying the quotes copied out of that advice. All three
+ *     arrive as one issue — `source: invalid union` — which names neither value the discriminator
+ *     takes nor the fact that `source` is what decides.
+ *
+ * And through all of it the reference carried an id this run's own ledger verifies. `source` is
+ * therefore redundant where an id is present: an id either matches a read this run completed or a
+ * snapshot it captured, so the arm follows from the id and does not have to be asked for twice.
+ *
+ * The verification rule is untouched. An id matching nothing this run produced settles no arm, the
+ * reference is returned exactly as it arrived, and the refusal it earns still fires — so this
+ * admits nothing that a correctly-written citation would not have been admitted for. The snapshot
+ * arm stays behind the workflow gate for the reason `readMisfiledEvidence` has it: a workflow that
+ * refuses snapshot citations would only refuse the recovered one a layer further down.
+ */
+function readUndiscriminatedEvidence(
+  input: unknown,
+  events: readonly AgentRunEvent[],
+  workflowType: AgentRunWorkflowType,
+): unknown {
+  if (typeof input !== "object" || input === null) return input;
+  const settle = (reference: unknown): unknown => {
+    if (typeof reference !== "object" || reference === null) return reference;
+    const { source, correlationId, fingerprint, ...rest } = reference as Record<string, unknown>;
+    // A reference that named one arm and sent only that arm's id is already well-formed, or is
+    // misfiled in the one way `readMisfiledEvidence` resolves. Neither is this fault.
+    const ambiguous = typeof correlationId === "string" && typeof fingerprint === "string";
+    if ((source === "artifact" || source === "context-snapshot") && !ambiguous) return reference;
+    for (const id of [correlationId, fingerprint]) {
+      if (typeof id !== "string") continue;
+      // `producedArtifact`, never `tool-completed` alone: it is the authority `verifiedAgainst` and
+      // `citableEvidence` both read, and a profile is citable under it. Asking for one event kind
+      // here would settle a read's id and refuse a profile's — while the refusal beside it offers
+      // that very profile id — so a model copying what it was offered would be refused for it.
+      if (producedArtifact(events, id) !== null) {
+        return { ...rest, source: "artifact", correlationId: id };
+      }
+      if (
+        AGENT_WORKFLOW_ACCEPTS_SNAPSHOT_CITATION[workflowType] &&
+        events.some((event) => event.kind === "context-captured" && event.fingerprint === id)
+      ) {
+        return { ...rest, source: "context-snapshot", fingerprint: id };
+      }
+    }
+    return reference;
+  };
+  const readHolder = (holder: Record<string, unknown>): Record<string, unknown> =>
+    Array.isArray(holder.evidence) ? { ...holder, evidence: holder.evidence.map(settle) } : holder;
+  const record = input as Record<string, unknown>;
+  const claimed = Array.isArray(record.claims)
+    ? {
+        ...record,
+        claims: record.claims.map((claim) =>
+          typeof claim === "object" && claim !== null ? readHolder(claim as Record<string, unknown>) : claim,
+        ),
+      }
+    : record;
+  return readHolder(claimed);
+}
+
 function readMisfiledEvidence(
   input: unknown,
   events: readonly AgentRunEvent[],
@@ -4104,10 +4249,12 @@ function readMisfiledEvidence(
       return snapshot ? { source: "context-snapshot", fingerprint: correlationId } : reference;
     }
     if (source === "context-snapshot" && typeof fingerprint === "string") {
-      const read = events.some(
-        (event) => event.kind === "tool-completed" && event.artifact.correlationId === fingerprint,
-      );
-      return read ? { source: "artifact", correlationId: fingerprint } : reference;
+      // `producedArtifact` for the same reason the settle above it uses it: the four kinds that
+      // carry a citable artifact are one set, and reading a different subset in each of the places
+      // that resolve a citation is how a profile became citable, offerable and still refused.
+      return producedArtifact(events, fingerprint) !== null
+        ? { source: "artifact", correlationId: fingerprint }
+        : reference;
     }
     return reference;
   };
@@ -4611,7 +4758,11 @@ export function composeReportTool(
   if (claimsArrivedAsUnparseableText(input)) return unavailable("INVALID_TOOL_INPUT", AGENT_CLAIMS_NOT_JSON);
   const parsed = parseToolInput(
     reportSchema,
-    readMisfiledEvidence(readSerializedClaims(input), run.events, context.workflowType),
+    readMisfiledEvidence(
+      readUndiscriminatedEvidence(withoutBlankLocators(readSerializedClaims(input)), run.events, context.workflowType),
+      run.events,
+      context.workflowType,
+    ),
     // `present_answer` refuses a run holding no data read of its own - `ANSWER_NOT_A_DATA_READ`,
     // 188 of them beside the 382 deliveries of the sentence that sends models there. Naming it as
     // the destination for `presentation` is only an instruction where it could accept the call.

@@ -5,6 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  isWithheldKafkaTopic,
   KAFKA_AGENT_DEFAULT_LIMIT,
   KAFKA_AGENT_MAX_LIMIT,
   KAFKA_AGENT_SENTENCES,
@@ -145,8 +146,32 @@ describe("refusals before anything is sent", () => {
     for (const topic of ["__consumer_offsets", "__transaction_state", "__share_group_state"]) {
       expect(refused(JSON.stringify({ read: "partitions", topic })).message).toBe(KAFKA_AGENT_SENTENCES.internal);
     }
-    // Kafka's own list is matched whole and by case, as Kafka does.
-    expect(readKafkaAgentStatement('{"read": "partitions", "topic": "__Consumer_offsets"}').ok).toBe(true);
+    // Kafka's own list is matched whole and by case, as Kafka does; a name its case moves off the list still leads
+    // with an underscore, so it is withheld as a platform's own.
+    expect(refused('{"read": "partitions", "topic": "__Consumer_offsets"}').message).toBe(
+      KAFKA_AGENT_SENTENCES.platform,
+    );
+  });
+
+  test("a platform's own topic, named with a leading underscore or connect-, is never named", () => {
+    for (const topic of [
+      "_schemas",
+      "_confluent-metrics",
+      "_confluent-ksql-default__command_topic",
+      "connect-configs",
+    ]) {
+      expect(isWithheldKafkaTopic(topic)).toBe(true);
+      for (const read of ["partitions", "offsets"]) {
+        expect(refused(JSON.stringify({ read, topic })).message).toBe(KAFKA_AGENT_SENTENCES.platform);
+      }
+    }
+    // Only the leading characters mark one: a user's topic that merely holds them is read.
+    for (const topic of ["orders_", "orders-connect-", "connector-logs", "Connect-orders"]) {
+      expect(isWithheldKafkaTopic(topic)).toBe(false);
+      expect(readKafkaAgentStatement(JSON.stringify({ read: "offsets", topic })).ok).toBe(true);
+    }
+    // The topic listing's cursor may still be one, since it is compared in Studio and never sent.
+    expect(readKafkaAgentStatement('{"read": "topics", "after": "_schemas"}').ok).toBe(true);
   });
 
   test("a limit is a whole number from 1 to the largest a read takes", () => {

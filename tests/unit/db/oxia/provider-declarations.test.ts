@@ -35,7 +35,15 @@ describe("getCapabilities (SB2-9.1)", () => {
       supportsTransactions: false,
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
-      enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/providers/keyvalue/oxia/grpc-client.ts", symbol: "allowlistedServices" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: { reach: "absent" },
+        transaction: { reach: "absent" },
+      },
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

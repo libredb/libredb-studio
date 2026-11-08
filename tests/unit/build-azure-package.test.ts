@@ -32,7 +32,7 @@ const SCRIPT = join(import.meta.dir, "../../scripts/build-azure-package.mjs");
 const REPO_ROOT = join(import.meta.dir, "../..");
 
 /*
-  The builder itself shells out to `zip` (scripts/build-azure-package.mjs:273), so every case that
+  The builder itself shells out to `zip` (`buildPackage` in scripts/build-azure-package.mjs), so every case that
   actually builds a package needs that binary, and reading the result back needs `unzip`. A stock
   Windows 11 has neither, and `execFileSync`/`Bun.spawnSync` answer a missing binary by THROWING
   ("Executable not found in $PATH", measured in this worktree), so those cases now say what is

@@ -12,6 +12,7 @@ import {
   NO_ACTIVE_EDITOR,
   NOTHING_TO_RUN,
   ROW_LIMIT_MAX,
+  RUN_ANYWAY,
   RowLimitError,
   readRowLimit,
   runQuery,
@@ -68,7 +69,8 @@ function setup(text = "select 1;") {
   const entries: Record<string, ProfileEntry | undefined> = { [PG.id]: PG, [MONGO.id]: MONGO };
   const scripts = {
     ensureOpen: (connectionId: string): Promise<ProviderDescription> => Promise.resolve(descriptions[connectionId]),
-    runTarget: (params: RunTargetParams): Promise<RunTargetResult> => Promise.resolve({ statement: params.text }),
+    runTarget: (params: RunTargetParams): Promise<RunTargetResult> =>
+      Promise.resolve({ statement: params.text, dangerous: false }),
     listContainers: (): Promise<Container[]> => Promise.resolve([SHOP]),
     execute: (): Promise<void> => Promise.resolve(),
   };
@@ -499,7 +501,7 @@ describe("runQuery", () => {
 
   it("step 10: a target with no code answers Nothing to run. and starts no run", async () => {
     const { deps, scripts, runs, executed } = bound("-- only a comment");
-    scripts.runTarget = () => Promise.resolve({ statement: "" });
+    scripts.runTarget = () => Promise.resolve({ statement: "", dangerous: false });
     await runQuery(deps);
     assert.deepEqual(messages(), [{ level: "info", message: "Nothing to run.", items: [] }]);
     assert.deepEqual(executed, []);
@@ -509,7 +511,8 @@ describe("runQuery", () => {
   describe("step 11: the highlight", () => {
     it("highlights the target's range and disposes the decoration after HIGHLIGHT_MS", async () => {
       const { deps, editor, scripts, timers } = bound("select 1;\nselect 2;");
-      scripts.runTarget = () => Promise.resolve({ statement: "select 2;", range: { start: 10, end: 19 } });
+      scripts.runTarget = () =>
+        Promise.resolve({ statement: "select 2;", range: { start: 10, end: 19 }, dangerous: false });
       await runQuery(deps);
       assert.equal(decorationTypes.length, 1);
       const [type] = decorationTypes;
@@ -532,7 +535,8 @@ describe("runQuery", () => {
       const { deps, document, editor, scripts, timers, executed } = bound("select 1;");
       const open = deferred<ProviderDescription>();
       scripts.ensureOpen = () => open.promise;
-      scripts.runTarget = () => Promise.resolve({ statement: "select 1;", range: { start: 0, end: 9 } });
+      scripts.runTarget = () =>
+        Promise.resolve({ statement: "select 1;", range: { start: 0, end: 9 }, dangerous: false });
       const run = runQuery(deps);
       await settle();
       document.edit("delete from t;\nselect 1;");
@@ -549,6 +553,69 @@ describe("runQuery", () => {
       await runQuery(deps);
       assert.deepEqual(decorationTypes, []);
       assert.deepEqual(editor.decorations, []);
+    });
+  });
+
+  describe("step 11b: the confirmation", () => {
+    const DELETE = "delete from t";
+    const asks = () => {
+      const env = bound(DELETE);
+      env.scripts.runTarget = () => Promise.resolve({ statement: DELETE, dangerous: true });
+      return env;
+    };
+
+    it("asks in a modal that shows the statement, and runs it once the person chooses Run Anyway", async () => {
+      const { deps, executed } = asks();
+      answerMessages(() => RUN_ANYWAY);
+      await runQuery(deps);
+      assert.deepEqual(shownMessages, [
+        {
+          level: "warning",
+          message:
+            "This statement may change data, database objects, or permissions. Review it before running it on shop.",
+          options: { modal: true, detail: DELETE },
+          items: ["Run Anyway"],
+        },
+      ]);
+      assert.equal(executed.length, 1);
+      assert.equal(executed[0][1].statement, DELETE);
+    });
+
+    it("sends nothing and settles the run when the person dismisses it", async () => {
+      const { deps, runs, executed } = asks();
+      await runQuery(deps);
+      assert.equal(shownMessages.length, 1);
+      assert.deepEqual(executed, []);
+      assert.deepEqual(runs.running(), []);
+    });
+
+    it("sends nothing when the run is cancelled during the question, whatever the person then chose", async () => {
+      const { deps, runs, executed } = asks();
+      answerMessages(() => {
+        runs.of(UNTITLED)?.tokenSource.cancel();
+        return RUN_ANYWAY;
+      });
+      await runQuery(deps);
+      assert.deepEqual(executed, []);
+      assert.deepEqual(runs.running(), []);
+    });
+
+    it("asks when the child answer leaves the verdict out, and sends nothing when declined", async () => {
+      const env = bound(DELETE);
+      // A stale or hand-swapped child can answer without the field; the type cannot stop that at runtime.
+      env.scripts.runTarget = () => Promise.resolve({ statement: DELETE } as unknown as RunTargetResult);
+      await runQuery(env.deps);
+      assert.equal(shownMessages.length, 1);
+      assert.equal(shownMessages[0].options?.modal, true);
+      assert.deepEqual(env.executed, []);
+      assert.deepEqual(env.runs.running(), []);
+    });
+
+    it("asks nothing for a target the child did not flag", async () => {
+      const { deps, executed } = bound("select 1;");
+      await runQuery(deps);
+      assert.deepEqual(shownMessages, []);
+      assert.equal(executed.length, 1);
     });
   });
 

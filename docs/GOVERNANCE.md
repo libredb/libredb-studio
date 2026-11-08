@@ -131,6 +131,9 @@ It prints one banner that names every variable to fix and never prints a secret,
 - The server's own Google identity for BigQuery and Firestore connections.
 - MCP and the agent, until a later Studio release runs them under governance.
 
+A governed connection carries no agent credential: a definition holding `agentUser` or `agentPassword` is refused as `DEFINITION_HAS_SECRET` and the credential envelope has no agent key, and since the agent and MCP are off under governance in this contract version, the seed file's agent credential does not reach a governed deployment.
+So a row's `mcp_enabled` is left off, and the row still served, for an engine MCP reads only under an agent credential.
+
 ## Sign-in
 
 Under governance the identity provider at `OIDC_ISSUER` is the only way into Studio, and the `subject` of a grant is that provider's `sub` for the user.

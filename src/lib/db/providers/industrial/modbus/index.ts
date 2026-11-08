@@ -67,7 +67,6 @@ import {
   MODBUS_ADDRESS_MASKING_REASON,
   MODBUS_DEFAULT_PORT,
   MODBUS_NO_REVOCATION_SENTENCE,
-  MODBUS_READ_ONLY_HINT,
   UNIT_ID_MIN,
 } from "./constants";
 import { dialModbus, socketWire, type Endpoint } from "./client";
@@ -91,12 +90,22 @@ import type { Table } from "./pdu";
 import { ModbusMapError, parseRegisterMap } from "./register-map";
 import { ModbusRequestError } from "./pdu";
 import { ModbusDecodeError } from "./values";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the valve admits only the read function codes and device identification on every
+ * outbound frame.
+ */
+const MODBUS_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/industrial/modbus/valve.ts",
+  symbol: "assertOutboundAllowed",
+});
 
 /**
  * WHY EVERY REFUSAL HERE IS A `QueryError` AND NOT A PLAIN `Error`. Measured on `90881379`: the
  * product treats the two differently, and a plain `Error` is the worse answer. `isQueryError`
  * (`src/lib/db/errors.ts`) tests `instanceof QueryError`, and a reader such as
- * `src/lib/db/providers/platform/kubernetes/objects.ts:348` turns a `QueryError` into
+ * `countKind` in `src/lib/db/providers/platform/kubernetes/objects.ts` turns a `QueryError` into
  * `{ unavailable }` while letting anything else propagate as an unexpected failure. So a refusal
  * thrown as a plain `Error` reaches the user as a crash rather than as the sentence it carries.
  * This was a real defect in the first version of this file and it is fixed here.
@@ -318,7 +327,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Structural rather than configured: there is no code here that can build a write.
-      enforcesReadOnly: true,
+      writeReach: MODBUS_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       // Modbus TCP has no connection string form, and inventing one would be ours.
@@ -741,4 +750,4 @@ export class ModbusProvider extends BaseDatabaseProvider {
   }
 }
 
-export { MODBUS_NO_REVOCATION_SENTENCE, MODBUS_READ_ONLY_HINT };
+export { MODBUS_NO_REVOCATION_SENTENCE };

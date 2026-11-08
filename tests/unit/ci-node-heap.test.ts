@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { posixShell, testIf } from "../helpers/posix-tools";
 
 // tsconfig.json includes every TypeScript file in the repository, tests among them, and checking that program peaks
 // within tens of MB of Node's default heap of about 4 GB on a GitHub runner: a pull request that added 0.3% more types
@@ -68,4 +69,80 @@ describe("every CI step that type-checks the whole tree runs Node with a 6 GB he
     const missing = guarded.filter(({ nodeOptions }) => !nodeOptions.includes(HEAP)).map(({ where }) => where);
     expect(missing).toEqual([]);
   });
+});
+
+// The same check outgrows the default heap on a workstation too, whenever it runs cold: a fresh clone or worktree, or
+// a change that invalidates most of tsconfig.tsbuildinfo, aborted `tsc --noEmit` at about 4.07 GB against a 4288 MiB
+// default, while the warm incremental run that follows passes and makes the first failure look flaky. So the scripts
+// raise the heap themselves, through NODE_OPTIONS because `next build` type-checks in a worker that takes its heap from
+// NODE_OPTIONS (node_modules/next/dist/lib/worker.js), with the caller's own NODE_OPTIONS after it so a caller can still
+// choose a larger heap. `bun run` runs scripts in the system shell on POSIX and in Bun's own shell on Windows, the
+// documented default of Bun's `run.shell` setting, which this repo's bunfig.toml does not change, so the prefix is
+// proven in both.
+
+const SCRIPTS = (
+  JSON.parse(readFileSync(join(import.meta.dir, "../../package.json"), "utf8")) as {
+    scripts: Record<string, string>;
+  }
+).scripts;
+
+/** The NODE_OPTIONS assignment that prefixes `command` inside a package.json script, or "" when there is none. */
+const heapPrefix = (script: string, command: string): string =>
+  new RegExp(`(NODE_OPTIONS="[^"]*") ${command}`).exec(script)?.[1] ?? "";
+
+const LOCAL = [
+  { script: "typecheck", command: "tsc --noEmit" },
+  { script: "build", command: "next build" },
+] as const;
+
+const PRINT_HEAP_MIB = `node -p "Math.round(v8.getHeapStatistics().heap_size_limit / 2 ** 20)"`;
+
+/** The process environment without NODE_OPTIONS, plus `nodeOptions` when given. */
+const envWith = (nodeOptions?: string): Record<string, string> => {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+  delete env.NODE_OPTIONS;
+  return nodeOptions === undefined ? env : { ...env, NODE_OPTIONS: nodeOptions };
+};
+
+const heapUnderBunShell = async (command: string, env: Record<string, string>): Promise<number> =>
+  Number((await Bun.$`${{ raw: command }}`.env(env).quiet().text()).trim());
+
+// On Windows `bun run` never hands a script to sh, and a bare `sh` is not on a PowerShell PATH there
+// (tests/helpers/posix-tools.ts), so the system-shell leg runs only where it is the shell scripts run in.
+const SYSTEM_SHELL = process.platform === "win32" ? null : posixShell("sh");
+const MISSING_SYSTEM_SHELL: string | null =
+  process.platform === "win32"
+    ? "system shell: on Windows `bun run` runs scripts in Bun's own shell, which the other leg covers"
+    : SYSTEM_SHELL === null
+      ? "no POSIX sh on PATH"
+      : null;
+
+const heapUnderSystemShell = (command: string, env: Record<string, string>): number => {
+  const run = Bun.spawnSync([SYSTEM_SHELL ?? "sh", "-c", command], { env, stdout: "pipe", stderr: "pipe" });
+  expect(run.stderr.toString()).toBe("");
+  return Number(run.stdout.toString().trim());
+};
+
+describe("the typecheck and build scripts raise the heap themselves, so a cold local run does not need CI's env", () => {
+  for (const { script, command } of LOCAL) {
+    test(`${script} runs \`${command}\` with the raised heap first and the caller's NODE_OPTIONS after it`, () => {
+      expect(heapPrefix(SCRIPTS[script] ?? "", command)).toBe(`NODE_OPTIONS="${HEAP} $NODE_OPTIONS"`);
+    });
+
+    const probe = `${heapPrefix(SCRIPTS[script] ?? "", command)} ${PRINT_HEAP_MIB}`;
+
+    test(`${script}'s prefix gives Node the raised heap under Bun's shell`, async () => {
+      expect(await heapUnderBunShell(probe, envWith())).toBeGreaterThanOrEqual(6144);
+      expect(await heapUnderBunShell(probe, envWith("--max-old-space-size=8192"))).toBeGreaterThanOrEqual(8192);
+      expect(await heapUnderBunShell(probe, envWith("--max-old-space-size=8192"))).toBeLessThan(8192 + 1024);
+    });
+
+    testIf(MISSING_SYSTEM_SHELL, `${script}'s prefix gives Node the raised heap under the system shell`, () => {
+      expect(heapUnderSystemShell(probe, envWith())).toBeGreaterThanOrEqual(6144);
+      expect(heapUnderSystemShell(probe, envWith("--max-old-space-size=8192"))).toBeGreaterThanOrEqual(8192);
+      expect(heapUnderSystemShell(probe, envWith("--max-old-space-size=8192"))).toBeLessThan(8192 + 1024);
+    });
+  }
 });

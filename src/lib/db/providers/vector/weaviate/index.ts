@@ -56,8 +56,11 @@ import {
   keylessAgentRefusal,
   proveWeaviateViewer,
   shapeWeaviateAgentAnswer,
+  WEAVIATE_AGENT_ALIAS_GRAPHQL,
+  WEAVIATE_AGENT_UNREADABLE,
   WEAVIATE_METADATA_ONLY,
   weaviateAgentFailure,
+  weaviateListedCollection,
 } from "./metadata-read";
 import { readWeaviateAgentStatement } from "./metadata-request";
 import type {
@@ -102,6 +105,16 @@ import {
   type WeaviatePathKind,
   type WeaviateVersion,
 } from "./versions";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: every route of the closed console route table is a read, and any other route is refused
+ * before any request.
+ */
+const WEAVIATE_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/vector/weaviate/routes.ts",
+  symbol: "WEAVIATE_ROUTES",
+});
 
 /** The in-flight bounds: four per provider, the transport's sockets, sixteen per process, a queue of 64. */
 export const WEAVIATE_LIMITER_OPTIONS = { perProvider: WEAVIATE_MAX_IN_FLIGHT, perEngine: 16, queueDepth: 64 } as const;
@@ -136,6 +149,7 @@ function errorContext(
   phase: WeaviateErrorContext["phase"],
   op: WeaviateOp,
   timeoutMs: number,
+  withholdServerWords: boolean,
 ): WeaviateErrorContext {
   return {
     phase,
@@ -144,6 +158,7 @@ function errorContext(
     responseCapBytes: options.responseCapBytes,
     timeoutMs,
     secretForms: options.secretForms,
+    withholdServerWords,
   };
 }
 
@@ -178,6 +193,13 @@ export class WeaviateProvider extends BaseDatabaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /**
+   * Whether this handle was opened under an execution profile, agent or operations: then no failure carries the
+   * server's words, which name the key's user (`data-scope/objects-note-sample-nodata`), and no listing or
+   * description reads a stored object. An editor handle keeps both.
+   */
+  private readonly withholdsServerWords: boolean;
+
   /** Validates nothing and opens nothing: the connection's rules run in `connect()`, before the factory. */
   constructor(
     config: DatabaseConnection,
@@ -187,6 +209,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.withholdsServerWords = execution.readOnly === true;
   }
 
   /** Every member written out: the base's defaults are SQL's, so each flag here is a decision (spec 6.2). */
@@ -209,7 +232,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       defaultPort: WEAVIATE_DEFAULT_PORT,
       containerLevels: [],
       objectKinds: WEAVIATE_OBJECT_KINDS,
-      enforcesReadOnly: true,
+      writeReach: WEAVIATE_WRITE_REACH,
       // The secret alone signs in, so the agent's own key is `agentPassword` alone; a user is refused here as it is
       // on the connection.
       agentCredential: "token",
@@ -295,6 +318,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
         phase,
         request.op,
         Math.min(WEAVIATE_SURFACE_TIMEOUT_MS, this.queryTimeout),
+        this.withholdsServerWords,
       );
       let answer: Awaited<ReturnType<WeaviateClient["send"]>>;
       try {
@@ -328,7 +352,13 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       } catch (error) {
         throw toProviderError(
           error,
-          errorContext(options, phase, request.op, Math.min(WEAVIATE_SURFACE_TIMEOUT_MS, this.queryTimeout)),
+          errorContext(
+            options,
+            phase,
+            request.op,
+            Math.min(WEAVIATE_SURFACE_TIMEOUT_MS, this.queryTimeout),
+            this.withholdsServerWords,
+          ),
         );
       }
     };
@@ -342,6 +372,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       version: session.version,
       paths: session.paths,
       scoped: session.options.secretForms.length > 0,
+      readsObjects: !this.withholdsServerWords,
     };
   }
 
@@ -362,6 +393,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
           "request",
           failure.op,
           Math.min(WEAVIATE_BOUNDS.searchDeadlineMs, this.queryTimeout),
+          this.withholdsServerWords,
         );
         if (failure.kind === "thrown") return toProviderError(failure.error, context);
         const answered = failure.op === "graphql" ? graphqlFailure(failure.answer) : answerFailure(failure.answer);
@@ -376,9 +408,12 @@ export class WeaviateProvider extends BaseDatabaseProvider {
    * `readWeaviateAgentStatement` and refused before anything is sent when it is not a metadata read. Then, under the
    * request's own deadline, the server is asked again who the key is, with no verdict kept from the open or the
    * request before, and the request runs as the console runs it, the tenant's own record read first so a COLD
-   * tenant is refused rather than woken, with a path memory of its own. Its answer is the metadata-only projection of
-   * its operation, refused past the row or byte budget rather than cut, and a server refusal is worded without the
-   * server's words.
+   * tenant is refused rather than woken, with a path memory of its own. A request whose path names a collection is
+   * sent only when the key's own collection or alias list holds the name, and an alias is sent as the collection the
+   * alias list names, since the server reads an alias there as whatever collection it names when the request arrives;
+   * a count the server answers over GraphQL alone, whose document names the alias, is refused. Its answer is the metadata-only projection of its operation, refused past the row or
+   * byte budget rather than cut, and a server refusal is worded without the server's words, a refusal and a not-found
+   * of a named collection, alias, tenant or shard in one sentence.
    */
   public async queryReadOnly(
     statement: string,
@@ -393,11 +428,36 @@ export class WeaviateProvider extends BaseDatabaseProvider {
     if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
     const { client, options } = session;
     const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+    // A name where a collection's name stands is sent only when the key's own lists hold it, and as the collection
+    // they name, so the server checks exactly that collection; the lists are read once per request.
+    const admitted = new Map<string, string>();
+    const admit = async (name: string, read: AbortSignal): Promise<string> => {
+      const known = admitted.get(name);
+      if (known !== undefined) return known;
+      const listed = await weaviateListedCollection((list, at) => client.send(list, at), name, read);
+      if (listed === undefined) throw new QueryError(WEAVIATE_AGENT_UNREADABLE, this.type, statement);
+      admitted.set(name, listed);
+      return listed;
+    };
+    const send = async (request: WeaviateRequest, read: AbortSignal): Promise<WeaviateAnswer> => {
+      const name = request.params.collection;
+      if (name !== undefined) {
+        const collection = await admit(name, read);
+        return client.send({ ...request, params: { ...request.params, collection } }, read);
+      }
+      // A GraphQL count names the collection in its document as the request wrote it, so it is sent for a collection
+      // the key's lists hold as itself and never for an alias.
+      const counted = reading.plan.collection;
+      if (request.op === "graphql" && counted !== null && (await admit(counted, read)) !== counted) {
+        throw new QueryError(WEAVIATE_AGENT_ALIAS_GRAPHQL, this.type, statement);
+      }
+      return client.send(request, read);
+    };
     return this.trackQuery(async () => {
       try {
         await proveWeaviateViewer(this.answerFor(client, options, "request"), signal);
         return await executeWeaviate(statement, undefined, {
-          send: (request, read) => client.send(request, read),
+          send,
           limiter: this.limiter,
           runs: this.runs,
           version: session.version,
@@ -414,8 +474,11 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       } catch (error) {
         if (error instanceof ExecutionProfileError) throw error;
         throw (
-          weaviateAgentFailure(error, budget, statement) ??
-          toProviderError(error, errorContext(options, "request", reading.plan.route.op, budget.statementTimeoutMs))
+          weaviateAgentFailure(error, budget, statement, reading.plan) ??
+          toProviderError(
+            error,
+            errorContext(options, "request", reading.plan.route.op, budget.statementTimeoutMs, true),
+          )
         );
       }
     });

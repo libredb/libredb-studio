@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * Gate 2 and gate 5 for the MQTT provider (#1635).
@@ -76,23 +77,17 @@ test.describe("MQTT in the connection dialog", () => {
   });
 
   /**
-   * The read-only hint names the reason as structural, because it is: the provider's encoder has no
-   * function that writes a PUBLISH and its CONNECT carries no Will, so the toggle cannot turn writing on.
+   * The read-only mode is structural, because it is: the provider's encoder has no function that writes a PUBLISH
+   * and its CONNECT carries no Will, so there is no box that could turn writing on.
    */
-  test("draws the Read-only toggle, whose hint says the mode is not what makes it read-only", async ({ page }) => {
+  test("draws the fixed Read-only label, since no setting is what makes it read-only", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "MQTT", exact: true }).click();
 
-    const box = dialog.getByLabel("Read-only", { exact: true });
-    await expect(box).toBeVisible();
-    await expect(box).not.toBeChecked();
-    await expect(dialog.locator("#readOnly")).toHaveAttribute("aria-describedby", "readOnly-hint");
-    await expect(
-      dialog.getByText(
-        "MQTT connections are read-only whether or not this is ticked, and not by a setting: this provider has no code that can write a PUBLISH, and its CONNECT carries no Will.",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    // A fixed label and no box: Studio has no write path on this engine, so there is no mode to choose.
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
   });
 
   /**
@@ -157,5 +152,6 @@ test.describe("MQTT in the connection dialog", () => {
     await expect(dialog.locator("#database")).toBeVisible();
     await expect(dialog.getByText("Topic filter", { exact: true })).toHaveCount(0);
     await expect(dialog.getByLabel("Read-only", { exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveCount(0);
   });
 });

@@ -13,7 +13,7 @@ values to enter are in [`template.json`](./template.json).
 
 - In the editor, click **+ New** (top-right), or open the command palette
   (`⌘K` / `Ctrl+K`) → **+ New Service** → **Docker Image**.
-- Image: `ghcr.io/libredb/libredb-studio:1.1.0` (pinned, never `:latest`).
+- Image: `ghcr.io/libredb/libredb-studio:1.2.0` (pinned, never `:latest`).
 - Rename the service to `libredb-studio`.
 
 ## 3. Variables
@@ -108,7 +108,7 @@ On a new Studio release:
 
 1. Bump the image tag in all three files that carry it:
    `deploy/railway/template.json`, `deploy/railway/README.md` and this file
-   (line 16). `distribution/channels.yaml` says these three must move
+   (its Image line in the setup steps). `distribution/channels.yaml` says these three must move
    together, and leaving this one out is how it last went stale.
 2. In the template editor / published template, update the image tag and
    re-publish (Docker-image templates are **not** auto-updated by Railway).

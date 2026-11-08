@@ -1,4 +1,4 @@
-import { SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
+import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import type { DatabaseConnection, SSLConfig } from "@/lib/types";
 import { KUBERNETES_REVIEWED_ROLE } from "./roles";
 import type { SeedConnection, SeedDefaults, ManagedConnection } from "./types";
@@ -48,6 +48,36 @@ function assertReadOnlySeedIsManaged(conn: SeedConnection): void {
   );
 }
 
+/**
+ * An agent credential stays on a managed seed. The seed schema refuses either field on an unmanaged seed at load,
+ * with `defaults.managed` taken into account; this is the mapper's own gate, checked on the connection
+ * `mergeDefaults` produced, so a SeedConnection built in memory cannot be projected as an unmanaged connection whose
+ * browser copy carries the agent's credential. Both fields, though `agentUser` alone is public, because an unmanaged
+ * copy is relied on to carry neither.
+ */
+function assertAgentCredentialSeedIsManaged(conn: SeedConnection): void {
+  if (conn.managed !== false || (conn.agentUser === undefined && conn.agentPassword === undefined)) return;
+  throw new Error(
+    `Seed connection "${conn.id}" carries an agent credential with managed: false. An agent credential stays on a managed seed, because an unmanaged one is copied into the browser with its credentials; the seed is refused rather than projected with it.`,
+  );
+}
+
+/**
+ * An agent credential beside a field the engine's provider signs in with in preference to a user and password, read
+ * from the engine's `SEED_AGENT_CREDENTIAL` row: the agent would run under the connection's own credential. The seed
+ * schema refuses it at load; this is the mapper's own gate for a SeedConnection built in memory, and the only check
+ * after load, since the factory does not compare the two.
+ */
+function assertAgentCredentialNotSuperseded(conn: SeedConnection): void {
+  if (conn.agentUser === undefined && conn.agentPassword === undefined) return;
+  const fields = conn as Readonly<Record<string, unknown>>;
+  const superseding = SEED_AGENT_CREDENTIAL[conn.type]?.supersededBy.find((field) => fields[field] !== undefined);
+  if (superseding === undefined) return;
+  throw new Error(
+    `Seed connection "${conn.id}" carries an agent credential beside ${superseding}, which the ${conn.type} provider signs in with in preference to a user and password. The seed is refused rather than projected as an agent credential the agent would not sign in with.`,
+  );
+}
+
 /** The connections of `connections` these roles may see, each projected for them. */
 export function filterByRoles(connections: SeedConnection[], userRoles: string[]): ManagedConnection[] {
   return connections
@@ -57,11 +87,16 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
 
 /**
  * The managed connection a seed connection becomes for a caller holding `userRoles`, whether or not its roles select
- * it: the role filter is filterByRoles' own step. It carries only the roles the caller holds, plus `*`.
+ * it: the role filter is filterByRoles' own step. It carries only the roles the caller holds, plus `*`, and, when the
+ * operator's own roles offer the seed to any role but admin, `sharedWithNonAdminRoles`, which those narrowed roles can
+ * no longer show: editorExecutionContext (src/lib/api/execution-context.ts) decides the file-access posture from it,
+ * so every caller of one seed gets one posture.
  */
 export function projectSeedConnection(conn: SeedConnection, userRoles: string[]): ManagedConnection {
   assertSeedOnlyFieldsBelong(conn);
   assertReadOnlySeedIsManaged(conn);
+  assertAgentCredentialSeedIsManaged(conn);
+  assertAgentCredentialNotSuperseded(conn);
   return {
     id: `seed:${conn.id}`,
     name: conn.name,
@@ -94,6 +129,13 @@ export function projectSeedConnection(conn: SeedConnection, userRoles: string[])
     // with its user and password and no mechanism to send them by, which the provider refuses.
     saslMechanism: conn.saslMechanism,
     schema: conn.schema,
+    // The agent credential, copied for the reason skipObjectScan is: dropped here, a seed that declared an agent
+    // credential would run its agent and MCP calls under its own login, the wider principal.
+    agentUser: conn.agentUser,
+    agentPassword: conn.agentPassword,
+    // OPC UA's read roots, copied for the reason skipObjectScan is: dropped here, a seed that declared read roots
+    // would answer every agent and MCP read with a refusal for roots the file did declare.
+    agentReadRoots: conn.agentReadRoots,
     // The second half of the seed round-trip, and the half a zod field cannot cover:
     // this mapper is a hand-written field list, so a field validated above and not
     // copied here reaches the browser as `undefined` and the seeded connection scans
@@ -156,6 +198,10 @@ export function projectSeedConnection(conn: SeedConnection, userRoles: string[])
     managed: conn.managed ?? true,
     // Send only the roles the caller holds (plus wildcard), so browser never sees other teams' roles
     roles: conn.roles.filter((r) => r === "*" || userRoles.includes(r)),
+    // Whom the operator offers the seed to, read from its own roles rather than the narrowed ones above: the
+    // file-access posture is decided from it, so an admin's copy of a seed offered to ["admin", "user"] gets the
+    // posture a user's copy gets. Server-only: GET /api/connections/managed removes it.
+    ...(conn.roles.some((r) => r !== "admin") ? { sharedWithNonAdminRoles: true as const } : {}),
     seedId: conn.id,
   };
 }

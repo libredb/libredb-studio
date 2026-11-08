@@ -1,0 +1,17 @@
+# what the server is and what it lists: catalogs, and each catalog's table functions (function type 'table')
+> [read-only transaction] SELECT node_version FROM system.runtime.nodes
+  OK ["node_version"] [["476"]]
+> [read-only transaction] SHOW CATALOGS
+  OK ["Catalog"] [["lake"],["memory"],["pg"],["pg2"],["system"]]
+> [read-only transaction] SHOW FUNCTIONS FROM "lake"."system"
+  OK ["Function","Return Type","Argument Types","Function Type","Deterministic","Description"] []
+> [read-only transaction] SHOW FUNCTIONS FROM "memory"."system"
+  OK ["Function","Return Type","Argument Types","Function Type","Deterministic","Description"] []
+> [read-only transaction] SHOW FUNCTIONS FROM "pg"."system"
+  OK ["Function","Return Type","Argument Types","Function Type","Deterministic","Description"] [["query","unknown","varchar","table",false,""]]
+> [read-only transaction] SHOW FUNCTIONS FROM "pg2"."system"
+  OK ["Function","Return Type","Argument Types","Function Type","Deterministic","Description"] [["query","unknown","varchar","table",false,""]]
+> [read-only transaction] SHOW FUNCTIONS FROM "system"."system"
+  OK ["Function","Return Type","Argument Types","Function Type","Deterministic","Description"] []
+> [read-only transaction] SHOW SCHEMAS FROM "system"
+  OK ["Schema"] [["information_schema"],["jdbc"],["metadata"],["runtime"]]

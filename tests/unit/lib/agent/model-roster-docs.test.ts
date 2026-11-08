@@ -78,7 +78,32 @@ const WORDS: Readonly<Record<number, string>> = {
   44: "Forty-four",
   45: "Forty-five",
   46: "Forty-six",
+  47: "Forty-seven",
+  48: "Forty-eight",
+  49: "Forty-nine",
+  50: "Fifty",
+  51: "Fifty-one",
 };
+
+/**
+ * How each page states that every one of those runs passed.
+ *
+ * This is here because the run total was guarded and the PASS total beside it was not, and it
+ * drifted for five releases without anything noticing. `cc2e71ade` took the roster from
+ * thirty-five to forty and moved `1050 runs` to `1200 runs` while leaving `1050 passes` where it
+ * was; the four model pull requests after it each added thirty to both, so the gap stayed exactly
+ * one hundred and fifty and the pages ended up saying "1380 runs, 1230 passes" — and, on
+ * `methodology.md`, "1380 runs, and all 1230 passed", which cannot be true of any roster.
+ *
+ * Both numbers describe the same protocol: six surfaces, five CONSECUTIVE passing runs each is
+ * what makes a model supported, so a supported roster has no failing run left in its total and
+ * the two figures are the same number. Deriving the second one from the same place as the first
+ * is what makes them impossible to separate again.
+ */
+const PASS_CLAIMS: readonly { readonly page: string; readonly phrase: (n: number) => string }[] = [
+  { page: "README.md", phrase: (n) => `${n} passes` },
+  { page: "methodology.md", phrase: (n) => `all ${n} passed` },
+];
 
 describe("the roster count the docs state is the roster the product ships", () => {
   const count = Object.keys(modelProfiles()).length;
@@ -102,6 +127,18 @@ describe("the roster count the docs state is the roster the product ships", () =
       for (let other = 10; other <= 60; other += 1) {
         if (other === count) continue;
         const stale = `${other * RUNS_PER_MODEL} runs`;
+        expect({ page, stale, found: text.includes(stale) }).toEqual({ page, stale, found: false });
+      }
+    }
+  });
+
+  test("the passes each page claims are the runs it states, not a roster ago", () => {
+    for (const { page, phrase } of PASS_CLAIMS) {
+      const text = read(page);
+      expect({ page, states: text.includes(phrase(total)) }).toEqual({ page, states: true });
+      for (let other = 10; other <= 60; other += 1) {
+        if (other === count) continue;
+        const stale = phrase(other * RUNS_PER_MODEL);
         expect({ page, stale, found: text.includes(stale) }).toEqual({ page, stale, found: false });
       }
     }

@@ -232,7 +232,15 @@ describe("declarations (spec 6.3)", () => {
       supportsTransactions: false,
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
-      enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/providers/timeseries/influxdb/sql-policy.ts", symbol: "evaluateInfluxSql" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: { reach: "absent" },
+        transaction: { reach: "absent" },
+      },
       agentCredential: "token",
       supportsMaintenance: false,
       maintenanceOperations: [],

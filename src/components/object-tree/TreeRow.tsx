@@ -60,7 +60,7 @@ export const ROW_ICONS = { container: Database, group: Layers, folder: Folder, o
 
 /**
  * The non-primary column's mark, carried over from the flat explorer VERBATIM: a 4px dot in a
- * 14px slot (`schema-explorer/ColumnList.tsx:12-16`). Hoisted for the reason it was hoisted
+ * 14px slot (`nonPrimaryDot` in `schema-explorer/ColumnList.tsx`). Hoisted for the reason it was hoisted
  * there, and a dot rather than a kind icon because the KEY is the only thing a reader scans a
  * column list for. A 14px `Columns3` on every ordinary column would put a glyph of the same
  * weight and size beside the key on every row, which is the one thing that mark exists not to be.

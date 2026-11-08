@@ -134,6 +134,21 @@ describe("describeObject", () => {
     expect(detail.foreignKeys).toEqual([]);
   });
 
+  test("under an execution profile the definition alone: no object is read, and the dimension is `?`", async () => {
+    const { context, calls } = surfaceContext(SURFACE, { readsObjects: false });
+    const detail = await describeWeaviateObject(context, ["Article"], "collection");
+    expectCalls(calls, [
+      { method: "collection", args: [{ op: "collection", params: { collection: "Article" }, query: {} }] },
+    ]);
+    expect(detail.columns.at(-1)).toEqual({
+      name: "$vector",
+      type: "Vector(?, cosine, hnsw)",
+      nullable: true,
+      isPrimary: false,
+    });
+    expect(detail.indexes).toEqual([{ name: "$vector", columns: ["$vector"], unique: false }]);
+  });
+
   test("named vectors take their dimensions from the object's vectors", async () => {
     const detail = await describeWeaviateObject(surfaceContext(SURFACE).context, ["Product"], "collection");
     expect(detail.columns.filter((column) => column.name.startsWith("$vector"))).toEqual([

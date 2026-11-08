@@ -190,7 +190,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|firestore|clickhouse|druid|elasticsearch|opensearch|trino|bigquery|snowflake|spark|cassandra|prometheus|kafka|mqtt|rabbitmq|opcua|etcd|neo4j|milvus|qdrant|weaviate|influxdb|influxdb3|oxia|databend|s3|kubernetes
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|firestore|clickhouse|druid|elasticsearch|opensearch|trino|bigquery|snowflake|spark|cassandra|prometheus|kafka|mqtt|rabbitmq|opcua|mtconnect|modbus|netconf|snmp|sparkplug|etcd|neo4j|milvus|qdrant|weaviate|influxdb|influxdb3|oxia|databend|s3|kubernetes
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -366,14 +366,14 @@ connections:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `version` | Yes | — | Must be `"1"` |
-| `defaults` | No | - | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged, and `mcp` and `readOnly` are refused here (see [MCP opt-in](#mcp-opt-in)) |
+| `defaults` | No | - | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged, and `mcp`, `readOnly`, `agentUser`, `agentPassword` and `agentReadRoots` are refused here (see [MCP opt-in](#mcp-opt-in), [An agent credential](#an-agent-credential) and [An OPC UA connection's read roots](#an-opc-ua-connections-read-roots)) |
 | `defaults.managed` | No | `true` | Default managed state |
 | `defaults.environment` | No | — | Default environment label |
 | `defaults.ssl` | No | — | Default SSL config |
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `mtconnect`, `modbus`, `netconf`, `snmp`, `sparkplug`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**. S3: the optional pinned bucket. PostgreSQL: empty reaches the whole server, every database the role can CONNECT to) |
@@ -389,7 +389,7 @@ connections:
 | `connections[].connectionString` | No | - | Full connection string (use `${ENV_VAR}`). Read only by postgres, mysql, sqlite (as the database file path), libsql, oracle, db2, clickhouse, mongodb and couchbase; every other type, mssql included, refuses it when the file loads, naming the connection and the type ([The connection string refusal](#the-connection-string-refusal)) |
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]`, or custom roles starting with `OIDC_ROLE_PREFIX` when OIDC is enabled |
 | `connections[].managed` | No | from defaults | `true` = admin-controlled: not editable in the UI, its secrets stay on the server; `false` = an editable copy for the user |
-| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Oxia, S3-compatible object storage and Kubernetes); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
+| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose write reach is `guarded` or `none` ([write reach](DATABASE_PROVIDERS.md#write-reach)); every engine whose write reach is `open` refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
 | `connections[].environment` | No | from defaults | Environment badge |
 | `connections[].group` | No | — | Group label |
 | `connections[].color` | No | — | Hex color for badge (e.g., `#10B981`) |
@@ -418,7 +418,10 @@ connections:
 | `connections[].securityPolicyUri` | No | absent | OPC UA only: the policy to insist on, such as `http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256`. An endpoint is a mode **and** a policy, so naming one narrows the choice to that pair and is refused when the server offers no such pair |
 | `connections[].clientCertificatePath` / `connections[].clientPrivateKeyPath` | No | absent | OPC UA only: the client certificate and private key to present, as paths on the host that runs Studio, supplied together or not at all. A server holding a trust list of its own has to be given a STABLE client identity before it will accept a secured channel, which is what a mounted pair is for; absent, the library generates one under the PKI root (`LIBREDB_OPCUA_PKI_ROOT`), which is stable for as long as that directory is. Paths and never keys: the private key stays in the file |
 | `connections[].authSource` | No | - | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error. A seed for MongoDB agent mode names the read user's own database here: [the agent's user](providers/mongodb.md#setting-up-the-agents-user) has the whole entry |
-| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An etcd, Oxia, S3, Kubernetes, MQTT, Firestore or OPC UA connection refuses `mcp: true` when the file loads: MCP is not offered for it |
+| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An Oxia, Firestore, Modbus or NETCONF connection refuses `mcp: true` when the file loads: MCP is not offered for it. An S3 connection with `mcp: true` and no agent credential is refused too, since MCP reads S3 only under an agent read key of its own ([An agent credential](#an-agent-credential)), and so is an OPC UA connection with `mcp: true` and no `agentReadRoots`, since MCP reads OPC UA only beneath read roots its seed declares ([An OPC UA connection's read roots](#an-opc-ua-connections-read-roots)). An etcd connection with `mcp: true` whose effective MCP principal is `root`, its `agentUser` where it sets one and its `user` otherwise, is refused too, since MCP reads etcd only under a user the server proves reads only ([providers/etcd.md](providers/etcd.md), section 15.7) |
+| `connections[].agentUser` | No | absent | The principal every agent execution profile and every MCP call on this connection signs in as, in the engine's own user field: a database role, an etcd user, an S3 access key ID. Set with `agentPassword` on an engine that takes a user and a password, and never on one that takes the agent's secret alone. Resolved like `user`. Public, as `user` is ([An agent credential](#an-agent-credential)) |
+| `connections[].agentPassword` | No | absent | That principal's secret, or on an engine that takes the agent's secret alone the whole credential: a bearer token, a service-account key JSON. Resolved like `password`, and stripped from `GET /api/connections/managed` as `password` is. Only on a managed connection, and never in `defaults` ([An agent credential](#an-agent-credential)) |
+| `connections[].agentReadRoots` | No | absent | OPC UA only: a list of 1 to 32 node ids, each written with its namespace URI (`nsu=<uri>;s=<name>`), beneath which agent mode and MCP read. A literal, never resolved from a reference; on a managed or an unmanaged connection, never in `defaults`, and stripped from `GET /api/connections/managed` ([An OPC UA connection's read roots](#an-opc-ua-connections-read-roots)) |
 
 ### MCP opt-in
 
@@ -428,10 +431,106 @@ The built-in sample connections never carry it, so they are never visible to an 
 A value that is not a boolean fails the whole file, as any invalid field does: `GET /api/connections/managed` then answers 500 with its named reason, and every MCP tool answers that the connection configuration could not be read.
 With no seed file, or with no entry that opts in for the token's role, `list_connections` answers an empty list.
 
+### An agent credential
+
+A seed connection may carry an agent credential of its own, `agentUser` and `agentPassword`, beside its own `user` and `password`.
+Every agent execution profile on the connection, the read-only one, the operations one and the hand-over one, and every MCP call on it then signs in as the agent credential; the editor, the tree and the monitoring panels keep the connection's own login.
+A connection without one runs its agent and MCP calls under its own login, as before.
+So the agent can run as a least-privileged principal while the connection keeps a wider one, which is what an engine's read-only proof asks for (each provider doc says what its proof admits).
+
+Which fields a seed of each engine takes is `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts`, which follows each provider's declared form (`AgentCredentialForm` in `src/lib/db/types.ts`):
+
+- `agentUser` and `agentPassword` together: `postgres`, `mysql`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `influxdb`, `databend`, `mqtt`, `rabbitmq`, `opcua`, `netconf`.
+- `agentUser` and `agentPassword` together, with an `agentUser` other than `user`: `s3`, whose agent key is an access key ID and secret of its own, since an agent key ID equal to the connection's names the same key.
+- `agentPassword` alone, the agent's token or key: `libsql`, `qdrant`, `weaviate`, `influxdb3`, `kubernetes`, and `bigquery`, which takes a service-account key JSON.
+- Neither: `sqlite`, `duckdb`, `oxia`, `snowflake`, `spark`, `firestore`, `mtconnect`, `modbus`, `snmp`, `sparkplug`, `libredb`, since the engine has no user or no secret field for an agent to sign in with, or, on Snowflake, an agent user and password would narrow no privilege.
+
+MCP reads under the agent credential on every engine it offers; on `netconf`, which MCP does not offer, it narrows agent runs only, and on `druid`, `trino`, `prometheus`, `influxdb`, `databend` and `bigquery`, which have no MCP statement tool, it narrows `inspect_schema` and agent runs.
+
+```yaml
+version: "1"
+connections:
+  - id: "prod-orders"
+    name: "Orders (production)"
+    type: postgres
+    host: db.internal
+    port: 5432
+    database: orders
+    user: "${ORDERS_OWNER_USER}"
+    password: "${ORDERS_OWNER_PASSWORD}"
+    agentUser: "${ORDERS_AGENT_USER}"
+    agentPassword: "${ORDERS_AGENT_PASSWORD}"
+    roles: ["admin"]
+    managed: true
+    mcp: true
+```
+
+Both fields resolve as `user` and `password` do, from `${ENV_VAR}` when the operator cache is filled and from `${vault:...}` when the connection is opened, and a literal `agentPassword` logs the plaintext warning once, naming the field and never the value.
+The load refuses, naming the connection and the field and never the value:
+
+- either field on an engine that takes neither, and `agentUser` on an engine that takes the agent's secret alone;
+- one half of a user and password, an empty string counting as absent;
+- an `agentUser` that names the connection's own `user`, compared without case or surrounding space, on an engine that takes only an agent user of its own (S3);
+- either field beside `connectionString`, which the provider would sign the agent in with instead;
+- either field beside a field the provider signs in with in preference to a user and password, `apiKeyId` or `apiKeySecret` on Elasticsearch;
+- an agent secret beside a literal `user` on an engine that keeps the connection's user beside the agent's secret (libSQL, whose transport would send both, which has no read-only form);
+- an agent user and password that are a published default, such as RabbitMQ's `guest` and `guest`;
+- either field on a connection whose effective `managed` is false, because an unmanaged seed is copied into the browser of every user its roles admit with its credentials, and Duplicate turns that copy into a connection of the user's own;
+- either field in `defaults`, because a default would hand one principal to every later connection of the file.
+
+On S3, MCP reads only under the agent credential: an S3 connection with `mcp: true` and no `agentUser` and `agentPassword` is refused at load, naming `mcp`, and a connection that reaches MCP without one past the load is refused when a tool opens it, so MCP never reads S3 under the connection's own key ([providers/s3.md](providers/s3.md), section 15.7).
+A refused entry fails the whole file, as any invalid field does, so one such entry takes every connection of that file off the list until it is fixed.
+A reference is unknown at load, so a field written as one passes there, and the factory checks the resolved credential against the engine's form when the connection opens, before it connects.
+One limit of the resolved value: an `agentPassword` whose text before the first colon is `v` and digits, such as `v2:x`, is read as a sealed secret and refused at open with `AGENT_CREDENTIAL_UNRESOLVABLE`, where the same text as `password` opens.
+
+### An OPC UA connection's read roots
+
+An OPC UA seed connection may declare read roots, `agentReadRoots`: the node ids beneath which agent mode and MCP read.
+
+```yaml
+connections:
+  - id: plant-a
+    name: Plant A
+    type: opcua
+    host: opc.tcp://plc.plant-a.internal:4840/
+    agentUser: "${PLANT_A_AGENT_USER}"
+    agentPassword: "${PLANT_A_AGENT_PASSWORD}"
+    agentReadRoots:
+      - "nsu=http://microsoft.com/Opc/OpcPlc/;s=Telemetry"
+      - "i=2256"
+```
+
+Each root is one node id in the console's string form, with its namespace written by URI and never by index, since a namespace index is a position in the server's NamespaceArray that a server restart can move.
+In namespace 0 a root is one of a fixed table of standard nodes that describe the server's state and limits: `Server.ServerStatus` (`i=2256`), `Server.ServerCapabilities.OperationLimits` (`i=11704`), `Server.ServerDiagnostics.ServerDiagnosticsSummary` (`i=2275`), `Server.NamespaceArray` (`i=2255`), `Server.ServerArray` (`i=2254`), `Server.ServiceLevel` (`i=2267`) and `Server.Auditing` (`i=2994`), written `i=<n>`, `ns=0;i=<n>` or with the OPC Foundation URI.
+
+The file is refused when it loads, naming the connection, the field and the element's index, for:
+
+- a value that is not a list of strings, an empty list, or more than 32 roots;
+- an element longer than 512 characters;
+- a `${ENV}` or `${vault:...}` reference, since a read root is neither a credential nor an address;
+- an element that is not a node id, or whose identifier does not decode;
+- a namespace written by index (`ns=3;...`, or `nsu=...;ns=3;...`);
+- an element in the OPC Foundation diagnostics namespace (`http://opcfoundation.org/UA/Diagnostics`);
+- a namespace-0 node outside the table above, the Objects folder and the Server object among them;
+- two elements that name one node;
+- the field on a connection of another type, or in `defaults`.
+
+A root beneath another root is not refused, since that is the server's to say.
+Whether a root is on the server is decided on every read's own session, never from the file.
+
+Read roots are kept from the browser: `GET /api/connections/managed` never lists them, so a Duplicate never copies them into a connection of the user's own, and an agent run on the editable copy of an unmanaged seed resolves the seed's own roots on the server.
+A connection a browser or an API client supplies inline that carries `agentReadRoots` is refused with 400, since only the operator's seed file declares what agent mode and MCP read.
+A governed connection carries none: the control plane's definition has no such key, so a governed OPC UA connection runs no agent read and is never opted in to MCP.
+
+What the roots bound: every agent read and every MCP read on the connection answers only nodes proved beneath them, on the read's own session, and every other node id answers as one the server does not hold, with nothing sent for it ([providers/opcua.md](providers/opcua.md#143-what-agent-mode-reads-the-read-roots)).
+An agent run on a statement-sending workflow is refused at Start on an OPC UA seed without roots, and `mcp: true` without them is refused when the file loads; the editor, plan mode and the operations workflow never read them.
+The roots are read once per drive: a run resolves its connection when it is driven, so an operator who narrows a root mid-run is obeyed from the run's next drive, and MCP reads a changed file after the seed cache's time to live, `SEED_CACHE_TTL_MS`.
+Inside a root the operator vouches for the subtree: the standard identity properties (a condition's `ClientUserId`, a DI device's `Lock` with `LockingClient` and `LockingUser`) are never answered, but a vendor's own identity or credential node that no table names is, so declare the folders that hold the process data rather than a device's whole tree.
+
 ### A read-only cluster for everyone
 
-`readOnly: true` makes a connection refuse every write, value edit and maintenance operation before any request, on an engine whose provider keeps the mode.
-etcd's, Neo4j's, Milvus's, Qdrant's, Weaviate's, both InfluxDB types', Oxia's, S3's and Kubernetes's do today ([providers/etcd.md](providers/etcd.md), section 3.4, the Neo4j recipe below, [providers/milvus.md](providers/milvus.md) and [providers/qdrant.md](providers/qdrant.md), section 3.4 of each, [providers/weaviate.md](providers/weaviate.md), section 3.5, the InfluxDB recipes above, [providers/oxia.md](providers/oxia.md), section 3.5, [providers/s3.md](providers/s3.md), section 3.5, and [providers/kubernetes.md](providers/kubernetes.md), section 9), and on every other engine the file is refused at load, with a sentence naming the type and the field.
+`readOnly: true` makes a connection refuse every write, value edit and maintenance operation before any request, on an engine whose write reach is `guarded` or `none` in the [write reach](DATABASE_PROVIDERS.md#write-reach) table; on a `none` engine there is no write to refuse, and the flag loads so that a file marking every seed read-only still loads.
+The providers of etcd, Neo4j, Milvus, Qdrant, Weaviate, both InfluxDB types, Oxia, S3 and Kubernetes keep it ([providers/etcd.md](providers/etcd.md), section 3.4, the Neo4j recipe below, [providers/milvus.md](providers/milvus.md) and [providers/qdrant.md](providers/qdrant.md), section 3.4 of each, [providers/weaviate.md](providers/weaviate.md), section 3.5, the InfluxDB recipes above, [providers/oxia.md](providers/oxia.md), section 3.5, [providers/s3.md](providers/s3.md), section 3.5, and [providers/kubernetes.md](providers/kubernetes.md), section 9), and on every engine whose write reach is `open` the file is refused at load, with a sentence naming the type and the field.
 The recipe is two seeds of one cluster: one every role reaches, read-only, and one for the people who may write.
 
 ```yaml
@@ -489,7 +588,7 @@ An empty `user` with a password of the form `user:password` is read as that pair
 ### A read-only Neo4j graph
 
 A Neo4j connection is read-only whatever `readOnly` says, because its provider refuses every write before it is sent ([providers/neo4j.md](providers/neo4j.md), section 3.1), so `readOnly: true` loads on a managed Neo4j seed and states what the connection does.
-One seed every role reaches is enough, and `mcp: true` lets an MCP client list the connection and inspect its schema; `run_read_query` does not serve Neo4j.
+One seed every role reaches is enough, and `mcp: true` lets an MCP client list the connection, inspect its schema and read it with `run_cypher_read`.
 
 ```yaml
 version: "1"
@@ -533,10 +632,10 @@ connections:
 1. The config file is read from disk (YAML/JSON) and validated as a whole.
 2. `${VARIABLE_NAME}` patterns are resolved from `process.env` when the [operator cache](#the-operator-cache) is filled.
 3. If a variable is undefined, that connection is **skipped**, the others are listed, and the [Seed sources card](#diagnostics) names the variable, with the field in the endpoint's record.
-4. A literal password is used as written and logs a warning once per connection.
+4. A literal `password` or `agentPassword` is used as written and logs a warning once per connection and field, naming the field.
 5. With `SEED_LITERAL_VALUES=true`, steps 2 to 4 do not happen: every value is used as written (see [Literal values written by a platform](#literal-values-written-by-a-platform))
 
-**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`, `apiKeySecret`, `amqpPort`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
+**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `amqpPort`, `authMethod`, `privateKey`, `privateKeyPassphrase`, `role`, `apiKeyId`, `apiKeySecret`, `agentUser`, `agentPassword`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
 
 ### Literal values written by a platform
 
@@ -574,14 +673,16 @@ The part before `#` is the KV v2 path (`<mount>/data/<name>`) and the part after
 
 **Quote the value.** YAML reads an unquoted `#` as the start of a comment, so `password: ${vault:secret/data/prod/postgres#password}` sets the password to the literal text `${vault:secret/data/prod/postgres` and drops the key. The quotes above are not optional.
 
-Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `apiKeyId`, `apiKeySecret`, `amqpPort`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
+Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `dataServers`, `warehouse`, `region`, `apiPath`, `tlsServerName`, `amqpPort`, `authMethod`, `privateKey`, `privateKeyPassphrase`, `role`, `apiKeyId`, `apiKeySecret`, `agentUser`, `agentPassword`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
 A reference with no `#key` fails when the connection is opened.
 
 A Vault reference is read lazily, one connection at a time:
 
 1. Listing connections (`GET /api/connections/managed`) makes **zero** Vault requests. The reference is handed back unresolved, and for a `managed: false` connection it is the reference — not a secret — that reaches the browser.
 2. Opening a connection reads the referenced path once, then caches the result per path for `VAULT_CACHE_TTL_MS` (default 60000). A second connection to the same path within that TTL makes no request.
+   An MCP tool reads it the same way when it opens an opted-in connection ([MCP.md](MCP.md)), and `list_connections` reads none.
 3. A failure — Vault unreachable, the path or key missing, the token refused — fails that one connection with an explicit error. There is no fallback to an empty password, no retry loop and no fallback to an environment variable, and the failure never affects the boot or another connection.
+   On MCP the tool's answer names the connection and says its secret reference could not be read from Vault; the cause goes to the server log only, because it may quote the reference.
 4. The resolved value is never logged, never written to an error message and never reaches the audit log. The reference string may be logged; it is not a secret.
 
 `${ENV_VAR}` resolution is unchanged: synchronous on the list path, and a dictionary lookup. Only `${vault:...}` is deferred.
@@ -1544,9 +1645,12 @@ In OIDC sign-in mode the ServiceAccount review refuses to run on OpenShift: befo
 | Invalid YAML/JSON | `GET /api/connections/managed` returns a generic 500 with `reason: "seed-config-unreadable"` and logs the details server-side. `GET /api/admin/seed-sources` returns the parse message to an admin, and the Seed sources card shows it with code `unparseable`; a YAML error names its code and, where the parser has one, its line and column, and a JSON error says the file is not valid JSON; neither quotes a value. |
 | Invalid config (Zod validation fails) | `GET /api/connections/managed` returns a generic 500 with `reason: "seed-config-unreadable"` and logs the validation errors server-side. `GET /api/admin/seed-sources` returns the validation message to an admin, and the Seed sources card shows it with code `invalid`; the message names the fields, never a value. |
 | `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |
-| `readOnly: true` on a connection whose type does not enforce it, on a connection whose effective `managed` is false, or `readOnly` in `defaults` | The whole file fails like any invalid config, and the error names the connection, the field and the reason |
+| `readOnly: true` on a connection whose type's write reach is `open`, on a connection whose effective `managed` is false, or `readOnly` in `defaults` | The whole file fails like any invalid config, and the error names the connection, the field and the reason |
 | `readOnly: true` on a connection whose literal credential matches a default its type declares, or with no password where its type declares it accepts none | The whole file fails like any invalid config, and the error names the connection and `password`, never the value; a `${ENV}` or `${vault:...}` reference is checked once it resolves, and the connection is refused before anything is dialled |
-| `mcp: true` on an etcd, Oxia, S3 or Kubernetes connection | The whole file fails like any invalid config, and the error names `mcp` and the type, `etcd`, `oxia`, `s3` or `kubernetes` |
+| `mcp: true` on an Oxia, Firestore, Modbus or NETCONF connection | The whole file fails like any invalid config, and the error names `mcp` and the type, such as `oxia` or `netconf` |
+| `mcp: true` on an OPC UA connection with no `agentReadRoots` | The whole file fails like any invalid config, and the error names `mcp` and says to add `agentReadRoots` |
+| `mcp: true` on an S3 connection with no `agentUser` and `agentPassword` | The whole file fails like any invalid config, and the error names the connection, `mcp` and the type |
+| `mcp: true` on an etcd connection whose `user` is `root` | The whole file fails like any invalid config, and the error names the connection and `user` |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |
 | `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged, and the Seed sources card lists the skip with the variable; the endpoint's record also names the field. |
 | `${vault:...}` reference, Vault unreachable / path or key missing / token refused | The connection fails with an explicit error **when it is opened**. Listing connections is unaffected, and so is every other connection. |

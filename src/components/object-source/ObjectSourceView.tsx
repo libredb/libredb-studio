@@ -186,7 +186,7 @@ const DISCONNECTED = "This connection is no longer open, so this definition cann
  */
 const MARKER_OWNER = "libredb-object-apply";
 
-/** The same 500 ms the workspace save effect uses at `use-tab-manager.ts:214`, so the two writers have one rhythm. */
+/** The same 500 ms the workspace save effect uses at `useTabManager` in `use-tab-manager.ts`, so the two writers have one rhythm. */
 const DRAFT_DEBOUNCE_MS = 500;
 
 /** Why a draft is NOT in this browser. Four from the draft store, plus the one only this pane can see. */
@@ -1018,7 +1018,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
   /**
    * The debounced draft write, and the ONE place a draft is stored.
    *
-   * The same 500 ms the workspace save effect uses at `use-tab-manager.ts:214`, so the two
+   * The same 500 ms the workspace save effect uses at `useTabManager` in `use-tab-manager.ts`, so the two
    * writers have one rhythm rather than two the reader can feel the difference between.
    *
    * A buffer typed back to what the engine holds DROPS the draft instead of storing it: a draft
@@ -1788,7 +1788,7 @@ export function ObjectSourceView(props: ObjectSourceViewProps): React.JSX.Elemen
                        * toasts, zero alerts, and the word "quota" nowhere in the document.
                        *
                        * `output` rather than a div with role="status", which is this repository's
-                       * own spelling of a live region (`LazyView.tsx:25`) and what its jsx-a11y
+                       * own spelling of a live region (`ViewLoading` in `LazyView.tsx`) and what its jsx-a11y
                        * gate asks for.
                        */
                       <output

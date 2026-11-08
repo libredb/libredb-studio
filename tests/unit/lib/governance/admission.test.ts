@@ -162,6 +162,11 @@ describe("admitConnectionRows", () => {
     });
     expect(connection.write).toMatchObject({ id: `seed:${ID}`, literal: true, user: "writer" });
     expect(connection.write?.password).toBe("example-only-write-password");
+    // A governed record carries no agent credential: the envelope has no agent key, and a definition holding one is
+    // refused below, so the seed schema's agent fields never reach a governed connection.
+    for (const record of [connection.read, connection.write]) {
+      expect([record?.agentUser, record?.agentPassword]).toEqual([undefined, undefined]);
+    }
 
     // Each envelope was opened for its own level, with the definition exactly as the row holds it.
     expect(opened).toEqual([bindingOf(ID, "read"), bindingOf(ID, "write")]);
@@ -443,6 +448,8 @@ describe("admitConnectionRows", () => {
       ["ssl.verify", true],
       ["ssl", "require"],
       ["options", { statement_timeout: 0 }],
+      // Read roots are declared only by an operator's seed file, so a governed record never carries any.
+      ["agentReadRoots", ["nsu=urn:plant;s=Line1"]],
     ];
     for (const [field, value] of others) {
       const result = admit([connectionRow({ definition: withField(DEFINITION, field, value) })]);
@@ -563,19 +570,50 @@ describe("admitConnectionRows", () => {
     const offered = admit([connectionRow({ write: WRITE, columns: { mcp_enabled: true } })]);
     expect(offered.admitted.map((connection) => [connection.read.mcp, connection.write?.mcp])).toEqual([[true, true]]);
 
-    // MCP is not offered for etcd, so its flag is left off rather than refused, and the row is served.
-    const etcd = admit(
+    // MCP is not offered for Oxia, so its flag is left off rather than refused, and the row is served.
+    const oxia = admit(
       [
         connectionRow({
-          engine: "etcd",
-          definition: { host: "etcd.example.internal", port: 2379 },
+          engine: "oxia",
+          definition: { host: "oxia.example.internal", port: 6648 },
           columns: { mcp_enabled: true },
         }),
       ],
-      { allowedEngines: ["etcd"] },
+      { allowedEngines: ["oxia"] },
     );
-    expect(itemsOf(etcd)).toEqual([]);
-    expect(etcd.admitted[0].read.mcp).toBeUndefined();
+    expect(itemsOf(oxia)).toEqual([]);
+    expect(oxia.admitted[0].read.mcp).toBeUndefined();
+
+    // S3 is offered to MCP only under a seed agent read key, which a governed record never carries, so its flag is
+    // left off the same way and the row is still served.
+    const s3 = admit(
+      [
+        connectionRow({
+          engine: "s3",
+          definition: { host: "s3.example.internal", port: 9000 },
+          columns: { mcp_enabled: true },
+        }),
+      ],
+      { allowedEngines: ["s3"] },
+    );
+    expect(itemsOf(s3)).toEqual([]);
+    expect(s3.admitted[0].read.mcp).toBeUndefined();
+
+    // OPC UA is offered to MCP only beneath read roots a seed declares, which a governed record never carries, so its
+    // flag is left off and the row is still served, with no roots.
+    const opcua = admit(
+      [
+        connectionRow({
+          engine: "opcua",
+          definition: { host: "opc.tcp://plc.example.internal:4840/" },
+          columns: { mcp_enabled: true },
+        }),
+      ],
+      { allowedEngines: ["opcua"] },
+    );
+    expect(itemsOf(opcua)).toEqual([]);
+    expect(opcua.admitted[0].read.mcp).toBeUndefined();
+    expect(opcua.admitted[0].read.agentReadRoots).toBeUndefined();
   });
 
   test("an opener failure that carries no envelope code is no row's fault, so admission throws it", () => {

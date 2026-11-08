@@ -32,8 +32,12 @@ const TLS_PARAMS: Readonly<Partial<Record<DatabaseType, readonly string[]>>> = {
   postgres: ["sslmode", "ssl"],
 };
 
-/** The fields snowflake's `validateSeed` refuses, one per check its provider makes before any socket. */
-const SNOWFLAKE_SEED_FIELDS = ["host", "user", "authMethod", "privateKey", "password", "role"] as const;
+/** The fields each engine's `validateSeed` refuses, which its document's subsection names. */
+const SEED_CHECKED_FIELDS: Readonly<Partial<Record<string, readonly string[]>>> = {
+  etcd: ["user", "agentUser"],
+  opcua: ["agentReadRoots"],
+  snowflake: ["host", "user", "authMethod", "privateKey", "password", "role"],
+};
 
 /** The headings outside fenced code, each with its level and line index. */
 function headingsOf(lines: readonly string[]): { readonly level: number; readonly index: number }[] {
@@ -107,13 +111,14 @@ describe("each provider document's Connection string subsection", () => {
       test("names each field its validateSeed refuses, or says it runs no seed load check", () => {
         const section = sectionOf(type);
         if (spec.validateSeed === null) {
-          expect(type).not.toBe("snowflake");
+          expect(Object.keys(SEED_CHECKED_FIELDS)).not.toContain(type);
           expect(section).toContain("no seed load check");
           return;
         }
-        expect(type).toBe("snowflake");
+        const fields = SEED_CHECKED_FIELDS[type];
+        expect(fields).toBeDefined();
         const spans = codeSpans(section);
-        for (const field of SNOWFLAKE_SEED_FIELDS) expect(spans.has(field.toLowerCase())).toBe(true);
+        for (const field of fields ?? []) expect(spans.has(field.toLowerCase())).toBe(true);
       });
 
       test("names each field only this engine's provider reads", () => {

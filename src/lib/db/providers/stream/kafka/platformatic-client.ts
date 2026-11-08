@@ -31,6 +31,28 @@ import {
 import type { KafkaConnectionOptions } from "./connection-options";
 
 export const KAFKA_SENTINEL_GROUP_ID = "libredb-studio-never-joined";
+
+/**
+ * Every Kafka API this client sends a broker, by name and protocol key: each one a read, or the connection's own
+ * version and authentication exchange. It is the whole of the provider's reach, since this file is the only one that
+ * reaches the library, so it names no API that produces, creates, deletes, alters, commits or joins a group;
+ * tests/unit/db/kafka/write-reach.test.ts holds the real library, driven through every method below, to it.
+ */
+export const KAFKA_READ_APIS = Object.freeze({
+  Fetch: 1,
+  ListOffsets: 2,
+  Metadata: 3,
+  OffsetFetch: 9,
+  FindCoordinator: 10,
+  DescribeGroups: 15,
+  ListGroups: 16,
+  SaslHandshake: 17,
+  ApiVersions: 18,
+  DescribeConfigs: 32,
+  DescribeLogDirs: 35,
+  SaslAuthenticate: 36,
+  ConsumerGroupDescribe: 69,
+});
 const KAFKA_FETCH_MAX_WAIT_MS = 250;
 const KAFKA_FETCH_MAX_BYTES = 1024 * 1024;
 
@@ -43,7 +65,7 @@ interface AdminLike {
   describeGroups(o: object): Promise<Map<string, LibClassicGroup>>;
   listConsumerGroupOffsets(o: object): Promise<LibGroupOffsets[]>;
   describeLogDirs(o: object): Promise<LibBrokerLogDirs[]>;
-  /** A bare array (dist/clients/admin/admin.d.ts:25), not an object with a coordinators key. */
+  /** A bare array (`Admin.findCoordinator` in @platformatic/kafka 2.14.0's `dist/clients/admin/admin.d.ts`), not an object with a coordinators key. */
   findCoordinator(o: object): Promise<Array<{ key: string; nodeId: number; host: string; port: number }>>;
   listApis(): Promise<Array<{ apiKey: number; name: string; minVersion: number; maxVersion: number }>>;
   close(): Promise<void>;
@@ -257,7 +279,7 @@ const READ_COMMITTED = 1;
  * The Fetch API, and the one version this adapter sends: the first that names a topic by id
  * (KIP-516), which every broker from Apache Kafka 3.1 on answers, and where Redpanda v26.2.2 stops.
  */
-const FETCH_API_KEY = 1;
+const FETCH_API_KEY = KAFKA_READ_APIS.Fetch;
 const FETCH_VERSION = 13;
 /** Session id 0 with epoch -1 asks for a full answer and opens no fetch session (KIP-227). */
 const SESSIONLESS_ID = 0;
@@ -294,7 +316,7 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
   const admin = new lib.Admin(base);
   // groupProtocol is pinned rather than left to the library default: Consumer.close()
   // leaves a KIP-848 group with a heartbeat whenever the protocol is "consumer", joined
-  // or not (dist/clients/consumer/consumer.js:134-139).
+  // or not (`Consumer.close` in @platformatic/kafka 2.14.0's `dist/clients/consumer/consumer.js`).
   const consumer = new lib.Consumer({
     ...base,
     groupId: KAFKA_SENTINEL_GROUP_ID,
@@ -657,7 +679,7 @@ function mapMetadata(md: LibMetadata): KafkaClusterMetadata {
   const topics: KafkaTopicMetadata[] = [...md.topics.entries()]
     .map(([name, t]): KafkaTopicMetadata => {
       // The library's metadata cache skips internal topics and answers their names with
-      // undefined (dist/clients/base/base.js:513-531); a missing topic fails before this as
+      // undefined (the metadata cache of `Base` in @platformatic/kafka 2.14.0's `dist/clients/base/base.js`); a missing topic fails before this as
       // "Unknown topic", so undefined here is an internal topic.
       if (t === undefined) throw internalTopic(name);
       return {

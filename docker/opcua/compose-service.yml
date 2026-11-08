@@ -28,8 +28,10 @@ opcua:
     # Loopback only, and here it is the whole point rather than a habit: the flags above make this
     # server accept any client certificate on an unsecured channel. Published without the host
     # address, Docker's default is 0.0.0.0, and the fixture answered on every interface of whatever
-    # machine ran it. `tests/unit/db/opcua/live-environment.test.ts` holds this line.
-    - "127.0.0.1:54840:50000"
+    # machine ran it. The host port is Docker's pick (`docker compose port opcua 50000` reads it):
+    # a fixed one inside the ephemeral range (32768-60999) can be held by a client
+    # socket and refuse the bind. `tests/unit/db/opcua/live-environment.test.ts` holds this line.
+    - "127.0.0.1::50000"
   # NO HEALTHCHECK, and the reason is measured rather than an omission. A healthcheck runs INSIDE
   # the container, and nothing in this image can speak OPC UA to ask the server whether it is up:
   # `nc` and `wget` are absent (checked in the image), `curl` is present but OPC UA is a binary

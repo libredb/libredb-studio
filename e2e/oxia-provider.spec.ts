@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { CREDENTIAL_WARNINGS } from "../src/lib/db/credential-warnings";
 import { parseDataServers } from "../src/lib/db/providers/keyvalue/oxia/connection-options";
-import { DB_UI_CONFIG } from "../src/lib/db-ui-config";
+import { DB_UI_CONFIG, READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * What a user sees in the connection dialog when choosing Oxia (SB3-5.8), and the refusals Test Connection answers.
@@ -60,7 +60,7 @@ test.describe("Oxia in the connection dialog", () => {
     await expect(dialog.getByText("Connection String", { exact: true })).toHaveCount(0);
   });
 
-  test("draws Host, Port, Token, Namespace and Data servers, the TLS panel, the SSH Tunnel toggle and the Read-only toggle, and no User box", async ({
+  test("draws Host, Port, Token, Namespace and Data servers, the TLS panel, the SSH Tunnel toggle and the fixed Read-only label, and no User box", async ({
     page,
   }) => {
     const dialog = page.locator('[role="dialog"]');
@@ -74,17 +74,18 @@ test.describe("Oxia in the connection dialog", () => {
     await expect(dialog.locator('label[for="dataServers"]')).toHaveText(oxia.fieldLabels?.dataServers ?? "");
     await expect(dialog.getByText("SSL / TLS", { exact: true })).toBeVisible();
     await expect(dialog.getByText("SSH Tunnel", { exact: true })).toBeVisible();
-    await expect(dialog.getByLabel("Read-only", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
   });
 
-  test("draws the five hints and the read-only hint", async ({ page }) => {
+  test("draws the five hints and the sentence under the fixed Read-only label", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     // The consent box and its hint are drawn while SSL Mode is disable, the default.
     for (const field of ["host", "password", "database", "dataServers", "allowInsecureAuth"] as const) {
       // oxlint-disable-next-line no-await-in-loop -- one hint at a time, so a failure names its field.
       await expect(dialog.getByTestId(`${field}-hint`)).toHaveText(oxia.fieldHints?.[field] ?? "");
     }
-    await expect(dialog.locator("#readOnly-hint")).toHaveText(oxia.readOnlyHint ?? "");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
   });
 
   test("the credential warning shows before Test Connection for a JWT with no exp", async ({ page }) => {

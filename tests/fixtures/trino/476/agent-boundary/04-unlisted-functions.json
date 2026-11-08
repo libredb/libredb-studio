@@ -1,0 +1,25 @@
+[
+ {
+  "note": "table function names no catalog lists, called with the proof's probe: the name is looked up before the permission check, so a name that does not resolve answers FUNCTION_NOT_FOUND under every access control and proves nothing about one that does"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg\".\"system\".\"libredb_no_such_function\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg\".\"libredb_no_such_schema\".\"query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"lake\".\"system\".\"query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"libredb_no_such_catalog\".\"system\".\"query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SHOW FUNCTIONS FROM \"lake\".\"system\"",
+  "txn": "read-only"
+ }
+]

@@ -67,6 +67,7 @@ export const SNMP_AGENT_FAILURE_SENTENCES = {
     `${TIME_BUDGET_PREFIX}: no answer within ${ms}ms. Over SNMPv2c silence is also how an agent answers a community it does not accept, an object too large for one message, or a request a filter dropped, so the read was not answered.`,
   tooBig: `The agent answered that the reply would not fit one message (tooBig), so it sent none of it: ask for fewer objects in one get or next. ${NO_DEVICE_TEXT}`,
   requestTooLarge: `The request did not fit one datagram, so it was never sent: ask for fewer objects in one get or next. ${NO_DEVICE_TEXT}`,
+  answerTooLarge: `The agent answered with more objects than one request asks for, so Studio refused the answer as too large rather than read it: ask for fewer objects in one get or next. ${NO_DEVICE_TEXT}`,
   refused: (status: number): string => `The agent refused the read with SNMP error-status ${status}. ${NO_DEVICE_TEXT}`,
   credential: `The agent refused this connection's credential for the read. ${NO_DEVICE_TEXT}`,
   unreachable: `The agent could not be reached for the read. ${NO_DEVICE_TEXT}`,
@@ -109,6 +110,8 @@ function failureSentence(failure: SnmpFailure, timeoutMs: number): string {
       return F.tooBig;
     case "requestTooLarge":
       return F.requestTooLarge;
+    case "answerTooLarge":
+      return F.answerTooLarge;
     case "credential":
       return F.credential;
     case "transport":

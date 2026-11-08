@@ -5,8 +5,8 @@
  *
  * The listing is one `GET /v1/schema`, which also answers every collection's columns, so `describeObjects` keeps the
  * one-round-trip contract. `describeObject` adds one object read with `include=vector` to a single-tenant collection
- * to spell its vectors' dimensions, which the schema does not declare (spec 4.2); a multi-tenant collection is never
- * read past its schema, so no tenant is touched (W6).
+ * to spell its vectors' dimensions, which the schema does not declare (spec 4.2), on an editor handle only; a
+ * multi-tenant collection is never read past its schema, so no tenant is touched (W6).
  *
  * Every read goes through the `send` the surface is handed: index.ts gives each call its own limiter permit and the
  * surface's deadline, and raises a failure in errors.ts's words, so nothing here retries or words an HTTP failure.
@@ -82,6 +82,13 @@ export interface WeaviateSurfaceContext<Ops extends WeaviateOp> {
   readonly paths: WeaviatePathState;
   /** A credential is configured, so a listing holds what it may see rather than every collection. */
   readonly scoped: boolean;
+  /**
+   * Whether a description may read a stored object to spell a vector's dimension: an editor handle's yes. Under an
+   * execution profile no stored object is read for a description, so a key that may read a collection's definition
+   * and none of its objects is described all the same (`data-scope/objects-note-sample-nodata`), with the dimension
+   * the schema never declares left as `?`.
+   */
+  readonly readsObjects: boolean;
 }
 
 export type WeaviateObjectContext = WeaviateSurfaceContext<WeaviateObjectOp>;
@@ -168,7 +175,7 @@ async function sampledDimensions(
   context: WeaviateSurfaceContext<"objects">,
   definition: WeaviateClass,
 ): Promise<ReadonlyMap<string, number>> {
-  if (definition.multiTenant || definition.vectors.length === 0) return new Map();
+  if (!context.readsObjects || definition.multiTenant || definition.vectors.length === 0) return new Map();
   const answer = await context.send(
     { op: "objects", params: {}, query: { class: definition.name, limit: "1", include: "vector" } },
     context.signal,

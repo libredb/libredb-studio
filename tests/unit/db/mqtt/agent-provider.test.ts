@@ -255,9 +255,78 @@ describe("the window read", () => {
     const { provider } = await opened({ messages: PEOPLE, end: "wait" });
     const result = await provider.queryReadOnly('{"read": "window"}', BUDGET);
     expect(result.rows[0]).toMatchObject({ stop_reason: "budget-time", scope: "unknown" });
-    expect(result.rows[0]?.listened_ms as number).toBeGreaterThanOrEqual(MQTT_READ_BUDGET_MS - 50);
+    const row = result.rows[0] as Record<string, unknown>;
+    // The window ran its whole length; the subscription listened inside it, the handshake's share less.
+    expect(row.window_ms as number).toBeGreaterThanOrEqual(MQTT_READ_BUDGET_MS);
+    expect(row.listened_ms as number).toBeGreaterThan(0);
+    expect(row.listened_ms as number).toBeLessThanOrEqual(row.window_ms as number);
     expect(result.warnings?.[0]?.message).toContain("stopped because the window ended.");
   }, 10_000);
+
+  test("the window and the time it listened are measured on the timer's own clock, so a wall clock set back mid-read shortens neither", async () => {
+    // A virtual machine's wall clock is stepped and slewed by time sync, while the window's timer runs on the monotonic
+    // clock. Here the wall clock loses 200 ms once the read is under way: the answer still reports the window it ran.
+    const { provider } = await opened({ messages: PEOPLE, end: "wait" });
+    const wallClock = Date.now;
+    const setBackAt = wallClock() + 500;
+    Date.now = () => {
+      const now = wallClock();
+      return now >= setBackAt ? now - 200 : now;
+    };
+    let result: QueryResult;
+    try {
+      result = await provider.queryReadOnly('{"read": "window"}', BUDGET);
+    } finally {
+      Date.now = wallClock;
+    }
+    const row = result.rows[0] as Record<string, unknown>;
+    expect(row.stop_reason).toBe("budget-time");
+    expect(row.window_ms as number).toBeGreaterThanOrEqual(MQTT_READ_BUDGET_MS);
+    expect(row.window_ms as number).toBeLessThan(MQTT_READ_BUDGET_MS + 100);
+    expect(row.listened_ms as number).toBeGreaterThan(MQTT_READ_BUDGET_MS - 100);
+    expect(row.listened_ms as number).toBeLessThanOrEqual(row.window_ms as number);
+  }, 10_000);
+
+  test("a budget timer that fires before the clock reaches the window's end does not end the window short", async () => {
+    // Bun's timer fired early on macOS: CI measured a 2,999 ms window twice (runs 41381663638 and
+    // 41404970621). Here the clock the read reports with is virtual and the window's timer fires at 2,999.4 ms of it, so
+    // the window would be one millisecond short of the 3,000 ms the doc promises if the read ended on the timer alone.
+    const { provider } = await opened({ messages: PEOPLE, end: "wait" });
+    const realNow = performance.now;
+    const realSetTimeout = globalThis.setTimeout;
+    let now = 10_000;
+    const budgetDelays: number[] = [];
+    let inBudgetTimer = false;
+    const fake = ((handler: () => void, delay?: number, ...rest: unknown[]) => {
+      if (delay !== MQTT_READ_BUDGET_MS && !inBudgetTimer) return realSetTimeout(handler, delay, ...rest);
+      budgetDelays.push(delay as number);
+      // The first budget timer is early by 0.6 ms; any timer armed from inside it fires on time.
+      const advance = budgetDelays.length === 1 ? MQTT_READ_BUDGET_MS - 0.6 : (delay as number);
+      return realSetTimeout(() => {
+        now += advance;
+        inBudgetTimer = true;
+        try {
+          handler();
+        } finally {
+          inBudgetTimer = false;
+        }
+      }, 0);
+    }) as unknown as typeof setTimeout;
+    performance.now = () => now;
+    globalThis.setTimeout = fake;
+    let result: QueryResult;
+    try {
+      result = await provider.queryReadOnly('{"read": "window"}', BUDGET);
+    } finally {
+      performance.now = realNow;
+      globalThis.setTimeout = realSetTimeout;
+    }
+    const row = result.rows[0] as Record<string, unknown>;
+    expect(row.stop_reason).toBe("budget-time");
+    expect(row.window_ms as number).toBeGreaterThanOrEqual(MQTT_READ_BUDGET_MS);
+    // The early timer is armed again for the rest of the window, rounded up to a whole millisecond.
+    expect(budgetDelays).toEqual([MQTT_READ_BUDGET_MS, 1]);
+  });
 
   test("one message on one topic is counted in the singular", async () => {
     const { provider } = await opened({ messages: [PEOPLE[0]], end: "disconnect" });

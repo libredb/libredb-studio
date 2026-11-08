@@ -93,7 +93,7 @@ describe("connection string registry census", () => {
       if (scheme !== null) expect(scheme).toBe(id);
     }
     expect(idsWhere((id) => CONNECTION_STRING[id].readTls !== null)).toEqual(["db2", "mssql", "mysql", "postgres"]);
-    expect(idsWhere((id) => CONNECTION_STRING[id].validateSeed !== null)).toEqual(["snowflake"]);
+    expect(idsWhere((id) => CONNECTION_STRING[id].validateSeed !== null)).toEqual(["etcd", "opcua", "snowflake"]);
   });
 
   test("connectionStringFor answers no connection and unknown types with their own specs", () => {

@@ -33,6 +33,10 @@
  *    a fresh random suffix, in the bound keyspace; the role holds no DROP, so an enforcing server answers Unauthorized,
  *    and a server that enforces nothing drops nothing, since no such table exists (captures 02 and 07).
  *
+ * Between checks 1 and 2, a connection bound to one of Cassandra's own keyspaces (`CASSANDRA_SYSTEM_KEYSPACES`) is
+ * refused: the role is bounded by its keyspace, so a role holding only SELECT on `system_auth` and bound to it would
+ * pass every check and read every role's password hash.
+ *
  * Every finding of checks 2 to 4 is collected and named in one refusal. A failure to reach the server leaves as it
  * came, and a check the server refuses to answer is a refusal of the profile, so no failure admits a role.
  *
@@ -47,6 +51,7 @@
  */
 import { ExecutionProfileError } from "../../../errors";
 import { hasLoneCarriageReturnInLineComment, readSqlSpan } from "@/lib/sql/spans";
+import { CASSANDRA_SYSTEM_KEYSPACES } from "./objects";
 import { CASSANDRA_SQL_GRAMMAR } from "./sql-grammar";
 import { type CassandraQueryResult, CassandraTransportError, type CassandraFaultCategory } from "./transport";
 
@@ -122,6 +127,21 @@ async function assertMeasuredServer(read: CassandraAgentReader): Promise<void> {
   }
   throw new ExecutionProfileError(
     "The agent read-only execution profile is proven on Apache Cassandra 5.0 only; this server answers system.versions, which ScyllaDB keeps and Apache Cassandra does not, so its enforcement is unmeasured and the connection is refused.",
+    "PROFILE_UNSUPPORTED_TARGET",
+  );
+}
+
+/**
+ * The bound keyspace is not one Apache Cassandra keeps for itself. Checks 3 and 4 and the read-scope check bound the
+ * role to its keyspace, so a role holding only SELECT on `system_auth` and bound to it passes them, and reads every
+ * role's password hash; `system_traces` and `system` hold other sessions' statements and the node's state the same way.
+ * The list is the provider's exact one, compared in lower case so no spelling of one passes; a user keyspace merely
+ * named like one, `system_reports` say, is the user's.
+ */
+function assertDataKeyspace(keyspace: string): void {
+  if (!CASSANDRA_SYSTEM_KEYSPACES.includes(keyspace.toLowerCase())) return;
+  throw new ExecutionProfileError(
+    `The agent read-only execution profile reads the connection's keyspace, and this connection names ${keyspace}, one of the keyspaces Apache Cassandra keeps for itself, which hold its roles and their password hashes, other sessions' traced statements and the node's own state, so the connection is refused. Set the keyspace on the connection to a keyspace of your data.`,
     "PROFILE_UNSUPPORTED_TARGET",
   );
 }
@@ -252,6 +272,7 @@ export async function verifyCassandraAgentProfile(
     );
   }
   await assertMeasuredServer(read);
+  assertDataKeyspace(keyspace);
   const statements = cassandraAgentStatements(role, keyspace, nonce);
   const superusers = superuserRoles(await readListing(read, statements.roles, role, "roles"), role);
   const permissions = permissionFindings(
@@ -309,8 +330,11 @@ const SELECT_KEYWORD = /^select(?![\w$])/i;
  * ends the comment there (capture 14), and so does the grammar the walk reads, but a reader that runs the comment on
  * to the line feed reads a different statement: `-- x<CR>ALTER ROLE ... = '<LF>SELECT ... = ' -- '<LF>` is a SELECT to
  * it, and the server ran it as the role's password change. Such text is refused whichever reading is the walk's.
+ *
+ * Last, the one table the SELECT reads must be the connection's keyspace's or `system_schema`'s
+ * (`readScopeRefusal`), since the server lets every signed-in role read some system tables no grant names.
  */
-export function cassandraAgentStatementRefusal(cql: string): string | null {
+export function cassandraAgentStatementRefusal(cql: string, keyspace: string): string | null {
   const grammar = CASSANDRA_SQL_GRAMMAR.grammar;
   if (hasLoneCarriageReturnInLineComment(cql, grammar)) {
     return `${FENCE}; this text holds a carriage return inside a -- or // comment with more text after it, and the server ends the comment at that carriage return, so the server could read a statement other than the one checked here, and it was not sent. End a comment with a line feed.`;
@@ -342,7 +366,8 @@ export function cassandraAgentStatementRefusal(cql: string): string | null {
     if (cql[at] === ";") ended = true;
     at++;
   }
-  return opened ? null : `${FENCE}; this text holds no statement, so nothing was sent.`;
+  if (!opened) return `${FENCE}; this text holds no statement, so nothing was sent.`;
+  return readScopeRefusal(cql, keyspace);
 }
 
 function notSelect(): string {
@@ -351,4 +376,101 @@ function notSelect(): string {
 
 function goesOn(): string {
   return `${FENCE}; this text goes on after its first statement's semicolon, so it was not sent. Send one SELECT at a time.`;
+}
+
+/** The keyspace of the schema catalog, which the agent's catalog read and every driver read; its rows are no data. */
+const SCHEMA_KEYSPACE = "system_schema";
+
+/** What every read-scope refusal starts with. */
+const SCOPE = `The agent read-only execution profile reads the tables of the connection's keyspace and of ${SCHEMA_KEYSPACE}, and nothing else`;
+
+/** A run of code as the scope check reads it: a word, a quoted name with its quotes undone, a literal, or one mark. */
+interface CqlToken {
+  readonly kind: "word" | "quoted" | "literal" | "mark";
+  readonly text: string;
+}
+
+const WORD = /[A-Za-z0-9_]+/y;
+
+/** An unquoted CQL name: a letter, then letters, digits and underscores. */
+const UNQUOTED_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/** The code of `cql` as tokens, read with CQL's own grammar: trivia skipped, strings and quoted names whole. */
+function cqlTokens(cql: string): CqlToken[] {
+  const grammar = CASSANDRA_SQL_GRAMMAR.grammar;
+  const tokens: CqlToken[] = [];
+  for (let at = 0; at < cql.length; ) {
+    const span = readSqlSpan(cql, at, grammar);
+    if (span !== null && span.kind !== "subscript") {
+      if (span.kind === "quoted-identifier") {
+        tokens.push({ kind: "quoted", text: cql.slice(at + 1, span.end - 1).replaceAll('""', '"') });
+      } else if (span.kind === "string" || span.kind === "dollar-string") {
+        tokens.push({ kind: "literal", text: cql.slice(at, span.end) });
+      }
+      at = span.end;
+      continue;
+    }
+    WORD.lastIndex = at;
+    const word = WORD.exec(cql);
+    if (word !== null) {
+      tokens.push({ kind: "word", text: word[0] });
+      at += word[0].length;
+      continue;
+    }
+    tokens.push({ kind: "mark", text: cql[at] });
+    at++;
+  }
+  return tokens;
+}
+
+/** A keyspace or table name as the server reads it: a quoted name as written, an unquoted one in lower case. */
+function nameOf(token: CqlToken | undefined): string | null {
+  if (token?.kind === "quoted") return token.text === "" ? null : token.text;
+  if (token?.kind === "word" && UNQUOTED_NAME.test(token.text)) return token.text.toLowerCase();
+  return null;
+}
+
+/**
+ * The read-scope check: `null` when the SELECT reads a table of `keyspace` or of `system_schema`, else the reason it is
+ * refused. Measured on 5.0.9 (capture 15), a role holding only SELECT on its keyspace reads, with no grant,
+ * `system.local`, `system.peers`, `system.peers_v2`, `system.size_estimates`, `system.table_estimates`, every
+ * `system_schema` and `system_virtual_schema` table, and `system_traces.sessions` and `system_traces.events`, which
+ * hold the text of other sessions' traced statements, values included; no grant the role check reads opens those, so
+ * the role check cannot keep the agent off them.
+ *
+ * A CQL SELECT reads one table, named after its FROM, and has no join and no subquery; FROM is a reserved word, so the
+ * first FROM outside a string, a quoted name and every bracket is the statement's. The name after it is read as the
+ * server reads it, an unquoted name in lower case and a quoted one as written, across comments and whitespace, and an
+ * unqualified table is the connection's keyspace's, since the fence refuses every `USE`. A name the check cannot read
+ * is refused, never guessed.
+ */
+function readScopeRefusal(cql: string, keyspace: string): string | null {
+  const tokens = cqlTokens(cql);
+  const unreadable = `${SCOPE}; which table this SELECT reads cannot be told from its text, so it was not sent. Write FROM and then a table of the keyspace ${keyspace}, as table, ${keyspace}.table or a quoted name.`;
+  let depth = 0;
+  let from = -1;
+  for (const [index, token] of tokens.entries()) {
+    if (token.kind === "mark") {
+      if ("([{".includes(token.text)) depth++;
+      else if (")]}".includes(token.text)) depth--;
+      continue;
+    }
+    if (token.kind === "word" && token.text.toLowerCase() === "from") {
+      if (depth !== 0) return unreadable;
+      from = index;
+      break;
+    }
+  }
+  if (from === -1) return unreadable;
+  const first = nameOf(tokens[from + 1]);
+  if (first === null) return unreadable;
+  let read = { keyspace, table: first };
+  const dot = tokens[from + 2];
+  if (dot?.kind === "mark" && dot.text === ".") {
+    const table = nameOf(tokens[from + 3]);
+    if (table === null) return unreadable;
+    read = { keyspace: first, table };
+  }
+  if (read.keyspace === keyspace || read.keyspace === SCHEMA_KEYSPACE) return null;
+  return `${SCOPE}; this SELECT reads ${read.keyspace}.${read.table}, so it was not sent. Name a table of the keyspace ${keyspace}, or of ${SCHEMA_KEYSPACE} for the schema.`;
 }

@@ -198,9 +198,9 @@ function pairedAssignments(lines: string[], name: string): string[] {
  * table shape in these files.
  *
  * WHICH cell holds the value is not answerable by position. The tables actually written here
- * are `| Variable | Required | Description |` (README.md:640, DOCKERHUB.md:184), where a
+ * are `| Variable | Required | Description |` (the "Environment Variables" section of README.md, the "Environment variables" section of DOCKERHUB.md), where a
  * default is written inside the description as ``(default: `x`)`` - the `ADMIN_EMAIL` row
- * does exactly that - and `| Variable | Source | Conditional |` (docs/HELM_CHART.md:166),
+ * does exactly that - and `| Variable | Source | Conditional |` (the "6. ConfigMap / Environment Variables" section of docs/HELM_CHART.md),
  * where the second cell is a chart value PATH. Reading the cell after the name misses the
  * first and reports `secrets.adminPassword` as a published password in the second, which is
  * the failure that gets a guard deleted by the next person it stops.
@@ -220,8 +220,8 @@ function pairedAssignments(lines: string[], name: string): string[] {
  *    read. That is the single positional convention left when nothing has been declared.
  * 4. A two-column table offers no column to choose between: whatever its header calls that
  *    one cell, it is everything the table says about the variable, so a value written there
- *    AS a value - `x` or **x** - is read as one. deploy/koyeb/README.md:68 and
- *    deploy/kubero/README.md:56 are that table, headed `Notes`, and a bare word in them is a
+ *    AS a value - `x` or **x** - is read as one. the "Environment variables" section of deploy/koyeb/README.md and
+ *    the "Environment variables" section of deploy/kubero/README.md are that table, headed `Notes`, and a bare word in them is a
  *    note (`auto-generated`) while a marked-up one is a credential, measured on both.
  *
  * Read in a table, a value that spells the variable's own name is a reference to the setting
@@ -239,7 +239,7 @@ function isTableRule(line: string): boolean {
 
 /**
  * The header cells governing each line, and which lines are the table's own scaffolding.
- * docs/STORAGE.md:388 writes `| `STORAGE_ENCRYPTION_KEY` | Key used |` as a HEADER; a header
+ * the "What is encrypted" section of docs/STORAGE.md writes `| `STORAGE_ENCRYPTION_KEY` | Key used |` as a HEADER; a header
  * states a column, it does not publish a value, so it is not read as a row.
  */
 function tableStructure(lines: string[]): { header: string[] | null; structural: boolean }[] {
@@ -455,8 +455,8 @@ describe("the documentation publishes no credential that works", () => {
 
   test("reads a password out of a login body, and leaves a schema alone", () => {
     const caught = (text: string) => jsonPasswordValues(text);
-    // The two shapes that were really in docs/API_DOCS.md, copied from it: the cURL body at
-    // line 1685 and the fetch() body at line 1769. The second is a JavaScript object literal
+    // The two shapes that were really in docs/API_DOCS.md, copied from it: the cURL body and the
+    // fetch() body of its login example. The second is a JavaScript object literal
     // - bare key, single quotes - and a rule that required double quotes read the first and
     // walked past the second, which is how that file published two logins and reported one.
     expect(caught(`  -d '{"email": "admin@libredb.org", "password": "example-fake-login"}' \\`)).toEqual([
@@ -592,7 +592,7 @@ describe("the documentation publishes no credential that works", () => {
   test("reads a value a table hides past the cell after the name", () => {
     const caught = (text: string, name = "ADMIN_PASSWORD") => assignments(text, name);
 
-    // README.md:640 and DOCKERHUB.md:184 are shaped `| Variable | Required | Description |`.
+    // the "Environment Variables" section of README.md and the "Environment variables" section of DOCKERHUB.md are shaped `| Variable | Required | Description |`.
     // The cell after the name is a tick or a cross, and the value goes inside the description
     // - which is where the ADMIN_EMAIL row directly above already writes its own default.
     const required = "| Variable | Required | Description |\n|----------|----------|-------------|\n";
@@ -627,7 +627,7 @@ describe("the documentation publishes no credential that works", () => {
     expect(secret).toEqual(["example-fake-secret-not-a-real-x"]);
     expect(secret[0].length).toBeGreaterThanOrEqual(JWT_SECRET_MIN_LENGTH);
 
-    // A two-column table has no column to choose between - deploy/koyeb/README.md:68 heads
+    // A two-column table has no column to choose between - the "Environment variables" section of deploy/koyeb/README.md heads
     // its one cell `Notes` - so a value written there AS a value is read as one.
     const notes = "| Variable | Notes |\n|----------|-------|\n";
     expect(caught(notes + "| `JWT_SECRET` | `example-fake-secret-not-a-real-x` |", "JWT_SECRET")).toEqual([
@@ -645,7 +645,7 @@ describe("the documentation publishes no credential that works", () => {
   test("leaves a table that names a source, a requirement or a note alone", () => {
     const caught = (text: string, name = "ADMIN_PASSWORD") => assignments(text, name);
 
-    // docs/HELM_CHART.md:166 is `| Variable | Source | Conditional |` and its second cell is
+    // the "6. ConfigMap / Environment Variables" section of docs/HELM_CHART.md is `| Variable | Source | Conditional |` and its second cell is
     // a chart value PATH. Read positionally it reports the path as a published password, and
     // `secrets.jwtSecret.fromExistingSecret` is 37 characters, so it would fail the "no
     // secret the server would accept" test outright. This is the misfire that gets a guard
@@ -659,7 +659,7 @@ describe("the documentation publishes no credential that works", () => {
     expect(caught(source + "| `ADMIN_PASSWORD` | none | When local auth |")).toEqual([]);
     expect(caught(source + "| `ADMIN_PASSWORD` | yes | When local auth |")).toEqual([]);
 
-    // The rows as README.md:640 and DOCKERHUB.md:186 actually write them: where the password
+    // The rows as the "Environment Variables" section of README.md and the "Environment variables" section of DOCKERHUB.md actually write them: where the password
     // comes from, never what it is.
     const required = "| Variable | Required | Description |\n|----------|----------|-------------|\n";
     const real = "| `ADMIN_PASSWORD` | @(autogenerated) | Admin password; auto-generated on first run |";
@@ -674,7 +674,7 @@ describe("the documentation publishes no credential that works", () => {
       "| `USER_EMAIL` | No | Login email (default `user@libredb.org`, only read when `USER_PASSWORD` is set) |";
     expect(caught(required + other, "USER_PASSWORD")).toEqual([]);
 
-    // deploy/koyeb/README.md:68 and deploy/railway/PUBLISH.md:31, measured as written. In a
+    // the "Environment variables" section of deploy/koyeb/README.md and the "Pre-configured variables (defaults — entered for the deployer)" section of deploy/railway/PUBLISH.md, measured as written. In a
     // two-column table an unmarked cell is the note it is headed as, however few words it is.
     const notes = "| Variable | Notes |\n|---|---|\n| `JWT_SECRET` | 32+ chars, set your own |";
     expect(caught(notes, "JWT_SECRET")).toEqual([]);
@@ -687,7 +687,7 @@ describe("the documentation publishes no credential that works", () => {
       "| Variable | Value | Description |\n|---|---|---|\n| `ADMIN_PASSWORD` | `${{ secret(16) }}` | Auto |";
     expect(caught(railway)).toEqual([]);
 
-    // docs/STORAGE.md:388 writes the name in a HEADER cell. A header states what a column
+    // the "What is encrypted" section of docs/STORAGE.md writes the name in a HEADER cell. A header states what a column
     // holds; it does not publish a value.
     const heading =
       "| `STORAGE_ENCRYPTION_KEY` | Key used |\n|---|---|\n| unset (default) | Derived from `JWT_SECRET` |";

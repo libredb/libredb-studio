@@ -181,7 +181,7 @@ Each provider implements:
 - **`getLabels()`** - entityName, selectAction, searchPlaceholder, etc. (drives all UI text)
 - **`prepareQuery()`** - handles query limiting per-provider (SQL LIMIT injection vs MongoDB native)
 
-A graph engine is the one family with a shared base of its own: `GraphBaseProvider` (`src/lib/db/graph/graph-base-provider.ts`) runs every statement through the shared Cypher read policy, the engine's statement gate (which an allowlisted SHOW form skips) and one READ session over the Bolt transport, and the engine supplies a `GraphEngineProfile` (its policy lists, catalog reads, gate and error table) plus its declarations and monitoring reads.
+A graph engine is the one family with a shared base of its own: `GraphBaseProvider` (`src/lib/db/graph/graph-base-provider.ts`) runs every statement through the shared Cypher read policy, the engine's statement gate (which an allowlisted SHOW form skips on the editor path, while agent handles classify every SHOW form) and one READ session over the Bolt transport, and the engine supplies a `GraphEngineProfile` (its policy lists, catalog reads, gate and error table) plus its declarations and monitoring reads.
 The graph core under `src/lib/db/graph/` is pure and shipped to the browser, where the editor's Cypher language and completion read it; `bolt/` and the base class are server only.
 [`ADDING_A_PROVIDER.md`](./ADDING_A_PROVIDER.md#adding-a-graph-engine) describes the layers and the profile, and [`providers/neo4j.md`](./providers/neo4j.md) the one engine on them.
 
@@ -291,6 +291,8 @@ See [LAUNCH.md](LAUNCH.md).
 
 Multi-statement queries execute sequentially via `POST /api/db/multi-query`, one request per execution unit (`splitExecutionUnits`): a statement, or on SQL Server the whole batch between `GO` lines.
 
+The run target, the connection type's refusal, the confirmation and the route of a run are decided by the functions `analyzeStatement` in `src/lib/editor/statement-analysis.ts` composes in the web editor's order: the web editor calls them one by one, `POST /api/db/statement/analyze` answers `analyzeStatement` whole to a client outside the browser, and the VS Code extension's child calls the run target, the editor language and the gate.
+
 ### 4.4. Storage Abstraction Layer
 
 - **Write-through cache architecture**: localStorage (L1 cache) + optional server storage (L2 persistent)
@@ -347,9 +349,9 @@ Full behaviour, the tool set, what bounds a run, the HTTP surface and the honest
 
 ### 4.10. MCP Server (`src/lib/mcp/`, off by default)
 
-An MCP endpoint at `/api/mcp` for AI clients of the user's own, served by the official MCP TypeScript SDK: `createMcpHandler` at module scope and one `McpServer` per request, in revision 2026-07-28 and, statelessly, 2025-11-25 and 2025-06-18.
+An MCP endpoint at `/api/mcp` for AI clients of the user's own, served by the official MCP TypeScript SDK: two `createMcpHandler` handlers at module scope, one for a token's own `tools/list` and one for every other request, and one server per request, in revision 2026-07-28 and, statelessly, 2025-11-25 and 2025-06-18.
 It authenticates with a scoped bearer token each user mints on the settings screen, signed with a key derived from `JWT_SECRET` under a configured label, and never with the session cookie; `src/proxy.ts` and the route both check the Origin, the Host on a loopback bind, and the token.
-Its five tools reach only seed connections opted in with `mcp: true`, through `acquireExecutionProfileProvider` alone, bound every result to 32 KiB behind an untrusted-content notice, and write `mcp_operation` audit events, the decision before any provider.
+Its tools reach only seed connections opted in with `mcp: true`, through `acquireExecutionProfileProvider` alone, bound every result to 32 KiB behind an untrusted-content notice, and write `mcp_operation` audit events, the decision before any provider.
 It is standalone-only: nothing under `src/lib/mcp/` or `src/app/` is reachable from the package's entry points, which a package-boundary test asserts.
 Full behaviour, client configuration and limits: [`docs/MCP.md`](MCP.md).
 

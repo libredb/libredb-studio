@@ -106,7 +106,15 @@ describe("getCapabilities", () => {
       supportsTransactions: false,
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
-      enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/graph/cypher/read-policy.ts", symbol: "checkCypherRead" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: { reach: "absent" },
+        transaction: { reach: "absent" },
+      },
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,
@@ -156,7 +164,7 @@ describe("connect", () => {
   test("a failed version read does not fail the connection; the version is then unknown", async () => {
     const logged = spyOn(console, "error").mockImplementation(() => {});
     try {
-      const refused = new GraphClientError("access-mode", "Permission denied", "Neo.ClientError.Security.Forbidden");
+      const refused = new GraphClientError("forbidden", "Permission denied", "Neo.ClientError.Security.Forbidden");
       const { provider } = await connected({ [NEO4J_MONITORING_STATEMENTS.components]: refused });
       expect(provider.isConnected()).toBe(true);
       expect((await provider.getOverview()).version).toBe("unknown");
@@ -275,7 +283,7 @@ describe("the monitoring reads", () => {
   });
 
   test("a refused read is the panel's empty answer", async () => {
-    const refused = new GraphClientError("access-mode", "Permission denied", "Neo.ClientError.Security.Forbidden");
+    const refused = new GraphClientError("forbidden", "Permission denied", "Neo.ClientError.Security.Forbidden");
     const { provider } = await connected({ [NEO4J_MONITORING_STATEMENTS.transactions]: refused });
     expect(await provider.getActiveSessions()).toEqual([]);
   });

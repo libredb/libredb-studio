@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * Gate 2 and gate 5 for the Prometheus provider (#1085).
@@ -65,6 +66,28 @@ test.describe("Prometheus in the connection dialog", () => {
     await expect(dialog.getByText("Leave User empty to send this as a bearer token.", { exact: true })).toBeVisible();
     // The hint names the field "User", so the field is labelled that.
     await expect(dialog.locator('label[for="user"]')).toHaveText("User");
+  });
+
+  test("shows a fixed Read-only label and no checkbox, since Studio has no write path on this engine", async ({
+    page,
+  }) => {
+    const dialog = page.locator('[role="dialog"]');
+    await dialog.getByRole("button", { name: "Prometheus", exact: true }).click();
+
+    await expect(dialog.locator("#host")).toBeVisible();
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
+  });
+
+  test("an engine Studio can write draws no read-only control at all", async ({ page }) => {
+    // The control for the label above: PostgreSQL's reach is open, so the same locators find nothing.
+    const dialog = page.locator('[role="dialog"]');
+    await dialog.getByRole("button", { name: "PostgreSQL", exact: true }).click();
+
+    await expect(dialog.locator("#host")).toBeVisible();
+    await expect(dialog.locator("#readOnly-label")).toHaveCount(0);
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
   });
 
   test("another engine keeps the plain Password label and draws its Database box", async ({ page }) => {

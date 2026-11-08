@@ -33,7 +33,7 @@ const ADDRESS_REST = /[\p{L}\u{345}0-9_/.?=&#%-]+/uy;
 /**
  * A non-ASCII letter right after an ASCII letter or digit, the one place inside a word run where Spark's lexer can
  * start a token: it ends a decimal such as `1.5` (also `1.5D`, `1.5BD`, `1.5E3`) before any character but `A-Z`, `0-9`
- * and `_` (`isValidDecimal`, `SqlBaseLexer-v4.2.0.g4:42-50`; the number rules, `:627-646`), so in `1.5é://x--y` an
+ * and `_` (`isValidDecimal` and the number rules of Spark v4.2.0's `SqlBaseLexer.g4`), so in `1.5é://x--y` an
  * address starts at `é`. The rule also tries `é` in `x1é://y--z`, which Spark reads as one name: refusing that text is
  * the accepted cost of a rule that reads no number.
  */

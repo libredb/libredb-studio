@@ -150,6 +150,8 @@ export interface CommandRefusal {
   readonly message: string;
   readonly line?: number;
   readonly column?: number;
+  /** The command the refusal is of, once its words named one of the table's: set on a refusal of its arguments. */
+  readonly kind?: EtcdCommandKind;
 }
 
 export type ParseResult =
@@ -1517,10 +1519,10 @@ export function parseEtcdCommand(text: string, limits: EtcdParseLimits): ParseRe
   if (isRefusal(resolved)) return fail(resolved);
   const { spec, next } = resolved;
   const positionals = readArguments(words, next, { where: "command", spec }, found);
-  if (isRefusal(positionals)) return fail(positionals);
+  if (isRefusal(positionals)) return fail({ ...positionals, kind: spec.kind });
   const commandWord = words[lead.commandIndex];
   let command = spec.build({ commandWord, positionals, flags: found.flags, limits, inTxn: false });
-  if (isRefusal(command)) return fail(command);
+  if (isRefusal(command)) return fail({ ...command, kind: spec.kind });
 
   if (command.kind === "txn") {
     command = readTxnBody(lines, limits);

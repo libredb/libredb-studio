@@ -14,6 +14,10 @@ Every JWT is minted at run time from the auth service's admin key and is never w
 `openapi-extract.json` is written by the same harness from `docs/redoc/master/openapi.json` of github.com/qdrant/qdrant at tag v1.19.1, which it refuses unless its sha256 is `eb3e5d71ba74e1d99124ca1a77d563bbfa47084f04a13ef9b197e339f5a4ce0a`.
 It holds the 17 operations of the console with their methods, paths and parameters, and every schema their request bodies reach, without prose.
 
+`1.19.1/agent-boundary/` is written by its own `run.sh`, which starts the servers it records, and `tests/unit/db/qdrant/agent-captures.test.ts` holds it.
+`1.19.1/mcp-scope/` is written by `tests/live/qdrant-mcp-boundary.ts`: what a JWT reading one collection, a JWT reading one alias and the read-only API key are each answered when they ask for another collection's metadata, sent raw; `tests/unit/db/qdrant/mcp-scope.test.ts` holds it.
+Neither is in the catalog.
+
 ## The groups
 
 - `routes`: the 17 routes, the 14 that name a collection on each of the seven seeded collections.

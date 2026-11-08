@@ -45,10 +45,19 @@ export interface OpcuaReference {
    * descending into methods is what put the issue's own node count 352 above the figure it quotes.
    */
   readonly mayHaveChildren: boolean;
+  /**
+   * The node's type definition as the server answered it (the result mask asks for it), or absent where it answered
+   * none, as for a Method. The read roots walk prunes a node by it.
+   */
+  readonly typeDefinition?: OpcuaNodeId;
 }
 
-/** Which way a Browse follows hierarchical references: to a node's children, or to its parents. */
-export type OpcuaBrowseDirection = "forward" | "inverse";
+/**
+ * Which fixed attribute list a Read asks for: the value and the ten attributes the console shows, or the four facts
+ * the read roots walk decides membership on (`OPCUA_READ_ATTRIBUTES` and `OPCUA_WALK_ATTRIBUTES` in `constants.ts`).
+ * No request field chooses an attribute.
+ */
+export type OpcuaReadList = "values" | "facts";
 
 /** What one Browse answered for one node, with the continuation point it did or did not hand back. */
 export interface OpcuaBrowseResult {
@@ -90,6 +99,10 @@ export interface OpcuaDataValue {
   readonly description?: string;
   /** The DisplayName's text, which is what a reader recognises. */
   readonly displayName?: string;
+  /** A facts read only: the BrowseName with its namespace index, as the node's own attribute answers it. */
+  readonly browseName?: { readonly namespaceIndex: number; readonly name: string };
+  /** A facts read only: the DataType attribute's own status, since a server may refuse it alone. */
+  readonly dataTypeStatusCode?: string;
   readonly sourceTimestamp?: string;
   readonly serverTimestamp?: string;
   /**
@@ -173,15 +186,18 @@ export interface OpcuaReadOnlyClient {
   limits(): Promise<OpcuaServerLimits>;
   /**
    * Browse, for up to `OPCUA_MAX_NODES_PER_BROWSE` nodes at a time, following hierarchical references forward to a
-   * node's children, or inverse to its parents when `direction` says so. Both are the one Browse service.
+   * node's children, and never to its parents: no caller decides a node by what the server says lies above it.
    */
-  browse(nodeIds: readonly OpcuaNodeId[], direction?: OpcuaBrowseDirection): Promise<readonly OpcuaBrowseResult[]>;
+  browse(nodeIds: readonly OpcuaNodeId[]): Promise<readonly OpcuaBrowseResult[]>;
   /** BrowseNext, consuming a continuation point this client handed back. */
   browseNext(continuationPoints: readonly Uint8Array[]): Promise<readonly OpcuaBrowseResult[]>;
   /** BrowseNext with `releaseContinuationPoints` set, which frees the server's slot and returns nothing. */
   releaseBrowseContinuationPoints(continuationPoints: readonly Uint8Array[]): Promise<void>;
-  /** Read, the Value attribute and the attributes beside it, chunked by the caller. */
-  read(nodeIds: readonly OpcuaNodeId[]): Promise<readonly OpcuaDataValue[]>;
+  /**
+   * Read, chunked by the caller: the Value attribute and the attributes beside it, or with `list` "facts" the four
+   * facts the read roots walk reads, whose row status is the NodeClass attribute's. Both lists are fixed.
+   */
+  read(nodeIds: readonly OpcuaNodeId[], list?: OpcuaReadList): Promise<readonly OpcuaDataValue[]>;
   /** HistoryRead, raw only: `isReadModified` false, `returnBounds` false, a page size always set. */
   historyRead(options: {
     readonly nodeId: OpcuaNodeId;

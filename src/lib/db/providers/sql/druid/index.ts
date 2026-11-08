@@ -83,7 +83,14 @@ import {
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
 } from "../read-only-budget";
-import { druidAgentStatementRefusal, verifyDruidAgentEngine } from "./agent-boundary";
+import {
+  DRUID_UNREADABLE_PLAN_REFUSAL,
+  druidAgentExplainStatement,
+  druidAgentPlanMessage,
+  druidAgentReachRefusal,
+  druidAgentStatementRefusal,
+  verifyDruidAgentEngine,
+} from "./agent-boundary";
 import { DruidHttpTransport } from "./http-transport";
 import {
   getActiveSessions as readActiveSessions,
@@ -538,8 +545,9 @@ export class DruidProvider extends SQLBaseProvider {
             this.config.port,
           );
         });
-        const queryId = randomUUID();
         const maxResponseBytes = 2 * budget.maxResultBytes + AGENT_ENVELOPE_BYTES;
+        await this.checkAgentReach(transport, sql, budget, signal, maxResponseBytes);
+        const queryId = randomUUID();
         try {
           return await transport.agentQuery(sql, {
             queryId,
@@ -575,6 +583,52 @@ export class DruidProvider extends SQLBaseProvider {
       });
       return this.readAgentAnswer(result, executionTime, budget, sql);
     });
+  }
+
+  /**
+   * The second layer, which does not read the statement's text: the planner's answer to `EXPLAIN PLAN FOR` the
+   * statement, asked as the same user under the statement's deadline and byte cap, must say it reads only datasources
+   * (`druidAgentReachRefusal`), or the statement is refused before it is sent. Druid's EXPLAIN plans the statement and
+   * runs nothing. A refusal the planner answers, a datasource the user may not read included, is the statement's, in
+   * the server's words, as the statement itself would have been refused; an answer past the byte cap is refused unread.
+   */
+  private async checkAgentReach(
+    transport: DruidTransport,
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    signal: AbortSignal,
+    maxResponseBytes: number,
+  ): Promise<void> {
+    let plan: DruidQueryResult;
+    try {
+      plan = await transport.agentQuery(druidAgentExplainStatement(sql), {
+        queryId: randomUUID(),
+        timeoutMs: budget.statementTimeoutMs,
+        signal,
+        maxResponseBytes,
+      });
+    } catch (caught) {
+      if (signal.aborted) throw this.timeBudgetError(budget, sql, null);
+      if (caught instanceof DruidAnswerTooLargeError) {
+        throw new RefusedBeforeSendError(DRUID_UNREADABLE_PLAN_REFUSAL, this.type, sql);
+      }
+      // The server's words, with each position it names moved back onto the statement's own line.
+      const error =
+        caught instanceof DruidTransportError && caught.isServerAnswer()
+          ? new DruidTransportError(
+              druidAgentPlanMessage(caught.message),
+              caught.category,
+              caught.errorCode,
+              caught.persona,
+            )
+          : caught;
+      if (error instanceof DruidTransportError && error.is("FORBIDDEN")) {
+        throw new QueryError(error.message, this.type, sql);
+      }
+      throw this.mapDruidError(error, sql);
+    }
+    const refused = druidAgentReachRefusal(plan);
+    if (refused !== null) throw new RefusedBeforeSendError(refused, this.type, sql);
   }
 
   /** The proof of the native engine, its probe sent on `transport` under a fresh query id and `signal`. */

@@ -29,8 +29,7 @@ const eslintConfig = defineConfig([
   // desktop AppImage build (scripts/build-desktop-appimage.sh stages the whole
   // standalone payload, node_modules included, in there);
   // .claude/ holds agent worktrees whose checkouts (and .next build output)
-  // must not be linted from this checkout, and .loop/ is the same kind of
-  // gitignored agent scratch (maintainer-loop live state and its archives);
+  // must not be linted from this checkout;
   // public/monaco/** is the Monaco AMD bundle staged from node_modules by
   // scripts/copy-monaco.mjs (issue #247) — 16 MB of minified vendor JS that
   // exhausts ESLint's heap, and it only appears once something has built;
@@ -47,7 +46,6 @@ const eslintConfig = defineConfig([
     "desktop/src-tauri/target/**",
     "desktop/src-tauri/bin/**",
     ".claude/**",
-    ".loop/**",
     "next-env.d.ts",
     "vscode-extension/dist/**",
     "vscode-extension/out/**",

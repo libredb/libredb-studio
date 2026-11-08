@@ -9,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ReadOnlyMarker } from "@/components/read-only-marker";
+import { ReadOnlyMarker, showsReadOnlyMarker } from "@/components/read-only-marker";
 import { cn } from "@/lib/utils";
 
 const NO_GROUPS: { id: string; name: string }[] = [];
@@ -167,7 +167,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
             <Star strokeWidth={1.5} className={cn("w-3 h-3", isFavorite && "fill-current")} />
           </button>
         )}
-        {conn.readOnly === true && <ReadOnlyMarker compact />}
+        {showsReadOnlyMarker(conn) && <ReadOnlyMarker compact />}
         {onMoveToGroup && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

@@ -23,6 +23,7 @@
 | **SSL** | Yes — `connection.ssl` → `tls` + Node's `ca`/`cert`/`key` ([§4.1](#41-ssl--tls)) |
 | **Source** | [`src/lib/db/providers/document/mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts) |
 | **Tests** | [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts) |
+| **Write reach** | open: the editor's write operations, Import, Generate Test Data and maintenance (`vacuum`, `analyze`, `check`, `kill`) send writes |
 
 ---
 
@@ -1431,7 +1432,7 @@ MCP's `run_mongo_command` sends the command, so it opens under `agent-read-only`
        roles: ["admin"]
    ```
 
-   The seed's own user is the read user because a run opens on a seed only and a seed carries no separate agent credential (B85); an agent credential beside a connection string is refused with `AGENT_CREDENTIAL_WITH_CONNECTION_STRING`.
+   The seed's own user is the read user here; a seed may instead keep its own user and carry the read user as its [agent credential](../SEED_CONNECTIONS.md#an-agent-credential), set as separate fields, since an agent credential beside a connection string is refused at load and with `AGENT_CREDENTIAL_WITH_CONNECTION_STRING` at open.
    `authSource` names the database the user was created in: the wrong one fails as a credentials error, not as a refusal of the profile.
 4. Keep the admin seed for the editor and the monitoring panels, and add this one beside it.
    As the read user, `serverStatus`, `currentOp` and `top` answer code 13 (measured on 9.0.4; `dbStats` answers), so the overview goes blank on a read-only connection, and the sessions panel and the slow-query view say the user may not read them: `getActiveSessions` and `getSlowQueries` raise a `PermissionDeniedError` on code 13 instead of answering an empty list, because "not allowed to look" is not "nothing there" (an Operate run on 2026-10-17 reported the server idle while an admin saw 46 sessions).

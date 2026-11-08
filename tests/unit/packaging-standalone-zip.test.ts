@@ -13,6 +13,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { platformTimeoutMs } from "../helpers/platform-timeout";
 import { describeIf, missingPosixShell, missingUnixTool, posixShell } from "../helpers/posix-tools";
 
 const SCRIPT = join(import.meta.dir, "../../scripts/lib/pack-standalone-zip.sh");
@@ -59,6 +60,25 @@ function listZipEntries(zipPath: string): string[] {
   return names;
 }
 
+/**
+ * The bound of each test below that runs 7-Zip, declared rather than left at bun's 5000ms default.
+ *
+ * Each of those tests spawns the script, which runs 7-Zip twice, and on a loaded runner one such spawn outlasted the
+ * default: in CI run 42084796608 the first test here timed out at 5000ms with the script unfinished, while the next
+ * test, packing the same fixture, took 980ms. That job ran four files at a time on four CPUs under coverage, and this
+ * file ran beside the same three long-running files in every one of the twelve runs read, the eleven green ones
+ * taking 0.6s to 1.5s for the whole file. On a developer machine the same spawn takes about 17ms idle and stays under
+ * 190ms beside three times as many busy loops as CPUs, so the script itself is not what got slow.
+ *
+ * Forty seconds is eight times the default the slow spawn died at and over twenty-five times the slowest green run of
+ * the whole file, and `platformTimeoutMs` doubles it on Windows, where a test's own bound replaces the 60s the
+ * runner gives every test there. It masks no broken script: one that packs the wrong layout or exits with the wrong
+ * status still fails its assertions at once, and one that hangs still fails, at the bound (on Windows the runner's
+ * per-file budget can end the file first, once four bounds add up past it). The last two tests stop before 7-Zip and
+ * answer in milliseconds even under that load, so they keep the default.
+ */
+const PACK_TIMEOUT_MS = platformTimeoutMs(40_000);
+
 describeIf(CANNOT_PACK, "scripts/lib/pack-standalone-zip.sh (#114)", () => {
   const fixtureRoots: string[] = [];
 
@@ -78,52 +98,68 @@ describeIf(CANNOT_PACK, "scripts/lib/pack-standalone-zip.sh (#114)", () => {
     return { root, payloadDir, zip: join(root, "out.zip") };
   }
 
-  test("packs the payload contents FLAT at the archive root, including dot-directories", () => {
-    const { payloadDir, zip } = makeFixturePayload();
+  test(
+    "packs the payload contents FLAT at the archive root, including dot-directories",
+    () => {
+      const { payloadDir, zip } = makeFixturePayload();
 
-    const run = Bun.spawnSync([SHELL!, SCRIPT, payloadDir, zip], { stdout: "pipe", stderr: "pipe" });
-    expect(run.stderr.toString()).toBe("");
-    expect(run.exitCode).toBe(0);
+      const run = Bun.spawnSync([SHELL!, SCRIPT, payloadDir, zip], { stdout: "pipe", stderr: "pipe" });
+      expect(run.stderr.toString()).toBe("");
+      expect(run.exitCode).toBe(0);
 
-    const entries = listZipEntries(zip).map((entry) => entry.replaceAll("\\", "/"));
-    expect(entries).toContain("server.js");
-    expect(entries).toContain("package.json");
-    expect(entries).toContain(".next");
-    expect(entries).toContain(".next/BUILD_ID");
-    // Flat contract: nothing may hide under a versioned wrapper root.
-    for (const entry of entries) {
-      expect(entry.startsWith("libredb-studio-")).toBe(false);
-      expect(entry.startsWith("payload/")).toBe(false);
-    }
-  });
+      const entries = listZipEntries(zip).map((entry) => entry.replaceAll("\\", "/"));
+      expect(entries).toContain("server.js");
+      expect(entries).toContain("package.json");
+      expect(entries).toContain(".next");
+      expect(entries).toContain(".next/BUILD_ID");
+      // Flat contract: nothing may hide under a versioned wrapper root.
+      for (const entry of entries) {
+        expect(entry.startsWith("libredb-studio-")).toBe(false);
+        expect(entry.startsWith("payload/")).toBe(false);
+      }
+    },
+    PACK_TIMEOUT_MS,
+  );
 
-  test("overwrites a stale zip at the output path", () => {
-    const { payloadDir, zip } = makeFixturePayload();
-    writeFileSync(zip, "not a zip");
+  test(
+    "overwrites a stale zip at the output path",
+    () => {
+      const { payloadDir, zip } = makeFixturePayload();
+      writeFileSync(zip, "not a zip");
 
-    const run = Bun.spawnSync([SHELL!, SCRIPT, payloadDir, zip], { stdout: "pipe", stderr: "pipe" });
-    expect(run.exitCode).toBe(0);
-    expect(listZipEntries(zip)).toContain("server.js");
-  });
+      const run = Bun.spawnSync([SHELL!, SCRIPT, payloadDir, zip], { stdout: "pipe", stderr: "pipe" });
+      expect(run.exitCode).toBe(0);
+      expect(listZipEntries(zip)).toContain("server.js");
+    },
+    PACK_TIMEOUT_MS,
+  );
 
-  test("refuses a payload missing a required root entry (server.js)", () => {
-    const { payloadDir, zip } = makeFixturePayload();
-    rmSync(join(payloadDir, "server.js"));
+  test(
+    "refuses a payload missing a required root entry (server.js)",
+    () => {
+      const { payloadDir, zip } = makeFixturePayload();
+      rmSync(join(payloadDir, "server.js"));
 
-    const run = Bun.spawnSync([SHELL!, SCRIPT, payloadDir, zip], { stdout: "pipe", stderr: "pipe" });
-    expect(run.exitCode).not.toBe(0);
-    expect(run.stderr.toString()).toContain("server.js");
-  });
+      const run = Bun.spawnSync([SHELL!, SCRIPT, payloadDir, zip], { stdout: "pipe", stderr: "pipe" });
+      expect(run.exitCode).not.toBe(0);
+      expect(run.stderr.toString()).toContain("server.js");
+    },
+    PACK_TIMEOUT_MS,
+  );
 
-  test("matches required entries as fixed strings, not regexes (serverXjs must not satisfy server.js)", () => {
-    const { payloadDir, zip } = makeFixturePayload();
-    rmSync(join(payloadDir, "server.js"));
-    writeFileSync(join(payloadDir, "serverXjs"), "// imposter");
+  test(
+    "matches required entries as fixed strings, not regexes (serverXjs must not satisfy server.js)",
+    () => {
+      const { payloadDir, zip } = makeFixturePayload();
+      rmSync(join(payloadDir, "server.js"));
+      writeFileSync(join(payloadDir, "serverXjs"), "// imposter");
 
-    const run = Bun.spawnSync([SHELL!, SCRIPT, payloadDir, zip], { stdout: "pipe", stderr: "pipe" });
-    expect(run.exitCode).not.toBe(0);
-    expect(run.stderr.toString()).toContain("server.js");
-  });
+      const run = Bun.spawnSync([SHELL!, SCRIPT, payloadDir, zip], { stdout: "pipe", stderr: "pipe" });
+      expect(run.exitCode).not.toBe(0);
+      expect(run.stderr.toString()).toContain("server.js");
+    },
+    PACK_TIMEOUT_MS,
+  );
 
   test("fails loudly for a missing payload directory", () => {
     const { root, zip } = makeFixturePayload();

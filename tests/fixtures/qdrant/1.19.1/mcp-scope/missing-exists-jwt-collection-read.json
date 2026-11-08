@@ -1,0 +1,12 @@
+{
+  "version": "1.19.1",
+  "name": "mcp-scope/missing-exists-jwt-collection-read",
+  "capturedAt": "2026-11-02",
+  "principal": "a JWT whose access claim is [{\"collection\":\"mcp_plain\",\"access\":\"r\"}]",
+  "request": {
+    "method": "GET",
+    "path": "/collections/mcp_missing/exists"
+  },
+  "status": 403,
+  "body": "{\"status\":{\"error\":\"Forbidden: Access to collection mcp_missing is required\"},\"time\":0}"
+}

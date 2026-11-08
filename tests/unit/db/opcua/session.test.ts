@@ -79,6 +79,7 @@ function bridge(
     readLimits: async () => ({ maxNodesPerRead: 2_500 }),
     shapeBrowse: () => [],
     shapeRead: () => [],
+    shapeFacts: () => [],
     shapeHistory: (_answers, nodeId) => ({
       nodeId,
       values: [],
@@ -188,7 +189,7 @@ describe("history reads are built explicitly, never left to the library", () => 
 });
 
 describe("browse", () => {
-  test("follows hierarchical references forward by default, and inverse only when asked, in full requests", async () => {
+  test("follows hierarchical references forward only, in full requests", async () => {
     const sent: unknown[] = [];
     const base = bridge([endpoint("SignAndEncrypt", PLC_THUMB)], fresh());
     const client = await openReadOnlySession(
@@ -205,8 +206,8 @@ describe("browse", () => {
       options(),
     );
     await client.browse(["i=85"]);
-    await client.browse(["ns=3;s=SlowUInt1"], "inverse");
-    await client.browse(["i=2253"], "forward");
+    await client.browse(["ns=3;s=SlowUInt1"]);
+    await client.browse(["i=2253"]);
     const request = (nodeId: string, browseDirection: number) => ({
       nodeId,
       referenceTypeId: "i=33",
@@ -214,7 +215,45 @@ describe("browse", () => {
       browseDirection,
       resultMask: 63,
     });
-    expect(sent).toEqual([request("i=85", 0), request("ns=3;s=SlowUInt1", 1), request("i=2253", 0)]);
+    expect(sent).toEqual([request("i=85", 0), request("ns=3;s=SlowUInt1", 0), request("i=2253", 0)]);
+  });
+});
+
+describe("read", () => {
+  test("a value read asks for the ten attributes, and a facts read for the four, per node, in one request", async () => {
+    const sent: unknown[][] = [];
+    const shaped: string[] = [];
+    const base = bridge([endpoint("SignAndEncrypt", PLC_THUMB)], fresh());
+    const client = await openReadOnlySession(
+      {
+        ...base,
+        shapeRead: () => {
+          shaped.push("values");
+          return [];
+        },
+        shapeFacts: () => {
+          shaped.push("facts");
+          return [];
+        },
+        openSession: async (opened) => ({
+          ...(await base.openSession(opened)),
+          read: async (nodes) => {
+            sent.push([...nodes]);
+            return [];
+          },
+        }),
+      },
+      options(),
+    );
+    await client.read(["i=2258"]);
+    await client.read(["i=2258", "ns=3;s=A"], "facts");
+    const pairs = (nodeId: string, attributes: readonly number[]) =>
+      attributes.map((attributeId) => ({ nodeId, attributeId }));
+    expect(sent).toEqual([
+      pairs("i=2258", [13, 2, 14, 15, 16, 17, 18, 20, 5, 4]),
+      [...pairs("i=2258", [2, 14, 3, 4]), ...pairs("ns=3;s=A", [2, 14, 3, 4])],
+    ]);
+    expect(shaped).toEqual(["values", "facts"]);
   });
 });
 
@@ -285,6 +324,7 @@ describe("the dial itself", () => {
       readLimits: async () => ({}),
       shapeBrowse: () => [],
       shapeRead: () => [],
+      shapeFacts: () => [],
       shapeHistory: (_answers, nodeId) => ({
         nodeId,
         values: [],
@@ -405,6 +445,7 @@ describe("a library throw becomes a sentence, and the code in it is read", () =>
       },
       shapeBrowse: () => [],
       shapeRead: () => [],
+      shapeFacts: () => [],
       shapeHistory: (_answers, nodeId) => ({
         nodeId,
         values: [],
@@ -674,6 +715,7 @@ describe("a library throw while the session is being opened", () => {
       readLimits: async () => ({}),
       shapeBrowse: () => [],
       shapeRead: () => [],
+      shapeFacts: () => [],
       shapeHistory: (_answers, nodeId) => ({
         nodeId,
         values: [],

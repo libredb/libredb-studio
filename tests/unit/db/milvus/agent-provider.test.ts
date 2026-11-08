@@ -14,7 +14,13 @@ import { MILVUS_METADATA_ONLY } from "@/lib/db/providers/vector/milvus/metadata-
 import { MILVUS_AGENT_SENTENCES } from "@/lib/db/providers/vector/milvus/metadata-request";
 import { MILVUS_PROOF_SENTENCES } from "@/lib/db/providers/vector/milvus/read-only-proof";
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { agentMilvusWire, MILVUS_AGENT_USERS } from "../../../helpers/milvus-agent";
+import {
+  agentMilvusWire,
+  MILVUS_AGENT_USERS,
+  MILVUS_SCOPE_PRINCIPALS,
+  type MilvusScopePrincipal,
+  scopeMilvusWire,
+} from "../../../helpers/milvus-agent";
 import { okStatus, type RecordedMilvusAnswer, type RecordedMilvusWire } from "../../../helpers/milvus-wire";
 
 const PASSWORD = "not-a-real-password";
@@ -197,7 +203,7 @@ describe("an agent request", () => {
   test("a server refusal is worded by its category, never the server's words", async () => {
     const { provider } = await connected("reader", {
       overrides: {
-        DescribeAlias: (() =>
+        ShowPartitions: (() =>
           Promise.reject(
             Object.assign(new Error("7 PERMISSION_DENIED: stored-title-value"), {
               code: 7,
@@ -208,7 +214,7 @@ describe("an agent request", () => {
       },
     });
     const error = await rejection(
-      provider.queryReadOnly(request("aliases/describe", { aliasName: "agent_alias" }), BUDGET),
+      provider.queryReadOnly(request("partitions/list", { collectionName: "agent_docs" }), BUDGET),
     );
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toContain("permission-denied");
@@ -300,5 +306,52 @@ describe("queryReadOnly off the agent profile", () => {
   test("on a provider that is not connected, it refuses as every surface does", async () => {
     const { provider } = agentProvider("reader");
     await expect(provider.queryReadOnly(request("collections/list"), BUDGET)).rejects.toThrow();
+  });
+});
+
+describe("a narrow read-only user, as 3.0.2 answered it (tests/fixtures/milvus/3.0.2/mcp-scope/)", () => {
+  async function scoped(principal: MilvusScopePrincipal) {
+    const wire = scopeMilvusWire(principal);
+    const { user, database } = MILVUS_SCOPE_PRINCIPALS[principal];
+    const provider = new MilvusProvider({ ...CONNECTION, user, password: PASSWORD, database }, {}, AGENT, (options) =>
+      createGrpcMilvusClient(options, wire.transport),
+    );
+    await provider.connect();
+    wire.calls.length = 0;
+    return { provider, wire };
+  }
+
+  test.each(["dbro", "few", "onedb"] as const)("%s passes the read-only proof at the open", async (principal) => {
+    const { provider } = await scoped(principal);
+    expect(provider.isConnected()).toBe(true);
+  });
+
+  test("a user granted two collections reads them, and a third collection, an alias or a missing name is refused alike after the proof", async () => {
+    const { provider, wire } = await scoped("few");
+    const listed = await provider.queryReadOnly(request("collections/list"), BUDGET);
+    expect(listed.rows).toEqual([{ collection: "scope_c1" }, { collection: "scope_c2" }]);
+    const sentences: string[] = [];
+    for (const name of ["scope_c3", "scope_alias_c3", "scope_missing"]) {
+      wire.calls.length = 0;
+      // oxlint-disable-next-line no-await-in-loop -- one handle, read one request at a time, so each call list is its own.
+      const error = await rejection(
+        provider.queryReadOnly(request("collections/describe", { collectionName: name }), BUDGET),
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(rpcs(wire)).toEqual([...PROOF, "ShowCollections"]);
+      sentences.push((error as Error).message.replaceAll(name, "<name>"));
+    }
+    expect(new Set(sentences).size).toBe(1);
+    expect(sentences[0]).not.toContain("scope_few");
+  });
+
+  test("a user granted one database lists only it, and every call names it", async () => {
+    const { provider, wire } = await scoped("onedb");
+    const databases = await provider.queryReadOnly(request("databases/list"), BUDGET);
+    expect(databases.rows).toEqual([{ database: "scope_db_a" }]);
+    await provider.queryReadOnly(request("collections/describe", { collectionName: "scope_a1" }), BUDGET);
+    for (const logged of wire.calls.filter((call) => !["ListDatabases", ...PROOF].includes(call.method))) {
+      expect((logged.args?.[0] as { db_name?: string } | undefined)?.db_name).toBe("scope_db_a");
+    }
   });
 });

@@ -10,6 +10,7 @@ import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
 import type { MilvusAuth, MilvusConnectionOptions } from "@/lib/db/providers/vector/milvus/connection-options";
 import { createGrpcMilvusClient } from "@/lib/db/providers/vector/milvus/grpc-client";
 import {
+  MILVUS_CLUSTER_READ_PRIVILEGES,
   MILVUS_PROOF_MAX_ROLES,
   MILVUS_PROOF_SENTENCES,
   MILVUS_READ_PRIVILEGES,
@@ -89,6 +90,13 @@ describe("the privileges a read-only user may hold", () => {
     for (const privilege of groups.ClusterReadOnly as string[]) {
       if (privilege !== "ListDatabases") expect(MILVUS_READ_PRIVILEGES).not.toContain(privilege);
     }
+  });
+
+  test("the cluster reads refused in their own sentence are ClusterReadOnly and its members past ListDatabases", () => {
+    expect([...MILVUS_CLUSTER_READ_PRIVILEGES].sort()).toEqual(
+      ["ClusterReadOnly", ...(groups.ClusterReadOnly as string[]).filter((name) => name !== "ListDatabases")].sort(),
+    );
+    for (const privilege of MILVUS_CLUSTER_READ_PRIVILEGES) expect(MILVUS_READ_PRIVILEGES).not.toContain(privilege);
   });
 });
 
@@ -170,9 +178,14 @@ describe("the proof against what 3.0.2 answered", () => {
     expect(error.message).toBe(MILVUS_PROOF_SENTENCES.grant("CollectionReadWrite"));
   });
 
-  test("a ClusterReadOnly user is refused by its grant, though it reads only, since it may list every user", async () => {
+  test("a ClusterReadOnly user is refused for reading past its collection grants, not as a user that may write", async () => {
     const error = refusal((await proofOf("clusterro")).outcome);
-    expect(error.message).toBe(MILVUS_PROOF_SENTENCES.grant("ClusterReadOnly"));
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toBe(
+      'This Milvus user holds "ClusterReadOnly" through one of its roles or public, which reads the cluster\'s users, roles, privilege groups and resource groups, beyond what its collection grants reach, so Studio could not bound what the agent reads. Give the agent a user whose roles hold only the CollectionReadOnly and DatabaseReadOnly groups or their read privileges. No agent request was sent.',
+    );
+    expect(error.message).not.toContain("change the server");
+    expect(MILVUS_PROOF_SENTENCES.clusterRead("SelectUser")).toContain('holds "SelectUser" through');
   });
 
   test("a user holding the admin role is refused by its role, its grants unread", async () => {

@@ -1626,7 +1626,7 @@ describe("useQueryExecution", () => {
     // A PromQL text is ONE expression, and `#` starts a comment in it. Under the connection's SQL
     // grammar (postgres here) the `;` inside the comment below separates two statements, so a
     // splitter that ran would send the comment's first half on its own and the rest as a second
-    // statement. `dialectIsSql` keeps it off for every declared language but SQL.
+    // statement. `runsAsScript` keeps it off for every declared language but SQL.
     const fetchMock = mockGlobalFetch({
       "/api/db/multi-query": { ok: true, json: mockQueryResult },
       "/api/db/query": { ok: true, json: mockQueryResult },
@@ -1662,7 +1662,7 @@ describe("useQueryExecution", () => {
   });
 
   test("executeQuery keeps a Cypher buffer on /api/db/query whole, semicolons and all (Neo4j spec 6.5)", async () => {
-    // Correct as is: `dialectIsSql` is false for every declared language but SQL. The buffer reaches the
+    // Correct as is: `runsAsScript` is false for every declared language but SQL. The buffer reaches the
     // provider as written, whose read policy reads it with the Cypher lexer and refuses a second statement
     // by name, rather than the SQL splitter cutting it under the connection's SQL grammar.
     const fetchMock = mockGlobalFetch({
@@ -1702,7 +1702,7 @@ describe("useQueryExecution", () => {
     // A Kafka tab's whole buffer is ONE read request, which the provider parses as JSON. Under the
     // connection's SQL grammar the `;` below separates two statements, so a splitter that ran
     // would send each object on its own, two reads the user never wrote as one request.
-    // `dialectIsSql` keeps it off: the declared language is JSON, whatever its dialect.
+    // `runsAsScript` keeps it off: the declared language is JSON, whatever its dialect.
     const fetchMock = mockGlobalFetch({
       "/api/db/multi-query": { ok: true, json: mockQueryResult },
       "/api/db/query": { ok: true, json: mockQueryResult },
@@ -1743,7 +1743,7 @@ describe("useQueryExecution", () => {
   test("executeQuery keeps an etcd buffer on /api/db/query whole, semicolons and all (#1089)", async () => {
     // An etcd tab's whole buffer is ONE command, which the provider's own parser reads (#1089 5.1.2): a
     // leading comment line is skipped and a `;` inside it is text. Under the connection's SQL grammar
-    // the `;` below separates two statements. `dialectIsSql` keeps the splitter off.
+    // the `;` below separates two statements. `runsAsScript` keeps the splitter off.
     const fetchMock = mockGlobalFetch({
       "/api/db/multi-query": { ok: true, json: mockQueryResult },
       "/api/db/query": { ok: true, json: mockQueryResult },

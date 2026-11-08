@@ -28,6 +28,7 @@
 | **Tracking issue** | [#424 — the database coverage map](https://github.com/libredb/libredb-studio/issues/424) |
 | **Probed against** | `ghcr.io/tursodatabase/libsql-server` reporting `sqld 0.24.33 (f8fb14f3 2026-08-11)`, and a Turso Cloud database in `aws-eu-west-1`, both on 2026-08-27 |
 | **Reproducible with** | `ghcr.io/tursodatabase/libsql-server:v0.24.33`, the tag `database-compose.yml` pins. It is a DIFFERENT build of the same version - `sqld 0.24.33 (40a151bd 2025-12-19)`, because `:latest` is a rolling rebuild - and it was re-probed surface by surface on 2026-08-27: the same 17 of 19, the same four refusals with byte-identical wording, and the same `"notnull"` behaviour. **One thing the two builds do NOT share is the embedded SQLite version**: `:latest` and Turso Cloud answer `3.47.0` and the pinned tag answers `3.45.1`, re-measured 2026-09-11 while building the object surface. Every measurement below holds on the pinned tag, and where a version floor matters the doc says which build it was taken from. |
+| **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table and maintenance (`reindex`, `check`) all send writes |
 
 ---
 
@@ -240,7 +241,7 @@ A self-hosted sqld started with `SQLD_AUTH_JWT_KEY` checks a JWT signed by that 
 Turso Cloud mints the same kind of token with `turso db tokens create --read-only`.
 sqld classifies every statement before it runs it, and refuses a request that carries a write from such a token as a whole, with HTTP 403 (`Authorization forbidden: Current session doesn't not have Write permission to namespace default`), on each HTTP statement route measured (`/v2/pipeline`, `/v3/pipeline`, `/v1/execute`, `/v1/batch` and `/`); Hrana over WebSocket was not measured, and this provider never speaks it.
 Turso Cloud refuses the same write in-band instead: the request answers HTTP 200, and the statement's step carries the error, code `BLOCKED`, `Operation was blocked: SQL write operations are forbidden (current session doesn't have write permission)`.
-Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT and Sparkplug B; on libSQL the provider implements `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/libsql/index.ts), with the open's proof in [`agent-boundary.ts`](../../src/lib/db/providers/sql/libsql/agent-boundary.ts) and the reading of an answer in [`agent-read.ts`](../../src/lib/db/providers/sql/libsql/agent-read.ts).
+Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino; on libSQL the provider implements `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/libsql/index.ts), with the open's proof in [`agent-boundary.ts`](../../src/lib/db/providers/sql/libsql/agent-boundary.ts) and the reading of an answer in [`agent-read.ts`](../../src/lib/db/providers/sql/libsql/agent-read.ts).
 
 #### The open's proof
 
@@ -336,7 +337,7 @@ The budgets: 51 rows under a budget of 50, 100,000 bytes of hex under 65,536, an
 A token whose permission claims the server cannot read is refused 401 at connect, before the proof.
 A token carrying `"a": "ro"` and `"p": {"rw": {"ns": ["default"]}}` ran `INSERT`, `DELETE ... WHERE 0` and `DROP TABLE IF EXISTS` on the server, and the open refused it on its claims (`PROFILE_PRIVILEGES_TOO_BROAD`) before a probe was sent.
 
-Run it against servers you may write to; it creates tables with the `libredb_lb_` prefix and drops them on exit:
+Run it against servers you may write to; it creates tables with the `libredb_lb_` prefix and drops them on exit, and sets `user_version` in its positive control, then puts back the value it read before its first write:
 
 ```sh
 docker run -d -e SQLD_NODE=primary -e SQLD_AUTH_JWT_KEY=<public key> -p 18181:8080 ghcr.io/tursodatabase/libsql-server:v0.24.33
@@ -346,6 +347,32 @@ LIBREDB_LIVE_LIBSQL_JWT_PORT=18181 LIBREDB_LIVE_LIBSQL_RO_TOKEN=<ro token> LIBRE
   LIBREDB_LIVE_LIBSQL_WIDENED_TOKEN=<ro token with a p claim granting rw> \
   LIBREDB_LIVE_LIBSQL_BASIC_PORT=18182 LIBREDB_LIVE_LIBSQL_BASIC_USER=<user> LIBREDB_LIVE_LIBSQL_BASIC_PASSWORD=<password> \
   LIBREDB_LIVE_LIBSQL_OPEN_PORT=18183 bun tests/live/libsql-agent-boundary.ts
+```
+
+#### MCP read
+
+MCP's `run_read_query` serves libSQL through the agent's own path: it takes the connection under the agent read-only profile, so the open runs the proof above, and sends the statement through `queryReadOnly`, alone in one request under the token.
+It shares the agent's profiled handle, so the proof runs at the open of that handle, as in agent mode, not before each statement: a token whose rights change after the open is seen at the next open.
+The token the open proves is the seed's agent token, `agentPassword` ([an agent credential](../SEED_CONNECTIONS.md#an-agent-credential)), when it sets one, and the seed's own token otherwise, and it must be one the open admits: a writable token, a read-only token with any other claim, a user name and password (HTTP Basic), no token, and a server that runs the probes are each refused, in the tool's sentence, before any statement runs.
+MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth; it also refuses every `PRAGMA`, reads included, and `EXPLAIN` of a write.
+It runs a `SELECT` (a `WITH` is fine), `VALUES`, or `EXPLAIN`: `TABLE` and `EXPLAIN ANALYZE` are syntax errors on sqld 0.24.33, as on SQLite, and `EXPLAIN QUERY PLAN` runs; it pages with `LIMIT n OFFSET m`, and an offset on `VALUES`, `EXPLAIN` or a query with its own `LIMIT` is refused.
+A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.
+A read past `timeout_ms` is answered as the timeout: the provider closes the request at the deadline, which stops the statement on sqld.
+A client that closes its request stops the wait only: the statement runs on until the provider closes its request at the time left of `timeout_ms`.
+Measured on 2026-11-01 by watching the container: after a two-second `timeout_ms` the server was idle within a second, and after a cancel one second into a 15-second `timeout_ms` a recursive count held a core until that deadline.
+
+[`tests/live/libsql-mcp-boundary.ts`](../../tests/live/libsql-mcp-boundary.ts) replays the boundary record above through the tool's handler with its statement fence removed, against the same three `ghcr.io/tursodatabase/libsql-server:v0.24.33` servers, and passed on 2026-11-01 (98 checks).
+The read-only token read its table; the writable token, the read-only token whose permission claim grants writes, a user name and password on the Basic server, and the server that checks no credential, with no token and with the read-only token, were each refused at open through MCP.
+The MCP fence refused every statement of the record before anything was acquired; with it removed, every write was refused by sqld with 403, `ATTACH`, `VACUUM`, `VACUUM INTO`, `ANALYZE`, `CREATE TEMP TABLE` and the pragmas sqld does not take with `unsupported statement`, `DETACH` with `no such database`, `load_extension` with `not authorized`, and a second statement with `more than one statement`.
+The writable token ran each write on a scratch table, and a hash of the tables, rows, indexes, views, triggers and `user_version` read back the same before and after.
+A read paged with `offset`; a read with its own `LIMIT` past 1000 rows, one past 1 MiB and one past a one-second `timeout_ms` were each refused, and the server answered the next call.
+Turso Cloud was not re-run through MCP: its read-only refusal is the one the open already admits, measured on 2026-10-29.
+
+```sh
+LIBREDB_LIVE_LIBSQL_JWT_PORT=18181 LIBREDB_LIVE_LIBSQL_RO_TOKEN=<ro token> LIBREDB_LIVE_LIBSQL_RW_TOKEN=<rw token> \
+  LIBREDB_LIVE_LIBSQL_WIDENED_TOKEN=<ro token with a p claim granting rw> \
+  LIBREDB_LIVE_LIBSQL_BASIC_PORT=18182 LIBREDB_LIVE_LIBSQL_BASIC_USER=<user> LIBREDB_LIVE_LIBSQL_BASIC_PASSWORD=<password> \
+  LIBREDB_LIVE_LIBSQL_OPEN_PORT=18183 bun tests/live/libsql-mcp-boundary.ts
 ```
 
 #### Agent language pack
@@ -369,7 +396,7 @@ The grounding capture is unsupported because it reads through the read-only path
 A plan run reads its statistics under the profile it grounds under, the operations profile here: the `sqlite_stat1` availability probe and the statistics read are composed by Studio and sent through the provider's own query path, so a plan run on a token that can write succeeds, grounded, and never asks for the read-only profile.
 In agent mode these statements run only on a handle whose open admitted the token: a read-only token with none but the allowed claims, refused a write by sqld or Turso Cloud in that server's own words.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-MCP's statement read stays closed on libSQL (`MCP_STATEMENT_READ.libsql` is false) until a change of its own opens it.
+MCP's `run_read_query` runs a statement on libSQL (`MCP_STATEMENT_READ.libsql` is true) under the same boundary, described in "MCP read" above.
 
 ### 3.7 `notnull` must be quoted, and only a live server says so
 
@@ -1237,7 +1264,7 @@ await provider.disconnect();
 |---|---|---|
 | No transaction controls | The provider closes its Hrana stream with each statement, so it holds no session | Ours. Hrana's `baton` is exactly the feature that would carry one |
 | Agent mode needs a read-only token | `PRAGMA query_only` is refused by the server, so the token is the only lever ([§3.6](#36-the-agent-read-only-profile-rests-on-a-read-only-token)) | The engine's; mint a read-only token |
-| No MCP statement read | `MCP_STATEMENT_READ.libsql` is false | Ours, until a change of its own opens it |
+| MCP read needs a read-only seed token | The open proves the seed's agent token, or its own token where it sets none ("MCP read", §3.6) | The engine's; mint a read-only token for the seed, as its agent token or its own |
 | No Vacuum, Analyze or Optimize | Refused by the server's statement allowlist | The engine's |
 | No slow queries, no sessions, no uptime, no cache ratio | libSQL publishes none of them | The engine's |
 | No WAL size on the Storage tab | No statement reports it, and `PRAGMA wal_checkpoint` is refused | The engine's |

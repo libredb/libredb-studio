@@ -1,0 +1,37 @@
+[
+ {
+  "note": "what the server is and what it lists: catalogs, and each catalog's table functions (function type 'table')"
+ },
+ {
+  "sql": "SELECT node_version FROM system.runtime.nodes",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SHOW CATALOGS",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SHOW FUNCTIONS FROM \"lake\".\"system\"",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SHOW FUNCTIONS FROM \"memory\".\"system\"",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SHOW FUNCTIONS FROM \"pg\".\"system\"",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SHOW FUNCTIONS FROM \"pg2\".\"system\"",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SHOW FUNCTIONS FROM \"system\".\"system\"",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SHOW SCHEMAS FROM \"system\"",
+  "txn": "read-only"
+ }
+]

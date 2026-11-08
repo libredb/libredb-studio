@@ -39,11 +39,11 @@ export function fingerprintQdrantapi(text: string): string {
  */
 const QDRANT_ROW_CAP_ADVICE: Readonly<Record<string, (allowed: string) => string>> = Object.freeze({
   collections: (allowed: string) =>
-    `Ask for at most ${allowed} rows: read one collection with GET /collections/{collection} instead of the whole list, and run it again.`,
+    `Ask for at most ${allowed} row${allowed === "1" ? "" : "s"}: read one collection with GET /collections/{collection} instead of the whole list, and run it again.`,
   collection: (allowed: string) =>
-    `Ask for at most ${allowed} rows: count the collection with POST /collections/{collection}/points/count, or read its cluster layout, instead of every vector and payload index, and run it again.`,
+    `Ask for at most ${allowed} row${allowed === "1" ? "" : "s"}: count the collection with POST /collections/{collection}/points/count, or read its cluster layout, instead of every vector and payload index, and run it again.`,
   aliases: (allowed: string) =>
-    `Ask for at most ${allowed} rows: read one collection's aliases with GET /collections/{collection}/aliases instead of every alias, and run it again.`,
+    `Ask for at most ${allowed} row${allowed === "1" ? "" : "s"}: read one collection's aliases with GET /collections/{collection}/aliases instead of every alias, and run it again.`,
 });
 
 const ADVICE_OF: Readonly<Record<string, string>> = Object.freeze({
@@ -57,7 +57,7 @@ export function qdrantapiRowCapAdvice(statement: string, allowed: string): strin
   const reading = readQdrantAgentStatement(statement);
   const key = reading.ok ? ADVICE_OF[reading.plan.route.op] : undefined;
   return key === undefined
-    ? `Ask for at most ${allowed} rows: read one collection instead of the whole list, and run it again.`
+    ? `Ask for at most ${allowed} row${allowed === "1" ? "" : "s"}: read one collection instead of the whole list, and run it again.`
     : QDRANT_ROW_CAP_ADVICE[key](allowed);
 }
 

@@ -27,7 +27,7 @@ export interface BerField {
  *
  * Measured on 13 October 2026 against `origin/main`: a count that fails is turned into
  * `{ unavailable: error.message }` only for `QueryError` and `TimeoutError`
- * (`providers/platform/kubernetes/objects.ts:348`), and `isQueryError` in `src/lib/db/errors.ts` is
+ * (`countKind` in `providers/platform/kubernetes/objects.ts`), and `isQueryError` in `src/lib/db/errors.ts` is
  * the same test. A refusal thrown as a plain `Error` therefore passes as an unexpected failure and
  * ITS SENTENCE NEVER REACHES THE USER. Every refusal in this provider exists for its sentence,
  * so a plain `Error` would have thrown away the whole point of refusing. The first version of
@@ -46,6 +46,15 @@ export class BerError extends QueryError {
     super(message);
     this.name = "BerError";
     Object.setPrototypeOf(this, BerError.prototype);
+  }
+}
+
+/** A SEQUENCE holding more fields than its reader allows. Its own class, so a reader can tell "too many" from "broken". */
+export class BerTooManyFieldsError extends BerError {
+  constructor(readonly limit: number) {
+    super(`more than ${limit} fields in one SEQUENCE`);
+    this.name = "BerTooManyFieldsError";
+    Object.setPrototypeOf(this, BerTooManyFieldsError.prototype);
   }
 }
 
@@ -82,7 +91,7 @@ export function readChildren(buf: Uint8Array, parent: BerField, limit = 8): BerF
   const out: BerField[] = [];
   let at = parent.start;
   while (at < parent.end) {
-    if (out.length >= limit) throw new BerError(`more than ${limit} fields in one SEQUENCE`);
+    if (out.length >= limit) throw new BerTooManyFieldsError(limit);
     const field = readField(buf, at);
     if (field.end > parent.end) throw new BerError("field runs past its parent");
     out.push(field);
@@ -98,7 +107,7 @@ export function readChildren(buf: Uint8Array, parent: BerField, limit = 8): BerF
  * The reader above exists to inspect what the client produced. This half exists because there
  * is no client: the provider builds its own messages, so that nothing in this repository has to
  * carry a dependency whose write paths would then need keeping away from. The house doctrine is
- * explicit about the trade (`docs/ADDING_A_PROVIDER.md:21`), and the precedent is S3's SigV4,
+ * explicit about the trade (the "Prerequisites" section of `docs/ADDING_A_PROVIDER.md`), and the precedent is S3's SigV4,
  * which is Studio's own `node:crypto` code rather than an SDK.
  *
  * Encoding is the narrower half of BER and this is the narrowest part of it: definite lengths,

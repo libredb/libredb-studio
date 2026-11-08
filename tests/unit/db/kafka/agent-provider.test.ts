@@ -12,6 +12,7 @@ import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { KAFKA_AGENT_SHAPE, KAFKA_AGENT_WITHHELD } from "@/lib/db/providers/stream/kafka/agent-surface";
 import { KAFKA_AGENT_SENTENCES } from "@/lib/db/providers/stream/kafka/agent-statement";
 import {
+  type KafkaAgentReadClient,
   type KafkaClusterMetadata,
   KafkaError,
   type KafkaReadClient,
@@ -237,6 +238,65 @@ describe("every surface of an agent-mode handle", () => {
     });
     expect(calls.every((call) => call.startsWith("metadata") || call === "listTopics")).toBe(true);
     expect(JSON.stringify({ counts })).not.toContain(HOST);
+  });
+
+  test.each([
+    ["read-only", READ_ONLY],
+    ["operations", OPERATIONS],
+  ] as const)(
+    "on the %s profile withholds a platform's own topics from every listing and count",
+    async (_l, execution) => {
+      const fake = fakeClient();
+      fake.client.listTopics = async () => ["_confluent-metrics", "_schemas", "connect-configs", "orders"];
+      const provider = new KafkaProvider(CONNECTION, {}, execution, async () => fake.client);
+      await provider.connect();
+      expect(await provider.listObjects([], "topic")).toEqual([{ path: ["orders"], name: "orders", kind: "topic" }]);
+      expect((await provider.countObjects([])).topic).toEqual({ count: 1 });
+      if (execution === READ_ONLY) {
+        const result = await provider.queryReadOnly('{"read": "topics"}', BUDGET);
+        expect(result.rows.map((row) => row.topic)).toEqual(["orders"]);
+      }
+    },
+  );
+
+  test("a platform's own topic named to the agent's client is refused before anything is sent", async () => {
+    const { provider, calls } = await connected(OPERATIONS);
+    const error = await rejection(provider.describeObject(["_schemas"], "topic"));
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(KAFKA_AGENT_SENTENCES.platform);
+    expect(calls).toEqual([]);
+  });
+
+  test("the agent's client refuses an offsets read of a platform's own topic, and drops one the broker answers", async () => {
+    const fake = fakeClient();
+    const withheld: KafkaTopicMetadata = { ...ORDERS, name: "_schemas", id: "id-schemas" };
+    fake.client.metadata = async (topics) => {
+      fake.calls.push(`metadata ${JSON.stringify(topics ?? null)}`);
+      return { ...CLUSTER, topics: [withheld, ORDERS] };
+    };
+    const provider = new KafkaProvider(CONNECTION, {}, READ_ONLY, async () => fake.client);
+    await provider.connect();
+    fake.calls.length = 0;
+    // No caller today names a withheld topic to offsets() or reads metadata() unnamed, so the client is held directly.
+    const client = (provider as unknown as { agentClient(): KafkaAgentReadClient }).agentClient();
+    const error = await rejection(client.offsets("_schemas", "latest"));
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(KAFKA_AGENT_SENTENCES.platform);
+    expect(fake.calls).toEqual([]);
+    expect((await client.metadata()).topics.map((topic) => topic.name)).toEqual(["orders"]);
+    expect(fake.calls).toEqual(["metadata null"]);
+  });
+
+  test("the editor's handle still lists a platform's own topics", async () => {
+    const fake = fakeClient();
+    fake.client.listTopics = async () => ["_schemas", "connect-configs", "orders"];
+    const provider = new KafkaProvider(CONNECTION, {}, {}, async () => fake.client);
+    await provider.connect();
+    expect((await provider.listObjects([], "topic")).map((topic) => topic.name)).toEqual([
+      "_schemas",
+      "connect-configs",
+      "orders",
+    ]);
   });
 
   test("a topic count past the listing cap says it is a floor", async () => {

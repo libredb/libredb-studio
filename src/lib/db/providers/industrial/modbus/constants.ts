@@ -102,17 +102,14 @@ export const UNIT_ID_SERIAL_RESERVED_FROM = 248;
 export const MAX_REGISTER_MAP_BYTES = 65536;
 
 /**
- * The sentences the product has to say out loud, kept here because `index.ts` imports this file and
+ * The sentence the product has to say out loud, kept here because `index.ts` imports this file and
  * a sentence nothing imports is a sentence that drifts.
  *
  * They were first written in a `provider-surface.ts` that declared the capabilities a second time.
  * Nothing read that file: the provider declares its own capabilities inline, so the duplicate was a
  * stand-in whose tests protected nothing, and the two had already diverged on `queryDialect`. The
- * file is gone and these two sentences are what was worth keeping.
+ * file is gone and this sentence is what was worth keeping.
  */
-export const MODBUS_READ_ONLY_HINT =
-  "Studio cannot write to a Modbus device: it builds four read requests and the identification request, and nothing else. The device enforces nothing of its own, so anything else that reaches its port can write to it. Protection is MODBUS/TCP Security or a network path you control.";
-
 export const MODBUS_NO_REVOCATION_SENTENCE =
   "Over MODBUS/TCP Security, Studio checks the device's certificate chain and host name but does not check revocation. Measured on 13 October 2026: a stapled OCSP response saying revoked still completes the connection under Node, and under Bun it never reaches the application.";
 

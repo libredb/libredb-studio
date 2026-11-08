@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 
 /**
  * The OPC UA entry in a real browser (#1677).
@@ -61,19 +62,14 @@ test.describe("OPC UA in the connection dialog", () => {
     await expect(dialog.locator("#serverCertificateThumbprint")).toBeVisible();
   });
 
-  test("draws the Read-only toggle, whose hint says the mode is not what makes it read-only", async ({ page }) => {
+  test("draws the fixed Read-only label, since no setting is what makes it read-only", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "OPC UA", exact: true }).click();
 
-    const box = dialog.getByLabel("Read-only", { exact: true });
-    await expect(box).toBeVisible();
-    await expect(box).not.toBeChecked();
-    await expect(
-      dialog.getByText(
-        "OPC UA connections are read-only whether or not this is ticked, and not by a setting: this provider's client exposes Browse, BrowseNext, Read, HistoryRead and the session calls, and has no code that can Write, Call a method, or subscribe.",
-        { exact: true },
-      ),
-    ).toBeVisible();
+    // A fixed label and no box: Studio has no write path on this engine, so there is no mode to choose.
+    await expect(dialog.getByRole("checkbox", { name: "Read-only", exact: true })).toHaveCount(0);
+    await expect(dialog.locator("#readOnly-label")).toHaveText("Read-only");
+    await expect(dialog.locator("#readOnly-hint")).toHaveText(READ_ONLY_FIXED_HINT);
   });
 
   /** The scheme is refused before anything is dialled: there is no WebSocket transport in this version. */

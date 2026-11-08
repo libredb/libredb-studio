@@ -24,10 +24,16 @@
  * not this account's.
  */
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
-const PG_CONTAINER = "libredb-statement-timeout-e2e-pg";
-const PG_PORT = 54333;
+/**
+ * Per run, and on a loopback port Docker picks: a fixed host port inside the ephemeral range (32768-60999) can be held
+ * by a client socket, open or in TIME_WAIT, and Docker then refuses the bind with "address already in use".
+ */
+const PG_CONTAINER = `libredb-statement-timeout-e2e-pg-${randomBytes(4).toString("hex")}`;
+/** Set once the container is up. */
+let pgPort = 0;
 const PG_PASSWORD = "statement-timeout-e2e";
 
 /** The connection's query timeout, in milliseconds: far below the statement's sleep. */
@@ -47,6 +53,14 @@ function dockerAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+/** The host port Docker published for the container's 5432, from `docker port`'s `127.0.0.1:49153`. */
+function publishedPort(container: string): number {
+  const binding = docker(["port", container, "5432/tcp"]).trim().split("\n")[0] ?? "";
+  const port = Number(binding.slice(binding.lastIndexOf(":") + 1));
+  if (!Number.isInteger(port) || port <= 0) throw new Error(`Docker published no port for ${container}: "${binding}"`);
+  return port;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -78,11 +92,6 @@ function psql(sql: string): string {
 
 /** Readiness is proven by the seed itself succeeding over TCP, never by pg_isready, which answers the temporary server. */
 async function startSeededPostgres(): Promise<void> {
-  try {
-    docker(["rm", "-f", PG_CONTAINER]);
-  } catch {
-    // No stale container of this spec's own name; nothing else is ever removed.
-  }
   docker([
     "run",
     "-d",
@@ -92,9 +101,10 @@ async function startSeededPostgres(): Promise<void> {
     "-e",
     `POSTGRES_PASSWORD=${PG_PASSWORD}`,
     "-p",
-    `127.0.0.1:${PG_PORT}:5432`,
+    "127.0.0.1::5432",
     "postgres:16-alpine",
   ]);
+  pgPort = publishedPort(PG_CONTAINER);
   let lastError: unknown;
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
@@ -148,7 +158,7 @@ test.describe("Functional smoke: a statement that reaches its query timeout", ()
     await dialog.locator("#name").fill("Timeout PG");
     await dialog.locator("#queryTimeout").fill(String(QUERY_TIMEOUT_MS));
     await dialog.locator("#host").fill("127.0.0.1");
-    await dialog.locator("#port").fill(String(PG_PORT));
+    await dialog.locator("#port").fill(String(pgPort));
     await dialog.locator("#user").fill("postgres");
     await dialog.locator("#password").fill(PG_PASSWORD);
     await dialog.locator("#database").fill("postgres");

@@ -19,7 +19,14 @@
  * this is what lets the model read why it was refused, before anything is sent.
  */
 import type { EtcdBytes } from "./client";
-import { type CommandRefusalCode, type EtcdCommand, type EtcdParseLimits, parseEtcdCommand } from "./commands";
+import {
+  type CommandRefusal,
+  type CommandRefusalCode,
+  type EtcdCommand,
+  type EtcdCommandKind,
+  type EtcdParseLimits,
+  parseEtcdCommand,
+} from "./commands";
 
 export type EtcdAgentRefusalCode = "request" | "metadata-only" | "arguments";
 
@@ -103,11 +110,27 @@ const FLAG_REFUSALS: ReadonlySet<CommandRefusalCode> = new Set([
   "limit-too-large",
 ]);
 
-/** A refusal of the editor's parser, worded for the agent. */
-function parserRefusal(code: CommandRefusalCode, message: string): EtcdAgentReading {
+/** The parsed commands the table holds, each read further by `readEtcdAgentStatement`. */
+const TABLE_KINDS: ReadonlySet<EtcdCommandKind> = new Set([
+  "get",
+  "endpoint-status",
+  "member-list",
+  "alarm-list",
+  "auth-status",
+  "lease-list",
+  "lease-timetolive",
+]);
+
+/**
+ * A refusal of the editor's parser, worded for the agent. A refusal of the arguments of a command outside the table
+ * reads as outside the table: the editor's sentence would name a form of it, such as `lease keep-alive --once`, that
+ * the table refuses all the same.
+ */
+function parserRefusal({ code, message, kind }: CommandRefusal): EtcdAgentReading {
   if (NOT_A_COMMAND.has(code)) return refuse("request", ETCD_AGENT_SENTENCES.empty);
   if (OUTSIDE_THE_TABLE.has(code)) return refuse("metadata-only", ETCD_AGENT_SENTENCES.metadataOnly);
   if (FLAG_REFUSALS.has(code)) return refuse("arguments", ETCD_AGENT_SENTENCES.flags);
+  if (kind !== undefined && !TABLE_KINDS.has(kind)) return refuse("metadata-only", ETCD_AGENT_SENTENCES.metadataOnly);
   return refuse("request", ETCD_AGENT_SENTENCES.request(message));
 }
 
@@ -136,7 +159,7 @@ export function readEtcdAgentStatement(text: string): EtcdAgentReading {
   if (text.trim() === "") return refuse("request", ETCD_AGENT_SENTENCES.empty);
   const parsed = parseEtcdCommand(text, PARSE_LIMITS);
   if (!parsed.ok) {
-    return parserRefusal(parsed.refusal.code, parsed.refusal.message);
+    return parserRefusal(parsed.refusal);
   }
   if (parsed.parsed.commandTimeoutMs !== undefined) return refuse("arguments", ETCD_AGENT_SENTENCES.flags);
   const { command } = parsed.parsed;

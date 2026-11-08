@@ -120,8 +120,8 @@ function filesOnDisk(): string[] {
       .map((entry) =>
         path.relative(MILVUS_FIXTURES_DIR, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"),
       )
-      // The agent boundary's captures are another harness's, read by tests/helpers/milvus-agent.ts.
-      .filter((file) => !file.startsWith("3.0.2/agent-boundary/"))
+      // The agent boundary's, the data scope's and the MCP boundary's captures are other harnesses'.
+      .filter((file) => !/^3\.0\.2\/(?:agent-boundary|mcp-scope|mcp-boundary)\//.test(file))
       .sort()
   );
 }

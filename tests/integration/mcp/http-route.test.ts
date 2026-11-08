@@ -30,6 +30,7 @@ import {
   routeServe,
 } from "../../helpers/mcp-harness";
 import { mintTestToken, useMcpChannel } from "../../helpers/mcp-token";
+import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 
 pinMcpTestEnvironment();
 
@@ -130,16 +131,12 @@ describe("a client pinned to revision 2026-07-28", () => {
 });
 
 describe("the route in front of the SDK", () => {
-  test("lets the default client connect and list the five tools", async () => {
+  test("lets the default client connect and list the token's own tools", async () => {
     const session = await connectClient(serve, { token });
     try {
-      expect((await session.client.listTools()).tools.map((tool) => tool.name)).toEqual([
-        "list_connections",
-        "inspect_schema",
-        "run_read_query",
-        "run_kubectl_read",
-        "run_mongo_command",
-      ]);
+      expect((await session.client.listTools()).tools.map((tool) => tool.name)).toEqual(
+        listedMcpToolNames(new Set(["sqlite", "duckdb"])),
+      );
     } finally {
       await session.close();
     }
@@ -317,7 +314,9 @@ describe("pre-processing at the route", () => {
       const posts = session.http.requests.filter((request) => request.method === "POST");
       expect(posts[0].headers.get("mcp-protocol-version")).toBeNull();
       for (const later of posts.slice(1)) expect(later.headers.get("mcp-protocol-version")).toBe("2025-11-25");
-      expect((await session.client.listTools()).tools).toHaveLength(5);
+      expect((await session.client.listTools()).tools).toHaveLength(
+        listedMcpToolNames(new Set(["sqlite", "duckdb"])).length,
+      );
     } finally {
       await session.close();
     }
@@ -419,9 +418,9 @@ describe("pre-processing at the route", () => {
         id: 4,
       });
       expect(registrations.calls).toBe(0);
-      // The control: a modern tools/list builds one server, which registers the five tools.
+      // The control: a modern tools/list builds one server, which registers the token's tools.
       await readJsonRpc(await serve(modernPost("tools/list", {}, { token })));
-      expect(registrations.calls).toBe(5);
+      expect(registrations.calls).toBe(listedMcpToolNames(new Set(["sqlite", "duckdb"])).length);
     } finally {
       registrations.restore();
     }

@@ -1,0 +1,38 @@
+[
+ {
+  "note": "the PostgreSQL table before, read through the pg catalog"
+ },
+ {
+  "sql": "SELECT a FROM pg.public.rp_t ORDER BY a",
+  "txn": "none"
+ },
+ {
+  "note": "as the connection's user, which no rule grants a function: the definer view over a pass-through dblink write, inside a read-only transaction, as the agent path sends it"
+ },
+ {
+  "sql": "SELECT * FROM \"lake\".\"views\".\"pass_through\"",
+  "txn": "read-only"
+ },
+ {
+  "note": "how a view's security reads: SHOW CREATE VIEW names it, a view that named none reads as DEFINER, and information_schema.views does not carry it"
+ },
+ {
+  "sql": "SHOW CREATE VIEW \"lake\".\"views\".\"pass_through\"",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SHOW CREATE VIEW \"lake\".\"views\".\"plain\"",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT table_schema, table_name FROM \"lake\".\"information_schema\".\"views\" ORDER BY table_name",
+  "txn": "read-only"
+ },
+ {
+  "note": "the PostgreSQL table after: 301 listed means the view's write landed"
+ },
+ {
+  "sql": "SELECT a FROM pg.public.rp_t ORDER BY a",
+  "txn": "none"
+ }
+]

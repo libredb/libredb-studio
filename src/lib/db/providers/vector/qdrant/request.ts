@@ -227,7 +227,8 @@ function shown(text: string): string {
   return JSON.stringify(text.length > SHOWN ? `${text.slice(0, SHOWN)}...` : text);
 }
 
-function kindOf(value: TaggedJson | undefined): string {
+/** The JSON kind of a value, as a refusal names it, never the value itself. */
+export function kindOf(value: TaggedJson | undefined): string {
   if (value === undefined) return "nothing";
   if (value === null) return "null";
   if (Array.isArray(value)) return "a list";
@@ -1078,8 +1079,12 @@ function refuseOptions(body: TaggedObject): void {
   const pending: TaggedJson[] = [body];
   while (pending.length > 0) {
     const value = pending.pop() as TaggedJson;
-    if (Array.isArray(value)) pending.push(...value);
-    else if (isObject(value)) {
+    // Item by item, never as the arguments of one call: a list may hold the console's 262,144 numbers, and Node takes
+    // fewer arguments than that (measured: 130,000 overflowed the stack under Node 24.22.1, where Bun 1.4.4 took all
+    // 262,144).
+    if (Array.isArray(value)) {
+      for (const item of value) pending.push(item);
+    } else if (isObject(value)) {
       if (Object.hasOwn(value, "options")) {
         refuse(`A request holds no key "options", at any depth. ${INFERENCE_RULE}`, "options");
       }

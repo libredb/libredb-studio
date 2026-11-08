@@ -285,7 +285,7 @@ export function DataProfiler({
     change than a dismiss fix should make.
 
     Registered on `document`, following CommandPalette's shortcut effect
-    (src/components/CommandPalette.tsx:79): the card takes no focus of its own when
+    (`CommandPalette` in src/components/CommandPalette.tsx): the card takes no focus of its own when
     it opens, so a handler on the card would never see the key. Bound only while
     open, so a closed profiler - of which the tree holds one per surface - is not a
     listener that swallows Escape from whatever else is on screen.

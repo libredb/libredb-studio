@@ -1,0 +1,12 @@
+{
+  "version": "1.19.1",
+  "name": "mcp-scope/other-jwt-alias-read",
+  "capturedAt": "2026-11-02",
+  "principal": "a JWT whose access claim is [{\"collection\":\"mcp_other_alias\",\"access\":\"r\"}]",
+  "request": {
+    "method": "GET",
+    "path": "/collections/mcp_other"
+  },
+  "status": 403,
+  "body": "{\"status\":{\"error\":\"Forbidden: Access to collection mcp_other is required\"},\"time\":0}"
+}

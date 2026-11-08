@@ -4,7 +4,7 @@
  * WHY A SERVER AND NOT A FAKE. Everything between this provider and the wire is the library's:
  * GetEndpoints, the secure channel, CreateSession, ActivateSession, the encoder, the status codes.
  * A stand-in for it would agree with whatever the bridge happened to do, so the bridge's own module
- * is driven against `node-opcua-server` 2.187.16 started here on a loopback port — the same library
+ * is driven against `node-opcua-server` 2.187.18 started here on a loopback port — the same library
  * family the client speaks, which is the point: the two halves of OPC 10000-6 meet in this file.
  *
  * It needs no container and no plant: the server starts in `beforeAll`, serves a two-node address
@@ -40,7 +40,6 @@ import {
   levelSlice,
   resolvePath,
 } from "@/lib/db/providers/industrial/opcua/key-scan";
-import { walkAddressSpace } from "@/lib/db/providers/industrial/opcua/walk";
 import { statedLimit } from "@/lib/db/providers/industrial/opcua/limits";
 import { OPCUA_OBJECTS_FOLDER } from "@/lib/db/providers/industrial/opcua/constants";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -346,21 +345,6 @@ describe("a session over the real library", () => {
       const rootFolders = await childBearingNodes(client, rootSlice.rows, await client.limits());
       expect(levelPage(rootSlice, rootFolders).prefixes).toContain("Plant/");
       expect(levelPage(rootSlice).keys).toContain("Plant");
-    } finally {
-      await client.close();
-    }
-  });
-
-  test("a bounded walk reaches the server's own nodes and reports what it spent", async () => {
-    const client = await session();
-    try {
-      const walk = await walkAddressSpace(client, {
-        nodeBudget: 200,
-        depthBudget: 3,
-      });
-      expect(walk.nodeIds.length).toBeGreaterThan(5);
-      expect(walk.requests).toBeGreaterThan(0);
-      expect(["exhausted", "node-budget", "depth-budget"]).toContain(walk.end);
     } finally {
       await client.close();
     }

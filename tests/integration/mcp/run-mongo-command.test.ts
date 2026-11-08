@@ -23,6 +23,7 @@ import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { mongoDriver, mongoDriverModule, resetMongoDriver } from "../../helpers/mongodb-driver";
 import readWriteStatus from "../../unit/db/mongodb/fixtures/connection-status-read-plus-insert-one-collection-9.0.4.json";
 
@@ -123,17 +124,12 @@ function direct(args: Record<string, unknown>, context: McpConnectionContext) {
 }
 
 describe("the tool", () => {
-  test("is listed after run_kubectl_read, read-only, with the command schema and no offset", async () => {
+  test("is listed in its place in the token's list, read-only, with the command schema and no offset", async () => {
     const session = await connectClient(serve, { negotiation: "legacy" });
     try {
       const tools = (await session.client.listTools()).tools;
-      expect(tools.map((tool) => tool.name)).toEqual([
-        "list_connections",
-        "inspect_schema",
-        "run_read_query",
-        "run_kubectl_read",
-        "run_mongo_command",
-      ]);
+      const names = tools.map((tool) => tool.name);
+      expect(names).toEqual(listedMcpToolNames(new Set(["mongodb", "sqlite"])));
       const tool = tools.find((candidate) => candidate.name === "run_mongo_command");
       expect(tool?.description).toBe(RUN_MONGO_COMMAND_ARM.description);
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
@@ -340,7 +336,7 @@ describe("the result cap", () => {
     const result = await direct({ connection_id: "seed:fake", command: JSON.parse(find) }, fakeContext(provider));
     expect(result).toEqual({
       isError: true,
-      content: [{ type: "text", text: RUN_MONGO_COMMAND_ARM.tooLarge(find).bytes as string }],
+      content: [{ type: "text", text: RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb").bytes as string }],
     });
   });
 

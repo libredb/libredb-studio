@@ -99,7 +99,7 @@ function strictText(bytes: Uint8Array | undefined): string | Uint8Array | undefi
   }
 }
 
-/** Parsers that show what was stored, replacing hyparquet's defaults (convert.js:13-40); uuid keeps its default. */
+/** Parsers that show what was stored, replacing hyparquet's defaults (`DEFAULT_PARSERS` in hyparquet 1.32.0's `src/convert.js`); uuid keeps its default. */
 export const PREVIEW_PARSERS: Partial<ParquetParsers> = {
   timestampFromMilliseconds: (value: bigint) => timestampText(value, BigInt(1_000), 3, "ms"),
   timestampFromMicroseconds: (value: bigint) => timestampText(value, BigInt(1_000_000), 6, "us"),

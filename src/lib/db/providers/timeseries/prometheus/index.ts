@@ -72,6 +72,7 @@ import type {
 } from "@/lib/db/types";
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { noWritePath } from "@/lib/db/write-reach";
 import { projectAgentTransport } from "./agent-projection";
 import { prometheusAgentFailure, prometheusAgentResult } from "./agent-read";
 import { readPrometheusAgentStatement } from "./agent-statement";
@@ -110,6 +111,15 @@ export interface PrometheusProviderDeps {
 
 /** The port a stock server serves its HTTP API on, for either scheme (#1085 6.1). */
 const PROMETHEUS_DEFAULT_PORT = 9090;
+
+/**
+ * No write path on any route: the transport requests only the paths of the closed endpoint table `PATHS`, every one a
+ * read, and PromQL has no write construct, so no admin, remote-write, OTLP or lifecycle endpoint is ever built.
+ */
+const PROMETHEUS_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/timeseries/prometheus/http-transport.ts",
+  symbol: "PATHS",
+});
 
 /** Every answer is shaped against the same three bounds (#1085 5.4). */
 const SHAPE_LIMITS: ShapeLimits = {
@@ -258,7 +268,9 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       // own: the query asks the endpoint for one series more than it, and the shaper enforces it on
       // the answer (#1085 5.4).
       supportsExternalQueryLimiting: false,
-      // Nothing this product offers writes to Prometheus (#1085 sections 2 and 4.5).
+      // Nothing this product offers writes to Prometheus (#1085 sections 2 and 4.5), so a connection is read-only
+      // whatever its flag says, and the flag is accepted.
+      writeReach: PROMETHEUS_WRITE_REACH,
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       // An instant query has no row offset to advance; `prepareQuery` below pins it to 0.

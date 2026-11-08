@@ -669,9 +669,10 @@ describe("the etcd row", () => {
 
 /**
  * The editor's refusal: a statement a row's `refuse` or `maxTextBytes` refuses is never sent
- * and never stored. Milvus's, Qdrant's and InfluxDB's rows are the shipped rows that declare both fields; every rule
- * here is driven by the stand-in row, so it is pinned apart from any engine's grammar, and each engine's own is pinned
- * in describe("the milvus row"), describe("the qdrant row") and describe("the influxdb row").
+ * and never stored. The first test below holds which shipped rows declare both fields and that Redis's declares a
+ * refusal alone; every other rule here is driven by the stand-in row, so it is pinned apart from any engine's grammar.
+ * An engine's own row is pinned in its describe block below, Weaviate's in tests/unit/db/weaviate/routes.test.ts,
+ * S3's in tests/unit/db/s3/provider-doc.test.ts and Redis's beside its reader in describe("isDestructiveNonSqlQuery").
  */
 describe("statementRefusal and the console text bound", () => {
   const REFUSAL = "The stand-in dialect refuses FORBIDDEN.";

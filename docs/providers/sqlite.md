@@ -23,6 +23,7 @@
 | **Agent read-only profile** | Yes — separate read-only OPEN (no file create) + verified `query_only` (#328, §12) |
 | **Source** | [`src/lib/db/providers/sql/sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts) |
 | **Tests** | [`tests/integration/db/sqlite-provider.test.ts`](../../tests/integration/db/sqlite-provider.test.ts) |
+| **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table and maintenance (`vacuum`, `analyze`, `reindex`, `check`) all write the file |
 
 ---
 
@@ -47,14 +48,10 @@ for a web-based editor:
   connect to over the network. SQLite-as-target therefore fits **self-hosted / Docker / local-dev /
   edge** deployments (where the file is co-located with Studio) and **zero-config trials** (instant,
   no server to provision) — it is **not** a multi-tenant SaaS target.
-- **It works under both Bun and Node.** The provider selects the runtime's built-in driver at
-  connect time — see [Runtime & driver selection](#runtime--driver-selection). All packaged
-  distribution channels — the official Docker image, `npx @libredb/studio`, the Homebrew tap, the
-  `.deb`/`.rpm` packages, and the standalone tarballs — run the built app with `node server.js` (the
-  Docker image's runner stage is `node:26.9.0-trixie-slim`; the other channels bundle their own pinned
-  Node 24 runtime), so they all use `node:sqlite`. `bun:sqlite` is used for local development
-  (`bun dev`) and the test suite, where Next.js runs directly under Bun. Only on a runtime with
-  neither driver does `connect()` throw a `DatabaseConfigError`.
+- **It works under both Bun and Node.** The provider selects the runtime's built-in driver at connect time (see [Runtime & driver selection](#runtime--driver-selection)).
+  All packaged distribution channels (the official Docker image, `npx @libredb/studio`, the Homebrew tap, the `.deb`/`.rpm` packages, and the standalone tarballs) run the built app with `node server.js` (the Docker image's runner stage is the official Node 26 image, its exact release pinned by the `Dockerfile`'s `FROM` line; the other channels bundle their own pinned Node 24 runtime), so they all use `node:sqlite`.
+  `bun:sqlite` is used for local development (`bun dev`) and the test suite, where Next.js runs directly under Bun.
+  Only on a runtime with neither driver does `connect()` throw a `DatabaseConfigError`.
 
 Position it accordingly: a developer-friendly, works-everywhere, frictionless-onboarding feature —
 not an enterprise/SaaS headline.
@@ -484,7 +481,7 @@ from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sa
 `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db) — see
 [`seed-assets/sqlite/ATTRIBUTION.md`](../../seed-assets/sqlite/ATTRIBUTION.md)) to
 `<data dir>/sample-employees.db` and `getManagedConnections()` advertises it as an editable,
-dismissable "Sample (Employees)" connection (`type: "sqlite"`, `managed: false`, `roles: ["*"]`).
+dismissable "Sample (Employees)" connection (`type: "sqlite"`, `managed: false`, `roles: ["admin"]`).
 
 Unlike the LibreDB sample, the copy runs **asynchronously and fail-open**: `register()`
 fires-and-forgets the seed (start/completion/duration are logged), boot never waits on it, and a
@@ -1750,6 +1747,7 @@ so hard links cannot alias reserved files. Other user database files beside them
 SQLite connections are refused when the server-derived file-access posture is denied,
 including agent handles. HTTP and MCP derive that posture from the verified role and
 managed connection: non-admin callers and seeds shared with non-admin roles are denied.
+Where it is denied, MCP's `list_connections` lists the seed with `read_tool: null` and an `unavailable` sentence that says what an operator changes, and `inspect_schema` and every statement tool refuse it with that sentence before anything is acquired ([MCP.md](../MCP.md#opting-connections-in)).
 SQLite's adapters cannot confine statement-level file access, so a denied connection
 cannot be opened safely. Administrators retain SQLite access on private connections.
 Embedded callers using the cached factory must explicitly pass `{ allowExternalFileAccess: true }`

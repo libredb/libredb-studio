@@ -1383,6 +1383,11 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         the ledger line stays the raw union code, and the model's text carries both arms. It fails
         if either half moves — if the contract stops reaching the model, or if the ledger line
         starts claiming to name what it does not.
+
+        The cited id is one this run never produced, and it has to stay that way for the test to
+        reach this refusal at all: `readUndiscriminatedEvidence` settles the arm from a VERIFIABLE
+        id, so a bad `source` beside a real correlation id now composes instead of landing here.
+        The split below is about what a model is told when its own ledger cannot settle the arm.
       */
       const h = harness();
 
@@ -1390,7 +1395,9 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         h.context,
         { runId: h.context.runId, events: [artifactEvent] },
         {
-          claims: [{ claim: "Engineering is largest.", evidence: [{ source: "table", correlationId: "corr-real" }] }],
+          claims: [
+            { claim: "Engineering is largest.", evidence: [{ source: "table", correlationId: "corr-unproduced" }] },
+          ],
         },
       );
 
@@ -1590,6 +1597,338 @@ describe("a tool that demands a citation says what a citation IS (#350)", () => 
         // previous review caught exactly that shape in another test on this file.
         expect(outcome.modelText).toContain("claims.0.evidence.0.locator: expected string");
         expect(outcome.modelText).not.toContain('"claim":');
+      });
+    });
+
+    describe("an optional field left BLANK is dropped, not refused", () => {
+      /*
+        Measured 2026-10-18 on `bonsai-2:2b` operations: FORTY `INVALID_TOOL_INPUT` refusals in one
+        five-run cell, every one the same line — `claims.0.evidence.0.locator: too small` — and the
+        cell scored 1/5, its losses `turn-limit` and `report-composed` with `no-reading`.
+
+        `locator` is OPTIONAL on both arms of the evidence union, and it is the one field whose
+        description invites a blank: "Add "locator" only to point at a part of it." A model that has
+        nothing to point at answers that by sending the empty string, which is the same intent as
+        omitting the field and carries exactly the same information. `.min(1)` then refuses it.
+
+        So the refusal was about nothing: the server had a complete, verifiable citation and
+        declined it over an absent optional. Worse, `too small` is zod's own wording for a string
+        length — it never says the field is a string, never says the field is optional, and never
+        says that dropping it is allowed. There is no reading of that sentence that gets a model to
+        the one move that works, which is why the same call arrived forty times.
+
+        Stripping the blank, rather than relaxing `.min(1)`: a locator that IS sent still has to
+        point at something, so `locator: ""` must never reach a report as a citation that points
+        nowhere. The typo guard above (`locator: 3`) is what holds the line between the two - a
+        wrong TYPE is still named, because that one is a mistake rather than a blank.
+      */
+      const artifactEventForBlank: AgentRunEvent = {
+        kind: "tool-completed",
+        atMs: 1,
+        stepId: "step_1",
+        artifact: {
+          correlationId: "corr-real",
+          operationId: "sql.query.read",
+          connectionId: "conn-1",
+          createdAtMs: 1,
+          summary: { rowCount: 1, columns: ["id"], truncated: false },
+        },
+      } as unknown as AgentRunEvent;
+
+      test.each([
+        ["empty", ""],
+        ["whitespace", "   "],
+      ])("a %s locator composes, and does not reach the report", (_name, locator) => {
+        const h = harness();
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [artifactEventForBlank] },
+          {
+            claims: [
+              {
+                claim: "Engineering is largest.",
+                evidence: [{ source: "artifact", correlationId: "corr-real", locator }],
+              },
+            ],
+          },
+        );
+
+        if (outcome.kind !== "composed") throw new Error(`expected composed, got ${outcome.kind}`);
+        // Dropped, not carried through as a blank: a citation that points nowhere is not a
+        // citation, and the stored claim is what a reader of the report sees. The whitespace case
+        // already composed before this fix - and carried `locator: "   "` into the report.
+        expect(outcome.claims[0]?.evidence[0]).toEqual({ source: "artifact", correlationId: "corr-real" });
+      });
+    });
+
+    describe("a citation whose ARM the run can settle is settled, not refused", () => {
+      /*
+        Measured 2026-10-18 on `bonsai-2:2b` database-assessment: SIXTY-EIGHT
+        `compose_report:INVALID_TOOL_INPUT` refusals in one five-run cell, the cell at 0/5, four of
+        its five runs ending `report-composed` with `no-table-profile`. Two message shapes account
+        for all of them, and probing the tool with each candidate input shows both are dead ends:
+
+          - BOTH ids sent at once. The surplus one is reported, so the advice is "set source to the
+            other arm and keep it" - and once the model does, the FIRST id is the surplus one and
+            the advice reverses. Neither message ever says to drop one, so the pair can be
+            exchanged forever. This is the loop, confirmed by probe rather than inferred.
+          - `source` missing, misspelled, or sent with the quotes copied out of the advice above.
+            All three collapse to `source: invalid union`, which names no remedy at all: not the
+            two values the discriminator takes, not that `source` is the field that decides.
+
+        In every one of those cases the run was holding a `correlationId` its own ledger verifies.
+        The arm is not actually ambiguous - the id settles it, because an id either matches a read
+        this run completed or a snapshot this run captured. So the discriminator is recovered from
+        the id rather than demanded from the model.
+
+        `UNVERIFIABLE_EVIDENCE` is untouched: an id that matches nothing this run produced resolves
+        to no arm, the reference is left exactly as it arrived, and the refusal it earns still
+        fires. Nothing is admitted here that a correctly-discriminated citation would not have been.
+      */
+      const readEvent: AgentRunEvent = {
+        kind: "tool-completed",
+        atMs: 1,
+        stepId: "step_1",
+        artifact: {
+          correlationId: "corr-real",
+          operationId: "sql.query.read",
+          connectionId: "conn-1",
+          createdAtMs: 1,
+          summary: { rowCount: 1, columns: ["id"], truncated: false },
+        },
+      } as unknown as AgentRunEvent;
+      const captureEvent: AgentRunEvent = {
+        kind: "context-captured",
+        atMs: 1,
+        fingerprint: "ctx_real",
+        tableCount: 1,
+      } as unknown as AgentRunEvent;
+
+      const compose = (evidence: unknown, workflowType: AgentToolContext["workflowType"] = "operations") => {
+        const h = harness({ workflowType });
+        return composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [readEvent, captureEvent] },
+          { claims: [{ claim: "Engineering is largest.", evidence: [evidence] }] },
+        );
+      };
+
+      test.each([
+        ["source absent", { correlationId: "corr-real" }],
+        ["source misspelled", { source: "inspect_schema", correlationId: "corr-real" }],
+        ["source quoted out of the advice", { source: '"artifact"', correlationId: "corr-real" }],
+        [
+          "both ids, artifact the verifiable one",
+          { source: "artifact", correlationId: "corr-real", fingerprint: "ff" },
+        ],
+        [
+          "both ids, the OTHER arm named",
+          { source: "context-snapshot", correlationId: "corr-real", fingerprint: "ff" },
+        ],
+      ])("%s: the id settles the arm", (_name, evidence) => {
+        const outcome = compose(evidence);
+
+        if (outcome.kind !== "composed") throw new Error(`expected composed, got ${outcome.kind}`);
+        expect(outcome.claims[0]?.evidence[0]).toEqual({ source: "artifact", correlationId: "corr-real" });
+      });
+
+      test("a locator survives the recovery, because it is the model's own pointer", () => {
+        const outcome = compose({ correlationId: "corr-real", locator: "row 3" });
+
+        if (outcome.kind !== "composed") throw new Error(`expected composed, got ${outcome.kind}`);
+        expect(outcome.claims[0]?.evidence[0]).toEqual({
+          source: "artifact",
+          correlationId: "corr-real",
+          locator: "row 3",
+        });
+      });
+
+      test("a snapshot id settles to the snapshot arm where the workflow takes one", () => {
+        const outcome = compose({ fingerprint: "ctx_real" }, "database-assessment");
+
+        if (outcome.kind !== "composed") throw new Error(`expected composed, got ${outcome.kind}`);
+        expect(outcome.claims[0]?.evidence[0]).toEqual({ source: "context-snapshot", fingerprint: "ctx_real" });
+      });
+
+      test("an ARTIFACT id declared as a snapshot settles back to the artifact arm", () => {
+        // The mirror of the case above, and the one the surfaces that accept BOTH arms make
+        // reachable: a run holding an id a reading produced names `context-snapshot` for it, which
+        // validates against the branch that wants a fingerprint and refuses the id it was sent.
+        // The id is the evidence here, so the arm moves to the id rather than the id being asked
+        // for again under a different name.
+        const outcome = compose({ source: "context-snapshot", fingerprint: "corr-real" }, "database-assessment");
+
+        if (outcome.kind !== "composed") throw new Error(`expected composed, got ${outcome.kind}`);
+        expect(outcome.claims[0]?.evidence[0]).toEqual({ source: "artifact", correlationId: "corr-real" });
+      });
+
+      test("a snapshot id is NOT settled where the workflow refuses snapshot citations", () => {
+        // `query-optimization` scores a report on what it read, not on what it was handed at the
+        // start. Recovering a snapshot citation there would only move the refusal one layer down.
+        const outcome = compose({ fingerprint: "ctx_real" }, "query-optimization");
+
+        expect(outcome.kind).toBe("unavailable");
+      });
+
+      test("an id that verifies NOTHING keeps its refusal, unchanged", () => {
+        /*
+          The boundary of the recovery, and the reason it is a boundary rather than a gap. An id
+          this run never produced settles no arm, so the reference reaches the schema exactly as the
+          model wrote it and earns exactly the refusal it earned before.
+
+          The ledger line stays the raw union code here, which the test above this describe pins
+          deliberately: the two arms reach the MODEL from the contract appended to every refusal,
+          and naming them in `detail` too would make one failure look like two different ones to a
+          reader counting refusals. What changed is which calls arrive here at all — a cited id the
+          run can verify no longer does.
+        */
+        const outcome = compose({ correlationId: "corr-invented" });
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.detail).toContain("claims.0.evidence.0.source");
+        expect(outcome.detail).toContain("invalid union");
+      });
+    });
+
+    describe("what a refusal OFFERS is everything the run can cite, not one kind of it", () => {
+      /*
+        `ARTIFACT_EVENTS` names four event kinds that carry a citable artifact, and says in its own
+        comment why it is a set: so that a later reading which produces an artifact "is added here
+        once and is citable everywhere `producedArtifact` is read". `citableEvidence` — the half of
+        the refusal that tells a model WHICH ids exist — did not read it. It collected
+        `tool-completed` and nothing else.
+
+        What that buys in a LIVE run is narrower than it first looked, and the correction belongs
+        here rather than in a commit message. `profile_table` turns out to write `tool-completed`
+        beside `table-profiled`, so its ids were already being offered by the old reading — the
+        premise that a profiled run was told nothing was wrong, and the wire capture on 2026-10-19
+        is what showed it. What the set-based reading actually buys is the invariant: an artifact
+        `producedArtifact` would verify is one this offer names, for every kind in the set and for
+        whichever kind a later reading is given, rather than by coincidence of a second event.
+
+        The duplicate test above is the live defect this reading DID introduce, and it is measured:
+        two events for one reading, five slots spent on three ids.
+      */
+      const profileEvent: AgentRunEvent = {
+        kind: "table-profiled",
+        atMs: 1,
+        artifact: {
+          correlationId: "corr-profile",
+          operationId: "sql.table.profile",
+          connectionId: "conn-1",
+          createdAtMs: 1,
+          summary: { rowCount: 1, columns: ["id"], truncated: false },
+        },
+        profile: { table: "orders" },
+      } as unknown as AgentRunEvent;
+
+      test("one artifact is offered ONCE, however many events carry it", () => {
+        /*
+          `profile_table` writes BOTH events for one reading — `tool-completed` settling the step
+          and `table-profiled` carrying the profile — with the same correlation id on each. Read as
+          a set of kinds, that is the same id twice, and the offer is capped at five: a run that
+          profiled nine tables spent two of those five slots repeating itself, and showed the model
+          three distinct ids instead of five.
+
+          Captured off the wire 2026-10-19 on `bonsai-2:9b` database-assessment, in a refusal that
+          read `this run produced 662fd694…, 662fd694…, 02c4e9a5…, 02c4e9a5…, 45d54ac1…` — while
+          the model, trying to pick one, spliced the front of one id onto the tail of another and
+          was refused four times for the id it invented.
+        */
+        const h = harness({ workflowType: "database-assessment" });
+        const settled: AgentRunEvent = {
+          kind: "tool-completed",
+          atMs: 2,
+          stepId: "step_profile",
+          artifact: {
+            correlationId: "corr-profile",
+            operationId: "sql.table.profile",
+            connectionId: "conn-1",
+            createdAtMs: 1,
+            summary: { rowCount: 1, columns: ["id"], truncated: false },
+          },
+        } as unknown as AgentRunEvent;
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [settled, profileEvent] },
+          {
+            claims: [
+              {
+                claim: "Orders is the largest table.",
+                evidence: [{ source: "artifact", correlationId: "corr-invented" }],
+              },
+            ],
+          },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        const offered = (outcome.detail ?? "").split("corr-profile").length - 1;
+        expect(offered).toBe(1);
+      });
+
+      test("a profile id is offered, where the run took no other reading", () => {
+        const h = harness({ workflowType: "database-assessment" });
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [profileEvent] },
+          {
+            claims: [
+              {
+                claim: "Orders is the largest table.",
+                evidence: [{ source: "artifact", correlationId: "corr-invented" }],
+              },
+            ],
+          },
+        );
+
+        if (outcome.kind !== "unavailable") throw new Error(`expected unavailable, got ${outcome.kind}`);
+        expect(outcome.reasonCode).toBe("UNVERIFIABLE_EVIDENCE");
+        // The id the model could have cited, which the old offer left out entirely.
+        expect(outcome.detail).toContain("corr-profile");
+      });
+
+      test("and the offered id settles its own arm, so the offer is not a two-step trap", () => {
+        /*
+          The two halves have to agree. `citableEvidence` now names a profile id, and a model that
+          copies an offered id without re-deriving `source` has done the one thing the offer asked
+          of it — so the arm has to settle from a profile id exactly as it settles from a read's.
+          `producedArtifact` is the authority for both, which is what it was factored out to be;
+          asking `tool-completed` directly here would have advertised an id and then refused it.
+        */
+        const h = harness({ workflowType: "database-assessment" });
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [profileEvent] },
+          { claims: [{ claim: "Orders is the largest table.", evidence: [{ correlationId: "corr-profile" }] }] },
+        );
+
+        if (outcome.kind !== "composed") throw new Error(`expected composed, got ${outcome.kind}`);
+        expect(outcome.claims[0]?.evidence[0]).toEqual({ source: "artifact", correlationId: "corr-profile" });
+      });
+
+      test("the profile id is CITABLE too, so the offer is not advice the server would refuse", () => {
+        // The guard that makes the test above worth something: an offer naming an id the citation
+        // check would then reject would be a worse failure than naming nothing.
+        const h = harness({ workflowType: "database-assessment" });
+
+        const outcome = composeReportTool(
+          h.context,
+          { runId: h.context.runId, events: [profileEvent] },
+          {
+            claims: [
+              {
+                claim: "Orders is the largest table.",
+                evidence: [{ source: "artifact", correlationId: "corr-profile" }],
+              },
+            ],
+          },
+        );
+
+        expect(outcome.kind).toBe("composed");
       });
     });
 

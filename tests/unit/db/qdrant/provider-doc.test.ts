@@ -257,11 +257,12 @@ describe("docs/providers/qdrant.md quotes what the code says", () => {
     expect(MCP_EXPOSABLE.qdrant).toBe(true);
     expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
     expect(AGENT_EXECUTION_ENGINES).toContain("qdrant");
-    expect(MCP_STATEMENT_READ.qdrant).toBe(false);
+    expect(MCP_STATEMENT_READ.qdrant).toBe(true);
     const machine = sectionOf(DOC, "### 3.5 Machine access");
     expect(machine).toContain("(`mcp: true`)");
     expect(machine).toContain("Agent execution reads metadata only (section 15)");
-    expect(machine).toContain("MCP `run_read_query` refuses Qdrant");
+    expect(machine).toContain("MCP `run_qdrant_read` runs those same reads, under the same proof and projection");
+    expect(machine).toContain("MCP `run_read_query` refuses Qdrant, naming `run_qdrant_read`");
   });
 
   test("the doc keeps every sentence of the stated limits, the open-server clause included", () => {
@@ -297,7 +298,7 @@ describe("docs/SECURITY.md states Qdrant's control, its limits and its plaintext
     expect(bullet).toContain(
       "A Qdrant API key or JWT over no TLS is refused unless the host is a loopback address or `localhost`, or an SSH tunnel carries the connection.",
     );
-    expect(SECURITY).toContain("etcd's, Neo4j's, Milvus's, Qdrant's and Weaviate's providers keep the mode today");
+    expect(SECURITY).toContain("Qdrant's runs reads only, so the mode changes nothing a request can do today");
   });
 });
 

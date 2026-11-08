@@ -21,7 +21,8 @@ import {
   RABBITMQ_FIELD_RULES,
   offersSshTunnel,
   offersSslPanel,
-  readOnlyHint,
+  READ_ONLY_FIXED_HINT,
+  READ_ONLY_TOGGLE_HINT,
   SNOWFLAKE_FIELD_HINTS,
   SNOWFLAKE_FIELD_RULES,
   SPARK_FIELD_HINTS,
@@ -720,13 +721,6 @@ describe("db-ui-config", () => {
     expect(neo4j.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("neo4j")).toBe(true);
     expect(neo4j.fieldHints).toEqual({ database: "Leave empty to use the server's home database." });
-    // The Read-only toggle's own sentence: the dialog's default says the mode can be turned off (spec A7).
-    expect(readOnlyHint(neo4j)).toBe(
-      "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
-    );
-    expect(readOnlyHint(DB_UI_CONFIG.etcd)).toBe(
-      "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
-    );
     expect(neo4j.fieldLabels).toBeUndefined();
     expect(neo4j.fieldOptions).toBeUndefined();
   });
@@ -870,15 +864,11 @@ describe("declared connection-field copy (#1085)", () => {
       allowInsecureAuth:
         "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
     });
-    expect(oxia.readOnlyHint).toBe(
-      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
-    );
     // The Namespace box shows the namespace an empty one means, not the dialog's "db" (ruling R34).
     expect(oxia.fieldPlaceholders).toEqual({ database: "default" });
     expect(connectionFieldPlaceholder(oxia, "database", "db")).toBe("default");
     expect(connectionFieldPlaceholder(oxia, "host", "localhost")).toBe("localhost");
     expect(connectionFieldPlaceholder(getDBConfig("postgres"), "database", "db")).toBe("db");
-    expect(readOnlyHint(oxia)).toBe(oxia.readOnlyHint ?? "");
     // No User box, no Host address, no option list and the default SSH tunnel (SB3-1.5).
     expect(takesConnectionField("oxia", "user")).toBe(false);
     expect(oxia.hostAcceptsUri).toBeUndefined();
@@ -920,7 +910,6 @@ describe("declared connection-field copy (#1085)", () => {
       allowInsecureAuth:
         "Ticked, the password crosses the network in cleartext to this host. Databend Cloud never needs this: it serves HTTPS on port 443.",
     });
-    expect(databend.readOnlyHint).toBeUndefined();
     expect(databend.fieldOptions).toBeUndefined();
     expect(hostUriSchemes("databend")).toEqual(["http", "https"]);
     expect(databend.credentialWarnings).toBe(CREDENTIAL_WARNINGS.databend);
@@ -968,9 +957,6 @@ describe("declared connection-field copy (#1085)", () => {
         "Ticked, Studio connects to this host over plain HTTP. The secret access key is never sent to this server, but bucket and object names, listings and previewed contents travel in the clear, readable by anyone on the path, and a captured request can be replayed for several minutes. Choose an SSL mode under SSL / TLS, or an SSH tunnel, wherever the server offers one.",
     });
     expect(s3.fieldRules).toBe(S3_FIELD_RULES);
-    expect(readOnlyHint(s3)).toBe(
-      "S3-compatible connections are read-only in this version, whether or not this is ticked: Studio sends no write.",
-    );
     expect(s3.fieldOptions).toBeUndefined();
     expect(hostUriSchemes("s3")).toEqual(["http", "https"]);
     expect(s3.credentialWarnings).toBe(CREDENTIAL_WARNINGS.s3);
@@ -1005,8 +991,6 @@ describe("declared connection-field copy (#1085)", () => {
     "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.";
   const INFLUX_CONSENT_HINT =
     "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.";
-  const INFLUX_READ_ONLY_HINT =
-    "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.";
 
   test("influxdb declares its label, port, fields, Password or token, the hints, the consent hint and the Host box addresses (InfluxDB spec A.3)", () => {
     const influxdb = getDBConfig("influxdb");
@@ -1029,7 +1013,6 @@ describe("declared connection-field copy (#1085)", () => {
         'A 1.x database, a 2.x bucket, or an InfluxDB 3 database: the default for a run, not a filter. Empty: the only database the credential can list, or name it in the statement as "db".."measurement".',
       allowInsecureAuth: INFLUX_CONSENT_HINT,
     });
-    expect(readOnlyHint(influxdb)).toBe(INFLUX_READ_ONLY_HINT);
     expect(hostUriSchemes("influxdb")).toEqual(["http", "https"]);
     expect(influxdb.credentialWarnings).toBe(CREDENTIAL_WARNINGS.influxdb);
   });
@@ -1057,7 +1040,6 @@ describe("declared connection-field copy (#1085)", () => {
         "The one InfluxDB 3 database this connection reads. Empty: the only database the token can list; with more than one, set it here.",
       allowInsecureAuth: INFLUX_CONSENT_HINT,
     });
-    expect(readOnlyHint(influxdb3)).toBe(INFLUX_READ_ONLY_HINT);
     expect(hostUriSchemes("influxdb3")).toEqual(["http", "https"]);
     expect(influxdb3.credentialWarnings).toBe(CREDENTIAL_WARNINGS.influxdb3);
   });
@@ -1276,7 +1258,6 @@ describe("declared field rules (Databend design 6.3)", () => {
     );
     expect(connectionFieldHint(config, "port")).toBe("15671 with TLS; 443 when a TLS proxy serves the management API");
     expect(connectionFieldHint(config, "host")).toContain("A path such as /rabbitmq goes in Path prefix.");
-    expect(readOnlyHint(config)).toContain("read-only whether or not this is ticked");
   });
 
   test("Kubernetes' form rules are the provider's patterns and sentences, which the dialog cannot import", () => {
@@ -2033,10 +2014,29 @@ describe("the Firestore connection form (Firestore spec 4.1)", () => {
     expect(connectionFieldHint(config, "schema")).toContain("(default)");
   });
 
-  test("declares a placeholder only for the box that draws one, and says the read-only mode is structural", () => {
+  test("declares a placeholder only for the box that draws one", () => {
     expect(connectionFieldPlaceholder(config, "database", "")).toBe("my-project");
     // The dialog draws its own `default` and `***` in these two boxes, so a declared value would be drawn nowhere.
     expect(config.fieldPlaceholders).toEqual({ database: "my-project" });
-    expect(readOnlyHint(config)).toContain("read-only whether or not this is ticked");
+  });
+});
+
+describe("the read-only control's two sentences", () => {
+  test("the toggle's sentence says the mode can be turned off, and the fixed label's says no setting keeps it", () => {
+    expect(READ_ONLY_TOGGLE_HINT).toBe(
+      "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
+    );
+    expect(READ_ONLY_FIXED_HINT).toBe(
+      "Studio has no write path on this engine, so every connection to it is read-only.",
+    );
+  });
+
+  test("no engine declares a sentence of its own: the fixed label's is one for every engine Studio has no write path on", () => {
+    // The removed per-engine field, read by name, so a row that brings it back is caught even though the type no
+    // longer lists it.
+    const declaring = (Object.keys(DB_UI_CONFIG) as DatabaseType[]).filter(
+      (type) => "readOnlyHint" in DB_UI_CONFIG[type],
+    );
+    expect(declaring).toEqual([]);
   });
 });

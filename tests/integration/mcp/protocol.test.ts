@@ -13,6 +13,7 @@ import { join, resolve } from "node:path";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { DuckDBProvider } from "@/lib/db/providers/sql/duckdb";
 import { logger } from "@/lib/logger";
+import { listedStatementArms } from "@/lib/mcp/tools/statement-arms";
 import {
   APP_VERSION,
   createDuckdbFile,
@@ -33,10 +34,11 @@ import {
   readJsonRpc,
   testAuthInfo,
 } from "../../helpers/mcp-harness";
+import { listedMcpToolNames, registeredMcpToolNames } from "../../helpers/mcp-tool-names";
 
 pinMcpTestEnvironment();
 
-const { mcpHandler, MCP_SERVER_NAME, MCP_INSTRUCTIONS, MCP_SUPPORTED_PROTOCOL_VERSIONS } = await import(
+const { mcpHandler, mcpListHandler, MCP_SERVER_NAME, MCP_INSTRUCTIONS, MCP_SUPPORTED_PROTOCOL_VERSIONS } = await import(
   "@/lib/mcp/server"
 );
 const { isMcpToolName } = await import("@/lib/mcp/tools");
@@ -71,7 +73,9 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const TOOL_NAMES = ["list_connections", "inspect_schema", "run_read_query", "run_kubectl_read", "run_mongo_command"];
+const TOOL_NAMES = registeredMcpToolNames();
+/** The admin token's list: this file seeds a SQLite and a DuckDB connection offered to admins. */
+const LISTED = listedMcpToolNames(new Set(["sqlite", "duckdb"]));
 const legacyInitialize = (protocolVersion: string) =>
   legacyPost(
     {
@@ -84,13 +88,17 @@ const legacyInitialize = (protocolVersion: string) =>
   );
 
 describe("the default legacy client", () => {
-  test("connects on 2025-11-25, lists the five tools in registration order and calls one", async () => {
+  test("connects on 2025-11-25, lists the tools in registration order and calls one", async () => {
     const warn = spyOn(logger, "warn");
     const session = await connectClient(serve);
     try {
       expect(session.client.getProtocolEra()).toBe("legacy");
       expect(session.client.getNegotiatedProtocolVersion()).toBe("2025-11-25");
-      expect((await session.client.listTools()).tools.map((tool) => tool.name)).toEqual(TOOL_NAMES);
+      const listed = (await session.client.listTools()).tools.map((tool) => tool.name);
+      expect(listed).toEqual(LISTED);
+      // The wire order against the records themselves: the metadata tools first, then each serving arm in record order.
+      expect(listed.slice(0, 2)).toEqual(["list_connections", "inspect_schema"]);
+      expect(listed.slice(2)).toEqual(listedStatementArms(new Set(["sqlite", "duckdb"])).map((arm) => arm.tool));
 
       const result = await session.client.callTool({ name: "list_connections", arguments: {} });
       expect(result.isError ?? false).toBe(false);
@@ -111,7 +119,7 @@ describe("the default legacy client", () => {
     const session = await connectClient(serve, { supportedProtocolVersions: ["2025-06-18"] });
     try {
       expect(session.client.getNegotiatedProtocolVersion()).toBe("2025-06-18");
-      expect((await session.client.listTools()).tools).toHaveLength(5);
+      expect((await session.client.listTools()).tools).toHaveLength(LISTED.length);
     } finally {
       await session.close();
     }
@@ -182,7 +190,7 @@ describe("the capability objects", () => {
 });
 
 describe("the tool map", () => {
-  test("names the five tools and nothing an object inherits, so no other name reaches a tool's schema", () => {
+  test("names the tools and nothing an object inherits, so no other name reaches a tool's schema", () => {
     for (const name of TOOL_NAMES) expect(isMcpToolName(name)).toBe(true);
     for (const name of ["toString", "constructor", "__proto__", "no_such_tool", 42, undefined]) {
       expect(isMcpToolName(name)).toBe(false);
@@ -243,6 +251,12 @@ describe("the legacy answer to a tools/call", () => {
 describe("the server factory", () => {
   test("refuses a request that arrives without a verified identity", async () => {
     const response = await mcpHandler.fetch(legacyPost({ jsonrpc: "2.0", id: 9, method: "tools/list" }));
+    expect(response.status).toBe(500);
+    expect(((await response.json()) as { error: { code: number } }).error.code).toBe(-32603);
+  });
+
+  test("the list handler refuses a tools/list that arrives without a verified identity", async () => {
+    const response = await mcpListHandler.fetch(legacyPost({ jsonrpc: "2.0", id: 9, method: "tools/list" }));
     expect(response.status).toBe(500);
     expect(((await response.json()) as { error: { code: number } }).error.code).toBe(-32603);
   });

@@ -27,7 +27,7 @@ import {
 import type { ColumnSchema, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { RawMessage, StopReason } from "./amqp/read-loop";
 import type { RabbitMQAgentOperation } from "./agent-statement";
-import { IDLE_WARNING, NEXT_EMPTY_WARNING } from "./errors";
+import { IDLE_WARNING, NEXT_EMPTY_WARNING, ObjectNotFoundError, quoteName, VhostAccessError } from "./errors";
 import { RABBITMQ_READ_WIRE_BYTES, RABBITMQ_RESULT_BUDGET_BYTES, RABBITMQ_TYPE } from "./limits";
 import type { AgentReadOutcome } from "./read";
 import type { ReadRequest } from "./request";
@@ -130,13 +130,31 @@ export function rabbitmqAgentResult(
 }
 
 /**
- * The agent's wording of a failure, or undefined for one the provider passes on as it is. A read that D ended before
- * the broker started it is the time budget's refusal, and an answer that fits no column is the projection's own
- * sentence. Every other failure is already one of errors.ts's own sentences, picked by a reply code or a fixed
- * pattern and never quoting the broker, so it passes on unchanged.
+ * The agent's refusal of a vhost it may not use and of a vhost or stream that does not exist, in one sentence. Measured
+ * on 4.3.6, the type check answers a vhost that exists without permission with 404 not_found and one that does not
+ * exist with 404 Object Not Found, so two sentences would tell a vhost the user cannot list apart from a missing one.
  */
-export function rabbitmqAgentFailure(error: unknown, deadlineMs: number, statement: string): QueryError | undefined {
+export function rabbitmqAgentUnreadable(vhost: string, stream: string): string {
+  return `Virtual host ${quoteName(vhost)} does not exist, this user has no permissions on it, or it has no queue, stream or exchange ${quoteName(stream)}: name a stream this user may read.`;
+}
+
+/**
+ * The agent's wording of a failure, or undefined for one the provider passes on as it is. A read that D ended before
+ * the broker started it is the time budget's refusal, an answer that fits no column is the projection's own sentence,
+ * and a vhost the user may not use or a vhost or stream that does not exist is one sentence for all three. Every
+ * other failure is already one of errors.ts's own sentences, picked by a reply code or a fixed pattern and never
+ * quoting the broker, so it passes on unchanged.
+ */
+export function rabbitmqAgentFailure(
+  error: unknown,
+  deadlineMs: number,
+  request: ReadRequest,
+  statement: string,
+): QueryError | undefined {
   if (error instanceof MetadataProjectionError) return new QueryError(error.message, RABBITMQ_TYPE, statement);
+  if (error instanceof VhostAccessError || error instanceof ObjectNotFoundError) {
+    return new QueryError(rabbitmqAgentUnreadable(request.vhost, request.stream), RABBITMQ_TYPE, statement);
+  }
   if (error instanceof TimeoutError) {
     return new QueryError(RABBITMQ_AGENT_STOP_SENTENCES.timeout(deadlineMs), RABBITMQ_TYPE, statement);
   }

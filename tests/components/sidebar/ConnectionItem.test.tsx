@@ -540,6 +540,19 @@ describe("ConnectionItem", () => {
       );
     });
 
+    test("a connection to an engine Studio has no write path on carries it without the field", () => {
+      const { getByText } = render(
+        <ConnectionItem
+          connection={{ ...mockPostgresConnection, type: "qdrant", readOnly: undefined }}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+        />,
+      );
+
+      expect(getByText("Read-only").closest("[title]")?.getAttribute("title")).toBe(title);
+    });
+
     test("a connection that is not read-only carries none", () => {
       const props = { isActive: false, onSelect: defaultOnSelect, onDelete: defaultOnDelete };
       const view = render(<ConnectionItem connection={mockPostgresConnection} {...props} />);

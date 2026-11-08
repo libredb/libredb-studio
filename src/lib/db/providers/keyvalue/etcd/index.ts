@@ -68,7 +68,7 @@ import type {
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { type EtcdAgentAnswer, ETCD_METADATA_ONLY, etcdAgentFailure, etcdAgentResult } from "./agent-metadata-read";
-import { etcdAgentUser, proveEtcdReadOnly } from "./agent-read-only-proof";
+import { ETCD_PROOF_SENTENCES, etcdAgentUser, proveEtcdReadOnly } from "./agent-read-only-proof";
 import { type EtcdAgentPlan, readEtcdAgentStatement } from "./agent-statement";
 import { type EtcdAuthStatus, type EtcdClient, type EtcdClientFactory, EtcdError, type EtcdPermission } from "./client";
 import { type EtcdParseLimits, parseEtcdCommand } from "./commands";
@@ -84,6 +84,7 @@ import {
   type EtcdConnectStep,
   type EtcdErrorConnection,
   type EtcdErrorContext,
+  isAuthNotEnabled,
   isUserNameEmpty,
   toProviderError,
 } from "./errors";
@@ -107,6 +108,29 @@ import {
 } from "./objects";
 import { type AccessScope, describeScope, ROOT_ROLE, readableScope, writableScope } from "./permissions";
 import { commandResult } from "./results";
+import { declareWriteReach } from "@/lib/db/write-reach";
+
+/**
+ * Every write path the provider has is refused while read-only mode holds, before any request: every command the
+ * guard classes as a write (put, del, a txn that writes, lease grant, lease keep-alive, lease revoke) by
+ * `refuseBeforeSend`, and the value edit and the maintenance operations (compact, defragment, disarm) by
+ * `refuseReadOnly`, which `refuseBeforeSend` calls first. There is no transaction route.
+ */
+const ETCD_WRITE_REACH = declareWriteReach({
+  editor: {
+    reach: "gated",
+    gate: { module: "src/lib/db/providers/keyvalue/etcd/write-policy.ts", symbol: "refuseBeforeSend" },
+  },
+  objectEdit: {
+    reach: "gated",
+    gate: { module: "src/lib/db/providers/keyvalue/etcd/write-policy.ts", symbol: "refuseReadOnly" },
+  },
+  maintenance: {
+    reach: "gated",
+    gate: { module: "src/lib/db/providers/keyvalue/etcd/write-policy.ts", symbol: "refuseReadOnly" },
+  },
+  transaction: { reach: "absent" },
+});
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: an etcdctl command has no placeholders";
 
@@ -341,7 +365,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
       containerLevels: [],
       objectKinds: ETCD_OBJECT_KINDS,
       keyScan: ETCD_KEY_SCAN,
-      enforcesReadOnly: true,
+      writeReach: ETCD_WRITE_REACH,
       // Key names and values are stored values: the agent's answers carry the cluster's metadata, counts and sizes.
       metadataOnly: ETCD_METADATA_ONLY,
       schemaRefreshPattern: ETCD_SCHEMA_REFRESH_PATTERN,
@@ -435,6 +459,11 @@ export class EtcdProvider extends BaseDatabaseProvider {
 
     if (auth.kind === "password") {
       await client.authenticate({ signal: signal() }).catch((error: unknown) => {
+        // With authentication off no user is proved, so the agent read-only profile refuses the open in the proof's
+        // own sentence rather than as the editor's connection failure, and without etcd's words.
+        if (this.readOnlyProfile && isAuthNotEnabled(error)) {
+          throw new ExecutionProfileError(ETCD_PROOF_SENTENCES.authOff, "PROFILE_SERVER_UNENFORCED");
+        }
         throw stepError("authenticate", error, step("sign-in"));
       });
     }

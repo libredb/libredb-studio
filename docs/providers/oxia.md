@@ -5,6 +5,10 @@ Source: [`src/lib/db/providers/keyvalue/oxia/`](../../src/lib/db/providers/keyva
 Tests: [`tests/unit/db/oxia/`](../../tests/unit/db/oxia/) and [`tests/integration/db/oxia-provider.test.ts`](../../tests/integration/db/oxia-provider.test.ts).
 Tracking issue: [#424](https://github.com/libredb/libredb-studio/issues/424).
 
+| | |
+|---|---|
+| **Write reach** | none: the gRPC stub, built from `allowlistedServices`, holds only the read RPCs, so no write RPC can be called; there is no object edit, maintenance or transaction route |
+
 ## Before you connect
 
 Six facts decide whether the first connection works.
@@ -26,7 +30,7 @@ Six facts decide whether the first connection works.
 ## 1. Overview
 
 Studio reads an Oxia namespace through a gRPC client of its own, shows its shards in the object tree and every key in the Keys panel, and runs one `oxia client` read command per run in the editor.
-It reads only, whatever the connection's Read-only toggle says: no call Studio can make writes, opens a session or watches notifications.
+It reads only, whatever the connection's `readOnly` says: no call Studio can make writes, opens a session or watches notifications.
 Each key opens in a Source tab with its value and its version metadata.
 
 ### Concept mapping
@@ -161,7 +165,7 @@ The client can call only the four read methods and the health check, and never a
 
 ### 3.5 The read-only mode
 
-The Read-only toggle, a seed's `readOnly` and an agent execution profile all set the mode, and the provider enforces it whatever its source, because it sends no write at all.
+A connection's `readOnly`, a seed's and an agent execution profile all set the mode, and the provider enforces it whatever its source, because it sends no write at all.
 A write command names the mode only while the mode holds:
 
 > put writes, and this connection is read-only. Studio's Oxia support also reads only in this version, so turning the mode off would not run it: write with the oxia CLI.
@@ -170,9 +174,9 @@ and otherwise:
 
 > put writes, and Studio's Oxia support reads only in this version: write with the oxia CLI.
 
-The connection dialog says the same under the Read-only toggle:
+The connection dialog draws no Read-only box for Oxia, only a fixed Read-only label, and says under it:
 
-> Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.
+> Studio has no write path on this engine, so every connection to it is read-only.
 
 A read-only seed of one standalone server on this machine, managed, with no token and no Data servers, is `tests/fixtures/seed-connections/oxia-read-only-config.yaml`.
 
@@ -205,7 +209,7 @@ A connection names one endpoint, one namespace and, for a cluster, the data serv
 | Send the password without TLS | Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one. |
 | SSL / TLS | The mode, the CA, and the client certificate and key, for the endpoint and every data server alike |
 | SSH Tunnel | A bastion that forwards the one endpoint, for a standalone server (section 4.5) |
-| Read-only | The mode of section 3.5 |
+| Read-only | A fixed label with no box: the mode of section 3.5 |
 
 The Host, Token, Namespace, Data servers and consent rows are the hints the connection dialog shows under each field.
 There is no User field: Oxia has no user name, and a connection that carries one is refused.
@@ -242,6 +246,7 @@ The connection dialog warns about a token whose payload declares no expiry:
 > This token declares no expiry, so it stays valid until the identity provider's signing key changes, and Oxia has no authorization, so it reads and writes every namespace. Prefer a token with an expiry.
 
 A read-only seed without a token is not refused: no token makes an Oxia server read-only, so the mode is a promise of what Studio sends, with a token or without one.
+An Oxia seed takes no agent credential (`SEED_AGENT_CREDENTIAL.oxia` in `src/lib/db/connection-fields.ts` is null), so a seed that sets `agentUser` or `agentPassword` is refused at load: the provider declares no agent credential form, so the factory would ask for a user, which Oxia refuses, and the server authorizes nothing, so a token of the agent's own would narrow nothing either (D441).
 
 ### 4.3 TLS
 
@@ -626,7 +631,7 @@ Every capability is written, since the base's defaults are SQL's:
 | `supportsTransactions` | `false` |
 | `declaresForeignKeys` | `false` |
 | `tablesAreDerivedGroupings` | `false` |
-| `enforcesReadOnly` | `true` |
+| `writeReach` | `OXIA_WRITE_REACH` |
 | `supportsMaintenance` | `false` |
 | `maintenanceOperations` | `[]` |
 | `supportsConnectionString` | `false` |

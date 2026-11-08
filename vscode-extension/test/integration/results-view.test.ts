@@ -17,7 +17,7 @@ import { ProfileConnectionSource } from "../../src/host/connections/connection-s
 import { ConnectionStore } from "../../src/host/connections/connection-store";
 import type { ProfileEntry } from "../../src/host/connections/profile";
 import { BindingStore } from "../../src/host/editor/bindings";
-import { runQuery } from "../../src/host/editor/run-query";
+import { RUN_ANYWAY, runQuery } from "../../src/host/editor/run-query";
 import { RunRegistry } from "../../src/host/editor/run-registry";
 import { RunService } from "../../src/host/editor/run-service";
 import { OpenConnections } from "../../src/host/open-connections";
@@ -37,7 +37,16 @@ import { type BackendSession, openSession } from "../backend-session";
 import { FakeSetting } from "../fakes/connections-setting";
 import { FakeTextDocument, FakeTextEditor } from "../fakes/documents";
 import { MemorySecretStorage } from "../fakes/secret-storage";
-import { CancellationTokenSource, languages, settings, Uri, window, workspace } from "../fakes/vscode";
+import {
+  answerMessages,
+  CancellationTokenSource,
+  languages,
+  settings,
+  shownMessages,
+  Uri,
+  window,
+  workspace,
+} from "../fakes/vscode";
 import { EMPTY_AND_NOTICES, FAILURES, LOAD_MORE_ON_POSTGRES, MONGODB_DOCUMENTS } from "../fixtures/results-sequences";
 import { type EngineService, type RunningEngine, START_DEADLINE_MS, startEngine, stopEngine } from "./containers";
 import { ENGINES, type EngineFixture } from "./engines";
@@ -529,8 +538,22 @@ describe("the Results view against PostgreSQL, SQL Server, MySQL and MongoDB", (
   describe("on PostgreSQL (criterion 10)", () => {
     const pg = profileId("postgres");
 
-    it("posts an UPDATE of three rows with rowCount 3 and no rows", async () => {
-      const messages = await run(pg, "update it_update3 set n = n + 10");
+    it("asks once in a modal before an UPDATE, then posts its three rows with rowCount 3 and no rows", async () => {
+      const statement = "update it_update3 set n = n + 10";
+      const shown = shownMessages.length;
+      // The integration config loads no reset hook, so the scripted answer is put back before any later case.
+      answerMessages(() => RUN_ANYWAY);
+      let messages: HostToWebview[];
+      try {
+        messages = await run(pg, statement);
+      } finally {
+        answerMessages(() => undefined);
+      }
+      // The real child's verdict reaches the host here: the gate flags the UPDATE and Run asks before sending it.
+      assert.deepEqual(
+        shownMessages.slice(shown).map(({ level, options, items }) => ({ level, options, items })),
+        [{ level: "warning", options: { modal: true, detail: statement }, items: [RUN_ANYWAY] }],
+      );
       const { page } = succeeded(messages);
       assert.equal(page.rowCount, 3);
       assert.deepEqual(page.rows, []);

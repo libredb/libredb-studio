@@ -249,14 +249,14 @@ export function readInfluxqlCatalogRows(text: string, columns: readonly string[]
 /**
  * A `/query` 200 body as one grid (spec 5.1 step 10). The grid keeps no more columns than the cell budget, and a
  * column past it sets `cut` as a row past it does (R54), as `shapeJsonlBody` keeps none. `secretForms` are the
- * connection's (`InfluxConnectionOptions.secretForms`), which the server's notices pass. Throws
- * `InfluxAnswerShapeError`.
+ * connection's (`InfluxConnectionOptions.secretForms`), which the server's notices pass. `seriesColumns` is each
+ * series' own column list, as the server sent it, before the grid merges them. Throws `InfluxAnswerShapeError`.
  */
 export function shapeInfluxqlBody(
   text: string,
   limits: InfluxShapeLimits,
   secretForms: readonly string[],
-): ShapedResult & { readonly partial: boolean } {
+): ShapedResult & { readonly partial: boolean; readonly seriesColumns: readonly (readonly string[])[] } {
   const statements = statementResults(splitJsonDocuments(text).map(readDocument));
   const series = statements.flatMap((result) => result.series);
   const grid = gridColumns(series);
@@ -278,5 +278,6 @@ export function shapeInfluxqlBody(
     cut: columnsCut || total > kept,
     warnings: engineWarnings(statements, secretForms),
     partial: statements.at(-1)?.partial === true,
+    seriesColumns: series.map((entry) => entry.columns),
   };
 }

@@ -50,6 +50,8 @@ export interface FakeAgentOptions {
 export interface FakeAgent {
   readonly port: number;
   readonly requests: FakeAgentRequest[];
+  /** The encoded size in bytes of every answer the agent sent, in order. */
+  readonly answerBytes: number[];
   readonly close: () => void;
 }
 
@@ -92,6 +94,7 @@ export async function startFakeAgent(
     return found ?? [[...oid], END_OF_MIB_VIEW];
   };
   const requests: FakeAgentRequest[] = [];
+  const answerBytes: number[] = [];
   const socket: Socket = createSocket("udp4");
   socket.on("message", (datagram, from) => {
     const bytes = Uint8Array.from(datagram);
@@ -143,6 +146,7 @@ export async function startFakeAgent(
         0xa2,
       ),
     ]);
+    answerBytes.push(answer.length);
     socket.send(answer, from.port, from.address);
   });
   await new Promise<void>((resolve) => socket.bind(0, "127.0.0.1", () => resolve()));
@@ -151,5 +155,5 @@ export async function startFakeAgent(
     if (open) socket.close();
     open = false;
   };
-  return { port: (socket.address() as { port: number }).port, requests, close };
+  return { port: (socket.address() as { port: number }).port, requests, answerBytes, close };
 }

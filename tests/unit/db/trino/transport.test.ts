@@ -215,6 +215,7 @@ describe("TrinoTransport", () => {
           affectedRows: null,
           warnings: [warning],
           stats: STUB_STATS,
+          endedTransaction: false,
           // `sql` is read so the stub is a transport rather than a constant.
           ...(sql === "" ? { rows: [] } : {}),
         });
@@ -224,10 +225,16 @@ describe("TrinoTransport", () => {
         return Promise.resolve();
       },
       close: () => Promise.resolve(),
+      beginReadOnlyTransaction: () => Promise.resolve("0b6f3c2e-1d4a-4c8e-9f00-000000000001"),
+      rollback: (transactionId: string): Promise<void> => {
+        seen.push(transactionId);
+        return Promise.resolve();
+      },
     };
 
     const result = await stub.query(TRINO_DIALECT.versionQuery, { onQueryStarted: (id) => seen.push(id) });
     await stub.cancel(result.queryId);
+    await stub.rollback(await stub.beginReadOnlyTransaction());
     await stub.close();
 
     expect(result.rows).toEqual([{ _col0: "476" }]);
@@ -235,6 +242,10 @@ describe("TrinoTransport", () => {
     // Announced while the statement is running AND carried on the result: a caller
     // that wants to cancel from elsewhere needs the first, and one that wants to
     // link to the cluster UI needs the second.
-    expect(seen).toEqual(["20260819_231125_00001_chvb7", "20260819_231125_00001_chvb7"]);
+    expect(seen).toEqual([
+      "20260819_231125_00001_chvb7",
+      "20260819_231125_00001_chvb7",
+      "0b6f3c2e-1d4a-4c8e-9f00-000000000001",
+    ]);
   });
 });

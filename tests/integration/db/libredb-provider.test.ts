@@ -904,7 +904,7 @@ describe("LibreDBProvider object surface (#789)", () => {
       kinds: { table: 3, collection: 2, keyspace: 3 },
       sampleObject: { path: ["employees:*"], kind: "table" },
       // Invariant 8's negative direction runs zero times here, and saying so is mandatory
-      // rather than polite: `columnsForGroup` (`libredb.ts:642-663`) has three arms and every
+      // rather than polite: `columnsForGroup` (`libredb.ts`) has three arms and every
       // one of them returns a non-empty list, so all three declared kinds declare columns and
       // a silent zero-iteration loop would certify nothing (#789).
       noAbstainingKinds: true,
@@ -1854,7 +1854,7 @@ describe("LibreDBProvider — the agent read-only profile", () => {
       const error = await settle(reader.queryReadOnly("get user:1", BUDGET));
       expect(error).toBeInstanceOf(ConnectionError);
       expect((error as Error).message).toBe(
-        `The LibreDB file ${tmpFile} does not exist. The agent opens an existing file read-only and creates none.`,
+        `The LibreDB file ${tmpFile} does not exist. The agent opens an existing file only and creates none.`,
       );
       expect(fs.existsSync(tmpFile)).toBe(false);
     } finally {
@@ -1870,7 +1870,7 @@ describe("LibreDBProvider — the agent read-only profile", () => {
       const error = await settle(reader.getOverview());
       expect(error).toBeInstanceOf(ConnectionError);
       expect((error as Error).message).toBe(
-        `The LibreDB file ${tmpFile} does not exist. The agent opens an existing file read-only and creates none.`,
+        `The LibreDB file ${tmpFile} does not exist. The agent opens an existing file only and creates none.`,
       );
     } finally {
       await reader.disconnect();
@@ -1914,11 +1914,61 @@ describe("LibreDBProvider — the agent read-only profile", () => {
     const error = await settle(reader.connect());
     expect(error).toBeInstanceOf(ConnectionError);
     expect((error as Error).message).toBe(
-      `The LibreDB file ${missing} does not exist. The agent opens an existing file read-only and creates none.`,
+      `The LibreDB file ${missing} does not exist. The agent opens an existing file only and creates none.`,
     );
     expect(reader.isConnected()).toBe(false);
     expect(fs.readdirSync(tmpDir)).toEqual(["test.libredb"]);
   });
+
+  test("an operations handle opens an existing file only: a missing one is refused, and no file and no lock are created", async () => {
+    const missing = path.join(tmpDir, "missing.libredb");
+    const provider = new LibreDBProvider(makeConn(missing), {}, { readOnly: true });
+    const error = await settle(provider.connect());
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(
+      `The LibreDB file ${missing} does not exist. The agent opens an existing file only and creates none.`,
+    );
+    expect(fs.readdirSync(tmpDir)).toEqual(["test.libredb"]);
+  });
+
+  test("an operations handle takes the writer lock as the editor does, reads the file, and changes no byte", async () => {
+    const before = fs.readFileSync(tmpFile);
+    const provider = new LibreDBProvider(makeConn(tmpFile), {}, { readOnly: true });
+    await provider.connect();
+    try {
+      expect(fs.readdirSync(tmpDir).sort()).toEqual(["test.libredb", "test.libredb.lock"]);
+      expect((await provider.getOverview()).tableCount).toBeGreaterThan(0);
+    } finally {
+      await provider.disconnect();
+    }
+    expect(fs.readFileSync(tmpFile)).toEqual(before);
+    expect(fs.readdirSync(tmpDir)).toEqual(["test.libredb"]);
+  });
+
+  test("the editor still creates a missing file, as a new connection does", async () => {
+    const created = path.join(tmpDir, "created.libredb");
+    const provider = new LibreDBProvider(makeConn(created));
+    await provider.connect();
+    await provider.disconnect();
+    expect(fs.readFileSync(created).length).toBe(0);
+  });
+
+  describeIf(
+    fs.existsSync("/proc/self/environ") ? null : "no /proc/self/environ on this platform",
+    "a procfs file, whose size reads 0 while it holds bytes",
+    () => {
+      test("is refused as no LibreDB file under both agent profiles", async () => {
+        for (const execution of [AGENT, { readOnly: true }]) {
+          const provider = new LibreDBProvider(makeConn("/proc/self/environ"), {}, execution);
+          const error = await settle(provider.connect());
+          expect(error).toBeInstanceOf(ConnectionError);
+          expect((error as Error).message).toBe(
+            "The file is not a LibreDB database. It was left untouched \u2014 check the path.",
+          );
+        }
+      });
+    },
+  );
 
   test("a file that is no database is refused at the open with the editor's sentence", async () => {
     const junk = path.join(tmpDir, "junk.libredb");

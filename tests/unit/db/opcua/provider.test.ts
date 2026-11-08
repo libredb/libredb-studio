@@ -6,6 +6,7 @@
  * cannot write, would be lying by omission.
  */
 import { describe, expect, test } from "bun:test";
+import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { isAbsolute } from "node:path";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type {
@@ -99,7 +100,7 @@ describe("the declarations", () => {
   const provider = new OpcuaProvider(connection(), {}, {}, undefined, ENV);
 
   test("read-only is declared true, and it is structural rather than a setting", () => {
-    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
   });
 
   test("its own dialect, so a connection never falls through to another engine's tab", () => {
@@ -129,6 +130,19 @@ describe("the declarations", () => {
 });
 
 describe("connecting", () => {
+  test("read roots outside the grammar are refused when the provider is built, naming the first", () => {
+    expect(() => new OpcuaProvider(connection({ agentReadRoots: ["i=2256", "ns=3;s=Telemetry", "x"] }))).toThrow(
+      new DatabaseConfigError(
+        "This OPC UA connection's agentReadRoots is refused: agentReadRoots[1] names its namespace by index, which a server restart can move to another namespace: write it with the namespace URI, nsu=<uri>;..., as the server's NamespaceArray lists it.",
+        "opcua",
+      ),
+    );
+    expect(() => new OpcuaProvider(connection({ agentReadRoots: [] }))).toThrow(
+      "This OPC UA connection's agentReadRoots is refused: agentReadRoots is empty",
+    );
+    expect(() => new OpcuaProvider(connection({ agentReadRoots: ["nsu=urn:plant;s=Line1"] }))).not.toThrow();
+  });
+
   test("a connection is read before anything is dialled, so a bad one never opens a socket", async () => {
     const provider = new OpcuaProvider(
       connection({ host: "http://plc/" }),

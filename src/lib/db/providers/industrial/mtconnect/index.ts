@@ -18,7 +18,7 @@
  * then run by `agent-read.ts` against the agent's device model read fresh for that read, with the agent's adapter
  * connections withheld (`agent-withheld.ts`). On a handle opened for any agent-mode profile the console is refused,
  * the connection reads only the device model, and every reading the agent does not report answers its reason
- * (`agent-surface.ts`). MCP read stays closed on this engine.
+ * (`agent-surface.ts`). MCP's `run_mtconnect_read` reads through the same `queryReadOnly`.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
@@ -71,6 +71,13 @@ import { indexMtconnectModel, modelIsCurrent, type MtcModel } from "./model";
 import type { MtcElement, MtcObservation } from "./xml";
 import type { MtcOp } from "./routes";
 import { buildRow, rowsFromAssets, rowsFromModel, sortRows, type MtcRow } from "./rows";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/** No write path on any route: every route of the closed route table is a GET. */
+const MTCONNECT_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/industrial/mtconnect/routes.ts",
+  symbol: "MTC_ROUTES",
+});
 
 /** One agent's session: the transport, the held model and the window the cursor is read against. */
 interface MtcSession {
@@ -169,7 +176,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    * MEASURED: the factory resolves the connection's own `queryTimeout` into `options` before it
    * builds anything (`factory.ts`, `options = { ...options, queryTimeout: options.queryTimeout ??
    * connection.queryTimeout }`), and `BaseDatabaseProvider` reads it there
-   * (`base-provider.ts:153`, `options.queryTimeout ?? DEFAULT_QUERY_TIMEOUT`). This provider then
+   * (`BaseDatabaseProvider` in `base-provider.ts`, `options.queryTimeout ?? DEFAULT_QUERY_TIMEOUT`). This provider then
    * uses `this.queryTimeout` twice: the limiter's permit wait and the request's own abort signal. So
    * a constructor that ignored `options` would quietly replace a reader's configured timeout with the
    * default, on every read, with nothing failing. Every sibling takes it; this one does too.
@@ -234,7 +241,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Read-only whatever the connection's flag says: the client has one operation and it is a GET.
-      enforcesReadOnly: true,
+      writeReach: MTCONNECT_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,
@@ -323,7 +330,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    * EVERY REFUSAL LEAVES THIS PROVIDER AS A `QueryError`, and that is a correctness rule rather than
    * a style one (#1722).
    *
-   * MEASURED on `origin/main`: `providers/platform/kubernetes/objects.ts:348` turns a `QueryError` or
+   * MEASURED on `origin/main`: `countKind` in `providers/platform/kubernetes/objects.ts` turns a `QueryError` or
    * a `TimeoutError` into `{ unavailable: error.message }` and RE-THROWS anything else, and
    * `src/lib/db/errors.ts` defines `isQueryError` as `instanceof QueryError`. So a refusal thrown
    * as a plain `Error` is handled as an unexpected failure and THE SENTENCE IT CARRIES NEVER

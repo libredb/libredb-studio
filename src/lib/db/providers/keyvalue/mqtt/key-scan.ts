@@ -1,7 +1,7 @@
 /**
  * The Keys panel's page over an MQTT broker (`docs/providers/mqtt.md` sections 5 and 6).
  *
- * ONE READ RETURNS WHAT THE READ SAW, AND THERE IS NO PAGE TWO. The cursor is always `"0"`, which `types.ts:779`
+ * ONE READ RETURNS WHAT THE READ SAW, AND THERE IS NO PAGE TWO. The cursor is always `"0"`, which `KeyScanPage` in `types.ts`
  * defines as "this walk reached the end". That is a CHOICE and its cost is real: the panel's "Scan more" is
  * disabled, so a reader cannot ask for the rest.
  *

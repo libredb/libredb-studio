@@ -95,19 +95,10 @@ describe("the CI step", () => {
   });
 });
 
-describe("the maintainer loop", () => {
-  test("loop/scripts/functional-smoke.sh runs the check right after the PostgreSQL one", () => {
-    const lines = read("loop/scripts/functional-smoke.sh")
-      .split("\n")
-      .filter((line) => line.startsWith("bun tests/live/"));
-    expect(lines).toEqual(["bun tests/live/postgres-read-only-live.ts", `bun ${SCRIPT}`]);
-  });
-
-  test("the loop's README and the PostgreSQL check name the job by its name", () => {
-    for (const file of ["loop/README.md", "tests/live/postgres-read-only-live.ts"]) {
-      const named = read(file).match(/Functional Smoke \([^)]*\)/g) ?? [];
-      expect({ file, named }).toEqual({ file, named: ["Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)"] });
-    }
+describe("the PostgreSQL check", () => {
+  test("names the job by its name", () => {
+    const named = read("tests/live/postgres-read-only-live.ts").match(/Functional Smoke \([^)]*\)/g) ?? [];
+    expect(named).toEqual(["Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)"]);
   });
 });
 

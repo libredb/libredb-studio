@@ -26,6 +26,7 @@ import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers/timeseries/influxdb/client";
 import { INFLUX_ERROR_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/errors";
+import { INFLUXQL_AGENT_QUERY_TEXT_SENTENCE } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-read";
 import { influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
 import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import { InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/influxql-provider";
@@ -496,6 +497,8 @@ describe("the agent read-only profile", () => {
     "SELECT * FROM home -- c",
     "SHOW MEASUREMENTS\r",
     "EXPLAIN SHOW MEASUREMENTS",
+    'SHOW TAG VALUES CARDINALITY ON "other" WITH KEY = "tenant"',
+    'SHOW FIELD KEYS FROM "other"."autogen"."m"',
   ])("%p is refused before the proof or the statement is sent", async (statement) => {
     const { provider, wire } = agentServer("1.13.1", at("1.13.1", "listing-reader"), PROOF.reader);
     await provider.connect();
@@ -505,6 +508,28 @@ describe("the agent read-only profile", () => {
     expect(wire.requests).toHaveLength(opened);
     await provider.disconnect();
   });
+
+  test.each(["show-queries-during-admin-read-reader", "show-continuous-queries-reader"])(
+    "an answer shaped as %s is refused from its columns, whatever statement was sent",
+    async (name) => {
+      // The reader is never bypassed here: an admitted SELECT is answered, as a spelling the reader missed would be,
+      // with the statement text 1.13.1 handed the reader. The refusal reads the answer alone and carries none of it.
+      const captured = at("1.13.1", name);
+      const answered = { ...captured, body: captured.body.replaceAll("<qid>", "7") };
+      const { provider } = agentServer("1.13.1", at("1.13.1", "listing-reader"), [
+        ...PROOF.reader,
+        ...PROOF.reader,
+        answered,
+      ]);
+      await provider.connect();
+      const error = await rejection(provider.queryReadOnly("SELECT * FROM home", BUDGET));
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe(INFLUXQL_AGENT_QUERY_TEXT_SENTENCE);
+      expect(error.message).not.toContain("SELECT count(v)");
+      expect(error.message).not.toContain("CREATE CONTINUOUS QUERY");
+      await provider.disconnect();
+    },
+  );
 
   test("an estimating plan and a bad budget are refused before anything is sent", async () => {
     const { provider, wire } = agentServer("1.13.1", at("1.13.1", "listing-reader"), PROOF.reader);

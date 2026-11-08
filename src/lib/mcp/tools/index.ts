@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-import type { McpConnectionContext } from "../context";
+import type { McpConnectionContext, McpReach } from "../context";
 import { InspectSchemaInputSchema, registerInspectSchema } from "./inspect-schema";
 import { ListConnectionsInputSchema, registerListConnections } from "./list-connections";
 import { registerStatementTools } from "./run-statement";
@@ -12,7 +12,8 @@ import { MCP_STATEMENT_INPUT_SCHEMAS } from "./statement-arms";
  * own input validation and the route's record of it cannot disagree. Its key order is the
  * registration order, which is the order tools/list answers in. The statement tools' entries come from
  * their arms, in record order; a statement tool is registered only while its arm serves an engine
- * (`MCP_STATEMENT_ARMS`), so its entry here can outlive a listing.
+ * (`MCP_STATEMENT_ARMS`), so its entry here can outlive a listing, and on one token's tools/list only while it serves an
+ * engine the token reaches.
  */
 export const MCP_TOOL_INPUT_SCHEMAS = {
   list_connections: ListConnectionsInputSchema,
@@ -27,8 +28,12 @@ export function isMcpToolName(name: unknown): name is McpToolName {
   return typeof name === "string" && Object.hasOwn(MCP_TOOL_INPUT_SCHEMAS, name);
 }
 
-export function registerStudioTools(server: McpServer, context: McpConnectionContext): void {
+/**
+ * Without `reach` it registers every serving tool with the read-only hints, the full handler's set; with one, the
+ * metadata tools and the statement tools that serve a reached engine, `inspect_schema` with the reach's hints.
+ */
+export function registerStudioTools(server: McpServer, context: McpConnectionContext, reach?: McpReach): void {
   registerListConnections(server, context);
-  registerInspectSchema(server, context);
-  registerStatementTools(server, context);
+  registerInspectSchema(server, context, reach);
+  registerStatementTools(server, context, reach);
 }

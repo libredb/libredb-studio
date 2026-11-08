@@ -83,6 +83,7 @@ import {
 } from "@/lib/db/types";
 import { formatDuration } from "@/lib/db/utils/pool-manager";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { noWritePath } from "@/lib/db/write-reach";
 import { generateSelectQuery } from "@/lib/query-generators";
 import type { ColumnSchema, DatabaseConnection, SSLConfig } from "@/lib/types";
 import { capture, captureBody, captureVm } from "../../../helpers/prometheus-fixtures";
@@ -1298,6 +1299,10 @@ describe("the declarations", () => {
       queryLanguage: "promql",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
+      writeReach: noWritePath({
+        module: "src/lib/db/providers/timeseries/prometheus/http-transport.ts",
+        symbol: "PATHS",
+      }),
       supportsInlineRowEdit: false,
       supportsTestDataGeneration: false,
       supportsResultPagination: false,

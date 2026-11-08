@@ -56,6 +56,7 @@ import net from "node:net";
 import { join } from "node:path";
 import { flattenTree } from "@/components/object-tree/flatten";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { createDatabaseProvider } from "@/lib/db/factory";
 import { containerDepth, declaredKinds } from "@/lib/db/object-kinds";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { KafkaError, type KafkaReadClient } from "@/lib/db/providers/stream/kafka/client";
@@ -63,12 +64,17 @@ import { kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connecti
 import { toDatabaseError } from "@/lib/db/providers/stream/kafka/errors";
 import { KAFKA_METADATA_ONLY } from "@/lib/db/providers/stream/kafka/agent-metadata-read";
 import * as kafkaObjects from "@/lib/db/providers/stream/kafka/objects";
-import { createPlatformaticClient, loadPlatformatic } from "@/lib/db/providers/stream/kafka/platformatic-client";
+import {
+  createPlatformaticClient,
+  KAFKA_READ_APIS,
+  loadPlatformatic,
+} from "@/lib/db/providers/stream/kafka/platformatic-client";
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET, readMessages } from "@/lib/db/providers/stream/kafka/read";
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import { KAFKA_RESULT_FIELDS, toQueryResult } from "@/lib/db/providers/stream/kafka/results";
 import type { ObjectSourceDocument, ProviderCapabilities, ProviderOptions, QueryResult } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { noWritePath } from "@/lib/db/write-reach";
 import type { DatabaseConnection } from "@/lib/types";
 import { kafkaFixture, recordedLib } from "../../helpers/kafka-fixtures";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
@@ -843,6 +849,67 @@ describe("connect and disconnect", () => {
     expect(error).toMatchObject({ provider: "kafka", host: "127.0.0.1", port: 1 });
     expect(provider.isConnected()).toBe(false);
   }, 20_000);
+
+  test("a connect the client never settles is a ConnectionError at the query timeout, and the client it built is closed", async () => {
+    const { provider, recorded } = unconnected(
+      { "admin.metadata": () => new Promise(() => undefined) },
+      { queryTimeout: 300 },
+    );
+    const started = performance.now();
+    const error = await provider.connect().catch((e) => e);
+    const elapsed = performance.now() - started;
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error).toMatchObject({ provider: "kafka", host: "localhost", port: 9092 });
+    expect(error.message).toBe("The broker could not be reached (connect-timeout)");
+    expect(elapsed).toBeGreaterThanOrEqual(290);
+    expect(elapsed).toBeLessThan(1_000);
+    expect(closesOf(recorded.calls)).toEqual(["admin.close", "consumer.close", "pool.close"]);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a connect that settles inside the query timeout leaves no deadline behind to fail it later", async () => {
+    const { provider } = await connected({}, 200);
+    await sleep(300);
+    expect(provider.isConnected()).toBe(true);
+    await provider.disconnect();
+  });
+
+  test("with the real library, a host that accepts and never answers fails the connect within its query timeout, retries included", async () => {
+    // The library retries the forced metadata read and, inside it, the ApiVersions read, each after a
+    // one-second delay, so without the provider's own bound this connect took about 11 s.
+    let accepted = 0;
+    let open = 0;
+    const silent = net.createServer((socket) => {
+      accepted++;
+      open++;
+      socket.on("error", () => undefined);
+      socket.on("close", () => open--);
+      // Read and drop what the client sends, so its close reaches this side as an end.
+      socket.resume();
+    });
+    await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", resolve));
+    const port = (silent.address() as net.AddressInfo).port;
+    try {
+      const provider = new KafkaProvider({ ...CONNECTION, host: "127.0.0.1", port } as DatabaseConnection, {
+        queryTimeout: 1_000,
+      });
+      const started = performance.now();
+      const error = await provider.connect().catch((e) => e);
+      const elapsed = performance.now() - started;
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect(error).toMatchObject({ provider: "kafka", host: "127.0.0.1", port });
+      expect(elapsed).toBeLessThan(1_900);
+      expect(provider.isConnected()).toBe(false);
+      // Closed on the way out: the connection it opened is closed, and no retry the library had
+      // scheduled opens another one afterwards.
+      const afterConnect = accepted;
+      await sleep(1_500);
+      expect(accepted).toBe(afterConnect);
+      expect(open).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => silent.close(() => resolve()));
+    }
+  }, 20_000);
 });
 
 describe("reads over captured payloads", () => {
@@ -1589,6 +1656,10 @@ describe("declarations", () => {
       containerLevels: kafkaObjects.KAFKA_CONTAINER_LEVELS,
       objectKinds: kafkaObjects.KAFKA_OBJECT_KINDS,
       metadataOnly: KAFKA_METADATA_ONLY,
+      writeReach: noWritePath({
+        module: "src/lib/db/providers/stream/kafka/platformatic-client.ts",
+        symbol: "KAFKA_READ_APIS",
+      }),
     };
     expect(capabilities).toMatchObject(declared);
     // Exactly these members, so no flag the spec does not name (a key browser, an explain format) is declared.
@@ -2412,4 +2483,90 @@ describe("delegation (spec 3.5)", () => {
       await compareOneCall();
     },
   );
+});
+
+// ============================================================================
+// Write reach
+// ============================================================================
+
+describe("write reach: every surface of a read-only connection reaches the broker through read calls alone", () => {
+  /** The library calls the adapter's API key set covers, as tests/unit/db/kafka/write-reach.test.ts maps them. */
+  const READ_CALLS = new Set([
+    "admin.metadata",
+    "admin.listTopics",
+    "admin.describeConfigs",
+    "admin.listGroups",
+    "admin.describeGroups",
+    "admin.listConsumerGroupOffsets",
+    "admin.describeLogDirs",
+    "admin.findCoordinator",
+    "admin.listApis",
+    "consumer.listOffsets",
+    "consumer.listOffsetsWithTimestamps",
+    "connection.connect",
+    "pool.get",
+    "fetchV13",
+    "consumerGroupDescribeV0",
+    "admin.close",
+    "consumer.close",
+    "connection.close",
+    "pool.close",
+  ]);
+
+  test("the provider declares no write path, with the client's API key set as the editor's proof", () => {
+    const capabilities = new KafkaProvider(CONNECTION).getCapabilities();
+    expect(capabilities.writeReach).toEqual(
+      noWritePath({ module: "src/lib/db/providers/stream/kafka/platformatic-client.ts", symbol: "KAFKA_READ_APIS" }),
+    );
+    expect(Object.isFrozen(KAFKA_READ_APIS)).toBe(true);
+  });
+
+  test("the factory accepts a read-only connection", async () => {
+    const provider = await createDatabaseProvider({ ...CONNECTION, readOnly: true });
+    expect(provider).toBeInstanceOf(KafkaProvider);
+  });
+
+  test("a read-only connection opens, and every surface it offers makes read calls only", async () => {
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    const recorded = brokerLib();
+    const provider = new KafkaProvider({ ...CONNECTION, readOnly: true }, {}, {}, async (clientOptions) =>
+      createPlatformaticClient(clientOptions, recorded.lib),
+    );
+    await provider.connect();
+    const attempt = (call: () => Promise<unknown>): Promise<unknown> => call().catch((error: unknown) => error);
+
+    await attempt(() => provider.query(JSON.stringify({ topic: "orders", from: "earliest", limit: 5 })));
+    await attempt(() => provider.listContainers());
+    await attempt(() => provider.countObjects([]));
+    for (const kind of provider.getCapabilities().objectKinds ?? []) {
+      const objects = await attempt(() => provider.listObjects([], kind.id));
+      await attempt(() => provider.describeObjects([], kind.id, 5));
+      const first = Array.isArray(objects) ? (objects[0] as { path?: readonly string[] } | undefined) : undefined;
+      if (first?.path !== undefined) {
+        await attempt(() => provider.describeObject(first.path as readonly string[], kind.id));
+        await attempt(async () => provider.readObjectSource?.(first.path as readonly string[], kind.id));
+      }
+    }
+    await attempt(() => provider.getHealth());
+    await attempt(() => provider.getOverview());
+    await attempt(() => provider.getPerformanceMetrics());
+    await attempt(() => provider.getSlowQueries());
+    await attempt(() => provider.getActiveSessions());
+    await attempt(() => provider.getTableStats());
+    await attempt(() => provider.getIndexStats());
+    await attempt(() => provider.getStorageStats());
+    await attempt(() => provider.getMonitoringData());
+    const maintenance = await attempt(() => provider.runMaintenance("analyze"));
+    await provider.disconnect();
+    consoleError.mockRestore();
+
+    // The control: the surfaces did reach the broker, over most of the read calls.
+    const called = new Set(recorded.calls.map(([name]) => name));
+    expect(called.size).toBeGreaterThan(10);
+    expect(maintenance).toBeInstanceOf(Error);
+    for (const [name] of recorded.calls) expect({ name, read: READ_CALLS.has(name) }).toEqual({ name, read: true });
+    for (const request of argsOf(recorded.calls, "admin.metadata")) {
+      expect(request).toMatchObject({ autocreateTopics: false });
+    }
+  });
 });

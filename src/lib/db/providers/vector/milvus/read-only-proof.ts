@@ -59,6 +59,22 @@ export const MILVUS_READ_PRIVILEGES: readonly string[] = Object.freeze([
   "ListDatabases",
 ]);
 
+/**
+ * The cluster reads: the group ClusterReadOnly and its members as 3.0.2 lists them (`list-privilege-groups-root`),
+ * but ListDatabases, which a reader may hold. Each reads, yet reaches past the user's collection grants, so it is
+ * refused in a sentence of its own rather than as a privilege that may change the server.
+ */
+export const MILVUS_CLUSTER_READ_PRIVILEGES: readonly string[] = Object.freeze([
+  "ClusterReadOnly",
+  "SelectOwnership",
+  "SelectUser",
+  "DescribeResourceGroup",
+  "ListResourceGroups",
+  "ListPrivilegeGroups",
+  "GetReplicateConfiguration",
+  "ListFileResources",
+]);
+
 /** The most roles the proof reads the grants of; a user holding more is refused. */
 export const MILVUS_PROOF_MAX_ROLES = 16;
 
@@ -73,6 +89,9 @@ export const MILVUS_PROOF_SENTENCES = {
   /** `privilege` is a privilege or group name the server listed, never user text. */
   grant: (privilege: string): string =>
     `This Milvus user holds ${JSON.stringify(privilege)} through one of its roles or public, which is not a read Studio admits, so the user may change the server. ${GIVE_A_READER} ${NOTHING_SENT}`,
+  /** `privilege` is one of `MILVUS_CLUSTER_READ_PRIVILEGES`, never user text. */
+  clusterRead: (privilege: string): string =>
+    `This Milvus user holds ${JSON.stringify(privilege)} through one of its roles or public, which reads the cluster's users, roles, privilege groups and resource groups, beyond what its collection grants reach, so Studio could not bound what the agent reads. ${GIVE_A_READER} ${NOTHING_SENT}`,
   unenforced: `Milvus answered this user the list of users, which it refuses every read-only user while authorization is on, so this server does not enforce authorization and any caller may write. Turn authorization on, then give the agent a read-only user. ${NOTHING_SENT}`,
   /** `step` is one of the proof's own reads, never user text. */
   unread: (step: string): string =>
@@ -178,6 +197,8 @@ export async function proveMilvusReadOnly(client: MilvusProofClient, user: strin
   for (const role of [...roles.filter((name) => name !== "public"), "public"]) {
     // oxlint-disable-next-line no-await-in-loop -- the proof's reads go one after another, as every request does.
     for (const privilege of await privilegesOf(client, role, call)) {
+      if (MILVUS_CLUSTER_READ_PRIVILEGES.includes(privilege))
+        throw tooBroad(MILVUS_PROOF_SENTENCES.clusterRead(privilege));
       if (!MILVUS_READ_PRIVILEGES.includes(privilege)) throw tooBroad(MILVUS_PROOF_SENTENCES.grant(privilege));
     }
   }

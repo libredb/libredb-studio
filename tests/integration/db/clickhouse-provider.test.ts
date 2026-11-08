@@ -47,6 +47,14 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { comparePaths } from "@/lib/db/object-path";
+import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import type { McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import type { ManagedConnection } from "@/lib/seed";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 
 // ============================================================================
 // Connection
@@ -4222,12 +4230,12 @@ describe("endOpenQueryTransaction()", () => {
 const AGENT_BUDGET = { statementTimeoutMs: 2_000, maxResultRows: 3, maxResultBytes: 500 };
 const AGENT_PROFILE = { readOnly: true, sendsStatements: true };
 
-/** The open's proof as 26.7.1.1315 answered it for the least-privilege user `agent_ro`, then `answer` for the rest. */
-function agentReply(answer: (sql: string) => Reply): (sql: string) => Reply {
+/** The open's proof for `agent_ro`, checked on 26.7.1.1315 and 26.9.23.15, then `answer` for the rest. */
+function agentReply(answer: (sql: string) => Reply, version = "26.7.1.1315"): (sql: string) => Reply {
   return (sql) => {
     if (sql === "SELECT 1") return jsonReply([{ "1": 1 }]);
     if (sql.startsWith("SELECT version() AS version, currentUser()")) {
-      return jsonReply([{ version: "26.7.1.1315", user: "agent_ro", readonly: "1" }]);
+      return jsonReply([{ version, user: "agent_ro", readonly: "1" }]);
     }
     if (sql === "SELECT 1 SETTINGS readonly = 0") {
       return exceptionReply(164, "READONLY", "Cannot modify 'readonly' setting in readonly mode", 500);
@@ -4237,6 +4245,9 @@ function agentReply(answer: (sql: string) => Reply): (sql: string) => Reply {
       return jsonReply([{ "GRANTS FINAL": "GRANT SELECT ON demo.orders TO agent_ro" }]);
     }
     if (sql === "SELECT 1 FROM system.query_log LIMIT 0") return DENIED();
+    if (sql === "SELECT 1 FROM system.user_query_log LIMIT 0") {
+      return exceptionReply(60, "UNKNOWN_TABLE", "Table system.user_query_log does not exist", 404);
+    }
     if (sql.startsWith("SELECT database, name, engine FROM system.tables")) {
       return jsonReply(
         [],
@@ -4281,6 +4292,35 @@ async function readOnlyRefusal(run: Promise<unknown>): Promise<Error> {
 }
 
 describe("ClickHouseProvider agent read-only profile", () => {
+  test("a shared connection user with readable user_query_log is refused before an agent statement", async () => {
+    replyFor = (sql) =>
+      sql === "SELECT 1 FROM system.user_query_log LIMIT 0"
+        ? jsonReply([], [{ name: "1", type: "UInt8" }])
+        : agentReply(() => jsonReply([]), "26.9.23.15")(sql);
+    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+
+    const error = await readOnlyRefusal(provider.connect());
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toContain("system.user_query_log");
+    expect(provider.isConnected()).toBe(false);
+    expect(sentSql.at(-1)).toBe("SELECT 1 FROM system.user_query_log LIMIT 0");
+  });
+
+  test("a checked 26.9 server admits the profile and executes a bounded read", async () => {
+    replyFor = agentReply(() => jsonReply([{ id: "1" }], [{ name: "id", type: "UInt64" }]), "26.9.23.15");
+    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+    await provider.connect();
+
+    const result = await provider.queryReadOnly("SELECT id FROM demo.orders", AGENT_BUDGET);
+
+    expect(result.rows).toEqual([{ id: "1" }]);
+    expect(sentSql).toContain("SHOW GRANTS FINAL");
+    for (const url of sentUrls.slice(1)) expect(new URL(url).searchParams.get("readonly")).toBe("1");
+    await provider.disconnect();
+  });
+
   test("an ordinary editor handle refuses queryReadOnly and sends nothing", async () => {
     const provider = await connectProvider();
     sentSql = [];
@@ -4311,6 +4351,7 @@ describe("ClickHouseProvider agent read-only profile", () => {
       "CREATE DATABASE IF NOT EXISTS `demo`",
       "SHOW GRANTS FINAL",
       "SELECT 1 FROM system.query_log LIMIT 0",
+      "SELECT 1 FROM system.user_query_log LIMIT 0",
       sqlWith("FROM system.tables"),
       "SELECT database, name FROM system.dictionaries LIMIT 1",
       sqlWith("FROM system.functions"),
@@ -4488,5 +4529,255 @@ describe("ClickHouseProvider agent read-only profile", () => {
     const provider = new ClickHouseProvider(makeConnection(), {}, AGENT_PROFILE);
 
     await expect(provider.queryReadOnly("SELECT 1", AGENT_BUDGET)).rejects.toBeInstanceOf(DatabaseConfigError);
+  });
+});
+
+// ============================================================================
+// MCP run_read_query on ClickHouse
+// ============================================================================
+
+/**
+ * MCP's `run_read_query` serves ClickHouse through the same acquisition and `queryReadOnly` agent mode uses: the
+ * connection is taken under `agent-read-only`, whose open proves the user, and every statement carries `readonly = 1`.
+ * The MCP fence refuses a write-shaped statement before anything is acquired; a table function that reaches another
+ * server passes that fence and is refused by the provider's own, after the open and before the statement is sent.
+ */
+describe("MCP run_read_query on a ClickHouse connection", () => {
+  const SEED = {
+    id: "seed:events",
+    name: "events",
+    type: CLICKHOUSE,
+    seedId: "events",
+    managed: true,
+    mcp: true,
+    roles: ["*"],
+    host: "127.0.0.1",
+    port: 8123,
+    user: "agent_ro",
+    database: DATABASE,
+    createdAt: new Date(),
+  } as ManagedConnection;
+
+  let acquired: ExecutionProfile[] = [];
+
+  /** A context over the one ClickHouse seed, opening each acquisition the way the factory does, by its profile. */
+  const context = {
+    caller: { username: "alice", role: "admin" },
+    visibleConnections: async () => [SEED],
+    resolve: async () => SEED,
+    acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
+      acquired.push(profile);
+      const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, executionContextFor(profile));
+      await provider.connect();
+      return provider;
+    },
+  } as unknown as McpConnectionContext;
+
+  function call(args: Record<string, unknown>) {
+    const parsed = RunReadQueryInputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runReadQuery(parsed, { context, signal: new AbortController().signal });
+  }
+
+  const textOf = (result: { content: unknown }) =>
+    (result.content as { type: string; text: string }[]).map((part) => part.text);
+
+  beforeEach(() => {
+    acquired = [];
+  });
+
+  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/clickhouse.md"), "utf8");
+
+    expect(MCP_STATEMENT_READ.clickhouse).toBe(true);
+    expect(doc).toContain("`MCP_STATEMENT_READ.clickhouse` is true");
+    expect(doc).not.toContain("MCP's statement read stays closed on ClickHouse");
+    expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf(CLICKHOUSE).statements}:`);
+  });
+
+  test("reads rows under the agent profile, every request under readonly = 1, paged one row past max_rows", async () => {
+    replyFor = agentReply(() => jsonReply([{ id: "1" }, { id: "2" }, { id: "3" }], [{ name: "id", type: "UInt64" }]));
+
+    const result = await call({ sql: "SELECT id FROM demo.orders ORDER BY id", max_rows: 2 });
+
+    expect(result.isError).toBeUndefined();
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(result.structuredContent).toMatchObject({
+      connection_id: SEED.id,
+      columns: [{ name: "id", type: "UInt64" }],
+      rows: [{ id: "1" }, { id: "2" }],
+      row_count: 2,
+      truncated: true,
+      truncated_by: "max_rows",
+      pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
+      hint: "Call again with offset 2 for the next page.",
+    });
+    expect(textOf(result)[0]).toBe(MCP_UNTRUSTED_NOTICE);
+    const statement = "SELECT id FROM demo.orders ORDER BY id LIMIT 3";
+    expect(sentSql.at(-1)).toBe(statement);
+    expect(sentSql).toContain("SHOW GRANTS FINAL");
+    for (const url of sentUrls.slice(1)) expect(new URL(url).searchParams.get("readonly")).toBe("1");
+    const params = new URL(urlWith(statement)).searchParams;
+    expect(params.get("max_result_rows")).toBe("1000");
+    expect(params.get("result_overflow_mode")).toBe("throw");
+  });
+
+  test("pages with ClickHouse's own LIMIT n OFFSET m", async () => {
+    replyFor = agentReply(() => jsonReply([{ id: "3" }], [{ name: "id", type: "UInt64" }]));
+
+    const result = await call({ sql: "SELECT id FROM demo.orders ORDER BY id", max_rows: 2, offset: 2 });
+
+    expect(sentSql.at(-1)).toBe("SELECT id FROM demo.orders ORDER BY id LIMIT 3 OFFSET 2");
+    expect(result.structuredContent).toMatchObject({
+      rows: [{ id: "3" }],
+      pagination: { offset: 2, limit: 2, hasMore: false, nextOffset: null, wasLimited: true },
+    });
+  });
+
+  const fenced = (code: string) =>
+    `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: a SELECT (a WITH is fine), or EXPLAIN without ANALYZE.`;
+
+  test.each([
+    ["INSERT INTO demo.orders VALUES (9, 'x')", "NON_READ_STATEMENT"],
+    ["ALTER TABLE demo.orders UPDATE status = 'x' WHERE 1", "NON_READ_STATEMENT"],
+    ["DROP TABLE demo.orders", "NON_READ_STATEMENT"],
+    ["CREATE TABLE demo.copy ENGINE = Memory AS SELECT * FROM demo.orders", "NON_READ_STATEMENT"],
+    ["SELECT 1; INSERT INTO demo.orders VALUES (9, 'x')", "MULTIPLE_STATEMENTS"],
+    ["SYSTEM FLUSH LOGS", "NON_READ_STATEMENT"],
+    ["KILL QUERY WHERE query_id = 'not-a-real-query'", "NON_READ_STATEMENT"],
+    ["BACKUP TABLE demo.orders TO Memory('not-a-real-backup')", "NON_READ_STATEMENT"],
+    ["EXPLAIN ANALYZE SELECT 1", "SIDE_EFFECT_KEYWORD"],
+  ])("%p is refused at admission, before anything is acquired or sent", async (sql, code) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual({ content: [{ type: "text", text: fenced(code) }], isError: true });
+    expect(acquired).toEqual([]);
+    expect(sentSql).toEqual([]);
+  });
+
+  test.each([
+    ["SELECT count() FROM remote('127.0.0.1', system.one)", "remote"],
+    ["SELECT * FROM remoteSecure('127.0.0.1', demo.orders)", "remoteSecure"],
+    ["SELECT * FROM cluster('default', demo.orders)", "cluster"],
+  ])("%p passes the MCP fence and is refused by the provider's before the statement is sent", async (sql, name) => {
+    replyFor = agentReply(() => jsonReply([{ n: "1" }]));
+
+    const result = await call({ sql });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: `The statement was refused before it reached the database: Read-only execution refused the table function ${name}(), which reaches another server.`,
+        },
+      ],
+      isError: true,
+    });
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(sentSql.some((sent) => sent.includes(`${name}(`))).toBe(false);
+  });
+
+  test("a write the server refuses under readonly = 1 is answered as the database's refusal", async () => {
+    replyFor = agentReply(() =>
+      exceptionReply(164, "READONLY", "agent_ro: Cannot execute query in readonly mode", 500),
+    );
+
+    const result = await call({ sql: "SELECT * FROM demo.orders SETTINGS readonly = 0" });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toEqual([
+      MCP_UNTRUSTED_NOTICE,
+      `${MCP_ENGINE_ERROR_PREFIX}Code: 164. DB::Exception: agent_ro: Cannot execute query in readonly mode. (READONLY)`,
+    ]);
+  });
+
+  test("a user whose grants run past reads is refused at open, in the profile's sentence", async () => {
+    replyFor = (sql) =>
+      sql === "SHOW GRANTS FINAL"
+        ? jsonReply([
+            { "GRANTS FINAL": "GRANT SELECT ON demo.orders TO agent_ro" },
+            { "GRANTS FINAL": "GRANT BACKUP ON demo.* TO agent_ro" },
+          ])
+        : agentReply(() => jsonReply([]))(sql);
+
+    const result = await call({ sql: "SELECT id FROM demo.orders" });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(sentSql.filter((sent) => sent.startsWith("SELECT id FROM demo.orders"))).toEqual([]);
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: `run_read_query cannot run on this connection: ClickHouse user "agent_ro" holds BACKUP ON demo.*, a grant whose statements readonly does not refuse; the agent read-only profile takes a user holding only SELECT and SHOW on named databases or tables, so it is refused. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  test("a result past the 1000-row provider budget is refused, never cut", async () => {
+    replyFor = agentReply(() =>
+      exceptionReply(
+        396,
+        "TOO_MANY_ROWS_OR_BYTES",
+        "Limit for result exceeded, max rows: 1.00 thousand, current rows: 1.00 thousand",
+        500,
+      ),
+    );
+
+    const result = await call({ sql: "SELECT number FROM numbers(2000) SETTINGS max_block_size = 10" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  test("a result past the 1 MiB provider budget is refused, never cut", async () => {
+    replyFor = agentReply(() => jsonReply([{ s: "x".repeat(1_048_577) }]));
+
+    const result = await call({ sql: "SELECT s FROM demo.wide" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  test("a statement past timeout_ms is answered as the timeout, and the server's deadline is never before it", async () => {
+    const statement = "SELECT count() FROM numbers(100000000000) LIMIT 101";
+    replyFor = agentReply(() => jsonReply([{ n: "1" }]));
+    const answered = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(init?.body) !== statement) return answered(input, init);
+      sentUrls.push(String(input));
+      sentSql.push(statement);
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      });
+    }) as typeof fetch;
+
+    const pending = call({ sql: "SELECT count() FROM numbers(100000000000)", timeout_ms: 500 });
+    const result = await pending;
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The statement did not finish within timeout_ms (500 ms). Narrow it, or raise timeout_ms up to 30000.",
+        },
+      ],
+      isError: true,
+    });
+    expect(new URL(urlWith(statement)).searchParams.get("max_execution_time")).toBe("1");
   });
 });

@@ -14,10 +14,12 @@ import {
   type McpCallRecord,
   type McpToolAuditReason,
 } from "../audit";
+import { mcpConnectionUnavailable } from "../availability";
 import {
   MCP_CONNECTIONS_UNREADABLE,
   MCP_CONNECTIONS_UNREADABLE_TEXT,
   type McpConnectionContext,
+  type McpReach,
   type McpToolCall,
 } from "../context";
 import {
@@ -42,34 +44,48 @@ import {
   classifyReadQueryFailure,
   nextPageHint,
   offsetRefusalText,
+  pagesWithOffset,
   profileRefusalText,
   raceDeadline,
   timeoutText,
 } from "./read-query-limits";
-import { MCP_STATEMENT_ARMS, mcpStatementToolFor, servingStatementArms, type McpStatementArm } from "./statement-arms";
+import {
+  listedStatementArms,
+  MCP_STATEMENT_ARMS,
+  mcpStatementToolFor,
+  servingStatementArms,
+  type McpStatementArm,
+} from "./statement-arms";
 
 /**
  * The one core every MCP statement tool runs (#246): one read-only statement, on an engine that
  * can bound it itself, in the arm's language.
  *
- * The order is run_read_query's, unchanged: signal, resolve, the served-engine gate, canonicalize, fence, the decision
+ * The order is run_read_query's: signal, resolve, availability, the served-engine gate, canonicalize, fence, the decision
  * record, `acquire(connection, "agent-read-only")`, `providerInDatabase`, for an arm that pages the provider's
  * `prepareQuery` with the row cap and offset, `queryReadOnly` under the provider budgets, the cut to max_rows and the
  * result cap, the outcome record.
  *
  * The boundary is the agent-read-only acquisition and the provider's queryReadOnly, which the factory refuses to hand
  * out for an engine without one; this module never calls query(), and that is what makes every statement tool's
- * readOnlyHint true. An engine the arm does not serve is refused before anything is acquired, naming the tool that
- * does serve it, and the arm's fence then runs as defence in depth. One deadline, the call's start plus timeout_ms,
- * covers acquisition and execution; neither a cancel nor the deadline stops a statement already running
- * (docs/BACKLOG.md D128), they end the wait.
+ * readOnlyHint true. A profile refusal, from the acquisition or from a provider that proves its principal before every
+ * statement, is answered in the tool's own sentence; the second kind quotes database names, so it comes behind the
+ * untrusted-data notice. A connection no MCP open can serve for the caller is refused first, with the sentence
+ * list_connections lists it with, naming no tool. An engine the arm does not serve is refused before anything is
+ * acquired, naming the tool that does serve it, and the arm's fence then runs as defence in depth. One deadline, the
+ * call's start plus timeout_ms, covers acquisition and execution; neither a cancel nor the deadline stops a statement
+ * already running (docs/BACKLOG.md D128), they end the wait.
  *
  * Rows are fetched one past the page where the arm pages, so the extra row proves more exist, cut to max_rows, then
  * cut to the result cap by binary search. offset on a query the provider did not rewrite is refused before anything
  * runs, because the provider would answer the first page labelled with the requested offset; so is an offset the
- * provider's prepareQuery refuses by throwing OffsetUnsupportedError, as the Elasticsearch and Cassandra overrides do,
- * answered in their own words. An arm that does not page sends the statement as written, and the provider's row
- * budget bounds it.
+ * provider's prepareQuery refuses by throwing OffsetUnsupportedError, answered in its own words, and any offset on an
+ * engine whose accepted-forms row says its SQL has none, refused before prepareQuery with the way to page there; such
+ * an engine is never offered a next offset either. An arm that does not page sends the statement as written, and the
+ * provider's row budget bounds it.
+ *
+ * A result's warnings stay off the answer, except on an arm whose facet says they are Studio's own sentences an answer
+ * must carry: there they are its `notes`, in the order the provider gave them.
  */
 
 /** What the core reads from a call's parsed arguments; the statement itself is under the arm's own key. */
@@ -98,6 +114,7 @@ const StatementOutputSchema = z.object({
     wasLimited: z.boolean(),
   }),
   hint: z.string().nullable(),
+  notes: z.array(z.string()).optional(),
   byte_size: z.number().int(),
   execution_time_ms: z.number(),
 });
@@ -108,6 +125,7 @@ type Answer = readonly [ToolResult, McpToolAuditReason?];
 /** One call: its arm, its arguments, the statement text the arm read from them, and the offset it pages from. */
 interface StatementCall {
   readonly arm: McpStatementArm;
+  readonly type: DatabaseType;
   readonly args: McpStatementInput;
   readonly statement: string;
   readonly offset: number;
@@ -125,7 +143,7 @@ function failureAnswer(
   deadline: number,
   record: McpCallRecord,
 ): Answer {
-  const failure = classifyReadQueryFailure(error, settledAt, deadline, call.arm.tooLarge(call.statement));
+  const failure = classifyReadQueryFailure(error, settledAt, deadline, call.arm.tooLarge(call.statement, call.type));
   if (failure.kind === "timeout") {
     logger.warn(`MCP ${call.arm.tool} answered a provider failure as the timeout`, {
       route: "/api/mcp",
@@ -151,7 +169,8 @@ function resultOf(call: StatementCall, type: DatabaseType, prepared: PreparedQue
   const build = (count: number) => {
     const truncatedBy = count < page.length ? "result_bytes" : all.length > args.max_rows ? "max_rows" : null;
     const hasMore = all.length > count;
-    const nextOffset = hasMore && prepared.wasLimited ? offset + count : null;
+    // Only a query the provider paged, on an engine whose SQL has an offset to page the next call with.
+    const nextOffset = hasMore && prepared.wasLimited && pagesWithOffset(type) ? offset + count : null;
     return withByteSize(
       {
         connection_id: args.connection_id,
@@ -168,6 +187,9 @@ function resultOf(call: StatementCall, type: DatabaseType, prepared: PreparedQue
             : truncatedBy !== null
               ? arm.moreRows(call.statement, type, { maxRows: args.max_rows, shown: count, cut: truncatedBy })
               : null,
+        ...(arm.answersWarnings && raw.warnings !== undefined && raw.warnings.length > 0
+          ? { notes: raw.warnings.map((warning) => warning.message) }
+          : {}),
         byte_size: 0,
         execution_time_ms: raw.executionTime,
       },
@@ -195,6 +217,11 @@ function prepare(
   const { args, offset, statement } = call;
   if (call.arm.paging === "none") {
     return { prepared: { query: statement, wasLimited: false, limit: args.max_rows, offset: 0 } };
+  }
+  // An engine whose SQL has no offset takes none: refused before the provider is asked, in the words that say how to
+  // page there instead.
+  if (offset > 0 && !pagesWithOffset(type)) {
+    return { refused: [ownWordsError(offsetRefusalText(statement, type)), "mcp_offset_unsupported"] };
   }
   let prepared: PreparedQuery;
   try {
@@ -264,6 +291,12 @@ async function execute(
   );
   if (executed.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
   if (executed.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
+  // A provider whose principal check runs before every statement, rather than at the open, refuses there, in the
+  // tool's sentence. That refusal quotes names any user of the database may have chosen (a function, a view, a role),
+  // so it goes behind the untrusted-data notice, redacted and cut as an engine message is.
+  if (executed.kind === "failed" && executed.error instanceof ExecutionProfileError) {
+    return [engineError(`${arm.tool} cannot run on this connection: `, executed.error), "mcp_execution_failed"];
+  }
   if (executed.kind === "failed") return failureAnswer(call, executed.error, executed.settledAt, deadline, record);
   return resultOf(call, connection.type, prepared.prepared, executed.value);
 }
@@ -299,6 +332,10 @@ export async function runStatement(
     return refuse(record, "mcp_connections_unreadable", MCP_CONNECTIONS_UNREADABLE_TEXT);
   if (connection === null) return refuse(record, "mcp_connection_not_visible", MCP_NOT_VISIBLE_TEXT);
   const resolved: McpCallRecord = { ...record, connectionName: connection.seedId };
+  // Ahead of the served-engine gate and of any acquisition: a connection no MCP open can serve for this caller is
+  // refused with the sentence list_connections lists it with, whichever tool is called, and no provider is built.
+  const unavailable = mcpConnectionUnavailable(tool.context.caller, connection);
+  if (unavailable !== null) return refuse(resolved, "mcp_execution_failed", unavailable);
   // Ahead of the fence, so the answer names the engine rather than the statement, and of any
   // acquisition, so no provider is built or dialled for an engine this tool does not serve.
   if (!arm.types.includes(connection.type)) {
@@ -313,7 +350,7 @@ export async function runStatement(
   const unrecorded = recordOrRefuse(() => recordMcpDecision(resolved));
   if (unrecorded !== null) return unrecorded;
 
-  const call: StatementCall = { arm, args, statement, offset: args.offset ?? 0 };
+  const call: StatementCall = { arm, type: connection.type, args, statement, offset: args.offset ?? 0 };
   const finish = ([result, failure]: Answer): ToolResult =>
     recordOrRefuse(() => recordMcpOutcome(resolved, Date.now() - startedAt, failure)) ?? result;
   try {
@@ -323,13 +360,17 @@ export async function runStatement(
   }
 }
 
-/** Every statement tool whose arm serves an engine, in record order; an arm that serves none is never listed. */
+/**
+ * Every statement tool whose arm serves an engine, in record order, or with `reach` only those that serve a reached
+ * engine; an arm that serves none is never listed.
+ */
 export function registerStatementTools(
   server: McpServer,
   context: McpConnectionContext,
+  reach?: McpReach,
   arms: Parameters<typeof servingStatementArms>[0] = MCP_STATEMENT_ARMS,
 ): void {
-  for (const arm of servingStatementArms(arms)) {
+  for (const arm of reach === undefined ? servingStatementArms(arms) : listedStatementArms(reach, arms)) {
     server.registerTool(
       arm.tool,
       {

@@ -633,7 +633,7 @@ describe("error categories", () => {
   const cases: Array<[string, unknown, string]> = [
     ["Unauthorized", server("Neo.ClientError.Security.Unauthorized"), "auth"],
     ["another security code", server("Neo.ClientError.Security.AuthenticationRateLimit"), "auth"],
-    ["Forbidden", server("Neo.ClientError.Security.Forbidden"), "access-mode"],
+    ["Forbidden", server("Neo.ClientError.Security.Forbidden"), "forbidden"],
     ["AccessMode", server("Neo.ClientError.Statement.AccessMode"), "access-mode"],
     ["SyntaxError", server("Neo.ClientError.Statement.SyntaxError"), "syntax"],
     [

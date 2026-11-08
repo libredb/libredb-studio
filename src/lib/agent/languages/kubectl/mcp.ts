@@ -23,11 +23,11 @@ export const KUBECTL_MCP_FACET = Object.freeze({
   // Every Kubernetes kind is `config`, none a relation, so inspect_schema has nothing to list and refuses it by name.
   holdsNoTables: true,
   describe: ({ engines, limits }) =>
-    `Run one read-only kubectl read on a connection: one line, with or without the kubectl word, such as "get pods -n shop", "describe deployment/web -n shop", "logs pod/web -n shop --tail=50", "top pod -n shop", "events -n shop --types=Warning", "api-resources", "explain deployment.spec", "auth can-i list pods -n shop", "auth whoami" or "version". Writes, exec, port-forward, proxy, a watch (-w) and Studio's paging line are refused before the cluster is reached. The answer is masked as an agent read is: a Secret's name in every field defined to hold one, Secret and ConfigMap values, env and header values, a container's command and args, and annotation values read <redacted>. Free-text status, event and log messages are not masked, so a Secret's name or a value an application printed can reach you there. Runs on ${engines}; other engines refuse it. ${limits}; this tool takes no offset, so narrow the read with -n, -l or --field-selector.`,
+    `Run one read-only kubectl read on a connection: one line, with or without the kubectl word, such as "get pods -n shop", "describe deployment/web -n shop", "logs pod/web -n shop --tail=50", "top pod -n shop", "events -n shop --types=Warning", "api-resources", "explain deployment.spec", "auth can-i list pods -n shop", "auth whoami" or "version". Writes, exec, port-forward, proxy, a watch (-w) and Studio's paging line are refused before the cluster is reached. The answer is masked: a Secret's name in every field defined to hold one, Secret and ConfigMap values, env and header values, a container's command and args, and annotation values read <redacted>. Free-text status, event and log messages are not masked, so a Secret's name or a value an application printed can reach you there. Runs on ${engines}; other engines refuse it. ${limits}; this tool takes no offset, so narrow the read with -n, -l or --field-selector.`,
   words: {
     fewerFields: "Read fewer fields, without -o wide, -o yaml or -o json,",
     readPast: (shown: number) =>
-      `read past the ${shown} rows returned, split the read into narrower ones, since a kubectl read is never paged.`,
+      `read past the ${shown} row${shown === 1 ? "" : "s"} returned, split the read into narrower ones, since a kubectl read is never paged.`,
     rowOverCap:
       "One row of this result is larger than the 32 KiB result limit. Read it in a shorter form, without -o yaml or -o json, and run it again.",
     reached: "the cluster",

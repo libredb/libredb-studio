@@ -229,6 +229,7 @@ check (`bun run format`), linters (`bun run lint`, i.e. oxlint then ESLint), typ
 hook (`.claude/settings.json`) runs `lint && typecheck && test && build` and now transitively enforces oxlint
 and the type-aware layer via `bun run lint`.
 In every workflow, the type check, `next build` and the Playwright runs whose first server builds run Node with `NODE_OPTIONS=--max-old-space-size=6144`, as the release payload build has since #1535, because `tsconfig.json` takes every TypeScript file, tests included, and that program peaks within tens of MB of Node's default heap of about 4 GB on a GitHub runner (`tests/unit/ci-node-heap.test.ts`).
+The `typecheck` and `build` scripts in `package.json` set the same heap themselves, as `NODE_OPTIONS="--max-old-space-size=6144 $NODE_OPTIONS"` with any caller's options after it, because a cold local run with no `tsconfig.tsbuildinfo` aborted `tsc --noEmit` with `JavaScript heap out of memory` at the 4288 MiB default (measured 2026-11-02 on node v24.22.1), and `next build` type-checks in a worker that takes its heap from `NODE_OPTIONS`, so the workflow settings above are now redundant but kept.
 
 `bun run lint` ends with one more step, added after the phases above: `node scripts/only-check.mjs`, the
 focused-test guard from #979, also reachable on its own as `bun run only:check`. A committed `.only` makes bun

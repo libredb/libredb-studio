@@ -22,7 +22,7 @@ import type { ObjectSourcePart } from "@/lib/db/types";
  * half is the one the server-side stripping cannot cover. The route deletes `edit` from any part
  * whose kind the CONNECTED provider does not declare editable: `boundSourceDocument` reads
  * `kindAcceptsSourceEdits(capabilities, document.kind)` and passes the answer to `stripEdit`
- * (`src/lib/api/object-route.ts:549` and `:588`). This paragraph said that stripping was NOT
+ * (`boundSourceDocument` in `src/lib/api/object-route.ts`). This paragraph said that stripping was NOT
  * WRITTEN YET, which was true when this file landed and stopped being true in the same phase;
  * corrected here rather than left, because a stale claim about a guard reads as a statement that
  * the guard is absent. What did NOT change is the half that matters to this file: a host never

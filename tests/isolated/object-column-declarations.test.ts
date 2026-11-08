@@ -44,7 +44,7 @@
  * MEASURED 2026-09-22, and recorded because the repair went the way that rule demands: the
  * binding design's table spelled the search providers' third mapped kind `data_stream`, and the
  * id those providers really declare is `stream` (`SEARCH_KIND_STREAM` at
- * `src/lib/db/providers/sql/search/index.ts:323`, listed in `SEARCH_MAPPED_KINDS` at `:478-482`
+ * `src/lib/db/providers/sql/search/index.ts`, listed in `SEARCH_MAPPED_KINDS`
  * as the third kind that answers `_mapping`). This file transcribed `data_stream` verbatim first
  * and went red naming both rows, because a census whose expectation is edited to match a build
  * certifies nothing. The DESIGN was then corrected and the expectation re-transcribed from the

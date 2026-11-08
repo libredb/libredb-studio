@@ -1,6 +1,6 @@
 /**
  * The AMQP dial on the runtimes production runs: a Bun child and one Node child per binary that NODE_TRANSPORT_NODES
- * lists (or the node on PATH), so CI's Node 24 step and its Node 26.10.0 step both run it. Each child runs a bundle of
+ * lists (or the node on PATH), so CI's Node 24 suite and its step on the image's Node both run it. Each child runs a bundle of
  * `amqp/dial.ts` against listeners this file starts, and starts from an unbundled entry.mjs that answers two names
  * itself: metadata.test with 169.254.169.254, and pinned.test with 127.0.0.1, a name no resolver knows, so a dial that
  * reaches the listener by it proves the address dialled is the checked lookup's answer.
@@ -134,20 +134,19 @@ interface Counted {
   readonly names: string[];
 }
 
-const listeners: Counted[] = [];
+/** Every server listening, a loopback listener's ::1 twin included, closed after the file. */
+const listening: Server[] = [];
 const sockets = new Set<Socket>();
 let dir: string;
 let plan: Plan;
 let counted: Record<"plain" | "amqp" | "local" | "v6" | "farName" | "asking" | "refusing", Counted>;
 
-async function listen(
-  kind:
-    | "plain"
-    | "amqp"
-    | { readonly cert: string; readonly key: string; readonly clientCa?: string; readonly refuse?: true },
-  host = "127.0.0.1",
-): Promise<[Counted, number]> {
-  const entry: Counted = { server: undefined as never, accepted: 0, names: [] };
+type Kind =
+  | "plain"
+  | "amqp"
+  | { readonly cert: string; readonly key: string; readonly clientCa?: string; readonly refuse?: true };
+
+function serve(kind: Kind, entry: Counted): Server {
   const server =
     typeof kind === "object"
       ? createTlsServer(
@@ -184,10 +183,55 @@ async function listen(
     socket.on("error", () => {});
   });
   server.on("tlsClientError", () => {});
-  await new Promise<void>((resolve) => server.listen(0, host, resolve));
-  Object.assign(entry, { server });
-  listeners.push(entry);
-  return [entry, (server.address() as AddressInfo).port];
+  return server;
+}
+
+function bind(server: Server, port: number, host: string): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      server.removeListener("error", reject);
+      resolve((server.address() as AddressInfo).port);
+    });
+  });
+}
+
+const close = (server: Server) => new Promise<void>((resolve) => server.close(() => resolve()));
+
+/**
+ * A listener on `host`. One on 127.0.0.1 also holds the same port on ::1, with a twin of the same kind counting into
+ * the same entry, so a child's dial to "localhost" reaches it whichever family the name resolves to first. Without the
+ * twin, where the resolver returns ::1 first for localhost (see dial.test.ts), a ::1 socket holding the same port
+ * number, such as this file's own v6 listener or another file's, takes the dial and the counts land on the wrong
+ * entry. A ::1 port taken by anything else is a retry on another port. The entry's `server` is the 127.0.0.1 socket
+ * only.
+ */
+async function listen(kind: Kind, host = "127.0.0.1"): Promise<[Counted, number]> {
+  const entry: Counted = { server: undefined as never, accepted: 0, names: [] };
+  for (let attempt = 1; ; attempt += 1) {
+    const server = serve(kind, entry);
+    // oxlint-disable-next-line no-await-in-loop -- each attempt needs the previous one's port to be closed or kept
+    const port = await bind(server, 0, host);
+    if (host === "127.0.0.1") {
+      const twin = serve(kind, entry);
+      // oxlint-disable-next-line no-await-in-loop -- the twin takes the port the line above was given
+      const refused = await bind(twin, port, "::1").then(
+        () => null,
+        (error: NodeJS.ErrnoException) => error,
+      );
+      if (refused) {
+        // The twin never listened, so only the 127.0.0.1 server is open; close it before a retry or a rethrow.
+        // oxlint-disable-next-line no-await-in-loop -- the next attempt starts after this port is released
+        await close(server);
+        if (refused.code !== "EADDRINUSE" || attempt === 10) throw refused;
+        continue;
+      }
+      listening.push(twin);
+    }
+    listening.push(server);
+    Object.assign(entry, { server });
+    return [entry, port];
+  }
 }
 
 function binaries(): string[] {
@@ -291,7 +335,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const socket of sockets) socket.destroy();
-  for (const { server } of listeners) await new Promise<void>((resolve) => server.close(() => resolve()));
+  for (const server of listening) await close(server);
   rmSync(dir, { recursive: true, force: true });
 });
 

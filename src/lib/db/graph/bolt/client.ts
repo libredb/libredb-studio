@@ -60,7 +60,10 @@ export type GraphClientErrorCategory =
   | "tls"
   | "timeout"
   | "cancelled"
+  /** A write the READ session refused: the server's code shows a write. */
   | "access-mode"
+  /** A statement the server refused for the user's privileges, read or write: the code does not say which. */
+  | "forbidden"
   | "syntax"
   | "query";
 

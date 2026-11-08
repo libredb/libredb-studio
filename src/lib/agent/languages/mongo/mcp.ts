@@ -22,7 +22,7 @@ export const MONGO_MCP_FACET = Object.freeze({
   words: {
     fewerFields: "Project fewer fields",
     readPast: (shown: number) =>
-      `read past the ${shown} rows returned, skip them with a find's "skip" or a $skip stage.`,
+      `read past the ${shown} row${shown === 1 ? "" : "s"} returned, skip ${shown === 1 ? "it" : "them"} with a find's "skip" or a $skip stage.`,
     rowOverCap:
       "One row of this result is larger than the 32 KiB result limit. Narrow the read to fewer or smaller fields, and run it again.",
     reached: "the database",

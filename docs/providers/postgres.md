@@ -22,6 +22,7 @@
 | **Source** | [`src/lib/db/providers/sql/postgres.ts`](../../src/lib/db/providers/sql/postgres.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/postgres-provider.test.ts`](../../tests/integration/db/postgres-provider.test.ts) |
+| **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, the function and procedure object edit, maintenance (`vacuum`, `analyze`, `reindex`, `kill`) and the transaction route all send writes, and the database role is the boundary |
 
 ---
 

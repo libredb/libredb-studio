@@ -14,7 +14,7 @@ const readWeaviateapiStatementSchema = z.strictObject({
 const WEAVIATEAPI_RUN_READ_QUERY: AgentToolDefinition = Object.freeze({
   name: "run_read_query",
   description:
-    'Run one bounded Weaviate metadata read against the connection\'s server, written as a REST request line and an optional JSON body: GET /v1/meta, /v1/schema, /v1/schema/{collection}, /v1/schema/{collection}/shards, /v1/schema/{collection}/tenants, /v1/schema/{collection}/tenants/{tenant}, /v1/aliases, /v1/aliases/{alias}, /v1/nodes or /v1/nodes/{collection} (?output=verbose for shard rows), or POST /v1/aggregate/{collection} with an optional {"tenant": "..."} for an object count. Answers carry names, counts and flags only. Object reads, searches, GraphQL, filters, groupBy and every write are refused before anything is sent, and you are told why.',
+    'Run one bounded Weaviate metadata read against the connection\'s server, written as a REST request line and an optional JSON body: GET /v1/meta, /v1/schema, /v1/schema/{collection}, /v1/schema/{collection}/shards, /v1/schema/{collection}/tenants, /v1/schema/{collection}/tenants/{tenant}, /v1/aliases, /v1/aliases/{alias}, /v1/nodes or /v1/nodes/{collection} (?output=verbose for the collections on each node), or POST /v1/aggregate/{collection} with an optional {"tenant": "..."} for an object count. Answers carry names, counts and flags only. Object reads, searches, GraphQL, filters, groupBy and every write are refused before anything is sent, and you are told why.',
   inputSchema: readWeaviateapiStatementSchema,
   operationId: "weaviateapi.query.read",
 });

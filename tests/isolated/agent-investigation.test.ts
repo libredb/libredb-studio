@@ -6207,10 +6207,10 @@ describe("the handover an answer records comes from the run's own setting", () =
 
   So the serialized presentation reaches `readSerializedPresentation` only because of
   two properties of `takeTurn` that nothing else names: it pushes every `tool-call`
-  part without consulting `part.invalid` (src/lib/agent/investigation.ts:1042), and it
+  part without consulting `part.invalid` (`takeTurn` in src/lib/agent/investigation.ts), and it
   keeps only `role: "assistant"` response messages, discarding the SDK's error result
-  (src/lib/agent/investigation.ts:1069). Hardening the first to
-  `part.invalid !== true` (the shape `capability-probe.ts:296` already uses, so it is
+  (`takeTurn` in src/lib/agent/investigation.ts). Hardening the first to
+  `part.invalid !== true` (the shape `observeProbe` in `capability-probe.ts` already uses, so it is
   a natural edit rather than a hypothetical one) deletes #406's entire behaviour
   gain: the call is dropped, the turn looks like "the model stopped", and the run is
   scored with no answer and nothing on the ledger saying why.

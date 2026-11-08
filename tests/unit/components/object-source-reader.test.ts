@@ -266,7 +266,7 @@ describe("isSourceDocumentShape", () => {
     /*
      * THE FOURTH HOST-SUPPLIED RENDERED STRING, and the first one this phase adds (#789 Phase 3).
      * `partEditability` answers `provider-refused` with `edit.reason` VERBATIM and unprefixed
-     * (`source-editable.ts:110-112`), and `ObjectSourceView` renders that sentence, so an
+     * (`partEditability` in `source-editable.ts`), and `ObjectSourceView` renders that sentence, so an
      * unbounded `reason` is the same failure `unavailable` and `truncated.reason` were bounded
      * for: on the embedded seam there is no route in front of this predicate, and a host can hand
      * the shell tens of megabytes of prose to put in a `<span>`.

@@ -1,0 +1,115 @@
+SELECT COUNT(*) FROM SYSIBM.SYSCOLDIST
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSIBM.SYSCOLDIST".  
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSIBM.SYSCOLDISTPARTITIONSTATS
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: 
+"SYSIBM.SYSCOLDISTPARTITIONSTATS".  SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSIBM.SYSCOLGROUPDIST
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSIBM.SYSCOLGROUPDIST".  
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSCAT.COLDIST
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSCAT.COLDIST".  
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSCAT.COLDISTPARTITIONSTATS
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSCAT.COLDISTPARTITIONSTATS".  
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSCAT.COLGROUPDIST
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSCAT.COLGROUPDIST".  
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSSTAT.COLDIST
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSSTAT.COLDIST".  
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSSTAT.COLDISTPARTITIONSTATS
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSSTAT.COLDISTPARTITIONSTATS". 
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSSTAT.COLGROUPDIST
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSSTAT.COLGROUPDIST".  
+SQLSTATE=42501
+
+SELECT COLNAME, HIGH2KEY, LOW2KEY FROM SYSCAT.COLUMNS WHERE TABSCHEMA = 'APP' AND TABNAME = 'SECRET'
+
+COLNAME                                                                                                                          HIGH2KEY                                                                                                                                                                                                                                                       LOW2KEY                                                                                                                                                                                                                                                       
+-------------------------------------------------------------------------------------------------------------------------------- -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+V                                                                                                                                'owner-only'                                                                                                                                                                                                                                                   'owner-only'                                                                                                                                                                                                                                                  
+
+  1 record(s) selected.
+
+
+SELECT V FROM APP.SECRET
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "APP.SECRET".  SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSIBMADM.TOP_DYNAMIC_SQL
+
+1          
+-----------
+SQL1092N  The requested command or operation failed because the user ID does 
+not have the authority to perform the requested command or operation.  User 
+ID: "AGENT_RO".
+
+SELECT COUNT(*) FROM SYSIBMADM.MON_CURRENT_SQL
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSIBMADM.MON_CURRENT_SQL".  
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM TABLE (MON_GET_PKG_CACHE_STMT(NULL, NULL, NULL, -2)) AS M
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "EXECUTE". Object: 
+"SYSPROC.MON_GET_PKG_CACHE_STMT".  SQLSTATE=42501
+
+SELECT COUNT(*) FROM TABLE (SYSPROC.SNAP_GET_DYN_SQL('', -1)) AS M
+
+1          
+-----------
+SQL1092N  The requested command or operation failed because the user ID does 
+not have the authority to perform the requested command or operation.  User 
+ID: "AGENT_RO".
+
+SELECT COUNT(*) FROM TABLE (MON_GET_CONNECTION(NULL, -2)) AS M
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "EXECUTE". Object: "SYSPROC.MON_GET_CONNECTION".  
+SQLSTATE=42501
+
+SELECT VARCHAR(CONTROLNAME, 50) AS CONTROLNAME, VARCHAR(TABNAME, 20) AS TABNAME, COLNAME FROM SYSCAT.CONTROLS ORDER BY 1
+
+CONTROLNAME                                        TABNAME              COLNAME                                                                                                                         
+-------------------------------------------------- -------------------- --------------------------------------------------------------------------------------------------------------------------------
+SYS_DEFAULT_COLUMN_MASK__SYSCOLDIST_COLVALUE       SYSCOLDIST           COLVALUE                                                                                                                        
+SYS_DEFAULT_COLUMN_MASK__SYSCOLUMNS_HIGH2KEY       SYSCOLUMNS           HIGH2KEY                                                                                                                        
+SYS_DEFAULT_COLUMN_MASK__SYSCOLUMNS_LOW2KEY        SYSCOLUMNS           LOW2KEY                                                                                                                         
+SYS_DEFAULT_COLUMN_MASK__SYSSERVEROPTIONS_SETTING  SYSSERVEROPTIONS     SETTING                                                                                                                         
+SYS_DEFAULT_COLUMN_MASK__SYSUSEROPTIONS_SETTING    SYSUSEROPTIONS       SETTING                                                                                                                         
+
+  5 record(s) selected.
+
+

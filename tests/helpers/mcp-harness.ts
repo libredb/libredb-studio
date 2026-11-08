@@ -67,11 +67,22 @@ export function inProcessFetch(serve: ServeRequest): InProcessFetch {
   };
 }
 
-/** The production handler with the given identity; null passes none. */
+/**
+ * The production dispatcher with the given identity; null passes none. A POST's body picks the handler as the
+ * route's does (`mcpHandlerFor`), read from a copy so the SDK still reads the request itself; every other method
+ * takes the full handler, as the route's GET and DELETE do.
+ */
 export function handlerServe(authInfo: AuthInfo | null = testAuthInfo()): ServeRequest {
   return async (request) => {
-    const { mcpHandler } = await import("@/lib/mcp/server");
-    return mcpHandler.fetch(request, authInfo === null ? undefined : { authInfo });
+    const { mcpHandlerFor } = await import("@/lib/mcp/server");
+    const parsedBody =
+      request.method.toUpperCase() === "POST"
+        ? await request
+            .clone()
+            .json()
+            .catch(() => undefined)
+        : undefined;
+    return mcpHandlerFor(parsedBody).fetch(request, authInfo === null ? undefined : { authInfo });
   };
 }
 

@@ -7,7 +7,7 @@
  * security page, the authorization-off clause included.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
@@ -223,11 +223,39 @@ describe("docs/providers/milvus.md quotes what the code says", () => {
   test("machine access is what the records say", () => {
     expect(MCP_EXPOSABLE.milvus).toBe(true);
     expect(AGENT_EXECUTION_ENGINES).toContain("milvus");
-    expect(MCP_STATEMENT_READ.milvus).toBe(false);
+    expect(MCP_STATEMENT_READ.milvus).toBe(true);
     const machine = sectionOf(DOC, "### 3.5 Machine access");
     expect(machine).toContain("(`mcp: true`)");
     expect(machine).toContain("Agent execution reads metadata only");
-    expect(machine).toContain("MCP `run_read_query` still refuses Milvus");
+    expect(machine).toContain("MCP's `run_milvus_read` sends the same reads under the same proof");
+    expect(machine).toContain("MCP `run_read_query` refuses Milvus, naming that tool");
+    const mcp = sectionOf(DOC, "### 15.6 MCP read");
+    expect(mcp).toContain("A client cancel ends the wait, not the read");
+    expect(mcp).toContain("each in its own sentence");
+  });
+
+  test("the data scope names the layer that stops each item, and every capture it cites is on disk", () => {
+    const scope = sectionOf(DOC, "#### 15.3.1 The data scope");
+    for (const row of [
+      "A database other than the connection's",
+      "A collection outside the user's grants, by name",
+      "An alias where a collection's name stands",
+      "An alias of a collection outside the user's grants",
+      "Every alias of the database",
+    ]) {
+      expect(rowOf(scope, row)).toContain("Studio:");
+    }
+    expect(rowOf(scope, "A database outside the user's grants, in `databases/list`")).toContain("The server:");
+    expect(rowOf(scope, "A collection outside the user's grants, in `collections/list`")).toContain("The server:");
+    const scopeDir = path.join(ROOT, "tests/fixtures/milvus/3.0.2/mcp-scope");
+    for (const cited of scope.match(/`[a-z-]+-(?:dbro|few|onedb|\*)`/g) ?? []) {
+      const name = cited.slice(1, -1);
+      const pattern = new RegExp(`^${name.replaceAll("*", "[a-z]+")}\\.json$`);
+      expect({ cited: name, found: readdirSync(scopeDir).some((file) => pattern.test(file)) }).toEqual({
+        cited: name,
+        found: true,
+      });
+    }
   });
 
   test("the object edit section states the abstention the census holds", () => {
@@ -275,7 +303,7 @@ describe("docs/SECURITY.md states Milvus's limits and its plaintext rule", () =>
     expect(bullet).toContain(
       "A Milvus password or token over no TLS is refused unless the host is a loopback address or `localhost`, or an SSH tunnel carries the connection.",
     );
-    expect(SECURITY).toContain("etcd's, Neo4j's, Milvus's, Qdrant's and Weaviate's providers keep the mode today");
+    expect(SECURITY).toContain("Milvus's names where the mode was set, as etcd's does, in refusing Load and Release");
     expect(SECURITY).toContain("src/lib/db/providers/vector/milvus/write-policy.ts");
   });
 });

@@ -8,7 +8,7 @@
  */
 import "../../setup-dom";
 
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { GraphView } from "@/components/results-graph/GraphView";
@@ -81,6 +81,14 @@ function harness(): Harness {
 }
 
 let h: Harness;
+
+// The first import of Cytoscape and fcose in a process is the cold one: on a Windows
+// runner the 1000 ms `waitFor` in `mount` gave up before it resolved and failed
+// whichever test came first. These tests are about what is drawn, not how fast the
+// library arrives, so the cold import is paid here, before any test's clock starts.
+beforeAll(async () => {
+  await loadCytoscape();
+});
 
 beforeEach(() => {
   h = harness();

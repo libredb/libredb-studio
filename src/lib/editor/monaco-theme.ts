@@ -12,7 +12,7 @@ import type * as Monaco from "monaco-editor";
  *
  * `editor.defineTheme` registers on the Monaco INSTANCE, not on the mount, and monaco-editor
  * 0.57.0 documents it as "Define a new theme or update an existing theme"
- * (`monaco-editor/esm/vs/editor/editor.api.d.ts:1124`), so calling this from every mount's
+ * (`editor.defineTheme` in monaco-editor 0.57.0's `esm/vs/editor/editor.api.d.ts`), so calling this from every mount's
  * `beforeMount` rewrites the same two entries with the same payload rather than accumulating
  * per-mount state.
  */

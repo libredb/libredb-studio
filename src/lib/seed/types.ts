@@ -1,8 +1,21 @@
 import { z } from "zod";
-import { CONNECTION_STRING_ACCEPTED, MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import {
+  CONNECTION_STRING_ACCEPTED,
+  MCP_AGENT_CREDENTIAL_REQUIRED,
+  MCP_EXPOSABLE,
+  READ_ROOTS_REQUIRED,
+  WRITE_REACH,
+} from "@/lib/db/compatibility";
+import type { WriteReach } from "@/lib/db/write-reach";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
-import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
-import { SEED_ONLY_FIELDS, type SeedOnlyFields } from "@/lib/db/connection-fields";
+import { publishedDefaultPairWarning, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
+import {
+  CONNECTION_FIELDS,
+  SEED_AGENT_CREDENTIAL,
+  SEED_ONLY_FIELDS,
+  type SeedAgentCredential,
+  type SeedOnlyFields,
+} from "@/lib/db/connection-fields";
 import { isCredentialReference } from "./credential-resolver";
 import { connectionStringFor } from "@/lib/db/connection-string";
 
@@ -67,7 +80,7 @@ function refuseSeedOnlyFields(conn: { readonly type: DatabaseType }, ctx: z.Refi
  * it is handed, `MCP_EXPOSABLE` in `SeedConnectionSchema`, never a type-id branch, so an engine is
  * admitted by its own entry. Refused rather than stripped, because a stripped opt-in would load a file
  * that asks for something the product will not do. A factory over the record, the way
- * `offersReadOnlyToggle` takes its engine's answer, so the refusal is tested before any shipped engine
+ * `readOnlyControl` takes its engine's answer, so the refusal is tested before any shipped engine
  * answers false.
  */
 export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType, boolean>>) {
@@ -76,6 +89,169 @@ export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: `mcp is not offered for ${conn.type}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`,
+      path: ["mcp"],
+    });
+  };
+}
+
+/**
+ * The load's refusal of `readOnly: true` on an engine whose write reach is `open` (#1089): some path there sends a
+ * write no Studio gate refuses, so the seed would be listed as read-only and still write. Accepted wherever the reach
+ * is `guarded` or `none`; on a `none` engine the flag changes no write, and a policy that marks every seed read-only
+ * still loads. Read from the record it is handed, `WRITE_REACH` in `SeedConnectionSchema`, never a type-id branch,
+ * and a factory over it for the reason `refuseMcpWhereNotOffered` gives. The credential refusal and the `managed`
+ * refusal below apply on every engine this admits, `none` included, because a read-only seed promises a boundary on
+ * the host as well as in Studio's code.
+ */
+export function refuseReadOnlyWhereOpen(reach: Readonly<Record<DatabaseType, WriteReach>>) {
+  return (conn: { type: DatabaseType; readOnly?: boolean }, ctx: z.RefinementCtx): void => {
+    if (conn.readOnly !== true || reach[conn.type] !== "open") return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `readOnly is not offered for ${conn.type}: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.`,
+      path: ["readOnly"],
+    });
+  };
+}
+
+/** The two fields of a seed's agent credential, in the order a refusal names them. */
+const AGENT_FIELDS = ["agentUser", "agentPassword"] as const;
+
+/** The agent credential fields the load refusals read, as the file writes them. */
+interface AgentCredentialFields {
+  readonly id: string;
+  readonly type: DatabaseType;
+  readonly user?: string;
+  readonly connectionString?: string;
+  readonly agentUser?: string;
+  readonly agentPassword?: string;
+}
+
+/** Set, as the factory's form check reads a field: an empty string counts as absent. */
+const isSet = (value: string | undefined): value is string => value !== undefined && value !== "";
+
+/** A value the file shows as it is: set, and not a reference resolution replaces. */
+const isLiteral = (value: string | undefined): value is string => isSet(value) && !isCredentialReference(value);
+
+/**
+ * The load's refusals of an agent credential its engine's row does not take, read from the table it is handed,
+ * `SEED_AGENT_CREDENTIAL` in `SeedConnectionSchema`, never a type-id branch. Each names the connection and the field,
+ * never the value, and a reference is unknown here: load refuses what the file shows, and the factory refuses the rest
+ * at open, before it connects. A factory over the table, the way `refuseMcpWhereNotOffered` takes its record, so each
+ * form is tested on an engine of the test's choosing.
+ */
+export function refuseInvalidAgentCredential(table: Readonly<Record<DatabaseType, SeedAgentCredential | null>>) {
+  return (conn: AgentCredentialFields, ctx: z.RefinementCtx): void => {
+    const set = AGENT_FIELDS.filter((field) => isSet(conn[field]));
+    const present = AGENT_FIELDS.filter((field) => conn[field] !== undefined);
+    if (present.length === 0) return;
+    const refuse = (field: string, message: string): void => {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: [field] });
+    };
+    const row = table[conn.type];
+    if (row === null) {
+      for (const field of present) {
+        refuse(
+          field,
+          `Seed connection "${conn.id}": ${field} is refused: a ${conn.type} seed takes no agent credential, so the agent and MCP could not run under one. Remove ${field} from this connection.`,
+        );
+      }
+      return;
+    }
+    if (row.form === "secret" && conn.agentUser !== undefined) {
+      refuse(
+        "agentUser",
+        `Seed connection "${conn.id}": agentUser is refused: the ${conn.type} provider takes the agent's credential as agentPassword alone. Remove agentUser from this connection.`,
+      );
+    }
+    if (row.form !== "secret" && set.length === 1) {
+      const [field] = set;
+      const missing = field === "agentUser" ? "agentPassword" : "agentUser";
+      refuse(
+        field,
+        `Seed connection "${conn.id}" sets ${field} without ${missing}: an agent credential on ${conn.type} is a user and a password together. Set both, or remove ${field}.`,
+      );
+    }
+    if (conn.connectionString !== undefined) {
+      const fields = CONNECTION_FIELDS[conn.type].filter((field) => field !== "connectionString").join(", ");
+      refuse(
+        "connectionString",
+        `Seed connection "${conn.id}" sets an agent credential beside connectionString, which the provider ignores for the agent: move the value into the separate fields a ${conn.type} seed takes (${fields}), or remove the agent credential.`,
+      );
+    }
+    const fields = conn as unknown as Readonly<Record<string, unknown>>;
+    const superseding = row.supersededBy.find((field) => fields[field] !== undefined);
+    if (superseding !== undefined) {
+      refuse(
+        present[0],
+        `Seed connection "${conn.id}" sets an agent credential beside ${superseding}, which the ${conn.type} provider signs in with in preference to a user and password, so the agent and MCP would run under the connection's own credential. Remove ${superseding} or the agent credential.`,
+      );
+    }
+    if (row.form === "dedicated-pair" && isLiteral(conn.agentUser) && isLiteral(conn.user)) {
+      if (conn.agentUser.trim().toLowerCase() === conn.user.trim().toLowerCase()) {
+        refuse(
+          "agentUser",
+          `Seed connection "${conn.id}": agentUser is refused: it names the connection's own user, and the ${conn.type} provider takes only an agent user of its own. Name a dedicated agent user.`,
+        );
+      }
+    }
+    if (row.form !== "secret" && isLiteral(conn.agentUser) && isLiteral(conn.agentPassword)) {
+      const warning = publishedDefaultPairWarning(conn.type, { user: conn.agentUser, password: conn.agentPassword });
+      if (warning !== undefined) {
+        refuse(
+          "agentPassword",
+          `Seed connection "${conn.id}": the agent credential is refused: ${warning} An agent credential exists to narrow the principal, and a published default narrows nothing. Give the agent a credential of its own.`,
+        );
+      }
+    }
+    if (row.form === "secret" && isSet(conn.agentPassword) && isLiteral(conn.user)) {
+      if (CONNECTION_FIELDS[conn.type].includes("user")) {
+        refuse(
+          "agentPassword",
+          `Seed connection "${conn.id}" sets an agent credential beside user: the ${conn.type} provider keeps the connection's user beside the agent's secret and signs in with both, which has no read-only form, so every agent profile would be refused. Remove user from this connection, or remove the agent credential.`,
+        );
+      }
+    }
+  };
+}
+
+/**
+ * The load's refusal of an MCP opt-in without an agent credential on an engine MCP reads only under one, read from
+ * the record it is handed, `MCP_AGENT_CREDENTIAL_REQUIRED` in `SeedConnectionSchema`, never a type-id branch. The MCP
+ * context refuses the same connection again at open (`assertAgentCredentialWhereRequired` in src/lib/mcp/context.ts).
+ * A factory over the record for the reason `refuseMcpWhereNotOffered` is one: no shipped engine answers true yet.
+ */
+export function refuseMcpWithoutAgentCredential(required: Readonly<Record<DatabaseType, boolean>>) {
+  return (conn: AgentCredentialFields & { readonly mcp?: boolean }, ctx: z.RefinementCtx): void => {
+    if (conn.mcp !== true || !required[conn.type]) return;
+    if (isSet(conn.agentUser) || isSet(conn.agentPassword)) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Seed connection "${conn.id}" sets mcp: true on ${conn.type} without a read credential of its own (agentUser and agentPassword): MCP reads this engine only under that credential, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.`,
+      path: ["mcp"],
+    });
+  };
+}
+
+/**
+ * The load's refusal of an MCP opt-in without read roots on an engine MCP reads only beneath roots its seed declares,
+ * read from the record it is handed, `READ_ROOTS_REQUIRED` in `SeedConnectionSchema`, never a type-id branch. The MCP
+ * context refuses the same connection again at open (`assertReadRootsWhereRequired` in src/lib/mcp/context.ts).
+ */
+export function refuseMcpWithoutReadRoots(required: Readonly<Record<DatabaseType, boolean>>) {
+  return (
+    conn: {
+      readonly id: string;
+      readonly type: DatabaseType;
+      readonly mcp?: boolean;
+      readonly agentReadRoots?: unknown;
+    },
+    ctx: z.RefinementCtx,
+  ): void => {
+    if (conn.mcp !== true || !required[conn.type] || conn.agentReadRoots !== undefined) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Seed connection "${conn.id}" sets mcp: true on ${conn.type} without agentReadRoots: MCP reads this engine only beneath read roots its seed declares. Add agentReadRoots, or remove mcp from this connection.`,
       path: ["mcp"],
     });
   };
@@ -133,6 +309,9 @@ const SeedDatabaseType = z.enum([
   "sparkplug",
 ]);
 
+const AGENT_CREDENTIAL_IN_DEFAULTS =
+  "agentUser and agentPassword are set per connection and never in defaults: add the agent credential to each seed connection whose agent and MCP calls should run under it";
+
 export const SeedDefaultsSchema = z.object({
   managed: z.boolean().optional(),
   environment: ConnectionEnvironmentSchema.optional(),
@@ -151,6 +330,18 @@ export const SeedDefaultsSchema = z.object({
     .never({
       error:
         "readOnly is set per connection and never in defaults: add readOnly: true to each seed connection that must refuse writes",
+    })
+    .optional(),
+  // Refused rather than stripped, like mcp: a default would hand one agent principal to every later connection of the
+  // file, on engines whose forms differ.
+  agentUser: z.never({ error: AGENT_CREDENTIAL_IN_DEFAULTS }).optional(),
+  agentPassword: z.never({ error: AGENT_CREDENTIAL_IN_DEFAULTS }).optional(),
+  // Refused rather than stripped, like the agent credential: read roots name nodes on one server, so a default would
+  // hand one server's roots to every OPC UA connection of the file.
+  agentReadRoots: z
+    .never({
+      error:
+        "agentReadRoots is set per connection and never in defaults: add the read roots to each OPC UA seed connection whose agent and MCP reads they bound.",
     })
     .optional(),
 });
@@ -299,6 +490,23 @@ export const SeedConnectionSchema = z
      * resolved from a reference.
      */
     registerMap: z.string().optional(),
+    // The agent credential: the principal the agent execution profiles and MCP sign in as, the engine's own user field
+    // (a database role, an etcd user, an S3 access key ID), and that principal's secret, or on a secret-only engine the
+    // whole credential (a bearer token, a service-account key JSON). Declared for the reason skipObjectScan is: zod
+    // strips an undeclared key silently, and a seed file's agent credential would validate and vanish, leaving its
+    // agent and MCP calls under the connection's own login. Strings, because both are resolvable (RESOLVABLE_FIELDS)
+    // and the file is validated before anything is resolved. Which engines take which is SEED_AGENT_CREDENTIAL in
+    // src/lib/db/connection-fields.ts, read by the refine below; only on a managed seed (SeedConfigSchema), and never
+    // in defaults.
+    agentUser: z.string().optional(),
+    agentPassword: z.string().optional(),
+    // OPC UA only: the read roots, the node ids beneath which agent mode and MCP read. Declared for the reason
+    // skipObjectScan is: zod strips an undeclared key silently, and a seed's roots would validate and vanish, leaving
+    // every agent and MCP read refused for roots the file did declare. Accepted here whatever it holds, so that the
+    // engine's load check (OPCUA_CONNECTION_STRING.validateSeed, which runs readRootRefusals) answers every case in
+    // its own words, a value that is not a list of strings included, framed with the connection's id. Never resolved
+    // from a reference, and refused on every other type through SEED_ONLY_FIELDS.opcua.
+    agentReadRoots: z.custom<readonly string[]>(() => true).optional(),
     // And the three OPC UA fields the dialog has no box for: why, at SEED_ONLY_FIELDS.opcua in src/lib/db/connection-fields.ts.
     securityPolicyUri: z.string().optional(),
     clientCertificatePath: z.string().optional(),
@@ -323,17 +531,15 @@ export const SeedConnectionSchema = z
   })
   // An MCP opt-in on an engine MCP is not offered for (#1089), read from MCP_EXPOSABLE.
   .superRefine(refuseMcpWhereNotOffered(MCP_EXPOSABLE))
-  // A read-only mode the engine's provider ignores would be a promise nobody keeps: the seed would be
-  // listed as read-only and still write (#1089). Read from READ_ONLY_ENFORCED, never a type-id branch,
-  // so an engine is admitted by its own declaration.
-  .superRefine((conn, ctx) => {
-    if (conn.readOnly !== true || READ_ONLY_ENFORCED[conn.type]) return;
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `readOnly is not offered for ${conn.type}: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.`,
-      path: ["readOnly"],
-    });
-  })
+  // An MCP opt-in without an agent credential on an engine MCP reads only under one, read from
+  // MCP_AGENT_CREDENTIAL_REQUIRED.
+  .superRefine(refuseMcpWithoutAgentCredential(MCP_AGENT_CREDENTIAL_REQUIRED))
+  // An MCP opt-in without read roots on an engine MCP reads only beneath them, read from READ_ROOTS_REQUIRED.
+  .superRefine(refuseMcpWithoutReadRoots(READ_ROOTS_REQUIRED))
+  // An agent credential the engine's row does not take, read from SEED_AGENT_CREDENTIAL.
+  .superRefine(refuseInvalidAgentCredential(SEED_AGENT_CREDENTIAL))
+  // A read-only mode on an engine Studio can write unguarded, read from WRITE_REACH.
+  .superRefine(refuseReadOnlyWhereOpen(WRITE_REACH))
   // A read-only seed whose credential its type declares unsafe to rely on (src/lib/db/credential-warnings.ts): a
   // published default pair, or no secret where the type accepts none, so the mode would promise a boundary the
   // server does not keep. The file shows only literals, so a pair with a `${ENV}` or `${vault:...}` reference in
@@ -384,6 +590,18 @@ function unmanagedReadOnlyMessage(fromDefaults: boolean): string {
   return `readOnly: true needs a managed connection, and this one has ${managed}: an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose readOnly can be cleared. Set managed: true on this connection, or remove readOnly.`;
 }
 
+/**
+ * The load's refusal of an agent credential on a seed that is not managed. An unmanaged seed is copied into the
+ * browser of every user its roles admit, with its credentials (`GET /api/connections/managed`), and Duplicate turns
+ * that copy into a connection of the user's own, so the agent's secret would reach every browser. Both fields, though
+ * `agentUser` alone is public, because a browser copy that carries either no longer resolves to the seed. It names
+ * `defaults.managed` when the value came from there, as `unmanagedReadOnlyMessage` does.
+ */
+function unmanagedAgentCredentialMessage(fromDefaults: boolean): string {
+  const managed = fromDefaults ? "managed: false from defaults.managed" : "managed: false";
+  return `An agent credential needs a managed connection, and this one has ${managed}: an unmanaged seed is copied into the browser of every user its roles admit, with its credentials, and Duplicate turns that copy into a connection of the user's own. Set managed: true on this connection, or remove the agent credential.`;
+}
+
 export const SeedConfigSchema = z
   .object({
     version: z.literal("1"),
@@ -422,6 +640,19 @@ export const SeedConfigSchema = z
         path: ["connections", index, "readOnly"],
       });
     });
+  })
+  // Here for the reason the read-only refusal above is: the effective managed value needs `defaults`.
+  .superRefine((cfg, ctx) => {
+    cfg.connections.forEach((conn, index) => {
+      const field = AGENT_FIELDS.find((name) => conn[name] !== undefined);
+      if (field === undefined) return;
+      if ((conn.managed ?? cfg.defaults?.managed ?? true) === true) return;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: unmanagedAgentCredentialMessage(conn.managed === undefined),
+        path: ["connections", index, field],
+      });
+    });
   });
 
 export type SeedConnection = z.infer<typeof SeedConnectionSchema>;
@@ -451,6 +682,14 @@ export interface ManagedConnection extends DatabaseConnection {
    * (src/lib/seed/index.ts).
    */
   kubernetesSecret?: { readonly namespace: string; readonly name: string };
+  /**
+   * Set in code by projectSeedConnection (src/lib/seed/connection-filter.ts) when the operator's own `roles` offer this
+   * seed to any role but admin (`user`, `*`, a custom role, or the role reserved for the Kubernetes access review), read
+   * before the projection narrows `roles` to the caller's. Never read from a file, because SeedConnectionSchema does not
+   * declare it; stripped by GET /api/connections/managed. editorExecutionContext (src/lib/api/execution-context.ts)
+   * decides the file-access posture from it, so every caller of one seed gets one posture and one cached handle.
+   */
+  sharedWithNonAdminRoles?: true;
   /**
    * Under governance only, set by GET /api/connections/managed from the grant level the record was resolved for: "read"
    * when statements run under the connection's read credential. Never read from a file.

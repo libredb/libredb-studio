@@ -1,6 +1,11 @@
 import { describe, test, expect } from "bun:test";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
-import { readCteBodyWrite, readOperativeKeyword } from "@/lib/sql/operative-keyword";
+import {
+  cteListRuns,
+  readCteBodyWrite,
+  readOperativeKeyword,
+  readOperativeKeywordAt,
+} from "@/lib/sql/operative-keyword";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -663,5 +668,49 @@ describe("readCteBodyWrite", () => {
 
       expect(bodyWriteOf("WITH r AS ( /* a /* b */ DELETE */ SELECT 1) SELECT * FROM r", postgres)).toBeNull();
     });
+  });
+});
+
+// ─── readOperativeKeywordAt ─────────────────────────────────────────────────
+//
+// What `readOperativeKeyword` answers for the text from an index on, read in place, for the confirmation gate, which
+// asks it of every CTE body that opens with WITH and shares where the runs of the text close between those reads.
+
+describe("readOperativeKeywordAt", () => {
+  const POSTGRES = resolveSqlGrammar("postgres");
+
+  test.each<[string, string, string, string | null]>([
+    [
+      "a WITH in a CTE body, operated by a write",
+      "WITH a AS (WITH b AS (SELECT 1) DELETE FROM t) SELECT 1",
+      "WITH b",
+      "DELETE",
+    ],
+    ["a WITH in a body that reads", "x AS (WITH b AS (SELECT 1) SELECT 2)", "WITH b", "SELECT"],
+    ["a statement that does not lead with WITH", "x AS (SELECT 1)", "SELECT", "SELECT"],
+    ["a WITH whose list never closes", "x AS (WITH b AS (SELECT 1", "WITH b", null],
+    ["a comment before the WITH", "x /* c */ WITH a AS (SELECT 1) INSERT INTO t", "/* c */", "INSERT"],
+    // The leading keyword is read as `readOperativeKeyword` reads it, ASCII letters only: this one is `W`.
+    ["a WITH spelled with a dotless i", "x AS (wıth b AS (SELECT 1) DELETE FROM t)", "wıth", "W"],
+    ["nothing to read", "x AS (", "(", null],
+  ])("%s answers what the text from there answers", (_label, sql, from, expected) => {
+    const start = sql.indexOf(from);
+    expect(readOperativeKeyword(sql.slice(start), POSTGRES)?.keyword ?? null).toBe(expected);
+    expect(readOperativeKeywordAt(sql, start, POSTGRES, cteListRuns(sql, POSTGRES))).toBe(expected);
+  });
+
+  test("statements nested in each other, read with one CteListRuns in any order, answer as each read alone", () => {
+    const sql =
+      "SELECT 1 FROM t AS (WITH a AS (WITH (SELECT 2) AS b, c (x) AS (WITH d AS (SELECT 3) MERGE INTO m) DELETE FROM u) SELECT 4) INSERT INTO v";
+    const starts = [...sql.matchAll(/WITH/g)].map((match) => match.index);
+    const alone = starts.map((start) => readOperativeKeyword(sql.slice(start), POSTGRES)?.keyword ?? null);
+    expect(alone).toEqual(["SELECT", "DELETE", "MERGE"]);
+
+    const forwards = cteListRuns(sql, POSTGRES);
+    expect(starts.map((start) => readOperativeKeywordAt(sql, start, POSTGRES, forwards))).toEqual(alone);
+    const backwards = cteListRuns(sql, POSTGRES);
+    expect([...starts].reverse().map((start) => readOperativeKeywordAt(sql, start, POSTGRES, backwards))).toEqual(
+      [...alone].reverse(),
+    );
   });
 });

@@ -46,12 +46,13 @@ const secretFile = join(workDir, "services.json");
 writeFileSync(secretFile, JSON.stringify({ services: [{ env: { POSTGRES_PASSWORD: SECRET_PLACEHOLDER } }] }));
 
 /**
- * The operator's seed file: one DuckDB seed every role can use, and one only admins can. Read
- * through the real loader and resolveConnection, so the record each role resolves is the one the
- * product builds.
+ * The operator's seed file: one DuckDB seed every role can use, one offered to admin and user, and
+ * one only admins can. Read through the real loader and resolveConnection, so the record each role
+ * resolves is the one the product builds.
  */
 const sharedSeedFile = join(workDir, "shared-seed.duckdb");
 const adminSeedFile = join(workDir, "admin-seed.duckdb");
+const pairSeedFile = join(workDir, "pair-seed.duckdb");
 const seedConfigFile = join(workDir, "seed-connections.json");
 writeFileSync(
   seedConfigFile,
@@ -59,6 +60,7 @@ writeFileSync(
     version: "1",
     connections: [
       { id: "duck-shared", name: "Shared DuckDB", type: "duckdb", database: sharedSeedFile, roles: ["*"] },
+      { id: "duck-pair", name: "Pair DuckDB", type: "duckdb", database: pairSeedFile, roles: ["admin", "user"] },
       { id: "duck-admin", name: "Admin DuckDB", type: "duckdb", database: adminSeedFile, roles: ["admin"] },
     ],
   }),
@@ -211,6 +213,7 @@ describe("one DuckDB seed a non-admin role can use is one handle for every role 
   // closes last checkpoints over the other's committed rows; Windows refuses it. So the record
   // every role resolves must stay one cache key, which means one posture for all of them.
   const SHARED = { connectionId: "seed:duck-shared" };
+  const PAIR = { connectionId: "seed:duck-pair" };
 
   test("an admin and a user share one cache entry, and every acknowledged row reaches the file", async () => {
     role = "admin";
@@ -237,13 +240,31 @@ describe("one DuckDB seed a non-admin role can use is one handle for every role 
     expect(ids(read.body)).toEqual([1, 2, 3, 4]);
   });
 
-  test("on that seed an admin's read_text is refused too: the one handle is the non-admin posture", async () => {
-    role = "admin";
-    const { status, body } = await queryWith({ ...SHARED, sql: `SELECT * FROM read_text('${secretFile}')` });
+  test.each([
+    ["every role", SHARED],
+    ["admin and user", PAIR],
+  ] as const)(
+    "on a seed offered to %s an admin's read_text is refused too: the one handle is the non-admin posture",
+    async (_offered, seed) => {
+      role = "admin";
+      const { status, body } = await queryWith({ ...seed, sql: `SELECT * FROM read_text('${secretFile}')` });
 
-    expect(status).toBe(400);
-    expect(String(body.error)).toContain("file system operations are disabled by configuration");
-    expect(JSON.stringify(body)).not.toContain(SECRET_PLACEHOLDER);
+      expect(status).toBe(400);
+      expect(String(body.error)).toContain("file system operations are disabled by configuration");
+      expect(JSON.stringify(body)).not.toContain(SECRET_PLACEHOLDER);
+    },
+  );
+
+  test("on a seed offered to admin and user, a user's temporary table survives an admin's request", async () => {
+    // One record, one handle: the session state a user built on it is still there after an admin's request.
+    role = "user";
+    expect((await queryWith({ ...PAIR, sql: "CREATE TEMP TABLE scratch AS SELECT 42 AS answer" })).status).toBe(200);
+    role = "admin";
+    expect((await queryWith({ ...PAIR, sql: "SELECT 1 AS one" })).status).toBe(200);
+    role = "user";
+    const read = await queryWith({ ...PAIR, sql: "SELECT answer FROM scratch" });
+    expect(read.status).toBe(200);
+    expect(read.body.rows).toEqual([{ answer: 42 }]);
   });
 
   test("a seed only admins can use keeps the admin's full file access", async () => {
@@ -286,6 +307,7 @@ describe("a DuckDB seed whose roles change while Studio runs keeps one handle (n
         version: "1",
         connections: [
           { id: "duck-shared", name: "Shared DuckDB", type: "duckdb", database: sharedSeedFile, roles: ["*"] },
+          { id: "duck-pair", name: "Pair DuckDB", type: "duckdb", database: pairSeedFile, roles: ["admin", "user"] },
           { id: "duck-admin", name: "Admin DuckDB", type: "duckdb", database: adminSeedFile, roles: ["admin"] },
           { id: "duck-flip", name: "Flip DuckDB", type: "duckdb", database: flipFile, roles: flipRoles },
         ],
@@ -295,13 +317,14 @@ describe("a DuckDB seed whose roles change while Studio runs keeps one handle (n
   }
 
   afterEach(() => {
-    // Restore the two-seed base the rest of the file resolves against.
+    // Restore the base seeds the rest of the file resolves against.
     writeFileSync(
       seedConfigFile,
       JSON.stringify({
         version: "1",
         connections: [
           { id: "duck-shared", name: "Shared DuckDB", type: "duckdb", database: sharedSeedFile, roles: ["*"] },
+          { id: "duck-pair", name: "Pair DuckDB", type: "duckdb", database: pairSeedFile, roles: ["admin", "user"] },
           { id: "duck-admin", name: "Admin DuckDB", type: "duckdb", database: adminSeedFile, roles: ["admin"] },
         ],
       }),

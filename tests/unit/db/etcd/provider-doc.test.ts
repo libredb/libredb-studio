@@ -42,6 +42,8 @@ import {
   ETCD_REFUSED_GLOBAL_FLAGS,
 } from "@/lib/db/providers/keyvalue/etcd/commands";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { admitEtcdctlStatement, ETCDCTL_AGENT_MAX_STATEMENT_CHARS } from "@/lib/db/operations/etcdctl-admission";
+import { ETCD_AGENT_MAX_KEY_BYTES } from "@/lib/db/providers/keyvalue/etcd/agent-statement";
 
 import { PROGRAMME_CONTROL_IDS } from "../../../../scripts/security-check.mjs";
 import { createFakeEtcdClient } from "../../../helpers/etcd-fake-client";
@@ -218,18 +220,29 @@ describe("the read-only recipe, in the provider doc and in docs/SEED_CONNECTIONS
 });
 
 describe("docs/providers/etcd.md section 3.5 states the machine access the product gives and refuses (E12)", () => {
-  test("agent execution reads metadata only, and MCP stays closed for etcd", () => {
+  test("agent execution and MCP read metadata only on etcd", () => {
     expect(AGENT_EXECUTION_ENGINES).toContain("etcd");
-    expect(MCP_EXPOSABLE.etcd).toBe(false);
-    expect(MCP_STATEMENT_READ.etcd).toBe(false);
-    expect(MACHINE).toContain("The provider's read-only query path is agent mode's alone and reads metadata only");
-    expect(MACHINE).toContain("MCP stays closed");
+    expect(MCP_EXPOSABLE.etcd).toBe(true);
+    expect(MCP_STATEMENT_READ.etcd).toBe(true);
+    expect(MACHINE).toContain("The provider's read-only query path is agent mode's and MCP's `run_etcd_read`");
+    expect(MACHINE).toContain("so key names and values reach no MCP client, and `inspect_schema` lists no key prefix");
   });
 
-  test("the MCP refusal quoted is the one the seed schema gives", () => {
+  test("the MCP seed refusal quoted is the one the seed schema gives", () => {
     const parsed = SeedConfigSchema.safeParse({
       version: "1",
-      connections: [{ id: "cluster", name: "Cluster", type: "etcd", host: "etcd.internal", roles: ["*"], mcp: true }],
+      connections: [
+        {
+          id: "cluster",
+          name: "Cluster",
+          type: "etcd",
+          host: "etcd.internal",
+          user: "root",
+          password: "${ETCD_ROOT_PASSWORD}",
+          roles: ["*"],
+          mcp: true,
+        },
+      ],
     });
     const message = parsed.error?.issues[0]?.message;
     expect(message).toBeDefined();
@@ -368,6 +381,8 @@ describe("docs/SECURITY.md carries the read-only control, its note and its three
     expect(note).toContain("the mode is a boundary only on a managed seed");
     expect(note).toContain("`assertReadOnlyHonoured`");
     expect(note).toContain("`READ_ONLY_ENFORCED`");
+    // The provider sentences that follow the pointer to the Write reach table name the noun they belong to.
+    expect(note).toContain("Of the providers that keep it, etcd's names where the mode was set in every refusal");
     expect(read("src/lib/db/factory.ts")).toContain("export function assertReadOnlyHonoured");
   });
 
@@ -530,6 +545,22 @@ describe("docs/providers/etcd.md states the limits of spec E17 and the Kubernete
     expect(kubernetes).toContain("Never put the client key in `seedConnections.config`");
     expect(kubernetes).toContain("kube-apiserver compacts etcd every 5 minutes");
     expect(kubernetes).toContain("verify-full");
+  });
+});
+
+describe("docs/providers/etcd.md section 15.3 states the longest key an agent command reaches", () => {
+  const section = sectionOf(DOC, "### 15.3 What an agent command may be") ?? "";
+  const reached = ETCDCTL_AGENT_MAX_STATEMENT_CHARS - "get ".length;
+  const count = (value: number) => value.toLocaleString("en-US");
+
+  test("the bound quoted is the command cap less the get, below the reader's own key cap", () => {
+    expect(reached).toBeLessThan(ETCD_AGENT_MAX_KEY_BYTES);
+    expect(admitEtcdctlStatement(`get /${"a".repeat(reached - 1)}`)).toBeNull();
+    expect(admitEtcdctlStatement(`get /${"a".repeat(reached)}`)?.code).toBe("agent-too-large");
+    expect(section).toContain(`at most ${count(reached)} bytes`);
+    expect(section).toContain(`${count(ETCDCTL_AGENT_MAX_STATEMENT_CHARS)} characters`);
+    expect(section).toContain(`${count(ETCD_AGENT_MAX_KEY_BYTES)} bytes`);
+    expect(section).not.toContain(`A key is 1 to ${count(ETCD_AGENT_MAX_KEY_BYTES)} bytes`);
   });
 });
 

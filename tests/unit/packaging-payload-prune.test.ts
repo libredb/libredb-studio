@@ -122,11 +122,10 @@ const EXTRA_FILES = [
   "knip.json",
   "next.config.ts",
   "playwright.config.ts",
-  // One per harness, covered by a glob: the base-path, channel and smoke configs
+  // One per harness, covered by a glob: the base-path and channel configs
   // shipped in every image while only the bare name was on the list.
   "playwright.base-path.config.ts",
   "playwright.channel.config.ts",
-  "playwright.smoke.config.ts",
   "postcss.config.mjs",
   "render.yaml",
   "SECURITY.md",

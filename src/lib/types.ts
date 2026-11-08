@@ -594,8 +594,8 @@ export interface DatabaseConnection {
    * and where it was set, and sends nothing.
    *
    * Accepted only on an engine whose provider enforces it, which `READ_ONLY_ENFORCED` in
-   * `src/lib/db/compatibility.ts` records and a census holds equal to
-   * `ProviderCapabilities.enforcesReadOnly`. On any other engine `true` is refused, by the seed schema
+   * `src/lib/db/compatibility.ts` records and a census holds equal to the summary of
+   * `ProviderCapabilities.writeReach`. On any other engine `true` is refused, by the seed schema
    * at load and by `assertReadOnlyHonoured` in `src/lib/db/factory.ts` before anything is built or
    * dialled, because a mode the provider ignores would list the connection as read-only and send its
    * writes. A value that is not a boolean is refused on every engine.
@@ -613,8 +613,14 @@ export interface DatabaseConnection {
   readOnly?: boolean;
   managed?: boolean; // true = admin-controlled, read-only in UI
   seedId?: string; // stable reference to seed config ID
-  agentUser?: string; // optional least-privilege role for the agent read-only execution profile (#328)
-  agentPassword?: string; // password for agentUser; secret-classified, sealed at rest by connection-secrets
+  agentUser?: string; // optional least-privilege principal every agent execution profile and MCP call signs in as (#328); a seed may set it, on a managed seed only
+  agentPassword?: string; // that principal's secret, or the agent's whole token or key; secret-classified, sealed at rest by connection-secrets
+  /**
+   * OPC UA only: the read roots, node ids written with their namespace URI, beneath which agent mode and MCP read and
+   * nowhere else. Set only by the operator's seed file: the managed listing strips it before a seed reaches the browser,
+   * and `resolveConnection` refuses a connection a caller supplies that carries it. The editor never reads it.
+   */
+  agentReadRoots?: readonly string[];
   /**
    * Elasticsearch only (#708): an API key pair, sent as `Authorization: ApiKey
    * base64(apiKeyId:apiKeySecret)` in preference to `user`/`password` when both halves

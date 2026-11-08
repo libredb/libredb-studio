@@ -124,7 +124,18 @@ describe("the declarations, with no client", () => {
       containerLevels: MILVUS_CONTAINER_LEVELS,
       containerPathShapes: "exact",
       objectKinds: MILVUS_OBJECT_KINDS,
-      enforcesReadOnly: true,
+      writeReach: {
+        editor: {
+          reach: "absent",
+          proof: { module: "src/lib/db/providers/vector/milvus/routes.ts", symbol: "MILVUS_ROUTES" },
+        },
+        objectEdit: { reach: "absent" },
+        maintenance: {
+          reach: "gated",
+          gate: { module: "src/lib/db/providers/vector/milvus/write-policy.ts", symbol: "refuseReadOnly" },
+        },
+        transaction: { reach: "absent" },
+      },
       metadataOnly: MILVUS_METADATA_ONLY,
       schemaRefreshPattern: "(?!)",
     });

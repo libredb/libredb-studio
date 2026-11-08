@@ -1,0 +1,12 @@
+{
+  "version": "1.19.1",
+  "name": "mcp-scope/aliases-read-only",
+  "capturedAt": "2026-11-02",
+  "principal": "the server's read-only API key",
+  "request": {
+    "method": "GET",
+    "path": "/aliases"
+  },
+  "status": 200,
+  "body": "{\"result\":{\"aliases\":[{\"alias_name\":\"mcp_other_alias\",\"collection_name\":\"mcp_other\"},{\"alias_name\":\"mcp_plain_alias\",\"collection_name\":\"mcp_plain\"}]},\"status\":\"ok\",\"time\":0}"
+}

@@ -27,8 +27,9 @@
  * each a fresh session over the same encoder, and each answer projected to counts and flags (`agent-read.ts`), never an
  * id, a metric name or a value, and always with the window it listened for and the sentence that an edge node or
  * device not seen may still exist. On a handle opened for any agent-mode profile, connecting is a handshake that
- * subscribes to nothing, and every other surface answers its reason (`agent-surface.ts`). MCP read stays closed on
- * this engine.
+ * subscribes to nothing, and every other surface answers its reason (`agent-surface.ts`). MCP's `run_sparkplug_read`
+ * reads through this same `queryReadOnly` on an agent read-only handle, and its answers carry the window and the
+ * completeness sentence as notes.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { ConnectionError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
@@ -95,6 +96,13 @@ import { buildRows, describeResult, RESULT_FIELDS } from "./results";
 import { readOnce, type ReceivedMessage, type TransportFactory } from "./session";
 import { type EdgeNodeState, ReadState } from "./state";
 import { groupIdIsFilterSafe, readFilters } from "./topics";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/** No write path on any route: the encoder produces five packet types and no PUBLISH, and its CONNECT takes no will. */
+const SPARKPLUG_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/industrial/sparkplug/encoder.ts",
+  symbol: "PACKET",
+});
 
 export { SPARKPLUG_DEFAULT_PORT };
 
@@ -295,7 +303,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       // Structural: this class has no code that can write to a broker.
-      enforcesReadOnly: true,
+      writeReach: SPARKPLUG_WRITE_REACH,
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,

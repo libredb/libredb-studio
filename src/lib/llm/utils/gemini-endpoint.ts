@@ -8,7 +8,7 @@
  *  - `@google/generative-ai` (the chat surface) takes `RequestOptions.baseUrl` as
  *    an ORIGIN and appends the version itself —
  *    `` `${baseUrl}/${apiVersion}/${model}:${task}` `` with `apiVersion` defaulting
- *    to `v1beta` (`node_modules/@google/generative-ai/dist/index.js:333-335`),
+ *    to `v1beta` (`DEFAULT_API_VERSION` in @google/generative-ai 0.24.1's `dist/index.js`),
  *  - `@ai-sdk/google` (the agent adapter) takes a `baseURL` that already CARRIES
  *    the version path, defaulting to
  *    `https://generativelanguage.googleapis.com/v1beta`
@@ -22,7 +22,8 @@
  * origin passed through for the chat surface, so both surfaces reach one host either
  * way. Leaving the variable unset returns undefined on both paths, which selects
  * each SDK's own Google default; `@ai-sdk/google`'s base URL has no environment
- * fallback for an undefined value to re-open (same line 7855).
+ * fallback for an undefined value to re-open (`createGoogle` in @ai-sdk/google 4.0.99's
+ * `dist/index.js` falls back to `DEFAULT_BASE_URL` and nothing else).
  */
 
 /** The version segment both SDKs default to; the only one this repository composes. */

@@ -29,6 +29,12 @@ import type { DatabaseType } from "@/lib/types";
 
 export type { ReadOnlyRefusalKind };
 
+/**
+ * The bounds of every MCP tool's `timeout_ms`: at least 500 ms, unless a statement facet raises its own least
+ * (`leastTimeout`), and at most 30000 ms, the most a timeout answer offers.
+ */
+export const MCP_TIMEOUT_BOUNDS_MS = { min: 500, max: 30_000 } as const;
+
 export const READ_ONLY_REFUSALS: readonly ReadOnlyRefusalOpening[] = READ_ONLY_REFUSAL_OPENINGS;
 
 const TOO_LARGE_TEXTS: Record<"rows" | "bytes", string> = {
@@ -65,6 +71,29 @@ export function classifyReadQueryFailure(
   return { kind: "too-large", text: texts[refusal.kind] ?? own };
 }
 
+/** Whether `prepareQuery` can page `type`'s SQL with an offset; where it cannot, no offset is ever named or taken. */
+export function pagesWithOffset(type: DatabaseType): boolean {
+  return readQueryFormsOf(type).pagesWithOffset;
+}
+
+/**
+ * The budget refusals in `type`'s words where they differ from the shared ones: an engine with no offset is never told
+ * to page with one, and an engine with no `LIMIT` is told its own row limiting clause.
+ */
+export function tooLargeTextsOf(type: DatabaseType): Partial<Record<"rows" | "bytes", string>> {
+  const { rowLimit, paging } = readQueryFormsOf(type);
+  if (rowLimit !== undefined) {
+    return {
+      rows: `The result has more than 1000 rows, the most this server reads for one call. Add ${rowLimit.add} with n of 1000 or less, or remove your own ${rowLimit.own} and page with offset.`,
+      bytes: `The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add ${rowLimit.add} with a smaller n.`,
+    };
+  }
+  if (pagesWithOffset(type)) return {};
+  return {
+    rows: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ${paging}.`,
+  };
+}
+
 export function inSqlPaging(type: DatabaseType): string {
   return `Page it in SQL: ${readQueryFormsOf(type).paging}.`;
 }
@@ -82,12 +111,18 @@ const NOT_PAGEABLE_TEXT = "This statement's result cannot be paged. Call again w
 export function offsetRefusalText(sql: string, type: DatabaseType): string {
   const info = analyzeQuery(sql, type);
   if (info.type !== "SELECT") return NOT_PAGEABLE_TEXT;
+  if (!pagesWithOffset(type)) {
+    return `This engine's SQL has no OFFSET, so this query cannot be paged with offset. ${inSqlPaging(type)}`;
+  }
   if (!info.hasLimit) return `This query cannot be paged with offset. ${inSqlPaging(type)}`;
-  return `This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ${readQueryFormsOf(type).paging}.`;
+  const { rowLimit, paging } = readQueryFormsOf(type);
+  return `This query has its own ${rowLimit?.own ?? "LIMIT or TOP"}, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ${paging}.`;
 }
 
+/** The timeout answer of every statement tool; more time is offered only below the most `timeout_ms` allows. */
 export function timeoutText(timeoutMs: number): string {
-  return `The statement did not finish within timeout_ms (${timeoutMs} ms). Narrow it, or raise timeout_ms up to 30000.`;
+  const more = timeoutMs < MCP_TIMEOUT_BOUNDS_MS.max ? `, or raise timeout_ms up to ${MCP_TIMEOUT_BOUNDS_MS.max}` : "";
+  return `The statement did not finish within timeout_ms (${timeoutMs} ms). Narrow it${more}.`;
 }
 
 export function nextPageHint(nextOffset: number): string {

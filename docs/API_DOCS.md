@@ -586,6 +586,15 @@ The same answer comes from `POST /api/db/multi-query`, `/api/db/transaction`, `/
 `POST /api/db/monitoring` answers JSON that is not an object the same way, and keeps `400 { "error": "Invalid JSON in request body" }` for text that is not JSON.
 Its `options`, when sent, must be an object as well: anything else (`null`, a number, an array) answers `400 { "error": "options must be an object" }` before any connection resolves.
 
+**An inline connection with no type, or a type or name that is not a string:**
+
+An inline `connection` whose `type` is missing, empty or not a string, or whose `name` is present and not a string, `null` included, answers `400 { "error": "Valid connection configuration is required", "code": "CONFIG_ERROR", "statusCode": 400 }` when the connection resolves, before any provider is built; a `connection` that is not an object is refused the same way.
+A `connection` without a `name` is still accepted, as a connection with no name.
+Every route that takes a `connection` answers it the same way, `POST /api/db/test-connection` included, and `POST /api/admin/fleet-health` reports it as that item's `error`.
+`POST /api/db/disconnect` reads the record's `id` before it resolves anything, so a `connection` that is not an object, or a record with no `id`, answers its own `400 { "success": false, "error": "Either connection or connectionId is required" }`.
+It resolves a record only without governance and only for an `id` outside `seed:`, so only that record is refused as above; under governance it removes the caller's providers of the `id` without reading the record, and answers `200`.
+While custom connections are off, an inline connection answers `403 CUSTOM_CONNECTIONS_DISABLED` whatever it holds.
+
 **A connection type's console text bound:**
 
 A connection type can declare a bound on its statement text in UTF-8 bytes, on its row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/destructive-commands.ts`), declared in the provider's `destructive.ts` module.
@@ -1044,6 +1053,74 @@ Redis is a key-value store, so the `sql` field carries a Redis command instead o
 - Schema introspection (`/api/db/objects/*`) uses a non-blocking `SCAN` and groups keys by prefix, presenting each prefix (e.g. `user:*`) as a "table".
 - Monitoring/health endpoints derive their data from `INFO`, `SLOWLOG GET`, and `CLIENT LIST`.
 - Invalid JSON, a missing `command` field, or an unknown/failed Redis command returns `400 Bad Request` with code `QUERY_ERROR`.
+
+---
+
+#### POST /api/db/statement/analyze
+
+What Run would do with the editor's text, decided as the web editor decides it: the statement to send, where it sits, whether the connection type refuses it, whether to ask before it runs and what to type, and which route it takes.
+It runs nothing and opens no database connection: it builds the connection's provider only to read its capabilities, as `POST /api/db/provider-meta` does.
+It records no query event and logs no part of the text, of the statement or of the refusal.
+It is advisory, like the web editor's confirmation dialog: it is not an authorization check, and `POST /api/db/query` does not require it.
+
+**Authentication:** Required, the `auth-token` cookie or, where that channel is on, a bearer access token (see [Authentication](#authentication)), and no admin role.
+Each request spends one slot of the `query` budget (see [Rate Limiting](#rate-limiting)).
+
+**Request:**
+```json
+{
+  "connectionId": "seed:orders-db",
+  "text": "SELECT 1;\nDELETE FROM t;",
+  "selection": { "start": 19, "end": 19 },
+  "cursor": 19
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `connectionId` or `connection` | string or object | Yes | The same connection selector every database route takes |
+| `text` | string | Yes | The editor's whole text as the user sees it, at most 1,000,000 UTF-16 code units; it is never trimmed or normalised |
+| `selection` | `{ "start": integer, "end": integer }` | Yes | The selection, with `start <= end`; `start` equal to `end` is no selection, and a blank selection falls back to the caret |
+| `cursor` | integer | Yes | The caret; an editor that never placed one sends `0` |
+
+Offsets are UTF-16 code units into `text`, the unit of a JavaScript and a Dart string index, so `text.slice(start, end)` and Dart's `text.substring(start, end)` agree.
+`null` is no value for any of these fields, and every other field is ignored.
+
+**Response (200 OK):** an object whose `decision` is one of:
+
+| `decision` | Other fields | Meaning |
+|------------|--------------|---------|
+| `nothing` | none | The target holds no code; send nothing |
+| `refuse` | `statement`, `range`, `refusal` | The connection type refuses the statement; send nothing and show `refusal` |
+| `run` | `statement`, `range`, `route` | Send `statement` without asking |
+| `confirm` | `statement`, `range`, `route`, `unreadable`, `typedConfirmation` | Ask first; send `statement` once the user confirmed, and typed `typedConfirmation.expected` where it is not `null` |
+
+```json
+{"decision":"confirm","statement":"DELETE FROM t","range":{"start":10,"end":23},"route":"query","unreadable":false,"typedConfirmation":null}
+```
+
+Every field a decision lists is present, and no other field is; a client that reads any other `decision` treats the analysis as failed.
+`statement` is the exact text to send; it is not always the text `range` covers, because a one-statement selection on an engine whose editor language is SQL and whose `statementTerminator` capability is `none` is sent without its `;` and the blanks around it.
+`range` is where the target sits in `text`: the selection, the caret's statement, or the whole text where the connection's editor language is not SQL and nothing is selected.
+`route` is `query` (`POST /api/db/query`) or `multi-query` (`POST /api/db/multi-query`), the route of a run outside a transaction, without bound params and not an explain; inside a transaction the statement goes to `POST /api/db/transaction` whatever `route` says, and a connection whose query language is not SQL always answers `query`.
+`refusal` is the connection type's own sentence, shown as it is; it may quote a word of the text, so a client does not log it.
+`unreadable` is `true` when part of the statement could not be read, a run that never closes or a lone carriage return in a line comment, which is a reason to ask; it is `false` wherever the confirmation gate does not read the text as SQL, and the embedded LibreDB store's text is read as SQL, so its unclosed literal is unreadable.
+`typedConfirmation` is `null`, or `{ "type": "text", "expected": "..." }`, or `{ "type": "connection-name", "expected": "<the connection's name>", "targets": ["..."] }`, whose `targets` name what the statement reaches, for display; the user types `expected` exactly, case and whitespace included.
+A statement confirmed by typing the connection's name answers `refuse` on a connection with no name, because an empty expected value would let an empty field confirm it.
+
+**Errors:** the connection is resolved before any field is read, so a connection the caller may not resolve answers its `403`, `404` or `503` whatever the body holds.
+A type the server cannot build, one `LIBREDB_ENABLED_PROVIDERS` leaves out, an unknown type or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
+
+| Status | When |
+|--------|------|
+| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required`, `Valid connection configuration is required` for an inline connection whose `type` is missing, empty or not a string or whose `name` is present and not a string, `null` included (see [`POST /api/db/query`](#post-apidbquery)), or a type `LIBREDB_ENABLED_PROVIDERS` leaves out |
+| `413` | A text over 1,000,000 UTF-16 code units: `The text is <n> UTF-16 code units long, over the 1000000-unit limit for statement analysis. Shorten it to run it.` |
+| `401` | No session (`AUTH_REQUIRED`) |
+| `403` | `CUSTOM_CONNECTIONS_DISABLED` for an inline connection while custom connections are off, or, without governance and the Kubernetes access review, `AUTH_ERROR` for a seed the caller's role may not use |
+| `404` | `CONNECTION_NOT_FOUND` under governance or the Kubernetes access review, for every connection the caller may not see; without them, a seed that does not exist |
+| `429` | The `query` budget is spent (`RATE_LIMITED`, with `Retry-After`) |
+| `503` | `GOVERNANCE_UNAVAILABLE` or `ACCOUNT_STORE_UNAVAILABLE` |
+| `500` | `INTERNAL_ERROR`, for anything else |
 
 ---
 
@@ -1942,7 +2019,7 @@ could arrive twice.
 { "error": "previousRunId must be a non-empty string when provided" }
 { "error": "This connection reaches every database on its server: name the database the run reads in catalog" }
 {
-  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT and Sparkplug B. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
+  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
   "refused": "engine-unsupported"
 }
 
@@ -2099,7 +2176,8 @@ The answers, in the order they are checked:
 | 404 | JSON-RPC `-32601`, `Method not found` | `subscriptions/listen`, which this server does not implement |
 | 200, 202 | The SDK's JSON-RPC answer, as JSON or as an event stream; 202 for a notification | Everything else |
 
-The tools it serves are `list_connections`, `inspect_schema`, `run_read_query` (SQL), `run_kubectl_read` (a kubectl read) and `run_mongo_command` (a MongoDB command envelope); `list_connections` names each connection's `read_tool`, and [`docs/MCP.md`](MCP.md) documents each tool's arguments and limits.
+The tools it serves are `list_connections`, `inspect_schema` and one statement tool per statement language, listed with their engines in [docs/MCP.md](./MCP.md#what-it-is); a token's `tools/list` holds the metadata tools and only the statement tools that serve the engines of the connections it can read, `list_connections` names each connection's `read_tool`, and [`docs/MCP.md`](MCP.md) documents each tool's arguments, hints and limits.
+A seed file that cannot be read or parsed answers `tools/list` with the JSON-RPC error `-32603` on HTTP 200.
 
 #### `GET /api/mcp`, `DELETE /api/mcp`
 
@@ -2438,8 +2516,9 @@ interface DatabaseConnection {
   readOnly?: boolean;      // refuse writes, value edits and maintenance before any request (#1089). Accepted only where the engine's provider enforces it: true anywhere else is refused at seed load and before any provider is built, and a value that is not a boolean is refused everywhere
   managed?: boolean;       // true = admin-controlled: not editable in the UI, secrets kept on the server
   seedId?: string;         // stable reference to seed config ID
-  agentUser?: string;      // optional least-privilege role for the agent read-only execution profile (#328)
-  agentPassword?: string;  // password for agentUser; secret-classified, sealed at rest by connection-secrets
+  agentUser?: string;      // optional least-privilege principal every agent execution profile and MCP call signs in as (#328); a seed may set it, on a managed seed only (docs/SEED_CONNECTIONS.md)
+  agentPassword?: string;  // that principal's secret, or the agent's whole token or key; secret-classified, sealed at rest by connection-secrets; a seed may set it, on a managed seed only
+  agentReadRoots?: readonly string[]; // OPC UA only: the read roots, node ids written with their namespace URI, beneath which agent mode and MCP read; set only by the seed file, never listed to the browser, refused inline
   apiKeyId?: string;       // Elasticsearch only (#708): API key pair, sent in preference to user/password when both halves are set (trimmed). Secret-classified like agentPassword, not public like user. OpenSearch refuses the pair
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
   registerMap?: string;    // Modbus only: the register map, as the JSON document the provider parses - a list of points, each naming a unit, a table, a zero-based PDU address and a type. Bounded at 65536 bytes, checked before the parse; public-classified, because Modbus TCP defines no authentication and the document carries nothing to leak
@@ -2744,7 +2823,7 @@ single number written here has gone stale every time it was updated:
 | Bucket | Applies to | Default |
 |--------|-----------|---------|
 | `ai` | The `/api/ai/*` routes, plus every `/api/agent/*` route except `GET /api/agent/config`: classifying an objective, starting a run, driving one, reading one, cancelling one, streaming one, and fetching an artifact | 20 requests / 60 seconds |
-| `query` | Every database-reaching `/api/db/*` route, plus `/api/admin/fleet-health`, the three storage data routes (`GET /api/storage`, `PUT /api/storage/{collection}`, `POST /api/storage/migrate`) and the owner's own factor routes (`/api/auth/totp`, `/api/auth/passkey`), together | 120 requests / 60 seconds |
+| `query` | Every database-reaching `/api/db/*` route, plus `POST /api/db/statement/analyze`, which reaches no database, `/api/admin/fleet-health`, the three storage data routes (`GET /api/storage`, `PUT /api/storage/{collection}`, `POST /api/storage/migrate`) and the owner's own factor routes (`/api/auth/totp`, `/api/auth/passkey`), together | 120 requests / 60 seconds |
 
 Routing the same workload through a different endpoint does not multiply the budget - the bucket is
 shared across every route it applies to. All limits are configurable through the `RATE_LIMIT_*`

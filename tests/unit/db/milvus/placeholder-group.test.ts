@@ -14,7 +14,7 @@ import {
   textBytes,
 } from "@/lib/db/providers/vector/milvus/placeholder-group";
 
-/** common.PlaceholderValue and common.PlaceholderGroup at milvus-proto 9e4f0ebc (common.proto:158-170). */
+/** common.PlaceholderValue and common.PlaceholderGroup at milvus-proto 9e4f0ebc (in `common.proto`). */
 const ROOT = protobuf.Root.fromJSON({
   nested: {
     PlaceholderValue: {

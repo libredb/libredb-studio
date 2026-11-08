@@ -13,6 +13,9 @@
  * - **The connection's database.** A body's `dbName` would point the request at another database, so an agent request
  *   names none or the connection's own, and every call it makes names the connection's database. Read without the
  *   connection (the agent's admission), a `dbName` is left to the provider, which reads it again with its database.
+ * - **A collection's aliases.** 3.0.2 answers every alias of a database to any user, those of collections outside its
+ *   grants among them (`list-aliases-few` in tests/fixtures/milvus/3.0.2/mcp-scope/), so `aliases/list` names the
+ *   collection whose aliases it reads.
  *
  * Not the boundary. The boundary is the provider's closed RPC table, which holds no write the agent can reach, and the
  * read-only user the server proves before every agent request (`read-only-proof.ts`); this is what lets the model
@@ -22,7 +25,7 @@ import { RequestRefusal } from "@/lib/db/console/dialect";
 import { type MilvusPhase0, milvusPhase0, parseMilvusRequest } from "./request";
 import type { MilvusOp } from "./routes";
 
-export type MilvusAgentRefusalCode = "request" | "metadata-only" | "database";
+export type MilvusAgentRefusalCode = "request" | "metadata-only" | "database" | "scope";
 
 /** A request the agent may send: one of the metadata routes. */
 export type MilvusAgentPlan = Exclude<MilvusPhase0, { readonly op: `entities/${string}` }>;
@@ -55,6 +58,8 @@ export const MILVUS_AGENT_SENTENCES = {
     `POST /v2/vectordb/${route} is not one of agent mode's reads: it answers stored field values or vectors, or runs a function on the server. ${AGENT_READS} Nothing was sent.`,
   database:
     "An agent request reads the connection's own database: leave dbName out, or name that database. Nothing was sent.",
+  aliasList:
+    "aliases/list names a collection in agent mode, since Milvus answers every alias of a database to any user, those of collections outside the user's grants among them: read one collection's aliases with aliases/list and a collectionName that collections/list lists. Nothing was sent.",
 } as const;
 
 function isAgentPlan(plan: MilvusPhase0): plan is MilvusAgentPlan {
@@ -78,6 +83,9 @@ export function readMilvusAgentStatement(text: string, database?: string): Milvu
   }
   if (database !== undefined && plan.db !== database) {
     return { ok: false, code: "database", message: MILVUS_AGENT_SENTENCES.database };
+  }
+  if (plan.op === "aliases/list" && plan.collection === undefined) {
+    return { ok: false, code: "scope", message: MILVUS_AGENT_SENTENCES.aliasList };
   }
   return { ok: true, plan };
 }

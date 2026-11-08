@@ -46,6 +46,17 @@ export interface MtcElement {
   readonly children: readonly MtcElement[];
   /** Character data of this element alone, CDATA included, entities resolved, whitespace kept. */
   readonly text: string;
+  /**
+   * Where each child sits in `text`, in document order: for the child at an index, how much of `text` came before it.
+   * `textPieces` cuts `text` at these, so the element can be read, as a consumer reads it, in the order it was written.
+   */
+  readonly childOffsets: readonly number[];
+}
+
+/** An element's own text cut where its children sit: one piece before each child and one after the last. */
+export function textPieces(element: MtcElement): string[] {
+  const cuts = [0, ...element.childOffsets, element.text.length];
+  return cuts.slice(1).map((end, index) => element.text.slice(cuts[index], end));
 }
 
 export type MtcXmlRefusal =
@@ -172,6 +183,7 @@ interface Open {
   readonly name: string;
   readonly attributes: Record<string, string>;
   readonly children: MtcElement[];
+  readonly childOffsets: number[];
   text: string;
 }
 
@@ -370,7 +382,7 @@ export function readMtconnectXml(bytes: Uint8Array, bounds: MtcXmlBounds = MTC_X
     const open: Open[] = [];
     const sink: Sink = {
       open(name, attributes) {
-        open.push({ name, attributes: { ...attributes }, children: [], text: "" });
+        open.push({ name, attributes: { ...attributes }, children: [], childOffsets: [], text: "" });
       },
       close() {
         const done = open.pop();
@@ -380,10 +392,13 @@ export function readMtconnectXml(bytes: Uint8Array, bounds: MtcXmlBounds = MTC_X
           attributes: Object.freeze(done.attributes),
           children: Object.freeze(done.children),
           text: done.text,
+          childOffsets: Object.freeze(done.childOffsets),
         } satisfies MtcElement);
         const parent = open[open.length - 1];
-        if (parent) parent.children.push(element);
-        else root = element;
+        if (parent) {
+          parent.children.push(element);
+          parent.childOffsets.push(parent.text.length);
+        } else root = element;
       },
       text(chunk) {
         const holder = open[open.length - 1];
@@ -481,7 +496,7 @@ export function streamMtconnectObservations(
           return;
         }
         if (open.length === 0 && (name === "Samples" || name === "Events" || name === "Condition")) return;
-        open.push({ name, attributes: { ...attributes }, children: [], text: "" });
+        open.push({ name, attributes: { ...attributes }, children: [], childOffsets: [], text: "" });
       },
       close() {
         if (stopped) return;
@@ -493,10 +508,12 @@ export function streamMtconnectObservations(
           attributes: Object.freeze(done.attributes),
           children: Object.freeze(done.children),
           text: done.text,
+          childOffsets: Object.freeze(done.childOffsets),
         } satisfies MtcElement);
         const parent = open[open.length - 1];
         if (parent) {
           parent.children.push(element);
+          parent.childOffsets.push(parent.text.length);
           return;
         }
         count++;

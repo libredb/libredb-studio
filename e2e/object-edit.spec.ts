@@ -46,10 +46,16 @@
  * this spec does not own, and driving the modal exercises one more surface a user has to pass.
  */
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 
-const PG_CONTAINER = "libredb-object-edit-e2e-pg";
-const PG_PORT = 54331;
+/**
+ * Per run, and on a loopback port Docker picks: a fixed host port inside the ephemeral range (32768-60999) can be held
+ * by a client socket, open or in TIME_WAIT, and Docker then refuses the bind with "address already in use".
+ */
+const PG_CONTAINER = `libredb-object-edit-e2e-pg-${randomBytes(4).toString("hex")}`;
+/** Set once the container is up. */
+let pgPort = 0;
 const PG_PASSWORD = "object-edit-e2e";
 
 /** The definition every test starts from. Multi-line ON PURPOSE: see EDIT_MARKER below. */
@@ -112,6 +118,14 @@ function dockerAvailable(): boolean {
   }
 }
 
+/** The host port Docker published for the container's 5432, from `docker port`'s `127.0.0.1:49153`. */
+function publishedPort(container: string): number {
+  const binding = docker(["port", container, "5432/tcp"]).trim().split("\n")[0] ?? "";
+  const port = Number(binding.slice(binding.lastIndexOf(":") + 1));
+  if (!Number.isInteger(port) || port <= 0) throw new Error(`Docker published no port for ${container}: "${binding}"`);
+  return port;
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -147,12 +161,6 @@ async function seedPostgres(): Promise<void> {
 }
 
 function startPostgres(): void {
-  try {
-    docker(["rm", "-f", PG_CONTAINER]);
-  } catch {
-    // No stale container of OUR OWN name. Nothing else is ever removed: the human's databases run
-    // on this machine under names this spec never touches.
-  }
   docker([
     "run",
     "-d",
@@ -162,9 +170,10 @@ function startPostgres(): void {
     "-e",
     `POSTGRES_PASSWORD=${PG_PASSWORD}`,
     "-p",
-    `127.0.0.1:${PG_PORT}:5432`,
+    "127.0.0.1::5432",
     "postgres:16-alpine",
   ]);
+  pgPort = publishedPort(PG_CONTAINER);
 }
 
 /** The definition the engine holds now, straight from its catalog, for an assertion below the UI. */
@@ -216,7 +225,7 @@ async function connectToTheFixture(page: Page): Promise<void> {
   await dialog.getByRole("button", { name: "PostgreSQL", exact: true }).click();
   await dialog.locator("#name").fill("Object Edit PG");
   await dialog.locator("#host").fill("127.0.0.1");
-  await dialog.locator("#port").fill(String(PG_PORT));
+  await dialog.locator("#port").fill(String(pgPort));
   await dialog.locator("#user").fill("postgres");
   await dialog.locator("#password").fill(PG_PASSWORD);
   await dialog.locator("#database").fill("postgres");

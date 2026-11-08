@@ -36,6 +36,7 @@ import {
   type ManagementFailureContext,
   managementTimeout,
   notAStream,
+  ObjectNotFoundError,
   queryError,
   rabbitmqBoundary,
   READ_CANCELLED_BEFORE_START,
@@ -43,6 +44,7 @@ import {
   readPhaseTimeout,
   REQUEST_EMPTY,
   REQUEST_PARAMS,
+  VhostAccessError,
 } from "./errors";
 import {
   type DeadlineSignalFactory,
@@ -51,7 +53,7 @@ import {
   RABBITMQ_READ_LIMITER_KEY,
   RABBITMQ_READ_LIMITS,
 } from "./limits";
-import type { ManagementClient, StreamTypeAnswer } from "./management/client";
+import type { ManagementClient, RouteAnswers, StreamTypeAnswer } from "./management/client";
 import { MANAGEMENT_ROUTES } from "./management/routes";
 import { parseReadRequest, type ReadRequest } from "./request";
 import { buildReadResult } from "./results";
@@ -108,7 +110,7 @@ async function read(
   const run = beginRun(deps.runs, queryId, AbortSignal.any([deps.deadlineSignal(deadlineMs), deps.lifetime]));
   try {
     const request = parseReadRequest(text);
-    const outcome = await readRequest(request, run.signal, deadlineMs, deps);
+    const outcome = await readRequest(request, run.signal, { ms: deadlineMs, at: startedAt + deadlineMs }, deps);
     return buildReadResult(outcome, request, deps.clock.now() - startedAt, deadlineMs / 1000);
   } finally {
     run.end();
@@ -134,23 +136,54 @@ export async function runAgentRead(request: ReadRequest, deps: ReadDependencies)
   try {
     const startedAt = deps.clock.now();
     const signal = AbortSignal.any([deps.deadlineSignal(deadlineMs), deps.lifetime]);
-    const outcome = await readRequest(request, signal, deadlineMs, deps);
+    let outcome: StreamReadOutcome;
+    try {
+      outcome = await readRequest(request, signal, { ms: deadlineMs, at: startedAt + deadlineMs }, deps);
+    } catch (error) {
+      throw await exchangeOfTheName(error, request, signal, deadlineMs / 1000, deps);
+    }
     return { outcome, executionTime: deps.clock.now() - startedAt, deadlineMs };
   } catch (error) {
     throw rabbitmqBoundary(error, { site: "read", endpoint, route: STREAM_READ_ROUTE });
   }
 }
 
-/** Steps 2 to 6 of a validated request under `signal`: the AMQP port, the type check, the read slot and the read. */
+/**
+ * An agent read whose type check found no queue of the name, in a virtual host the user may use: the agent's one
+ * sentence for a name it cannot read says the virtual host has no queue, stream or exchange of the name, so one GET of
+ * the exchange route asks whether an exchange holds it, and an exchange is refused as not a stream. A virtual host the
+ * user may not use answers the type check with not_found or 401, so no exchange GET is sent for it, and an exchange
+ * GET answered not found keeps the type check's error; any other failure of that GET is its own.
+ */
+async function exchangeOfTheName(
+  error: unknown,
+  request: ReadRequest,
+  signal: AbortSignal,
+  seconds: number,
+  deps: ReadDependencies,
+): Promise<unknown> {
+  if (!(error instanceof ObjectNotFoundError)) return error;
+  try {
+    await checkedGet(deps, "exchange", request, signal, seconds);
+  } catch (failure) {
+    return failure instanceof ObjectNotFoundError || failure instanceof VhostAccessError ? error : failure;
+  }
+  return notAStream(request.stream, "");
+}
+
+/**
+ * Steps 2 to 6 of a validated request under `signal`: the AMQP port, the type check, the read slot and the read.
+ * `deadline.at` is the instant on `deps.clock` at which the signal's deadline of `deadline.ms` falls.
+ */
 async function readRequest(
   request: ReadRequest,
   signal: AbortSignal,
-  deadlineMs: number,
+  deadline: { readonly ms: number; readonly at: number },
   deps: ReadDependencies,
 ): Promise<StreamReadOutcome> {
   const amqp = deps.endpoints.amqp;
   if (amqp === null) throw configError(AMQP_PORT_REQUIRED);
-  const seconds = deadlineMs / 1000;
+  const seconds = deadline.ms / 1000;
   const checked = await checkStreamType(deps, request, signal, seconds);
   if (checked.type !== "stream") throw notAStream(request.stream, checked.type);
   const ticket = await acquireReadSlot(deps.readLimiter, signal, {
@@ -167,6 +200,7 @@ async function readRequest(
       limit: request.limit,
       signal,
       deadlineSeconds: seconds,
+      deadlineAt: deadline.at,
       replicas: { online: checked.online, members: checked.members },
       dial: deps.dial,
       clock: deps.clock,
@@ -199,22 +233,33 @@ function cancelReason(signal: AbortSignal): QueryCancelledError | undefined {
  * here: a Stop or `disconnect()` as in the queue, D as the management timeout of the type check, since no AMQP byte
  * was sent; a failure while the signal is live is the client's own error.
  */
-async function checkStreamType(
+function checkStreamType(
   deps: ReadDependencies,
   request: ReadRequest,
   signal: AbortSignal,
   seconds: number,
 ): Promise<StreamTypeAnswer> {
+  return checkedGet(deps, "stream-type", request, signal, seconds);
+}
+
+/** One GET of the request's object under the run's signal, a Stop, D and `disconnect()` read as the type check's. */
+async function checkedGet<R extends "stream-type" | "exchange">(
+  deps: ReadDependencies,
+  route: R,
+  request: ReadRequest,
+  signal: AbortSignal,
+  seconds: number,
+): Promise<RouteAnswers[R]> {
   const parts = { vhost: request.vhost, name: request.stream };
   try {
-    return await deps.management.get("stream-type", parts, { signal });
+    return await deps.management.get(route, parts, { signal });
   } catch (error) {
     if (!signal.aborted) throw error;
     const cancelled = cancelReason(signal);
     if (cancelled !== undefined) throw cancelled;
     const context: ManagementFailureContext = {
       endpoint: deps.endpoints.management.display,
-      route: MANAGEMENT_ROUTES["stream-type"].label,
+      route: MANAGEMENT_ROUTES[route].label,
       scope: "object",
       site: "read",
       ...parts,

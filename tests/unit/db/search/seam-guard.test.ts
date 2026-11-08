@@ -3,7 +3,7 @@
  *
  * ONE provider implementation serves TWO type-ids, and that is only affordable
  * while everything the two products disagree about lives in exactly one file.
- * `transport.ts:40-43` states the rule and names this test as its enforcement:
+ * `SearchDialectId` in `transport.ts` states the rule and names this test as its enforcement:
  * provider logic, introspection and monitoring read the neutral
  * `SearchQueryResult` / `SearchIndexInfo` / `SearchTransportError` through the seam,
  * so `http-transport.ts` is the only file allowed to know a path, an envelope key, a
@@ -32,10 +32,10 @@
  *   instead (`cluster_name`, `docs.count`, `root_cause`, ...).
  * - `"object"` and `"nested"` are NOT flagged at all: they are mapping type VALUES
  *   that cross the seam as `SearchMappingField.type` data, which is why
- *   `introspect.ts:90` may name them and `transport.ts:175` names `object` in its
+ *   `SEARCH_CONTAINER_TYPES` in `introspect.ts` may name them and `SearchMappingField` in `transport.ts` names `object` in its
  *   own doc comment.
  * - HTTP **200** is not in the status set: it is the one status that carries no
- *   classification (categorisation here is body-driven, `transport.ts:26-32`), and
+ *   classification (categorisation here is body-driven, `SearchDialectId` in `transport.ts`), and
  *   200 is a plausible row limit.
  *
  * Both directions are proven below: the detector must light up on the file that is
@@ -81,9 +81,17 @@ const WIRE_TOKENS = [
   "/_ingest/pipeline",
   "/_index_template",
   "/_data_stream",
+  // The agent statement check's questions about an index expression: what the server resolves it to, and which
+  // indices the SQL endpoint reads for it.
+  "/_resolve/index",
+  "/_field_caps",
+  // The agent open's login probes on OpenSearch: the security plugin's own answer, and a delete by query on a fresh name.
+  "/_plugins/_security",
+  "/_delete_by_query",
+  "/_close",
   // The two query strings. Without `format=json` Elasticsearch answers its own
   // tabular text with no types in it, and without `bytes=b` the listing reports
-  // "5.6kb" (both measured, `http-transport.ts:101-118`).
+  // "5.6kb" (both measured, `JSON_CONTENT_TYPE` in `http-transport.ts`).
   "format=json",
   "bytes=b",
   // `_cat` columns. `pri.store.size` rather than `store.size` is a decision the
@@ -123,13 +131,13 @@ const WIRE_TOKENS = [
  *
  * - `/_query` is ES|QL. It exists only on Elasticsearch (and works on a basic
  *   licence), and a surface only one of the two products has cannot be the shared
- *   query language, so it is deliberately unused (`transport.ts:21-24`).
+ *   query language, so it is deliberately unused (`SearchDialectId` in `transport.ts`).
  * - `/_search` and `/_bulk` are the document APIs. SQL is the query language here
  *   and writes go through APIs this seam does not expose
- *   (`transport.ts:64-71`), so reaching for them is a change of scope, not a fix.
+ *   (`SearchQueryResult` in `transport.ts`), so reaching for them is a change of scope, not a fix.
  * - `root_cause` and `caused_by` are members of Elasticsearch's error envelope
  *   that nothing reads: the fault name comes from `error.type` and the wording
- *   from `error.reason` (measured, `transport.ts:16-20`).
+ *   from `error.reason` (measured, `SearchDialectId` in `transport.ts`).
  */
 const UNUSED_WIRE_TOKENS = [
   "/_query",
@@ -198,8 +206,8 @@ const ENVELOPE_KEYS = [
  * OpenSearch sends `size` alongside `total` on every result and Elasticsearch sends
  * neither (measured), so a page size read off one product's envelope would be a
  * number the other cannot produce. `SearchQueryResult` carries `totalHits` and
- * nothing else, and `TableSchema.size` - which `introspect.ts:334` sets from
- * `formatBytes` - is a different concept wearing the same word.
+ * nothing else, and `StorageStats.size` - which `toStorageStats` in the provider's `index.ts`
+ * sets from `formatBytes` - is a different concept wearing the same word.
  */
 const UNUSED_ENVELOPE_KEYS = ["size"];
 
@@ -403,7 +411,7 @@ describe("Elasticsearch/OpenSearch transport seam", () => {
   });
 
   // The two statuses HTTP itself gives a fixed meaning, which is why they are the
-  // only ones the transport decides anything on (`http-transport.ts:248-251`).
+  // only ones the transport decides anything on (`HTTP_UNAUTHORIZED` in `http-transport.ts`).
   test.each(["HTTP 401", "HTTP 403"])("the transport decides %s on the status, as measured", (token) => {
     const tokens = findWireLeaks(TRANSPORT_FILE, readProviderSource(TRANSPORT_FILE)).map((leak) => leak.token);
 
@@ -563,7 +571,7 @@ export async function readIndices(origin: string) {
     ["an options bag naming a schema", "const target = options.schema ?? null;"],
     ["the introspection entry point", "const tables = await getSchema(transport, options);"],
     ["an object built with identifier keys", "return { rows, total: 1, size: bytes, schema: name };"],
-    // Mapping type VALUES, not wire vocabulary: introspect.ts:90 owns this list.
+    // Mapping type VALUES, not wire vocabulary: `SEARCH_CONTAINER_TYPES` in introspect.ts owns this list.
     ["the container mapping types", 'const containers = ["object", "nested"];'],
     ["a mapping type read off the seam", "const isContainer = field.type === containers[0];"],
     // Near misses that a substring grep would have fired on.

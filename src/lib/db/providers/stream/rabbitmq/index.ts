@@ -16,7 +16,7 @@
  * grants a take and a purge, so no credential can be the boundary, and the structural closed table is: the encoder
  * table, the stream-only type check before any frame and the `x-stream-offset` 406 backstop. On a handle opened for
  * any agent-mode profile the editor's read and an object's source are refused, and a stream's columns are the agent
- * read's. MCP read stays closed on this engine.
+ * read's. MCP's `run_rabbitmq_read` reads through this same `queryReadOnly`, under the agent read-only profile.
  *
  * The seams are test seams the factory never passes, and no connection field reaches them; they come fourth, after
  * the execution context the factory passes.
@@ -106,6 +106,16 @@ import {
 import { type ReadDependencies, rabbitmqReadLimiter, runAgentRead, runRead } from "./read";
 import { readSource } from "./source";
 import { createTrackingProbe, type TrackingProbe } from "./tracking-probe";
+import { noWritePath } from "@/lib/db/write-reach";
+
+/**
+ * No write path on any route: the AMQP codec admits no publish, get, reject or queue or exchange method, and the
+ * management routes are GET only.
+ */
+const RABBITMQ_WRITE_REACH = noWritePath({
+  module: "src/lib/db/providers/stream/rabbitmq/amqp/codec.ts",
+  symbol: "isAllowedOutbound",
+});
 
 /** The test seams; the factory passes none, so a built provider always runs on these defaults. */
 export interface RabbitMQSeams {
@@ -220,7 +230,7 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
       tablesAreDerivedGroupings: false,
       declaresForeignKeys: false,
       // Read-only whatever the flag says: the management client sends GET only, and the AMQP client cannot publish.
-      enforcesReadOnly: true,
+      writeReach: RABBITMQ_WRITE_REACH,
       statementTerminator: "none",
       maintenanceOperations: [],
       // No read request changes what the tree shows.
@@ -408,7 +418,7 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
       const read = await runAgentRead(reading.plan, this.readDependencies(session, deadlineMs));
       return rabbitmqAgentResult(read, reading.plan, budget, statement);
     } catch (error) {
-      throw rabbitmqAgentFailure(error, deadlineMs, statement) ?? error;
+      throw rabbitmqAgentFailure(error, deadlineMs, reading.plan, statement) ?? error;
     }
   }
 

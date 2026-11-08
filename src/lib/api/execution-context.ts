@@ -6,7 +6,8 @@ import type { DatabaseConnection } from "@/lib/types";
 /**
  * The namespace `resolveConnection` fills from the operator's seed configuration. A body that claims
  * an id in it is replaced by the operator's own record before any route sees it, so an id here is the
- * operator's, and so are the roles on the record.
+ * operator's, and so is the record: its `roles` are the operator's narrowed to those its caller holds,
+ * and its `sharedWithNonAdminRoles` was read from the operator's roles before that narrowing.
  */
 const SEED_NAMESPACE = "seed:";
 
@@ -24,14 +25,20 @@ const SUBJECT_MISSING_MESSAGE =
 
 /**
  * Whether a role other than admin can resolve this record: a seed the operator's configuration offers
- * to `user` or to every role (`*`). Every role it is offered to resolves the SAME record, so whatever
- * posture its handle opens under is the posture all of them share.
+ * to `user`, to every role (`*`) or to a custom role. Every role it is offered to resolves its own copy
+ * of the SAME seed, so whatever posture its handle opens under is the posture all of them share.
  *
- * An inline connection is never shared this way, whatever roles its body carries: it is one
- * requester's own record, so the requester decides it.
+ * A copy names only the roles its caller holds (`projectSeedConnection`), so an admin's copy of a seed
+ * offered to `["admin", "user"]` reads `["admin"]`. The audience is read first from
+ * `sharedWithNonAdminRoles`, which the projection sets from the operator's roles before it narrows them;
+ * the roles on the record decide only a seed record built without that projection.
+ *
+ * An inline connection is never shared this way, whatever its body carries: it is one requester's own
+ * record, so the requester decides it.
  */
 function openToNonAdminRoles(connection: DatabaseConnection): boolean {
   if (connection.id?.startsWith(SEED_NAMESPACE) !== true) return false;
+  if ((connection as { sharedWithNonAdminRoles?: unknown }).sharedWithNonAdminRoles === true) return true;
   const roles: unknown = (connection as { roles?: unknown }).roles;
   return Array.isArray(roles) && roles.some((role) => role !== "admin");
 }

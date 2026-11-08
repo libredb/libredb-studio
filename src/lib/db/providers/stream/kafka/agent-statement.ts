@@ -56,6 +56,19 @@ const KAFKA_INTERNAL_TOPICS: ReadonlySet<string> = new Set([
   "__transaction_state",
   "__share_group_state",
 ]);
+/**
+ * A platform's own topics, by the names their platforms give them: a leading underscore (Schema Registry's
+ * `_schemas`, Confluent's `_confluent-*`, ksqlDB's command topics, Redpanda's own), or `connect-`, Kafka Connect's
+ * configs, offsets and status topics. The broker marks none of them internal, so its listing answers them to any
+ * principal that may describe them; they hold connector configs, schemas and offsets rather than the cluster's data,
+ * so every agent-mode read withholds them: the listings drop them, and a request that names one is refused. A
+ * platform that names its topics otherwise is not recognised; the principal's own Describe grants are what keep those
+ * out.
+ */
+export function isWithheldKafkaTopic(name: string): boolean {
+  return name.startsWith("_") || name.startsWith("connect-");
+}
+
 /** A partition id and a broker node id are INT32 on the wire. */
 const KAFKA_MAX_ID = 2147483647;
 
@@ -77,6 +90,7 @@ export const KAFKA_AGENT_SENTENCES = {
   topicNotTaken: `This read lists the whole cluster and takes no "topic". ${AGENT_READS} ${NOTHING_SENT}`,
   topicName: `"topic" must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, ".", "_" and "-", other than "." and "..". ${AGENT_READS} ${NOTHING_SENT}`,
   internal: `That is one of Kafka's internal topics, which agent mode never names in a request. ${AGENT_READS} ${NOTHING_SENT}`,
+  platform: `That topic's name marks it as a platform's own (a leading underscore, as Schema Registry's and Confluent's topics have, or connect-, as Kafka Connect's have), so agent mode withholds it: it is never listed or named in a request. ${AGENT_READS} ${NOTHING_SENT}`,
   limit: `"limit" must be a whole number from 1 to ${KAFKA_AGENT_MAX_LIMIT}. ${AGENT_READS} ${NOTHING_SENT}`,
   topicCursor: `"after" on the topic listing is the last topic name of the answer before, a Kafka topic name. ${AGENT_READS} ${NOTHING_SENT}`,
   idCursor: `"after" on this read is the last node id or partition id of the answer before, a whole number from 0 to ${KAFKA_MAX_ID}. ${AGENT_READS} ${NOTHING_SENT}`,
@@ -133,6 +147,7 @@ export function readKafkaAgentStatement(text: string): KafkaAgentReading {
   if (topic === undefined) return refuse("request", KAFKA_AGENT_SENTENCES.topicRequired);
   if (!isTopicName(topic)) return refuse("request", KAFKA_AGENT_SENTENCES.topicName);
   if (KAFKA_INTERNAL_TOPICS.has(topic)) return refuse("request", KAFKA_AGENT_SENTENCES.internal);
+  if (isWithheldKafkaTopic(topic)) return refuse("metadata-only", KAFKA_AGENT_SENTENCES.platform);
   if (after !== undefined && !isId(after)) return refuse("request", KAFKA_AGENT_SENTENCES.idCursor);
   return { ok: true, plan: { op, topic, ...(after === undefined ? {} : { after }), ...bound } };
 }

@@ -208,15 +208,15 @@ function isFlux(text: string, tokens: readonly InfluxqlToken[], significant: rea
 
 /**
  * The databases a statement names (R17, R31), read over the tokens as influxql v1.4.1 reads a
- * source (`parseSources`, `parseSource`, `parseSegmentedIdents`, `parser.go:2211-2311`, `:508-550`):
+ * source (`parseSources`, `parseSource` and `parseSegmentedIdents` in its `parser.go`):
  *
  * - the name directly after `ON`, in any allowed statement. v1.4.1 has an `ON` clause in `SHOW`
- *   only and explains a `SELECT` only (`parser.go:2030`), but the 3.12.0 parser explains any
+ *   only and explains a `SELECT` only (`parseExplainStatement` in its `parser.go`), but the 3.12.0 parser explains any
  *   statement (measured: `EXPLAIN SHOW MEASUREMENTS ON "_internal"` answers a plan, and with an
  *   unknown name "database not found"). A `SELECT` has no `ON` clause on either parser, so a name
  *   read after one belongs to a statement the server fails;
  * - every source after `FROM` and after each `,` of that list, and the one source after
- *   `WITH MEASUREMENT =` or `=~` (`parser.go:1132-1145`);
+ *   `WITH MEASUREMENT =` or `=~` (in its `parser.go`, where `WITH MEASUREMENT` is parsed);
  * - a `(` where a `SELECT`'s `FROM` list expects a source, straight before the keyword `SELECT`,
  *   opens a subquery, read at any depth, and its `)` returns to the outer list. Any other `(` where
  *   a source is expected (in a `SHOW` source, after `WITH MEASUREMENT`, or a second `(`) is one the

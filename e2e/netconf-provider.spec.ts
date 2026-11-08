@@ -193,7 +193,7 @@ test.describe("a read of the fixture, as a reader sees it", () => {
 
   test("a write is refused on screen, in the provider's own words", async ({ page }) => {
     // The refusal a user actually meets. It is this provider's own and costs the device nothing:
-    // `enforcesReadOnly` is structural here, there being no code in the provider that builds a
+    // its `none` write reach is structural here, there being no code in the provider that builds a
     // write, and the sentence says which five operations it does send.
     await run(page, WRITE);
     /*
@@ -220,7 +220,7 @@ test.describe("a read of the fixture, as a reader sees it", () => {
      * By the editor's own shape, not by a grid role this grid does not use. A first writing of the
      * Modbus spec looked for `[role='gridcell'] input, td input`, which matches nothing here
      * whatever the product does - an absence true for the selector's reason rather than the
-     * engine's. The cell editor is an `<input autoFocus>` (`ResultsGrid.tsx:736`), so if one had
+     * engine's. The cell editor is an `<input autoFocus>` (`ResultsGrid` in `ResultsGrid.tsx`), so if one had
      * opened it would be THE focused input on the page; the query editor is Monaco, whose own
      * field is a textarea.
      */
@@ -243,7 +243,7 @@ test.describe("a read of the fixture, as a reader sees it", () => {
  *
  * WHY THIS IS AN E2E CASE AND NOT A UNIT ONE. The defect these two steps hold was in the SEAM
  * between the keys route and the provider: the route holds a level page to rows sitting directly
- * under the pattern (`api/db/keys/scan/route.ts:215-219`), the provider answered the level BELOW,
+ * under the pattern (`checkAnswer` in `api/db/keys/scan/route.ts`), the provider answered the level BELOW,
  * and no test saw it because every unit and integration test calls `scanKeysPage` DIRECTLY. The
  * panel is this engine's only tree surface, and both documented spellings showed a reader nothing:
  *

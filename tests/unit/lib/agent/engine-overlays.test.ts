@@ -81,6 +81,7 @@ import * as CASSANDRA from "@/lib/agent/languages/sql/engines/cassandra";
 import * as CLICKHOUSE from "@/lib/agent/languages/sql/engines/clickhouse";
 import * as COUCHBASE from "@/lib/agent/languages/sql/engines/couchbase";
 import * as DRUID from "@/lib/agent/languages/sql/engines/druid";
+import * as TRINO from "@/lib/agent/languages/sql/engines/trino";
 import * as ELASTICSEARCH from "@/lib/agent/languages/sql/engines/elasticsearch";
 import * as INFLUXDB3 from "@/lib/agent/languages/sql/engines/influxdb3";
 import * as LIBSQL from "@/lib/agent/languages/sql/engines/libsql";
@@ -141,6 +142,7 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "sql/engines/cassandra": CASSANDRA,
   "sql/engines/couchbase": COUCHBASE,
   "sql/engines/druid": DRUID,
+  "sql/engines/trino": TRINO,
   "sql/engines/client": SQL_CLIENT_OVERLAYS,
   "mongo/engines/mongodb": MONGODB,
   "mongo/engines/client": MONGO_CLIENT_OVERLAYS,
@@ -214,6 +216,7 @@ describe("the engine registry", () => {
       "mssql",
       "clickhouse",
       "druid",
+      "trino",
       "cassandra",
       "elasticsearch",
       "opensearch",
@@ -254,6 +257,7 @@ describe("the engine registry", () => {
       "mssql",
       "clickhouse",
       "druid",
+      "trino",
       "cassandra",
       "elasticsearch",
       "opensearch",
@@ -289,7 +293,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(76);
+    expect(exported).toHaveLength(78);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -482,6 +486,8 @@ describe("engineServerDialect", () => {
       couchbase: "unsupported",
       // The agent path sends only a SELECT, never an EXPLAIN PLAN FOR.
       druid: "unsupported",
+      // The agent path sends only a SELECT, never an EXPLAIN.
+      trino: "unsupported",
       libsql: { kind: "prefix", prefix: "EXPLAIN QUERY PLAN" },
       influxdb3: { kind: "prefix", prefix: "EXPLAIN" },
     });
@@ -650,6 +656,7 @@ describe("the client dialect", () => {
       cassandra: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       couchbase: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       druid: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
+      trino: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       libsql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });

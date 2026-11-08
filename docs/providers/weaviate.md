@@ -5,6 +5,10 @@ Source: [`src/lib/db/providers/vector/weaviate/`](../../src/lib/db/providers/vec
 Tests: [`tests/unit/db/weaviate/`](../../tests/unit/db/weaviate/) and [`tests/integration/db/weaviate-provider.test.ts`](../../tests/integration/db/weaviate-provider.test.ts).
 Tracking issue: [#1566](https://github.com/libredb/libredb-studio/issues/1566), with [#1089](https://github.com/libredb/libredb-studio/issues/1089) and [#424](https://github.com/libredb/libredb-studio/issues/424).
 
+| | |
+|---|---|
+| **Write reach** | none: every route of the closed console route table, `WEAVIATE_ROUTES`, is a read, and any other route is refused before any request; there is no object edit, maintenance or transaction route |
+
 ## 1. Overview
 
 Studio reads a Weaviate server through Weaviate's own REST requests, written in the editor as one `METHOD /v1/path` line and one JSON body, the form Weaviate's REST reference prints.
@@ -107,7 +111,7 @@ On the 1.37 line (1.37.4 and 1.37.17), `GET /v1/schema/{collection}/shards?tenan
 
 ### 3.5 The read-only mode
 
-`enforcesReadOnly` is true: every console request is a read and the provider has no maintenance operation.
+The `writeReach` is `none`: every console request is a read and the provider has no maintenance operation.
 A read-only seed connection with no key is refused, because a server with anonymous access on, its default, grants a request with no key every write, so the mode would promise a boundary the server does not keep.
 
 ### 3.6 Integers
@@ -258,7 +262,8 @@ Redaction is `none`: a redacted statement is stored as `?`, because a reader gue
 
 One kind, Collection, from one `GET /v1/schema`, which also answers every collection's columns, so describing every collection is one round trip; collections are listed by name.
 A collection's columns are `$id`, its properties in schema order typed with Weaviate's own word (`text`, `int`, `number`, `date`, `geoCoordinates`, `object` and the rest, a cross-reference as `ref → Target`), then its vectors.
-The schema declares no dimension, so opening one single-tenant collection reads one object with `include=vector` to spell it; a multi-tenant collection is never read past its schema.
+The schema declares no dimension, so opening one single-tenant collection in the editor reads one object with `include=vector` to spell it; a multi-tenant collection is never read past its schema.
+A connection opened for agent mode or MCP reads no object to describe a collection, so its vectors' dimension reads `?` there (section 15.9).
 No row count is on the listing.
 
 ### 6.2 Object source
@@ -293,7 +298,7 @@ None: Weaviate has no maintenance operation in v1, so no Admin > Operations card
 
 ## 9. Capabilities & labels
 
-`queryLanguage` `json` with `queryDialect` `weaviate`, `containerLevels` empty, `enforcesReadOnly` true, every `supports*` false, `defaultPort` 8080.
+`queryLanguage` `json` with `queryDialect` `weaviate`, `containerLevels` empty, `writeReach` `none`, every `supports*` false, `defaultPort` 8080.
 `agentCredential` is `"token"` and `metadataOnly` states the agent's nine projections (section 15.5); `queryReadOnly` answers on a handle opened for the agent read-only profile only (section 15).
 The labels name a Collection and an Object, "Read Objects" and "Generate Request", and the statement language plan mode states is generated from the route table.
 
@@ -428,12 +433,18 @@ Weaviate declares `ProviderCapabilities.metadataOnly`: every answer is projected
 | tenants, one tenant | `tenant`, `status` |
 | aliases, one alias | `alias`, `collection` |
 | nodes | `node`, `status`, `version`, `objects`, `shards` |
-| nodes with `output=verbose` | `node`, `collection`, `shard`, `objects`, `vector_indexing_status`, `loaded` |
+| nodes with `output=verbose` | `node`, `collection`, one row per collection on each node |
 | aggregate | `collection`, `tenant`, `count` |
 
 A column's name comes from the projection, never from a key the store holds, and nothing the projection does not name reaches a row: no description, module setting, base URL or host name.
 A cell that does not fit its kind, such as an object, a list or a vector where a name or a count stands, or a name holding a line break, withholds the whole answer, naming the column and never the value.
+A verbose node read neither names nor counts a shard: a multi-tenant collection's shards are named after its tenants, and the server lists every one of them to a key that may read the collection's nodes, whatever tenants the key may read (section 15.8).
+A shard count there would be the collection's tenant count, and the summed objects less the count of the one tenant a key may count would be the count of a tenant it may not, so the projection names the collections on each node and nothing else.
+A collection's objects are counted with an aggregate and its shards read with `GET /v1/schema/{collection}/shards`, both of which the server checks against the key's grants.
+This holds for agent mode as much as for MCP; before it, a verbose node read answered one row per shard, with its name, object count, indexing status and loaded flag.
 A server refusal is worded by its status and category alone, never the server's message.
+Of a request that names a collection, alias, tenant or shard, a refusal and a not-found are one sentence, `WEAVIATE_AGENT_UNREADABLE` in `metadata-read.ts`, since the server answers the two apart: an alias outside the key's grants is 403 and a missing one 404 in any case, and a missing collection or tenant is 404 to a key that may read them all and 403 to one that may not (`data-scope/alias-docs-scoped`, `alias-missing-scoped`, `alias-docs-lower-scoped`, `collection-missing-viewer`, `tenant-missing-viewer`).
+A count through an alias that the server answers over GraphQL alone is refused in its own sentence, `WEAVIATE_AGENT_ALIAS_GRAPHQL`, which names no collection (section 15.8).
 A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
 
 ### 15.6 Agent language pack
@@ -447,12 +458,55 @@ This overlay overrides no Shared member, so every Shared member is the `weaviate
 The family offers the investigation workflow, through `run_read_query` with one Weaviate request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a Weaviate request: the family declares no MCP facet, and `MCP_STATEMENT_READ.weaviate` is false (B153).
+MCP clients read a Weaviate connection with `run_weaviate_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/weaviateapi/mcp.ts`](../../src/lib/agent/languages/weaviateapi/mcp.ts)), and `MCP_STATEMENT_READ.weaviate` is true (section 15.9).
 
 ### 15.7 Tests
 
 - `tests/unit/db/weaviate/metadata-request.test.ts`: the operations an agent request may name, and every refusal before the network.
-- `tests/unit/db/weaviate/metadata-read.test.ts`: the viewer proof over each `own-info-*` capture, every projection over the captured answers, and answers that carry a stored value where a name, a count or a flag stands.
+- `tests/unit/db/weaviate/metadata-read.test.ts`: the viewer proof over each `own-info-*` capture, every projection over the captured answers, the data scope of a broad and a narrow key over the `data-scope/` captures, and answers that carry a stored value where a name, a count or a flag stands.
 - `tests/unit/db/weaviate/agent-provider.test.ts`: the open, the proof before every request, the exact request lines and bodies through the REST client, the tenant refusal, the wording of a failure and the budgets.
 - `tests/integration/db/weaviate-provider.test.ts`: the boundary replayed from the captures, the viewer's writes beside the positive control.
 - `tests/unit/lib/db/redaction/metadata-only.test.ts`: the shared projection helpers.
+- `tests/integration/mcp/run-weaviate-read.test.ts`: `run_weaviate_read` through the real route and handler over the provider and the captures: the answer behind the notice, every refusal before anything is acquired, each key the proof refuses, a `COLD` tenant, the budgets, the timeout and the tools that name each other.
+
+### 15.8 Data scope
+
+What a key that passes the viewer proof reads is what its roles grant, and the proof checks the actions, not their scope, so a custom role of viewer actions scoped to some collections, tenants and aliases passes it.
+Measured on 1.40.2 with the built-in viewer and with such a role, scoped to one collection, one tenant of a multi-tenant collection, one alias and the node reads of two collections, every read sent raw ([`tests/fixtures/weaviate/1.40.2/data-scope/`](../../tests/fixtures/weaviate/1.40.2/data-scope/), recorded by its `run.sh`):
+
+| Read | What the scoped role is answered | Which layer stops what it does not grant |
+| --- | --- | --- |
+| `GET /v1/schema` | the collections it may read, and no other (`schema-*`) | the server |
+| a collection, its shards, a tenant or a count outside its grants | 403 (`collection-doc-*`, `shards-*`, `tenant-globex-*`, `aggregate-*`) | the server |
+| `GET /v1/schema/{collection}/tenants` | the tenants it may read, and no other (`tenants-*`) | the server |
+| `GET /v1/aliases`, one alias | the aliases it may read; another is 403 (`aliases-*`, `alias-docs-*`) | the server |
+| `GET /v1/nodes?output=verbose`, `GET /v1/nodes/{collection}?output=verbose` | only the collections it may read nodes of, but every tenant of each, named as a shard (`nodes-verbose-*`, `collection-nodes-*`) | Studio: the projection names the collections and neither names nor counts a shard (section 15.5) |
+| `GET /v1/meta`, `GET /v1/nodes` | the server's version and its nodes, the same for every key | none needed: no collection, tenant or alias is named |
+| an alias where a collection's name stands, the alias outside its grants and its collection inside them: `GET /v1/schema/{alias}`, its tenants, one tenant, its shards, `GET /v1/nodes/{alias}?output=verbose` and a count | the target's definition, tenants, shards, nodes and count, as if it had named the collection (`collection-alias-*`, `tenants-alias-*`, `tenant-alias-acme-*`, `shards-alias-acme-*`, `collection-nodes-alias-*`, `aggregate-alias-acme-*`) | Studio: the name is sent only when the key's own lists hold it |
+| a collection, alias or tenant that does not exist | 404 to the viewer, and to the scoped role 403 for a collection or tenant and 404 for an alias (`collection-missing-*`, `tenant-missing-*`, `alias-missing-*`, `alias-docs-lower-*`) | Studio: one sentence for a missing name and one outside the grants (section 15.5) |
+
+The server resolves an alias in a collection's place and checks the grants of the collection it names alone.
+So before a request whose path names a collection is sent, the provider reads the key's own collection list, `GET /v1/schema`, and when that does not hold the name exactly as spelled, the key's own alias list, `GET /v1/aliases`; a name neither holds is refused in the one sentence of section 15.5 and the request is not sent.
+Both lists are the server's own, filtered by the key's grants, and are read for every request, as the viewer proof is.
+A name the collection list holds is sent as written; an alias the alias list holds is sent as the collection its entry names, never as the alias, so the server checks the grants of exactly that collection.
+The server resolves an alias when the request arrives, so an alias an administrator repoints after the list was read and before the request is sent would otherwise be answered as its new collection, which the key's alias list did not show; sent as the listed collection, it is answered that collection or refused.
+An answer names the collection the list named, which the key's alias list already shows, or the alias as the request wrote it.
+A count the server answers over GraphQL alone, on a line without REST aggregates or with them switched off, names the collection in the GraphQL document as the request wrote it, so a count through an alias is refused there and a count naming the collection is sent.
+The check reads the name from each request the provider sends, not from the agent's reading of the text.
+So tenant and alias names reach an answer only where the server filters them by the key's grants, and a per-tenant count only through a count the server checks against the tenant.
+
+### 15.9 MCP read
+
+`run_weaviate_read` takes one request in the agent's own words, reads and admits it with the agent's reader, acquires the connection under the agent read-only profile and runs it through the same `queryReadOnly`, so everything in sections 15.1 to 15.8 holds for an MCP client too: the viewer proof at the open and before every read, the metadata-only projection, a server refusal worded by its status alone and a `COLD` tenant refused rather than woken.
+Every call reads as the seed's agent key, `agentPassword` ([an agent credential](../SEED_CONNECTIONS.md#an-agent-credential)), when it sets one, and as its `password` otherwise; give that key a viewer's key, or a role of viewer actions scoped to what the client may read.
+`inspect_schema` takes the operations profile, which proves nothing, so it lists each collection's properties and vectors with any key that may read the collections' definitions, never its tenants or aliases.
+It reads `GET /v1/schema` and each collection's own record and no stored object, so a key that may read a collection's definition and none of its objects is listed all the same, and the vectors' dimension, which the schema does not declare, reads `?` (`data-scope/objects-note-sample-nodata`).
+A failure under either profile is worded by Studio's sentence alone, without the server's words, which name the key's user.
+One call on a fresh connection sends `GET /v1/meta` and `GET /v1/users/own-info` at the open, `GET /v1/users/own-info` again before the request, the key's collection list `GET /v1/schema` before a request naming a collection and its alias list `GET /v1/aliases` when that does not hold the name, the collection's own record, the tenant's own record before a read naming a tenant, then the request: at most eight requests, and seven for a count of a tenant of a collection the key lists.
+On a connection already open the two open requests are not sent again; the proof at the open and the proof before the request are kept apart on purpose, since the open refuses a key before any request of the call is sent and the request's proof keeps no verdict.
+The tool takes no `offset` and no `database`; a read past the 1000-row provider budget is refused, never cut, so a collection with more than 1000 tenants cannot be listed and is read one tenant at a time.
+`queryReadOnly` takes no cancel signal: a client cancel ends MCP's wait, and the request stays open until its answer or the provider's transport deadline, set to the time left of `timeout_ms`, closes it (docs/MCP.md, "Limits").
+Measured through a proxy that held a read's answer back: at the minimum `timeout_ms` of 500 the client got the timeout answer after about 500 ms and the provider closed its request then, and a cancel after one second was answered at once while the request stayed open until about four seconds, the time left of a `timeout_ms` of 4000.
+[`tests/live/weaviate-mcp-boundary.ts`](../../tests/live/weaviate-mcp-boundary.ts) replays all of this through the MCP tool's own handler against live 1.40.2 servers: the open for each refused key, every write, object read, search, GraphQL, filter and user or role read refused by the provider's reader with the MCP fence bypassed, the viewer refused the same writes 403 by the server while root runs them, the state unchanged, the data scope of section 15.8 with an alias in a collection's place and a missing name beside one outside the grants, an alias repointed between two collections while reads through it run in parallel, `inspect_schema` for a key that may read no object, a `COLD` tenant, the limits, the timeout and the cancel.
+Measured on 2026-11-02: every check passed.
+An OIDC group is refused by the proof (section 15.2), but needs an OIDC provider, so that case is held by the unit tests over a constructed answer and not replayed live.

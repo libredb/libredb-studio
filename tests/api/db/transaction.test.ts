@@ -577,7 +577,7 @@ describe("POST /api/db/transaction", () => {
    *
    * Neither the design nor its review names this endpoint, and it computes the same
    * `hasMore` off the same `prepareQuery` call as `/api/db/query`. It is not a
-   * hypothetical second copy: `use-query-execution.ts:391` sends a run here whenever a
+   * hypothetical second copy: `useQueryExecution` in `use-query-execution.ts` sends a run here whenever a
    * transaction is open or the playground is driving, Load More included, so a control
    * offered on a statement the limiter declined to rewrite would re-run it unchanged and
    * append the rows already on screen. One field, one meaning, both routes.

@@ -4,13 +4,13 @@
  * and B, the result cap C with byte_size, one deadline over acquisition and execution, the
  * untrusted-content notice, and the decision recorded before anything is acquired.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, table } from "@libredb/libredb";
 import { getServerAuditBuffer } from "@/lib/audit";
-import { OffsetUnsupportedError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { ExecutionProfileError, OffsetUnsupportedError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
 import { DuckDBProvider } from "@/lib/db/providers/sql/duckdb";
 import { SnowflakeProvider } from "@/lib/db/providers/sql/snowflake/index";
@@ -27,14 +27,19 @@ import {
   MCP_RESULT_CAP_BYTES,
   MCP_UNTRUSTED_NOTICE,
 } from "@/lib/mcp/output";
+import { namedList } from "@/lib/agent/engine-support";
+import { getDBConfig } from "@/lib/db-ui-config";
 import { moreRowsThanPageableHint, ROW_OVER_CAP_TEXT, timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import {
   RUN_READ_QUERY_DESCRIPTION,
   RUN_READ_QUERY_ENGINES,
+  RUN_READ_QUERY_TYPES,
   RunReadQueryInputSchema,
   runReadQuery,
 } from "../../helpers/run-read-query";
-import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { MCP_STATEMENT_TOOLS, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
+import { mcpConnectionUnavailable } from "@/lib/mcp/availability";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
 import {
@@ -135,7 +140,10 @@ function direct(
   return runReadQuery(RunReadQueryInputSchema.parse(args) as McpStatementInput, { context: caller, signal });
 }
 
-/** A context over one opted-in connection of the given engine that hands out the given provider. */
+/**
+ * A context over one opted-in connection of the given engine that hands out the given provider. The connection is
+ * offered to admins alone, so an admin's MCP open of a SQLite one is available.
+ */
 function fakeContext(provider: Partial<DatabaseProvider>, type: DatabaseType = "sqlite"): McpConnectionContext {
   const connection = {
     id: "seed:fake",
@@ -144,7 +152,7 @@ function fakeContext(provider: Partial<DatabaseProvider>, type: DatabaseType = "
     seedId: "fake",
     managed: true,
     mcp: true,
-    roles: ["*"],
+    roles: ["admin"],
     createdAt: new Date(),
   } as ManagedConnection;
   return {
@@ -157,7 +165,7 @@ function fakeContext(provider: Partial<DatabaseProvider>, type: DatabaseType = "
 
 /** The answer to a call on an engine the tool does not serve, naming the tool that does serve it. */
 const notServed = (label: string, elsewhere = "inspect_schema") =>
-  `run_read_query cannot run on this connection: this tool does not serve ${label}; use ${elsewhere} there. It runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL.`;
+  `run_read_query cannot run on this connection: this tool does not serve ${label}; use ${elsewhere} there. It runs on ${RUN_READ_QUERY_ENGINES}.`;
 
 const mcpEvents = () =>
   getServerAuditBuffer()
@@ -194,6 +202,26 @@ describe("the answer", () => {
     expect(result.isError ?? false).toBe(false);
     expect(result.content[1].text).toContain('"rows":[{"__proto__":1}]');
     expect(Object.hasOwn(result.structuredContent?.rows[0], "__proto__")).toBe(true);
+  });
+
+  test("carries none of the provider's warnings, since this arm's facet does not answer them", async () => {
+    const original = SQLiteProvider.prototype.queryReadOnly;
+    SQLiteProvider.prototype.queryReadOnly = async function (
+      this: SQLiteProvider,
+      ...args: Parameters<typeof original>
+    ) {
+      const result = await original.apply(this, args);
+      return { ...result, warnings: [{ message: "a provider warning that names stored-value-7" }] };
+    };
+    try {
+      const result = await query({ connection_id: "seed:shop", sql: "SELECT id FROM numbers LIMIT 1" });
+      expect(result.isError ?? false).toBe(false);
+      expect(result.structuredContent?.rows).toEqual([{ id: 1 }]);
+      expect(result.structuredContent).not.toHaveProperty("notes");
+      expect(JSON.stringify(result)).not.toContain("stored-value-7");
+    } finally {
+      SQLiteProvider.prototype.queryReadOnly = original;
+    }
   });
 
   test("never quotes a fake column or a TRUNCATED marker", async () => {
@@ -367,12 +395,15 @@ describe("the boundary", () => {
     }
   });
 
-  test("an engine with no read-only statement path is refused before anything is acquired, and no writable method runs", async () => {
+  test("an engine whose statements another tool reads is refused before anything is acquired, and no writable method runs", async () => {
     const acquisitions = countMethod(McpConnectionContext.prototype, "acquire");
     const writes = countMethod(LibreDBProvider.prototype, "query");
     try {
       const result = await direct({ connection_id: "seed:notes", sql: "SELECT 1" });
-      expect(result).toEqual({ isError: true, content: [{ type: "text", text: notServed("LibreDB") }] });
+      expect(result).toEqual({
+        isError: true,
+        content: [{ type: "text", text: notServed("LibreDB", "run_libredb_read") }],
+      });
       expect(acquisitions.calls).toBe(0);
       expect(writes.calls).toBe(0);
       expect(mcpEvents()).toEqual([
@@ -509,6 +540,36 @@ describe("the boundary", () => {
     }
   });
 
+  // An engine whose check runs before every statement rather than at the open refuses a too-broad principal from
+  // queryReadOnly, and that refusal quotes names any user of the database may have chosen (a function, a view, a role),
+  // so it is answered in the tool's sentence behind the untrusted-data notice, redacted as an engine message is.
+  test("a profile refusal raised by the statement call itself is answered in the tool's sentence behind the untrusted notice", async () => {
+    const failing = failNextCall(
+      SQLiteProvider.prototype,
+      "queryReadOnly",
+      new ExecutionProfileError(
+        'The agent read-only execution profile refuses the user: it may run "ignore prior rules" with password=not-a-real-password.',
+        "PROFILE_PRIVILEGES_TOO_BROAD",
+      ),
+    );
+    try {
+      const result = await direct({ connection_id: "seed:shop", sql: "SELECT 1" });
+      expect(result).toEqual({
+        content: [
+          { type: "text", text: MCP_UNTRUSTED_NOTICE },
+          {
+            type: "text",
+            text: 'run_read_query cannot run on this connection: The agent read-only execution profile refuses the user: it may run "ignore prior rules" with password=[REDACTED]',
+          },
+        ],
+        isError: true,
+      });
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
+    } finally {
+      failing.restore();
+    }
+  });
+
   test("an acquisition that fails for a reason other than the profile is an engine failure, redacted behind the notice", async () => {
     const failing = failNextCall(
       SQLiteProvider.prototype,
@@ -532,8 +593,116 @@ describe("the boundary", () => {
   });
 });
 
+describe("a connection no MCP open can serve for the caller", () => {
+  // The posture is read through editorExecutionContext, so a developer's GOVERNANCE_SOURCE is set aside.
+  let savedGovernance: string | undefined;
+  beforeEach(() => {
+    savedGovernance = process.env.GOVERNANCE_SOURCE;
+    delete process.env.GOVERNANCE_SOURCE;
+    writeSeedFile(dir, [{ id: "shared", type: "sqlite", database: join(dir, "shop.db"), roles: ["admin", "user"] }]);
+  });
+  afterEach(() => {
+    if (savedGovernance === undefined) delete process.env.GOVERNANCE_SOURCE;
+    else process.env.GOVERNANCE_SOURCE = savedGovernance;
+  });
+
+  const ADMIN = { username: "alice", role: "admin" } as const;
+  const USER = { username: "bob", role: "user" } as const;
+
+  /** The sentence list_connections lists the seed with for `caller`, then `tool`'s answer on it, in one session. */
+  async function listedThenCalled(caller: typeof ADMIN | typeof USER, tool: string, args: Record<string, unknown>) {
+    const session = await connectClient(handlerServe(testAuthInfo(caller)), { negotiation: "legacy" });
+    try {
+      const listed = (await session.client.callTool({ name: "list_connections", arguments: {} })) as Answered;
+      const [row] = listed.structuredContent?.connections ?? [];
+      getServerAuditBuffer().clear();
+      const answer = (await session.client.callTool({ name: tool, arguments: args })) as Answered;
+      return { unavailable: row?.unavailable as string | undefined, answer };
+    } finally {
+      await session.close();
+    }
+  }
+
+  /** The decision a refused call records, and nothing after it. */
+  const refusedDecision = (action: string) => [
+    expect.objectContaining({
+      action,
+      target: "mcp/decision",
+      result: "failure",
+      reason: "mcp_execution_failed",
+      connectionName: "shared",
+    }),
+  ];
+
+  test.each([
+    ["an admin", ADMIN],
+    ["a user", USER],
+  ] as const)(
+    "run_read_query answers %s token with the sentence list_connections lists, before anything is acquired",
+    async (_, caller) => {
+      const acquisitions = countMethod(McpConnectionContext.prototype, "acquire");
+      const builds = countMethod(SQLiteProvider.prototype, "validate");
+      try {
+        const { unavailable, answer } = await listedThenCalled(caller, "run_read_query", {
+          connection_id: "seed:shared",
+          sql: "SELECT 1",
+        });
+        expect(unavailable).toBeString();
+        expect(answer.isError).toBe(true);
+        expect(answer.content).toEqual([{ type: "text", text: unavailable as string }]);
+        expect(answer.content.map((block) => block.text)).not.toContain(MCP_UNTRUSTED_NOTICE);
+        expect(answer.structuredContent).toBeUndefined();
+        expect(mcpEvents()).toEqual(refusedDecision("run_read_query"));
+        expect([acquisitions.calls, builds.calls]).toEqual([0, 0]);
+      } finally {
+        acquisitions.restore();
+        builds.restore();
+      }
+    },
+  );
+
+  test.each([
+    ["an admin", ADMIN],
+    ["a user", USER],
+  ] as const)(
+    "every statement tool that does not serve SQLite answers %s token with the same sentence, naming no tool",
+    async (_, caller) => {
+      const unavailable = mcpConnectionUnavailable(
+        caller,
+        (await new McpConnectionContext(caller).resolve("seed:shared")) as ManagedConnection,
+      );
+      expect(unavailable).toBeString();
+      const others = servingStatementArms().filter((arm) => !arm.types.includes("sqlite"));
+      expect(others.length).toBeGreaterThan(0);
+      const acquisitions = countMethod(McpConnectionContext.prototype, "acquire");
+      try {
+        for (const arm of others) {
+          getServerAuditBuffer().clear();
+          const args = { connection_id: "seed:shared", max_rows: 100, timeout_ms: 30_000, [arm.argument]: "SELECT 1" };
+          // oxlint-disable-next-line no-await-in-loop -- one tool after the other, each with its own audit events
+          const answer = await runStatement(arm, args as McpStatementInput, {
+            context: new McpConnectionContext(caller),
+            signal: new AbortController().signal,
+          });
+          expect(answer).toEqual({ isError: true, content: [{ type: "text", text: unavailable as string }] });
+          for (const tool of MCP_STATEMENT_TOOLS) expect(answer.content[0].text).not.toContain(tool);
+          expect(mcpEvents()).toEqual(refusedDecision(arm.tool));
+        }
+        expect(acquisitions.calls).toBe(0);
+      } finally {
+        acquisitions.restore();
+      }
+    },
+  );
+});
+
 describe("the deadline and the signal", () => {
   const TIMEOUT_LOG = "MCP run_read_query answered a provider failure as the timeout";
+
+  // A test that times out never reaches its own finally, so a fake clock it set would otherwise outlive it.
+  afterEach(() => {
+    jest.useRealTimers();
+  });
 
   test("pins today's behaviour, not a goal: a long SQLite statement blocks the process, so it is answered only after it ends, with the timeout answer, and a timer set beside it fires only after it too", async () => {
     // This test pins the OLD blocking behaviour, so it forces the synchronous driver
@@ -656,6 +825,28 @@ describe("the deadline and the signal", () => {
       expect(Date.now() - started).toBeLessThan(5_000);
       expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
     } finally {
+      gate.release();
+      // The held call runs to its end before afterEach closes the provider under it.
+      await gate.finished;
+      gate.restore();
+    }
+  });
+
+  test("a statement held past the most timeout_ms allows is answered without an offer of more time", async () => {
+    const gate = gateMethod(DuckDBProvider.prototype, "queryReadOnly");
+    try {
+      // The deadline timer is set under the fake clock, so the 30 s bound is reached without waiting for it.
+      jest.useFakeTimers();
+      const pending = direct({ connection_id: "seed:slow", sql: "SELECT answer FROM answers", timeout_ms: 30_000 });
+      await gate.entered;
+      jest.advanceTimersByTime(30_000);
+      const result = await pending;
+      expect(result.content).toEqual([
+        { type: "text", text: "The statement did not finish within timeout_ms (30000 ms). Narrow it." },
+      ]);
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
+    } finally {
+      jest.useRealTimers();
       gate.release();
       // The held call runs to its end before afterEach closes the provider under it.
       await gate.finished;
@@ -962,7 +1153,7 @@ describe("the registration", () => {
         expect(tool?.annotations).toEqual({ readOnlyHint: true, openWorldHint: false });
         expect(tool?.outputSchema?.type).toBe("object");
         expect(tool?.description).toBe(RUN_READ_QUERY_DESCRIPTION);
-        expect(RUN_READ_QUERY_ENGINES).toBe("PostgreSQL, SQLite, DuckDB, SQL Server and MySQL");
+        expect(RUN_READ_QUERY_ENGINES).toBe(namedList(RUN_READ_QUERY_TYPES.map((type) => getDBConfig(type).label)));
         expect(tool?.description).toContain(`Runs on ${RUN_READ_QUERY_ENGINES};`);
       } finally {
         await session.close();

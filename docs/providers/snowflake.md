@@ -14,7 +14,7 @@
 | **Default port**       | None: the endpoint is always the account host on 443                                                |
 | **Connection string**  | Not stored: a pasted Snowflake URL is decomposed into fields                                        |
 | **EXPLAIN**            | `snowflake-json`: `EXPLAIN USING JSON`, which compiles the statement; never sent for a `SYSTEM$` call |
-| **Writes**             | Whatever the role allows; the confirmation gate asks before Snowflake's destructive forms            |
+| **Write reach** | open: the editor sends every statement as written, and the role is the boundary; the confirmation gate asks before Snowflake's destructive forms |
 | **Transactions**       | None across statements; a transaction runs inside one `EXECUTE IMMEDIATE $$ ... $$` block           |
 | **Maintenance**        | None                                                                                                |
 | **Query parameters**   | Not supported: v1 sends no bindings                                                                 |
@@ -596,6 +596,7 @@ A Role edit makes a new connection identity, so a plan held under one role is no
 Snowflake declares no agent credential form yet, so an agent credential here is the user-and-password pair, which reaches a key-pair connection's user but not its `privateKey`.
 It takes the `"dedicated-user"` form, an agent user other than the connection's own with that user's PAT in the agent password, when it joins agent mode (D324).
 That form overlays only the user and password, so an agent key pair needs the form or the overlay extended to reach `privateKey`, which is part of the same work (D324).
+A Snowflake seed takes no agent credential (`SEED_AGENT_CREDENTIAL.snowflake` in `src/lib/db/connection-fields.ts` is null), so a seed that sets `agentUser` or `agentPassword` is refused at load: under key-pair sign-in the agent's password would be ignored and every statement would run as the connection's role, so the pair would narrow no privilege (D444).
 
 ### 8.4 MCP
 

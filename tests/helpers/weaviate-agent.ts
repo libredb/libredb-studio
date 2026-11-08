@@ -1,21 +1,20 @@
 /**
  * The Weaviate agent boundary captures (tests/fixtures/weaviate/1.40.2/agent-boundary/, written by its run.sh): one
- * file per request a 1.40.2 server was sent raw, with the principal it was sent as and what the server answered.
+ * file per request a 1.40.2 server was sent raw, with the principal it was sent as and what the server answered. The
+ * data-scope captures beside them (1.40.2/data-scope/) are the same reads sent as a broad and a narrow principal.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { NodeResponse } from "@/lib/db/http/node-transport";
 import type { WeaviateAnswer } from "@/lib/db/providers/vector/weaviate/client";
 import type { RecordedAnswer } from "./weaviate-wire";
 
-const DIRECTORY = posix.join(
-  import.meta.dir.replaceAll("\\", "/"),
-  "..",
-  "fixtures",
-  "weaviate",
-  "1.40.2",
-  "agent-boundary",
-);
+const VERSION_DIRECTORY = posix.join(import.meta.dir.replaceAll("\\", "/"), "..", "fixtures", "weaviate", "1.40.2");
+const DIRECTORY = posix.join(VERSION_DIRECTORY, "agent-boundary");
+const SCOPE_DIRECTORY = posix.join(VERSION_DIRECTORY, "data-scope");
+
+const asResponse = (answer: WeaviateAnswer): NodeResponse => ({ ...answer });
 
 export interface WeaviateAgentCapture {
   readonly name: string;
@@ -32,6 +31,59 @@ export function agentCapture(name: string): WeaviateAgentCapture {
   return JSON.parse(readFileSync(posix.join(DIRECTORY, `${name}.json`), "utf8")) as WeaviateAgentCapture;
 }
 
+/** One data-scope capture by its file name, without `.json`: `<read>-viewer` or `<read>-scoped`. */
+export function scopeCapture(name: string): WeaviateAgentCapture {
+  return JSON.parse(readFileSync(posix.join(SCOPE_DIRECTORY, `${name}.json`), "utf8")) as WeaviateAgentCapture;
+}
+
+/** Every data-scope capture's file name, without `.json`. */
+function scopeCaptureNames(): readonly string[] {
+  return readdirSync(SCOPE_DIRECTORY)
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => file.slice(0, -".json".length));
+}
+
+/**
+ * A recording transport's answers for a data-scope `principal` (`viewer`, `scoped`, `nodata`): each request line is
+ * answered with the data-scope capture of the same line sent as that principal, and the meta read with the
+ * agent-boundary viewer's, since every key is answered the same meta; `overrides` answers a request line otherwise. A
+ * line no capture holds throws by name. Where two captures share a line and differ by body (the counts of tenants acme
+ * and globex), the request is answered by the capture whose body equals its own as JSON, and a body neither sent
+ * throws by name: the directory's listing order is the platform's (sorted on macOS, hash order on Linux), so it never
+ * picks the answer.
+ */
+export function scopeServer(
+  principal: string,
+  overrides: Readonly<Record<string, WeaviateAnswer>> = {},
+): RecordedAnswer {
+  const byLine = new Map<string, { readonly body: unknown; readonly answer: WeaviateAnswer }[]>([
+    ["GET /v1/meta", [{ body: undefined, answer: agentAnswer("meta-viewer") }]],
+  ]);
+  for (const name of scopeCaptureNames()) {
+    if (!name.endsWith(`-${principal}`)) continue;
+    const capture = scopeCapture(name);
+    const line = `${capture.request.method} ${capture.request.path}`;
+    byLine.set(line, [...(byLine.get(line) ?? []), { body: capture.request.body, answer: scopeAnswer(name) }]);
+  }
+  return (request, line) => {
+    const override = overrides[line];
+    if (override !== undefined) return asResponse(override);
+    const captures = byLine.get(line);
+    if (captures === undefined) throw new Error(`no ${principal} data-scope capture answers ${line}`);
+    if (captures.length === 1) return asResponse(captures[0].answer);
+    const body: unknown = request.body === undefined ? undefined : JSON.parse(request.body);
+    const found = captures.find((capture) => isDeepStrictEqual(capture.body, body));
+    if (found === undefined) throw new Error(`no ${principal} data-scope capture answers ${line} with that body`);
+    return asResponse(found.answer);
+  };
+}
+
+/** A data-scope capture's answer as it crosses the client seam. */
+export function scopeAnswer(name: string): WeaviateAnswer {
+  const capture = scopeCapture(name);
+  return { status: capture.status, contentType: capture.contentType, retryAfter: null, text: capture.body };
+}
+
 /** Every capture's file name, without `.json`. */
 export function agentCaptureNames(): readonly string[] {
   return readdirSync(DIRECTORY)
@@ -44,8 +96,6 @@ export function agentAnswer(name: string): WeaviateAnswer {
   const capture = agentCapture(name);
   return { status: capture.status, contentType: capture.contentType, retryAfter: null, text: capture.body };
 }
-
-const asResponse = (answer: WeaviateAnswer): NodeResponse => ({ ...answer });
 
 /**
  * A recording transport's answers for `principal` (`viewer`, `root`, ...): each request is answered with the capture
