@@ -166,6 +166,7 @@ describe("GET /api/auth/oidc/callback", () => {
 
     expect(mockDecryptState).toHaveBeenCalledWith("encrypted-state-cookie");
     expect(mockExchangeCode).toHaveBeenCalledTimes(1);
+    expect(mockExchangeCode.mock.calls[0]?.[1]?.toString()).toBe(req.url);
     expect(await mintedSession()).toMatchObject({ role: "user", username: "user@example.com" });
     expect(res.status).toBe(307);
     expect(res.headers.get("location")).toContain("/");
@@ -436,7 +437,7 @@ describe("GET /api/auth/oidc/callback", () => {
     }
   });
 
-  test("OIDC callback preserves the mount through exchange, redirect and state cleanup", async () => {
+  test.each(["", "/tools/libredb"])("OIDC callback preserves the mount with request prefix %p", async (prefix) => {
     await withBasePathEnv("/tools/libredb", async () => {
       mockCookieGet.mockReturnValue({ value: "encrypted-state-cookie" });
       mockDecryptState.mockResolvedValue({ code_verifier: "v", state: "s", nonce: "n" });
@@ -454,9 +455,12 @@ describe("GET /api/auth/oidc/callback", () => {
       mockExchangeCode.mockClear();
       mockMapOIDCRole.mockReturnValue("user");
       mockCookieStore.delete.mockClear();
-      const url = "https://studio.example/tools/libredb/api/auth/oidc/callback?code=c&state=s";
+      mockGetPublicOrigin.mockReturnValue("https://studio.example");
+      const url = `http://localhost:3000${prefix}/api/auth/oidc/callback?code=c%2B1&state=s%2F2`;
       const response = await GET(new Request(url));
-      expect(mockExchangeCode.mock.calls[0]?.[1]?.toString()).toBe(url);
+      expect(mockExchangeCode.mock.calls[0]?.[1]?.toString()).toBe(
+        "https://studio.example/tools/libredb/api/auth/oidc/callback?code=c%2B1&state=s%2F2",
+      );
       expect(response.headers.get("location")).toBe("https://studio.example/tools/libredb/");
       expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/tools/libredb" });
       mockCookieGet.mockReturnValue(undefined);

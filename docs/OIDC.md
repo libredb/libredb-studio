@@ -87,6 +87,8 @@ Set these URLs in your identity provider:
 
 For local development, use `http://localhost:3000` instead.
 
+For deployments under a base path, see [Authentication and editor assets](SUBPATH.md#authentication-and-editor-assets) for the provider URLs.
+
 ### 3. Start the App
 
 ```bash
