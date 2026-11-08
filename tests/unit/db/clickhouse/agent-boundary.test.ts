@@ -27,6 +27,21 @@ const ENGINES_26_7 =
     ",",
   );
 
+/** The same query on 26.9.23.15: BigQuery replaces WindowView; the other 82 names match. */
+const ENGINES_26_9 = [...ENGINES_26_7.filter((engine) => engine !== "WindowView"), "BigQuery"];
+
+/** Entries added to system.privileges between 26.7.1.1315 and 26.9.23.15. */
+const NEW_PRIVILEGES_26_9 = [
+  "ALTER HANDLER",
+  "ALTER MODIFY PROJECTION",
+  "BIGQUERY",
+  "CREATE HANDLER",
+  "CREATE TOKEN",
+  "DISK",
+  "DROP HANDLER",
+  "SHOW HANDLERS",
+];
+
 /** The source privileges an unrestricted user's `SHOW GRANTS FINAL` lists on 26.7.1.1315, beside READ and WRITE. */
 const SOURCE_GRANTS_26_7 =
   "FILE, URL, REMOTE, MONGO, REDIS, MYSQL, POSTGRES, SQLITE, ODBC, JDBC, HDFS, S3, HIVE, AZURE, KAFKA, NATS, RABBITMQ, YTSAURUS, ARROW FLIGHT, SOURCES".split(
@@ -66,6 +81,7 @@ function leastPrivilege(): Record<string, Answer> {
       [GRANTS_COLUMN],
     ),
     queryLog: refused(497),
+    userQueryLog: refused(60),
     objects: result([], ["database", "name", "engine"]),
     dictionaries: refused(497),
     functions: result([], ["name", "origin"]),
@@ -78,6 +94,7 @@ function stepOf(sql: string): string {
   if (sql.startsWith("CREATE DATABASE IF NOT EXISTS")) return "write";
   if (sql === "SHOW GRANTS FINAL") return "grants";
   if (sql.includes("system.query_log")) return "queryLog";
+  if (sql.includes("system.user_query_log")) return "userQueryLog";
   if (sql.includes("system.tables")) return "objects";
   if (sql.includes("system.dictionaries")) return "dictionaries";
   if (sql.includes("system.functions")) return "functions";
@@ -123,6 +140,7 @@ describe("verifyAgentProfile admits", () => {
       "write",
       "grants",
       "queryLog",
+      "userQueryLog",
       "objects",
       "dictionaries",
       "functions",
@@ -164,11 +182,29 @@ describe("verifyAgentProfile admits", () => {
 });
 
 describe("verifyAgentProfile refuses the server", () => {
+  test.each(["26.9.3.38", "26.9.9.28", "26.9.22.999", "26.9.23.14"])(
+    "26.9 below the tested floor: %s",
+    async (version) => {
+      const { query, sent } = server({ identity: result([{ version, user: "agent_ro", readonly: "1" }]) });
+      await expect(verifyAgentProfile(query, "demo")).rejects.toMatchObject({
+        reasonCode: "PROFILE_UNSUPPORTED_TARGET",
+        message: expect.stringContaining("26.9.23.15"),
+      });
+      expect(sent.map(stepOf)).toEqual(["identity"]);
+    },
+  );
+
+  test.each(["26.9.23.15", "26.9.23.16", "26.9.24.1"])("26.9 at or above the tested floor: %s", async (version) => {
+    await expect(
+      verifyAgentProfile(server({ identity: result([{ version, user: "agent_ro", readonly: "1" }]) }).query, "demo"),
+    ).resolves.toBeUndefined();
+  });
+
   test("a release outside the checked set", async () => {
     const error = await refusal({ identity: result([{ version: "26.8.1.1", user: "agent_ro", readonly: "1" }]) });
     expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
     expect(error.message).toBe(
-      "The agent read-only profile is checked on ClickHouse 26.7, and this server is 26.8.1.1: its privileges and table engines have not been checked, so it is refused",
+      "The agent read-only profile is checked on ClickHouse 26.7, 26.9, and this server is 26.8.1.1: its privileges and table engines have not been checked, so it is refused",
     );
   });
 
@@ -269,7 +305,30 @@ describe("verifyAgentProfile refuses the principal", () => {
 
   test.each([[result([])], [refused(81)]])("a readable query log: %#", async (answer) => {
     const error = await refusal({ queryLog: answer });
-    expect(error.message).toContain("can read system.query_log");
+    expect(error.message).toContain("cannot read system.query_log");
+  });
+
+  test.each([result([]), refused(81)])("a readable or unproven user query log: %#", async (answer) => {
+    const error = await refusal({
+      identity: result([{ version: "26.9.23.15", user: "agent_ro", readonly: "1" }]),
+      userQueryLog: answer,
+    });
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toContain("system.user_query_log");
+  });
+
+  test.each([497, 60])("a user query log refused with code %s", async (code) => {
+    const { query, sent } = server({
+      identity: result([{ version: "26.9.23.15", user: "agent_ro", readonly: "1" }]),
+      userQueryLog: refused(code),
+    });
+    await expect(verifyAgentProfile(query, "demo")).resolves.toBeUndefined();
+    expect(sent).toContain("SELECT 1 FROM system.user_query_log LIMIT 0");
+  });
+
+  test("a user query log transport failure is propagated", async () => {
+    const lost = new ClickHouseTransportError("fetch failed", 0);
+    await expect(verifyAgentProfile(server({ userQueryLog: lost }).query, "demo")).rejects.toBe(lost);
   });
 
   test("the object check names every local engine and refuses definer and NONE views", async () => {
@@ -333,14 +392,25 @@ describe("verifyAgentProfile refuses the principal", () => {
 });
 
 describe("the checked lists", () => {
-  test("the checked release is the one the lists were read from", () => {
-    expect(CLICKHOUSE_CHECKED_RELEASES).toEqual(["26.7"]);
+  test("the checked releases are the ones the lists were read from", () => {
+    expect(CLICKHOUSE_CHECKED_RELEASES).toEqual(["26.7", "26.9"]);
   });
 
-  test("the local and refused engine lists cover 26.7's engines exactly, without overlap", () => {
+  test("the local and refused engine lists cover both checked inventories, without overlap", () => {
     const covered = [...CLICKHOUSE_LOCAL_TABLE_ENGINES, ...CLICKHOUSE_REFUSED_TABLE_ENGINES];
     expect(new Set(covered).size).toBe(covered.length);
-    expect([...covered].sort()).toEqual([...ENGINES_26_7].sort());
+    expect([...covered].sort()).toEqual([...new Set([...ENGINES_26_7, ...ENGINES_26_9])].sort());
+    expect(CLICKHOUSE_REFUSED_TABLE_ENGINES).toContain("BigQuery");
+  });
+
+  test.each(NEW_PRIVILEGES_26_9)("26.9's added %s privilege is refused", async (privilege) => {
+    const error = await refusal({
+      identity: result([{ version: "26.9.23.15", user: "agent_ro", readonly: "1" }]),
+      grants: grants(`GRANT ${privilege} ON demo.* TO agent_ro`),
+    });
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toContain(`holds ${privilege} ON demo.*,`);
+    expect(error.message).toContain(["BIGQUERY", "DISK"].includes(privilege) ? "a source grant" : "not a read");
   });
 
   test("every source grant 26.7 lists is a source privilege, and none is admitted", () => {
