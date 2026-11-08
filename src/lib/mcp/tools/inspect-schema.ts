@@ -205,9 +205,9 @@ type ContainerChoice =
 
 /**
  * The container the page is read from: at each level above the deepest the one the session is in,
- * or the first listed, and at the deepest the named schema, matched case-insensitively, or the
- * same default. An engine that declares no level is read at its root; a level that lists nothing
- * leaves nothing to read.
+ * or the first listed, and at the deepest the named schema, preferring an exact match and falling
+ * back to case-insensitive, or the same default. An engine that declares no level is read at its root;
+ * a level that lists nothing leaves nothing to read.
  */
 async function chooseContainer(
   provider: DatabaseProvider,
@@ -223,7 +223,8 @@ async function chooseContainer(
     const deepest = level === depth - 1;
     const named = deepest && wanted !== undefined;
     const chosen = named
-      ? containers.find((candidate) => candidate.name.toLowerCase() === wanted)
+      ? (containers.find((candidate) => candidate.name === schema) ??
+        containers.find((candidate) => candidate.name.toLowerCase() === wanted))
       : (containers.find((candidate) => candidate.isSessionDefault === true) ?? containers[0]);
     if (chosen === undefined) return named ? { kind: "not-found" } : { kind: "none", listed: containers };
     if (deepest) return { kind: "found", container: chosen, listed: containers };

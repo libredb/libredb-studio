@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B171 · 82
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 25
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 24
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
 
 ---
@@ -9614,14 +9614,6 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 
 **Done when:** `inspect_schema` reports a sampled count as a floor with `has_more` true and says how to reach an object outside the sample, for every provider, in a shared change.
 
-### MCP3. `inspect_schema` matches a named container case-insensitively
-
-`chooseContainer` compares names lower-cased, so on a RabbitMQ broker with virtual hosts `Billing` and `billing` a call naming `billing` reads whichever is listed first; Kubernetes namespaces are lower case, so it never mattered before.
-
-Found 2026-10-12 while designing the RabbitMQ provider.
-
-**Done when:** the chooser prefers an exact match and falls back to the case-insensitive one only when no exact match exists, for every provider, with a test on two names that differ by case.
-
 ### MCP4. The shared MCP read-query module still writes SQL's words
 
 `src/lib/mcp/tools/read-query-limits.ts` is shared MCP code, and three of its texts are SQL's: `fenceRefusalText` says "run_read_query runs one read-only statement", `ROW_OVER_CAP_TEXT` advises fewer or narrower columns and "a substring of a long text column", and `offsetRefusalText` speaks of a query's "own LIMIT or TOP".
@@ -9795,7 +9787,6 @@ Found 2026-11-05 while designing MCP phase 1 (#2252).
 
 `chooseContainer` in `src/lib/mcp/tools/inspect-schema.ts` reads, at each level, the first container flagged `isSessionDefault`, or the first listed when none is flagged, while `sessionDefaultContainer` in `src/lib/db/container-walk.ts`, the rule the object browser's scoped read and agent grounding read, answers no default when no container or more than one is flagged.
 So on a connection whose level flags none, or flags two, a call without `schema` reads whichever container the provider listed first, and its answer names that container without saying it was a guess.
-MCP3, the case-insensitive match in the same function, is a separate defect.
 Found 2026-11-05 while designing MCP phase 1 (#2252).
 
 **Done when:** `chooseContainer` reads the default through `sessionDefaultContainer` and answers a level where that rule declines with a refusal that asks for `schema`, with a test on fake providers of depth 1 and 2 for none and for a tie.
