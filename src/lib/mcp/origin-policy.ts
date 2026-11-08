@@ -23,8 +23,6 @@ import { readMcpUrl } from "./config";
  * refuse a present but unparseable Origin, and refuse a missing Host.
  */
 
-export const MCP_LOOPBACK_BINDS: ReadonlySet<string> = new Set(["127.0.0.1", "::1", "localhost"]);
-
 export type McpOriginHostReason = "origin_mismatch" | "mcp_host_not_allowed";
 
 export interface McpOriginHostRefusal {
@@ -32,8 +30,17 @@ export interface McpOriginHostRefusal {
   readonly reason: McpOriginHostReason;
 }
 
+/**
+ * Whether HOSTNAME binds this machine only, by the launcher's rule (bin/lib/launcher-utils.mjs):
+ * 127.0.0.0/8, ::1 bracketed or not, or localhost (#2244). An unset or empty HOSTNAME is not a
+ * loopback bind: the standalone server then binds 0.0.0.0.
+ */
 export function isLoopbackBind(): boolean {
-  return MCP_LOOPBACK_BINDS.has((process.env.HOSTNAME ?? "").trim().toLowerCase());
+  const host = (process.env.HOSTNAME ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, "$1");
+  return host === "localhost" || host === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
 /**

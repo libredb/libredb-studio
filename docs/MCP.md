@@ -705,7 +705,7 @@ OpenAI's [plugin guide](https://developers.openai.com/plugins/build/plugins) sai
   Every MCP call resets that clock, and meanwhile opening the connection in the Studio editor fails with 503, `LibreDB file is already open by another process (exclusive lock)`.
   When the editor opened the file first, MCP borrows its handle and nothing conflicts ([`docs/providers/libredb.md`](providers/libredb.md#421-on-disk-format-locking-and-version-compatibility-02x)).
   `run_libredb_read` takes no lock: each command opens its own read-only handle beside whatever holds the file.
-- Every request's `Origin` is checked, and on a loopback bind (`HOSTNAME` of 127.0.0.1, ::1 or localhost) its `Host` too; a container binds every address, so there the Origin check and the token protect the endpoint.
+- Every request's `Origin` is checked, and on a loopback bind (`HOSTNAME` in 127.0.0.0/8, `::1` or `[::1]`, or localhost) its `Host` too; a container binds every address, so there the Origin check and the token protect the endpoint.
   An MCP client that is not a browser sends no `Origin` and is not affected; a request that does carry one passes only from a localhost name or an `ALLOWED_ORIGINS` host, so a browser-based client served from another origin needs that origin in `ALLOWED_ORIGINS`.
 - JSON-RPC batches are refused: a request body that is a JSON array gets 400 and `-32600`.
 - A client must send `MCP-Protocol-Version` on every request after `initialize`; a request without it gets 400 and `-32020`.
