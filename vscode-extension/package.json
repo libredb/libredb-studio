@@ -331,7 +331,7 @@
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "21.0.4",
-    "@playwright/test": "1.64.1",
+    "@playwright/test": "1.65.0",
     "@sinonjs/fake-timers": "15.4.0",
     "@tailwindcss/cli": "4.3.3",
     "@types/mocha": "10.0.10",
