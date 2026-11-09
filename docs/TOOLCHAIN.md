@@ -131,6 +131,9 @@ As implemented (the first run surfaced ~1300 findings; the breakdown drove these
   - `no-underscore-dangle` (64) - the `_`-prefix is the codebase's deliberate intentionally-unused marker.
   - `no-unused-vars` (25) and `react-hooks/exhaustive-deps` (2) - eslint-config-next already owns these as
     warnings; disabling in oxlint avoids duplicate/contradictory reporting.
+  - `react/immutability` (8, added in oxlint 1.91) - a port of the React Compiler rule that eslint-config-next
+    already runs as `react-hooks/immutability` at error; the port also flags the cancel-flag idiom inside an
+    effect, which the original accepts, so ESLint stays the only enforcer.
   - `no-shadow` (17) - same call as database; shadcn/ui vendored components shadow idiomatically.
   - `no-control-regex` (4) - intentional control-char matching in `logger.ts` log-injection sanitization.
   - `react/no-unstable-nested-components` - the TanStack cell/header-renderer idiom
