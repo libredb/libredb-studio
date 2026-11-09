@@ -1239,7 +1239,7 @@ jobs:
 
       - name: Create Kind cluster
         if: steps.chart-changes.outputs.changed == 'true'
-        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
 
       - name: Run chart-testing install (default values, zero-config)
         if: steps.chart-changes.outputs.changed == 'true'
@@ -1332,7 +1332,7 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@4d1dc0c91ee400dcf8a6dddf2f705ac36542e304 # v8.4.0
+        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
         with:
           args: >
             -Dsonar.projectVersion=${{ steps.pkg.outputs.version }}

@@ -335,7 +335,7 @@ jobs:
         # A fork pull request's token cannot write security events. Same guard
         # shape as ci.yml's SonarCloud job, for the same reason.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9 # v4
+        uses: github/codeql-action/upload-sarif@0911ee96d2d6c8def97122c36c5cadd93829a4b4 # v4
         with:
           sarif_file: ${{ runner.temp }}/trivy-out/deps.sarif
           # Without a category this run would overwrite CodeQL's own results for
@@ -475,7 +475,7 @@ jobs:
           restore-keys: trivy-db-
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -584,7 +584,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the findings to the security tab
-        uses: github/codeql-action/upload-sarif@a60c4df7a135c7317c1e9ddf9b5a9b07a910dda9 # v4
+        uses: github/codeql-action/upload-sarif@0911ee96d2d6c8def97122c36c5cadd93829a4b4 # v4
         with:
           sarif_file: ${{ runner.temp }}/trivy-out/image.sarif
           category: trivy-image-${{ matrix.variant }}
