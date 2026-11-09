@@ -11,7 +11,7 @@
         "@grpc/proto-loader": "0.8.1",
         "@libredb/libredb": "^0.2.2",
         "@monaco-editor/react": "^4.7.0",
-        "@platformatic/kafka": "2.15.0",
+        "@platformatic/kafka": "2.14.0",
         "@radix-ui/react-accordion": "^1.2.20",
         "@radix-ui/react-alert-dialog": "^1.1.23",
         "@radix-ui/react-aspect-ratio": "^1.1.15",
@@ -60,7 +60,7 @@
         "framer-motion": "^14.0.0",
         "geist": "^1.7.2",
         "hyparquet": "1.32.0",
-        "hyparquet-compressors": "1.1.3",
+        "hyparquet-compressors": "1.1.2",
         "input-otp": "^1.5.0",
         "ioredis": "^5.11.1",
         "jose": "^6.2.15",
@@ -775,7 +775,7 @@
 
     "@platformatic/dynamic-buffer": ["@platformatic/dynamic-buffer@0.4.0", "", {}, "sha512-eCL++LyBjSsqalm4I67dl+gVqLSKd6gPYCieD72S5KqqAkmSAgAYNHt+lL+iVXssWPSfbuIJ5PEwpn5JVD73Xw=="],
 
-    "@platformatic/kafka": ["@platformatic/kafka@2.15.0", "", { "dependencies": { "@platformatic/dynamic-buffer": "^0.4.0", "@platformatic/wasm-utils": "^0.3.0", "ajv": "^8.20.0", "ajv-draft-04": "^1.0.0", "avsc": "^5.7.9", "debug": "^4.4.3", "fastq": "^1.20.3", "mnemonist": "^0.40.5", "scule": "^1.3.0" }, "optionalDependencies": { "@node-rs/crc32": "^1.10.8", "protobufjs": "^8.8.0" } }, "sha512-ROhJgOSxJxL9sTOAxDB0cn+VVxQ2LcN3scYR2Eh6Mnhp459a3xeXNHzycARDzvNWKgzHmEhwTga0oAM2v9NYIA=="],
+    "@platformatic/kafka": ["@platformatic/kafka@2.14.0", "", { "dependencies": { "@platformatic/dynamic-buffer": "^0.4.0", "@platformatic/wasm-utils": "^0.3.0", "ajv": "^8.20.0", "ajv-draft-04": "^1.0.0", "avsc": "^5.7.9", "debug": "^4.4.3", "fastq": "^1.20.3", "mnemonist": "^0.40.5", "scule": "^1.3.0" }, "optionalDependencies": { "@node-rs/crc32": "^1.10.8", "protobufjs": "^8.8.0" } }, "sha512-FvPnGuvxk3otCKQL515X1C2yMPAAjlmGEe9JQ2YiKCz0F90K+6zrWhExZ7DCBYIyPfo1O555hsI2D/R2MnmRUQ=="],
 
     "@platformatic/wasm-utils": ["@platformatic/wasm-utils@0.3.0", "", { "dependencies": { "@platformatic/dynamic-buffer": "^0.4.0" } }, "sha512-tK7M2HMtVQrHBuQ/TSaDIk3YCEV6+EUQcConDrIH1kbQ7ZQiCWGrp7Jn+vd0FxoAsq2O8ZXGhANxwNpkPR8Maw=="],
 
@@ -1943,7 +1943,7 @@
 
     "hyparquet": ["hyparquet@1.32.0", "", {}, "sha512-SpkvdfgQjcdCJA+MTzo0WSreLLy/aLRYs3xetk1SsuFvq8vF+J/97OaRnZhf+p5Nx3J27i9FhSC0bJ5eQZG/7Q=="],
 
-    "hyparquet-compressors": ["hyparquet-compressors@1.1.3", "", { "dependencies": { "fzstd": "0.1.1", "hysnappy": "1.1.1" } }, "sha512-QqObpH8Vu1NKF5qzv7yWwgVso8sQE6irx0L5+WZ5QQ+xXnCQE5/X9K8hzYD6Z4wVjTmsMnZUO1vbutXLhU9AFQ=="],
+    "hyparquet-compressors": ["hyparquet-compressors@1.1.2", "", { "dependencies": { "fzstd": "0.1.1", "hysnappy": "1.1.1" } }, "sha512-0Hx6w0ZpVpNCefKy5xBYLTp6rKeZn/tsUzuliNzfKqSCdLcTQSfwATEoeedS703Y17k1qNS61HwRME5aOeNkPg=="],
 
     "hysnappy": ["hysnappy@1.1.1", "", {}, "sha512-/V9XcN2NtRyWjR4LYMfvnvasVVF8jbT/ej0eofBQjZel91E3D813FQ3mQC6gDSMMTCq/FJh28XHeyqr3I/oBRw=="],
 
