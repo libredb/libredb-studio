@@ -333,7 +333,7 @@
     "@happy-dom/global-registrator": "21.0.4",
     "@playwright/test": "1.64.1",
     "@sinonjs/fake-timers": "15.4.0",
-    "@tailwindcss/cli": "4.3.3",
+    "@tailwindcss/cli": "4.3.4",
     "@types/mocha": "10.0.10",
     "@types/node": "24.19.2",
     "@types/vscode": "1.120.0",
