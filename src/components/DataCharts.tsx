@@ -435,7 +435,7 @@ export const NULL_CATEGORY_LABEL = "NULL";
  * later duplicate showed the first one's numbers. Keyed by position, each tick is its
  * own row; the tick text and the tooltip title read the category back from that row.
  */
-export const CHART_ROW_KEY = "__libredb_chart_row";
+const CHART_ROW_KEY = "__libredb_chart_row";
 
 /**
  * The x value a category chart is handed for one cell.

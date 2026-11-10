@@ -14,6 +14,12 @@
     "import/no-unassigned-import": "off",
     "import/no-named-as-default": "off",
     "react-hooks/exhaustive-deps": "off",
+    // oxlint 1.91 added react/immutability, a port of the React Compiler rule
+    // that eslint-config-next already runs as react-hooks/immutability at
+    // error. The port flags the cancel-flag idiom inside an effect (let
+    // cancelled = false; return () => { cancelled = true; }), which the
+    // React Compiler rule accepts, so ESLint stays its only enforcer.
+    "react/immutability": "off",
     "no-unused-vars": "off",
     "no-underscore-dangle": "off",
     "no-shadow": "off",
