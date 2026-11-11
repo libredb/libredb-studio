@@ -22,7 +22,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { toast } from "sonner";
-import { type AgentChartSpec, QueryResult } from "@/lib/types";
+import { type AgentChartSpec, QueryResult, type SavedChartConfig } from "@/lib/types";
 import {
   loadMaskingConfig,
   maskValueByPattern,
@@ -116,6 +116,16 @@ interface DataChartsProps {
    */
   spec?: AgentChartSpec | null;
   /**
+   * A chart the user saved, drawn the way it was saved: its type, axes, aggregation and
+   * date grouping, rather than whatever `analyzeData` would pick (#2281). The Dashboard's
+   * cards pass it in. Not a `spec`: an agent spec cannot carry a histogram, a stacked
+   * area or an aggregation, and a saved chart can. When the result on screen lacks the
+   * saved columns the chart says so instead of guessing another one.
+   */
+  saved?: SavedChartConfig | null;
+  /** Only the chart: no toolbar and no footer. For the Dashboard's cards (#2281). */
+  chartOnly?: boolean;
+  /**
    * The grid's masking inputs, handed down the same way the graph view takes them
    * (#1939). While masking is in force a masked column's CATEGORIES are drawn masked
    * and its numbers are never plotted: the mask text is not numeric, and the raw
@@ -145,10 +155,15 @@ interface DataChartsProps {
  * throw away — a disagreement between four layers is now a field that does not exist.
  */
 function specApplies(spec: AgentChartSpec, analysis: DataAnalysis): boolean {
-  if (!analysis.fields.some((field) => field.name === spec.x)) return false;
-  if (!spec.y.every((column) => analysis.numericFields.includes(column))) return false;
+  return columnsApply(spec.type, spec.x, spec.y, analysis);
+}
+
+/** The column test a specification and a saved chart (#2281) both have to pass. */
+function columnsApply(type: string, x: string, y: readonly string[], analysis: DataAnalysis): boolean {
+  if (!analysis.fields.some((field) => field.name === x)) return false;
+  if (!y.every((column) => analysis.numericFields.includes(column))) return false;
   // Scatter reads both axes as numbers, so a categorical x is the same failure.
-  if (spec.type === "scatter" && !analysis.numericFields.includes(spec.x)) return false;
+  if (type === "scatter" && !analysis.numericFields.includes(x)) return false;
   return true;
 }
 
@@ -545,6 +560,8 @@ export function groupByDate(dateStr: string, grouping: DateGrouping): string {
 export function DataCharts({
   result,
   spec = null,
+  saved = null,
+  chartOnly = false,
   maskingEnabled,
   userRole,
   maskingConfig,
@@ -554,6 +571,11 @@ export function DataCharts({
   const analysis = useMemo(() => analyzeData(result), [result]);
   /** The supplied specification, or null when there is none this result can carry. */
   const appliedSpec = useMemo(() => (spec !== null && specApplies(spec, analysis) ? spec : null), [spec, analysis]);
+  /** The saved chart, or null when none was handed in or this result cannot carry it. */
+  const appliedSaved = useMemo(
+    () => (saved !== null && columnsApply(saved.chartType, saved.xAxis, saved.yAxis, analysis) ? saved : null),
+    [saved, analysis],
+  );
 
   // No config handed in falls back to the SAVED one, as ResultsGrid (`maskingConfig ??
   // loadMaskingConfig()`) and the DataProfiler already do: undefined used to read as no
@@ -620,23 +642,41 @@ export function DataCharts({
   const [saveName, setSaveName] = useState("");
 
   /*
-    The analysis and the specification these selections were derived from. Adjusting the
-    state during render rather than in an effect means the chart never paints once with
-    the previous result's axes; the condition is what stops it looping. Both `analysis`
-    and `appliedSpec` are memos over the props, so they hold their identity until the
-    props change and the condition goes false again on the very next pass.
+    The analysis, the specification and the saved chart these selections were derived
+    from. Adjusting the state during render rather than in an effect means the chart never
+    paints once with the previous result's axes; the condition is what stops it looping.
+    `analysis`, `appliedSpec` and `appliedSaved` are memos over the props, so they hold
+    their identity until the props change and the condition goes false again on the very
+    next pass.
   */
-  const [derivedFrom, setDerivedFrom] = useState<{ a: DataAnalysis; s: AgentChartSpec | null } | null>(null);
-  if (derivedFrom === null || derivedFrom.a !== analysis || derivedFrom.s !== appliedSpec) {
-    setDerivedFrom({ a: analysis, s: appliedSpec });
+  const [derivedFrom, setDerivedFrom] = useState<{
+    a: DataAnalysis;
+    s: AgentChartSpec | null;
+    v: SavedChartConfig | null;
+  } | null>(null);
+  if (
+    derivedFrom === null ||
+    derivedFrom.a !== analysis ||
+    derivedFrom.s !== appliedSpec ||
+    derivedFrom.v !== appliedSaved
+  ) {
+    setDerivedFrom({ a: analysis, s: appliedSpec, v: appliedSaved });
     if (analysis.isVisualizable) {
       /*
-        A specification that survived validation seeds the view instead of the
-        inference: the type is the one its author chose, and the axes are the columns
-        it named. The controls are untouched, so the user can still take the chart
+        A saved chart or a specification that survived validation seeds the view instead
+        of the inference: the type is the one its author chose, and the axes are the
+        columns it named. A saved chart also brings its aggregation and date grouping
+        (#2281). The controls are untouched, so the user can still take the chart
         somewhere else from here.
       */
-      if (appliedSpec !== null) {
+      if (appliedSaved !== null) {
+        setChartType(appliedSaved.chartType as ChartType);
+        setXAxis(appliedSaved.xAxis);
+        setYAxis([...appliedSaved.yAxis]);
+        setAggregation(appliedSaved.aggregation ?? "none");
+        setDateGrouping(appliedSaved.dateGrouping ?? "");
+        if (appliedSaved.chartType === "scatter") setScatterY(appliedSaved.yAxis[0]);
+      } else if (appliedSpec !== null) {
         setChartType(appliedSpec.type);
         setXAxis(appliedSpec.x);
         setYAxis([...appliedSpec.y]);
@@ -854,6 +894,16 @@ export function DataCharts({
     );
   }
 
+  // A saved chart this result cannot carry: say so, rather than draw a guessed chart under its name (#2281).
+  if (saved !== null && appliedSaved === null) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-1 bg-sunken text-fg-subtle text-xs text-center px-3">
+        <p>{"The current result doesn't have this chart's columns"}</p>
+        <p className="font-mono">{[saved.xAxis, ...saved.yAxis].join(", ")}</p>
+      </div>
+    );
+  }
+
   const chartTypes: { type: ChartType; icon: React.ReactNode; label: string }[] = [
     { type: "bar", icon: <ChartColumn strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Bar" },
     { type: "line", icon: <LineChartIcon strokeWidth={1.5} className="w-3.5 h-3.5" />, label: "Line" },
@@ -907,6 +957,160 @@ export function DataCharts({
       (chartType === "scatter" &&
         ((xAxis !== "" && sensitiveColumns.has(xAxis)) || (scatterY !== "" && sensitiveColumns.has(scatterY)))) ||
       (chartType !== "histogram" && chartType !== "scatter" && yAxis.length > 0 && visibleYAxis.length === 0));
+
+  // The chart itself. Chart-only mode (#2281) draws it without the toolbar and the footer.
+  const chartArea = (
+    <div ref={chartRef} className={cn("flex-1 min-h-0", chartOnly ? "p-2" : "p-4")}>
+      {plotWithheld ? (
+        <div className="h-full flex items-center justify-center text-fg-subtle text-xs">
+          Nothing to plot while display masking is on: every selected numeric field is masked
+        </div>
+      ) : yAxis.length === 0 ? (
+        <div className="h-full flex items-center justify-center text-fg-subtle text-xs">
+          Select at least one numeric field for the chart
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height="100%">
+          {chartType === "bar" ? (
+            <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
+              <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
+              {categoryXAxis}
+              <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
+              {categoryTooltip}
+              <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
+              {plottedYAxis.map((field, index) => (
+                <Bar key={field} dataKey={field} fill={CHART_COLORS[index]} radius={[4, 4, 0, 0]} />
+              ))}
+            </BarChart>
+          ) : chartType === "line" ? (
+            <LineChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
+              <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
+              {categoryXAxis}
+              <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
+              {categoryTooltip}
+              <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
+              {plottedYAxis.map((field, index) => (
+                <Line
+                  key={field}
+                  type="monotone"
+                  dataKey={field}
+                  stroke={CHART_COLORS[index]}
+                  strokeWidth={2}
+                  dot={{ fill: CHART_COLORS[index], strokeWidth: 0, r: 4 }}
+                  activeDot={{ r: 6, strokeWidth: 0 }}
+                />
+              ))}
+            </LineChart>
+          ) : chartType === "area" ? (
+            <AreaChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
+              <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
+              {categoryXAxis}
+              <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
+              {categoryTooltip}
+              <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
+              {plottedYAxis.map((field, index) => (
+                <Area
+                  key={field}
+                  type="monotone"
+                  dataKey={field}
+                  stroke={CHART_COLORS[index]}
+                  fill={CHART_COLORS[index]}
+                  fillOpacity={0.3}
+                  strokeWidth={2}
+                />
+              ))}
+            </AreaChart>
+          ) : chartType === "scatter" ? (
+            <ScatterChart margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
+              <XAxis
+                dataKey={xAxis}
+                type="number"
+                tick={{ fill: viz.axis, fontSize: 11 }}
+                name={xAxis}
+                label={{ value: xAxis, position: "bottom", fill: viz.axis, fontSize: 11 }}
+              />
+              <YAxis
+                dataKey={scatterY}
+                type="number"
+                tick={{ fill: viz.axis, fontSize: 11 }}
+                name={scatterY}
+                label={{ value: scatterY, angle: -90, position: "insideLeft", fill: viz.axis, fontSize: 11 }}
+              />
+              <ZAxis range={[40, 200]} />
+              <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: "3 3" }} />
+              <Scatter name={`${xAxis} vs ${scatterY}`} data={chartData} fill={CHART_COLORS[0]} shape="circle" />
+            </ScatterChart>
+          ) : chartType === "histogram" ? (
+            <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
+              <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
+              <RotatedXAxis dataKey="range" fill={viz.axis} fontSize={10} shortenDates={false} />
+              <YAxis
+                tick={{ fill: viz.axis, fontSize: 11 }}
+                label={{ value: "Count", angle: -90, position: "insideLeft", fill: viz.axis, fontSize: 11 }}
+              />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar dataKey="count" fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          ) : chartType === "stacked-bar" ? (
+            <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
+              <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
+              {categoryXAxis}
+              <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
+              {categoryTooltip}
+              <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
+              {plottedYAxis.map((field, index) => (
+                <Bar key={field} dataKey={field} stackId="stack" fill={CHART_COLORS[index]} />
+              ))}
+            </BarChart>
+          ) : chartType === "stacked-area" ? (
+            <AreaChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
+              <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
+              {categoryXAxis}
+              <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
+              {categoryTooltip}
+              <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
+              {plottedYAxis.map((field, index) => (
+                <Area
+                  key={field}
+                  type="monotone"
+                  dataKey={field}
+                  stackId="stack"
+                  stroke={CHART_COLORS[index]}
+                  fill={CHART_COLORS[index]}
+                  fillOpacity={0.5}
+                />
+              ))}
+            </AreaChart>
+          ) : (
+            <PieChart margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+              <Pie
+                data={chartData.slice(0, MAX_SERIES)}
+                dataKey={plottedYAxis[0]}
+                nameKey={xAxis}
+                cx="50%"
+                cy="50%"
+                outerRadius="70%"
+                // `PieSliceLabel` defaults `percent` to 0, which is the same
+                // guard recharts 3 made necessary by typing it optional — an
+                // absent value would otherwise render the label "name (NaN%)".
+                label={<PieSliceLabel ink={viz.ink} />}
+                labelLine={{ stroke: viz.grid }}
+              >
+                {chartData.slice(0, MAX_SERIES).map((_entry, index) => (
+                  <Cell key={`cell-${index}`} fill={CHART_COLORS[index]} />
+                ))}
+              </Pie>
+              <Tooltip content={<CustomTooltip />} />
+              <Legend {...legendProps} />
+            </PieChart>
+          )}
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+
+  if (chartOnly) return <div className="h-full flex flex-col bg-sunken">{chartArea}</div>;
 
   return (
     <div className="h-full flex flex-col bg-sunken">
@@ -1165,154 +1369,7 @@ export function DataCharts({
       </div>
 
       {/* Chart Area */}
-      <div ref={chartRef} className="flex-1 p-4 min-h-0">
-        {plotWithheld ? (
-          <div className="h-full flex items-center justify-center text-fg-subtle text-xs">
-            Nothing to plot while display masking is on: every selected numeric field is masked
-          </div>
-        ) : yAxis.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-fg-subtle text-xs">
-            Select at least one numeric field for the chart
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            {chartType === "bar" ? (
-              <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                {categoryXAxis}
-                <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                {categoryTooltip}
-                <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
-                {plottedYAxis.map((field, index) => (
-                  <Bar key={field} dataKey={field} fill={CHART_COLORS[index]} radius={[4, 4, 0, 0]} />
-                ))}
-              </BarChart>
-            ) : chartType === "line" ? (
-              <LineChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                {categoryXAxis}
-                <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                {categoryTooltip}
-                <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
-                {plottedYAxis.map((field, index) => (
-                  <Line
-                    key={field}
-                    type="monotone"
-                    dataKey={field}
-                    stroke={CHART_COLORS[index]}
-                    strokeWidth={2}
-                    dot={{ fill: CHART_COLORS[index], strokeWidth: 0, r: 4 }}
-                    activeDot={{ r: 6, strokeWidth: 0 }}
-                  />
-                ))}
-              </LineChart>
-            ) : chartType === "area" ? (
-              <AreaChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                {categoryXAxis}
-                <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                {categoryTooltip}
-                <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
-                {plottedYAxis.map((field, index) => (
-                  <Area
-                    key={field}
-                    type="monotone"
-                    dataKey={field}
-                    stroke={CHART_COLORS[index]}
-                    fill={CHART_COLORS[index]}
-                    fillOpacity={0.3}
-                    strokeWidth={2}
-                  />
-                ))}
-              </AreaChart>
-            ) : chartType === "scatter" ? (
-              <ScatterChart margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
-                  dataKey={xAxis}
-                  type="number"
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  name={xAxis}
-                  label={{ value: xAxis, position: "bottom", fill: viz.axis, fontSize: 11 }}
-                />
-                <YAxis
-                  dataKey={scatterY}
-                  type="number"
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  name={scatterY}
-                  label={{ value: scatterY, angle: -90, position: "insideLeft", fill: viz.axis, fontSize: 11 }}
-                />
-                <ZAxis range={[40, 200]} />
-                <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: "3 3" }} />
-                <Scatter name={`${xAxis} vs ${scatterY}`} data={chartData} fill={CHART_COLORS[0]} shape="circle" />
-              </ScatterChart>
-            ) : chartType === "histogram" ? (
-              <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <RotatedXAxis dataKey="range" fill={viz.axis} fontSize={10} shortenDates={false} />
-                <YAxis
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  label={{ value: "Count", angle: -90, position: "insideLeft", fill: viz.axis, fontSize: 11 }}
-                />
-                <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="count" fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            ) : chartType === "stacked-bar" ? (
-              <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                {categoryXAxis}
-                <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                {categoryTooltip}
-                <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
-                {plottedYAxis.map((field, index) => (
-                  <Bar key={field} dataKey={field} stackId="stack" fill={CHART_COLORS[index]} />
-                ))}
-              </BarChart>
-            ) : chartType === "stacked-area" ? (
-              <AreaChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                {categoryXAxis}
-                <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                {categoryTooltip}
-                <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
-                {plottedYAxis.map((field, index) => (
-                  <Area
-                    key={field}
-                    type="monotone"
-                    dataKey={field}
-                    stackId="stack"
-                    stroke={CHART_COLORS[index]}
-                    fill={CHART_COLORS[index]}
-                    fillOpacity={0.5}
-                  />
-                ))}
-              </AreaChart>
-            ) : (
-              <PieChart margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                <Pie
-                  data={chartData.slice(0, MAX_SERIES)}
-                  dataKey={plottedYAxis[0]}
-                  nameKey={xAxis}
-                  cx="50%"
-                  cy="50%"
-                  outerRadius="70%"
-                  // `PieSliceLabel` defaults `percent` to 0, which is the same
-                  // guard recharts 3 made necessary by typing it optional — an
-                  // absent value would otherwise render the label "name (NaN%)".
-                  label={<PieSliceLabel ink={viz.ink} />}
-                  labelLine={{ stroke: viz.grid }}
-                >
-                  {chartData.slice(0, MAX_SERIES).map((_entry, index) => (
-                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index]} />
-                  ))}
-                </Pie>
-                <Tooltip content={<CustomTooltip />} />
-                <Legend {...legendProps} />
-              </PieChart>
-            )}
-          </ResponsiveContainer>
-        )}
-      </div>
+      {chartArea}
 
       {/* Footer Stats */}
       <div className="px-3 py-2 border-t border-hairline bg-surface flex items-center gap-4 text-xs text-fg-subtle">

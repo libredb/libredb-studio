@@ -224,7 +224,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { chartNumber, DataCharts, PieSliceLabel } from "@/components/DataCharts";
 import { mockToastError } from "../helpers/mock-sonner";
-import type { QueryResult } from "@/lib/types";
+import type { QueryResult, SavedChartConfig } from "@/lib/types";
 import { DEFAULT_MASKING_CONFIG, maskValueByPattern } from "@/lib/data-masking";
 
 import userEvent from "@testing-library/user-event";
@@ -1147,6 +1147,175 @@ describe("DataCharts", () => {
     const stored = localStorage.getItem("libredb_saved_charts");
     const parsed = JSON.parse(stored || "[]");
     expect(parsed.length).toBe(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // A saved chart handed in: what each Dashboard card draws (#2281)
+  // -----------------------------------------------------------------------
+
+  describe("a saved chart handed in (#2281)", () => {
+    // `cost`, not `revenue`: the built-in financial masking rule covers `revenue`, so a
+    // chart saved over it is withheld while masking is on (the masking test below).
+    function savedChart(overrides: Partial<SavedChartConfig> = {}): SavedChartConfig {
+      return {
+        id: "saved-1",
+        name: "Saved",
+        chartType: "bar",
+        xAxis: "category",
+        yAxis: ["cost"],
+        createdAt: new Date("2026-01-01"),
+        ...overrides,
+      };
+    }
+
+    test("draws the saved chart type, not the one the data suggests", () => {
+      // mockNumericResult has a date column, so on its own it is drawn as a line.
+      const { queryByTestId } = render(
+        React.createElement(DataCharts, { result: mockNumericResult, saved: savedChart({ chartType: "pie" }) }),
+      );
+      expect(queryByTestId("mock-pie-chart")).not.toBeNull();
+      expect(queryByTestId("mock-line-chart")).toBeNull();
+    });
+
+    test("draws the saved axes, not the inferred ones", () => {
+      render(
+        React.createElement(DataCharts, {
+          result: mockNumericResult,
+          saved: savedChart({ chartType: "line", xAxis: "date", yAxis: ["cost"] }),
+        }),
+      );
+      const point = (capturedChartProps.at(-1)!.data as Record<string, unknown>[])[0];
+      expect(point).toHaveProperty("date");
+      expect(point).toHaveProperty("cost");
+      // The inference would have drawn `revenue` over `category`.
+      expect(point).not.toHaveProperty("revenue");
+      expect(point).not.toHaveProperty("category");
+    });
+
+    test("applies the saved aggregation and date grouping", () => {
+      const result: QueryResult = {
+        rows: [
+          { date: "2025-01-03", units: 100 },
+          { date: "2025-01-20", units: 50 },
+          { date: "2025-02-01", units: 70 },
+        ],
+        fields: ["date", "units"],
+        rowCount: 3,
+        executionTime: 1,
+      };
+      render(
+        React.createElement(DataCharts, {
+          result,
+          saved: savedChart({ xAxis: "date", yAxis: ["units"], aggregation: "sum", dateGrouping: "month" }),
+        }),
+      );
+      expect(capturedChartProps.length).toBeGreaterThan(0);
+      const data = capturedChartProps.at(-1)!.data as Record<string, unknown>[];
+      expect(data.map((point) => point.units)).toEqual([150, 70]);
+    });
+
+    test("draws a saved histogram, a type an agent spec cannot carry", () => {
+      const { queryByTestId } = render(
+        React.createElement(DataCharts, {
+          result: mockNumericResult,
+          saved: savedChart({ chartType: "histogram", xAxis: "category", yAxis: ["cost"] }),
+        }),
+      );
+      expect(queryByTestId("mock-bar-chart")).not.toBeNull();
+      const bins = capturedChartProps.at(-1)!.data as Record<string, unknown>[];
+      expect(bins[0]).toHaveProperty("range");
+    });
+
+    test("selects a saved stacked area, and leaves the controls live", () => {
+      const { getByTitle } = render(
+        React.createElement(DataCharts, {
+          result: mockNumericResult,
+          saved: savedChart({ chartType: "stacked-area" }),
+        }),
+      );
+      expect(getByTitle("Stack Area").className).toContain("bg-brand-solid");
+
+      fireEvent.click(getByTitle("Bar"));
+      expect(getByTitle("Bar").className).toContain("bg-brand-solid");
+    });
+
+    test("draws a saved scatter against its first y column", () => {
+      render(
+        React.createElement(DataCharts, {
+          result: pureNumericResult,
+          saved: savedChart({ chartType: "scatter", xAxis: "x", yAxis: ["z"] }),
+        }),
+      );
+      expect(capturedScatterProps.at(-1)?.name).toBe("x vs z");
+    });
+
+    test("says so when a saved scatter's x column is no longer numeric", () => {
+      const { queryByText, queryByTestId } = render(
+        React.createElement(DataCharts, {
+          result: mockNumericResult,
+          saved: savedChart({ chartType: "scatter", xAxis: "category", yAxis: ["cost"] }),
+        }),
+      );
+      expect(queryByText(/doesn't have this chart's columns/)).not.toBeNull();
+      expect(queryByTestId("mock-scatter-chart")).toBeNull();
+    });
+
+    test("a saved chart over a masked column is withheld while masking is on, not redrawn over another", () => {
+      const { queryByText, queryByTestId } = render(
+        React.createElement(DataCharts, { result: mockNumericResult, saved: savedChart({ yAxis: ["revenue"] }) }),
+      );
+      expect(queryByText(/Nothing to plot while display masking is on/)).not.toBeNull();
+      expect(queryByTestId("mock-bar-chart")).toBeNull();
+    });
+
+    test("says so instead of guessing when the result lacks the saved x column", () => {
+      const { queryByText, queryByTestId } = render(
+        React.createElement(DataCharts, { result: mockNumericResult, saved: savedChart({ xAxis: "month" }) }),
+      );
+      expect(queryByText(/doesn't have this chart's columns/)).not.toBeNull();
+      expect(queryByTestId("mock-line-chart")).toBeNull();
+      expect(queryByTestId("mock-bar-chart")).toBeNull();
+    });
+
+    test("says so instead of guessing when the result lacks a saved y column", () => {
+      const { queryByText, queryByTestId } = render(
+        React.createElement(DataCharts, {
+          result: mockNumericResult,
+          saved: savedChart({ yAxis: ["revenue", "profit"] }),
+        }),
+      );
+      expect(queryByText(/doesn't have this chart's columns/)).not.toBeNull();
+      expect(queryByTestId("mock-line-chart")).toBeNull();
+      expect(queryByTestId("mock-bar-chart")).toBeNull();
+    });
+
+    test("chart-only draws the chart without the toolbar or the footer", () => {
+      const { queryByText, queryByTestId, queryByTitle } = render(
+        React.createElement(DataCharts, { result: mockNumericResult, saved: savedChart(), chartOnly: true }),
+      );
+      expect(queryByTestId("mock-bar-chart")).not.toBeNull();
+      expect(queryByTitle("Bar")).toBeNull();
+      expect(queryByText("Save")).toBeNull();
+      expect(queryByText("Export")).toBeNull();
+      expect(queryByText("Agg")).toBeNull();
+      expect(queryByText(/Rows:/)).toBeNull();
+    });
+
+    test("a different saved chart handed in replaces the one it was drawing", () => {
+      const { queryByTestId, rerender } = render(
+        React.createElement(DataCharts, { result: mockNumericResult, saved: savedChart({ chartType: "pie" }) }),
+      );
+      expect(queryByTestId("mock-pie-chart")).not.toBeNull();
+
+      rerender(
+        React.createElement(DataCharts, {
+          result: mockNumericResult,
+          saved: savedChart({ id: "saved-2", chartType: "area" }),
+        }),
+      );
+      expect(queryByTestId("mock-area-chart")).not.toBeNull();
+      expect(queryByTestId("mock-pie-chart")).toBeNull();
+    });
   });
 
   // -----------------------------------------------------------------------
