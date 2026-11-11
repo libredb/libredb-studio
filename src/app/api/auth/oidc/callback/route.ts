@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { login } from "@/lib/auth";
 import { OIDC_STATE_COOKIE, cookieDeletion } from "@/lib/auth-cookies";
 import { studioCookie } from "@/lib/studio-cookie";
-import { sessionTtlSeconds } from "@/lib/config/auth-env";
+import { allowedEmailDomains, sessionTtlSeconds } from "@/lib/config/auth-env";
 import {
   OIDC_LOGOUT_HINT_COOKIE,
   fitsLogoutHintCookie,
@@ -22,7 +22,7 @@ import {
   readRoleClaimValues,
   getPublicOrigin,
 } from "@/lib/oidc";
-import { oidcUsername } from "@/lib/oidc-identity";
+import { isEmailDomainAllowed, oidcUsername } from "@/lib/oidc-identity";
 import { logger } from "@/lib/logger";
 import { clientAddress } from "@/lib/api/client-address";
 import { emitAuditEvent, type AuditReason } from "@/lib/audit";
@@ -124,6 +124,14 @@ export async function GET(request: Request) {
     }
 
     const identity = oidcUsername(claims as Record<string, unknown>) ?? claims.sub;
+
+    // OIDC_ALLOWED_EMAIL_DOMAINS narrows admission before any role is read. Unset, every account the provider
+    // authenticated signs in exactly as before.
+    if (!isEmailDomainAllowed(claims as Record<string, unknown>, allowedEmailDomains())) {
+      cookieStore.delete(cookieDeletion(stateScope));
+      auditFailure("oidc_domain_not_allowed", ip, String(identity));
+      return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_domain_not_allowed`);
+    }
 
     // With the Kubernetes access review on (docs/SEED_CONNECTIONS.md), the ID token's groups are what every review of
     // this subject asserts, so a claim the store cannot hold refuses the sign-in, and the role claim is not read at

@@ -4,6 +4,7 @@ import { AuthConfigError } from "@/lib/auth-errors";
 import { SignJWT } from "jose";
 import { verifyJWT } from "@/lib/auth";
 import {
+  allowedEmailDomains,
   derivedSigningKey,
   getJwtSecret,
   JWT_SECRET_MISSING_MESSAGE,
@@ -205,5 +206,26 @@ describe("config/auth-env sessionTtlSeconds", () => {
       expect(() => sessionTtlSeconds()).toThrow(AuthConfigError);
       expect(() => sessionTtlSeconds()).toThrow("AUTH_SESSION_TTL_SECONDS");
     }
+  });
+});
+
+describe("config/auth-env allowedEmailDomains", () => {
+  const original = process.env.OIDC_ALLOWED_EMAIL_DOMAINS;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.OIDC_ALLOWED_EMAIL_DOMAINS;
+    else process.env.OIDC_ALLOWED_EMAIL_DOMAINS = original;
+  });
+
+  test("parses a comma list, lowercased and without a leading @", () => {
+    process.env.OIDC_ALLOWED_EMAIL_DOMAINS = " Topvisor.com ,@thundo.com, ,";
+    expect(allowedEmailDomains()).toEqual(["topvisor.com", "thundo.com"]);
+  });
+
+  test("is empty when unset or blank, which turns the setting off", () => {
+    delete process.env.OIDC_ALLOWED_EMAIL_DOMAINS;
+    expect(allowedEmailDomains()).toEqual([]);
+    process.env.OIDC_ALLOWED_EMAIL_DOMAINS = " , ,";
+    expect(allowedEmailDomains()).toEqual([]);
   });
 });

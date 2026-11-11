@@ -116,3 +116,14 @@ export function sessionTtlSeconds(): number {
   }
   return seconds;
 }
+
+/**
+ * The domains OIDC_ALLOWED_EMAIL_DOMAINS lists, lowercased and without a leading @ so that a pasted "@example.com"
+ * still matches. Empty, the setting is off and every account the provider authenticates is admitted.
+ */
+export function allowedEmailDomains(): string[] {
+  return (process.env.OIDC_ALLOWED_EMAIL_DOMAINS ?? "")
+    .split(",")
+    .map((domain) => domain.trim().toLowerCase().replace(/^@/, ""))
+    .filter(Boolean);
+}

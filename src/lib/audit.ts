@@ -113,6 +113,12 @@ export type AuditReason =
    */
   | "oidc_no_role"
   /**
+   * The provider authenticated the account, but OIDC_ALLOWED_EMAIL_DOMAINS is set and the token speaks for another
+   * domain: its `hd` and the domain of a verified `email` both fall outside the list, or it carries neither, so no
+   * session was created. The record names the account, which the provider vouched for.
+   */
+  | "oidc_domain_not_allowed"
+  /**
    * The provider authenticated the account, but its role claim held more than 20 claim roles matching
    * OIDC_ROLE_PREFIX or a claim role longer than 64 characters, so no session was created.
    */
