@@ -412,6 +412,8 @@ describe("POST /api/db/transaction", () => {
       hasError: boolean;
       inTransaction: boolean;
       rows: unknown[];
+      fields: string[];
+      rowCount: number;
       pagination?: unknown;
       statements: { index: number; sql: string; status: string; error?: string }[];
     };
@@ -444,7 +446,7 @@ describe("POST /api/db/transaction", () => {
       expect(data.pagination).toBeUndefined();
     });
 
-    test("bounds only the last statement, and shows the last result that has rows", async () => {
+    test("bounds only the last statement, and shows the last successful result", async () => {
       mockTxProvider.queryInTransaction.mockImplementationOnce(async () => ({
         rows: [],
         fields: [],
@@ -457,6 +459,28 @@ describe("POST /api/db/transaction", () => {
       expect(sent[0]).not.toContain("LIMIT 50");
       expect(sent[1]).toContain("LIMIT 50");
       expect(data.rows).toEqual([{ id: 1, name: "Alice" }]);
+    });
+
+    test("shows the last successful statement even when it returns no rows (#2271)", async () => {
+      // First statement answers a row; the last, an empty SELECT with its own columns.
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => ({
+        rows: [{ id: 1, name: "Alice" }],
+        fields: ["id"],
+        rowCount: 1,
+        executionTime: 1,
+      }));
+      mockTxProvider.queryInTransaction.mockImplementation(async () => ({
+        rows: [],
+        fields: ["n"],
+        rowCount: 0,
+        executionTime: 1,
+      }));
+
+      const { data } = await run("SELECT id FROM t; SELECT n FROM u WHERE 1 = 0");
+
+      expect(data.rows).toEqual([]);
+      expect(data.fields).toEqual(["n"]);
+      expect(data.rowCount).toBe(0);
     });
 
     test("stops at the first failure and names it", async () => {

@@ -66,7 +66,7 @@ interface TransactionProvider {
  * that runs one statement per call answers a syntax error at the second: measured on MySQL 26.7.0,
  * two UPDATE lines failed "near 'UPDATE ...' at line 2". The answer has the shape
  * `/api/db/multi-query` gives a script, which the editor already reports (the executed count, the
- * statement that failed, the last result with rows), plus `inTransaction`.
+ * statement that failed, the last successful statement's result), plus `inTransaction`.
  *
  * A failure is part of the answer, not a thrown error: the statements before it ran inside the
  * transaction and their work is still there to commit or roll back. Only the last statement is
@@ -121,7 +121,9 @@ async function runScriptInTransaction(
       break;
     }
   }
-  const shown = [...statements].reverse().find((r) => r.status === "success" && r.rows && r.rows.length > 0);
+  // The last successful statement is the script's own outcome (#2271): a write or an empty
+  // SELECT is shown as itself, not by the last result that happened to carry rows.
+  const shown = [...statements].reverse().find((r) => r.status === "success");
   return {
     rows: shown?.rows ?? [],
     fields: shown?.fields ?? [],

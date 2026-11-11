@@ -512,8 +512,9 @@ the two were separate requests. The exception is a batch that is a module defini
 statement is `CREATE`, `ALTER` or `CREATE OR ALTER` of a procedure, function, trigger or view, which
 T-SQL requires first in its batch, and everything after it is the body the server stores, where a
 `TOP` would change the procedure rather than the result; that batch is sent as written. SQL Server's
-provider carries every result set of a batch, and the route shows the last one with rows, the same rule
-it applies across a script's statements. A batch's earlier result sets are not sent back one by one,
+provider carries every result set of a batch, and the route shows the last one with rows, a rule of
+its own inside a batch (across a script's statements the last successful statement is the main result,
+empty or not). A batch's earlier result sets are not sent back one by one,
 which costs nothing the grid showed before: it shows one result, and `statements[i]` is now the
 batch. Across a `GO`, a `#temp` table survives only if the next batch borrows the same pooled
 connection, which nothing guarantees (`docs/BACKLOG.md` D92).
@@ -538,9 +539,9 @@ not ask, as before. MySQL, Db2 and Trino compound statements are not read yet (`
 
 Last-only is that route's own policy, and it leaves a hole this section does not close: a non-final
 `SELECT` runs exactly as written, and its **entire** result set travels back in `statements[i].rows`.
-That is also what the grid displays whenever the final statement returns no rows of its own
-(`SELECT * FROM huge; INSERT INTO t VALUES (1)`), since the response picks the last result that *has*
-rows. Noted here rather than claimed closed.
+The grid itself now shows the last successful statement's own result, empty or not, so the earlier
+`SELECT`'s rows are no longer displayed in its place; they remain available in `statements[i].rows`
+for anything that reads the per-statement outcomes.
 
 Two indicators do not follow the bound onto this route, because it returns no pagination metadata at
 all: the **AUTO-LIMITED badge does not appear** for a multi-statement run, and **Load More is not
