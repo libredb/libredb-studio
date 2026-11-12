@@ -512,9 +512,9 @@ the two were separate requests. The exception is a batch that is a module defini
 statement is `CREATE`, `ALTER` or `CREATE OR ALTER` of a procedure, function, trigger or view, which
 T-SQL requires first in its batch, and everything after it is the body the server stores, where a
 `TOP` would change the procedure rather than the result; that batch is sent as written. SQL Server's
-provider carries every result set of a batch, and the route shows the last one with rows, a rule of
-its own inside a batch (across a script's statements the last successful statement is the main result,
-empty or not). A batch's earlier result sets are not sent back one by one,
+provider carries every result set of a batch, and the route shows the batch's last set, empty or
+not (#2286) - the same rule the script's statements follow (the last successful statement is the
+main result, empty or not). A batch's earlier result sets are not sent back one by one,
 which costs nothing the grid showed before: it shows one result, and `statements[i]` is now the
 batch. Across a `GO`, a `#temp` table survives only if the next batch borrows the same pooled
 connection, which nothing guarantees (`docs/BACKLOG.md` D92).

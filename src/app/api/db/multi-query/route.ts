@@ -99,9 +99,8 @@ function boundedText(
 }
 
 /**
- * What a unit's result shows. A batch that produced several result sets shows the last one
- * with rows (#1312), a rule of its own inside a batch; across a script's statements the
- * response below shows the last successful one, empty or not (#2271), so a plain
+ * What a unit's result shows. A batch that produced several result sets shows the last one,
+ * empty or not (#2286) - the same rule a script's statements follow since #2271, so a plain
  * `SELECT * FROM a; SELECT * FROM b` shows what it showed when the two were separate
  * requests. A unit that produced one set shows it.
  *
@@ -117,7 +116,7 @@ function shownSet(result: QueryResult, unit: ExecutionUnit) {
     const rowCount = batch && result.fields.length > 0 ? result.rows.length : result.rowCount;
     return { rows: result.rows, fields: result.fields, rowCount, columnTypes: result.columnTypes };
   }
-  const set = [...sets].reverse().find((candidate) => candidate.rows.length > 0) ?? sets[sets.length - 1];
+  const set = sets[sets.length - 1];
   return { rows: set.rows, fields: set.fields, rowCount: set.rows.length, columnTypes: set.columnTypes };
 }
 
