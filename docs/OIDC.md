@@ -424,7 +424,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
 | `OIDC_ROLE_CLAIM` | No | — | Claim path for role extraction (dot-notation supported) |
 | `OIDC_ADMIN_ROLES` | No | `admin` | Comma-separated values that map to admin role |
 | `OIDC_USER_ROLES` | No | unset | Comma-separated values that map to user role. Set, an account that holds neither an admin nor a user role is refused at sign-in ([Requiring a role](#requiring-a-role)). Needs `OIDC_ROLE_CLAIM` |
-| `OIDC_ALLOWED_EMAIL_DOMAINS` | No | unset | Comma-separated email domains allowed to sign in, read from the token's `hd` else from a verified `email`; see [Allowed email domains](#allowed-email-domains) |
+| `OIDC_ALLOWED_EMAIL_DOMAINS` | No | unset | Comma-separated domains allowed to sign in, read from Google's `hd` claim or from an email the provider marks verified; see [Allowed email domains](#allowed-email-domains) |
 | `OIDC_ROLE_PREFIX` | No | unset | Prefix filter for custom roles from the OIDC role claim; see [Custom seed roles with OIDC_ROLE_PREFIX](#custom-seed-roles-with-oidc_role_prefix). Needs `OIDC_ROLE_CLAIM` |
 | `OIDC_PROMPT` | No | `login` | The `prompt` sent on sign-in: `login`, `consent`, `select_account`, or `omit` to send none; see [Single sign-on with OIDC_PROMPT](#single-sign-on-with-oidc_prompt) |
 | `OIDC_AUTO_REDIRECT` | No | off | `true`, `1`, `on` or `yes` sends a signed-out `GET /login` straight to the identity provider; see [Automatic redirect to the provider](#automatic-redirect-to-the-provider) |
@@ -435,7 +435,10 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
 
 ### Allowed email domains
 
-`OIDC_ALLOWED_EMAIL_DOMAINS` admits only accounts whose ID token speaks for one of the listed domains: its `hd` claim (Google Workspace), else the domain of a verified `email`. Any other account is refused before its role is read, with no session and a `login_failure` audit reason of `oidc_domain_not_allowed`. Domains of separate tenants can share one client this way, which no consent-screen setting can express; unset, nothing changes.
+`OIDC_ALLOWED_EMAIL_DOMAINS` admits only accounts whose token speaks for a listed domain: Google's `hd` claim, else the domain of an email the provider marks verified.
+A Google token without `hd` is refused rather than read from the email, and a provider that sends no `email_verified` — Entra ID among them — admits nobody through a list.
+Each domain needs its own entry, a subdomain included, and the list applies when a session is issued.
+Any other account is refused before its role is read, with no session and a `login_failure` reason of `oidc_domain_not_allowed`; unset, nothing changes.
 
 ### Single sign-on with OIDC_PROMPT
 
