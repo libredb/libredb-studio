@@ -51,38 +51,47 @@ describe("oidcUsername", () => {
   });
 });
 
-// OIDC_ALLOWED_EMAIL_DOMAINS is enforced on the domain the provider stands behind: `hd` when it sends one, else the
-// domain of an email it does not mark unverified, so a claim another person could choose cannot pass for a listed one.
+// OIDC_ALLOWED_EMAIL_DOMAINS is enforced on the domain the provider stands behind: Google's `hd`, or an email the
+// provider marks verified, so a claim another person could choose cannot pass for a listed one.
 describe("isEmailDomainAllowed", () => {
+  const GOOGLE = "https://accounts.google.com";
+  const IDP = "https://idp.example.test";
+
   test("admits every account while the list is empty, as before the variable existed", () => {
     expect(isEmailDomainAllowed({ email: "anyone@gmail.test" }, [])).toBe(true);
     expect(isEmailDomainAllowed({}, [])).toBe(true);
   });
 
-  test("reads the hosted domain from hd, which Google Workspace sends, ahead of the email", () => {
-    expect(isEmailDomainAllowed({ hd: "topvisor.test", email: "ada@gmail.test" }, ["topvisor.test"])).toBe(true);
-    expect(isEmailDomainAllowed({ hd: "topvisor.test", email: "ada@topvisor.test" }, ["thundo.test"])).toBe(false);
+  test("reads Google's hd claim, and refuses a Google token without it instead of reading the email", () => {
+    expect(isEmailDomainAllowed({ iss: GOOGLE, hd: "topvisor.test" }, ["topvisor.test"])).toBe(true);
+    expect(isEmailDomainAllowed({ iss: GOOGLE, hd: "topvisor.test" }, ["thundo.test"])).toBe(false);
+    expect(
+      isEmailDomainAllowed({ iss: GOOGLE, email: "ada@topvisor.test", email_verified: true }, ["topvisor.test"]),
+    ).toBe(false);
   });
 
-  test("falls back to the domain of a verified email", () => {
-    expect(isEmailDomainAllowed({ email: "dev@thundo.test" }, ["topvisor.test", "thundo.test"])).toBe(true);
-    expect(isEmailDomainAllowed({ email: "dev@thundo.test" }, ["topvisor.test"])).toBe(false);
-    expect(emailDomainOf({ email: "Dev@Thundo.TEST" })).toBe("thundo.test");
+  test("ignores hd from any other issuer, which a provider or a client can set", () => {
+    expect(isEmailDomainAllowed({ iss: IDP, hd: "topvisor.test" }, ["topvisor.test"])).toBe(false);
   });
 
-  test("refuses a token that names no domain, and one whose email the provider marks unverified", () => {
-    expect(isEmailDomainAllowed({}, ["topvisor.test"])).toBe(false);
-    expect(isEmailDomainAllowed({ email: "boss@topvisor.test", email_verified: false }, ["topvisor.test"])).toBe(false);
-    // Some providers send email_verified as a string; the value is read the way oidcUsername reads it.
-    expect(isEmailDomainAllowed({ email: "boss@topvisor.test", email_verified: "false" }, ["topvisor.test"])).toBe(
-      false,
-    );
+  test("takes an email domain only when the provider marks the email verified", () => {
+    for (const email_verified of [true, "true"]) {
+      expect(isEmailDomainAllowed({ iss: IDP, email: "dev@example.test", email_verified }, ["example.test"])).toBe(
+        true,
+      );
+    }
+    for (const email_verified of [undefined, false, "false", "TRUE", 1]) {
+      expect(isEmailDomainAllowed({ iss: IDP, email: "dev@example.test", email_verified }, ["example.test"])).toBe(
+        false,
+      );
+    }
   });
 
   test("ignores empty and non-string values", () => {
-    expect(emailDomainOf({ hd: "  ", email: "ada@example.test" })).toBe("example.test");
-    expect(emailDomainOf({ hd: 42 })).toBeNull();
-    expect(emailDomainOf({ email: "not-an-email" })).toBeNull();
+    expect(emailDomainOf({ iss: GOOGLE, hd: "  " })).toBeNull();
+    expect(emailDomainOf({ iss: GOOGLE, hd: 42 })).toBeNull();
+    expect(emailDomainOf({ iss: IDP, email: "not-an-email", email_verified: true })).toBeNull();
+    expect(emailDomainOf({ iss: IDP, email: "ada@", email_verified: true })).toBeNull();
     expect(emailDomainOf({})).toBeNull();
   });
 });

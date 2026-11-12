@@ -42,15 +42,21 @@ export function oidcUsername(claims: Record<string, unknown>): string | null {
   return name !== null && !name.includes("@") ? name : null;
 }
 
+/** Google's issuer: the only source whose `hd` claim is trusted. */
+const GOOGLE_ISSUER = "https://accounts.google.com";
+
 /**
- * The domain an ID token speaks for, lowercased: its `hd` claim (Google Workspace), else the domain of an `email` the
- * provider does not mark unverified. Null when the token names neither, so an allowlist refuses it rather than guessing.
+ * The domain an ID token speaks for, lowercased, or null when it names none Studio may trust: Google's `hd` claim,
+ * else the domain of an email the provider marks verified. A Google token without `hd` is refused, because its email
+ * may sit in another domain.
  */
 export function emailDomainOf(claims: Record<string, unknown>): string | null {
   const hosted = nonEmptyString(claims.hd)?.trim().toLowerCase();
-  if (hosted) return hosted;
+  if (typeof claims.iss === "string" && comparableIssuer(claims.iss) === GOOGLE_ISSUER) return hosted || null;
+
   const email = nonEmptyString(claims.email);
-  if (email === null || emailMarkedUnverified(claims.email_verified)) return null;
+  const verified = claims.email_verified === true || claims.email_verified === "true";
+  if (email === null || !verified) return null;
   const at = email.lastIndexOf("@");
   if (at === -1) return null;
   const domain = email
@@ -60,10 +66,7 @@ export function emailDomainOf(claims: Record<string, unknown>): string | null {
   return domain || null;
 }
 
-/**
- * Whether OIDC_ALLOWED_EMAIL_DOMAINS admits this token's account: an empty list admits every account the provider
- * authenticated, a set one admits only the domains it names, so a token that names none is refused.
- */
+/** Whether OIDC_ALLOWED_EMAIL_DOMAINS admits this token: an empty list admits every account the provider authenticates. */
 export function isEmailDomainAllowed(claims: Record<string, unknown>, allowedDomains: readonly string[]): boolean {
   if (allowedDomains.length === 0) return true;
   const domain = emailDomainOf(claims);

@@ -678,7 +678,7 @@ describe("GET /api/auth/oidc/callback", () => {
     test("admits an account by the hosted domain hd when the token carries one", async () => {
       process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "topvisor.com";
       mockExchangeCode.mockImplementationOnce(async () =>
-        exchanged({ ...defaultClaims, email: "ada@gmail.com", hd: "topvisor.com" }),
+        exchanged({ ...defaultClaims, iss: "https://accounts.google.com", email: "ada@gmail.com", hd: "topvisor.com" }),
       );
 
       const res = await GET(new Request(callbackUrl));
@@ -697,7 +697,9 @@ describe("GET /api/auth/oidc/callback", () => {
 
     test("refuses an account outside the list, with no session and an audit record naming it", async () => {
       process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "topvisor.com";
-      mockExchangeCode.mockImplementationOnce(async () => exchanged({ ...defaultClaims, email: "someone@gmail.com" }));
+      mockExchangeCode.mockImplementationOnce(async () =>
+        exchanged({ ...defaultClaims, email: "someone@gmail.com", email_verified: true }),
+      );
       const spy = spyOn(console, "log").mockImplementation(() => {});
       try {
         const res = await GET(new Request(callbackUrl));
