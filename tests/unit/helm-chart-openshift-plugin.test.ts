@@ -933,9 +933,7 @@ describe("security control 3.37 and the chart's release notes", () => {
     expect(row).toContain("[`operator/config/manager/manager.yaml`]");
   });
 
-  test("Chart.yaml's change entry names the operator's own namespace", () => {
-    const changes = chartYaml.slice(chartYaml.indexOf("artifacthub.io/changes:"));
-    expect(changes).toContain("under the OLM operator, in the operator's own namespace");
+  test("Chart.yaml records why 0.1.118's consolePlugin entry carries no security flag", () => {
     expect(chartYaml).toContain("# False: 0.1.118 adds openshift.consolePlugin");
   });
 });

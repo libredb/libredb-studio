@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D461, U17 · 340
+- [Drivers and connections](#drivers-and-connections) — D1-D462, U17 · 341
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -4534,6 +4534,14 @@ SQLite stores no NaN, so only the two infinities are affected.
 Found 2026-11-06 by the final local check of MCP phase 1 (#2252).
 
 **Done when:** the worker carries a non-finite number across its JSON line and an MCP answer on an on-disk SQLite seed shows `"Infinity"` and `"-Infinity"`, with a test on the worker path and the provider triad kept (`docs/providers/sqlite.md`, `tests/integration/db/sqlite-provider.test.ts`).
+
+### D462. The Sparkplug STORED certificate test reads a one-second window under bun's five-second default
+
+`a STORED certificate names its metric and says its value may be stale (10.1.4)` in `tests/integration/db/sparkplug-provider.test.ts` runs a read with `"seconds":1` against the test broker and sets no timeout of its own, so the broker connect, the subscription, the one-second window and the provider's teardown all share bun's five-second default.
+Measured 2026-11-10 during the 1.3.0 release gate: in a full `bun run test:coverage` run at 12 jobs it failed at 5002.83 ms, and the same file alone passed every test.
+Found 2026-11-10 while cutting 1.3.0.
+
+**Done when:** the test carries a bound sized to its read window plus the connect, as the 7-Zip packaging tests got in #2258, or the setup the window does not measure moves out of the timed test, and the file passes in a full coverage run at the runner's default job count.
 
 ## Value interpolation
 
