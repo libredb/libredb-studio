@@ -47,7 +47,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { storage } from "@/lib/storage";
+import { useSavedCharts } from "@/hooks/use-saved-charts";
 import { offersSqlExport } from "@/lib/db/types";
 
 /**
@@ -133,8 +133,8 @@ const GraphView = React.lazy(
   lazyRetry(() => import("@/components/results-graph/GraphView").then((m) => ({ default: m.GraphView }))),
 );
 
-// The saved-chart dashboard. Its data is read on mount, not its module — the module
-// is split at the import above, along with the `DataCharts` this renders.
+// The saved-chart dashboard. Its module is split at the import above, along with the
+// `DataCharts` this renders; its data is read when it renders and kept current after.
 function ChartDashboard({
   result,
   maskingEnabled,
@@ -148,9 +148,9 @@ function ChartDashboard({
   maskingConfig: MaskingConfig;
   maskingExemptColumns: ProviderCapabilities["maskingExemptColumns"];
 }) {
-  // The saved-chart list, read once from storage. Nothing here writes it back —
-  // saving and deleting happen in DataCharts, which owns its own copy.
-  const [savedCharts] = React.useState(() => storage.getSavedCharts());
+  // The saved-chart list, kept current: a chart saved or deleted while the dashboard is
+  // open shows up without reopening it (#2281). Nothing here writes it back.
+  const savedCharts = useSavedCharts();
 
   if (savedCharts.length === 0) {
     return (
@@ -176,9 +176,13 @@ function ChartDashboard({
               {chart.yAxis?.length > 0 && <span className="ml-2">Y: {chart.yAxis.join(", ")}</span>}
             </div>
             {result ? (
-              <div className="mt-2 h-[160px]">
+              // Each card draws its own saved chart and nothing else: no toolbar to fill
+              // the card, and no guess from the data in place of what was saved (#2281).
+              <div className="mt-2 h-[240px]">
                 <DataCharts
                   result={result}
+                  saved={chart}
+                  chartOnly
                   maskingEnabled={maskingEnabled}
                   userRole={userRole}
                   maskingConfig={maskingConfig}
