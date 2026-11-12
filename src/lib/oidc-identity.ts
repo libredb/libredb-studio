@@ -42,17 +42,21 @@ export function oidcUsername(claims: Record<string, unknown>): string | null {
   return name !== null && !name.includes("@") ? name : null;
 }
 
-/** Google's issuer: the only source whose `hd` claim is trusted. */
+/** Google's issuer, the one whose `hd` claim is a domain source. */
 const GOOGLE_ISSUER = "https://accounts.google.com";
 
+/** Whether the configured issuer is Google's, compared the way a URL is: case and a trailing slash do not matter. */
+export function isGoogleIssuer(issuer: string): boolean {
+  return issuer.trim().replace(/\/$/, "").toLowerCase() === GOOGLE_ISSUER;
+}
+
 /**
- * The domain an ID token speaks for, lowercased, or null when it names none Studio may trust: Google's `hd` claim,
- * else the domain of an email the provider marks verified. A Google token without `hd` is refused, because its email
- * may sit in another domain.
+ * The domain an ID token speaks for, lowercased, or null when it names none Studio may trust: Google's `hd` claim
+ * when `issuer` is Google's, else the domain of an email the provider marks verified.
  */
-export function emailDomainOf(claims: Record<string, unknown>): string | null {
+export function emailDomainOf(claims: Record<string, unknown>, issuer: string): string | null {
   const hosted = nonEmptyString(claims.hd)?.trim().toLowerCase();
-  if (typeof claims.iss === "string" && comparableIssuer(claims.iss) === GOOGLE_ISSUER) return hosted || null;
+  if (isGoogleIssuer(issuer)) return hosted || null;
 
   const email = nonEmptyString(claims.email);
   const verified = claims.email_verified === true || claims.email_verified === "true";
@@ -67,8 +71,12 @@ export function emailDomainOf(claims: Record<string, unknown>): string | null {
 }
 
 /** Whether OIDC_ALLOWED_EMAIL_DOMAINS admits this token: an empty list admits every account the provider authenticates. */
-export function isEmailDomainAllowed(claims: Record<string, unknown>, allowedDomains: readonly string[]): boolean {
+export function isEmailDomainAllowed(
+  claims: Record<string, unknown>,
+  allowedDomains: readonly string[],
+  issuer: string,
+): boolean {
   if (allowedDomains.length === 0) return true;
-  const domain = emailDomainOf(claims);
+  const domain = emailDomainOf(claims, issuer);
   return domain !== null && allowedDomains.includes(domain);
 }

@@ -127,7 +127,7 @@ export async function GET(request: Request) {
 
     // OIDC_ALLOWED_EMAIL_DOMAINS narrows admission before any role is read. Unset, every account the provider
     // authenticated signs in exactly as before.
-    if (!isEmailDomainAllowed(claims as Record<string, unknown>, allowedEmailDomains())) {
+    if (!isEmailDomainAllowed(claims as Record<string, unknown>, allowedEmailDomains(), oidcConfig.issuer)) {
       cookieStore.delete(cookieDeletion(stateScope));
       auditFailure("oidc_domain_not_allowed", ip, String(identity));
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_domain_not_allowed`);

@@ -212,7 +212,7 @@ async function verify(token: string, audience: string): Promise<BearerAuthentica
   if (subject === null || username === null) return { kind: "denied", reason: "bearer_no_identity" };
 
   // The callback's rule on the same claims, read per request because an embedded Studio runs no boot preflight.
-  if (!isEmailDomainAllowed(payload, allowedEmailDomains())) {
+  if (!isEmailDomainAllowed(payload, allowedEmailDomains(), config.issuer)) {
     return { kind: "denied", reason: "bearer_domain_not_allowed" };
   }
 

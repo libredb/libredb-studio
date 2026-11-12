@@ -435,7 +435,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
 
 ### Allowed email domains
 
-`OIDC_ALLOWED_EMAIL_DOMAINS` admits only accounts whose token speaks for a listed domain: Google's `hd` claim, else the domain of an email the provider marks verified.
+`OIDC_ALLOWED_EMAIL_DOMAINS` admits only accounts whose token speaks for a listed domain: Google's `hd` claim when `OIDC_ISSUER` is Google's, else the domain of an email the provider marks verified.
 A Google token without `hd` is refused rather than read from the email, and a provider that sends no `email_verified` — Entra ID among them — admits nobody through a list.
 Each domain needs its own entry, a subdomain included, and the list applies when a session is issued.
 Any other account is refused before its role is read, with no session and a `login_failure` reason of `oidc_domain_not_allowed`; unset, nothing changes.

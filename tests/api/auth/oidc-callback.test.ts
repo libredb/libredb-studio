@@ -677,6 +677,17 @@ describe("GET /api/auth/oidc/callback", () => {
 
     test("admits an account by the hosted domain hd when the token carries one", async () => {
       process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "topvisor.com";
+      // Google is recognised by the configured issuer, so the config says so here.
+      mockGetOIDCConfig.mockReturnValueOnce({
+        issuer: "https://accounts.google.com",
+        clientId: "test-client-id",
+        clientSecret: "test-client-secret",
+        scope: "openid profile email",
+        roleClaim: "email",
+        rolePrefix: undefined,
+        adminRoles: ["admin"],
+        userRoles: [],
+      });
       mockExchangeCode.mockImplementationOnce(async () =>
         exchanged({ ...defaultClaims, iss: "https://accounts.google.com", email: "ada@gmail.com", hd: "topvisor.com" }),
       );
