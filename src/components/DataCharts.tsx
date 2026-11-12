@@ -791,7 +791,9 @@ export function DataCharts({
       name: saveName.trim(),
       chartType,
       xAxis,
-      yAxis: [...yAxis],
+      // A scatter draws x against `scatterY`, not the `yAxis` series selection, so that is the
+      // Y it has to keep: saving `yAxis` drew a saved scatter as x against x (#2281 review).
+      yAxis: chartType === "scatter" ? [scatterY] : [...yAxis],
       aggregation,
       dateGrouping: dateGrouping || "",
     };
@@ -809,13 +811,15 @@ export function DataCharts({
     });
     setShowSaveDialog(false);
     setSaveName("");
-  }, [saveName, chartType, xAxis, yAxis, aggregation, dateGrouping, savedCharts]);
+  }, [saveName, chartType, xAxis, yAxis, scatterY, aggregation, dateGrouping, savedCharts]);
 
   // Load saved chart config
   const loadSavedChart = useCallback((chart: (typeof savedCharts)[0]) => {
     setChartType(chart.chartType);
     setXAxis(chart.xAxis);
     setYAxis(chart.yAxis);
+    // The other half of the save above: a scatter's saved Y is the one it draws.
+    if (chart.chartType === "scatter") setScatterY(chart.yAxis[0]);
     setAggregation(chart.aggregation);
     setDateGrouping((chart.dateGrouping || "") as DateGrouping | "");
   }, []);

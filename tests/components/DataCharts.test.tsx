@@ -1149,6 +1149,39 @@ describe("DataCharts", () => {
     expect(parsed.length).toBe(0);
   });
 
+  // A scatter draws `scatterY`, not `yAxis`, so that is the Y a saved scatter has to keep (#2281 review).
+  test("saving a scatter stores the Y it draws, not the series selection", async () => {
+    const user = userEvent.setup();
+    // x, y, z: x is the default X, `yAxis` defaults to [x] and `scatterY` to y.
+    const { queryByText, getByText, queryByPlaceholderText } = render(
+      React.createElement(DataCharts, { result: pureNumericResult }),
+    );
+    fireEvent.click(getByText("Scatter"));
+    const scatterYPicker = getByText("Y").parentElement!;
+    fireEvent.click(scatterYPicker.querySelector('[data-testid="select-item-z"]')!);
+
+    await user.click(queryByText("Save")!);
+    await user.type(queryByPlaceholderText("Chart name...")!, "x against z");
+    const saveBtns = Array.from(document.querySelectorAll("button")).filter((b) => b.textContent === "Save");
+    await user.click(saveBtns[saveBtns.length - 1]);
+
+    const [stored] = JSON.parse(localStorage.getItem("libredb_saved_charts")!);
+    expect(stored).toMatchObject({ chartType: "scatter", xAxis: "x", yAxis: ["z"] });
+  });
+
+  test("loading a saved scatter draws it against its saved Y", () => {
+    localStorage.setItem(
+      "libredb_saved_charts",
+      JSON.stringify([
+        { id: "1", name: "x against z", chartType: "scatter", xAxis: "x", yAxis: ["z"], aggregation: "none" },
+      ]),
+    );
+    const { getByText } = render(React.createElement(DataCharts, { result: pureNumericResult }));
+    capturedScatterProps.length = 0;
+    fireEvent.click(getByText("x against z"));
+    expect(capturedScatterProps.at(-1)?.name).toBe("x vs z");
+  });
+
   // -----------------------------------------------------------------------
   // A saved chart handed in: what each Dashboard card draws (#2281)
   // -----------------------------------------------------------------------
