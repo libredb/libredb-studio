@@ -74,6 +74,18 @@ describe("isEmailDomainAllowed", () => {
     expect(isEmailDomainAllowed({ iss: IDP, hd: "topvisor.test" }, ["topvisor.test"])).toBe(false);
   });
 
+  test("matches exactly: a parent domain covers no subdomain, and no suffix or second address counts", () => {
+    for (const email of [
+      "a@sub.example.test",
+      "a@evil-example.test",
+      "a@example.test.evil",
+      "a@example.test@evil.test",
+    ]) {
+      expect(isEmailDomainAllowed({ iss: IDP, email, email_verified: true }, ["example.test"]), email).toBe(false);
+    }
+    expect(isEmailDomainAllowed({ iss: GOOGLE, hd: "EXAMPLE.TEST" }, ["example.test"])).toBe(true);
+  });
+
   test("takes an email domain only when the provider marks the email verified", () => {
     for (const email_verified of [true, "true"]) {
       expect(isEmailDomainAllowed({ iss: IDP, email: "dev@example.test", email_verified }, ["example.test"])).toBe(
