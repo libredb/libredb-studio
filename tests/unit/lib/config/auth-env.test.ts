@@ -217,15 +217,35 @@ describe("config/auth-env allowedEmailDomains", () => {
     else process.env.OIDC_ALLOWED_EMAIL_DOMAINS = original;
   });
 
-  test("parses a comma list, lowercased and without a leading @", () => {
-    process.env.OIDC_ALLOWED_EMAIL_DOMAINS = " Topvisor.com ,@thundo.com, ,";
+  test("parses a comma list, lowercased and trimmed", () => {
+    process.env.OIDC_ALLOWED_EMAIL_DOMAINS = " Topvisor.com , THUNDO.com ";
     expect(allowedEmailDomains()).toEqual(["topvisor.com", "thundo.com"]);
   });
 
   test("is empty when unset or blank, which turns the setting off", () => {
     delete process.env.OIDC_ALLOWED_EMAIL_DOMAINS;
     expect(allowedEmailDomains()).toEqual([]);
-    process.env.OIDC_ALLOWED_EMAIL_DOMAINS = " , ,";
+    process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "   ";
     expect(allowedEmailDomains()).toEqual([]);
+  });
+
+  test("throws for a set value that names no domain or an entry that is not a bare hostname", () => {
+    for (const value of [
+      ",",
+      "@",
+      "@example.com",
+      "example.com,",
+      " . ",
+      "exa mple.com",
+      "*.example.com",
+      "https://example.com",
+      "user@example.com",
+      "example.com/path",
+      "localhost",
+    ]) {
+      process.env.OIDC_ALLOWED_EMAIL_DOMAINS = value;
+      expect(() => allowedEmailDomains(), value).toThrow(AuthConfigError);
+      expect(() => allowedEmailDomains(), value).toThrow("OIDC_ALLOWED_EMAIL_DOMAINS");
+    }
   });
 });

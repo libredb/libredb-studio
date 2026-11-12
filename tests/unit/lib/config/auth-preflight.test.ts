@@ -49,6 +49,23 @@ describe("config/auth-preflight verifyAuthEnvAtBoot", () => {
     }
   });
 
+  test("stops boot when OIDC_ALLOWED_EMAIL_DOMAINS is set but names no bare hostname", () => {
+    setSecret("a-valid-secret-that-is-32-chars!");
+    process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "https://example.com";
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const { exitCalls, restore } = stubProcessExit();
+
+    try {
+      expect(verifyAuthEnvAtBoot()).toBe(false);
+      expect(exitCalls).toEqual([1]);
+      expect(errorSpy.mock.calls[0]?.[0]).toContain("OIDC_ALLOWED_EMAIL_DOMAINS is invalid");
+    } finally {
+      restore();
+      errorSpy.mockRestore();
+      delete process.env.OIDC_ALLOWED_EMAIL_DOMAINS;
+    }
+  });
+
   test("allows boot to continue when JWT_SECRET is unset (zero-config bootstrap owns that case)", () => {
     setSecret(undefined);
     const { exitCalls, restore } = stubProcessExit();
