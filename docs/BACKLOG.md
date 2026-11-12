@@ -6335,7 +6335,7 @@ Found 2026-10-12 while designing the Snowflake provider.
 
 ### U138. A result cut inside a script gets no limited badge
 
-The multi-query route in `src/app/api/db/multi-query/route.ts` builds a script's main result from the last result with rows, carrying its warnings and column types but no `pagination`.
+The multi-query route in `src/app/api/db/multi-query/route.ts` builds a script's main result from the last successful statement (#2271), carrying its warnings and column types but no `pagination`.
 So a result the provider cut inside a script gets neither the grid's limited badge nor the export menu's cut sentence, only the provider's own warning.
 
 Found 2026-10-12 while designing the Snowflake provider.

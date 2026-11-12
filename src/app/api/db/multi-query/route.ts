@@ -100,8 +100,9 @@ function boundedText(
 
 /**
  * What a unit's result shows. A batch that produced several result sets shows the last one
- * with rows (#1312), the rule the response applies across a script's statements below, so a
- * plain `SELECT * FROM a; SELECT * FROM b` shows what it showed when the two were separate
+ * with rows (#1312), a rule of its own inside a batch; across a script's statements the
+ * response below shows the last successful one, empty or not (#2271), so a plain
+ * `SELECT * FROM a; SELECT * FROM b` shows what it showed when the two were separate
  * requests. A unit that produced one set shows it.
  *
  * The count is the shown set's own rows in a batch of several statements: the engine's
@@ -358,22 +359,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Return the last successful result with rows as the main result (for ResultsGrid)
-    const lastResultWithRows = [...results]
-      .reverse()
-      .find((r) => r.status === "success" && r.rows && r.rows.length > 0);
+    // Return the last successful result as the main result (for ResultsGrid). A statement
+    // that succeeded with no rows - an empty SELECT or a write - is the script's own
+    // outcome (#2271); requiring rows here resurrected an earlier statement's data and
+    // dropped the final one's columns.
+    const activeResult = [...results].reverse().find((r) => r.status === "success");
     const hasError = results.some((r) => r.status === "error");
 
     return NextResponse.json({
       // Main result (for backward compatibility with ResultsGrid)
-      rows: lastResultWithRows?.rows || [],
-      fields: lastResultWithRows?.fields || [],
-      rowCount: lastResultWithRows?.rowCount || 0,
+      rows: activeResult?.rows ?? [],
+      fields: activeResult?.fields ?? [],
+      rowCount: activeResult?.rowCount ?? 0,
       executionTime: totalExecutionTime,
       // The main result shows one statement's rows, so it carries that statement's
       // notices and declared types and no others. Merging every statement's
       // warnings here would attribute one run's notice to another run's rows.
-      ...carriedChannels(lastResultWithRows),
+      ...carriedChannels(activeResult),
       // Multi-statement metadata
       multiStatement: true,
       // Present only when there was a transaction to end, following the same rule as the
