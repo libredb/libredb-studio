@@ -46,7 +46,7 @@ export function oidcUsername(claims: Record<string, unknown>): string | null {
 const GOOGLE_ISSUER = "https://accounts.google.com";
 
 /** Whether the configured issuer is Google's, compared the way a URL is: case and a trailing slash do not matter. */
-export function isGoogleIssuer(issuer: string): boolean {
+function isGoogleIssuer(issuer: string): boolean {
   return issuer.trim().replace(/\/$/, "").toLowerCase() === GOOGLE_ISSUER;
 }
 
