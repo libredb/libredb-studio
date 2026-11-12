@@ -289,10 +289,12 @@ export type AuditReason =
   | "mcp_host_not_allowed"
   // The OIDC bearer channel (src/lib/oidc-bearer.ts), written by src/proxy.ts: an access token that is malformed,
   // forged, expired, an ID token, for another audience, issuer or client; one whose account holds no role while
-  // OIDC_USER_ROLES is set; and one that carries no sub, or neither email nor preferred_username.
+  // OIDC_USER_ROLES is set; one that carries no sub, or neither email nor preferred_username; and one whose account
+  // speaks for a domain outside OIDC_ALLOWED_EMAIL_DOMAINS.
   | "bearer_token_invalid"
   | "bearer_no_role"
   | "bearer_no_identity"
+  | "bearer_domain_not_allowed"
   // The rest are mcp_operation reasons, each with one meaning. Arguments that failed the tool's
   // input schema, which the SDK refuses before any handler runs and the route records.
   | "mcp_invalid_arguments"

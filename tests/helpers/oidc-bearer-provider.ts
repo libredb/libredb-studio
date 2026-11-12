@@ -22,6 +22,7 @@ export const BEARER_ENV_KEYS = [
   "OIDC_USER_ROLES",
   "OIDC_BEARER_AUDIENCE",
   "OIDC_BEARER_CLIENT_IDS",
+  "OIDC_ALLOWED_EMAIL_DOMAINS",
 ] as const;
 
 export const signer = await generateKeyPair("RS256");

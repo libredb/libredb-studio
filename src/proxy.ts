@@ -65,6 +65,10 @@ const BEARER_ACCOUNT_REFUSED_BODY = {
       "The access token carries no user name Studio can use. Ask an administrator to check the account's email and username.",
     code: ApiErrorCode.BEARER_NO_IDENTITY,
   },
+  bearer_domain_not_allowed: {
+    error: "This account's email domain is not allowed in Studio. Ask an administrator for access.",
+    code: ApiErrorCode.BEARER_DOMAIN_NOT_ALLOWED,
+  },
 } as const;
 
 const IDENTITY_PROVIDER_UNAVAILABLE_BODY = {
