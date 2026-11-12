@@ -424,6 +424,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
 | `OIDC_ROLE_CLAIM` | No | — | Claim path for role extraction (dot-notation supported) |
 | `OIDC_ADMIN_ROLES` | No | `admin` | Comma-separated values that map to admin role |
 | `OIDC_USER_ROLES` | No | unset | Comma-separated values that map to user role. Set, an account that holds neither an admin nor a user role is refused at sign-in ([Requiring a role](#requiring-a-role)). Needs `OIDC_ROLE_CLAIM` |
+| `OIDC_ALLOWED_EMAIL_DOMAINS` | No | unset | Comma-separated domains allowed to sign in, read from Google's `hd` claim or from an email the provider marks verified; see [Allowed email domains](#allowed-email-domains) |
 | `OIDC_ROLE_PREFIX` | No | unset | Prefix filter for custom roles from the OIDC role claim; see [Custom seed roles with OIDC_ROLE_PREFIX](#custom-seed-roles-with-oidc_role_prefix). Needs `OIDC_ROLE_CLAIM` |
 | `OIDC_PROMPT` | No | `login` | The `prompt` sent on sign-in: `login`, `consent`, `select_account`, or `omit` to send none; see [Single sign-on with OIDC_PROMPT](#single-sign-on-with-oidc_prompt) |
 | `OIDC_AUTO_REDIRECT` | No | off | `true`, `1`, `on` or `yes` sends a signed-out `GET /login` straight to the identity provider; see [Automatic redirect to the provider](#automatic-redirect-to-the-provider) |
@@ -431,6 +432,13 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
 | `OIDC_BEARER_AUDIENCE` | No | unset | Turns on bearer access tokens for native clients: the audience the provider puts in their access tokens. Must differ from `OIDC_CLIENT_ID`; see [Bearer access tokens for native clients](#bearer-access-tokens-for-native-clients) |
 | `OIDC_BEARER_CLIENT_IDS` | No | unset | Comma-separated client ids whose access tokens are accepted, checked against `azp`, else `client_id`. Recommended whenever `OIDC_BEARER_AUDIENCE` is set |
 | `AUTH_SESSION_TTL_SECONDS` | No | `86400` | Session lifetime in seconds, from 300 to 86400; see [Session lifetime](#session-lifetime) |
+
+### Allowed email domains
+
+`OIDC_ALLOWED_EMAIL_DOMAINS` admits only accounts whose token speaks for a listed domain: Google's `hd` claim when `OIDC_ISSUER` is Google's, else the domain of an email the provider marks verified.
+A Google token without `hd` is refused rather than read from the email, and a provider that sends no `email_verified` — Entra ID among them — admits nobody through a list.
+Each domain needs its own entry, a subdomain included, and the list applies when a session is issued.
+Any other account is refused before its role is read, with no session and a `login_failure` reason of `oidc_domain_not_allowed`; unset, nothing changes.
 
 ### Single sign-on with OIDC_PROMPT
 
@@ -1428,6 +1436,7 @@ Both OIDC routes redirect to `/login?error=<code>` on failure, and record the sa
 | `oidc_state_invalid` | callback | State decryption failed or state mismatch | Tampered cookie, wrong JWT_SECRET, or CSRF attempt |
 | `oidc_no_claims` | callback | Token exchange returned no claims, or no string `sub` or `iss` | Provider returned invalid/empty ID token |
 | `oidc_no_role` | callback | `mapOIDCRole()` returned null: `OIDC_USER_ROLES` is set and the role claim holds no admin or user role | The account has no role at the provider; no session is created, and the audit record names the account |
+| `oidc_domain_not_allowed` | callback | `isEmailDomainAllowed()` returned false: `OIDC_ALLOWED_EMAIL_DOMAINS` is set and the token speaks for another domain, or names none | The account is outside the domains the operator listed; no session is created, and the audit record names the account |
 | `oidc_role_overflow` | callback | `mapOIDCClaimRoles()` returned overflow: matching roles exceed 20 or any role exceeds 64 bytes in UTF-8 | The account carries too many or excessively long roles; no session is created, and the audit record names the account |
 | `oidc_session_revoked` | callback | Governance mode only: the subject's latest `revoked_before` is at or after the current second | The control plane ended the account's sessions with a revocation that still applies, such as one dated ahead of Studio's clock; no session is created, and the audit record names the account |
 | `oidc_failed` | login, callback | Any other error after the provider answered | A discovery document that parses but lacks an endpoint, PKCE or state-cookie failure on login; network error, invalid client credentials, etc. on callback |
@@ -1441,6 +1450,7 @@ Both OIDC routes redirect to `/login?error=<code>` on failure, and record the sa
 | `oidc_config` | Single sign-on is not configured correctly on this server. Contact your administrator. |
 | `oidc_discovery` | The identity provider could not be reached. Try again later, or contact your administrator if this continues. |
 | `oidc_no_role` | Your account has no role that allows access to LibreDB Studio. Ask your administrator. |
+| `oidc_domain_not_allowed` | Your account's email domain is not allowed to sign in to this server. Ask your administrator. |
 | `oidc_role_overflow` | Your account has too many roles or a role name is too long. Ask your administrator. |
 | `oidc_session_revoked` | An administrator has ended your sessions. Try again later, or ask your administrator. |
 | anything else | Authentication failed. Please try again. |

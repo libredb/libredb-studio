@@ -102,6 +102,12 @@ export const ApiErrorCode = {
   BEARER_NO_ROLE: "BEARER_NO_ROLE",
 
   /**
+   * A bearer access token verified, but the account speaks for a domain outside OIDC_ALLOWED_EMAIL_DOMAINS (403,
+   * src/lib/oidc-identity.ts). Like BEARER_NO_ROLE, a fresh token is refused the same way until the account changes.
+   */
+  BEARER_DOMAIN_NOT_ALLOWED: "BEARER_DOMAIN_NOT_ALLOWED",
+
+  /**
    * A bearer access token verified, but it carries no subject or no user name Studio can use (403,
    * src/lib/oidc-identity.ts): no email the provider has not marked unverified, and no preferred_username without "@".
    * Like BEARER_NO_ROLE, a fresh token is refused the same way until the account changes.

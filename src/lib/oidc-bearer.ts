@@ -13,8 +13,9 @@ import {
 import type { UserPayload } from "@/lib/auth";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { authProvider } from "@/lib/config/auth-provider";
+import { allowedEmailDomains } from "@/lib/config/auth-env";
 import { getOIDCConfig, mapOIDCRole } from "@/lib/oidc";
-import { comparableIssuer, oidcUsername } from "@/lib/oidc-identity";
+import { comparableIssuer, isEmailDomainAllowed, oidcUsername } from "@/lib/oidc-identity";
 
 /**
  * The identity provider's access token as a session, for a native client that signs in to the provider itself
@@ -31,7 +32,11 @@ import { comparableIssuer, oidcUsername } from "@/lib/oidc-identity";
  */
 
 /** Why a bearer was refused. A refusal is the token's fault; a fault is the server's or the provider's. */
-export type BearerDenialReason = "bearer_token_invalid" | "bearer_no_role" | "bearer_no_identity";
+export type BearerDenialReason =
+  | "bearer_token_invalid"
+  | "bearer_no_role"
+  | "bearer_no_identity"
+  | "bearer_domain_not_allowed";
 
 /**
  * A session an access token stands for. Its `iat` is the access token's own, not a moment Studio signed anything, so
@@ -205,6 +210,11 @@ async function verify(token: string, audience: string): Promise<BearerAuthentica
   const subject = nonEmptyString(payload.sub);
   const username = oidcUsername(payload);
   if (subject === null || username === null) return { kind: "denied", reason: "bearer_no_identity" };
+
+  // The callback's rule on the same claims, read per request because an embedded Studio runs no boot preflight.
+  if (!isEmailDomainAllowed(payload, allowedEmailDomains(), config.issuer)) {
+    return { kind: "denied", reason: "bearer_domain_not_allowed" };
+  }
 
   const role = mapOIDCRole(payload, config.roleClaim, config.adminRoles, config.userRoles);
   if (role === null) return { kind: "denied", reason: "bearer_no_role" };

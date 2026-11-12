@@ -20,6 +20,7 @@ const KEYS = [
   "OIDC_ADMIN_ROLES",
   "OIDC_USER_ROLES",
   "OIDC_ROLE_PREFIX",
+  "OIDC_ALLOWED_EMAIL_DOMAINS",
   "LIBREDB_MCP_ENABLED",
   "LIBREDB_AGENT_ENABLED",
 ] as const;
@@ -133,6 +134,7 @@ describe("openShiftAuthEnvProblems", () => {
     for (const name of ["OIDC_ROLE_CLAIM", "OIDC_ADMIN_ROLES", "OIDC_USER_ROLES", "OIDC_ROLE_PREFIX"]) {
       onlyProblem(name, " groups ");
     }
+    onlyProblem("OIDC_ALLOWED_EMAIL_DOMAINS", "example.com");
     onlyProblem("LIBREDB_MCP_ENABLED", "true");
     onlyProblem("LIBREDB_AGENT_ENABLED", "on");
   });

@@ -43,6 +43,8 @@ function oidcErrorMessage(code: string): string {
       return "The identity provider could not be reached. Try again later, or contact your administrator if this continues.";
     case "oidc_no_role" satisfies AuditReason:
       return "Your account has no role that allows access to LibreDB Studio. Ask your administrator.";
+    case "oidc_domain_not_allowed" satisfies AuditReason:
+      return "Your account's email domain is not allowed to sign in to this server. Ask your administrator.";
     case "oidc_role_overflow" satisfies AuditReason:
       return "Your account has too many roles or a role name is too long. Ask your administrator.";
     case "oidc_session_revoked" satisfies AuditReason:
