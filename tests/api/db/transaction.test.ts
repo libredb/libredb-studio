@@ -444,7 +444,7 @@ describe("POST /api/db/transaction", () => {
       expect(data.pagination).toBeUndefined();
     });
 
-    test("bounds only the last statement, and shows the last result that has rows", async () => {
+    test("bounds only the last statement, and shows the script main result", async () => {
       mockTxProvider.queryInTransaction.mockImplementationOnce(async () => ({
         rows: [],
         fields: [],
@@ -457,6 +457,25 @@ describe("POST /api/db/transaction", () => {
       expect(sent[0]).not.toContain("LIMIT 50");
       expect(sent[1]).toContain("LIMIT 50");
       expect(data.rows).toEqual([{ id: 1, name: "Alice" }]);
+    });
+
+    test("shows a final empty SELECT instead of an earlier nonempty SELECT (#2271)", async () => {
+      mockTxProvider.queryInTransaction
+        .mockImplementationOnce(async () => ({
+          rows: [{ status: "Before" }],
+          fields: ["status"],
+          rowCount: 1,
+          executionTime: 1,
+        }))
+        .mockImplementationOnce(async () => ({
+          rows: [],
+          fields: ["status"],
+          rowCount: 0,
+          executionTime: 1,
+        }));
+      const { data } = await run("SELECT 'Before' AS status; SELECT 'After' AS status WHERE 1 = 0");
+      expect(data.rows).toEqual([]);
+      expect(data.fields).toEqual(["status"]);
     });
 
     test("stops at the first failure and names it", async () => {

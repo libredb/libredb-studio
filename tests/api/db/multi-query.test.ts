@@ -254,10 +254,9 @@ describe("POST /api/db/multi-query", () => {
     expect(data.statements[1].columnTypes).toEqual({ id: "INTEGER" });
   });
 
-  test("the main result carries the channels of the statement whose rows it shows", async () => {
-    // The main result is the last statement that returned rows, so those rows and
-    // these notices come from the same run. Merging every statement's warnings
-    // would attribute one statement's notice to another's rows.
+  test("the main result carries the channels of the statement the grid shows", async () => {
+    // Channels must come from the same statement as the top-level rows/fields. Merging
+    // every statement's warnings would attribute one statement's notice to another's rows.
     let call = 0;
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
       call++;
@@ -286,6 +285,42 @@ describe("POST /api/db/multi-query", () => {
 
     expect(data.warnings).toEqual([{ message: "second" }]);
     expect(data.columnTypes).toEqual({ total: "BIGINT" });
+  });
+
+  test("shows a final empty SELECT instead of an earlier nonempty SELECT (#2271)", async () => {
+    let call = 0;
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      call++;
+      return call === 1
+        ? { rows: [{ status: "Before", count: 100 }], fields: ["status", "count"], rowCount: 1, executionTime: 1 }
+        : { rows: [], fields: ["status", "count"], rowCount: 0, executionTime: 1 };
+    });
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: {
+        connection: validConnection,
+        sql: "SELECT 'Before' AS status; SELECT 'After' AS status WHERE 1 = 0",
+      },
+    });
+    const data = await parseResponseJSON<{ rows: unknown[]; fields: string[] }>(await POST(req as never));
+    expect(data.rows).toEqual([]);
+    expect(data.fields).toEqual(["status", "count"]);
+  });
+
+  test("keeps a prior SELECT when the final INSERT has no rowset but changed rows", async () => {
+    let call = 0;
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      call++;
+      return call === 1
+        ? { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 }
+        : { rows: [], fields: [], rowCount: 1, executionTime: 1 };
+    });
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1; INSERT INTO t VALUES (1)" },
+    });
+    const data = await parseResponseJSON<{ rows: unknown[] }>(await POST(req as never));
+    expect(data.rows).toEqual([{ id: 1 }]);
   });
 
   test("omits both channels when the engine reported neither", async () => {

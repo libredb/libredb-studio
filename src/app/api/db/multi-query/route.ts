@@ -17,6 +17,7 @@ import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/types";
+import { mainResultRowCount, pickScriptMainResult } from "@/lib/api/script-main-result";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
@@ -358,22 +359,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Return the last successful result with rows as the main result (for ResultsGrid)
-    const lastResultWithRows = [...results]
-      .reverse()
-      .find((r) => r.status === "success" && r.rows && r.rows.length > 0);
+    const mainResult = pickScriptMainResult(results);
     const hasError = results.some((r) => r.status === "error");
 
     return NextResponse.json({
-      // Main result (for backward compatibility with ResultsGrid)
-      rows: lastResultWithRows?.rows || [],
-      fields: lastResultWithRows?.fields || [],
-      rowCount: lastResultWithRows?.rowCount || 0,
+      rows: mainResult?.rows || [],
+      fields: mainResult?.fields || [],
+      rowCount: mainResultRowCount(mainResult),
       executionTime: totalExecutionTime,
-      // The main result shows one statement's rows, so it carries that statement's
-      // notices and declared types and no others. Merging every statement's
-      // warnings here would attribute one run's notice to another run's rows.
-      ...carriedChannels(lastResultWithRows),
+      ...carriedChannels(mainResult),
       // Multi-statement metadata
       multiStatement: true,
       // Present only when there was a transaction to end, following the same rule as the

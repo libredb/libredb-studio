@@ -536,11 +536,11 @@ fragment `BEGIN DELETE FROM emp` and nothing ran; now the whole block runs, so t
 into it. What a procedure call does (`EXEC sp_cleanup`, `BEGIN p; END;`) is the server's, and it does
 not ask, as before. MySQL, Db2 and Trino compound statements are not read yet (`docs/BACKLOG.md` S7).
 
-Last-only is that route's own policy, and it leaves a hole this section does not close: a non-final
-`SELECT` runs exactly as written, and its **entire** result set travels back in `statements[i].rows`.
-That is also what the grid displays whenever the final statement returns no rows of its own
-(`SELECT * FROM huge; INSERT INTO t VALUES (1)`), since the response picks the last result that *has*
-rows. Noted here rather than claimed closed.
+Last-only is that route's own policy for bounding. Which statement supplies the grid is chosen by
+`pickScriptMainResult` in `src/lib/api/script-main-result.ts`: the last statement when it produced a
+rowset (including zero rows with columns); a final write that matched no rows; otherwise, when the
+final write changed rows but has no grid, the last earlier rowset (`SELECT * FROM huge; INSERT INTO t
+VALUES (1)` still shows the read).
 
 Two indicators do not follow the bound onto this route, because it returns no pagination metadata at
 all: the **AUTO-LIMITED badge does not appear** for a multi-statement run, and **Load More is not
