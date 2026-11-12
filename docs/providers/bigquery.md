@@ -61,7 +61,8 @@ The provider resolves credentials in this order:
 
 1. **Service-account key JSON** in the `password` field. Always used when present, and needs no server setting. An `authorized_user` JSON (from `gcloud auth application-default login`) is accepted too.
 2. **An access token** in the `password` field, e.g. the output of `gcloud auth print-access-token` (`ya29.…`, with or without a `Bearer ` prefix). It is used as-is: Google issues it for about an hour and the provider has no way to refresh it, so the connection fails with an authentication error once it expires and the token must be pasted again. Use it for short-lived access or a CI job, not for a saved connection.
-3. **The server's own identity**, only when the server runs with `BIGQUERY_SERVER_CREDENTIALS=true` and only for an operator-seeded (`managed: true`) connection; a connection a user creates needs a key or an access token:
+3. **An `external_account` config** (Workload Identity Federation) in the `password` field, only on an operator-seeded (`managed: true`) connection. See [External account](#external-account) below.
+4. **The server's own identity**, only when the server runs with `BIGQUERY_SERVER_CREDENTIALS=true` and only for an operator-seeded (`managed: true`) connection; a connection a user creates needs a key or an access token:
    1. the file named by `GOOGLE_APPLICATION_CREDENTIALS` (a named file that cannot be read is an error, not a fallback);
    2. gcloud's ADC file, `~/.config/gcloud/application_default_credentials.json`;
    3. the metadata server (`metadata.google.internal`, or `GCE_METADATA_HOST`), which is how GKE Workload Identity, GCE and Cloud Run hand out tokens.
@@ -70,7 +71,31 @@ The opt-in exists because a connection without a key would otherwise run as the 
 That is also why a keyless connection that is not operator-seeded is refused even with the flag on, and why the server forces `managed` to false on any connection a browser sends inline (`resolveConnection`), so a client cannot claim to be a seed.
 Without the flag and without a key, the connection is refused with a message that names the variable.
 
-`external_account` (Workload Identity Federation outside GKE) and `impersonated_service_account` credential files are refused with a message.
+`impersonated_service_account` credential files are refused with a message.
+
+#### External account
+
+An `external_account` config lets a control plane give each person their own BigQuery identity without a key: an outside identity provider (Keycloak, Okta, GitHub…) issues the person a token, Google's Security Token Service exchanges it for an access token of that federated identity, and BigQuery's IAM then decides what the person may read. The config is the one `gcloud iam workload-identity-pools create-cred-config` writes, with the subject token read from a URL:
+
+```json
+{
+  "type": "external_account",
+  "audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/POOL/providers/PROVIDER",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "token_url": "https://sts.googleapis.com/v1/token",
+  "credential_source": {
+    "url": "https://idp.example/subject-token/alice",
+    "headers": { "authorization": "Bearer …" },
+    "format": { "type": "json", "subject_token_field_name": "token" }
+  }
+}
+```
+
+- **Fetched and refreshed by the server.** The provider GETs the subject token from `credential_source.url` with its `headers`, reads it as the whole body (`format` absent or `text`) or as one field of a JSON body, and exchanges it at STS for a token with the BigQuery scope. It caches that token like the others and repeats both steps a minute before it expires. A Google token never outlives the subject token it came from.
+- **Operator-seeded connections only.** The server fetches the URL the config names, so, like the server's own identity, the config is refused on a connection a user creates.
+- **TLS for the subject token.** The subject token is a credential, so `credential_source.url` must be `https` unless its host is this machine. The fetch goes through the same outbound guard as every HTTP connection, `DB_HTTP_BLOCK_PRIVATE_HOSTS` included, and follows no redirect. A failed fetch reports its status, never the body.
+- **Narrower than Google's client libraries:** the exchange is STS only (`token_url` must be `https://sts.googleapis.com/v1/token`), the subject is an OIDC `jwt` or `id_token`, and the federated identity is used directly. `service_account_impersonation_url`, and `file`, `executable` and AWS `environment_id` sources, are refused with a message. Grant the federated identity (`principal://…` or `principalSet://…`) BigQuery roles directly, as in [Required IAM](#33-required-iam).
+- **Not for the agent.** The agent's own credential stays a service-account key JSON, because Studio must choose the scope its token carries.
 
 Tokens are cached and refreshed a minute before they expire, and concurrent callers share one refresh instead of each minting a grant.
 

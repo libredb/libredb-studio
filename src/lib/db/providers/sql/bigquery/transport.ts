@@ -175,7 +175,17 @@ export function createBigQueryTransport(
         // The metadata server answers only requests that carry this header.
         headers: creds.type === "metadata" ? { "metadata-flavor": "Google" } : {},
       });
-  const token = oauth ? createTokenSource(creds, oauth) : async () => null;
+  // An external_account config reads its subject token from a second origin, through its own transport.
+  const subject =
+    oauth && creds.type === "external_account"
+      ? createNodeTransport({
+          origin: creds.source.origin,
+          tls: creds.source.origin.scheme === "https" ? tls(creds.source.origin.host) : null,
+          maxSockets: 1,
+          headers: creds.source.headers,
+        })
+      : undefined;
+  const token = oauth ? createTokenSource(creds, oauth, Date.now, subject) : async () => null;
   const base = `${new URL(`${api.scheme}://${api.host}:${api.port}`).origin}/bigquery/v2/projects/${encodeURIComponent(project)}`;
 
   // The node transport owns Authorization as a connection header, so each token gets its own transport.
@@ -377,6 +387,7 @@ export function createBigQueryTransport(
       for (const held of lanes) held.node.close();
       lanes.clear();
       oauth?.close();
+      subject?.close();
     },
   };
 }

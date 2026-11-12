@@ -75,6 +75,42 @@ describe("bigquery transport wiring", () => {
   });
 });
 
+describe("bigquery transport wiring for external_account", () => {
+  const external = (url: string, scheme: "http" | "https", host: string, port: number) =>
+    ({
+      type: "external_account",
+      audience: "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/k",
+      subjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+      source: { url, origin: { scheme, host, port }, headers: { authorization: "Bearer s" }, format: { type: "text" } },
+    }) as const;
+
+  test("a second lane reads the subject token from credential_source, and close() closes both", () => {
+    const transport = createBigQueryTransport(
+      "p",
+      external("https://adapter.example/t", "https", "adapter.example", 443),
+    );
+    expect(built.map((b) => b.opts.origin.host)).toEqual(["sts.googleapis.com", "adapter.example"]);
+    expect(built[0].opts).toMatchObject({
+      tls: { rejectUnauthorized: true, identity: "sts.googleapis.com" },
+      headers: {},
+    });
+    expect(built[1].opts).toMatchObject({
+      origin: { scheme: "https", host: "adapter.example", port: 443 },
+      tls: { rejectUnauthorized: true, identity: "adapter.example" },
+      headers: { authorization: "Bearer s" },
+      maxSockets: 1,
+    });
+    transport.close();
+    expect(built[0].closed).toBe(1);
+    expect(built[1].closed).toBe(1);
+  });
+
+  test("a subject source on this machine over http has no TLS", () => {
+    createBigQueryTransport("p", external("http://127.0.0.1:8099/t", "http", "127.0.0.1", 8099));
+    expect(built[1].opts).toMatchObject({ origin: { scheme: "http", host: "127.0.0.1", port: 8099 }, tls: null });
+  });
+});
+
 describe("BIGQUERY_EMULATOR_HOST", () => {
   test("unset or blank, the API is Google's over https", () => {
     for (const env of [{}, { BIGQUERY_EMULATOR_HOST: "  " }]) {
