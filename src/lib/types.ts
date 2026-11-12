@@ -934,8 +934,9 @@ export interface QueryResult {
    * and `columnTypes` above stay the first set's, as they always were. **Absent** for a text
    * with one result set or none.
    *
-   * The multi-statement route reads it to show a batch's last result with rows, the same
-   * rule it applies across a script's statements; `POST /api/db/query` and `POST /api/db/transaction` do not send it.
+   * The multi-statement route reads it to show a batch's last result with rows, a rule of
+   * its own inside a batch; across a script's statements the response shows the last
+   * successful one, empty or not (#2271). `POST /api/db/query` and `POST /api/db/transaction` do not send it.
    */
   resultSets?: QueryResultSet[];
 }

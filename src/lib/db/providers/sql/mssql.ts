@@ -2097,8 +2097,9 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       // A text with several result sets carries all of them (#1312). The editor sends a
       // T-SQL batch as one request, so `SELECT * FROM a; SELECT * FROM b` reaches here whole,
-      // and the multi-statement route shows the last one with rows, as it does across a
-      // script's statements. `rows` stays the FIRST set, which is what `EXEC sp_help` and
+      // and the multi-statement route shows the last one with rows, a rule of its own inside
+      // a batch; across a script's statements the response shows the last successful one,
+      // empty or not (#2271). `rows` stays the FIRST set, which is what `EXEC sp_help` and
       // every caller before batches were shown.
       const recordsets = (result.recordsets ?? []) as ArrayModeRecordset[];
       const resultSets =
