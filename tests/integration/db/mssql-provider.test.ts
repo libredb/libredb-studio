@@ -2740,12 +2740,13 @@ describe("MSSQLProvider declared column types", () => {
 
   // #1312: the editor sends a T-SQL batch as one request. A text with several result sets
   // still answers with its FIRST, as `EXEC sp_help` always did, and carries every set for the
-  // multi-statement route to choose from.
+  // multi-statement route to choose from. #2286: an empty last set keeps its own `fields` and
+  // `columnTypes`, so the route can show it as the batch's result.
   test("query() carries every result set of a batch and still answers with the first", async () => {
     const first = withColumns([{ a: 1 }], { a: { declaration: "int" } });
     const last = withColumns([{ doubled: 10 }, { doubled: 20 }], { doubled: { declaration: "int" } });
     const bare = Object.assign([{ z: 1 }], {});
-    const empty = Object.assign([] as Record<string, unknown>[], {});
+    const empty = withColumns([], { c: { declaration: "int" } });
     mockQueryFn = async () => ({ recordset: first, recordsets: [first, last, bare, empty], rowsAffected: [1, 2, 1] });
 
     await provider.connect();
@@ -2757,7 +2758,7 @@ describe("MSSQLProvider declared column types", () => {
       { rows: [{ a: 1 }], fields: ["a"], columnTypes: { a: "int" } },
       { rows: [{ doubled: 10 }, { doubled: 20 }], fields: ["doubled"], columnTypes: { doubled: "int" } },
       { rows: [{ z: 1 }], fields: ["z"] },
-      { rows: [], fields: [] },
+      { rows: [], fields: ["c"], columnTypes: { c: "int" } },
     ]);
   });
 

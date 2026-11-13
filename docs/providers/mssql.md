@@ -408,7 +408,7 @@ Each set of a multi-result batch is named on its own: `SELECT 1 AS a, 2 AS a; SE
 
 A text that returns several result sets still answers with its **first**, as `EXEC sp_help` always
 did, and carries every set in `resultSets` (#1312). `POST /api/db/query` and `POST /api/db/transaction` do not send that field; the
-multi-statement route reads it to show a batch's last result with rows.
+multi-statement route reads it to show a batch's last set, empty or not (#2286).
 
 **The editor sends a T-SQL batch whole.** The grammar's `script` fact for this dialect makes the unit
 of one request the batch between `GO` lines (`src/lib/db/providers/sql/mssql-sql-grammar.ts`), so `DECLARE @x INT = 5;
@@ -515,7 +515,7 @@ Before that mapping the route answered `500` *Canceled.*, measured on SQL Server
   Cassandra stopped spelling their bytes `0x…` in the provider.
 - **One result set is shown.** `query()` answers with the first result set and carries the others in
   `resultSets` (§5.1); the single-statement route shows the first and the multi-statement route a
-  batch's last one with rows.
+  batch's last set, empty or not (#2286).
 
 ### 5.4 Declared column types
 

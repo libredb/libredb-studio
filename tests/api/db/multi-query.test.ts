@@ -791,7 +791,10 @@ describe("POST /api/db/multi-query", () => {
       expect(executed()).toEqual(["SELECT 1; DELETE FROM t"]);
     });
 
-    test("a batch with several result sets shows the last one with rows", async () => {
+    test.each<[string, unknown[], number]>([
+      ["empty", [], 0],
+      ["with rows", [{ c: 4 }, { c: 5 }, { c: 6 }], 3],
+    ])("a batch with several result sets shows the last one, %s (#2286)", async (_label, lastRows, rowCount) => {
       (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
         rows: [{ a: 1 }],
         fields: ["a"],
@@ -800,7 +803,7 @@ describe("POST /api/db/multi-query", () => {
         resultSets: [
           { rows: [{ a: 1 }], fields: ["a"] },
           { rows: [{ b: 2 }, { b: 3 }], fields: ["b"], columnTypes: { b: "int" } },
-          { rows: [], fields: ["c"] },
+          { rows: lastRows, fields: ["c"], columnTypes: { c: "int" } },
         ],
       }));
       const req = createMockRequest("/api/db/multi-query", {
@@ -812,13 +815,40 @@ describe("POST /api/db/multi-query", () => {
         rows: unknown[];
         fields: string[];
         rowCount: number;
+        columnTypes?: Record<string, string>;
         statements: { columnTypes?: Record<string, string> }[];
       }>(await POST(req as never));
 
-      expect(data.rows).toEqual([{ b: 2 }, { b: 3 }]);
-      expect(data.fields).toEqual(["b"]);
-      expect(data.rowCount).toBe(2);
-      expect(data.statements[0].columnTypes).toEqual({ b: "int" });
+      expect(data.rows).toEqual(lastRows);
+      expect(data.fields).toEqual(["c"]);
+      expect(data.rowCount).toBe(rowCount);
+      expect(data.columnTypes).toEqual({ c: "int" });
+      expect(data.statements[0].columnTypes).toEqual({ c: "int" });
+    });
+
+    test("a batch ending in a write still shows its last result set (#2286)", async () => {
+      (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+        rows: [{ a: 1 }],
+        fields: ["a"],
+        rowCount: 1,
+        executionTime: 1,
+        resultSets: [
+          { rows: [{ a: 1 }], fields: ["a"] },
+          { rows: [], fields: ["c"], columnTypes: { c: "int" } },
+        ],
+      }));
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: mssql, sql: "SELECT 1 AS a; SELECT c FROM empty; DELETE FROM t" },
+      });
+
+      const data = await parseResponseJSON<{ rows: unknown[]; fields: string[]; rowCount: number }>(
+        await POST(req as never),
+      );
+
+      expect(data.rows).toEqual([]);
+      expect(data.fields).toEqual(["c"]);
+      expect(data.rowCount).toBe(0);
     });
 
     test.each<[string, Record<string, unknown>, number]>([
