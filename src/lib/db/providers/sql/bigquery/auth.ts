@@ -1,7 +1,8 @@
 /**
  * Google OAuth2 access tokens for BigQuery, with no Google SDK: `jose` signs the
  * service-account assertion, the token endpoint is one form POST, and on GKE/GCE the
- * metadata server hands out the workload's token.
+ * metadata server hands out the workload's token. An `external_account` config (Workload
+ * Identity Federation) reads a subject token from a URL and exchanges it at Google's STS.
  */
 
 import { readFileSync } from "node:fs";
@@ -9,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { importPKCS8, SignJWT } from "jose";
 import { AuthenticationError, DatabaseConfigError } from "@/lib/db/errors";
+import { type HttpOrigin, httpOrigin, isLoopbackHost } from "@/lib/db/http/endpoint";
 import { logger } from "@/lib/logger";
 import { type NodeTransport, TransportError } from "@/lib/db/http/node-transport";
 
@@ -22,6 +24,25 @@ const TOKEN_RESPONSE_BYTES = 64 * 1024;
 /** Opt-in for the server's own identity (ADC file or metadata server) on connections that carry no key. */
 const SERVER_CREDENTIALS_ENV = "BIGQUERY_SERVER_CREDENTIALS";
 const METADATA_TOKEN_PATH = "/computeMetadata/v1/instance/service-accounts/default/token";
+/** Google's Security Token Service. An external_account config may exchange there and nowhere else. */
+const STS_URL = "https://sts.googleapis.com/v1/token";
+const STS_ORIGIN: HttpOrigin = { scheme: "https", host: "sts.googleapis.com", port: 443 };
+/** Every workload identity pool provider's audience starts with this. */
+const WIF_AUDIENCE_PREFIX = "//iam.googleapis.com/";
+/** The OIDC subject tokens a url source can hand over; AWS and SAML subjects need sources this provider does not read. */
+const SUBJECT_TOKEN_TYPES: ReadonlySet<string> = new Set([
+  "urn:ietf:params:oauth:token-type:jwt",
+  "urn:ietf:params:oauth:token-type:id_token",
+]);
+const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+
+/** Where an external_account config reads its subject token: one URL, its headers, and how to find the token. */
+export interface SubjectTokenSource {
+  readonly url: string;
+  readonly origin: HttpOrigin;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly format: { readonly type: "text" } | { readonly type: "json"; readonly field: string };
+}
 
 export type GoogleCredentials =
   | { readonly type: "service_account"; readonly client_email: string; readonly private_key: string }
@@ -34,7 +55,14 @@ export type GoogleCredentials =
   /** GKE Workload Identity or a GCE/Cloud Run service account, via the metadata server. */
   | { readonly type: "metadata"; readonly host: string }
   /** A bearer token pasted as-is (`gcloud auth print-access-token`): about an hour of life and no refresh. */
-  | { readonly type: "access_token"; readonly token: string };
+  | { readonly type: "access_token"; readonly token: string }
+  /** Workload Identity Federation: a subject token from `source`, exchanged at STS for a token of that identity. */
+  | {
+      readonly type: "external_account";
+      readonly audience: string;
+      readonly subjectTokenType: string;
+      readonly source: SubjectTokenSource;
+    };
 
 /** What a Google access token looks like: `ya29.…` and its relatives, one unbroken run of URL-safe characters. */
 const ACCESS_TOKEN = /^[\w.~+/=-]{20,}$/;
@@ -102,14 +130,110 @@ export function readCredentials(
   ) {
     return creds as GoogleCredentials;
   }
+  if (creds.type === "external_account") return readExternalAccount(creds);
   throw new DatabaseConfigError(
-    `BigQuery credentials of type "${String(creds.type)}" are not supported: use a service_account key or authorized_user ADC`,
+    `BigQuery credentials of type "${String(creds.type)}" are not supported: use a service_account key, authorized_user ADC or an external_account config`,
     PROVIDER,
   );
 }
 
+function refuse(message: string): DatabaseConfigError {
+  return new DatabaseConfigError(`BigQuery external_account ${message}`, PROVIDER);
+}
+
+function isRecord(value: unknown): value is Partial<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A url-sourced external_account config, the shape `gcloud iam workload-identity-pools create-cred-config` writes.
+ * Narrower than Google's client libraries on purpose: STS is the only exchange, the federated identity is used
+ * directly (no service-account impersonation), and the subject token comes from a URL. A refusal names the field,
+ * never its value.
+ */
+function readExternalAccount(raw: Partial<Record<string, unknown>>): GoogleCredentials {
+  if (raw.service_account_impersonation_url !== undefined) {
+    throw refuse(
+      "credentials with service_account_impersonation_url are not supported: grant the federated identity BigQuery access directly",
+    );
+  }
+  if (raw.token_url !== STS_URL) throw refuse(`credentials must exchange at ${STS_URL}`);
+  if (typeof raw.audience !== "string" || !raw.audience.startsWith(WIF_AUDIENCE_PREFIX)) {
+    throw refuse(`credentials need an audience naming a workload identity pool provider (${WIF_AUDIENCE_PREFIX}...)`);
+  }
+  if (typeof raw.subject_token_type !== "string" || !SUBJECT_TOKEN_TYPES.has(raw.subject_token_type)) {
+    throw refuse("credentials support subject_token_type urn:ietf:params:oauth:token-type:jwt or id_token only");
+  }
+  return {
+    type: "external_account",
+    audience: raw.audience,
+    subjectTokenType: raw.subject_token_type,
+    source: readSubjectSource(raw.credential_source),
+  };
+}
+
+function readSubjectSource(raw: unknown): SubjectTokenSource {
+  const source = isRecord(raw) ? raw : {};
+  if (
+    source.url === undefined ||
+    source.file !== undefined ||
+    source.executable !== undefined ||
+    source.environment_id !== undefined
+  ) {
+    throw refuse(
+      "credentials read the subject token from credential_source.url only: file, executable and environment sources are not supported",
+    );
+  }
+  const { url, origin } = subjectUrl(source.url);
+  return { url, origin, headers: subjectHeaders(source.headers), format: subjectFormat(source.format) };
+}
+
+function subjectUrl(value: unknown): { url: string; origin: HttpOrigin } {
+  const invalid = refuse("credential_source.url is not a valid http(s) URL");
+  let parsed: URL;
+  try {
+    parsed = new URL(String(value));
+  } catch {
+    throw invalid;
+  }
+  const scheme = parsed.protocol.slice(0, -1);
+  if (typeof value !== "string" || (scheme !== "http" && scheme !== "https") || parsed.username || parsed.password) {
+    throw invalid;
+  }
+  const origin = httpOrigin(scheme, parsed.hostname, parsed.port || (scheme === "https" ? 443 : 80));
+  // The subject token is a credential: it may cross the network only inside TLS.
+  if (scheme === "http" && !isLoopbackHost(origin.host)) {
+    throw refuse(
+      "credential_source.url must use https unless it is on this machine, because the subject token is a credential",
+    );
+  }
+  return { url: parsed.href, origin };
+}
+
+function subjectHeaders(value: unknown): Readonly<Record<string, string>> {
+  if (value === undefined) return {};
+  const entries = isRecord(value) ? Object.entries(value) : null;
+  if (
+    !entries ||
+    !entries.every(([name, header]) => HEADER_NAME.test(name) && typeof header === "string" && !/[\r\n]/.test(header))
+  ) {
+    throw refuse("credential_source.headers must map header names to single-line strings");
+  }
+  return Object.fromEntries(entries.map(([name, header]) => [name.toLowerCase(), header as string]));
+}
+
+function subjectFormat(value: unknown): SubjectTokenSource["format"] {
+  if (value === undefined) return { type: "text" };
+  if (isRecord(value) && value.type === "text") return { type: "text" };
+  if (isRecord(value) && value.type === "json" && typeof value.subject_token_field_name === "string") {
+    const field = value.subject_token_field_name;
+    if (field) return { type: "json", field };
+  }
+  throw refuse("credential_source.format must be text, or json with subject_token_field_name");
+}
+
 async function grantForm(
-  creds: Exclude<GoogleCredentials, { type: "metadata" | "access_token" }>,
+  creds: Exclude<GoogleCredentials, { type: "metadata" | "access_token" | "external_account" }>,
   now: number,
 ): Promise<Record<string, string>> {
   if (creds.type === "authorized_user") {
@@ -131,19 +255,58 @@ async function grantForm(
   return { grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion };
 }
 
-/** Where tokens for these credentials come from: Google's token endpoint, or the metadata server. */
+/**
+ * The subject token an external_account source hands out. A refusal names the status or what was missing, never the
+ * body, which may carry the very credential being fetched.
+ */
+async function subjectToken(
+  source: SubjectTokenSource,
+  transport: NodeTransport,
+  signal: AbortSignal,
+): Promise<string> {
+  const failed = (reason: string) => new AuthenticationError(`Subject token request failed: ${reason}`, PROVIDER);
+  const response = await transport.request({
+    method: "GET",
+    url: source.url,
+    signal,
+    maxResponseBytes: TOKEN_RESPONSE_BYTES,
+  });
+  if (response.status !== 200) throw failed(`HTTP ${response.status}`);
+  let token: unknown = response.text.trim();
+  if (source.format.type === "json") {
+    let body: unknown;
+    try {
+      body = JSON.parse(response.text);
+    } catch {
+      throw failed("the answer is not JSON");
+    }
+    token = isRecord(body) ? body[source.format.field] : undefined;
+  }
+  if (typeof token !== "string" || !token) throw failed("the answer holds no subject token");
+  return token;
+}
+
+/** Where tokens for these credentials come from: Google's token endpoint, the metadata server, or STS. */
 export function tokenOrigin(creds: GoogleCredentials): { scheme: "http" | "https"; host: string; port: number } {
+  if (creds.type === "external_account") return STS_ORIGIN;
   if (creds.type !== "metadata") return { scheme: "https", host: new URL(TOKEN_URL).hostname, port: 443 };
   const [host, port] = creds.host.split(":");
   return { scheme: "http", host, port: port ? Number(port) : 80 };
 }
 
-/** A cached bearer token, refreshed a minute before Google says it expires. */
+/**
+ * A cached bearer token, refreshed a minute before Google says it expires. An external_account source also needs
+ * `subjectTokens`, the transport to its `source.origin`.
+ */
 export function createTokenSource(
   creds: GoogleCredentials,
   tokens: NodeTransport,
   now: () => number = Date.now,
+  subjectTokens?: NodeTransport,
 ): (signal: AbortSignal) => Promise<string> {
+  if (creds.type === "external_account" && !subjectTokens) {
+    throw new Error("BigQuery external_account credentials need a subject token transport");
+  }
   if (creds.type === "access_token") {
     const { token } = creds;
     return async () => token;
@@ -162,13 +325,29 @@ export function createTokenSource(
             signal,
             maxResponseBytes: TOKEN_RESPONSE_BYTES,
           })
-        : await tokens.request({
-            method: "POST",
-            url: TOKEN_URL,
-            form: await grantForm(creds, now()),
-            signal,
-            maxResponseBytes: TOKEN_RESPONSE_BYTES,
-          });
+        : creds.type === "external_account"
+          ? await tokens.request({
+              method: "POST",
+              url: STS_URL,
+              form: {
+                grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+                audience: creds.audience,
+                scope: SCOPE,
+                requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                subject_token_type: creds.subjectTokenType,
+                // Checked above: an external_account source never reaches here without its subject transport.
+                subject_token: await subjectToken(creds.source, subjectTokens as NodeTransport, signal),
+              },
+              signal,
+              maxResponseBytes: TOKEN_RESPONSE_BYTES,
+            })
+          : await tokens.request({
+              method: "POST",
+              url: TOKEN_URL,
+              form: await grantForm(creds, now()),
+              signal,
+              maxResponseBytes: TOKEN_RESPONSE_BYTES,
+            });
     let body: { access_token?: unknown; expires_in?: unknown; error_description?: unknown; error?: unknown } = {};
     try {
       body = JSON.parse(response.text);

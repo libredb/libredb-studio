@@ -252,7 +252,15 @@ export class BigQueryProvider extends SQLBaseProvider {
         this.type,
       );
     }
-    const transport = createBigQueryTransport(this.project(), readCredentials(this.config.password));
+    const creds = readCredentials(this.config.password);
+    // Like the server's own identity: the config names a URL the server fetches, so a user may not supply one.
+    if (creds.type === "external_account" && !this.operatorSeeded()) {
+      throw new DatabaseConfigError(
+        "BigQuery external_account credentials are used only for operator-seeded connections: the server fetches the subject token from the URL they name",
+        this.type,
+      );
+    }
+    const transport = createBigQueryTransport(this.project(), creds);
     try {
       // Without datasets.list the job location is left to BigQuery to infer; bad credentials still fail here.
       this.location =

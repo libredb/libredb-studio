@@ -34,7 +34,9 @@ describe("bigquery readCredentials rejects", () => {
   });
 
   test("an unsupported credential type", () => {
-    expect(() => readCredentials(JSON.stringify({ type: "external_account" }), {})).toThrow('"external_account"');
+    expect(() => readCredentials(JSON.stringify({ type: "impersonated_service_account" }), {})).toThrow(
+      '"impersonated_service_account"',
+    );
   });
 
   test("accepts authorized_user ADC", () => {

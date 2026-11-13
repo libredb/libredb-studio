@@ -34,14 +34,20 @@ interface Logged {
 const CAPTURES = join(import.meta.dir, "..", "..", "fixtures", "bigquery", "2026-10-13-eu");
 function captured(scenario: string, exchange = 0): Reply {
   const file = JSON.parse(readFileSync(join(CAPTURES, `${scenario}.json`), "utf8")) as {
-    exchanges: { request: { path: string }; response: { status: number; body: Wire } }[];
+    exchanges: {
+      request: { path: string };
+      response: { status: number; body: Wire };
+    }[];
   };
   const { status, body } = file.exchanges[exchange].response;
   return { status, json: body };
 }
 function capturedGet(scenario: string, path: string): Reply | undefined {
   const file = JSON.parse(readFileSync(join(CAPTURES, `${scenario}.json`), "utf8")) as {
-    exchanges: { request: { path: string }; response: { status: number; body: Wire } }[];
+    exchanges: {
+      request: { path: string };
+      response: { status: number; body: Wire };
+    }[];
   };
   const hit = file.exchanges.find((e) => e.request.path.split("?")[0] === path);
   return hit && { status: hit.response.status, json: hit.response.body };
@@ -53,7 +59,25 @@ const { privateKey, publicKey } = generateKeyPairSync("rsa", {
   publicKeyEncoding: { type: "spki", format: "pem" },
 });
 const CLIENT_EMAIL = "studio@demo-project.iam.gserviceaccount.com";
-const KEY_JSON = JSON.stringify({ type: "service_account", client_email: CLIENT_EMAIL, private_key: privateKey });
+const KEY_JSON = JSON.stringify({
+  type: "service_account",
+  client_email: CLIENT_EMAIL,
+  private_key: privateKey,
+});
+
+const WIF_AUDIENCE =
+  "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/studio/providers/adapter";
+const EXTERNAL_ACCOUNT = JSON.stringify({
+  type: "external_account",
+  audience: WIF_AUDIENCE,
+  subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+  token_url: "https://sts.googleapis.com/v1/token",
+  credential_source: {
+    url: "https://adapter.example.com/subject/alice",
+    headers: { authorization: "Bearer adapter-secret" },
+    format: { type: "json", subject_token_field_name: "id_token" },
+  },
+});
 
 const ok = (json: Wire): Reply => ({ status: 200, json });
 const apiError = (status: number, message: string, reason: string): Reply => ({
@@ -69,6 +93,9 @@ class FakeGoogle {
   datasetsReply: Reply | null = null;
   tokensIssued = 0;
   closed = 0;
+  /** external_account: the subject tokens the adapter handed out and the STS exchanges it was used in. */
+  subjectAuthorizations: (string | undefined)[] = [];
+  stsForms: Record<string, string>[] = [];
   /** A test's own answer for a jobs.query / GET getQueryResults; return undefined to fall through. */
   onQuery: (sql: string, body: Wire) => Reply | undefined = () => undefined;
   onPoll: (jobId: string, params: URLSearchParams) => Reply | undefined = () => undefined;
@@ -94,9 +121,17 @@ class FakeGoogle {
 
   private route(request: NodeRequest, url: URL, authorization: string | undefined): Reply {
     if (url.host === "oauth2.googleapis.com") return this.token(request);
+    if (url.host === "adapter.example.com") return this.subject(authorization);
+    if (url.host === "sts.googleapis.com") return this.sts(request);
     const path = url.pathname.replace("/bigquery/v2/projects/demo-project", "");
     const body = request.body ? (JSON.parse(request.body) as Wire) : null;
-    this.requests.push({ method: request.method, path, params: url.searchParams, body, authorization });
+    this.requests.push({
+      method: request.method,
+      path,
+      params: url.searchParams,
+      body,
+      authorization,
+    });
     if (url.host !== "bigquery.googleapis.com" || !url.pathname.startsWith("/bigquery/v2/projects/demo-project")) {
       return apiError(404, "no such route", "notFound");
     }
@@ -130,9 +165,32 @@ class FakeGoogle {
       .verify(publicKey, signature, "base64url");
     expect(verified).toBe(true);
     const claims = JSON.parse(Buffer.from(payload, "base64url").toString()) as Wire;
-    expect(claims).toMatchObject({ iss: CLIENT_EMAIL, scope: "https://www.googleapis.com/auth/bigquery" });
+    expect(claims).toMatchObject({
+      iss: CLIENT_EMAIL,
+      scope: "https://www.googleapis.com/auth/bigquery",
+    });
     this.tokensIssued += 1;
-    return ok({ access_token: `ya29.fake-token-${this.tokensIssued}`, expires_in: 3600 });
+    return ok({
+      access_token: `ya29.fake-token-${this.tokensIssued}`,
+      expires_in: 3600,
+    });
+  }
+
+  private subject(authorization: string | undefined): Reply {
+    this.subjectAuthorizations.push(authorization);
+    return ok({ id_token: `subject-jwt-${this.subjectAuthorizations.length}` });
+  }
+
+  private sts(request: NodeRequest): Reply {
+    const form = request.form!;
+    this.stsForms.push(form);
+    this.tokensIssued += 1;
+    return ok({
+      access_token: `federated-token-${this.tokensIssued}`,
+      issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
   }
 
   private jobsQuery(body: Wire): Reply {
@@ -214,7 +272,11 @@ describe("connect", () => {
     expect(provider.isConnected()).toBe(true);
     expect(google.tokensIssued).toBe(1);
     const probe = queriesWith(/^SELECT 1$/)[0];
-    expect(probe.body).toMatchObject({ location: "EU", useLegacySql: false, dryRun: false });
+    expect(probe.body).toMatchObject({
+      location: "EU",
+      useLegacySql: false,
+      dryRun: false,
+    });
     expect(probe.authorization).toBe("Bearer ya29.fake-token-1");
 
     await provider.query("SELECT 1");
@@ -224,13 +286,17 @@ describe("connect", () => {
   test("an explicit location skips the datasets listing", async () => {
     await open({ location: "europe-west3" });
     expect(google.requests.some((r) => r.path === "/datasets")).toBe(false);
-    expect(queriesWith(/^SELECT 1$/)[0].body).toMatchObject({ location: "europe-west3" });
+    expect(queriesWith(/^SELECT 1$/)[0].body).toMatchObject({
+      location: "europe-west3",
+    });
   });
 
   test("the default dataset's location wins over the majority", async () => {
     google.datasetsReply = captured("datasets-list-mixed-locations");
     await open({ schema: "regional" });
-    expect(queriesWith(/^SELECT 1$/)[0].body).toMatchObject({ location: "europe-west3" });
+    expect(queriesWith(/^SELECT 1$/)[0].body).toMatchObject({
+      location: "europe-west3",
+    });
   });
 
   test("a principal without datasets.list still connects, leaving the location to BigQuery", async () => {
@@ -245,6 +311,34 @@ describe("connect", () => {
     await expect(provider.connect()).rejects.toThrow(/only for operator-seeded connections/);
     expect(google.requests).toHaveLength(0);
     expect(google.tokensIssued).toBe(0);
+  });
+
+  test("external_account fetches the subject token, exchanges it at STS and queries with the federated token", async () => {
+    const provider = await open({ password: EXTERNAL_ACCOUNT, managed: true });
+    expect(provider.isConnected()).toBe(true);
+    expect(google.subjectAuthorizations).toEqual(["Bearer adapter-secret"]);
+    expect(google.stsForms).toEqual([
+      {
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        audience: WIF_AUDIENCE,
+        scope: "https://www.googleapis.com/auth/bigquery",
+        requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+        subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+        subject_token: "subject-jwt-1",
+      },
+    ]);
+    expect(queriesWith(/^SELECT 1$/)[0].authorization).toBe("Bearer federated-token-1");
+
+    await provider.query("SELECT 1");
+    expect(google.stsForms).toHaveLength(1);
+  });
+
+  test("external_account on a connection that is not operator-seeded is refused before anything is sent", async () => {
+    const provider = new BigQueryProvider(connection({ password: EXTERNAL_ACCOUNT }));
+    await expect(provider.connect()).rejects.toThrow(/external_account credentials are used only for operator-seeded/);
+    expect(google.subjectAuthorizations).toHaveLength(0);
+    expect(google.stsForms).toHaveLength(0);
+    expect(google.requests).toHaveLength(0);
   });
 
   test("a rejected token request is an AuthenticationError and leaves the provider disconnected", async () => {
@@ -403,7 +497,9 @@ describe("object surface", () => {
     // One catalog read of each view serves every listing, count and bulk column read.
     expect(queriesWith(/INFORMATION_SCHEMA\.TABLES/)).toHaveLength(1);
     expect(queriesWith(/INFORMATION_SCHEMA\.COLUMNS/)).toHaveLength(1);
-    expect(queriesWith(/INFORMATION_SCHEMA\.TABLES/)[0].body).toMatchObject({ jobTimeoutMs: expect.any(String) });
+    expect(queriesWith(/INFORMATION_SCHEMA\.TABLES/)[0].body).toMatchObject({
+      jobTimeoutMs: expect.any(String),
+    });
     expect(String(queriesWith(/INFORMATION_SCHEMA\.TABLES/)[0].body?.query)).toContain(
       "`demo-project`.`region-eu`.INFORMATION_SCHEMA.TABLES",
     );
@@ -439,7 +535,12 @@ describe("object surface", () => {
       nullable: true,
       isPrimary: false,
     });
-    expect(batch.details[1].columns[0]).toEqual({ name: "order_id", type: "INT64", nullable: false, isPrimary: false });
+    expect(batch.details[1].columns[0]).toEqual({
+      name: "order_id",
+      type: "INT64",
+      nullable: false,
+      isPrimary: false,
+    });
     expect(google.requests.filter((r) => r.path.startsWith("/datasets/shop/tables/"))).toHaveLength(0);
 
     google.informationSchema = false;
@@ -505,7 +606,10 @@ describe("monitoring", () => {
       databaseSizeBytes: 551,
       indexCount: 0,
     });
-    expect(await provider.getPerformanceMetrics()).toEqual({ cacheHitRatio: 15, queriesPerSecond: 0.01 });
+    expect(await provider.getPerformanceMetrics()).toEqual({
+      cacheHitRatio: 15,
+      queriesPerSecond: 0.01,
+    });
     const slow = await provider.getSlowQueries({ limit: 5 });
     expect(slow).toHaveLength(5);
     expect(slow[1]).toEqual({
@@ -529,9 +633,27 @@ describe("monitoring", () => {
     });
     expect(sessions[0].queryStart).toEqual(new Date(1791876491557));
     expect(await provider.getTableStats({ schema: "shop" })).toEqual([
-      { schemaName: "shop", tableName: "orders", rowCount: 7, totalSize: "280 B", totalSizeBytes: 280 },
-      { schemaName: "shop", tableName: "daily_totals", rowCount: 7, totalSize: "168 B", totalSizeBytes: 168 },
-      { schemaName: "shop", tableName: "customers", rowCount: 2, totalSize: "63 B", totalSizeBytes: 63 },
+      {
+        schemaName: "shop",
+        tableName: "orders",
+        rowCount: 7,
+        totalSize: "280 B",
+        totalSizeBytes: 280,
+      },
+      {
+        schemaName: "shop",
+        tableName: "daily_totals",
+        rowCount: 7,
+        totalSize: "168 B",
+        totalSizeBytes: 168,
+      },
+      {
+        schemaName: "shop",
+        tableName: "customers",
+        rowCount: 2,
+        totalSize: "63 B",
+        totalSizeBytes: 63,
+      },
     ]);
     expect(await provider.getStorageStats()).toEqual([
       { name: "shop", location: "EU", size: "511 B", sizeBytes: 511 },
@@ -560,7 +682,10 @@ describe("monitoring", () => {
   test("a refused read leaves the panels empty rather than failing", async () => {
     google.informationSchema = false;
     const provider = await open();
-    expect(await provider.getOverview()).toMatchObject({ databaseSize: "N/A", tableCount: 0 });
+    expect(await provider.getOverview()).toMatchObject({
+      databaseSize: "N/A",
+      tableCount: 0,
+    });
     expect(await provider.getPerformanceMetrics()).toEqual({});
     expect(await provider.getSlowQueries()).toEqual([]);
     expect(await provider.getActiveSessions()).toEqual([]);

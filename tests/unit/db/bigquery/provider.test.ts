@@ -96,7 +96,10 @@ mock.module("@/lib/db/providers/sql/bigquery/transport", () => ({
   },
 }));
 mock.module("@/lib/db/providers/sql/bigquery/auth", () => ({
-  readCredentials: (password?: string) => ({ kind: "fake", password }),
+  readCredentials: (password?: string) =>
+    password?.includes('"external_account"')
+      ? { type: "external_account", kind: "fake", password }
+      : { kind: "fake", password },
 }));
 
 const { BigQueryProvider, jobLocation, catalogLimits } = await import("@/lib/db/providers/sql/bigquery");
@@ -208,6 +211,16 @@ describe("connect / disconnect", () => {
     const seeded = await connected({ password: undefined, managed: true });
     expect(seeded.isConnected()).toBe(true);
     expect(createCalls[0]).toEqual(["my-proj", { kind: "fake", password: undefined }]);
+  });
+
+  test("an external_account connection a user created is refused; an operator-seeded one connects", async () => {
+    const external = JSON.stringify({ type: "external_account" });
+    const error = await new BigQueryProvider({ ...base, password: external }).connect().catch((e) => e);
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toContain("external_account credentials are used only for operator-seeded connections");
+    expect(createCalls).toHaveLength(0);
+    const seeded = await connected({ password: external, managed: true });
+    expect(seeded.isConnected()).toBe(true);
   });
 
   test("a datasets listing the principal may not read leaves the location to BigQuery", async () => {
