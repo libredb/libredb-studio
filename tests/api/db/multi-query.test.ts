@@ -791,10 +791,10 @@ describe("POST /api/db/multi-query", () => {
       expect(executed()).toEqual(["SELECT 1; DELETE FROM t"]);
     });
 
-    test.each<[unknown[], number]>([
-      [[], 0],
-      [[{ c: 4 }, { c: 5 }, { c: 6 }], 3],
-    ])("a batch with several result sets shows the last one, empty or not (#2286): %s", async (lastRows, rowCount) => {
+    test.each<[string, unknown[], number]>([
+      ["empty", [], 0],
+      ["with rows", [{ c: 4 }, { c: 5 }, { c: 6 }], 3],
+    ])("a batch with several result sets shows the last one, %s (#2286)", async (_label, lastRows, rowCount) => {
       (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
         rows: [{ a: 1 }],
         fields: ["a"],
@@ -848,34 +848,6 @@ describe("POST /api/db/multi-query", () => {
 
       expect(data.rows).toEqual([]);
       expect(data.fields).toEqual(["c"]);
-      expect(data.rowCount).toBe(0);
-    });
-
-    test("a batch's last set is shown even when an earlier one has rows and it is empty (#2286)", async () => {
-      (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
-        rows: [{ n: 3 }],
-        fields: ["n"],
-        rowCount: 1,
-        executionTime: 1,
-        resultSets: [
-          { rows: [{ n: 3 }], fields: ["n"] },
-          { rows: [], fields: ["id", "token"] },
-        ],
-      }));
-      const req = createMockRequest("/api/db/multi-query", {
-        method: "POST",
-        body: {
-          connection: mssql,
-          sql: "SELECT COUNT(*) AS n FROM expired_tokens; DELETE FROM expired_tokens; SELECT * FROM expired_tokens",
-        },
-      });
-
-      const data = await parseResponseJSON<{ rows: unknown[]; fields: string[]; rowCount: number }>(
-        await POST(req as never),
-      );
-
-      expect(data.rows).toEqual([]);
-      expect(data.fields).toEqual(["id", "token"]);
       expect(data.rowCount).toBe(0);
     });
 
