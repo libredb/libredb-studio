@@ -263,7 +263,9 @@ const seconds = (ms: number): string => (ms / 1000).toFixed(1);
 const readGauge = (gauge: AgentBudgetGauge): string =>
   gauge.unit === "ms"
     ? `${seconds(gauge.used)} / ${seconds(gauge.limit)} s ${gauge.label.toLowerCase()}`
-    : `${gauge.used} / ${gauge.limit} ${gauge.label.toLowerCase()}`;
+    : // Grouped for the same reason the rail groups: a token ceiling is a six-figure
+      // number, and a statement count below a thousand reads exactly as it did.
+      `${gauge.used.toLocaleString("en-US")} / ${gauge.limit.toLocaleString("en-US")} ${gauge.label.toLowerCase()}`;
 
 /**
  * How far through its budget the run is, as the FULLEST of its bounds.

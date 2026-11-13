@@ -105,6 +105,10 @@ type CoreNarrativeEvent = Extract<
       // its own operation id, and this entry is the run's own account of being left
       // ungrounded.
       | "context-unavailable"
+      // One model turn's spend, written by the drive itself and by nothing else. Narrative
+      // rather than a lifecycle fact: the run is telling the ledger what a turn cost, which
+      // is the half of its own account no other method can write.
+      | "model-turn"
       // The inventory the run did not read, because this process already held one (B56).
       // Narrative for the same reason both entries above are: no catalog was read, no step
       // was settled, and the run is recording where its ground came from — which is the one

@@ -462,7 +462,16 @@ export type AgentRunStopReason =
   /** One model call did not return within its own ceiling. Retrying is reasonable. */
   | "model-timeout"
   /** The model-turn ceiling was reached with work still in flight. */
-  | "turn-limit";
+  | "turn-limit"
+  /**
+   * The run's token ceiling was reached, so no further model turn opens.
+   *
+   * Its own member rather than a rename of `turn-limit`: the two ask the operator for
+   * different things. `turn-limit` says the run took too many steps and is a backstop,
+   * while this one says the budget the workflow declares was spent, which is a figure
+   * with a row behind it.
+   */
+  | "token-limit";
 
 /**
  * Who started the run, persisted at start and the sole authority for authorizing
@@ -1013,6 +1022,26 @@ export type AgentRunReadsSpent = number;
 export type AgentRunEvent =
   | (AgentRunEventBase & { readonly kind: "run-started"; readonly mode: AgentRunMode })
   | (AgentRunEventBase & { readonly kind: "run-paused" })
+  | (AgentRunEventBase & {
+      /**
+       * One model turn's spend, as the server reported it.
+       *
+       * Written per TURN rather than folded into `run-finished`, because the ceiling is
+       * checked between turns and a resumed drive has to be able to read what earlier
+       * drives spent. A turn whose server reported nothing writes NO event: a zero would
+       * be a figure the server never charged, and the meter's rule is that it shows what
+       * the server enforces.
+       *
+       * `cachedInputTokens` is a SUBSET of `inputTokens`, recorded beside it rather than
+       * subtracted, so a reader can state the prefix-cache share without recomputing it.
+       */
+      readonly kind: "model-turn";
+      /** Which turn of THIS drive this was, so a reader can order them. */
+      readonly atTurn: number;
+      readonly inputTokens: number;
+      readonly outputTokens: number;
+      readonly cachedInputTokens?: number;
+    })
   | (AgentRunEventBase & { readonly kind: "run-resumed" })
   | (AgentRunEventBase & {
       /**

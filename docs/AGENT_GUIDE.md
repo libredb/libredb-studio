@@ -834,8 +834,11 @@ once the run has one, and by the run's own record."* An Analyze run is bounded t
 Investigate one, so a figure shown before the workflow is known would be a number nothing is
 enforcing. The gauges themselves wait for a run either way.
 
-**There is no token gauge, and its absence is deliberate**: this build enforces no token budget, so
-a figure would mean nothing.
+**The token gauge appears only where the server reported a figure.** A run enforces
+`maxTokensPerRun` for its workflow and a completion ceiling on each model call, and every turn whose
+provider answered with usage adds to the gauge. A provider that reports nothing leaves the gauge
+absent rather than showing a zero it never charged, and a turn cut short reports nothing, so the
+figure is a floor like the others beside it.
 
 **A run that ends early was asked to stop.** When a run comes within 2 model turns or 20 seconds of
 either of those ceilings, the server tells it once — in its own words, not the database's — that this

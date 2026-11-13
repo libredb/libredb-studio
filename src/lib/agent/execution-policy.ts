@@ -177,6 +177,19 @@ export interface AgentWorkflowBudget {
    * is not merely a rename of `deadline-exceeded`.
    */
   readonly maxModelTurns: number;
+  /**
+   * How many model tokens ONE RUN may spend, across every drive of it.
+   *
+   * A run-side ceiling for the same reason `maxStatementsPerRun` and `maxTotalRunMs` are:
+   * spend survives a resume, and a ceiling that restarted with each drive would multiply
+   * by the number of times a run was picked up (#999).
+   *
+   * A frozen constant and never an environment variable, for the reason the row-level
+   * note above gives: this module is imported into the browser for the meter's ceilings,
+   * so a configured figure the server did not apply would be exactly the metered lie the
+   * rail's rule forbids.
+   */
+  readonly maxTokensPerRun: number;
 }
 
 /**
@@ -201,6 +214,7 @@ function workflowBudget(input: {
   readonly maxStatementsPerRun: number;
   readonly runDeadlineMs: number;
   readonly maxTotalRunMs: number;
+  readonly maxTokensPerRun: number;
 }): AgentWorkflowBudget {
   const budgets: ExecutionBudget = Object.freeze({
     /** The run loop is sequential: one statement in flight, so a run cannot fan out. */
@@ -236,8 +250,26 @@ function workflowBudget(input: {
     }),
     runDeadlineMs: input.runDeadlineMs,
     maxModelTurns: input.maxModelTurns,
+    maxTokensPerRun: input.maxTokensPerRun,
   });
 }
+
+/**
+ * The most completion tokens ONE model call may be asked for.
+ *
+ * A second lever beside `maxTokensPerRun`, because the two bound different things: the
+ * run ceiling is read between turns and therefore cannot reach the turn that is
+ * spending, while this is handed to `streamText` so the turn itself stops. Measured on
+ * a local 8b model, one uncapped turn generated 40,960 tokens over 2,240 s and no
+ * budget moved.
+ *
+ * 4,096 is sized from what a turn of this workload is seen to write: the largest
+ * healthy answer in the issue's measurements was 3,967 completion tokens, so a turn
+ * that has to think for longer than this is a turn the run cannot afford anyway. It is
+ * a CAP and not a target: a model that answers in 400 tokens is asked for 4,096 and
+ * writes 400. When the run has less left than this, the smaller figure wins.
+ */
+export const AGENT_PER_TURN_OUTPUT_CAP = 4_096;
 
 /**
  * What each workflow may spend, frozen per workflow (the data-analyst design, §1.6).
@@ -334,39 +366,48 @@ function workflowBudget(input: {
 export const AGENT_WORKFLOW_BUDGETS: Readonly<Record<AgentRunWorkflowType, AgentWorkflowBudget>> = Object.freeze({
   investigation: workflowBudget({
     workflowType: "investigation",
+    policyRevision: 2,
     maxModelTurns: 36,
     maxStatementsPerRun: 30,
     runDeadlineMs: 450_000,
     maxTotalRunMs: 90_000,
+    maxTokensPerRun: 150_000,
   }),
   "query-optimization": workflowBudget({
     workflowType: "query-optimization",
+    policyRevision: 2,
     maxModelTurns: 36,
     maxStatementsPerRun: 30,
     runDeadlineMs: 450_000,
     maxTotalRunMs: 90_000,
+    maxTokensPerRun: 150_000,
   }),
   "database-assessment": workflowBudget({
     workflowType: "database-assessment",
+    policyRevision: 2,
     maxModelTurns: 48,
     maxStatementsPerRun: 45,
     runDeadlineMs: 630_000,
     maxTotalRunMs: 135_000,
+    maxTokensPerRun: 250_000,
   }),
   operations: workflowBudget({
     workflowType: "operations",
-    policyRevision: 2,
+    policyRevision: 3,
     maxModelTurns: 20,
     maxStatementsPerRun: 18,
     runDeadlineMs: 360_000,
     maxTotalRunMs: 80_000,
+    maxTokensPerRun: 100_000,
   }),
   "data-analysis": workflowBudget({
     workflowType: "data-analysis",
+    policyRevision: 2,
     maxModelTurns: 60,
     maxStatementsPerRun: 42,
     runDeadlineMs: 900_000,
     maxTotalRunMs: 180_000,
+    maxTokensPerRun: 300_000,
   }),
 } satisfies Record<AgentRunWorkflowType, AgentWorkflowBudget>);
 

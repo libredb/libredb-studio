@@ -30,6 +30,24 @@ export interface DriveCeilings {
   readonly executedMs: number;
   /** How many artifacts this run may hold at once, across drives (#999). */
   readonly artifactAllowance: number;
+  /** Model tokens already spent by earlier drives, folded from `model-turn` entries. */
+  readonly tokensSpent: number;
+}
+
+/**
+ * The model tokens a run's ledger says it has spent, across every drive.
+ *
+ * Summed rather than taken as the largest figure, unlike `billedReadsSpent`: a
+ * `model-turn` entry carries ONE turn's spend and is never a running total, which is
+ * what makes the sum the run's whole spend. A turn the server reported nothing for
+ * writes no entry, so this is a floor, and the meter's caveat says so.
+ */
+export function tokensSpentIn(events: readonly AgentRunEvent[]): number {
+  let spent = 0;
+  for (const event of events) {
+    if (event.kind === "model-turn") spent += event.inputTokens + event.outputTokens;
+  }
+  return spent;
 }
 
 /**
@@ -51,10 +69,13 @@ export function deriveDriveCeilings(
   const deadlineMs = Math.max(1, run.createdAtMs + budget.runDeadlineMs - nowMs);
   let executedStatements = 0;
   let executedMs = 0;
+  let tokensSpent = 0;
   for (const event of run.events) {
     if (event.kind === "tool-completed") {
       executedStatements += 1;
       executedMs += event.artifact.summary.elapsedMs;
+    } else if (event.kind === "model-turn") {
+      tokensSpent += event.inputTokens + event.outputTokens;
     }
   }
   return {
@@ -62,6 +83,7 @@ export function deriveDriveCeilings(
     executedStatements,
     executedMs,
     artifactAllowance: budget.policy.budgets.maxStatementsPerRun,
+    tokensSpent,
   };
 }
 

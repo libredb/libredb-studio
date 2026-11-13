@@ -110,6 +110,7 @@ const EVENT_KINDS: ReadonlySet<string> = new Set([
     "run-paused": true,
     "run-resumed": true,
     "driver-resolved": true,
+    "model-turn": true,
     "context-captured": true,
     "context-reused": true,
     "context-unavailable": true,

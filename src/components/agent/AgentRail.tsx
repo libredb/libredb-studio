@@ -327,10 +327,16 @@ const TIMELINE_BOTTOM_SLACK_PX = 24;
 
 const seconds = (ms: number): string => (ms / 1000).toFixed(1);
 
-/** The meter's own reading of one gauge, in the unit that gauge is bounded in. */
+/**
+ * The meter's own reading of one gauge, in the unit that gauge is bounded in.
+ *
+ * Both counts are GROUPED, because a token ceiling is read in the hundred-thousands and
+ * `150000` is a figure a reader has to count digits on. A statement count below a
+ * thousand is unchanged, since the separator only appears above 999.
+ */
 function readGauge(gauge: AgentBudgetGauge): string {
   if (gauge.unit === "ms") return `${seconds(gauge.used)} / ${seconds(gauge.limit)} s`;
-  return `${gauge.used} / ${gauge.limit}`;
+  return `${gauge.used.toLocaleString("en-US")} / ${gauge.limit.toLocaleString("en-US")}`;
 }
 
 /**
@@ -2010,7 +2016,8 @@ export const AgentRail = React.memo(function AgentRail({
     `${run.timeline.items.length} steps`,
     ...run.timeline.budget
       // The two the ledger MEASURES, in the order the meter shows them. Repair attempts
-      // are a count of a count and say nothing at a glance, so they stay in the gauges.
+      // are a count of a count and say nothing at a glance, so they stay in the gauges,
+      // and the token figure lives there too: it is a total, not a step.
       .filter((gauge) => gauge.id === "statements" || gauge.id === "database-time")
       .map((gauge) =>
         gauge.id === "statements"
@@ -2756,11 +2763,13 @@ export const AgentRail = React.memo(function AgentRail({
         The meter, FOLDED (item 6 of the redesign).
 
         It reports what the server ENFORCES and reads every consumption off the run's own
-        ledger. Three bounds can be measured that way; the rest are stated as the ceilings
-        they are, because nothing durable records their consumption — the wall-clock
-        deadline and the model-turn count live in the process driving the run, and this
-        build enforces no token budget at all, so no token figure is shown rather than one
-        that means nothing.
+        ledger. Four bounds can be measured that way: statements and database time off the
+        settled steps, repair attempts off their own entries, and model tokens off the
+        `model-turn` entry each turn writes. The rest are stated as the ceilings they are,
+        because nothing durable records their consumption — the wall-clock deadline and the
+        model-turn count live in the process driving the run. The token gauge is drawn only
+        where the server reported a figure: a provider that answers nothing leaves the
+        gauge absent rather than showing a zero it never charged.
 
         What changed is where the reading SITS, and nothing about what it says. Four
         stacked paragraphs of caveat above the transcript pushed the run's own output below

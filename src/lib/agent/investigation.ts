@@ -55,7 +55,15 @@ import {
 } from "./agent-manifest";
 import { logger } from "@/lib/logger";
 import { isRetryableError, isToolCallParseError, LLMConfigError } from "@/lib/llm/types";
-import { type AssistantModelMessage, type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
+import {
+  type AssistantModelMessage,
+  type LanguageModelUsage,
+  type ModelMessage,
+  Output,
+  type ToolSet,
+  streamText,
+  tool,
+} from "ai";
 import { z } from "zod";
 import {
   type AgentContextCapture,
@@ -107,10 +115,11 @@ import {
   AGENT_TRANSPORT_TURN_RETRIES,
   AGENT_UNREADABLE_TOOL_CALL_ANSWERS,
   AGENT_REPORT_RESERVE_TURNS,
+  AGENT_PER_TURN_OUTPUT_CAP,
   AGENT_RUN_READ_ALLOWANCE,
   AGENT_WORKFLOW_BUDGETS,
 } from "./execution-policy";
-import { billedReadsSpent } from "./drive-budget";
+import { billedReadsSpent, tokensSpentIn } from "./drive-budget";
 import {
   type AgentModel,
   agentProviderOptions,
@@ -194,6 +203,13 @@ export interface AgentInvestigationOptions {
   readonly maxTurns?: number;
   /** Ceiling on ONE model call; defaults to `agentModelTurnTimeoutMs()`. */
   readonly turnTimeoutMs?: number;
+  /**
+   * The run's token ceiling; defaults to the workflow's `maxTokensPerRun`.
+   *
+   * Present as an option for the reason `maxTurns` is: a test that had to reach a real
+   * ceiling by writing a million tokens into a fixture would be testing the fixture.
+   */
+  readonly maxTokens?: number;
 }
 
 /**
@@ -2264,6 +2280,48 @@ const unknownToolText = (name: string): string =>
 // The run loop
 // ============================================================================
 
+/** What one turn's provider reported it spent. Absent when the server reported nothing. */
+export interface TurnUsage {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  /** The share of `inputTokens` the server answered from its own prefix cache. */
+  readonly cachedInputTokens?: number;
+}
+
+/**
+ * A count the server gave, or nothing.
+ *
+ * Every branch here exists because a provider can answer with something that is not
+ * a token count: `undefined` on a stream that reported no usage, `NaN` from a broken
+ * proxy, a negative from a mangled frame, a float from a server that averages. A
+ * number that is not a whole non-negative token count is refused rather than
+ * recorded, because a budget summed from one of those is a budget that never binds.
+ */
+const asTokenCount = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
+
+/**
+ * One turn's usage in the shape the ledger records, or `null`.
+ *
+ * `null` is a first-class answer, not an error: a server that reports nothing is a
+ * server whose spend this product cannot state, and the alternative (a zero) would be
+ * a figure the meter shows and the server never charged.
+ *
+ * The cached figure is a SUBSET of the input, so a server reporting more cached tokens
+ * than input tokens is reporting something inconsistent; the cached figure is dropped
+ * and the input kept, because the input is the half the budget spends.
+ */
+export function normalizeUsage(usage: LanguageModelUsage | undefined): TurnUsage | null {
+  if (usage === undefined) return null;
+  const inputTokens = asTokenCount(usage.inputTokens);
+  const outputTokens = asTokenCount(usage.outputTokens);
+  if (inputTokens === null || outputTokens === null) return null;
+  const cached = asTokenCount(usage.inputTokenDetails?.cacheReadTokens);
+  return cached === null || cached > inputTokens
+    ? { inputTokens, outputTokens }
+    : { inputTokens, outputTokens, cachedInputTokens: cached };
+}
+
 /** What one model turn produced. */
 interface ModelTurn {
   readonly text: string;
@@ -2271,6 +2329,8 @@ interface ModelTurn {
   /** The run's own deadline cut the call short. */
   readonly aborted: boolean;
   readonly assistantMessages: readonly ModelMessage[];
+  /** What the server said this turn spent, or `null` where it said nothing. */
+  readonly usage: TurnUsage | null;
 }
 
 /*
@@ -2476,6 +2536,16 @@ async function takeTurn(
     likely to be running locally, and a single-protocol test would pass anyway.
   */
   mode: AgentRunMode,
+  /*
+    The completion ceiling for THIS call, from what the run has left.
+
+    A run-level check between turns cannot bound the turn that spends: the check runs
+    after it. Measured on a local 8b model, one uncapped turn generated 40,960 tokens
+    over 2,240 s while no budget moved. This is the one lever that reaches a single
+    turn, and the loop already tolerates a capped turn because `finishReason: "length"`
+    is what such a call returns.
+  */
+  maxOutputTokens: number,
 ): Promise<ModelTurn> {
   /*
     Sampling is per MODEL now, not one number for all 25 of them.
@@ -2529,6 +2599,7 @@ async function takeTurn(
     messages: [...messages],
     ...(tools === undefined ? {} : { tools }),
     providerOptions,
+    maxOutputTokens,
     maxRetries: 0,
     // Real-time backstop for ONE call, sized by what the run has left. The
     // deadline object remains the authority — it is what the loop reads between
@@ -2543,6 +2614,13 @@ async function takeTurn(
   let text = "";
   let aborted = false;
   let failure: unknown;
+  /*
+    The LAST `finish` part wins, and `finish-step` is never read: a stream emits one
+    `finish-step` per step whose usage is that step's, and one `finish` whose
+    `totalUsage` is the call's. Summing the steps would double-count the same tokens
+    once the final part arrives.
+  */
+  let reportedUsage: LanguageModelUsage | undefined;
   const toolCalls: { toolCallId: string; toolName: string; input: unknown }[] = [];
 
   try {
@@ -2555,7 +2633,8 @@ async function takeTurn(
           failure = refused;
           break;
         }
-      } else if (part.type === "text-delta") text += part.text;
+      } else if (part.type === "finish") reportedUsage = part.totalUsage;
+      else if (part.type === "text-delta") text += part.text;
       else if (part.type === "tool-call") {
         toolCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
       } else if (part.type === "error") failure ??= part.error;
@@ -2566,7 +2645,7 @@ async function takeTurn(
   }
 
   if (failure !== undefined) throw mapAgentModelError(failure, agentModel.provider);
-  if (aborted) return { text, toolCalls: [], aborted: true, assistantMessages: [] };
+  if (aborted) return { text, toolCalls: [], aborted: true, assistantMessages: [], usage: null };
 
   // Only awaited on the path where the request succeeded; the SDK's own assistant
   // message is used rather than a hand-built one, so the transcript this loop
@@ -2580,6 +2659,10 @@ async function takeTurn(
   // every later turn of the run. The tool half of the transcript is this loop's to
   // write, because it is the half that has to carry the ledger's verdict.
   const response = await stream.response;
+  // The `finish` part is the ONLY read, and it is emitted before a successful stream
+  // ends. A stream that dies first leaves `reportedUsage` undefined, which normalizes to
+  // `null`: a turn whose usage is unknown still returns its text, and the ledger records
+  // no figure rather than a zero. An aborted turn returned above and never reaches here.
   return {
     text,
     toolCalls,
@@ -2587,6 +2670,7 @@ async function takeTurn(
     assistantMessages: neutraliseAssistantMessages(
       response.messages.filter((message): message is AssistantModelMessage => message.role === "assistant"),
     ),
+    usage: normalizeUsage(reportedUsage),
   };
 }
 
@@ -2787,6 +2871,14 @@ export async function runInvestigation(
     // the four figures the decision table varies per workflow, and a drive that used
     // another workflow's ceiling would end runs for a reason nothing enforced.
     const maxTurns = options.maxTurns ?? AGENT_WORKFLOW_BUDGETS[record.workflowType].maxModelTurns;
+    /*
+      The run's token ceiling, and the reason it is read from the ROW rather than from
+      this drive: a token is spend, and spend survives a resume. The statement count and
+      the database time are seeded the same way (`execution-policy.ts:323-332`), and a
+      ceiling that started fresh on every resume would multiply by the number of times a
+      run was picked up — the exact defect #999 closed for the other two.
+    */
+    const maxTokens = options.maxTokens ?? AGENT_WORKFLOW_BUDGETS[record.workflowType].maxTokensPerRun;
 
     const context: AgentToolContext = {
       ...resources,
@@ -3322,6 +3414,17 @@ export async function runInvestigation(
     let turns = 0;
     let text = "";
     /*
+      What earlier drives of this run already spent, read off the ledger rather than
+      kept here: this process may not be the one that drove them. Seeded once, before
+      the first turn, and accumulated locally as this drive's turns come in.
+    */
+    let tokensSpent = tokensSpentIn(record.events);
+    /** The completion ceiling for the next call: what is left, up to one turn's cap. */
+    const turnOutputCap = (): number => {
+      const remaining = maxTokens - tokensSpent;
+      return remaining > 0 ? Math.min(AGENT_PER_TURN_OUTPUT_CAP, remaining) : AGENT_PER_TURN_OUTPUT_CAP;
+    };
+    /*
     The notice bounds below are per RUN and not per drive, and that is what B51 changed.
 
     This function is also what RESUMES a run a dead process left running (`service.resume`,
@@ -3711,6 +3814,7 @@ export async function runInvestigation(
           undefined,
           record.workflowType,
           record.mode,
+          turnOutputCap(),
         );
       } catch (error) {
         /*
@@ -3770,6 +3874,16 @@ export async function runInvestigation(
         return null;
       }
       text = turn.text;
+      /*
+        Recorded before the abort branch, and only where the server reported something.
+        A turn with no figure writes no event: an event of zeros would be a spend the
+        server never charged, and a `null` event is not something the ledger's contract
+        admits.
+      */
+      if (turn.usage !== null) {
+        await service.recordEvent(runId, { kind: "model-turn", atTurn: turns, ...turn.usage });
+        tokensSpent += turn.usage.inputTokens + turn.usage.outputTokens;
+      }
       if (turn.aborted) {
         /*
           See the note above `turnCutOffRetried`. `turnBudgetMs < remainingMs` is not only the word
@@ -4316,6 +4430,12 @@ export async function runInvestigation(
         // checkpoint would never be called.
         result = { runId, status: "paused", stopReason: null, turns, text };
       } else if (remainingMs <= 0) result = await conclude("failed", "deadline-exceeded");
+      /*
+        After the clock and BEFORE the turn count: when both are exhausted the sentence
+        that names the budget names what the operator can raise, while "turn-limit"
+        would report a count they may not have chosen. The first turn of a drive is
+        never refused here, so a resumed drive always gets the chance to report.
+      */ else if (turns > 0 && tokensSpent >= maxTokens) result = await conclude("failed", "token-limit");
       else if (turns >= maxTurns) result = await conclude("failed", "turn-limit");
       else result = await driveTurn(remainingMs);
     }

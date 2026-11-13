@@ -2035,15 +2035,24 @@ run's own persisted workflow rather than accepting a policy from a caller — an
 would be a seam through which a route or a resumed run could widen the agent's privileges, while a
 workflow type is decided once when the run opens and read from the ledger thereafter.
 
-**The four figures that differ per workflow:**
+**The five figures that differ per workflow:**
 
-| Workflow | Model turns | Statements | Run deadline | Database time | Policy version |
-| --- | --- | --- | --- | --- | --- |
-| `investigation` | 36 | 30 | 450 s | 90 s | `agent-read-only.investigation.1` |
-| `query-optimization` | 36 | 30 | 450 s | 90 s | `agent-read-only.query-optimization.1` |
-| `database-assessment` | 48 | 45 | 630 s | 135 s | `agent-read-only.database-assessment.1` |
-| `operations` | 20 | 18 | 360 s | 80 s | `agent-read-only.operations.2` |
-| `data-analysis` | 60 | 42 | 900 s | 180 s | `agent-read-only.data-analysis.1` |
+| Workflow | Model turns | Statements | Run deadline | Database time | Model tokens | Policy version |
+| --- | --- | --- | --- | --- | --- | --- |
+| `investigation` | 36 | 30 | 450 s | 90 s | 150,000 | `agent-read-only.investigation.2` |
+| `query-optimization` | 36 | 30 | 450 s | 90 s | 150,000 | `agent-read-only.query-optimization.2` |
+| `database-assessment` | 48 | 45 | 630 s | 135 s | 250,000 | `agent-read-only.database-assessment.2` |
+| `operations` | 20 | 18 | 360 s | 80 s | 100,000 | `agent-read-only.operations.3` |
+| `data-analysis` | 60 | 42 | 900 s | 180 s | 300,000 | `agent-read-only.data-analysis.2` |
+
+The token figure is sized from measurement rather than chosen: turns of this workload were measured at
+roughly 1,600 to 2,100 prompt tokens and 0.5 to 1.5k completion tokens on an eight-table sample, about
+3.5k per turn, and each row's figure is that product against its own turn ceiling rounded up. A
+schema far larger than the sample raises the per-turn prompt, which is why the ceiling sits beside
+`maxModelTurns` in the same frozen row rather than in an environment variable: an operator can raise
+it by changing the row in a release, and the meter can only ever state a number the server applies.
+A per-call completion ceiling (`AGENT_PER_TURN_OUTPUT_CAP`) sits beside it, because a check between
+turns cannot reach the turn that is spending.
 
 **These figures are approved and pending live measurement.** They were approved on 2026-08-14 as the
 starting point a measurement then confirms or corrects; no run has been measured against them yet.
@@ -2728,10 +2737,11 @@ Two further rules govern it:
 - **A control the service cannot honour is not rendered at all.** There is no disabled-looking button
   standing in for a capability: pause is offered on a running run and resume on a paused one, and
   neither is rendered where the service would refuse it.
-- **The meter reports only what is actually enforced** — statements, database time, the run deadline,
-  repair attempts — and states that SQLite stops an overrunning statement by killing its child
-  process rather than implying the engine interrupts it. It reports no token budget because none is
-  enforced. A statement that
+- **The meter reports only what is actually enforced** (statements, database time, the run deadline,
+  repair attempts, and the model tokens a provider reported) and states that SQLite stops an
+  overrunning statement by killing its child process rather than implying the engine interrupts it.
+  The token gauge exists because a token budget is now enforced, and it is drawn only where the
+  provider answered with usage. A statement that
   failed at the database now carries the span the tracker charged for it, so the database-time figure
   no longer counts completed reads only, and a schema capture contributes the statements and the span
   the tracker charged it. What is left uncounted is the difference between an engine's elapsed time
@@ -3271,11 +3281,14 @@ need a work item to hold that record.
   scope today (`runtime.ts` calls `createTargetScope(connectionId)` with no dimensions), so this is
   a property of the layer rather than a live defect, and the two ways out are written where the
   declaration is made, in `src/lib/agent/tools.ts`.
-- **No token budget is enforced, so the meter reports none.** `AGENT_WORKFLOW_BUDGETS` is
-  statement-shaped, `maxModelTurns` bounds model TURNS rather than their size, and the run loop never
-  reads the SDK's `usage` at all. A token figure would be a number the server does not enforce shown
-  beside four that it does, which is the one thing the meter's bar forbids, so it states the turn
-  ceiling instead and says nothing about tokens.
+- **A token budget is enforced where the provider reports usage, and nowhere else.** Each workflow
+  row carries `maxTokensPerRun`, seeded from the run's own `model-turn` entries so a resumed drive
+  continues the spend instead of restarting it, and checked between turns before the next model call.
+  Each call also carries a completion ceiling sized from what the run has left, because a check
+  between turns cannot bound the turn that is spending. Where a server answers with no usage block,
+  nothing is recorded and the meter draws no token gauge, rather than a zero it never charged. A turn
+  cut short by the completion ceiling reports nothing either, so a run's recorded spend is a floor
+  beside the other floors the meter's caveat names.
 - **A run's stored results are released when it ends, so a report's citations can outlive its rows.**
   `ExecutionArtifactStore` holds results in process memory and `releaseExecutionRun` drops everything
   a run produced — the M1 decision that agent results never rest on disk. A report is composed as the

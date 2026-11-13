@@ -296,12 +296,12 @@ export interface AgentTimelineItem {
  * estimate of what a call "probably" cost.
  */
 export interface AgentBudgetGauge {
-  readonly id: "statements" | "database-time" | "repairs";
+  readonly id: "statements" | "database-time" | "repairs" | "tokens";
   /** The app's own words. */
   readonly label: string;
   readonly used: number;
   readonly limit: number;
-  readonly unit: "count" | "ms";
+  readonly unit: "count" | "ms" | "tokens";
 }
 
 /** What one claim in a report rests on, resolved out of the run's own ledger. */
@@ -809,6 +809,15 @@ const WORKFLOW_WORDS: Readonly<Record<AgentRunWorkflowType, string>> = {
 const TURN_LIMIT_SENTENCE = "The run reached its step limit before it finished.";
 
 /**
+ * The token-limit sentence, shared the same way.
+ *
+ * It names the BUDGET rather than the model, because the budget is the thing an
+ * operator can raise and the thing the meter beside it draws. `turn-limit` above says
+ * "steps" for the same reason: each names the bound that stopped the run.
+ */
+const TOKEN_LIMIT_SENTENCE = "The run used the whole token budget its workflow declares.";
+
+/**
  * How the loop ended, said plainly. Total over the union, so a stop reason added to
  * the durable contract cannot reach a user as an unlabelled ending.
  *
@@ -837,6 +846,9 @@ const AGENT_STOP_SENTENCES = {
   "deadline-exceeded": "The run reached its time limit before it finished.",
   "model-timeout": "The model did not answer in time. Starting the run again is reasonable.",
   "turn-limit": `${TURN_LIMIT_SENTENCE} What it had gathered is above.`,
+  // Its own sentence rather than a second wording of the turn limit: the two ask the
+  // operator for different things, and this one names a figure with a row behind it.
+  "token-limit": `${TOKEN_LIMIT_SENTENCE} What it had gathered is above.`,
 } as const satisfies Record<AgentRunStopReason, string | null>;
 
 /**
@@ -847,6 +859,7 @@ const AGENT_STOP_SENTENCES = {
  */
 const OFF_TIMELINE_STOP_SENTENCES: Readonly<Partial<Record<AgentRunStopReason, string>>> = {
   "turn-limit": TURN_LIMIT_SENTENCE,
+  "token-limit": TOKEN_LIMIT_SENTENCE,
 };
 
 const STOP_SENTENCES: Readonly<Record<AgentRunMode, Record<AgentRunStopReason, string | null>>> = {
@@ -1112,8 +1125,19 @@ function ageText(ms: number): string {
  * it can only be true for an entry that follows the request — which is the only
  * ordering that makes the sentence it produces true.
  */
+/**
+ * The event kinds a timeline step is made from.
+ *
+ * A `model-turn` entry is deliberately outside it: its figures are summed by the
+ * budget meter, and a row per turn would repeat six numbers the gauge already
+ * carries while pushing the steps a reader came for further down. Excluded by TYPE
+ * rather than by a filter, so `describeEvent`'s exhaustive switch keeps its
+ * `run-finished` default rather than needing an arm for a kind it never draws.
+ */
+type DescribedEvent = Exclude<AgentRunEvent, { kind: "model-turn" }>;
+
 function describeEvent(
-  event: AgentRunEvent,
+  event: DescribedEvent,
   mode: AgentRunMode,
   stopRequested: boolean,
   noun: AgentInventoryNoun,
@@ -1449,7 +1473,7 @@ function describeEntry(
   mode: AgentRunMode,
   stopRequested: boolean,
   noun: AgentInventoryNoun,
-): Omit<AgentTimelineItem, "id"> {
+): Omit<AgentTimelineItem, "id"> | null {
   switch (entry.kind) {
     case "run-opened":
       return {
@@ -1466,6 +1490,8 @@ function describeEntry(
         quoted: entry.objective,
       };
     case "event":
+      // A turn's spend is the meter's, not a step. See `DescribedEvent`.
+      if (entry.event.kind === "model-turn") return null;
       return { atMs: entry.event.atMs, ...describeEvent(entry.event, mode, stopRequested, noun) };
     default:
       return {
@@ -1832,7 +1858,8 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     }
     // Indexed, because two entries can legitimately be identical in content and
     // timestamp (a resumed run replaying a step), and React needs distinct keys.
-    items.push({ id: `entry-${index}`, ...describeEntry(entry, mode, stopRequested, noun) });
+    const described = describeEntry(entry, mode, stopRequested, noun);
+    if (described !== null) items.push({ id: `entry-${index}`, ...described });
   });
 
   /*
@@ -1877,6 +1904,16 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     items[index] = { ...item, headline: "No statement drafted", prose: refused, planRefusal: true };
   }
 
+  /*
+    The token figures come from the entries this fold already walks, and the gauge is
+    OMITTED when the ledger holds none: a build before this change, or a provider that
+    reported nothing, would otherwise draw `0 / 150,000` and claim a spend nobody
+    measured.
+  */
+  const modelTurns = entries.flatMap((entry) =>
+    entry.kind === "event" && entry.event.kind === "model-turn" ? [entry.event] : [],
+  );
+  const modelTokens = modelTurns.reduce((sum, event) => sum + event.inputTokens + event.outputTokens, 0);
   const budgets = AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets;
   return {
     items,
@@ -1892,6 +1929,17 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
       { id: "statements", label: "Statements", used: statements, limit: budgets.maxStatementsPerRun, unit: "count" },
       { id: "database-time", label: "Database time", used: databaseMs, limit: budgets.maxTotalRunMs, unit: "ms" },
       { id: "repairs", label: "Repair attempts", used: repairs, limit: AGENT_MAX_REPAIR_ATTEMPTS, unit: "count" },
+      ...(modelTurns.length === 0
+        ? []
+        : [
+            {
+              id: "tokens" as const,
+              label: "Model tokens",
+              used: modelTokens,
+              limit: AGENT_WORKFLOW_BUDGETS[workflowType].maxTokensPerRun,
+              unit: "tokens" as const,
+            },
+          ]),
     ],
     statementsWithoutDuration,
     report: claims === null ? null : reportOf(claims, { artifacts, statements: statementsByStep, captures }),

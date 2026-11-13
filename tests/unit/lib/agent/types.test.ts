@@ -88,6 +88,16 @@ const EVENTS: Record<AgentRunEvent["kind"], AgentRunEvent> = {
     provider: "ollama",
     tuning: { origin: "operator", digest: "f".repeat(64) },
   },
+  // One turn's spend, with the cached share as the server reported it. The figures are
+  // the ones measured on a real run, so the fixture is a shape this build produced.
+  "model-turn": {
+    kind: "model-turn",
+    atMs: 1,
+    atTurn: 3,
+    inputTokens: 1604,
+    outputTokens: 150,
+    cachedInputTokens: 1200,
+  },
   // A call the server turned back, carrying the verifier's own name for what was missing.
   // `shortfall` is optional because the purpose-written notices answer conditions the
   // verifier has no vocabulary for — a run holding two plans and citing neither, say.

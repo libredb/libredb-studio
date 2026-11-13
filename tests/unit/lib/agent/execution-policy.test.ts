@@ -77,48 +77,60 @@ const workflowTypes = Object.keys(AGENT_WORKFLOW_BUDGETS) as AgentRunWorkflowTyp
 const DECIDED: Readonly<
   Record<
     AgentRunWorkflowType,
-    { turns: number; statements: number; runDeadlineMs: number; databaseMs: number; version: string }
+    {
+      turns: number;
+      statements: number;
+      runDeadlineMs: number;
+      databaseMs: number;
+      tokens: number;
+      version: string;
+    }
   >
 > = {
+  // Every version moved with #2267's token ceiling, because the version's job is to name
+  // the row that produced a recorded decision and the row now has one more figure.
   investigation: {
     turns: 36,
     statements: 30,
     runDeadlineMs: 450_000,
     databaseMs: 90_000,
-    version: "agent-read-only.investigation.1",
+    tokens: 150_000,
+    version: "agent-read-only.investigation.2",
   },
   "query-optimization": {
     turns: 36,
     statements: 30,
     runDeadlineMs: 450_000,
     databaseMs: 90_000,
-    version: "agent-read-only.query-optimization.1",
+    tokens: 150_000,
+    version: "agent-read-only.query-optimization.2",
   },
   "database-assessment": {
     turns: 48,
     statements: 45,
     runDeadlineMs: 630_000,
     databaseMs: 135_000,
-    version: "agent-read-only.database-assessment.1",
+    tokens: 250_000,
+    version: "agent-read-only.database-assessment.2",
   },
   // Raised by #411, which gave this workflow a catalog capture it did not have: up to
   // three catalog statements and two statistics ones now come out of the same ceiling
-  // the readings do. The version moved with the figures, which is what the field is
-  // for — a recorded `STATEMENT_BUDGET_EXCEEDED` has to name the number that produced
-  // it.
+  // the readings do, and raised again by #2267's token ceiling.
   operations: {
     turns: 20,
     statements: 18,
     runDeadlineMs: 360_000,
     databaseMs: 80_000,
-    version: "agent-read-only.operations.2",
+    tokens: 100_000,
+    version: "agent-read-only.operations.3",
   },
   "data-analysis": {
     turns: 60,
     statements: 42,
     runDeadlineMs: 900_000,
     databaseMs: 180_000,
-    version: "agent-read-only.data-analysis.1",
+    tokens: 300_000,
+    version: "agent-read-only.data-analysis.2",
   },
 };
 
@@ -173,6 +185,7 @@ describe("AGENT_WORKFLOW_BUDGETS — the frozen decision table", () => {
     expect(budget.policy.budgets.maxStatementsPerRun).toBe(decided.statements);
     expect(budget.runDeadlineMs).toBe(decided.runDeadlineMs);
     expect(budget.policy.budgets.maxTotalRunMs).toBe(decided.databaseMs);
+    expect(budget.maxTokensPerRun).toBe(decided.tokens);
     expect(budget.policy.version).toBe(decided.version);
   });
 
