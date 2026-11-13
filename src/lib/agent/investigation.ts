@@ -2874,7 +2874,7 @@ export async function runInvestigation(
     /*
       The run's token ceiling, and the reason it is read from the ROW rather than from
       this drive: a token is spend, and spend survives a resume. The statement count and
-      the database time are seeded the same way (`execution-policy.ts:323-332`), and a
+      the database time are seeded the same way, as that docblock's run-and-drive split says, and a
       ceiling that started fresh on every resume would multiply by the number of times a
       run was picked up — the exact defect #999 closed for the other two.
     */

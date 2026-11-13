@@ -30,6 +30,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "stream": true,
@@ -67,6 +68,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "stream": true,
@@ -104,6 +106,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "stream": true,
@@ -141,6 +144,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "stream": true,
@@ -178,6 +182,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "stream": true,
@@ -372,6 +377,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "tool_choice": "auto",
@@ -663,6 +669,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "tool_choice": "auto",
@@ -899,6 +906,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "tool_choice": "auto",
@@ -1146,6 +1154,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "tool_choice": "auto",
@@ -1474,6 +1483,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "tool_choice": "auto",
@@ -1512,6 +1522,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "stream": true,
@@ -1549,6 +1560,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "stream": true,
@@ -1586,6 +1598,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "stream": true,
@@ -1623,6 +1636,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "stream": true,
@@ -1660,6 +1674,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "stream": true,
@@ -1802,6 +1817,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "tool_choice": "auto",
@@ -2156,6 +2172,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "tool_choice": "auto",
@@ -2320,6 +2337,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "tool_choice": "auto",
@@ -2567,6 +2585,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "tool_choice": "auto",
@@ -2802,6 +2821,7 @@
         ],
         "request": {
           "model": "gpt-4o-mini",
+          "max_tokens": 4096,
           "temperature": 0,
           "top_p": 1,
           "tool_choice": "auto",

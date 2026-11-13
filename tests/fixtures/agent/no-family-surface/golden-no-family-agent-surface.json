@@ -242,6 +242,7 @@
       ],
       "request": {
         "model": "gpt-4o-mini",
+        "max_tokens": 4096,
         "temperature": 0,
         "top_p": 1,
         "tool_choice": "auto",
@@ -284,6 +285,7 @@
       ],
       "request": {
         "model": "gpt-4o-mini",
+        "max_tokens": 4096,
         "temperature": 0,
         "top_p": 1,
         "stream": true,
@@ -325,6 +327,7 @@
       ],
       "request": {
         "model": "gpt-4o-mini",
+        "max_tokens": 4096,
         "temperature": 0,
         "top_p": 1,
         "stream": true,
@@ -337,7 +340,7 @@
   "denials": {
     "spark": {
       "reasonCode": "TARGET_OUT_OF_SCOPE",
-      "message": "The database operation layer refused this call: TARGET_OUT_OF_SCOPE (policy agent-read-only.operations.2). The target this call declared falls outside the scope this run may reach, which is not about how the statement is written; where a tool takes a target selector, an in-scope one may still be admitted. Choose a different approach that stays inside a bounded read-only inspection."
+      "message": "The database operation layer refused this call: TARGET_OUT_OF_SCOPE (policy agent-read-only.operations.3). The target this call declared falls outside the scope this run may reach, which is not about how the statement is written; where a tool takes a target selector, an in-scope one may still be admitted. Choose a different approach that stays inside a bounded read-only inspection."
     }
   }
 }

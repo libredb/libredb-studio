@@ -7248,15 +7248,19 @@ describe("a run sends sampling only where the SDK honours it", () => {
     });
 
     // Key order is the wire byte order: the sampling fields sit where the SDK always put them,
-    // so the filtering decision did not reorder or disturb a single byte of the request.
+    // so the filtering decision did not reorder or disturb a single byte of the request. The one
+    // key this list gained is `max_tokens`, the per-call completion ceiling (#2267), and the
+    // sampling beside it is byte for byte what it was.
     expect(Object.keys(script.turns[0]?.body ?? {})).toEqual([
       "model",
+      "max_tokens",
       "temperature",
       "top_p",
       "messages",
       "stream",
       "stream_options",
     ]);
+    expect(script.turns[0]?.body?.max_tokens).toBe(4_096);
     expect(script.turns[0]?.body?.temperature).toBe(0);
     expect(script.turns[0]?.body?.top_p).toBe(1);
   });
@@ -7272,14 +7276,18 @@ describe("a run sends sampling only where the SDK honours it", () => {
       resources: b.resources,
     });
 
+    // Same list, same reason: one added key for the completion ceiling, and the sampling
+    // fields untouched.
     expect(Object.keys(script.turns[0]?.body ?? {})).toEqual([
       "model",
+      "max_tokens",
       "temperature",
       "top_p",
       "messages",
       "stream",
       "stream_options",
     ]);
+    expect(script.turns[0]?.body?.max_tokens).toBe(4_096);
     expect(script.turns[0]?.body?.temperature).toBe(0);
     expect(script.turns[0]?.body?.top_p).toBe(1);
   });
