@@ -2,6 +2,7 @@ import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { SignJWT, decodeProtectedHeader, decodeJwt, jwtVerify } from "jose";
 import { derivedSigningKey, getJwtSecret } from "@/lib/config/auth-env";
+import { resetSecurityConfigWarnings } from "@/lib/security/config";
 
 // ─── Mock openid-client before importing oidc.ts ────────────────────────────
 
@@ -968,6 +969,30 @@ describe("exchangeCode", () => {
 // ─── getPublicOrigin ────────────────────────────────────────────────────────
 
 describe("getPublicOrigin", () => {
+  // The env-isolation pattern of tests/unit/lib/api/request-scheme.test.ts for the
+  // same flag: snapshot and restore TRUST_PROXY_HEADERS around each case, and clear
+  // readTrustProxyHeaders()'s warn-once latch so every case observes a fresh process.
+  const MUTATED = ["TRUST_PROXY_HEADERS"] as const;
+  const envSnapshot: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const key of MUTATED) envSnapshot[key] = process.env[key];
+    delete process.env.TRUST_PROXY_HEADERS;
+    resetSecurityConfigWarnings();
+  });
+
+  afterEach(() => {
+    for (const key of MUTATED) {
+      const value = envSnapshot[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    resetSecurityConfigWarnings();
+  });
+
+  const forwardedRequest = (headers: Record<string, string> = {}) =>
+    new Request("http://studio.example:3000/api/auth/oidc/login", { headers });
+
   test("returns origin from request URL when no forwarded headers", () => {
     const req = new Request("http://localhost:3000/api/auth/oidc/login");
     expect(getPublicOrigin(req)).toBe("http://localhost:3000");
@@ -1000,6 +1025,95 @@ describe("getPublicOrigin", () => {
       },
     });
     expect(getPublicOrigin(req)).toBe("https://app.libredb.org");
+  });
+
+  test.each(["false", "off", "0"])("ignores both forwarded headers when TRUST_PROXY_HEADERS=%s", (flag) => {
+    process.env.TRUST_PROXY_HEADERS = flag;
+    expect(
+      getPublicOrigin(
+        forwardedRequest({
+          host: "studio.example:3000",
+          "x-forwarded-host": "evil.example",
+          "x-forwarded-proto": "https",
+        }),
+      ),
+    ).toBe("http://studio.example:3000");
+  });
+
+  test("ignores forwarded proto without a forwarded host when trust is off", () => {
+    process.env.TRUST_PROXY_HEADERS = "false";
+    expect(
+      getPublicOrigin(
+        forwardedRequest({
+          host: "studio.example:3000",
+          "x-forwarded-proto": "https",
+        }),
+      ),
+    ).toBe("http://studio.example:3000");
+  });
+
+  test("keeps the request URL's scheme for a Host-only fallback", () => {
+    expect(getPublicOrigin(forwardedRequest({ host: "studio.example:3000" }))).toBe("http://studio.example:3000");
+  });
+
+  test("uses the first trusted comma-separated host and proto, normalized", () => {
+    expect(
+      getPublicOrigin(
+        forwardedRequest({
+          host: "internal:3000",
+          "x-forwarded-host": "app.example:8443 , proxy.internal",
+          "x-forwarded-proto": "HTTPS , http",
+        }),
+      ),
+    ).toBe("https://app.example:8443");
+  });
+
+  test.each(["ftp", "https://evil.example", ", https"])("falls back past an unusable forwarded proto: %s", (proto) => {
+    expect(
+      getPublicOrigin(
+        forwardedRequest({
+          host: "studio.example:3000",
+          "x-forwarded-proto": proto,
+        }),
+      ),
+    ).toBe("http://studio.example:3000");
+  });
+
+  test.each(["good.example@evil.example", "evil.example/path", "bad host", "bad:notaport"])(
+    "skips an invalid forwarded authority: %s",
+    (host) => {
+      expect(
+        getPublicOrigin(
+          forwardedRequest({
+            host: "studio.example:3000",
+            "x-forwarded-host": host,
+          }),
+        ),
+      ).toBe("http://studio.example:3000");
+    },
+  );
+
+  test("keeps a valid IPv6 forwarded host with a port", () => {
+    expect(
+      getPublicOrigin(
+        forwardedRequest({
+          "x-forwarded-host": "[2001:db8::1]:8443",
+          "x-forwarded-proto": "https",
+        }),
+      ),
+    ).toBe("https://[2001:db8::1]:8443");
+  });
+
+  test("returns the URL origin when no usable host survives with trust off", () => {
+    process.env.TRUST_PROXY_HEADERS = "false";
+    expect(
+      getPublicOrigin(
+        forwardedRequest({
+          "x-forwarded-host": "evil.example",
+          "x-forwarded-proto": "https",
+        }),
+      ),
+    ).toBe("http://studio.example:3000");
   });
 });
 
