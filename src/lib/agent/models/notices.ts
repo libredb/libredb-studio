@@ -42,6 +42,35 @@ export const BASELINE_NOTICES: AgentNotices = Object.freeze({
     "Do not work that turn out again — a turn cut for taking too long will be cut again. Act in ONE short move now: if you already know what you would say, call compose_report with what this conversation established; otherwise make one tool call and nothing else.",
     CITATION_RULE,
   ].join(" "),
+  /*
+    The other cut, and the one sentence that separates them is the last: this turn was stopped for
+    its LENGTH, not for the time it took, so the repair is to write less rather than to wait less.
+    Its sibling above says "a turn cut for taking too long will be cut again", which would be a
+    false thing to say here and would send the model after the wrong fix.
+
+    "Write less" is the instruction that matters and it is stated as a length rather than as a
+    number of words, because the ceiling is the endpoint's and this repository does not know it:
+    it varies by model, by context and by provider. What the model controls is how much of the
+    turn it spends talking before it acts.
+
+    "Do not restate the answer" is there because the natural repair, continuing where the cut
+    landed, spends the new turn on the same length that was already refused. What the run needs is
+    a MOVE, and either of the two moves named ends the run's need: the report it can already file,
+    or the one call it was about to make.
+
+    Neither move describes the call's SHAPE, and that is deliberate. "Make one tool call and nothing
+    else" is what its sibling says, and it is vague on purpose: on the prompted protocol a call is an
+    envelope written into the message text, so a sentence about "its arguments" would be telling half
+    the models to write bare arguments, which is the transport mistake `toolCallAsText` exists to
+    correct. The protocol reminder in the run's own prompt says how a call is made; this sentence
+    says only that one is due.
+  */
+  modelOutputLimit: [
+    "Your last turn was stopped at this server's output limit: a single answer may only be so long, and yours was still being written when it reached that length, so nothing from it was kept.",
+    "The run itself is not over. It has turns and time left, and the work you recorded earlier in this conversation still counts.",
+    "Write LESS this time. Do not continue or repeat the answer that was cut, and do not explain what you are about to do: make one move and stop. If this conversation already holds what the report needs, call compose_report now. Otherwise make one tool call and nothing else.",
+    CITATION_RULE,
+  ].join(" "),
   planStatement: [
     "Your plan describes the database but names no statement, and a plan is scored on what the user can run: it must end either with a fenced code block holding one statement for this engine, or with an explicit refusal.",
     `Write the statement in a fenced block now, or begin a line with ${PLAN_NO_STATEMENT_MARKER} and say what the database does not support.`,

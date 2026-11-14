@@ -845,6 +845,16 @@ partial answer rather than a missing one. The bar does not move when it happens:
 cite something the run read, so a forced report is a cited report or it is no report at all. Nothing
 is asked of a **Plan** run, which has no report tool to call. The meter says this under the ceilings.
 
+**A run whose answer was cut ran out of length, not of time.** A model server may stop a single reply
+at the length it allows, which is a limit this build does not set and cannot raise. When that happens
+to an agent run, nothing from that turn is kept and none of the tool calls it carried are run, and the
+run is told once, in this server's words, what happened and asked for one short move. A run cut a
+second time ends there, and the line under the timeline says the answer was cut at the model server's
+length limit rather than that the run used its time. The two are repaired in opposite ways, one by
+waiting less and the other by writing less, so a run read as out of time would be restarted for the
+wrong reason. A **Plan** run is not told and needs nothing: its prose is what the plan check reads, so
+a plan cut mid-block is judged as having drafted no statement.
+
 Then the caveat, which is the part worth reading twice — behind the **What is counted** ⓘ, beside the
 gauges it is about:
 

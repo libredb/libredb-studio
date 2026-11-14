@@ -156,6 +156,49 @@ export function chatTextStream(...deltas: string[]): Response {
 }
 
 /**
+ * The same prose turn, stopped by the SERVER at its own output limit.
+ *
+ * The only difference from `chatTextStream` is the final frame, and that is the whole point of
+ * the fixture: the body is a perfectly ordinary stream of deltas that simply stops, so a client
+ * that does not read `finish_reason` cannot tell it from a model that finished its sentence.
+ *
+ * Measured against Ollama 0.40.15 with `num_predict` set to 64 in a Modelfile: the last frame is
+ * `{"choices":[{"delta":{},"finish_reason":"length"}]}` and the body carries nothing else that
+ * says the answer was cut.
+ */
+export function chatTextCutStream(...deltas: string[]): Response {
+  return sseResponse(
+    chatChunk({ role: "assistant", content: "" }),
+    ...deltas.map((content) => chatChunk({ content })),
+    chatChunk({}, "length"),
+    "[DONE]",
+  );
+}
+
+/**
+ * A tool call whose turn the server then stopped at its output limit.
+ *
+ * The arguments are COMPLETE and parse, on purpose, and the case exists because of it: a guard
+ * that only refused calls with broken arguments would let this one through, and "the call was
+ * finished before the cut" is not something a client can know. Some servers cut a turn after a
+ * call has been emitted and before the text that follows it, and the frame they send is exactly
+ * this.
+ *
+ * The measured shape of a cut landing INSIDE the arguments is different and is not modelled here
+ * because it is not a `length` at all: on `qwen2.5:1.5b` with `num_predict` 56, 64 and 72 Ollama
+ * ends the frame `finish_reason: "tool_calls"` with the arguments field holding a single opening
+ * brace and nothing after it, which reaches the loop as an unreadable tool call rather than as a
+ * cut turn.
+ */
+export function chatToolCallCutStream(name: string, argumentsJson: string, callId = "call_1"): Response {
+  return sseResponse(
+    chatChunk({ role: "assistant", content: null, ...chatToolCallDelta(name, argumentsJson, callId) }),
+    chatChunk({}, "length"),
+    "[DONE]",
+  );
+}
+
+/**
  * A whole chat completion answered to a streamed request — what an endpoint that
  * ignores `stream: true` sends. The SDK's SSE parser finds no frames in it, so
  * the response arrives with no incremental part at all.
@@ -242,6 +285,34 @@ export function responsesTextStream(text: string, options: { readonly reasoning?
   );
 }
 
+/**
+ * A Responses stream that ends `incomplete`, which is how the Responses API says the server
+ * stopped the answer rather than the model: `response.incomplete` carrying
+ * `incomplete_details.reason: "max_output_tokens"`, which `@ai-sdk/openai@4.0.96` maps to the
+ * `length` finish reason (`mapOpenAIResponseFinishReason`).
+ */
+export function responsesTextCutStream(text: string): Response {
+  const item = { type: "message", id: "msg_1", role: "assistant", status: "incomplete", content: [] };
+  return sseResponse(
+    responseCreated,
+    { type: "response.output_item.added", output_index: 0, item },
+    { type: "response.output_text.delta", item_id: item.id, output_index: 0, delta: text },
+    { type: "response.output_item.done", output_index: 0, item },
+    {
+      type: "response.incomplete",
+      response: {
+        incomplete_details: { reason: "max_output_tokens" },
+        usage: {
+          input_tokens: 1,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens: 1,
+          output_tokens_details: { reasoning_tokens: 0 },
+        },
+      },
+    },
+  );
+}
+
 /** A Google `streamGenerateContent` SSE stream carrying prose. */
 export function geminiTextStream(...deltas: string[]): Response {
   return sseResponse(
@@ -250,6 +321,25 @@ export function geminiTextStream(...deltas: string[]): Response {
     })),
     {
       candidates: [{ content: { role: "model", parts: [] }, finishReason: "STOP" }],
+      usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+    },
+  );
+}
+
+/**
+ * The same prose stream, stopped by the model server at its output limit.
+ *
+ * Gemini says this with `MAX_TOKENS` rather than with a field of its own, and
+ * `@ai-sdk/google@4.0.99` maps it to the `length` finish reason (`mapGoogleFinishReason`). The
+ * `CONTINUATION` reason a resumable response carries is mapped the same way.
+ */
+export function geminiTextCutStream(...deltas: string[]): Response {
+  return sseResponse(
+    ...deltas.map((text) => ({
+      candidates: [{ content: { role: "model", parts: [{ text }] } }],
+    })),
+    {
+      candidates: [{ content: { role: "model", parts: [] }, finishReason: "MAX_TOKENS" }],
       usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
     },
   );

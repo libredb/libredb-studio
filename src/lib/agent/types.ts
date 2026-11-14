@@ -462,7 +462,21 @@ export type AgentRunStopReason =
   /** One model call did not return within its own ceiling. Retrying is reasonable. */
   | "model-timeout"
   /** The model-turn ceiling was reached with work still in flight. */
-  | "turn-limit";
+  | "turn-limit"
+  /**
+   * The model's own answer was stopped at the endpoint's output limit, and the run ended there.
+   *
+   * A different bound from every other entry here, which is why it is its own reason: the run had
+   * turns and seconds left, and the model was still talking. Nothing about the run's budget was
+   * exhausted. The provider stopped ONE answer part way through because it had grown past what a
+   * single response may be.
+   *
+   * The loop asks once when it sees this (see `AGENT_MODEL_OUTPUT_LIMIT_ASKS`); a run that is cut a
+   * second time ends here, because the sentence it was given had already told it to write less and
+   * it did not. Ending as `model-stopped` instead, as the loop did before the finish reason was
+   * read at all, told the user the model had nothing more to say about a turn the server had cut.
+   */
+  | "model-output-limit";
 
 /**
  * Who started the run, persisted at start and the sole authority for authorizing
@@ -937,6 +951,17 @@ export type AgentGuidanceNotice =
    * PASSING run took 183s.
    */
   | "turn-cut-off"
+  /**
+   * A turn the ENDPOINT stopped at its output limit, on a run that still has turns and time.
+   * Delivered as a `user` message and the turn is taken again, with the sentence naming the reason
+   * it was cut: the answer was too long for one turn. Bounded by `AGENT_MODEL_OUTPUT_LIMIT_ASKS`, counted
+   * off the ledger, so the sentence is said once per RUN rather than once per process.
+   *
+   * The sibling of `turn-cut-off` and not the same thing: that one is this server's per-call clock,
+   * this one is the provider's per-response length. A run can meet either, and what it is told has
+   * to say which, because the repair is the opposite: wait less, or write less.
+   */
+  | "model-output-limit"
   /**
    * A run within the turn or time reserve of a ceiling. Delivered as a `user` message
    * riding the turn about to be taken; once per run.

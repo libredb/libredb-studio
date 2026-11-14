@@ -55,7 +55,15 @@ import {
 } from "./agent-manifest";
 import { logger } from "@/lib/logger";
 import { isRetryableError, isToolCallParseError, LLMConfigError } from "@/lib/llm/types";
-import { type AssistantModelMessage, type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
+import {
+  type AssistantModelMessage,
+  type FinishReason,
+  type ModelMessage,
+  Output,
+  type ToolSet,
+  streamText,
+  tool,
+} from "ai";
 import { z } from "zod";
 import {
   type AgentContextCapture,
@@ -103,6 +111,7 @@ import { validatePlanStatement } from "./plan-statement";
 import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
 import {
   AGENT_MODEL_TURN_TIMEOUT_MS,
+  AGENT_MODEL_OUTPUT_LIMIT_ASKS,
   AGENT_REPORT_RESERVE_MS,
   AGENT_TRANSPORT_TURN_RETRIES,
   AGENT_UNREADABLE_TOOL_CALL_ANSWERS,
@@ -2270,6 +2279,27 @@ interface ModelTurn {
   readonly toolCalls: readonly { readonly toolCallId: string; readonly toolName: string; readonly input: unknown }[];
   /** The run's own deadline cut the call short. */
   readonly aborted: boolean;
+  /*
+    Why the model stopped talking, as the SDK mapped it off the provider's own field.
+
+    Read from the stream rather than off `stream.finishReason` after the fact, for the same
+    reason the whole turn is read part by part: the promise a failed request leaves behind
+    rejects with the SDK's wrapper, which hides the error this repository classifies.
+
+    `length` is the value this field exists for: it is the one where the PROVIDER stopped a model
+    that was still writing. It arrives as `length` on every adapter this repository speaks, from
+    `finish_reason: "length"` on the OpenAI-compatible wire and from Gemini's `MAX_TOKENS`.
+
+    The other values are deliberately not acted on here, and they are not all the same thing, so
+    they must not be dismissed together: `content-filter` is a provider refusal and `error` is a
+    transport ending, and neither is handled by the branch that handles `length`. Both are
+    follow-ups rather than silent decisions, and this comment is where the next reader finds that
+    out. `stop` and `tool-calls` are the model's own ending and need nothing.
+
+    `null` on the abort path only: an abort part means no finish part ever arrived, so there is
+    no value to read and none is invented.
+  */
+  readonly finishReason: FinishReason | null;
   readonly assistantMessages: readonly ModelMessage[];
 }
 
@@ -2543,6 +2573,13 @@ async function takeTurn(
   let text = "";
   let aborted = false;
   let failure: unknown;
+  /*
+    Written by both finish parts, last one winning, and `finish` is the last part of a stream:
+    `finish-step` closes a step and `finish` closes the call. A turn that offers no tools has
+    exactly one step, so reading only the second would be right today, and reading both costs
+    nothing and cannot be wrong if that stops being true.
+  */
+  let finishReason: FinishReason | null = null;
   const toolCalls: { toolCallId: string; toolName: string; input: unknown }[] = [];
 
   try {
@@ -2558,6 +2595,10 @@ async function takeTurn(
       } else if (part.type === "text-delta") text += part.text;
       else if (part.type === "tool-call") {
         toolCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
+      } else if (part.type === "finish-step" || part.type === "finish") {
+        // Required by the type, guarded anyway: an adapter that left the field out would otherwise
+        // overwrite a reason an earlier part had already stated with nothing.
+        if (part.finishReason !== undefined) finishReason = part.finishReason;
       } else if (part.type === "error") failure ??= part.error;
       else if (part.type === "abort") aborted = true;
     }
@@ -2566,7 +2607,7 @@ async function takeTurn(
   }
 
   if (failure !== undefined) throw mapAgentModelError(failure, agentModel.provider);
-  if (aborted) return { text, toolCalls: [], aborted: true, assistantMessages: [] };
+  if (aborted) return { text, toolCalls: [], aborted: true, finishReason: null, assistantMessages: [] };
 
   // Only awaited on the path where the request succeeded; the SDK's own assistant
   // message is used rather than a hand-built one, so the transcript this loop
@@ -2584,6 +2625,7 @@ async function takeTurn(
     text,
     toolCalls,
     aborted: false,
+    finishReason,
     assistantMessages: neutraliseAssistantMessages(
       response.messages.filter((message): message is AssistantModelMessage => message.role === "assistant"),
     ),
@@ -2695,6 +2737,7 @@ export function guidanceDelivered(events: readonly AgentRunEvent[]): Readonly<Re
     "report-reminder": 0,
     "plan-statement": 0,
     "turn-cut-off": 0,
+    "model-output-limit": 0,
     "report-reserve": 0,
     "plan-bar": 0,
     "usage-bar": 0,
@@ -2953,6 +2996,17 @@ export async function runInvestigation(
      * rather than by the model.
      */
     let unreadableToolCallAnswers = delivered["tool-call-unreadable"];
+    /**
+     * How many times this RUN has been told a turn was stopped at the endpoint's output limit; see
+     * `AGENT_MODEL_OUTPUT_LIMIT_ASKS`.
+     *
+     * Read off the ledger like the two bounds above, because it is a property of the run and a
+     * second drive has already spent what it spent. Unlike `turnCutOffRetried` below, which is a
+     * flag in this drive and deliberately granted again on a resume: that bound is on one CALL,
+     * and a resume is a second decision to spend on the call. This one is on the sentence, and the
+     * model has already heard it.
+     */
+    let modelOutputLimitAsked = delivered["model-output-limit"];
     /** The call written into the text channel; see `stoppedWithAToolCall`. */
     let toolCallAsTextAnswers = delivered["tool-call-as-text"];
     const priorProgress = describePriorProgress(record);
@@ -3792,6 +3846,68 @@ export async function runInvestigation(
           return null;
         }
         return conclude("failed", cutByTurnCeiling ? "model-timeout" : "deadline-exceeded");
+      }
+      /*
+        The other cut, and the one this loop could not see at all: the ENDPOINT stopped the answer
+        because it had grown past what a single response may be.
+
+        `takeTurn` discarded every finish reason, so this turn arrived here shaped exactly like a
+        model that had chosen to stop talking: its text went through the prompted readers, its calls
+        were dispatched, and an agent run with no report ended `model-stopped`, which is the stop
+        reason that means the model had nothing more to say. Measured directly against Ollama
+        0.40.15 with a `num_predict` cap of 64, the final frame of such a turn is
+        `finish_reason: "length"` and nothing in the body says the turn was cut.
+
+        THREE THINGS ARE DELIBERATELY NOT KEPT, and each of them is a defect this branch closes
+        rather than a tidiness:
+
+          - the TEXT is not pushed into the transcript and the run's own `text` is cleared, so no
+            truncated sentence becomes the run's closing statement. The notice says nothing from
+            the turn was kept, and a ledger that filed it would contradict the sentence it said.
+          - the CALLS are not dispatched, whatever the turn carried. A cut lands wherever it lands,
+            and the one place it must never land is inside a statement: a tool call is dropped
+            whether its arguments parsed or not, because "the call was complete" and "the call was
+            the last thing written before the cut" cannot be told apart from here. This is also why
+            the branch sits BEFORE the prompted readers: `readPromptedAction` and
+            `readPromptedPayload` recover a call out of the prose, and recovering one out of prose
+            that was cut mid-sentence is the same hazard through the other door.
+          - no assistant message is pushed, so the transcript never carries a `tool_call` with no
+            result for it, which is a shape a real endpoint answers with a 400 and which would
+            wedge every later turn of the run.
+
+        Agent mode only, and for the reason `turn-cut-off` is: the notice names `compose_report`,
+        which a planning run does not hold. A cut PLANNING turn needs nothing from this branch
+        either. Its prose is its deliverable, the plan verifier looks for a statement in there, and
+        a plan cut mid-block is judged as having drafted none rather than read as complete.
+
+        NOT every cut arrives as `length`, and the measured counterexample is worth keeping here
+        because it is the scope this branch does not claim. On `qwen2.5:1.5b` the same cap, set to
+        56, 64 and 72 tokens, cut a TOOL CALL inside its arguments and the frame reported
+        `finish_reason: "tool_calls"` with `"arguments":"{\\"` in it. Nothing here sees that shape:
+        unreadable arguments reach `takeTurn` as a parse failure and are answered by
+        `AGENT_UNREADABLE_TOOL_CALL_ANSWERS`, which is the path that sentence was written for. A
+        provider that reports a cut tool call honestly says `length`, and that case is the one this
+        branch is: the calls are dropped before anything runs them.
+      */
+      if (turn.finishReason === "length" && record.mode === "agent") {
+        text = "";
+        if (
+          modelOutputLimitAsked < AGENT_MODEL_OUTPUT_LIMIT_ASKS &&
+          turns < maxTurns &&
+          resources.deadline.remainingMs() > AGENT_REPORT_RESERVE_MS
+        ) {
+          modelOutputLimitAsked += 1;
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.modelOutputLimit) });
+          await issueGuidance("model-output-limit");
+          return null;
+        }
+        /*
+          The run has already been told, or has no turn left to act on the telling. Ended with its
+          own stop reason rather than left to fall through to `model-stopped`: the run is not
+          quiet, it produced an answer the server would not carry, and the user reading the ending
+          is owed that difference.
+        */
+        return conclude("failed", "model-output-limit");
       }
       /*
         On the prompted path the call arrives as a JSON object inside ordinary text, so it is
