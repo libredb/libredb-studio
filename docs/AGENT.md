@@ -2141,6 +2141,31 @@ The two bounds stay distinct in what they report — `model-timeout` says a requ
 starting again is reasonable; `deadline-exceeded` says the run used its time — and when less than the
 ceiling remains, the run's own reason is the one given.
 
+**A reply the model server stops for its LENGTH is a cut turn, not a quiet one.** The ceiling above
+bounds how long one request may take; this is the other bound on a single reply, and it is the
+provider's rather than this server's. An answer that reaches the length the model server allows for
+one response is stopped mid-sentence, and the provider says so with a finish reason: `length`.
+`@ai-sdk/openai` maps it from `max_output_tokens` on the Responses API, and `@ai-sdk/google` from
+`MAX_TOKENS`. `takeTurn` reads that reason for every turn, and the loop treats the cut turn as one:
+nothing from it is kept, and **none of its tool calls run**. The dropped call is not a refinement: a
+call emitted before the cut and a call cut in half are indistinguishable from the client side, and
+the one place a truncated call must never land is inside a statement. Neither is the text: a
+truncated sentence would otherwise be filed as the run's closing account, which is what the notice
+told the model had not happened.
+
+An agent run is told once, in a sentence that names the length limit rather than the clock and asks
+for less writing rather than less waiting, and a second cut ends the run as
+`failed` / `output-limit`. `AGENT_OUTPUT_LIMIT_ASKS` (1) is that bound, counted off the ledger, so a
+resumed drive does not spend the same sentence again. A planning run is not told: the sentence names
+`compose_report`, which that mode does not hold, and its prose is its deliverable, which the plan
+verifier already reads for a statement, so a plan cut mid-block is judged as having drafted none.
+
+Measured against Ollama 0.40.15 with a `num_predict` cap of 64 in a Modelfile: a cut text turn ends
+`finish_reason: "length"` and the body carries nothing else that says the answer was stopped. The same
+cap on `qwen2.5:1.5b`, at 56, 64 and 72 tokens, cut a tool call INSIDE its arguments and reported
+`finish_reason: "tool_calls"` with unparsable arguments instead; that is not this branch's shape and
+reaches the loop as an unreadable tool call, which is answered by `AGENT_UNREADABLE_TOOL_CALL_ANSWERS`.
+
 **The run deadline** is a monotonic per-run clock with an injected time source, and it answers two
 questions before every call: may this call start (`INSUFFICIENT_TIME_REMAINING` if its minimum
 viable duration no longer fits, `RUN_DEADLINE_EXCEEDED` if the run is simply over), and how long may
