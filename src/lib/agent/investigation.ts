@@ -55,7 +55,15 @@ import {
 } from "./agent-manifest";
 import { logger } from "@/lib/logger";
 import { isRetryableError, isToolCallParseError, LLMConfigError } from "@/lib/llm/types";
-import { type AssistantModelMessage, type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
+import {
+  type AssistantModelMessage,
+  type FinishReason,
+  type ModelMessage,
+  Output,
+  type ToolSet,
+  streamText,
+  tool,
+} from "ai";
 import { z } from "zod";
 import {
   type AgentContextCapture,
@@ -2270,6 +2278,24 @@ interface ModelTurn {
   readonly toolCalls: readonly { readonly toolCallId: string; readonly toolName: string; readonly input: unknown }[];
   /** The run's own deadline cut the call short. */
   readonly aborted: boolean;
+  /*
+    Why the model stopped talking, as the SDK mapped it off the provider's own field.
+
+    Read from the stream rather than off `stream.finishReason` after the fact, for the same
+    reason the whole turn is read part by part: the promise a failed request leaves behind
+    rejects with the SDK's wrapper, which hides the error this repository classifies.
+
+    `length` is the one value that means the provider stopped the model rather than the model
+    stopping itself, and it is the value this field exists for. On every adapter this
+    repository speaks, a per-call output cap arrives as `length`: OpenAI-compatible endpoints
+    send `finish_reason: "length"`, Gemini's `MAX_TOKENS` is mapped to it, and so is Anthropic's
+    `max_tokens`. A provider that cuts a turn for another reason says so with another value, and
+    those are the model's own decisions and are left to it.
+
+    `null` on the abort path only: an abort part means no finish part ever arrived, so there is
+    no value to read and none is invented.
+  */
+  readonly finishReason: FinishReason | null;
   readonly assistantMessages: readonly ModelMessage[];
 }
 
@@ -2543,6 +2569,13 @@ async function takeTurn(
   let text = "";
   let aborted = false;
   let failure: unknown;
+  /*
+    Written by both finish parts, last one winning, and `finish` is the last part of a stream:
+    `finish-step` closes a step and `finish` closes the call. A turn that offers no tools has
+    exactly one step, so reading only the second would be right today, and reading both costs
+    nothing and cannot be wrong if that stops being true.
+  */
+  let finishReason: FinishReason | null = null;
   const toolCalls: { toolCallId: string; toolName: string; input: unknown }[] = [];
 
   try {
@@ -2558,7 +2591,8 @@ async function takeTurn(
       } else if (part.type === "text-delta") text += part.text;
       else if (part.type === "tool-call") {
         toolCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
-      } else if (part.type === "error") failure ??= part.error;
+      } else if (part.type === "finish-step" || part.type === "finish") finishReason = part.finishReason;
+      else if (part.type === "error") failure ??= part.error;
       else if (part.type === "abort") aborted = true;
     }
   } catch (error) {
@@ -2566,7 +2600,7 @@ async function takeTurn(
   }
 
   if (failure !== undefined) throw mapAgentModelError(failure, agentModel.provider);
-  if (aborted) return { text, toolCalls: [], aborted: true, assistantMessages: [] };
+  if (aborted) return { text, toolCalls: [], aborted: true, finishReason: null, assistantMessages: [] };
 
   // Only awaited on the path where the request succeeded; the SDK's own assistant
   // message is used rather than a hand-built one, so the transcript this loop
@@ -2584,6 +2618,7 @@ async function takeTurn(
     text,
     toolCalls,
     aborted: false,
+    finishReason,
     assistantMessages: neutraliseAssistantMessages(
       response.messages.filter((message): message is AssistantModelMessage => message.role === "assistant"),
     ),
