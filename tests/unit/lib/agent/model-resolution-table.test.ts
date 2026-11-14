@@ -841,6 +841,11 @@ describe("the sentences every run is told", () => {
     copies of the prose would have to be edited whenever the prose is, which would make it agree
     with any change instead of catching one. Editing a sentence in `notices.ts` changes what all
     ten measured models are told, and this is the test that says so out loud.
+
+    The fourth is not a per-model copy and is pinned here for the same reason as the three: it is
+    told to every run of every model, and it is a sentence a model ACTS ON rather than reads. It
+    says an answer was cut for its length and asks for a shorter move, so a word moved in it is a
+    measured value changed by accident (#2291).
   */
   const digest = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
@@ -848,6 +853,7 @@ describe("the sentences every run is told", () => {
     expect(digest(BASELINE_NOTICES.reportReminder)).toBe("3f81f86d6e78daf2");
     expect(digest(BASELINE_NOTICES.planStatement)).toBe("ab274977ed206fb4");
     expect(digest(BASELINE_NOTICES.presentBeforeReport)).toBe("739fb327bf394f6c");
+    expect(digest(BASELINE_NOTICES.outputLimit)).toBe("0b13aafc70b5d217");
   });
 });
 

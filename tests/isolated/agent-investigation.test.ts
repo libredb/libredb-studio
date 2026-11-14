@@ -61,10 +61,14 @@ import {
 } from "./fixtures/agent-scripted-model";
 import {
   chatNeverAnswers,
+  chatTextCutStream,
   chatTextStream,
+  chatToolCallCutStream,
   chatToolCallStream,
   endpointError,
+  geminiTextCutStream,
   geminiTextStream,
+  responsesTextCutStream,
   responsesTextStream,
   responsesToolCallStream,
 } from "./fixtures/agent-transport";
@@ -3799,6 +3803,230 @@ describe("the run loop is bounded", () => {
     expect(script.turns).toHaveLength(0);
     expect(result.status).toBe("failed");
     expect(result.stopReason).toBe("deadline-exceeded");
+  });
+});
+
+// ─── the cut answer ─────────────────────────────────────────────────────────
+
+/**
+ * An agent turn the MODEL SERVER stopped at its own output limit (#2291).
+ *
+ * `takeTurn` read text, tool calls, errors and aborts out of the stream and threw the finish
+ * reason away, so a turn the server had cut arrived at the loop shaped exactly like one the model
+ * had chosen to end: its text went through the prompted readers, its calls were dispatched, and an
+ * agent run holding no report ended `model-stopped`, which is this loop's word for "the model had
+ * nothing more to say".
+ *
+ * Every test here drives the REAL ratified provider package over a scripted transport, so the
+ * finish reason being read is the one the SDK maps off the provider's own field rather than one a
+ * double invented. The Chat Completions wire is the shipped path for the `ollama` and `custom`
+ * kinds; the Responses and Gemini cases at the end are there because the mapping is the SDK's, and
+ * a mapping that stopped working would otherwise be found by a user.
+ */
+describe("a turn the model server cut at its output limit", () => {
+  const outputLimitNotices = async (b: Boot, runId: string): Promise<number> =>
+    (await eventsOf(b.store, runId)).filter(
+      (event) => event.kind === "guidance-issued" && event.notice === "output-limit",
+    ).length;
+
+  test("is told which limit stopped it, and can still file", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "size the table" }),
+      () => chatTextCutStream("The orders table is read by a sequential scan because"),
+      reportOn(),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.stopReason).toBe("report-composed");
+    expect(await outputLimitNotices(b, run.runId)).toBe(1);
+    // The sentence reaches the model on the turn it is given to act on, and names the limit that
+    // did it: the sibling notice about a turn cut for taking too long sends it after the wrong fix.
+    expect(script.turns[2]?.transcript).toContain("stopped at this server's output limit");
+    expect(script.turns[2]?.transcript).not.toContain("cut off at this server's per-call limit");
+  });
+
+  /*
+    The half of the defect that is worse than a wrong ending: a call the cut turn carried was
+    DISPATCHED.
+
+    The arguments here are complete and parse, which is the case a guard resting on "the call was
+    broken" would miss, and it is not a contrived one: a server cuts a turn wherever the length
+    lands, and the frame it emits when that is after a finished call is an ordinary `tool_calls`
+    frame. Nothing in the response tells a client whether the model had more to say after it.
+  */
+  test("a call the cut turn carried is dropped, arguments and all", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT count(*) FROM orders", rationale: "size the table" }),
+      () => chatToolCallCutStream("run_read_query", JSON.stringify({ sql: "DELETE FROM orders" }), "call_cut"),
+      reportOn(),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    // Exactly one statement reached the database: the read the model asked for on a turn that
+    // ended normally. The cut turn's statement never left the process.
+    expect(modelStatements(b.queryReadOnly)).toEqual(["SELECT count(*) FROM orders"]);
+    expect(invocationsOf(await eventsOf(b.store, run.runId))).toHaveLength(1);
+    // And the dropped call is not in the transcript either. An assistant message carrying a call
+    // with no result for it is a shape a real endpoint answers with a 400, which would wedge every
+    // later turn of the run.
+    expect(script.turns[2]?.transcript).not.toContain("call_cut");
+    expect(result.status).toBe("succeeded");
+  });
+
+  test("a second cut ends the run, with its own reason and no closing words it did not finish", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      () => chatTextCutStream("The orders table is read by a sequential scan because"),
+      () => chatTextCutStream("and the index on created_at is not used because"),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.stopReason).toBe("output-limit");
+    expect(result.turns).toBe(2);
+    // Said once, which is the bound: a model told to write less that writes the same length again
+    // has been told, and the run has no reason to spend its remaining turns on the same cut.
+    expect(await outputLimitNotices(b, run.runId)).toBe(1);
+    const events = await eventsOf(b.store, run.runId);
+    expect(events.find((event) => event.kind === "run-finished")).toMatchObject({
+      status: "failed",
+      stopReason: "output-limit",
+    });
+    // The notice says nothing from the cut turn was kept, so the ledger must not file it either:
+    // a truncated sentence recorded as the run's closing statement contradicts the sentence the
+    // model was given and tells a reader the answer ended there.
+    expect(events.filter((event) => event.kind === "closing-statement")).toEqual([]);
+  });
+
+  test("with no turn left to act on the telling, the run ends instead of spending the notice", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(() => chatTextCutStream("The orders table is read by a sequential scan"));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+      maxTurns: 1,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.stopReason).toBe("output-limit");
+    expect(script.turns).toHaveLength(1);
+    expect(await outputLimitNotices(b, run.runId)).toBe(0);
+  });
+
+  /*
+    The discrimination, which is the whole point of reading the field rather than inferring a cut
+    from an answer that looks short: a turn that ended by itself is still the model stopping, and
+    must not be relabelled. The second and third turns are identical prose because the first is
+    answered with the report reminder, which costs a turn of its own.
+  */
+  test("a turn that ended by itself is still read as the model stopping", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      callsTool("run_read_query", { sql: "SELECT id FROM orders", rationale: "size the table" }),
+      answersProse("The orders report scans the whole table."),
+      answersProse("The orders report scans the whole table."),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.stopReason).toBe("model-stopped");
+    expect(await outputLimitNotices(b, run.runId)).toBe(0);
+  });
+
+  /*
+    A PLAN run is left exactly as it was, and that is a decision rather than an omission.
+
+    The notice names `compose_report`, which a planning run does not hold, so telling it would be
+    the "#350 defect paid for once" this file records: a run told to call a tool it has not got
+    calls it, is answered "there is no such tool", and spends the very turn the retry bought. A cut
+    plan needs nothing either, because its prose is its deliverable and the plan verifier reads a
+    truncated block as having drafted no statement.
+  */
+  test("a plan run is not told, because the sentence names a tool it does not hold", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b, "planning");
+    const script = scriptedModel(() => chatTextCutStream("```sql\nSELECT 1\n```"));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+      maxTurns: 1,
+    });
+
+    expect(result.stopReason).toBe("model-stopped");
+    expect(await outputLimitNotices(b, run.runId)).toBe(0);
+  });
+
+  test("on the Responses API an incomplete answer is the same cut", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      () => responsesTextCutStream("The orders table"),
+      () => responsesTextCutStream("and the index"),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch, "https://api.openai.com/v1", "gpt-6-luna", "openai"),
+      resources: b.resources,
+    });
+
+    // `response.incomplete` with `incomplete_details.reason: "max_output_tokens"` is the SDK's
+    // `length`, and the loop sees it as one.
+    expect(result.stopReason).toBe("output-limit");
+  });
+
+  test("on Gemini MAX_TOKENS is the same cut", async () => {
+    const b = boot(freshDataDir());
+    const run = await startRun(b);
+    const script = scriptedModel(
+      () => geminiTextCutStream("The orders table"),
+      () => geminiTextCutStream("and the index"),
+    );
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(
+        script.fetch,
+        "https://generativelanguage.googleapis.com/v1beta",
+        "gemini-2.5-flash",
+        "gemini",
+      ),
+      resources: b.resources,
+    });
+
+    expect(result.stopReason).toBe("output-limit");
   });
 });
 

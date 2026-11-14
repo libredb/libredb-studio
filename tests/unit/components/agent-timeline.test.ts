@@ -872,6 +872,25 @@ describe("foldLedgerEntries", () => {
     );
   });
 
+  /*
+    The limit named, and named as the ANSWER's length (#2291).
+
+    The reader's next question about this ending is why an answer stopped mid-sentence, and the
+    two limits this run can meet are repaired in opposite ways: one by waiting less, this one by
+    writing less. A sentence that said "time limit" would send a user to restart a run that was
+    never short of time.
+  */
+  test("a run whose answer was cut names the length limit rather than the clock", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({ kind: "event", event: { kind: "run-finished", atMs: 9, status: "failed", stopReason: "output-limit" } }),
+    ]);
+
+    expect(view.items.at(-1)?.detail).toBe(
+      "The model's answer was cut at the model server's length limit for one reply.",
+    );
+  });
+
   test("a deadline and a cancellation each get their own account", () => {
     const ended = (stopReason: "deadline-exceeded" | "cancelled") =>
       foldLedgerEntries([
@@ -3466,6 +3485,7 @@ describe("an answer reads as the app's decision, with the model's caption quoted
       "report-reminder",
       "plan-statement",
       "turn-cut-off",
+      "output-limit",
       "report-reserve",
       "usage-bar",
       "unread-stop",

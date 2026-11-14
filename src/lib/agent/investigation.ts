@@ -111,6 +111,7 @@ import { validatePlanStatement } from "./plan-statement";
 import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
 import {
   AGENT_MODEL_TURN_TIMEOUT_MS,
+  AGENT_OUTPUT_LIMIT_ASKS,
   AGENT_REPORT_RESERVE_MS,
   AGENT_TRANSPORT_TURN_RETRIES,
   AGENT_UNREADABLE_TOOL_CALL_ANSWERS,
@@ -2730,6 +2731,7 @@ export function guidanceDelivered(events: readonly AgentRunEvent[]): Readonly<Re
     "report-reminder": 0,
     "plan-statement": 0,
     "turn-cut-off": 0,
+    "output-limit": 0,
     "report-reserve": 0,
     "plan-bar": 0,
     "usage-bar": 0,
@@ -2988,6 +2990,17 @@ export async function runInvestigation(
      * rather than by the model.
      */
     let unreadableToolCallAnswers = delivered["tool-call-unreadable"];
+    /**
+     * How many times this RUN has been told a turn was stopped at the endpoint's output limit; see
+     * `AGENT_OUTPUT_LIMIT_ASKS`.
+     *
+     * Read off the ledger like the two bounds above, because it is a property of the run and a
+     * second drive has already spent what it spent. Unlike `turnCutOffRetried` below, which is a
+     * flag in this drive and deliberately granted again on a resume: that bound is on one CALL,
+     * and a resume is a second decision to spend on the call. This one is on the sentence, and the
+     * model has already heard it.
+     */
+    let outputLimitAsked = delivered["output-limit"];
     /** The call written into the text channel; see `stoppedWithAToolCall`. */
     let toolCallAsTextAnswers = delivered["tool-call-as-text"];
     const priorProgress = describePriorProgress(record);
@@ -3827,6 +3840,68 @@ export async function runInvestigation(
           return null;
         }
         return conclude("failed", cutByTurnCeiling ? "model-timeout" : "deadline-exceeded");
+      }
+      /*
+        The other cut, and the one this loop could not see at all: the ENDPOINT stopped the answer
+        because it had grown past what a single response may be.
+
+        `takeTurn` discarded every finish reason, so this turn arrived here shaped exactly like a
+        model that had chosen to stop talking: its text went through the prompted readers, its calls
+        were dispatched, and an agent run with no report ended `model-stopped`, which is the stop
+        reason that means the model had nothing more to say. Measured directly against Ollama
+        0.40.15 with a `num_predict` cap of 64, the final frame of such a turn is
+        `finish_reason: "length"` and nothing in the body says the turn was cut.
+
+        THREE THINGS ARE DELIBERATELY NOT KEPT, and each of them is a defect this branch closes
+        rather than a tidiness:
+
+          - the TEXT is not pushed into the transcript and the run's own `text` is cleared, so no
+            truncated sentence becomes the run's closing statement. The notice says nothing from
+            the turn was kept, and a ledger that filed it would contradict the sentence it said.
+          - the CALLS are not dispatched, whatever the turn carried. A cut lands wherever it lands,
+            and the one place it must never land is inside a statement: a tool call is dropped
+            whether its arguments parsed or not, because "the call was complete" and "the call was
+            the last thing written before the cut" cannot be told apart from here. This is also why
+            the branch sits BEFORE the prompted readers: `readPromptedAction` and
+            `readPromptedPayload` recover a call out of the prose, and recovering one out of prose
+            that was cut mid-sentence is the same hazard through the other door.
+          - no assistant message is pushed, so the transcript never carries a `tool_call` with no
+            result for it, which is a shape a real endpoint answers with a 400 and which would
+            wedge every later turn of the run.
+
+        Agent mode only, and for the reason `turn-cut-off` is: the notice names `compose_report`,
+        which a planning run does not hold. A cut PLANNING turn needs nothing from this branch
+        either. Its prose is its deliverable, the plan verifier looks for a statement in there, and
+        a plan cut mid-block is judged as having drafted none rather than read as complete.
+
+        NOT every cut arrives as `length`, and the measured counterexample is worth keeping here
+        because it is the scope this branch does not claim. On `qwen2.5:1.5b` the same cap, set to
+        56, 64 and 72 tokens, cut a TOOL CALL inside its arguments and the frame reported
+        `finish_reason: "tool_calls"` with `"arguments":"{\\"` in it. Nothing here sees that shape:
+        unreadable arguments reach `takeTurn` as a parse failure and are answered by
+        `AGENT_UNREADABLE_TOOL_CALL_ANSWERS`, which is the path that sentence was written for. A
+        provider that reports a cut tool call honestly says `length`, and that case is the one this
+        branch is: the calls are dropped before anything runs them.
+      */
+      if (turn.finishReason === "length" && record.mode === "agent") {
+        text = "";
+        if (
+          outputLimitAsked < AGENT_OUTPUT_LIMIT_ASKS &&
+          turns < maxTurns &&
+          resources.deadline.remainingMs() > AGENT_REPORT_RESERVE_MS
+        ) {
+          outputLimitAsked += 1;
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.outputLimit) });
+          await issueGuidance("output-limit");
+          return null;
+        }
+        /*
+          The run has already been told, or has no turn left to act on the telling. Ended with its
+          own stop reason rather than left to fall through to `model-stopped`: the run is not
+          quiet, it produced an answer the server would not carry, and the user reading the ending
+          is owed that difference.
+        */
+        return conclude("failed", "output-limit");
       }
       /*
         On the prompted path the call arrives as a JSON object inside ordinary text, so it is
