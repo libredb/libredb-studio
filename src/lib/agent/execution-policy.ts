@@ -501,7 +501,7 @@ export const AGENT_UNREADABLE_TOOL_CALL_ANSWERS = 2;
  * The alternative to the re-ask is ending the run, so the ask is free on the argument every
  * recovery here rests on: the run had already lost the turn, and the notice cannot cost it a pass.
  */
-export const AGENT_OUTPUT_LIMIT_ASKS = 1;
+export const AGENT_MODEL_OUTPUT_LIMIT_ASKS = 1;
 
 /**
  * How many statements that FAILED AT THE DATABASE a run may try to repair.

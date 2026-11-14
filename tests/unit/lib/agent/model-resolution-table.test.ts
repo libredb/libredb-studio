@@ -853,7 +853,7 @@ describe("the sentences every run is told", () => {
     expect(digest(BASELINE_NOTICES.reportReminder)).toBe("3f81f86d6e78daf2");
     expect(digest(BASELINE_NOTICES.planStatement)).toBe("ab274977ed206fb4");
     expect(digest(BASELINE_NOTICES.presentBeforeReport)).toBe("739fb327bf394f6c");
-    expect(digest(BASELINE_NOTICES.outputLimit)).toBe("0b13aafc70b5d217");
+    expect(digest(BASELINE_NOTICES.modelOutputLimit)).toBe("af0b65edb1d75818");
   });
 });
 

@@ -57,11 +57,18 @@ export const BASELINE_NOTICES: AgentNotices = Object.freeze({
     landed, spends the new turn on the same length that was already refused. What the run needs is
     a MOVE, and either of the two moves named ends the run's need: the report it can already file,
     or the one call it was about to make.
+
+    Neither move describes the call's SHAPE, and that is deliberate. "Make one tool call and nothing
+    else" is what its sibling says, and it is vague on purpose: on the prompted protocol a call is an
+    envelope written into the message text, so a sentence about "its arguments" would be telling half
+    the models to write bare arguments, which is the transport mistake `toolCallAsText` exists to
+    correct. The protocol reminder in the run's own prompt says how a call is made; this sentence
+    says only that one is due.
   */
-  outputLimit: [
+  modelOutputLimit: [
     "Your last turn was stopped at this server's output limit: a single answer may only be so long, and yours was still being written when it reached that length, so nothing from it was kept.",
     "The run itself is not over. It has turns and time left, and the work you recorded earlier in this conversation still counts.",
-    "Write LESS this time. Do not continue or repeat the answer that was cut, and do not explain what you are about to do: make one move and stop. If this conversation already holds what the report needs, call compose_report now. Otherwise make one tool call, with its arguments and nothing else.",
+    "Write LESS this time. Do not continue or repeat the answer that was cut, and do not explain what you are about to do: make one move and stop. If this conversation already holds what the report needs, call compose_report now. Otherwise make one tool call and nothing else.",
     CITATION_RULE,
   ].join(" "),
   planStatement: [

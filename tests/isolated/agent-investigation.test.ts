@@ -3824,9 +3824,9 @@ describe("the run loop is bounded", () => {
  * a mapping that stopped working would otherwise be found by a user.
  */
 describe("a turn the model server cut at its output limit", () => {
-  const outputLimitNotices = async (b: Boot, runId: string): Promise<number> =>
+  const modelOutputLimitNotices = async (b: Boot, runId: string): Promise<number> =>
     (await eventsOf(b.store, runId)).filter(
-      (event) => event.kind === "guidance-issued" && event.notice === "output-limit",
+      (event) => event.kind === "guidance-issued" && event.notice === "model-output-limit",
     ).length;
 
   test("is told which limit stopped it, and can still file", async () => {
@@ -3846,7 +3846,7 @@ describe("a turn the model server cut at its output limit", () => {
 
     expect(result.status).toBe("succeeded");
     expect(result.stopReason).toBe("report-composed");
-    expect(await outputLimitNotices(b, run.runId)).toBe(1);
+    expect(await modelOutputLimitNotices(b, run.runId)).toBe(1);
     // The sentence reaches the model on the turn it is given to act on, and names the limit that
     // did it: the sibling notice about a turn cut for taking too long sends it after the wrong fix.
     expect(script.turns[2]?.transcript).toContain("stopped at this server's output limit");
@@ -3903,15 +3903,15 @@ describe("a turn the model server cut at its output limit", () => {
     });
 
     expect(result.status).toBe("failed");
-    expect(result.stopReason).toBe("output-limit");
+    expect(result.stopReason).toBe("model-output-limit");
     expect(result.turns).toBe(2);
     // Said once, which is the bound: a model told to write less that writes the same length again
     // has been told, and the run has no reason to spend its remaining turns on the same cut.
-    expect(await outputLimitNotices(b, run.runId)).toBe(1);
+    expect(await modelOutputLimitNotices(b, run.runId)).toBe(1);
     const events = await eventsOf(b.store, run.runId);
     expect(events.find((event) => event.kind === "run-finished")).toMatchObject({
       status: "failed",
-      stopReason: "output-limit",
+      stopReason: "model-output-limit",
     });
     // The notice says nothing from the cut turn was kept, so the ledger must not file it either:
     // a truncated sentence recorded as the run's closing statement contradicts the sentence the
@@ -3932,9 +3932,31 @@ describe("a turn the model server cut at its output limit", () => {
     });
 
     expect(result.status).toBe("failed");
-    expect(result.stopReason).toBe("output-limit");
+    expect(result.stopReason).toBe("model-output-limit");
     expect(script.turns).toHaveLength(1);
-    expect(await outputLimitNotices(b, run.runId)).toBe(0);
+    expect(await modelOutputLimitNotices(b, run.runId)).toBe(0);
+  });
+
+  /*
+    The third gate, and the reason it exists at all: the notice claims the run "has turns and time
+    left", so it may only be said where that is true. Here the run has turns but its clock is
+    already inside the report reserve, and the honest thing is to end rather than to spend what is
+    left of the run on a sentence the model could not act on.
+  */
+  test("with its clock inside the report reserve, the run ends rather than telling the model", async () => {
+    const b = boot(freshDataDir(), { spentMs: AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs - 10_000 });
+    const run = await startRun(b);
+    const script = scriptedModel(() => chatTextCutStream("The orders table is read by a sequential scan"));
+
+    const result = await runInvestigation(run.runId, {
+      service: b.service,
+      model: await modelOver(script.fetch),
+      resources: b.resources,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.stopReason).toBe("model-output-limit");
+    expect(await modelOutputLimitNotices(b, run.runId)).toBe(0);
   });
 
   /*
@@ -3960,7 +3982,7 @@ describe("a turn the model server cut at its output limit", () => {
 
     expect(result.status).toBe("succeeded");
     expect(result.stopReason).toBe("model-stopped");
-    expect(await outputLimitNotices(b, run.runId)).toBe(0);
+    expect(await modelOutputLimitNotices(b, run.runId)).toBe(0);
   });
 
   /*
@@ -3985,7 +4007,7 @@ describe("a turn the model server cut at its output limit", () => {
     });
 
     expect(result.stopReason).toBe("model-stopped");
-    expect(await outputLimitNotices(b, run.runId)).toBe(0);
+    expect(await modelOutputLimitNotices(b, run.runId)).toBe(0);
   });
 
   test("on the Responses API an incomplete answer is the same cut", async () => {
@@ -4004,7 +4026,7 @@ describe("a turn the model server cut at its output limit", () => {
 
     // `response.incomplete` with `incomplete_details.reason: "max_output_tokens"` is the SDK's
     // `length`, and the loop sees it as one.
-    expect(result.stopReason).toBe("output-limit");
+    expect(result.stopReason).toBe("model-output-limit");
   });
 
   test("on Gemini MAX_TOKENS is the same cut", async () => {
@@ -4026,7 +4048,7 @@ describe("a turn the model server cut at its output limit", () => {
       resources: b.resources,
     });
 
-    expect(result.stopReason).toBe("output-limit");
+    expect(result.stopReason).toBe("model-output-limit");
   });
 });
 

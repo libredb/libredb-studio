@@ -14,7 +14,12 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { connectionRefusalSentence, foldLedgerEntries, parseLedgerLine } from "@/components/agent/timeline";
+import {
+  connectionRefusalSentence,
+  describeRunFailure,
+  foldLedgerEntries,
+  parseLedgerLine,
+} from "@/components/agent/timeline";
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { PLAN_NO_STATEMENT_MARKER } from "@/lib/agent/plan-draft";
 import { nextStatus, type AgentLedgerEntry } from "@/lib/agent/run-store";
@@ -883,10 +888,47 @@ describe("foldLedgerEntries", () => {
   test("a run whose answer was cut names the length limit rather than the clock", () => {
     const view = foldLedgerEntries([
       OPENED,
-      event({ kind: "event", event: { kind: "run-finished", atMs: 9, status: "failed", stopReason: "output-limit" } }),
+      event({
+        kind: "event",
+        event: { kind: "run-finished", atMs: 9, status: "failed", stopReason: "model-output-limit" },
+      }),
     ]);
 
     expect(view.items.at(-1)?.detail).toBe(
+      "The model's answer was cut at the model server's length limit for one reply.",
+    );
+  });
+
+  /*
+    Which surface says WHAT, pinned against the shape a real run writes (#2291).
+
+    A run the loop ends at an output limit also carries a verdict with `no-report`, because it
+    filed nothing, and the timeline prefers the shortfall: the entry says what the run did not
+    produce. The stop sentence is then read off the timeline, by the answer card and the rail,
+    through `describeRunFailure`, which never consults the verdict. Both are the design, and the
+    test above alone would hide half of it by building a record no real run writes.
+  */
+  test("a cut answer that also missed its report says so on each surface, and the card still names the limit", () => {
+    const timeline = foldLedgerEntries([
+      OPENED,
+      event({
+        kind: "event",
+        event: {
+          kind: "run-finished",
+          atMs: 9,
+          status: "failed",
+          stopReason: "model-output-limit",
+          goalVerdict: { outcome: "unanswered", verifier: "agent-investigation.1", unmet: ["no-report"] },
+        },
+      } as AgentLedgerEntry & { kind: "event" }),
+    ]);
+
+    // The timeline says what is missing, which is the more specific fact about the run.
+    expect(timeline.items.at(-1)?.detail).toBe(
+      "The run finished without composing a cited report, so nothing it found was written down.",
+    );
+    // Above the timeline, the same run is told how it ended.
+    expect(describeRunFailure(timeline)).toBe(
       "The model's answer was cut at the model server's length limit for one reply.",
     );
   });
@@ -3485,7 +3527,7 @@ describe("an answer reads as the app's decision, with the model's caption quoted
       "report-reminder",
       "plan-statement",
       "turn-cut-off",
-      "output-limit",
+      "model-output-limit",
       "report-reserve",
       "usage-bar",
       "unread-stop",

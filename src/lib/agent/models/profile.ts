@@ -282,7 +282,7 @@ export interface AgentNotices {
    * shorter move in the same amount of time, this one asks for less writing. A model told only
    * "you were cut off" writes the same essay again, which is how the turn is lost twice.
    */
-  readonly outputLimit: string;
+  readonly modelOutputLimit: string;
   /** An answer-presenting run about to report a result it read but never presented. */
   readonly presentBeforeReport: string;
   /** A run that stopped without calling anything, having asked for what it could have read. */

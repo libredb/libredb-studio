@@ -111,7 +111,7 @@ import { validatePlanStatement } from "./plan-statement";
 import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
 import {
   AGENT_MODEL_TURN_TIMEOUT_MS,
-  AGENT_OUTPUT_LIMIT_ASKS,
+  AGENT_MODEL_OUTPUT_LIMIT_ASKS,
   AGENT_REPORT_RESERVE_MS,
   AGENT_TRANSPORT_TURN_RETRIES,
   AGENT_UNREADABLE_TOOL_CALL_ANSWERS,
@@ -2286,12 +2286,15 @@ interface ModelTurn {
     reason the whole turn is read part by part: the promise a failed request leaves behind
     rejects with the SDK's wrapper, which hides the error this repository classifies.
 
-    `length` is the one value that means the provider stopped the model rather than the model
-    stopping itself, and it is the value this field exists for. On every adapter this
-    repository speaks, a per-call output cap arrives as `length`: OpenAI-compatible endpoints
-    send `finish_reason: "length"`, Gemini's `MAX_TOKENS` is mapped to it, and so is Anthropic's
-    `max_tokens`. A provider that cuts a turn for another reason says so with another value, and
-    those are the model's own decisions and are left to it.
+    `length` is the value this field exists for: it is the one where the PROVIDER stopped a model
+    that was still writing. It arrives as `length` on every adapter this repository speaks, from
+    `finish_reason: "length"` on the OpenAI-compatible wire and from Gemini's `MAX_TOKENS`.
+
+    The other values are deliberately not acted on here, and they are not all the same thing, so
+    they must not be dismissed together: `content-filter` is a provider refusal and `error` is a
+    transport ending, and neither is handled by the branch that handles `length`. Both are
+    follow-ups rather than silent decisions, and this comment is where the next reader finds that
+    out. `stop` and `tool-calls` are the model's own ending and need nothing.
 
     `null` on the abort path only: an abort part means no finish part ever arrived, so there is
     no value to read and none is invented.
@@ -2592,8 +2595,11 @@ async function takeTurn(
       } else if (part.type === "text-delta") text += part.text;
       else if (part.type === "tool-call") {
         toolCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
-      } else if (part.type === "finish-step" || part.type === "finish") finishReason = part.finishReason;
-      else if (part.type === "error") failure ??= part.error;
+      } else if (part.type === "finish-step" || part.type === "finish") {
+        // Required by the type, guarded anyway: an adapter that left the field out would otherwise
+        // overwrite a reason an earlier part had already stated with nothing.
+        if (part.finishReason !== undefined) finishReason = part.finishReason;
+      } else if (part.type === "error") failure ??= part.error;
       else if (part.type === "abort") aborted = true;
     }
   } catch (error) {
@@ -2731,7 +2737,7 @@ export function guidanceDelivered(events: readonly AgentRunEvent[]): Readonly<Re
     "report-reminder": 0,
     "plan-statement": 0,
     "turn-cut-off": 0,
-    "output-limit": 0,
+    "model-output-limit": 0,
     "report-reserve": 0,
     "plan-bar": 0,
     "usage-bar": 0,
@@ -2992,7 +2998,7 @@ export async function runInvestigation(
     let unreadableToolCallAnswers = delivered["tool-call-unreadable"];
     /**
      * How many times this RUN has been told a turn was stopped at the endpoint's output limit; see
-     * `AGENT_OUTPUT_LIMIT_ASKS`.
+     * `AGENT_MODEL_OUTPUT_LIMIT_ASKS`.
      *
      * Read off the ledger like the two bounds above, because it is a property of the run and a
      * second drive has already spent what it spent. Unlike `turnCutOffRetried` below, which is a
@@ -3000,7 +3006,7 @@ export async function runInvestigation(
      * and a resume is a second decision to spend on the call. This one is on the sentence, and the
      * model has already heard it.
      */
-    let outputLimitAsked = delivered["output-limit"];
+    let modelOutputLimitAsked = delivered["model-output-limit"];
     /** The call written into the text channel; see `stoppedWithAToolCall`. */
     let toolCallAsTextAnswers = delivered["tool-call-as-text"];
     const priorProgress = describePriorProgress(record);
@@ -3886,13 +3892,13 @@ export async function runInvestigation(
       if (turn.finishReason === "length" && record.mode === "agent") {
         text = "";
         if (
-          outputLimitAsked < AGENT_OUTPUT_LIMIT_ASKS &&
+          modelOutputLimitAsked < AGENT_MODEL_OUTPUT_LIMIT_ASKS &&
           turns < maxTurns &&
           resources.deadline.remainingMs() > AGENT_REPORT_RESERVE_MS
         ) {
-          outputLimitAsked += 1;
-          messages.push({ role: "user", content: notice(BASELINE_NOTICES.outputLimit) });
-          await issueGuidance("output-limit");
+          modelOutputLimitAsked += 1;
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.modelOutputLimit) });
+          await issueGuidance("model-output-limit");
           return null;
         }
         /*
@@ -3901,7 +3907,7 @@ export async function runInvestigation(
           quiet, it produced an answer the server would not carry, and the user reading the ending
           is owed that difference.
         */
-        return conclude("failed", "output-limit");
+        return conclude("failed", "model-output-limit");
       }
       /*
         On the prompted path the call arrives as a JSON object inside ordinary text, so it is
