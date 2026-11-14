@@ -403,6 +403,53 @@ export function selectsPlainColumn(sql: string, column: string, type?: DatabaseT
     }
   }
 
+  // SQL Server (`mssql`) and DuckDB allow `TOP <n>` or `TOP (<expr>)` [PERCENT] [WITH TIES]
+  // immediately after `SELECT [ALL | DISTINCT]`. Like DISTINCT, TOP limits how many rows come
+  // back rather than modifying or projecting columns.
+  if (isWord(top[start], "TOP")) {
+    const next = top[start + 1];
+    let isTopClause = false;
+    let scan = start + 1;
+
+    if (next?.kind === "other" && /^[0-9]$/.test(next.text)) {
+      // Literal number, e.g. `TOP 50` or `TOP 10.5`
+      isTopClause = true;
+      while (scan < from && top[scan]?.kind === "other" && /^[0-9.]$/.test(top[scan].text)) {
+        scan++;
+      }
+    } else if (next?.kind === "other" && next.text === "(") {
+      // Parenthesized count, e.g. `TOP (50)`.
+      // Ensure it is not a scalar function call like `SELECT top(x) FROM users` or
+      // `SELECT top(x) AS id FROM users` where the closing paren is followed by `,`, `FROM`, or `AS`.
+      let close = scan + 1;
+      while (close < from && !(top[close].kind === "other" && top[close].text === ")")) {
+        close++;
+      }
+      if (close < from && top[close].kind === "other" && top[close].text === ")") {
+        const afterClose = top[close + 1];
+        if (
+          afterClose !== undefined &&
+          afterClose !== top[from] &&
+          !(afterClose.kind === "other" && afterClose.text === ",") &&
+          !isWord(afterClose, "AS")
+        ) {
+          isTopClause = true;
+          scan = close + 1;
+        }
+      }
+    }
+
+    if (isTopClause) {
+      if (isWord(top[scan], "PERCENT")) {
+        scan++;
+      }
+      if (isWord(top[scan], "WITH") && isWord(top[scan + 1], "TIES")) {
+        scan += 2;
+      }
+      start = scan;
+    }
+  }
+
   // The select list, split on its own commas. A comma inside parens belongs to a function's
   // arguments, and those pieces are not at this depth to begin with.
   const items: Piece[][] = [[]];

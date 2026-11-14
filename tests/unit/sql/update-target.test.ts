@@ -632,6 +632,19 @@ describe("selectsPlainColumn", () => {
     expect(selectsPlainColumn("SELECT DISTINCT product_id, sku FROM products", "product_id")).toBe(true);
     expect(selectsPlainColumn("SELECT ALL product_id, sku FROM products", "product_id")).toBe(true);
     expect(selectsPlainColumn("SELECT DISTINCT ON (sku) product_id, sku FROM products", "product_id")).toBe(true);
+    expect(selectsPlainColumn("SELECT TOP 50 * FROM dbo.users;", "id", "mssql")).toBe(true);
+    expect(selectsPlainColumn("SELECT TOP 100\n  id,\n  name\nFROM dbo.users\nWHERE 1=1;", "id", "mssql")).toBe(true);
+    expect(selectsPlainColumn("SELECT TOP (50) * FROM [dbo].[users];", "id", "mssql")).toBe(true);
+    expect(selectsPlainColumn("SELECT TOP (100) id, name FROM dbo.users;", "id", "mssql")).toBe(true);
+    expect(selectsPlainColumn("SELECT DISTINCT TOP 50 id, name FROM dbo.users;", "id", "mssql")).toBe(true);
+    expect(
+      selectsPlainColumn("SELECT TOP 10 PERCENT WITH TIES id, name FROM dbo.users ORDER BY id;", "id", "mssql"),
+    ).toBe(true);
+    expect(selectsPlainColumn("SELECT top FROM boxes;", "top", "mssql")).toBe(true);
+    expect(selectsPlainColumn("SELECT top(x) AS id FROM users;", "id", "mssql")).toBe(false);
+    expect(selectsPlainColumn("SELECT top(x) FROM users;", "id", "mssql")).toBe(false);
+    expect(selectsPlainColumn("SELECT TOP 50 sku AS id, name FROM products;", "id", "mssql")).toBe(false);
+    expect(selectsPlainColumn("SELECT TOP 50 sku AS id, name FROM products;", "name", "mssql")).toBe(true);
   });
 
   test("a reference can carry its schema as well as its table", () => {
