@@ -1454,7 +1454,7 @@ It carries a role reserved for the review, which the role filter never selects, 
 - The review is a SubjectAccessReview with `user` set to the session's identity provider subject, the ID token's `sub`, and `groups` set to the groups of the ID token's `groups` claim at sign-in, and nothing else: no header, cookie field or display name reaches it.
 - This is the identity Rancher impersonates on a downstream cluster, the Rancher user id with its group principals, so for the same Secret the review never allows more than Rancher does, and denies a Secret Rancher grants only through `system:authenticated` or `system:cattle:authenticated` (below).
   A Rancher user with no role in the cluster gets no reviewed connection.
-- Every error, timeout, answer that is not 2xx and answer that is malformed or for another user denies.
+- Every error, timeout, answer that is not 2xx and answer that is malformed, for another user or does not echo the asked attributes denies.
 - A session without an identity provider subject or a groups record is denied without a request.
 - Opening one the review denies answers with the same body as an id that does not exist: `404 CONNECTION_NOT_FOUND`.
   With the review on, so does a seed the caller's role may not see, which answers 403 otherwise; each miss is audited as `permission_denied` on the target `kubernetes-access/connection`.
