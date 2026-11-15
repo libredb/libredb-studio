@@ -199,8 +199,8 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  * - `managed` decides whom an empty credential signs in as: BigQuery and Firestore sign a keyless connection in with
  *   the server's own identity only when `managed` is exactly true, the operator's grant. A seed the operator demotes to
  *   `managed: false` keeps its id, server and empty credential, so without this a provider opened as the server went
- *   on serving it (`tests/api/db/demoted-seed.test.ts`). Framed last and only when exactly true, so every connection
- *   without the grant keeps the key it had.
+ *   on serving it (`tests/api/db/demoted-seed.test.ts`). Framed after the fixed parts, before the literal-mode part,
+ *   and only when exactly true, so every connection without the grant keeps the key it had.
  * - `LITERAL_SEED_FILE` (`src/lib/types.ts`) marks a seed-file row read in literal mode, which never signs in with the
  *   server's own identity, so it decides whom an empty credential signs in as just as `managed` does. The operator
  *   loader reads the mode on every call (`src/lib/seed/operator-loader.ts`), so the same record can arrive with and
@@ -241,7 +241,7 @@ async function credentialDigest(connection: DatabaseConnection & WithLiteralSeed
     tunnel?.hostKeyFingerprint ?? "",
     // Last and only when set, so every connection without roots keeps the key it had.
     ...(connection.agentReadRoots === undefined ? [] : [JSON.stringify(connection.agentReadRoots)]),
-    // Last and only under the grant, so every connection without it keeps the key it had.
+    // After the fixed parts and only under the grant, so every connection without it keeps the key it had.
     ...(connection.managed === true ? ["managed"] : []),
     // Last and only when set, so every connection without the literal-mode marker keeps the key it had.
     ...(connection[LITERAL_SEED_FILE] === true ? ["literalSeedFile"] : []),

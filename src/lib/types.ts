@@ -374,9 +374,9 @@ export interface WithTunnelFarEnd {
  * the credential text, and the row is not server-written (`isServerWritten` in
  * `src/lib/db/auth/server-identity-gate.ts`): it never signs in with the server's own cloud identity.
  *
- * Set in one place, `projectOperatorEntries` in `src/lib/seed/index.ts`, beside `literal`; never on a discovered row,
- * a built-in sample or a governed row, although those carry `literal` too. Read by `isServerWritten`, and framed in
- * the provider cache key (`credentialDigest` in `src/lib/db/provider-cache-key.ts`).
+ * Set in one place, `projectOperatorEntries` in `src/lib/seed/index.ts`, beside `literal`; never on a discovered or
+ * governed row, which carry `literal` too, nor on a built-in sample. Read by `isServerWritten`, and framed in the
+ * provider cache key (`credentialDigest` in `src/lib/db/provider-cache-key.ts`).
  *
  * A symbol key on the footing of {@link TUNNEL_FAR_END}: `JSON.parse` never produces one, so no seed file, request
  * body or stored connection can carry it, `JSON.stringify` drops it from every response, and the three maps over

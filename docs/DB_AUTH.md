@@ -106,8 +106,8 @@ The refusal sentences word the accepted kinds in a fixed order (service account,
 A non-blank pasted credential always wins.
 A blank one goes through the gate, then the Application Default Credentials chain: the file `GOOGLE_APPLICATION_CREDENTIALS` names (an unreadable one is an error), gcloud's well-known file under `HOME` or, on Windows, `APPDATA` (absent, `ENOENT` or `ENOTDIR`, moves on; any other read failure is an error), then the metadata server at `metadata.google.internal` or at `GCE_METADATA_HOST`, validated as a host with an optional port and no scheme.
 The chain reads those four variables and nothing else, and its reader is not exported: `resolveGoogleCredential`, which runs the gate first, is the only way to it.
-A provider passes `resolveGoogleCredential` the connection record it was given, never a copy built field by field, so the `LITERAL_SEED_FILE` marker reaches the gate and a keyless row of a literal-mode seed file is refused before any request.
 A blank value of any of the four counts as unset.
+A provider passes `resolveGoogleCredential` the connection record it was given, never a copy built field by field, so the `LITERAL_SEED_FILE` marker reaches the gate and a keyless row of a literal-mode seed file is refused before any request.
 `createGoogleTokenSource` takes whatever credential it is given, so a provider passes it only what `resolveGoogleCredential` returned and never builds a `metadata` credential itself.
 The ADC file accepts the JSON kinds the provider lists; an access token is never a file kind.
 

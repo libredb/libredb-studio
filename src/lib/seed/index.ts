@@ -35,8 +35,8 @@ export { KUBERNETES_REVIEWED_ROLE, seedRolesOf } from "./roles";
  *
  * The same entry also carries LITERAL_SEED_FILE (src/lib/types.ts): a seed file read in literal mode is written by a
  * platform from data its users control, so its rows are not server-written and never sign in with the server's own
- * cloud identity. This is the one place it is set; a discovered row, a sample or a governed row carries `literal` but
- * never this marker.
+ * cloud identity. This is the one place it is set; a discovered or governed row carries `literal` but never this
+ * marker, and a built-in sample carries neither.
  */
 function projectOperatorEntries(entries: readonly OperatorEntry[], roles: string[]): ManagedConnection[] {
   return entries.flatMap((entry) =>
