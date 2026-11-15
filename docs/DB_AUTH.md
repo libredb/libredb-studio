@@ -120,15 +120,23 @@ An answer without a usable `expires_in` lives Google's documented one hour.
 A refusal reports `error_description`, then `error`, then `HTTP <status>`; a reason quoted from the server is withheld whole when it holds any form of the credential's secrets, and is then cut to 300 characters.
 `close()` aborts a refresh in flight, drops the token, closes every lane, and makes every later call fail as closed.
 
+## AWS
+
+`aws/sigv4.ts` is the SigV4 core, with no AWS SDK: `signatureV4` computes the `Authorization` value of a canonical request for a key pair and a scope, `amzDateOf` writes the signing date, `canonicalQueryOf` sorts a query into its canonical order with `compareEncodedPairs`, and `EMPTY_PAYLOAD_SHA256` is the payload hash of an empty body.
+It is tested on the 24 AWS SigV4 suite vectors and the smithy vector.
+The core holds no signing policy: which headers are signed, the payload hash and the service name belong to the caller that builds the canonical request, such as S3's `s3Signer` ([providers/s3.md](providers/s3.md)).
+Only the keys a caller passes sign: the module reads no environment variable, no file and no instance metadata.
+It is the only file of the layer that imports `node:crypto`.
+
 ## Guards
 
 `tests/unit/db/auth/seam-guard.test.ts` holds the layer's lines, each proven both ways with a planted violation:
 
-- AUTH1: a file of the layer imports only `jose`, `@/lib/db/errors`, `@/lib/db/http/*`, `@/lib/db/utils/*`, `@/lib/types` and files of the layer.
+- AUTH1: a file of the layer imports only `jose`, `node:crypto` (in `aws/sigv4.ts` alone), `@/lib/db/errors`, `@/lib/db/http/*`, `@/lib/db/utils/*`, `@/lib/types` and files of the layer.
 - AUTH2: no `process.env`, `Date.now`, `new Date()` without an argument, timers, `AbortSignal.timeout` or console.
 - AUTH3: no external engine's type id, comments included.
 - AUTH4: no module state: top-level code is a closed list of declarations and frozen literals.
 - AUTH5: under `src/`, only providers and the layer import the layer, and only the layer imports `lanes.ts`.
-- AUTH6: the mechanism markers (the Google token host, the JWT-bearer grant, the metadata path) appear under `src/` only in the layer, apart from listed exceptions that each name the PR removing them.
+- AUTH6: the mechanism markers (the Google token host, the JWT-bearer grant, the metadata path, and SigV4's `AWS4-HMAC-SHA256` and `aws4_request`) appear under `src/` only in the layer, apart from listed exceptions that each name the PR removing them.
 
 `tests/unit/lib/governance/preflight.test.ts` checks that governance mode refuses every server-identity opt-in a literal under `src/` names, so a new opt-in without a preflight row fails the build.

@@ -435,7 +435,7 @@ src/
     │   │   ├── stream/      # kafka/ (read-client seam + JSON read requests over the Kafka protocol via @platformatic/kafka)
     │   │   ├── graph/       # neo4j/ (an engine profile, catalog, statement gate and monitoring on the graph layer below)
     │   │   ├── vector/      # milvus/ (a gRPC client of its own via the shared gRPC transport, Milvus's REST v2 requests as the console, run over gRPC); qdrant/ (a REST client of its own over the shared node transport, the closed console, the payload sample); weaviate/ (a REST client of its own over the shared node transport, the closed console run over REST or GraphQL as the server's version decides)
-    │   │   ├── objectstore/ # s3/ (a REST client of its own over the shared byte transport, signed by its own SigV4 module over node:crypto; an AWS CLI read-command console; object metadata and capped previews, Parquet through hyparquet)
+    │   │   ├── objectstore/ # s3/ (a REST client of its own over the shared byte transport, signed by its own signing policy over the shared SigV4 core in db/auth/aws; an AWS CLI read-command console; object metadata and capped previews, Parquet through hyparquet)
     │   │   ├── platform/    # kubernetes/ (a REST client of its own over the shared node transport behind a read-only request allowlist; a kubectl read-command console; namespaces and kinds in the tree, a YAML view of every object, Secret values redacted)
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
     │   ├── graph/           # The graph layer a Cypher-over-Bolt engine extends (docs/ADDING_A_PROVIDER.md, "Adding a graph engine"):

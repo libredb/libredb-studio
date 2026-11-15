@@ -40,7 +40,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { S3_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
-import { amzDateOf, canonicalQueryOf, signatureV4 } from "@/lib/db/providers/objectstore/s3/sigv4";
+import { amzDateOf, canonicalQueryOf, signatureV4 } from "@/lib/db/auth/aws/sigv4";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 

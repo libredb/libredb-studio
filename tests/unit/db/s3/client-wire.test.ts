@@ -10,11 +10,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { canonicalQueryOf, signatureV4 } from "@/lib/db/auth/aws/sigv4";
 import { createNodeByteTransport } from "@/lib/db/http/node-transport";
 import { createS3Client, type S3Client } from "@/lib/db/providers/objectstore/s3/client";
 import { objectPath, s3Query } from "@/lib/db/providers/objectstore/s3/encoding";
 import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
-import { canonicalQueryOf, s3Signer, signatureV4 } from "@/lib/db/providers/objectstore/s3/sigv4";
+import { s3Signer } from "@/lib/db/providers/objectstore/s3/sigv4";
 import { bucketsXml, objectsXml } from "../../../helpers/s3-fake-transport";
 import { howItFailed } from "../../../helpers/spawn-outcome";
 
