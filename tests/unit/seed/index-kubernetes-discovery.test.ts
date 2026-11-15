@@ -28,6 +28,7 @@ import {
 import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import { SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import {
   GOLDEN_CASES,
@@ -157,6 +158,29 @@ describe("seed/index with the Kubernetes discovery source", () => {
       ]);
       expect([...before, ...after].filter((c) => c.seedId.startsWith("k8s-"))).toEqual([]);
       expect((await getManagedConnections(roles)).filter((c) => c.seedId.startsWith("k8s-"))).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["off", undefined],
+    ["on", "on"],
+  ])(
+    "in literal mode with the access review %s, marks the seed file's row and never a discovered one with the literal-mode marker",
+    async (_review, review) => {
+      if (review !== undefined) process.env.KUBERNETES_ACCESS_REVIEW = review;
+      process.env.SEED_LITERAL_VALUES = "true";
+      try {
+        const { before, pendingReview } = await getSeedListing(["admin"]);
+        const marked = [...before, ...pendingReview].map((c) => [c.seedId, c[LITERAL_SEED_FILE]]);
+        expect(marked).toEqual([
+          ["file-pg", true],
+          ["caprover-pg", undefined],
+          ...KUBERNETES_IDS.map((id) => [id, undefined]),
+        ]);
+        expect(pendingReview.length).toBe(review === undefined ? 0 : KUBERNETES_IDS.length);
+      } finally {
+        delete process.env.SEED_LITERAL_VALUES;
+      }
     },
   );
 

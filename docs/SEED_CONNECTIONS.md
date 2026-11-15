@@ -654,6 +654,7 @@ Resolving a reference in such a file would hand Studio's own environment to whoe
 A platform user who names a database user `${JWT_SECRET}` would have Studio send its session signing secret, as that user name, to a database the platform user runs, and read it back from that database's log.
 With the secret, that user could sign a Studio admin session.
 Literal mode removes the resolution itself, so no value a platform user controls can make Studio read its environment or its Vault, including a value the platform failed to filter out.
+In such a file a connection with an empty password never signs in with the server's own cloud identity: BigQuery and Firestore refuse it even when `BIGQUERY_SERVER_CREDENTIALS` or `FIRESTORE_SERVER_CREDENTIALS` is `true`, because the empty field is a platform user's choice, not the operator's grant ([providers/bigquery.md](providers/bigquery.md), [providers/firestore.md](providers/firestore.md)).
 
 Turn the mode on only for a file in which every value is meant literally: a file written by hand that relies on `${ENV_VAR}` or `${vault:...}` references stops resolving them.
 Keep such a file `managed: true`, the default, so its passwords stay on the server, and mount it read-only from a directory other users on the host cannot enter.

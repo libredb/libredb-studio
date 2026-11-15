@@ -18,10 +18,11 @@ import { GOOGLE_TOKEN_URL } from "@/lib/db/auth/google/token-source";
 import { AuthenticationError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { type NodeRequest, type NodeResponse, TransportError } from "@/lib/db/http/node-transport";
 import { FIRESTORE_API_ORIGIN, FIRESTORE_SCOPE } from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_CREDENTIAL_SENTENCES } from "@/lib/db/providers/document/firestore/credential-policy";
 import { FirestoreProvider } from "@/lib/db/providers/document/firestore/index";
 import type { LaneKind } from "@/lib/db/providers/document/firestore/seams";
 import { FIRESTORE_EXPLAIN_MARKER } from "@/lib/explain/firestore-explain";
-import type { DatabaseConnection } from "@/lib/types";
+import { type DatabaseConnection, LITERAL_SEED_FILE, type WithLiteralSeedFile } from "@/lib/types";
 import {
   jsonAnswer,
   readCapture,
@@ -306,6 +307,8 @@ function google(
   options: {
     readonly password?: string;
     readonly managed?: boolean;
+    /** A seed-file row read in literal mode: the record carries LITERAL_SEED_FILE, as src/lib/seed/index.ts sets it. */
+    readonly literalSeedFile?: true;
     readonly env?: Readonly<Record<string, string>>;
     readonly token?: NodeResponse;
     readonly metadata?: NodeResponse;
@@ -320,13 +323,14 @@ function google(
     if (shape === "probe") return jsonAnswer(DATABASE_RESOURCE);
     return UNRECORDED_ANSWER;
   });
-  const connection: DatabaseConnection = {
+  const connection: DatabaseConnection & WithLiteralSeedFile = {
     id: "firestore-it-google",
     name: "Firestore",
     type: "firestore",
     database: PROJECT,
     password: options.password ?? SERVICE_ACCOUNT,
     ...(options.managed === undefined ? {} : { managed: options.managed }),
+    ...(options.literalSeedFile === undefined ? {} : { [LITERAL_SEED_FILE]: options.literalSeedFile }),
     createdAt: new Date(0),
   };
   const provider = new FirestoreProvider(
@@ -455,6 +459,23 @@ describe("built answers (spec 9)", () => {
     expect(headers).toContain("metadata-flavor");
     expect(script.lanes.some((lane) => lane.lane === "token")).toBe(false);
     await provider.disconnect();
+  });
+
+  test("a managed seed-file row read in literal mode with an empty password is refused at connect, with no request", async () => {
+    const serverIdentity = {
+      password: "",
+      managed: true,
+      env: { FIRESTORE_SERVER_CREDENTIALS: "true", GCE_METADATA_HOST: "metadata.test.invalid" },
+      metadata: jsonAnswer({ access_token: "ya29.metadata-token", expires_in: 3599, token_type: "Bearer" }),
+    } as const;
+    const marked = google(undefined, { ...serverIdentity, literalSeedFile: true });
+    await expect(marked.provider.connect()).rejects.toThrow(FIRESTORE_CREDENTIAL_SENTENCES.literalSeedFile);
+    expect(marked.script.lanes).toEqual([]);
+
+    const unmarked = google(undefined, serverIdentity);
+    await unmarked.provider.connect();
+    expect(unmarked.sent("metadata")).toHaveLength(1);
+    await unmarked.provider.disconnect();
   });
 
   built("probeNative", async () => {

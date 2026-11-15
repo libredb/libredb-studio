@@ -1,6 +1,11 @@
 import { connectionFingerprint } from "./connection-fingerprint";
 import { READS_FILE_ACCESS_POSTURE, SINGLE_WRITER_FILE } from "./compatibility";
-import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
+import {
+  type DatabaseConnection,
+  LITERAL_SEED_FILE,
+  type WithLiteralSeedFile,
+  type WithTunnelFarEnd,
+} from "@/lib/types";
 
 /**
  * The key `providerCache` holds a live provider under, and why it is not `connection.id`
@@ -83,7 +88,7 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  * `connectionFingerprint` states, a different server answering on the same host and port.
  */
 export async function providerCacheKey(
-  connection: DatabaseConnection & WithTunnelFarEnd,
+  connection: DatabaseConnection & WithTunnelFarEnd & WithLiteralSeedFile,
   allowExternalFileAccess?: boolean,
   owner?: string,
 ): Promise<string> {
@@ -196,8 +201,14 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  *   `managed: false` keeps its id, server and empty credential, so without this a provider opened as the server went
  *   on serving it (`tests/api/db/demoted-seed.test.ts`). Framed last and only when exactly true, so every connection
  *   without the grant keeps the key it had.
+ * - `LITERAL_SEED_FILE` (`src/lib/types.ts`) marks a seed-file row read in literal mode, which never signs in with the
+ *   server's own identity, so it decides whom an empty credential signs in as just as `managed` does. The operator
+ *   loader reads the mode on every call (`src/lib/seed/operator-loader.ts`), so the same record can arrive with and
+ *   without it, and a provider opened without it must never be handed to the record carrying it
+ *   (`tests/api/db/literal-seed-server-identity.test.ts`). Framed after `managed` and only when set, so every other
+ *   connection keeps the key it had.
  */
-async function credentialDigest(connection: DatabaseConnection): Promise<string> {
+async function credentialDigest(connection: DatabaseConnection & WithLiteralSeedFile): Promise<string> {
   const ssl = connection.ssl;
   const tunnel = connection.sshTunnel;
   const framed = [
@@ -232,6 +243,8 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
     ...(connection.agentReadRoots === undefined ? [] : [JSON.stringify(connection.agentReadRoots)]),
     // Last and only under the grant, so every connection without it keeps the key it had.
     ...(connection.managed === true ? ["managed"] : []),
+    // Last and only when set, so every connection without the literal-mode marker keeps the key it had.
+    ...(connection[LITERAL_SEED_FILE] === true ? ["literalSeedFile"] : []),
   ]
     .map((value) => `${value.length}:${value}`)
     .join("");

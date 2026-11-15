@@ -4,9 +4,11 @@
  *
  * - A credential in the password field: a service-account key JSON, an authorized-user JSON or an access token,
  *   parsed and used; it needs no server setting.
- * - An empty field: refused for a connection a browser sent; for an operator seed (`managed: true`, which
+ * - An empty field: refused for a connection a browser sent and for a row of a seed file read in literal mode
+ *   (SEED_LITERAL_VALUES, the record carries the literal-mode marker); for an operator seed (`managed: true`, which
  *   resolveConnection forces false on every browser-sent connection) refused unless BIGQUERY_SERVER_CREDENTIALS is
- *   exactly "true", and then the server's own identity in ADC order.
+ *   exactly "true", and then the server's own identity in ADC order. The resolver passes the record it was given, so
+ *   the marker reaches the shared gate.
  *
  * The real IO (process.env, the file system, the home directory, the platform) is read at each connect, so a changed
  * environment applies to the next connection. BIGQUERY_EMULATOR_HOST is the transport's rule, not this module's: the
@@ -22,7 +24,7 @@ import {
 } from "@/lib/db/auth/google/credentials";
 import type { GoogleTokenSourceDeps } from "@/lib/db/auth/google/token-source";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
-import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseConnection, WithLiteralSeedFile } from "@/lib/types";
 
 const PROVIDER = "bigquery" as const;
 const SERVER_CREDENTIALS_ENV = "BIGQUERY_SERVER_CREDENTIALS";
@@ -39,6 +41,8 @@ export const BIGQUERY_CREDENTIAL_SENTENCES = Object.freeze({
   browserEmpty:
     "BigQuery needs a service-account key or an access token in the password field: the server's own credentials are used only for operator-seeded connections",
   seedWithoutOptIn: `BigQuery needs a service-account key in the password field. To use the server's own credentials (ADC or Workload Identity) instead, set ${SERVER_CREDENTIALS_ENV}=true on the server.`,
+  literalSeedFile:
+    "BigQuery needs a service-account key or an access token in the password field: the server's own credentials are not used for a connection read from a seed file in literal mode (SEED_LITERAL_VALUES)",
 });
 
 const S = BIGQUERY_CREDENTIAL_SENTENCES;
@@ -61,6 +65,7 @@ export const BIGQUERY_CREDENTIAL_RULES: GoogleCredentialRules<BigQueryKind> = Ob
   serverIdentity: Object.freeze({
     optIn: SERVER_CREDENTIALS_ENV,
     unmanaged: S.browserEmpty,
+    literalSeedFile: S.literalSeedFile,
     withoutOptIn: S.seedWithoutOptIn,
   }),
 });
@@ -76,14 +81,10 @@ export function bigQueryCredentialIo(): GoogleCredentialIo {
 }
 
 export function resolveBigQueryCredential(
-  connection: Pick<DatabaseConnection, "password" | "managed">,
+  connection: Pick<DatabaseConnection, "password" | "managed"> & WithLiteralSeedFile,
   io: GoogleCredentialIo = bigQueryCredentialIo(),
 ): BigQueryCredentials {
-  return resolveGoogleCredential(
-    { text: connection.password, managed: connection.managed },
-    BIGQUERY_CREDENTIAL_RULES,
-    io,
-  );
+  return resolveGoogleCredential(connection, BIGQUERY_CREDENTIAL_RULES, io);
 }
 
 /** The token source's deps: BigQuery's scope and label, the wall clock, and createNodeTransport itself. */

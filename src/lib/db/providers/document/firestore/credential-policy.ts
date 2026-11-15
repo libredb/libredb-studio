@@ -5,9 +5,11 @@
  * - FIRESTORE_EMULATOR_HOST set (server environment only): every connection talks to that emulator, a credential in
  *   the field is refused, and nothing else is read, FIRESTORE_SERVER_CREDENTIALS included.
  * - A credential in the field: it is parsed and used.
- * - An empty field: refused for a connection a browser sent; for an operator seed (`managed: true`, which
+ * - An empty field: refused for a connection a browser sent and for a row of a seed file read in literal mode
+ *   (SEED_LITERAL_VALUES, the record carries the literal-mode marker); for an operator seed (`managed: true`, which
  *   resolveConnection forces false on every browser-sent connection) refused unless FIRESTORE_SERVER_CREDENTIALS is
- *   exactly "true", and then the server's own identity in ADC order.
+ *   exactly "true", and then the server's own identity in ADC order. The resolver passes the record it was given, so
+ *   the marker reaches the shared gate.
  */
 import {
   type GoogleCredentialRules,
@@ -16,7 +18,7 @@ import {
 } from "@/lib/db/auth/google/credentials";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { validateHost, validatePort } from "@/lib/db/http/endpoint";
-import type { DatabaseConnection } from "@/lib/types";
+import type { DatabaseConnection, WithLiteralSeedFile } from "@/lib/types";
 import { ENV, FIRESTORE_TYPE } from "./constants";
 import { projectIdRefusal } from "./names";
 import type { FirestoreEnv, FirestoreSeams } from "./seams";
@@ -44,6 +46,8 @@ export const FIRESTORE_CREDENTIAL_SENTENCES = Object.freeze({
   browserEmpty:
     "Paste a service-account key JSON, an authorized-user JSON or an access token: the server's own Google identity is used only for operator-seeded connections",
   seedWithoutOptIn: `Set ${ENV.serverCredentials}=true on the server to let this seeded connection use the server's own Google identity`,
+  literalSeedFile:
+    "Paste a service-account key JSON, an authorized-user JSON or an access token: the server's own Google identity is not used for a connection read from a seed file in literal mode (SEED_LITERAL_VALUES)",
   emulatorCredential: (display: string) =>
     `This server sends every Firestore connection to the emulator at ${display} (${ENV.emulatorHost}): clear the credential field, or ask the operator to unset the variable`,
   emulatorHost: `${ENV.emulatorHost} must be host:port or [ipv6]:port with no scheme, such as 127.0.0.1:8080`,
@@ -58,6 +62,7 @@ export const FIRESTORE_CREDENTIAL_RULES: GoogleCredentialRules<FirestoreKind> = 
   serverIdentity: Object.freeze({
     optIn: ENV.serverCredentials,
     unmanaged: S.browserEmpty,
+    literalSeedFile: S.literalSeedFile,
     withoutOptIn: S.seedWithoutOptIn,
   }),
 });
@@ -89,7 +94,7 @@ export function emulatorAddressOf(env: FirestoreEnv): EmulatorAddress | null {
 }
 
 export function resolveFirestoreAuth(
-  connection: Pick<DatabaseConnection, "password" | "managed">,
+  connection: Pick<DatabaseConnection, "password" | "managed"> & WithLiteralSeedFile,
   seams: FirestoreSeams,
 ): FirestoreAuth {
   const password = connection.password?.trim() ?? "";
@@ -100,10 +105,6 @@ export function resolveFirestoreAuth(
   }
   return {
     mode: "google",
-    credentials: resolveGoogleCredential(
-      { text: connection.password, managed: connection.managed },
-      FIRESTORE_CREDENTIAL_RULES,
-      seams,
-    ),
+    credentials: resolveGoogleCredential(connection, FIRESTORE_CREDENTIAL_RULES, seams),
   };
 }

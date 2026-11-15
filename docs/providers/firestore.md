@@ -158,6 +158,10 @@ and for an operator seed on a server without the opt-in with:
 
 > Set FIRESTORE_SERVER_CREDENTIALS=true on the server to let this seeded connection use the server's own Google identity
 
+and for a row of a seed file read in literal mode ([SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md#literal-values-written-by-a-platform)), with the opt-in on or off, with:
+
+> Paste a service-account key JSON, an authorized-user JSON or an access token: the server's own Google identity is not used for a connection read from a seed file in literal mode (SEED_LITERAL_VALUES)
+
 How tokens are cached, refreshed and refused is the shared token source's, in [DB_AUTH.md](../DB_AUTH.md#tokens).
 
 ### 4.3 IAM and Security Rules
@@ -168,7 +172,7 @@ A missing `datastore.entities.list` is not proven on connect; the first listing 
 
 ### 4.4 Server identity
 
-With `FIRESTORE_SERVER_CREDENTIALS=true` on the server and an operator-seeded connection (`managed: true`, which a browser-sent connection can never claim) whose field is empty, Studio reads the server's identity in Application Default Credentials order: the file `GOOGLE_APPLICATION_CREDENTIALS` names, then gcloud's well-known file (`$HOME/.config/gcloud/application_default_credentials.json`, or `%APPDATA%\gcloud\application_default_credentials.json` on Windows), then the metadata server (`GCE_METADATA_HOST`, or `metadata.google.internal`).
+With `FIRESTORE_SERVER_CREDENTIALS=true` on the server and an operator-seeded connection (`managed: true`, which a browser-sent connection can never claim), never one read from a seed file in literal mode (`SEED_LITERAL_VALUES`), whose field is empty, Studio reads the server's identity in Application Default Credentials order: the file `GOOGLE_APPLICATION_CREDENTIALS` names, then gcloud's well-known file (`$HOME/.config/gcloud/application_default_credentials.json`, or `%APPDATA%\gcloud\application_default_credentials.json` on Windows), then the metadata server (`GCE_METADATA_HOST`, or `metadata.google.internal`).
 Which read failures move the chain on and which are refused is the shared chain's, in [DB_AUTH.md](../DB_AUTH.md#server-identity).
 On GKE with Workload Identity, the pod's service account is the identity.
 

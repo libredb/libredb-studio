@@ -20,6 +20,7 @@ import {
   resolveBigQueryCredential,
 } from "@/lib/db/providers/sql/bigquery/credential-policy";
 import { logger } from "@/lib/logger";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import { type FakeIoOptions, fakeIo } from "../../../helpers/auth-fakes";
 
 const OPT_IN = { BIGQUERY_SERVER_CREDENTIALS: "true" };
@@ -48,12 +49,15 @@ function refusal(run: () => unknown): DatabaseConfigError {
 }
 
 describe("bigquery credential policy pins", () => {
-  test("the two server-identity sentences, byte for byte", () => {
+  test("the three server-identity sentences, byte for byte", () => {
     expect(S.browserEmpty).toBe(
       "BigQuery needs a service-account key or an access token in the password field: the server's own credentials are used only for operator-seeded connections",
     );
     expect(S.seedWithoutOptIn).toBe(
       "BigQuery needs a service-account key in the password field. To use the server's own credentials (ADC or Workload Identity) instead, set BIGQUERY_SERVER_CREDENTIALS=true on the server.",
+    );
+    expect(S.literalSeedFile).toBe(
+      "BigQuery needs a service-account key or an access token in the password field: the server's own credentials are not used for a connection read from a seed file in literal mode (SEED_LITERAL_VALUES)",
     );
   });
 
@@ -65,6 +69,7 @@ describe("bigquery credential policy pins", () => {
       optIn: "BIGQUERY_SERVER_CREDENTIALS",
       unmanaged: S.browserEmpty,
       withoutOptIn: S.seedWithoutOptIn,
+      literalSeedFile: S.literalSeedFile,
     });
   });
 
@@ -119,6 +124,25 @@ describe("bigquery resolveBigQueryCredential", () => {
     const error = refusal(() => resolveBigQueryCredential({ password: undefined, managed: true }, io));
     expect(error.message).toBe(S.seedWithoutOptIn);
     expect(io.fileReads).toEqual([]);
+  });
+
+  test("an empty password on a seed-file row read in literal mode is refused with its own sentence, the opt-in notwithstanding, and no file is read", () => {
+    const io = fakeIo({ env: OPT_IN, files: { [WELL_KNOWN]: KEY } });
+    const error = refusal(() =>
+      resolveBigQueryCredential({ password: "", managed: true, [LITERAL_SEED_FILE]: true }, io),
+    );
+    expect(error.message).toBe(S.literalSeedFile);
+    expect(error.provider).toBe("bigquery");
+    expect(io.envReads).toEqual([]);
+    expect(io.fileReads).toEqual([]);
+  });
+
+  test("a pasted key on a seed-file row read in literal mode is used as written", () => {
+    expect(resolveBigQueryCredential({ password: KEY, managed: true, [LITERAL_SEED_FILE]: true }, fakeIo())).toEqual({
+      type: "service_account",
+      clientEmail: key.client_email,
+      privateKey: PEM,
+    });
   });
 
   test("GOOGLE_APPLICATION_CREDENTIALS is read when opted in", () => {
