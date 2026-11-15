@@ -719,7 +719,8 @@ function checkedConnectionHeaders(headers: Readonly<Record<string, string>>): Re
   if ((prototype !== Object.prototype && prototype !== null) || Reflect.ownKeys(record).length !== entries.length) {
     throw new DatabaseConfigError(CONNECTION_NOT_A_RECORD);
   }
-  const checked: Record<string, string> = {};
+  // No prototype, so a header named __proto__ is an own entry like any other rather than a setter that drops it.
+  const checked: Record<string, string> = Object.create(null);
   for (const [written, value] of entries) {
     // The token rule holds for the name as written: lower-casing first would turn a name that is not a token,
     // such as one spelled with the Kelvin sign, into one that is.
