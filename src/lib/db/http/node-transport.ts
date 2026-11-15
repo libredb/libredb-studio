@@ -53,10 +53,17 @@
  *   and every socket is opened through a lookup that checks the address it dials, after the guard's own check when the
  *   flag is on.
  *
- * `createNodeTransport` takes two of these on request, the 101 refusal as `refusesUpgrade` and the link-local
- * refusal as `refusesLinkLocal`, both off when absent, so a provider that does not ask keeps the behaviour it had.
- * It also takes `reportsUnreachable`, off when absent, which the byte transport does not: a deadline that fires
- * before the socket connected is then kind "unreachable", naming host, port and the seconds waited.
+ * `createNodeTransport` takes three of these on request, the 101 refusal as `refusesUpgrade`, the link-local refusal
+ * as `refusesLinkLocal` and the signer as `signer`, all off when absent, so a provider that does not ask keeps the
+ * behaviour it had. A text signer is handed the method, Host, path, query and headers as above and also the exact
+ * payload text written, "" for none; with a signer the transport sets Host itself, so the Host signed is the Host sent.
+ * A signer's header values may be up to 8192 bytes on both transports, so a session token fits, while a request's own
+ * stay at 1024. The text transport also takes `reportsUnreachable`, off when absent, which the byte transport does
+ * not: a deadline that fires before the socket connected is then kind "unreachable", naming host, port and the seconds
+ * waited. Its `jsonContentType` picks the type a JSON body is sent under: one of application/json (the default when
+ * absent), application/x-amz-json-1.0 or application/x-amz-json-1.1, and any other value is refused when the transport
+ * is built. Both transports
+ * refuse a connection header named in two spellings, so none is dropped silently and a signer sees one set.
  *
  * `nodeTlsMaterial` is the TLS mapping D37 counts, shared here so that a new REST provider takes it instead of
  * writing another copy.
@@ -124,7 +131,22 @@ export interface NodeTransportOptions {
    * provider whose own deadlines read "timeout" for their retries leaves it off and keeps the behaviour it had.
    */
   readonly reportsUnreachable?: boolean;
+  /**
+   * Absent: the request is sent unsigned. Checked when the transport is built as the byte transport checks its signer,
+   * and called once per request just before the write; on the text transport the Host is then set explicitly, so the
+   * Host signed is the Host sent.
+   */
+  readonly signer?: RequestSigner;
+  /**
+   * Text transport only: the content type a JSON `body` is sent under, application/json when absent. AWS JSON APIs name
+   * their protocol version in it (DynamoDB application/x-amz-json-1.0, Athena application/x-amz-json-1.1). Any other
+   * value is refused when the transport is built; form fields keep their own type.
+   */
+  readonly jsonContentType?: JsonContentType;
 }
+
+/** The content types a text transport may send a JSON body under. */
+export type JsonContentType = "application/json" | "application/x-amz-json-1.0" | "application/x-amz-json-1.1";
 
 export interface NodeRequest {
   readonly method: "GET" | "POST";
@@ -203,14 +225,19 @@ export interface ResponseHeaderSelection {
 }
 
 /**
- * What the signer is given: the method, Host, target and every header the transport sets, before the signer's own.
- * The runtime also appends `Connection: keep-alive` after these, which is not in `headers` and must not be signed.
+ * What the signer is given: the method, Host, target, every header the transport sets, before the signer's own, and the
+ * body. The runtime also appends `Connection: keep-alive` after these, and `Content-Length: 0` on a POST with no
+ * payload; neither is in `headers` and neither must be signed.
  */
 export interface SigningInput {
-  readonly method: "GET" | "HEAD";
+  /** GET or HEAD on the byte transport, GET or POST on the text transport. */
+  readonly method: "GET" | "HEAD" | "POST";
   /** The Host header value the transport sends, from originHost(origin). */
   readonly host: string;
-  /** The request-target path, byte for byte as sent; for SigV4 it is the canonical URI unchanged. */
+  /**
+   * The request-target path, byte for byte as sent. On the byte transport it is the checked target's path, so for SigV4
+   * it is the canonical URI unchanged; on the text transport it is the path of the request URL as the URL parser wrote it.
+   */
   readonly path: string;
   /**
    * The query without "?", byte for byte as sent, in the caller's order; "" when there is none.
@@ -220,21 +247,27 @@ export interface SigningInput {
   readonly query: string;
   /**
    * Every header the transport sets, except the signer's: connection headers, per-request headers, `host` and
-   * `accept-encoding`, with lower-case names. A frozen copy: a signer cannot add to what is sent through it.
+   * `accept-encoding`, and on a text request with a payload `content-type` and `content-length`, with lower-case names.
+   * A frozen copy: a signer cannot add to what is sent through it.
    */
   readonly headers: Readonly<Record<string, string>>;
+  /** The exact payload text written, a JSON body or the serialised form; "" for none, and always "" on the byte transport. */
+  readonly body: string;
 }
 
 export interface RequestSigner {
   /** The lower-case names `sign` may return, a closed list; "authorization" is the one owned name it may hold. */
   readonly headerNames: readonly string[];
-  /** Called once per request, synchronously, when a socket is free and just before the request is written. */
+  /**
+   * Called once per request, synchronously, when a socket is free and just before the request is written. Each value it
+   * returns is visible ASCII or space of at most 8192 bytes, so a session token fits; a request's own values keep 1024.
+   */
   sign(input: SigningInput): Readonly<Record<string, string>>;
 }
 
 /** The byte transport always refuses link-local addresses and a 101 answer, so it takes neither option. */
 export interface NodeByteTransportOptions
-  extends Omit<NodeTransportOptions, "refusesLinkLocal" | "refusesUpgrade" | "reportsUnreachable"> {
+  extends Omit<NodeTransportOptions, "refusesLinkLocal" | "refusesUpgrade" | "reportsUnreachable" | "jsonContentType"> {
   /** Absent: no response header is returned and `headers` is []. */
   readonly responseHeaders?: ResponseHeaderSelection;
   /** Absent: the request is sent unsigned, with no Authorization header, which the connection headers never carry. */
@@ -402,6 +435,13 @@ const INVALID_RESPONSE_HEADERS =
   "Invalid responseHeaders: expected at most 32 lower-case names and 8 lower-case prefixes ending in a hyphen";
 const NEVER_RETURNED_LISTED = "Invalid responseHeaders: location and set-cookie are never returned";
 const INVALID_SIGNER = "Invalid signer: expected at least one lower-case header name";
+const INVALID_JSON_CONTENT_TYPE =
+  "Invalid jsonContentType: expected application/json, application/x-amz-json-1.0 or application/x-amz-json-1.1";
+const JSON_CONTENT_TYPES: ReadonlySet<unknown> = new Set<JsonContentType>([
+  "application/json",
+  "application/x-amz-json-1.0",
+  "application/x-amz-json-1.1",
+]);
 const UNLISTED_SIGNATURE_HEADER =
   "Invalid signature headers: the signer returned a header this transport does not list";
 const SIGNATURE_NOT_A_RECORD = "Invalid signature headers: expected a plain record of header names and values";
@@ -573,6 +613,13 @@ function optedIn(value: unknown, name: keyof NodeTransportOptions): boolean {
   throw new DatabaseConfigError(`Invalid ${name}: expected true or false`);
 }
 
+/** The text transport's JSON content type as checked when the transport is built: one of three, never repeated. */
+function jsonContentTypeOf(value: unknown): JsonContentType {
+  if (value === undefined) return "application/json";
+  if (!JSON_CONTENT_TYPES.has(value)) throw new DatabaseConfigError(INVALID_JSON_CONTENT_TYPE);
+  return value as JsonContentType;
+}
+
 function isPositiveInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 1;
 }
@@ -590,16 +637,21 @@ const TRANSPORT_HEADERS: ReadonlySet<string> = new Set(["content-length", "trans
 
 /**
  * Header names in lower case, so the transport's own headers below replace a caller's whatever its spelling; a header
- * the transport sets for each request is refused by name, never its value.
+ * the transport sets for each request is refused by name, never its value. Two spellings of one name are refused with
+ * the byte transport's sentence, so a signer sees one unambiguous set and none is dropped silently.
  */
 function lowerCased(headers: Readonly<Record<string, string>>): Record<string, string> {
-  const lowered = Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value] as const);
-  for (const [name] of lowered) {
+  // No prototype, so a header named __proto__ is an own entry like any other rather than a setter that drops it.
+  const lowered: Record<string, string> = Object.create(null);
+  for (const [written, value] of Object.entries(headers)) {
+    const name = written.toLowerCase();
+    if (Object.hasOwn(lowered, name)) throw new DatabaseConfigError(`Invalid headers: ${name} is named twice`);
     if (TRANSPORT_HEADERS.has(name)) {
       throw new DatabaseConfigError(`Invalid headers: ${name} is set by the transport for each request`);
     }
+    lowered[name] = value;
   }
-  return Object.fromEntries(lowered);
+  return lowered;
 }
 
 /**
@@ -631,10 +683,18 @@ const HEADER_NAME = /^[a-z0-9!#$%&'*+.^_`|~-]+$/;
 /** Visible ASCII and space: no CR or LF to split a header, no control and nothing node:http would re-encode. */
 const HEADER_VALUE = /^[\x20-\x7e]*$/;
 const MAX_HEADER_VALUE_BYTES = 1024;
+/**
+ * A signer's values may be longer than a request's own: an AWS session token from STS is longer than 1024 bytes
+ * (docs/BACKLOG.md D262). Visible ASCII is one byte a character, so the length is the byte count.
+ */
+const MAX_SIGNATURE_VALUE_BYTES = 8192;
 
-/** A header value a request, a signer or a byte transport's connection may send: a string the two checks above pass. */
-function isHeaderValue(value: unknown): value is string {
-  return typeof value === "string" && value.length <= MAX_HEADER_VALUE_BYTES && HEADER_VALUE.test(value);
+/**
+ * A header value a request, a signer or a byte transport's connection may send: a string of visible ASCII or space of
+ * at most `limit` bytes, MAX_HEADER_VALUE_BYTES unless a signer's.
+ */
+function isHeaderValue(value: unknown, limit = MAX_HEADER_VALUE_BYTES): value is string {
+  return typeof value === "string" && value.length <= limit && HEADER_VALUE.test(value);
 }
 
 const CONNECTION_NOT_A_RECORD = "Invalid headers: expected a plain record of header names and values";
@@ -718,17 +778,21 @@ interface HeaderRecordRefusals {
   readonly unlisted: string;
   /** Names the record in the value refusal, as in "Invalid request headers: the value of ...". */
   readonly label: string;
+  /** The longest value the record may hold. */
+  readonly maxValueBytes: number;
 }
 
 const REQUEST_HEADER_REFUSALS: HeaderRecordRefusals = {
   notARecord: NOT_A_RECORD,
   unlisted: UNLISTED_HEADER,
   label: "request headers",
+  maxValueBytes: MAX_HEADER_VALUE_BYTES,
 };
 const SIGNATURE_HEADER_REFUSALS: HeaderRecordRefusals = {
   notARecord: SIGNATURE_NOT_A_RECORD,
   unlisted: UNLISTED_SIGNATURE_HEADER,
   label: "signature headers",
+  maxValueBytes: MAX_SIGNATURE_VALUE_BYTES,
 };
 
 /**
@@ -744,7 +808,8 @@ function perRequestHeaders(
 
 /**
  * The rule every header record meets, a request's own and a signer's: one read of a plain record, only listed names,
- * each value visible ASCII or space and at most 1024 bytes. A refusal names a listed name, never a value.
+ * each value visible ASCII or space and at most the record's cap, 1024 bytes for a request's own and 8192 for a
+ * signer's. A refusal names a listed name, never a value.
  */
 function checkedHeaderRecord(
   record: object,
@@ -761,9 +826,9 @@ function checkedHeaderRecord(
   }
   for (const [name, value] of entries) {
     if (!listed.has(name)) throw new DatabaseConfigError(refusals.unlisted);
-    if (!isHeaderValue(value)) {
+    if (!isHeaderValue(value, refusals.maxValueBytes)) {
       throw new DatabaseConfigError(
-        `Invalid ${refusals.label}: the value of ${name} must be visible ASCII or space, at most ${MAX_HEADER_VALUE_BYTES} bytes`,
+        `Invalid ${refusals.label}: the value of ${name} must be visible ASCII or space, at most ${refusals.maxValueBytes} bytes`,
       );
     }
   }
@@ -776,23 +841,31 @@ interface Payload {
   readonly contentType: string;
 }
 
-/** The request's payload: a form serialised here, a JSON body as given, or undefined for neither. */
-function payloadOf(request: NodeRequest): Payload | undefined {
+/**
+ * The request's payload: a form serialised here, a JSON body as given under the transport's JSON content type, or
+ * undefined for neither.
+ */
+function payloadOf(request: NodeRequest, jsonContentType: JsonContentType): Payload | undefined {
   if (request.form !== undefined) {
     return { text: new URLSearchParams(request.form).toString(), contentType: "application/x-www-form-urlencoded" };
   }
-  return request.body === undefined ? undefined : { text: request.body, contentType: "application/json" };
+  return request.body === undefined ? undefined : { text: request.body, contentType: jsonContentType };
 }
 
-/** The connection's headers, then the request's own, then the transport's, which no earlier one can replace. */
+/**
+ * The connection's headers, then the request's own, then the transport's, which no earlier one can replace. `host` is
+ * set only for a signed request, so an unsigned one keeps the Host node:http writes and the order it writes it in.
+ */
 function requestHeaders(
   connection: Readonly<Record<string, string>>,
   perRequest: Readonly<Record<string, string>>,
   payload: Payload | undefined,
+  host?: string,
 ): Record<string, string> {
   return {
     ...connection,
     ...perRequest,
+    ...(host === undefined ? {} : { host }),
     "accept-encoding": "identity",
     ...(payload === undefined
       ? {}
@@ -1316,16 +1389,21 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
   const refusesLinkLocal = optedIn(options.refusesLinkLocal, "refusesLinkLocal");
   const refusesUpgrade = optedIn(options.refusesUpgrade, "refusesUpgrade");
   const reportsUnreachable = optedIn(options.reportsUnreachable, "reportsUnreachable");
+  const jsonContentType = jsonContentTypeOf(options.jsonContentType);
   const {
-    address: connectionOrigin,
+    address: { origin: connectionOrigin, host },
     connectionHeaders,
     requestHeaderNames,
     coreSettings,
-  } = connectionOf(options, (origin) => new URL(endpointUrl(origin, "/")).origin, {
-    refusesLinkLocal,
-    reportsUnreachable,
-    headersOf: lowerCased,
-  });
+  } = connectionOf(
+    options,
+    (origin) => ({ origin: new URL(endpointUrl(origin, "/")).origin, host: originHost(origin) }),
+    { refusesLinkLocal, reportsUnreachable, headersOf: lowerCased },
+  );
+  // Checked against the connection's headers and the request's names, as the byte transport checks its own, and
+  // before the core, so a refused signer builds no Agent.
+  const signer =
+    options.signer === undefined ? undefined : checkedSigner(options.signer, connectionHeaders, requestHeaderNames);
   const core = transportCore(coreSettings);
 
   const exchange = (
@@ -1336,7 +1414,31 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
   ): Promise<NodeResponse> =>
     core.queue<NodeResponse>(request.signal, (pending) => {
       const { hostname, port, path } = urlToHttpOptions(target);
-      const payload = payloadOf(request);
+      const payload = payloadOf(request, jsonContentType);
+      // A signed request's headers, built and signed here; an unsigned one's are built inside dispatch, as before.
+      let signedRequestHeaders: Readonly<Record<string, string>> | undefined;
+      if (signer !== undefined) {
+        // Its own try, as on the byte transport: a throw that escaped here would leak this socket slot or end the
+        // process, and failWith would turn a signer's Error into a network failure. fail() settles this request alone.
+        try {
+          // host is set explicitly, so node:http adds no second one and the Host signed is the Host sent.
+          const headers = requestHeaders(connectionHeaders, perRequest, payload, host);
+          const signed = signedHeaders(signer, {
+            method,
+            host,
+            path: target.pathname,
+            query: target.search.slice(1),
+            headers: Object.freeze({ ...headers }),
+            body: payload?.text ?? "",
+          });
+          signedRequestHeaders = { ...headers, ...signed };
+        } catch (error) {
+          pending.fail(error instanceof Error ? error : new Error(SIGNER_FAILED));
+          return;
+        }
+        // A signer that cancelled this request or closed the transport has settled it already: nothing is sent.
+        if (pending.settled()) return;
+      }
       dispatch(
         core,
         pending,
@@ -1346,7 +1448,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
             port,
             path,
             method,
-            headers: requestHeaders(connectionHeaders, perRequest, payload),
+            headers: signedRequestHeaders ?? requestHeaders(connectionHeaders, perRequest, payload),
           },
           body: payload?.text,
         }),
@@ -1477,6 +1579,7 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
             path: target.path,
             query: target.query,
             headers: Object.freeze({ ...headers }),
+            body: "",
           });
         } catch (error) {
           pending.fail(error instanceof Error ? error : new Error(SIGNER_FAILED));

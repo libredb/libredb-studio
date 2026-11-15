@@ -215,6 +215,7 @@ export function scriptedTransports(): ScriptedTransports {
             path: request.target.path,
             query: request.target.query,
             headers: Object.freeze({ ...headers }),
+            body: "",
           }) ?? {};
         requests.push({
           lane: -1,

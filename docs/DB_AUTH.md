@@ -45,6 +45,24 @@ An auth lane has one socket, checks TLS against its origin's host when the origi
 Only the layer builds an auth lane, so no provider can turn the link-local refusal off for an origin it chose.
 Every auth request goes through the transport factory a provider passes, which is `createNodeTransport` in production, so the egress guard, the refusal of redirects and proxies, and the byte caps apply to it.
 
+## Transport facts the signer relies on
+
+A request signer, such as a SigV4 one, signs what `src/lib/db/http/node-transport.ts` sends, so it relies on these facts of both transports, held by `tests/unit/db/http/node-transport-text-signer.test.ts` and `tests/unit/db/http/node-byte-transport.test.ts`.
+
+- A transport signs only when it is built with a `signer`; without one it sends exactly what it sent before signing existed.
+- The signer is called once per request, synchronously, when a socket is free and just before the request is written, so a clock or a credential it reads is read at send time.
+- It is handed the method (GET or POST on the text transport, GET or HEAD on the byte transport), the Host, the path, the query, the headers and the body.
+- The Host is `originHost(origin)`, and with a signer the transport sets the Host header itself, so the Host signed is the Host sent.
+- The query is the one sent, without `?`, in the caller's order; the transport never reorders it, so a signer that needs a canonical query sorts the pairs itself.
+- The headers are every header the transport sets except the signer's own, with lower-case names, in a frozen copy; on a text request with a payload they include `content-type` and `content-length`.
+- The runtime appends `Connection: keep-alive`, and `Content-Length: 0` on a POST with no payload, after the signer runs; neither is in the headers it is handed, and neither must be signed.
+- The body is the exact payload text written, `""` for none, and always `""` on the byte transport.
+- A connection header named in two spellings is refused when the transport is built, so the signer sees one unambiguous set.
+- The signer returns only names from its own closed `headerNames` list: `authorization` is the one name the transport owns that it may return, and it never returns a `content-` or `proxy-` name, a connection header or a request's own header.
+- Each value it returns is visible ASCII or space of at most 8192 bytes, so an AWS session token fits, while a request's own header values stay at 1024 bytes.
+- An `Error` the signer throws reaches the caller unchanged and nothing is sent; a signer that cancels its own request sends nothing either.
+- `jsonContentType` sends a JSON body as `application/json` (the default when absent), `application/x-amz-json-1.0` or `application/x-amz-json-1.1`; any other value is refused when the transport is built.
+
 ## Google
 
 `google/credentials.ts` reads a credential and `google/token-source.ts` turns it into access tokens, with no Google SDK.

@@ -127,6 +127,7 @@ describe("s3Signer", () => {
       range: "bytes=0-9",
       "x-amz-checksum-mode": "ENABLED",
     }),
+    body: "",
   };
 
   test("lists exactly the three names it returns", () => {

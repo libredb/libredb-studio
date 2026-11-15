@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { httpOrigin } from "@/lib/db/http/endpoint";
 import { TransportError } from "@/lib/db/http/node-transport";
+import { patTokenSource, readAccessToken, SNOWFLAKE_TOKEN_MAX_CHARS } from "@/lib/db/providers/sql/snowflake/auth";
 import {
   createSnowflakeTransport,
   SNOWFLAKE_CONTROL_ANSWER_MAX_BYTES,
@@ -20,6 +21,7 @@ import {
   snowflakeTestUuid,
   testDeps,
 } from "../../../helpers/snowflake-node-transport";
+import { closeAll, rawAnswer, rawHttpListener } from "../../../helpers/node-transport-fixtures";
 
 const HOST = "acme-x1.snowflakecomputing.com";
 const ORIGIN = httpOrigin("https", HOST, 443);
@@ -356,6 +358,24 @@ describe("partition", () => {
       "Bearer t2",
     ]);
     expect(transport.recentTokens()).toEqual(["t1", "t2"]);
+  });
+
+  test("a programmatic access token of the longest length read reaches the wire on a partition read", async () => {
+    // The byte transport holds a signer's values to 8192 bytes, so a bearer longer than 1024 bytes is sent whole.
+    const listener = await rawHttpListener(() => rawAnswer("200 OK", ["content-length: 2"], "[]"));
+    const pat = readAccessToken("A".repeat(SNOWFLAKE_TOKEN_MAX_CHARS));
+    const transport = createSnowflakeTransport(
+      { origin: httpOrigin("http", "127.0.0.1", listener.port), tls: null, tokens: patTokenSource(pat) },
+      snowflakeProductionDeps(),
+    );
+    try {
+      const answer = await transport.partition(STATUS, "partition=1", AbortSignal.timeout(5000), 100, 100);
+      expect(answer.status).toBe(200);
+      expect(listener.heads[0].toString("latin1").split("\r\n")).toContain(`authorization: Bearer ${pat}`);
+    } finally {
+      transport.close();
+      await closeAll();
+    }
   });
 });
 
