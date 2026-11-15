@@ -1,6 +1,6 @@
 /**
  * The shared SigV4 core: 24 of 24 AWS suite vectors, the smithy vector, the canonical header order, the empty-payload
- * hash and the two helpers. The suite stays at tests/fixtures/s3/sigv4-suite.json, where the Secret Scan's pinned
+ * hash, the two helpers, and payloadSha256 and sigV4Headers, which build the three headers a signed request carries. The suite stays at tests/fixtures/s3/sigv4-suite.json, where the Secret Scan's pinned
  * entry names it; each vector's canonical query is built with the shared rfc3986Query and compareEncodedPairs.
  */
 import { describe, expect, test } from "bun:test";
@@ -13,7 +13,9 @@ import {
   canonicalQueryOf,
   compareEncodedPairs,
   EMPTY_PAYLOAD_SHA256,
+  payloadSha256,
   signatureV4,
+  sigV4Headers,
 } from "@/lib/db/auth/aws/sigv4";
 import { rfc3986Encode, rfc3986Path, rfc3986Query } from "@/lib/db/http/endpoint";
 
@@ -141,5 +143,79 @@ describe("helpers", () => {
     expect(() => canonicalQueryOf("a=1&versions")).toThrow(
       'The request query holds a pair with no "=", so it cannot be signed',
     );
+  });
+});
+
+describe("payloadSha256", () => {
+  test("is the hex SHA-256 of the UTF-8 text, and of nothing the empty-payload hash", () => {
+    expect(payloadSha256("")).toBe(EMPTY_PAYLOAD_SHA256);
+    expect(payloadSha256("Param1=value1")).toBe(sha256("Param1=value1"));
+    // U+00E9 is the two UTF-8 bytes C3 A9, never the one Latin-1 byte E9.
+    expect(payloadSha256("\u00e9")).toBe("4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c");
+  });
+});
+
+describe("sigV4Headers", () => {
+  const { header } = suite;
+  const vector = (name: string): SuiteVector => {
+    const found = suite.vectors.find((one) => one.name === name);
+    if (found === undefined) throw new Error(`no vector ${name}`);
+    return found;
+  };
+  const scope = { region: header.region, service: header.service };
+  const now = new Date("2015-08-30T12:36:00Z");
+  const keys = { accessKeyId: header.accessKeyId, secretAccessKey: header.secretAccessKey };
+  const root = { method: "POST", host: "example.amazonaws.com", canonicalUri: "/", canonicalQuery: "" };
+
+  test("without a session token: authorization and x-amz-date, signing host and x-amz-date (post-vanilla)", () => {
+    const headers = sigV4Headers({ ...root, signed: {}, payloadHash: EMPTY_PAYLOAD_SHA256 }, keys, scope, now);
+    expect(headers).toEqual({ authorization: vector("post-vanilla").authorization, "x-amz-date": header.amzDate });
+  });
+
+  test("with a session token: x-amz-security-token is sent and signed (post-sts-header-before)", () => {
+    const sts = vector("post-sts-header-before");
+    const sessionToken = sts.request.headers["x-amz-security-token"];
+    const headers = sigV4Headers(
+      { ...root, signed: {}, payloadHash: EMPTY_PAYLOAD_SHA256 },
+      { ...keys, sessionToken },
+      scope,
+      now,
+    );
+    expect(headers).toEqual({
+      authorization: sts.authorization,
+      "x-amz-date": header.amzDate,
+      "x-amz-security-token": sessionToken,
+    });
+  });
+
+  test("signs the given headers and the caller's payload hash, and returns none of them (post-x-www-form-urlencoded)", () => {
+    const form = vector("post-x-www-form-urlencoded");
+    const headers = sigV4Headers(
+      {
+        ...root,
+        signed: { "content-type": "application/x-www-form-urlencoded" },
+        payloadHash: payloadSha256(form.request.body ?? ""),
+      },
+      keys,
+      scope,
+      now,
+    );
+    expect(headers).toEqual({ authorization: form.authorization, "x-amz-date": header.amzDate });
+  });
+
+  test("signs the canonical query it is given (post-vanilla-query)", () => {
+    const headers = sigV4Headers(
+      { ...root, canonicalQuery: "Param1=value1", signed: {}, payloadHash: EMPTY_PAYLOAD_SHA256 },
+      keys,
+      scope,
+      now,
+    );
+    expect(headers.authorization).toBe(vector("post-vanilla-query").authorization);
+  });
+
+  test.each(["host", "x-amz-date", "x-amz-security-token"])("refuses a given header named %s", (name) => {
+    expect(() =>
+      sigV4Headers({ ...root, signed: { [name]: "x" }, payloadHash: EMPTY_PAYLOAD_SHA256 }, keys, scope, now),
+    ).toThrow(`The signed headers name ${name}, which the signature sets itself`);
   });
 });

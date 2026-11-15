@@ -400,6 +400,9 @@ describe("the real tree holds every rule", () => {
   test("the rules read files, so none passes over nothing", () => {
     const { files } = repositoryOf(ROOT);
     expect(files.filter((file) => inLayer(file.path)).map((file) => file.path)).toEqual([
+      `${LAYER}/aws/credentials.ts`,
+      `${LAYER}/aws/endpoints.ts`,
+      `${LAYER}/aws/signer.ts`,
       SIGV4,
       `${LAYER}/google/credentials.ts`,
       `${LAYER}/google/token-source.ts`,
