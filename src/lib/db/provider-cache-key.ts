@@ -138,8 +138,9 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  * or the fingerprint, and `tests/unit/lib/db/provider-cache-key.test.ts` walks those maps to hold it,
  * because this list is hand-kept and the API key pair was once missing from it. The public fields
  * below (the agent user, what TLS presents and trusts, the mechanism, the auth database, the consent,
- * the data servers, the warehouse, the region, the sign-in method, the role, the tunnel's auth method and host key) are outside that walk, so the same file
- * holds them in a table of their own, one row per field.
+ * the data servers, the warehouse, the region, the sign-in method, the role, the tunnel's auth method
+ * and host key, the operator's grant) are outside that walk, so the same file holds them in a table of
+ * their own, one row per field.
  *
  * - `password` is the connection's own secret. `connectionString` is NOT here because the
  *   fingerprint already frames it whole, credentials and all.
@@ -190,6 +191,11 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  * - The tunnel's SECRETS and `hostKeyFingerprint`. Its ROUTE is deliberately absent: `tunnelRoute`
  *   frames the four route values inside the fingerprint already, and this is the half that file
  *   explicitly leaves out as "a credential, not a route".
+ * - `managed` decides whom an empty credential signs in as: BigQuery and Firestore sign a keyless connection in with
+ *   the server's own identity only when `managed` is exactly true, the operator's grant. A seed the operator demotes to
+ *   `managed: false` keeps its id, server and empty credential, so without this a provider opened as the server went
+ *   on serving it (`tests/api/db/demoted-seed.test.ts`). Framed last and only when exactly true, so every connection
+ *   without the grant keeps the key it had.
  */
 async function credentialDigest(connection: DatabaseConnection): Promise<string> {
   const ssl = connection.ssl;
@@ -224,6 +230,8 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
     tunnel?.hostKeyFingerprint ?? "",
     // Last and only when set, so every connection without roots keeps the key it had.
     ...(connection.agentReadRoots === undefined ? [] : [JSON.stringify(connection.agentReadRoots)]),
+    // Last and only under the grant, so every connection without it keeps the key it had.
+    ...(connection.managed === true ? ["managed"] : []),
   ]
     .map((value) => `${value.length}:${value}`)
     .join("");
