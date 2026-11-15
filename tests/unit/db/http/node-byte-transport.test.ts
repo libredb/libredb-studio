@@ -110,6 +110,11 @@ describe("refusals when the transport is built", () => {
       { requestHeaderNames: ["authorization"] },
       "Invalid requestHeaderNames: authorization is set by the transport or the connection",
     ],
+    [
+      "a per-request __proto__ next to a connection __proto__",
+      { headers: JSON.parse('{"__proto__":"x"}'), requestHeaderNames: ["__proto__"] },
+      "Invalid requestHeaderNames: __proto__ is set by the transport or the connection",
+    ],
   ] as const)("%s", async (_label, extra, sentence) => {
     const listener = await rawHttpListener(OK);
     let error: Error | undefined;
