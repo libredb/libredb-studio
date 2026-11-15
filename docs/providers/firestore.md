@@ -519,7 +519,7 @@ Every sentence leads with Google's own message and reason where Google sends the
 
 | Answer | Studio error | What it says |
 | --- | --- | --- |
-| Token endpoint refusal | `AuthenticationError` | Google's `error_description`, never the assertion |
+| Token endpoint refusal | `AuthenticationError` | Google's `error_description`, never the assertion, cut to 300 characters; withheld whole when it holds a form of the credential ([DB_AUTH.md](../DB_AUTH.md#google)) |
 | Probe: Datastore mode | `DatabaseConfigError` | see below |
 | Probe: Firestore API access disabled | `DatabaseConfigError` | see below |
 | Emulator started in Datastore mode | `DatabaseConfigError` | the emulator was started in Datastore mode |

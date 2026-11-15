@@ -1,7 +1,7 @@
 /**
- * The one rule for the server's own cloud identity: a connection may use it only when the server side wrote it
- * (`managed` exactly true, which a browser-sent record never carries) and the provider's operator opt-in is exactly
- * "true". Each provider declares its own opt-in variable and its own two refusal sentences; nothing here reads more of
+ * The one rule for the server's own cloud identity: a connection may use it only when its `managed` flag is exactly
+ * true (set only on the server side; a browser-sent record never carries it) and the provider's operator opt-in is
+ * exactly "true". `managed` alone does not say the server side wrote the credential text. Each provider declares its own opt-in variable and its own two refusal sentences; nothing here reads more of
  * the environment than that one variable.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";

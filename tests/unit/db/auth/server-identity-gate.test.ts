@@ -1,6 +1,6 @@
 /**
- * The server-identity gate: the server's own identity only for a connection the server side wrote (managed exactly
- * true) and only when the provider's opt-in is exactly "true". Neutral rules: no provider's gate is used here.
+ * The server-identity gate: the server's own identity only for a connection whose managed flag is exactly true, and
+ * only when the provider's opt-in is exactly "true". Neutral rules: no provider's gate is used here.
  */
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
@@ -9,7 +9,7 @@ import { fakeIo } from "../../../helpers/auth-fakes";
 
 const GATE: ServerIdentityGate = Object.freeze({
   optIn: "SAMPLE_SERVER_CREDENTIALS",
-  unmanaged: "Paste a credential: the server's own identity is for server-written connections",
+  unmanaged: "Paste a credential: the server's own identity is for managed connections",
   withoutOptIn: "Set SAMPLE_SERVER_CREDENTIALS=true to let this connection use the server's own identity",
 });
 
@@ -24,7 +24,7 @@ function refusal(run: () => unknown): DatabaseConfigError {
 }
 
 describe("admitServerIdentity", () => {
-  test("admits a server-written connection whose opt-in is exactly true, reading only the opt-in", () => {
+  test("admits a managed connection whose opt-in is exactly true, reading only the opt-in", () => {
     const io = fakeIo({ env: { SAMPLE_SERVER_CREDENTIALS: "true", OTHER_SERVER_CREDENTIALS: "true" } });
     expect(() => admitServerIdentity(GATE, true, io.env, "bigquery")).not.toThrow();
     expect(io.envReads).toEqual(["SAMPLE_SERVER_CREDENTIALS"]);
@@ -40,7 +40,7 @@ describe("admitServerIdentity", () => {
     }
   });
 
-  test("refuses a server-written connection whose opt-in is unset or any spelling but exactly true", () => {
+  test("refuses a managed connection whose opt-in is unset or any spelling but exactly true", () => {
     for (const value of [undefined, "", "TRUE", "True", "1", " true", "true ", "yes", "false"]) {
       const io = fakeIo({ env: value === undefined ? {} : { SAMPLE_SERVER_CREDENTIALS: value } });
       const error = refusal(() => admitServerIdentity(GATE, true, io.env, "firestore"));

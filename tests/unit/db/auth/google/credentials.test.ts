@@ -29,7 +29,7 @@ const rules: GoogleCredentialRules<GooglePastedKind> = {
   quotaProjectRefusal: (id) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(id) ? null : QUOTA_RULE),
   serverIdentity: {
     optIn: OPT_IN,
-    unmanaged: "Paste a credential: the server's own identity is for server-written connections",
+    unmanaged: "Paste a credential: the server's own identity is for managed connections",
     withoutOptIn: `Set ${OPT_IN}=true to let this connection use the server's own identity`,
   },
 };
@@ -40,12 +40,12 @@ const K = acceptedKindSentences(ALL_KINDS);
 const parseCredentialText = (text: string, given: GoogleCredentialRules<GooglePastedKind>) =>
   parseGoogleCredentialText(text, given);
 
-/** An IO whose environment carries the opt-in, so an empty credential on a server-written connection reaches ADC. */
+/** An IO whose environment carries the opt-in, so an empty credential on a managed connection reaches ADC. */
 function fakeSeams(options: FakeIoOptions = {}): FakeIo {
   return fakeIo({ ...options, env: { [OPT_IN]: "true", ...options.env } });
 }
 
-/** The server's own identity, the one way there is to it: an empty text on a server-written connection. */
+/** The server's own identity, the one way there is to it: an empty text on a managed connection. */
 const readServerIdentity = (io: FakeIo, given: GoogleCredentialRules<GooglePastedKind>) =>
   resolveGoogleCredential({ text: "", managed: true }, given, io);
 
@@ -441,7 +441,7 @@ describe("resolveGoogleCredential", () => {
     }
   });
 
-  test("a server-written connection without the opt-in exactly true is refused, and no file is read", () => {
+  test("a managed connection without the opt-in exactly true is refused, and no file is read", () => {
     for (const value of [undefined, "TRUE", "1", " true"]) {
       const io = fakeIo({ env: value === undefined ? {} : { [OPT_IN]: value } });
       const error = refusal(() => resolveGoogleCredential({ text: "", managed: true }, rules, io));

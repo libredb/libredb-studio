@@ -84,6 +84,10 @@ async function settle(): Promise<void> {
 }
 
 describe("google token source grants", () => {
+  test("the token endpoint is Google's OAuth 2.0 token URL", () => {
+    expect(GOOGLE_TOKEN_URL).toBe("https://oauth2.googleapis.com/token");
+  });
+
   test("a service account posts one JWT-bearer grant to the token constant, signed RS256 with its key", async () => {
     const { seams, source } = sourceOf(serviceAccount, () => tokenAnswer("sa-token"));
     expect(await source.token(signal)).toBe("sa-token");
@@ -287,7 +291,8 @@ describe("google token source errors", () => {
 
   test("a long error_description is cut to 300 characters", async () => {
     const { source } = sourceOf(user, () => jsonAnswer({ error_description: "x".repeat(1000) }, 400));
-    await expect(source.token(signal)).rejects.toThrow(S.refused("x".repeat(300)));
+    const error = await source.token(signal).catch((caught: unknown) => caught);
+    expect((error as Error).message).toBe(S.refused("x".repeat(300)));
   });
 
   test("a key jose cannot import is refused before any request, without the key", async () => {
@@ -405,7 +410,11 @@ describe("google token source refusal reasons (the credential's forms withheld)"
     const { source } = sourceOf(user, () =>
       jsonAnswer({ error_description: "Token has been expired or revoked." }, 400),
     );
-    await expect(source.token(signal)).rejects.toThrow(S.refused("Token has been expired or revoked."));
+    const plain = await source.token(signal).catch((caught: unknown) => caught);
+    expect((plain as Error).message).toBe(S.refused("Token has been expired or revoked."));
+    const long = sourceOf(user, () => jsonAnswer({ error_description: `${"y".repeat(400)}z` }, 400));
+    const cut = await long.source.token(signal).catch((caught: unknown) => caught);
+    expect((cut as Error).message).toBe(S.refused("y".repeat(300)));
     const secretAtTheEnd = `${"x".repeat(400)}1//refresh-token-value`;
     const late = sourceOf(user, () => jsonAnswer({ error_description: secretAtTheEnd }, 400));
     await expect(late.source.token(signal)).rejects.toThrow(

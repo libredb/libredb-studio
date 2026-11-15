@@ -303,7 +303,8 @@ function readServerIdentity<K extends GooglePastedKind>(
 
 /**
  * A non-blank pasted text is parsed; a blank one goes through admitServerIdentity, then the ADC chain. The only way
- * to the server's own identity: the chain's reader is module-private.
+ * to the ADC chain: its reader is module-private. createGoogleTokenSource accepts any credential, so a provider passes
+ * it only what this returns and never builds a metadata credential itself.
  */
 export function resolveGoogleCredential<K extends GooglePastedKind>(
   connection: { readonly text: string | undefined; readonly managed: boolean | undefined },
