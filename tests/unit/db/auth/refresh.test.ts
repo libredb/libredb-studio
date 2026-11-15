@@ -75,11 +75,12 @@ describe("refreshing value cache", () => {
     expect(await value.get(signal)).toBe(2);
   });
 
-  test("concurrent callers share one refresh", async () => {
+  test("concurrent callers share one refresh and one deadline", async () => {
     const answer = held<Expiring<string>>();
-    const { runs, value } = valueOf(() => answer.promise);
+    const { clock, runs, value } = valueOf(() => answer.promise);
     const calls = Promise.all([value.get(signal), value.get(signal), value.get(signal)]);
     await settle();
+    expect(clock.deadlines).toHaveLength(1);
     answer.resolve(hourly("shared"));
     expect(await calls).toEqual(["shared", "shared", "shared"]);
     expect(runs).toHaveLength(1);
@@ -242,7 +243,7 @@ describe("refreshing value close", () => {
     expect(runs).toHaveLength(0);
   });
 
-  test("close drops a cached value", async () => {
+  test("get() after close() rejects even while a value is cached, and starts no refresh", async () => {
     const { runs, value } = valueOf(async () => hourly("cached"));
     expect(await value.get(signal)).toBe("cached");
     value.close();

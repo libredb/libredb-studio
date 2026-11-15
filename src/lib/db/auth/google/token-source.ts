@@ -7,9 +7,8 @@
  * One cached token per source, held by the shared refreshing value (../refresh.ts): refreshed 60 seconds before it
  * expires; concurrent callers share one refresh, which runs on its own 30-second deadline so no caller's abort fails
  * the others; a failed refresh caches nothing. An answer without a usable expires_in lives Google's documented one
- * hour. No error carries a token, an assertion, a key, a
- * key id, a refresh token or a client secret: a reason quoted from the server passes serverText with the forms of
- * the credential's secrets before it is cut to 300 characters.
+ * hour. No error carries a token, an assertion, a key, a key id, a refresh token or a client secret: a reason quoted
+ * from the server passes serverText with the forms of the credential's secrets before it is cut to 300 characters.
  */
 import { importPKCS8, SignJWT } from "jose";
 import { AuthenticationError } from "@/lib/db/errors";
