@@ -10,8 +10,12 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { importPKCS8, SignJWT } from "jose";
-import { createNodeTransport } from "@/lib/db/http/node-transport";
-import { createTokenSource, readCredentials, tokenOrigin } from "@/lib/db/providers/sql/bigquery/auth";
+import { createGoogleTokenSource } from "@/lib/db/auth/google/token-source";
+import {
+  bigQueryCredentialIo,
+  bigQueryTokenSourceDeps,
+  resolveBigQueryCredential,
+} from "@/lib/db/providers/sql/bigquery/credential-policy";
 
 /** Region INFORMATION_SCHEMA keeps listing a dropped dataset's tables for a while, so names are per run. */
 const RUN = Date.now().toString(36);
@@ -33,15 +37,13 @@ if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(project)) {
   process.exit(2);
 }
 
-const creds = readCredentials(undefined, { ...process.env, BIGQUERY_SERVER_CREDENTIALS: "true" });
-const origin = tokenOrigin(creds);
-const oauth = createNodeTransport({
-  origin,
-  tls: origin.scheme === "https" ? { rejectUnauthorized: true, identity: origin.host } : null,
-  maxSockets: 1,
-  headers: creds.type === "metadata" ? { "metadata-flavor": "Google" } : {},
-});
-const token = createTokenSource(creds, oauth);
+// The server's ADC, as an operator seed with the opt-in set reads it.
+const creds = resolveBigQueryCredential(
+  { password: undefined, managed: true },
+  { ...bigQueryCredentialIo(), env: { ...process.env, BIGQUERY_SERVER_CREDENTIALS: "true" } },
+);
+const tokens = createGoogleTokenSource(creds, bigQueryTokenSourceDeps());
+const token = (signal: AbortSignal) => tokens.token(signal);
 
 type Wire = Record<string, unknown>;
 interface Exchange {
@@ -407,7 +409,7 @@ function scrub(all: Map<string, Exchange[]>): Map<string, string> {
     /refresh_token/,
     /\w@\w/,
   ];
-  if ("client_id" in creds) forbidden.push(escape(creds.client_id));
+  if (creds.type === "authorized_user") forbidden.push(escape(creds.clientId));
   for (const [name, text] of out) {
     for (const pattern of forbidden) {
       const line = text.split("\n").find((l) => pattern.test(l));
@@ -432,6 +434,6 @@ try {
   console.error(`bigquery-evidence: ${error instanceof Error ? error.message : String(error)}`);
 } finally {
   await teardown();
-  oauth.close();
+  tokens.close();
 }
 process.exit(failed ? 1 : 0);

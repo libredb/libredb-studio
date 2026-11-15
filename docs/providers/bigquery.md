@@ -37,7 +37,7 @@
 | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `src/lib/db/providers/sql/bigquery/index.ts`                                 | The provider: capabilities, query, object surface, catalog cache, monitoring                       |
 | `src/lib/db/providers/sql/bigquery/transport.ts`                             | The only file that knows the REST envelope: jobs, dry runs, paging, datasets, tables, cell decoding |
-| `src/lib/db/providers/sql/bigquery/auth.ts`                                  | Credential resolution and the token source                                                          |
+| `src/lib/db/providers/sql/bigquery/credential-policy.ts`                     | The credential policy over the shared Google auth ([DB_AUTH.md](../DB_AUTH.md#google)): accepted kinds, opt-in, sentences, scope |
 | `src/lib/explain/bigquery-dryrun.ts`                                         | The EXPLAIN strategy that turns a statement into a dry run                                          |
 | `src/hooks/use-dry-run-estimate.ts`, `src/components/studio/DryRunBadge.tsx` | The live "This query will process N" badge in the editor                                            |
 
@@ -57,24 +57,52 @@ The SSL / TLS and SSH tunnel panels are not shown either (`showSslPanel: false`,
 
 ### 3.2 Credentials
 
+BigQuery signs in through the shared Google auth, `src/lib/db/auth/google` ([DB_AUTH.md](../DB_AUTH.md#google)), which holds the parsing, the Application Default Credentials chain, the grants and the token cache.
+This section is BigQuery's policy, declared in `credential-policy.ts`.
+
 The provider resolves credentials in this order:
 
 1. **Service-account key JSON** in the `password` field. Always used when present, and needs no server setting. An `authorized_user` JSON (from `gcloud auth application-default login`) is accepted too.
 2. **An access token** in the `password` field, e.g. the output of `gcloud auth print-access-token` (`ya29.…`, with or without a `Bearer ` prefix). It is used as-is: Google issues it for about an hour and the provider has no way to refresh it, so the connection fails with an authentication error once it expires and the token must be pasted again. Use it for short-lived access or a CI job, not for a saved connection.
 3. **The server's own identity**, only when the server runs with `BIGQUERY_SERVER_CREDENTIALS=true` and only for an operator-seeded (`managed: true`) connection; a connection a user creates needs a key or an access token:
    1. the file named by `GOOGLE_APPLICATION_CREDENTIALS` (a named file that cannot be read is an error, not a fallback);
-   2. gcloud's ADC file, `~/.config/gcloud/application_default_credentials.json`;
+   2. gcloud's ADC file, `~/.config/gcloud/application_default_credentials.json`, or `%APPDATA%\gcloud\application_default_credentials.json` on Windows (a file that exists and cannot be read is an error, not a fallback);
    3. the metadata server (`metadata.google.internal`, or `GCE_METADATA_HOST`), which is how GKE Workload Identity, GCE and Cloud Run hand out tokens.
 
 The opt-in exists because a connection without a key would otherwise run as the server: every user who can add a connection would query with the pod's service account.
 That is also why a keyless connection that is not operator-seeded is refused even with the flag on, and why the server forces `managed` to false on any connection a browser sends inline (`resolveConnection`), so a client cannot claim to be a seed.
 Without the flag and without a key, the connection is refused with a message that names the variable.
+BigQuery's two refusals are its own: "BigQuery needs a service-account key or an access token in the password field: the server's own credentials are used only for operator-seeded connections" for a keyless connection a user created, and "BigQuery needs a service-account key in the password field. To use the server's own credentials (ADC or Workload Identity) instead, set BIGQUERY_SERVER_CREDENTIALS=true on the server." for a seed without the opt-in.
 
 `external_account` (Workload Identity Federation outside GKE) and `impersonated_service_account` credential files are refused with a message.
 
-Tokens are cached and refreshed a minute before they expire, and concurrent callers share one refresh instead of each minting a grant.
+An `authorized_user` JSON's `quota_project_id`, when present, must pass BigQuery's project id rule (a letter, then at most 200 letters, digits, colons, dots or hyphens), and is sent as `x-goog-user-project` on every API request, a job cancel included, so the API calls bill that project; the token requests never carry it.
+The scope is `https://www.googleapis.com/auth/bigquery`.
+The environment is read at each connect, so a changed variable applies to the next connection.
 
-A server credentials file that cannot be read is reported without its path (the path goes to the server log).
+#### What changed with the shared Google auth
+
+Moving onto the shared Google auth changed these, each pinned by a test:
+
+1. A credential that does not parse is refused with the shared sentences, such as "The credential starts like JSON but is not valid JSON: paste a service-account key JSON, an authorized-user JSON or an access token", instead of BigQuery's own three.
+2. A key or an authorized-user JSON whose fields are empty strings is refused at parse.
+3. A private key that is not PKCS #8 PEM (`-----BEGIN PRIVATE KEY-----`) is refused at parse; a key that has the markers and still cannot be imported is refused as an authentication error before any request.
+4. The service-account assertion carries the key's `private_key_id` as `kid`.
+5. An authorized user's `quota_project_id` is checked and sent as `x-goog-user-project`; it was ignored.
+6. A pasted JSON loses its line feeds and carriage returns before it is parsed, so a terminal-wrapped key parses.
+7. An ADC file holding a bare token is refused ("The application default credentials file is not a credential JSON"), where it was used as an access token, and the file's text is trimmed.
+8. A blank `GOOGLE_APPLICATION_CREDENTIALS` or `HOME` counts as unset.
+9. gcloud's ADC file that exists and cannot be read is refused ("The gcloud application default credentials file exists but cannot be read"); only an absent file moves on to the metadata server, where any read error used to.
+10. On Windows the ADC file is read under `%APPDATA%`.
+11. `GCE_METADATA_HOST` is validated as a host or `[IPv6]` address with an optional port and no scheme, and refused otherwise.
+12. A token answer whose `expires_in` is 0 or below lives one hour, an empty token is refused, a refusal reason is cut to 300 characters, and a `null` answer is refused cleanly.
+13. A credential's `type` is quoted back only when it looks like a type name.
+14. The token lane is built on the first refresh, refuses link-local addresses and `101` answers, and a pasted access token builds none.
+15. Closing the connection closes its token source and aborts a refresh in flight; a call after it keeps "The BigQuery connection is closed", and a job cancel carries the token of the lane the job last ran on.
+    A call waiting on a refresh that close() aborts now fails with "The request was cancelled", or with "The Google token source is closed" when close() lands while a service-account assertion is being signed, where it failed with "The connection was closed, so the request did not complete".
+16. A server credentials file that cannot be read is no longer logged with its path; the refusal names the variable, and the operator reads its value.
+17. A token refusal whose reason holds a form of the credential's secrets is withheld whole.
+
 The provider cache key includes `location`, so changing it gets a new provider instead of the cached one.
 The agent's connection identity includes it too, because a moved location is another catalog view: a held inventory is not served under the new location, so plan mode reads the catalog again, and a follow-up question does not carry the conversation over.
 The shared transport treats `Authorization` as a connection header, so each token gets its own transport, and a replaced one closes once its in-flight requests finish.
@@ -85,13 +113,15 @@ Today that token carries the same `https://www.googleapis.com/auth/bigquery` sco
 
 ### 3.3 Required IAM
 
-| Use                                      | Role                                                          |
-| ---------------------------------------- | ------------------------------------------------------------- |
-| Run queries                              | `roles/bigquery.jobUser` on the project                       |
-| Read data and metadata                   | `roles/bigquery.dataViewer` on the datasets or project        |
-| Monitoring: jobs, slow queries, sessions | `bigquery.jobs.listAll`, e.g. `roles/bigquery.resourceViewer` |
+| Use                                      | Role                                                                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Run queries                              | `roles/bigquery.jobUser` on the project                                                                       |
+| Read data and metadata                   | `roles/bigquery.dataViewer` on the datasets or project                                                        |
+| Monitoring: jobs, slow queries, sessions | `bigquery.jobs.listAll`, e.g. `roles/bigquery.resourceViewer`                                                 |
+| Bill an authorized user's quota project  | `serviceusage.services.use` on the `quota_project_id` project, e.g. `roles/serviceusage.serviceUsageConsumer` |
 
 A monitoring panel whose read is refused stays empty rather than failing.
+An authorized-user JSON with a `quota_project_id` bills its API calls to that project, so its user needs `serviceusage.services.use` there, or Google refuses those calls.
 
 ### 3.4 GKE Workload Identity
 
@@ -285,8 +315,7 @@ Uptime, connections and indexes have no BigQuery counterpart and stay empty.
 | `tests/integration/db/bigquery-provider.test.ts` | The provider, transport and auth end to end, replaying the live captures of `tests/fixtures/bigquery/`: connect, query, object surface (shared conformance), monitoring         |
 | `tests/unit/db/bigquery/provider.test.ts`        | The provider over a fake transport                                                                                                                                              |
 | `tests/unit/db/bigquery/transport.test.ts`       | The REST envelope: `jobs.query`, the dry run, paging, job cancel, token lanes                                                                                                   |
-| `tests/unit/db/bigquery/credentials.test.ts`     | Credential resolution order and the server-credentials opt-in                                                                                                                   |
-| `tests/unit/db/bigquery/token-source.test.ts`    | Token minting, caching and single-flight refresh                                                                                                                                |
+| `tests/unit/db/bigquery/credential-policy.test.ts` | The policy's pins (kinds, opt-in, sentences, project id rule, token deps) and credential resolution through it; the mechanism is tested in `tests/unit/db/auth/google/` |
 | `tests/unit/sql-completions.test.ts`             | Qualified table labels                                                                                                                                                          |
 | `tests/unit/sql/bigquery-grammar.test.ts`        | The BigQuery statement grammar: triple quotes, `#` comments, escapes, subscripts                                                                                                |
 | `tests/live/bigquery-live-check.ts`              | Hand-run, against goccy/bigquery-emulator; not in `bun run test` (see below)                                                                                                    |
@@ -295,7 +324,8 @@ Uptime, connections and indexes have no BigQuery counterpart and stay empty.
 ### 9.1 Live check against the emulator
 
 [goccy/bigquery-emulator](https://github.com/goccy/bigquery-emulator) answers the REST API locally, and the server sends every API request to it when `BIGQUERY_EMULATOR_HOST` (`host:port`, plain HTTP) is set in the server's environment; it is never a connection field.
-While it is set the server mints no token and sends no `authorization` header, whatever credential the connection holds; the password field is still required and still parsed, so put a placeholder access token (20 or more URL-safe characters) or a key JSON there; neither is sent.
+While it is set the server mints no token and sends no `authorization` header, whatever credential the connection holds; the password field is still required and still parsed, so put a placeholder access token (20 or more URL-safe characters) there; it is not sent.
+A placeholder key JSON is parsed as a real one, so its `private_key` must carry the PKCS #8 PEM markers (`-----BEGIN PRIVATE KEY-----`).
 `tests/live/bigquery-live-check.ts` runs the real provider and transport against it and exits non-zero on any failure:
 
 ```bash

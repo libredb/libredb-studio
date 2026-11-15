@@ -50,9 +50,7 @@ interface MarkerException {
   readonly lines: number;
   readonly removedBy: string;
 }
-const MARKER_EXCEPTIONS: readonly MarkerException[] = [
-  { path: "src/lib/db/providers/sql/bigquery/auth.ts", lines: 3, removedBy: "G2" },
-];
+const MARKER_EXCEPTIONS: readonly MarkerException[] = [];
 /**
  * The markers of each mechanism the layer holds: the Google token endpoint, the JWT-bearer grant, the metadata path,
  * and SigV4's algorithm name and scope terminator.
@@ -409,7 +407,9 @@ describe("the real tree holds every rule", () => {
       `${LAYER}/refresh.ts`,
       `${LAYER}/server-identity-gate.ts`,
     ]);
-    expect(MARKER_EXCEPTIONS.length).toBeGreaterThan(0);
+    expect(MARKER_EXCEPTIONS).toEqual([]);
+    const marked = files.filter((file) => inLayer(file.path) && MARKERS.test(file.text)).map((file) => file.path);
+    expect(marked).toEqual([SIGV4, `${LAYER}/google/token-source.ts`]);
   });
 });
 
@@ -455,7 +455,13 @@ const GATE = `${LAYER}/server-identity-gate.ts`;
 const LANES_FILE = `${LAYER}/lanes.ts`;
 const CREDENTIALS = `${LAYER}/google/credentials.ts`;
 const PROVIDER = `${PROVIDERS}/document/sample/credential-policy.ts`;
-const EXCEPTION = MARKER_EXCEPTIONS[0];
+/** An exception planted with its copy, since the real list is empty once every copy has moved into the layer. */
+const EXCEPTION: MarkerException = {
+  path: "src/lib/db/providers/document/sample/copy.ts",
+  lines: 2,
+  removedBy: "a later PR",
+};
+const EXCEPTION_COPY = `${Array.from({ length: EXCEPTION.lines }, () => "// https://oauth2.googleapis.com/token").join("\n")}\nexport {};\n`;
 
 /** A repository that holds every rule, as each planted one starts. */
 const HOLDING: Readonly<Record<string, string>> = {
@@ -493,7 +499,6 @@ const HOLDING: Readonly<Record<string, string>> = {
     "",
   ].join("\n"),
   [PROVIDER]: 'import { run } from "@/lib/db/auth/google/credentials";\nexport const used = run;\n',
-  [EXCEPTION.path]: `${Array.from({ length: EXCEPTION.lines }, () => "// https://oauth2.googleapis.com/token").join("\n")}\nexport {};\n`,
 };
 
 const planted = (files: Readonly<Record<string, string>>, rule: Rule) =>
@@ -738,13 +743,18 @@ describe("planted violations: each rule fails by name", () => {
           (root, env) => auth6OneCopy(root, env),
         ),
       ).toEqual([]);
-      expect(planted({ [EXCEPTION.path]: "export {};\n" }, (root, env) => auth6OneCopy(root, env))).toEqual([
+      expect(
+        planted({ [EXCEPTION.path]: EXCEPTION_COPY }, (root, env) => auth6OneCopy(root, env, [EXCEPTION])),
+      ).toEqual([]);
+      expect(
+        planted({ [EXCEPTION.path]: "export {};\n" }, (root, env) => auth6OneCopy(root, env, [EXCEPTION])),
+      ).toEqual([
         `AUTH6 one copy: ${EXCEPTION.path} is listed with ${EXCEPTION.lines} marker lines (removed by ${EXCEPTION.removedBy}) and holds 0`,
       ]);
-      const extra = { path: "src/lib/db/providers/document/sample/gone.ts", lines: 1, removedBy: "a later PR" };
-      expect(
-        inPlantedRepository(HOLDING, (root, env) => auth6OneCopy(root, env, [...MARKER_EXCEPTIONS, extra])),
-      ).toEqual([`AUTH6 one copy: ${extra.path} is listed with 1 marker lines (removed by a later PR) and holds 0`]);
+      expect(planted({ [EXCEPTION.path]: EXCEPTION_COPY }, (root, env) => auth6OneCopy(root, env))).toEqual([
+        `AUTH6 one copy: ${EXCEPTION.path}:1 holds oauth2.googleapis.com outside ${LAYER}/`,
+        `AUTH6 one copy: ${EXCEPTION.path}:2 holds oauth2.googleapis.com outside ${LAYER}/`,
+      ]);
     },
     platformTimeoutMs(40_000),
   );
