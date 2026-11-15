@@ -643,6 +643,24 @@ describe("bigquery close: the token source", () => {
     expect(cancelLane?.opts.headers).toMatchObject({ authorization: "Bearer t2" });
     expect(cancels()).toHaveLength(1);
   });
+
+  test("15: close() during a poll cancels the job with the job lane's bearer and quota project", async () => {
+    api = (req) =>
+      req.url.includes("/cancel")
+        ? json({})
+        : req.method === "POST"
+          ? json({ jobComplete: false, jobReference: { jobId: "j1" } })
+          : never();
+    const bq = createBigQueryTransport("p", { ...creds, quotaProjectId: "quota-proj" });
+    const run = bq.query("SELECT 1", opts).catch((e) => e);
+    while (!apiCalls().some((r) => r.method === "GET")) await Bun.sleep(0);
+    bq.close();
+    expect(await run).toMatchObject({ kind: "aborted" });
+    expect(tokenCount).toBe(1);
+    const cancelLane = built.find((b) => b.requests.some((r) => r.url.includes("/cancel")));
+    expect(cancelLane?.opts.headers).toEqual({ "x-goog-user-project": "quota-proj", authorization: "Bearer t1" });
+    expect(cancels()).toHaveLength(1);
+  });
 });
 
 describe("bigquery malformed wire answers", () => {

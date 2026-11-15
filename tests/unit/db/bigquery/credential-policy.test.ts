@@ -68,7 +68,7 @@ describe("bigquery credential policy pins", () => {
     });
   });
 
-  test("the token deps carry BigQuery's scope and label, and createNodeTransport itself in production", () => {
+  test("the token deps carry BigQuery's scope and label, and createNodeTransport itself in production", async () => {
     const deps = bigQueryTokenSourceDeps();
     expect(BIGQUERY_SCOPE).toBe("https://www.googleapis.com/auth/bigquery");
     expect(deps.scope).toBe(BIGQUERY_SCOPE);
@@ -80,6 +80,11 @@ describe("bigquery credential policy pins", () => {
     const signal = deps.timeoutSignal(60_000);
     expect(signal).toBeInstanceOf(AbortSignal);
     expect(signal.aborted).toBe(false);
+    // The shared refresh's deadline: a signal that never fires would leave a hung refresh joined until close().
+    const short = deps.timeoutSignal(1);
+    await new Promise((resolve) => short.addEventListener("abort", resolve, { once: true }));
+    expect(short.reason).toBeInstanceOf(DOMException);
+    expect((short.reason as DOMException).name).toBe("TimeoutError");
   });
 
   test("the project id rule: a letter first, then letters, digits, colons, dots or hyphens", () => {

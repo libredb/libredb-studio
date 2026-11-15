@@ -62,7 +62,7 @@ This section is BigQuery's policy, declared in `credential-policy.ts`.
 
 The provider resolves credentials in this order:
 
-1. **A service-account key JSON** in the `password` field. Always used when present, and needs no server setting. An `authorized_user` JSON (from `gcloud auth application-default login`) is accepted too.
+1. **Service-account key JSON** in the `password` field. Always used when present, and needs no server setting. An `authorized_user` JSON (from `gcloud auth application-default login`) is accepted too.
 2. **An access token** in the `password` field, e.g. the output of `gcloud auth print-access-token` (`ya29.…`, with or without a `Bearer ` prefix). It is used as-is: Google issues it for about an hour and the provider has no way to refresh it, so the connection fails with an authentication error once it expires and the token must be pasted again. Use it for short-lived access or a CI job, not for a saved connection.
 3. **The server's own identity**, only when the server runs with `BIGQUERY_SERVER_CREDENTIALS=true` and only for an operator-seeded (`managed: true`) connection; a connection a user creates needs a key or an access token:
    1. the file named by `GOOGLE_APPLICATION_CREDENTIALS` (a named file that cannot be read is an error, not a fallback);
@@ -99,6 +99,7 @@ Moving onto the shared Google auth changed these, each pinned by a test:
 13. A credential's `type` is quoted back only when it looks like a type name.
 14. The token lane is built on the first refresh, refuses link-local addresses and `101` answers, and a pasted access token builds none.
 15. Closing the connection closes its token source and aborts a refresh in flight; a call after it keeps "The BigQuery connection is closed", and a job cancel carries the token of the lane the job last ran on.
+    A call waiting on a refresh that close() aborts now fails with "The request was cancelled", or with "The Google token source is closed" when close() lands while a service-account assertion is being signed, where it failed with "The connection was closed, so the request did not complete".
 16. A server credentials file that cannot be read is no longer logged with its path; the refusal names the variable, and the operator reads its value.
 17. A token refusal whose reason holds a form of the credential's secrets is withheld whole.
 
@@ -112,13 +113,15 @@ Today that token carries the same `https://www.googleapis.com/auth/bigquery` sco
 
 ### 3.3 Required IAM
 
-| Use                                      | Role                                                          |
-| ---------------------------------------- | ------------------------------------------------------------- |
-| Run queries                              | `roles/bigquery.jobUser` on the project                       |
-| Read data and metadata                   | `roles/bigquery.dataViewer` on the datasets or project        |
-| Monitoring: jobs, slow queries, sessions | `bigquery.jobs.listAll`, e.g. `roles/bigquery.resourceViewer` |
+| Use                                      | Role                                                                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Run queries                              | `roles/bigquery.jobUser` on the project                                                                       |
+| Read data and metadata                   | `roles/bigquery.dataViewer` on the datasets or project                                                        |
+| Monitoring: jobs, slow queries, sessions | `bigquery.jobs.listAll`, e.g. `roles/bigquery.resourceViewer`                                                 |
+| Bill an authorized user's quota project  | `serviceusage.services.use` on the `quota_project_id` project, e.g. `roles/serviceusage.serviceUsageConsumer` |
 
 A monitoring panel whose read is refused stays empty rather than failing.
+An authorized-user JSON with a `quota_project_id` bills its API calls to that project, so its user needs `serviceusage.services.use` there, or Google refuses those calls.
 
 ### 3.4 GKE Workload Identity
 
@@ -321,7 +324,8 @@ Uptime, connections and indexes have no BigQuery counterpart and stay empty.
 ### 9.1 Live check against the emulator
 
 [goccy/bigquery-emulator](https://github.com/goccy/bigquery-emulator) answers the REST API locally, and the server sends every API request to it when `BIGQUERY_EMULATOR_HOST` (`host:port`, plain HTTP) is set in the server's environment; it is never a connection field.
-While it is set the server mints no token and sends no `authorization` header, whatever credential the connection holds; the password field is still required and still parsed, so put a placeholder access token (20 or more URL-safe characters) or a key JSON there; neither is sent.
+While it is set the server mints no token and sends no `authorization` header, whatever credential the connection holds; the password field is still required and still parsed, so put a placeholder access token (20 or more URL-safe characters) there; it is not sent.
+A placeholder key JSON is parsed as a real one, so its `private_key` must carry the PKCS #8 PEM markers (`-----BEGIN PRIVATE KEY-----`).
 `tests/live/bigquery-live-check.ts` runs the real provider and transport against it and exits non-zero on any failure:
 
 ```bash
