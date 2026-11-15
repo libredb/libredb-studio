@@ -4,24 +4,20 @@
  * token. The scope, the provider label, the response cap, the clock, the deadline and the transport factory come in
  * as GoogleTokenSourceDeps; the lane options come from authLaneOptions, never from the caller.
  *
- * One cached token per source, refreshed 60 seconds before it expires; concurrent callers share one refresh, which
- * runs on its own 30-second deadline so no caller's abort fails the others; a failed refresh caches nothing. An answer
- * without a usable expires_in lives Google's documented one hour. No error carries a token, an assertion, a key, a
- * key id, a refresh token or a client secret: a reason quoted from the server passes serverText with the forms of
- * the credential's secrets before it is cut to 300 characters.
+ * One cached token per source, held by the shared refreshing value (../refresh.ts): refreshed 60 seconds before it
+ * expires; concurrent callers share one refresh, which runs on its own 30-second deadline so no caller's abort fails
+ * the others; a failed refresh caches nothing. An answer without a usable expires_in lives Google's documented one
+ * hour. No error carries a token, an assertion, a key, a key id, a refresh token or a client secret: a reason quoted
+ * from the server passes serverText with the forms of the credential's secrets before it is cut to 300 characters.
  */
 import { importPKCS8, SignJWT } from "jose";
 import { AuthenticationError } from "@/lib/db/errors";
 import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
-import {
-  type NodeResponse,
-  type NodeTransport,
-  type NodeTransportOptions,
-  TransportError,
-} from "@/lib/db/http/node-transport";
+import type { NodeResponse, NodeTransport, NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { secretForms, serverText } from "@/lib/db/utils/server-text";
 import type { DatabaseType } from "@/lib/types";
 import { type AuthLaneSpec, authLaneOptions } from "../lanes";
+import { createRefreshingValue, type Expiring, type RefreshRun } from "../refresh";
 import {
   type GoogleCredentials,
   type GoogleCredentialsOf,
@@ -60,8 +56,6 @@ export const GOOGLE_TOKEN_SOURCE_SENTENCES = Object.freeze({
 
 const S = GOOGLE_TOKEN_SOURCE_SENTENCES;
 const REFRESH_EARLY_MS = 60_000;
-/** The shared refresh runs on its own deadline, so no single caller's abort fails the others waiting on it. */
-const REFRESH_TIMEOUT_MS = 30_000;
 const ASSERTION_LIFETIME_S = 3600;
 /** Google's documented lifetime of an access token, used when an answer carries no usable expires_in. */
 const DEFAULT_TTL_S = 3600;
@@ -71,14 +65,6 @@ const METADATA_TOKEN_PATH = "/computeMetadata/v1/instance/service-accounts/defau
 
 /** The kinds that refresh: every kind but a pasted access token. */
 type RefreshingKind = Exclude<GoogleCredentials["type"], "access_token">;
-
-/** What one refresh is given. */
-interface RefreshRun {
-  /** Aborts on close() or after the 30-second deadline; every request of the refresh takes it. */
-  readonly signal: AbortSignal;
-  /** Throws TransportError("aborted", closed) once close() was called: for a step that takes no signal, such as signing. */
-  throwIfClosed(): void;
-}
 
 /** What a strategy reaches: the deps, the refresh, and the one lane of a kind, built on first use. */
 interface StrategyContext {
@@ -199,32 +185,6 @@ function reasonOf(body: Readonly<Record<string, unknown>>, status: number, forms
   return typeof reason === "string" ? serverText(reason, forms).slice(0, REASON_CHARACTERS) : `HTTP ${status}`;
 }
 
-/** The shared work, or this caller's own abort as the node transport reports one, whichever comes first. */
-function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      reject(
-        signal.reason instanceof DOMException && signal.reason.name === "TimeoutError"
-          ? new TransportError("timeout", "The request did not finish within its time limit")
-          : new TransportError("aborted", "The request was cancelled"),
-      );
-    };
-    if (signal.aborted) onAbort();
-    else signal.addEventListener("abort", onAbort, { once: true });
-    const release = () => signal.removeEventListener("abort", onAbort);
-    work.then(
-      (value) => {
-        release();
-        resolve(value);
-      },
-      (error: unknown) => {
-        release();
-        reject(error);
-      },
-    );
-  });
-}
-
 export function createGoogleTokenSource(
   credentials: GoogleCredentials,
   deps: GoogleTokenSourceDeps,
@@ -235,10 +195,7 @@ export function createGoogleTokenSource(
   }
 
   const forms = secretForms(googleCredentialSecrets(credentials));
-  const closer = new AbortController();
   const lanes = new Map<GoogleAuthLane, NodeTransport>();
-  let cached: { readonly token: string; readonly expiresAt: number } | null = null;
-  let pending: Promise<string> | null = null;
 
   const lane = (kind: GoogleAuthLane, spec: () => AuthLaneSpec): NodeTransport => {
     let transport = lanes.get(kind);
@@ -249,12 +206,8 @@ export function createGoogleTokenSource(
     return transport;
   };
 
-  const throwIfClosed = () => {
-    if (closer.signal.aborted) throw new TransportError("aborted", S.closed);
-  };
-
-  const refresh = async (signal: AbortSignal): Promise<string> => {
-    const response = await exchange(credentials.type, credentials, { deps, run: { signal, throwIfClosed }, lane });
+  const refresh = async (run: RefreshRun): Promise<Expiring<string>> => {
+    const response = await exchange(credentials.type, credentials, { deps, run, lane });
     const body = tokenBody(response.text);
     const token = body.access_token;
     if (response.status !== 200 || typeof token !== "string" || token === "") {
@@ -263,22 +216,21 @@ export function createGoogleTokenSource(
     const expiresIn = body.expires_in;
     const ttl =
       typeof expiresIn === "number" && Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : DEFAULT_TTL_S;
-    cached = { token, expiresAt: deps.now() + ttl * 1000 };
-    return token;
+    return { value: token, expiresAt: deps.now() + ttl * 1000 };
   };
 
+  const cached = createRefreshingValue({
+    refresh,
+    earlyMs: REFRESH_EARLY_MS,
+    now: () => deps.now(),
+    timeoutSignal: (ms) => deps.timeoutSignal(ms),
+    sentences: { closed: S.closed },
+  });
+
   return {
-    token(signal) {
-      if (closer.signal.aborted) return Promise.reject(new TransportError("aborted", S.closed));
-      if (cached !== null && deps.now() < cached.expiresAt - REFRESH_EARLY_MS) return Promise.resolve(cached.token);
-      pending ??= refresh(AbortSignal.any([closer.signal, deps.timeoutSignal(REFRESH_TIMEOUT_MS)])).finally(() => {
-        pending = null;
-      });
-      return untilAborted(pending, signal);
-    },
+    token: (signal) => cached.get(signal),
     close() {
-      closer.abort();
-      cached = null;
+      cached.close();
       for (const transport of lanes.values()) transport.close();
       lanes.clear();
     },
