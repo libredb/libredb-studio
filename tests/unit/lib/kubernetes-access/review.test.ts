@@ -2,10 +2,10 @@
  * One SubjectAccessReview against a fake API server (src/lib/kubernetes-access/review.ts).
  *
  * The review is a trust boundary: an allowed answer opens a database's credentials to a person. So it is allowed only
- * for a 2xx `SubjectAccessReview` that echoes the asked user and says `allowed: true`, and every other outcome, an
- * error, a timeout, a status that is not 2xx, a body that is malformed, too large or for another review, a token or CA
- * that cannot be read, fails, which every caller treats as a deny. The token and the CA are read again for every
- * review, so a rotated projected token is used at once.
+ * for a 2xx `SubjectAccessReview` that echoes the asked user and attributes and says `allowed: true`, and every other
+ * outcome, an error, a timeout, a status that is not 2xx, a body that is malformed, too large or for another review,
+ * a token or CA that cannot be read, fails, which every caller treats as a deny. The token and the CA are read again
+ * for every review, so a rotated projected token is used at once.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
@@ -28,6 +28,13 @@ const SECRET: ResourceAttributes = {
   namespace: "team-a",
   name: "orders-app",
 };
+const DEPLOYMENT: ResourceAttributes = {
+  verb: "get",
+  group: "apps",
+  resource: "deployments",
+  namespace: "team-a",
+  name: "studio",
+};
 const DEV_A = { user: "u-rjs2h", groups: [] as string[] };
 
 let api: FakeKubernetesApi;
@@ -49,9 +56,19 @@ afterEach(() => {
   api.restoreEnv();
 });
 
-/** A scripted 201 that echoes `user` with this status. */
-function reviewAnswer(status: Record<string, unknown>, user = DEV_A.user, kind = "SubjectAccessReview"): string {
-  return JSON.stringify({ kind, apiVersion: "authorization.k8s.io/v1", spec: { user }, status });
+/** A scripted review answer that echoes `user` and `attributes` with this status. */
+function reviewAnswer(
+  status: Record<string, unknown>,
+  user = DEV_A.user,
+  kind = "SubjectAccessReview",
+  attributes: unknown = SECRET,
+): string {
+  return JSON.stringify({
+    kind,
+    apiVersion: "authorization.k8s.io/v1",
+    spec: { user, resourceAttributes: attributes },
+    status,
+  });
 }
 
 describe("the request", () => {
@@ -184,6 +201,69 @@ describe("the answer", () => {
     expect(await requestAccessReview(DEV_A, SECRET)).toEqual({ kind: "allowed" });
   });
 
+  test("an exact echo of the user and all five nonempty attributes allows", async () => {
+    api.answer = { status: 201, body: reviewAnswer({ allowed: true }, DEV_A.user, "SubjectAccessReview", DEPLOYMENT) };
+    expect(await requestAccessReview(DEV_A, DEPLOYMENT)).toEqual({ kind: "allowed" });
+  });
+
+  test.each([
+    ["absent", undefined],
+    ["empty", {}],
+    ["null", null],
+    ["text", "bad"],
+    ["an array", []],
+  ])(
+    "resourceAttributes that is %s fails as malformed even when the user matches",
+    async (_case, resourceAttributes) => {
+      api.answer = {
+        status: 201,
+        body: JSON.stringify({
+          kind: "SubjectAccessReview",
+          spec: { user: DEV_A.user, resourceAttributes },
+          status: { allowed: true },
+        }),
+      };
+      expect(await requestAccessReview(DEV_A, SECRET)).toEqual({ kind: "failed", reason: "malformed" });
+    },
+  );
+
+  test.each([
+    ["another verb", { ...DEPLOYMENT, verb: "list" }],
+    ["another group", { ...DEPLOYMENT, group: "batch" }],
+    ["another resource", { ...DEPLOYMENT, resource: "secrets" }],
+    ["another namespace", { ...DEPLOYMENT, namespace: "team-b" }],
+    ["another name", { ...DEPLOYMENT, name: "other" }],
+    ["a verb left out", { ...DEPLOYMENT, verb: undefined }],
+    ["a group left out", { ...DEPLOYMENT, group: undefined }],
+    ["a resource left out", { ...DEPLOYMENT, resource: undefined }],
+    ["a namespace left out", { ...DEPLOYMENT, namespace: undefined }],
+    ["a name left out", { ...DEPLOYMENT, name: undefined }],
+  ])("an answer with %s fails as malformed even when the user matches", async (_case, attributes) => {
+    api.answer = { status: 201, body: reviewAnswer({ allowed: true }, DEV_A.user, "SubjectAccessReview", attributes) };
+    expect(await requestAccessReview(DEV_A, DEPLOYMENT)).toEqual({ kind: "failed", reason: "malformed" });
+  });
+
+  test.each(["name", "group", "namespace"] as const)(
+    "an empty asked %s may be omitted in the answer",
+    async (field) => {
+      const attributes = { ...DEPLOYMENT, [field]: "" };
+      api.answer = {
+        status: 201,
+        body: reviewAnswer({ allowed: true }, DEV_A.user, "SubjectAccessReview", { ...attributes, [field]: undefined }),
+      };
+      expect(await requestAccessReview(DEV_A, attributes)).toEqual({ kind: "allowed" });
+    },
+  );
+
+  test("an echoed numeric name fails as malformed even when its text would match", async () => {
+    const attributes = { ...DEPLOYMENT, name: "7" };
+    api.answer = {
+      status: 201,
+      body: reviewAnswer({ allowed: true }, DEV_A.user, "SubjectAccessReview", { ...attributes, name: 7 }),
+    };
+    expect(await requestAccessReview(DEV_A, attributes)).toEqual({ kind: "failed", reason: "malformed" });
+  });
+
   test.each([
     [401, "Unauthorized: the token was refused"],
     [403, "Forbidden: the ServiceAccount may not create subjectaccessreviews"],
@@ -198,7 +278,10 @@ describe("the answer", () => {
     ["not JSON", "{"],
     ["not an object", "[true]"],
     ["another kind", reviewAnswer({ allowed: true }, DEV_A.user, "SelfSubjectAccessReview")],
-    ["no status", JSON.stringify({ kind: "SubjectAccessReview", spec: { user: DEV_A.user } })],
+    [
+      "no status",
+      JSON.stringify({ kind: "SubjectAccessReview", spec: { user: DEV_A.user, resourceAttributes: SECRET } }),
+    ],
     ["no spec", JSON.stringify({ kind: "SubjectAccessReview", status: { allowed: true } })],
     ["allowed as text", reviewAnswer({ allowed: "true" })],
     ["another user's review", reviewAnswer({ allowed: true }, "u-someone-else")],
