@@ -39,6 +39,37 @@ BASE_PATH=/tools/libredb docker compose up --build
 When using `docker-compose.example.yml`, select your custom image and set the same `BASE_PATH`
 in Compose's environment so its health check uses the built path.
 
+## Build an image for a release
+
+No prefixed image is published, because the prefix is fixed at build time and every deployment picks its own.
+Build one from the release tag instead, with the Dockerfile of the variant you want: `Dockerfile`, `Dockerfile.alpine` or `Dockerfile.alpine-slim`, as described in [DISTRIBUTION.md](DISTRIBUTION.md#image-tag-model).
+
+```sh
+VERSION=1.3.0
+git clone --depth 1 --branch "$VERSION" https://github.com/libredb/libredb-studio.git
+cd libredb-studio
+docker build -f Dockerfile.alpine --build-arg BASE_PATH=/libredb -t registry.example.com/libredb-studio:"$VERSION"-alpine-libredb .
+docker push registry.example.com/libredb-studio:"$VERSION"-alpine-libredb
+```
+
+Release tags have no `v` prefix.
+Repeat the build for each new release: the prefix is the only difference from the published image of that version.
+
+Build from a checkout, not from a remote Git URL such as `https://github.com/libredb/libredb-studio.git#1.3.0`.
+A remote context does not apply the repository's `.dockerignore`, so the build copies the test and docs trees, and with 1.3.0 its type check ran out of Node heap.
+
+## Why a prebuilt image cannot take the prefix at runtime
+
+Next.js treats `basePath` as a build input, and its documentation says it cannot be changed without rebuilding.
+The server reads the prefix when it starts, but the browser side has it compiled in: the client router's add and remove helpers, the loader that fetches JavaScript chunks, and every page prerendered at build time.
+Changing the server configuration alone leaves those on the old prefix.
+
+The only way to relocate a prebuilt image is to rewrite its compiled output at start: build with a placeholder prefix, then replace that text in the minified JavaScript, HTML and manifests.
+Studio does not do this.
+It depends on the undocumented byte format of Next.js, compiler and React output, and the rewritten files are not the ones the build produced and the tests ran against.
+A probe on 1.3.0 worked on the tested pages, yet a prerendered page split the placeholder across two payload chunks and loaded a script from the placeholder path, which neither the base-path E2E suite nor the rewrite's own check caught.
+A supported runtime prefix has to come from Next.js itself; until then the prefix is set by building, as above.
+
 ## Preserve the prefix at the reverse proxy
 
 Forward `/tools/libredb` and everything below it **with the path intact**. Do not use
