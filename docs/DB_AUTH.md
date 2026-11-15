@@ -135,6 +135,67 @@ It is tested on the 24 AWS SigV4 suite vectors and the smithy vector.
 The core holds no signing policy: which headers are signed, the payload hash and the service name belong to the caller that builds the canonical request, such as S3's `s3Signer` ([providers/s3.md](providers/s3.md)).
 Only the keys a caller passes sign: the module reads no environment variable, no file and no instance metadata.
 It is the only file of the layer that imports `node:crypto`.
+`payloadSha256` is the payload hash of a text body, and `sigV4Headers` builds the headers a signed request carries: `authorization` and `x-amz-date`, plus `x-amz-security-token` when the credentials hold a session token, signing `host`, the caller's headers, `x-amz-date` and the token.
+
+### Regions and endpoints
+
+`aws/endpoints.ts` holds one partition, the commercial `aws` partition, as a row of fixed values.
+`parseAwsRegion` admits a region that matches AWS's own `regionRegex` for that partition, copied with its source in the file's docblock, and gives it the DNS suffix `amazonaws.com`.
+A blank region is refused as missing.
+A value shaped as an AWS region name, such as `cn-north-1` or `us-gov-west-1`, is refused with a sentence that names it, because China, GovCloud and the isolated partitions are not supported in this version.
+Any other value, such as `local` or a secret pasted into the wrong field, is refused without being quoted.
+The European Sovereign Cloud's `eusc-de-east-1` is one of those: it is not shaped as a region name by that rule, so it is refused unquoted as not a region.
+`awsServiceOrigin(service, region)` is `https://<service>.<region>.amazonaws.com:443`; the service name is the provider's own and matches `^[a-z][a-z0-9-]{1,62}$`, and the region must be one `parseAwsRegion` returned.
+No FIPS or dual-stack endpoint is built.
+
+An endpoint override for an emulator is the provider's own field and policy.
+Its region still goes into the signature's scope, so the signer checks it against `AWS_SIGNING_REGION`, 1 to 64 letters, digits, hyphens or underscores, which keeps the `Credential=` scope unbroken.
+
+### Typed credentials
+
+`aws/credentials.ts` reads only what the provider typed into its fields: `resolveAwsCredentials` takes an access key ID, a secret access key and an optional session token, and returns static credentials.
+
+| Input | Result |
+| --- | --- |
+| Key ID and secret | Static credentials |
+| Key ID, secret and session token | Static credentials with the session token, signed and sent as `x-amz-security-token` |
+| Neither key ID nor secret | Refused: the keys are required |
+| A session token without a key pair | Refused |
+| Half a pair | Refused, naming the missing half |
+
+An empty string is the same as an absent value.
+The access key ID is 3 to 512 visible ASCII characters with no space, comma, slash or equals sign, the rule of the `Credential=` field it is written into, so an emulator's `test` passes.
+The secret access key is any non-empty well-formed text.
+The session token is at most 8192 visible ASCII characters, the transport's limit for a value a signer returns.
+No refusal repeats a value.
+
+No ambient source is read: no `AWS_ACCESS_KEY_ID` or other environment variable, no shared config or credentials file, no profile, SSO or credential process, and no instance metadata.
+An operator who keeps a key in the environment writes `${AWS_ACCESS_KEY_ID}` in the seed file, which the seed resolver expands, so the key is explicit per connection.
+`awsCredentialSecrets` lists the secret access key, the session token when present and the access key ID, in that order and without throwing, for the provider to pass to `secretForms` once at connect.
+
+### Request signer
+
+`aws/signer.ts` holds `createAwsSigner`, the signing policy for AWS JSON and Query API requests sent through the text transport.
+It takes a credentials getter, the scope region, the service's signing name and a clock, and reads the getter and the clock each time the transport sends a request, so a queued request is never signed with a stale date, and a later refreshing credential source can be passed in without changing the signer.
+It signs `host`, `content-type`, every `x-amz-*` header the request carries, `x-amz-date`, the session token when there is one, and the SHA-256 of the exact body.
+It returns only `authorization`, `x-amz-date` and `x-amz-security-token`.
+Building it refuses a region outside `AWS_SIGNING_REGION` and a malformed service name, quoting neither.
+It signs only the path `/`: the JSON and Query protocols post to it, and for every service but one SigV4 encodes any other canonical URI a second time, which this signer does not implement, so any other path is refused and nothing is sent.
+It signs the query exactly as it is sent, so every name and value must already be RFC 3986-encoded, as `rfc3986Query` builds it: only `A-Z a-z 0-9 - . _ ~` and upper-case `%XX`.
+A form-encoded query, such as `endpointUrl` builds from `URLSearchParams` (`~` as `%7E`, a space as `+`, a bare `*`), is refused and nothing is sent, because its canonical form is not the one AWS computes.
+It is tested directly on the nine POST vectors of the AWS SigV4 suite whose signed set is this policy, and through a real text transport against a loopback listener, where the `Authorization` received equals one recomputed from what the listener received.
+
+A provider wires it as `createNodeTransport` with `signer: createAwsSigner({ credentials: () => credentials, region, service, clock })`, its `jsonContentType`, `requestHeaderNames` for the headers its protocol needs, such as `x-amz-target`, `refusesLinkLocal` and `refusesUpgrade`.
+
+### Designed and not yet built
+
+These are designed and are built with the first provider that needs each, not ahead of it:
+
+- A refreshing credential source, which a provider awaits before each request and whose last value the signer reads through the same getter.
+- AssumeRole, over typed keys or over the server's identity, against the regional STS endpoint.
+- The server's own identity, behind `admitServerIdentity` and a provider opt-in, from exactly one source the platform selects: web identity (EKS), container credentials (ECS and EKS Pod Identity) or instance metadata over IMDSv2 only; a source that fails is an error and the chain never moves on to the next.
+- The shared `sessionToken` connection field, added by the first AWS provider with every row a new secret field needs.
+- Partitions other than commercial `aws`, each a row added when an operator needs it.
 
 ## Guards
 

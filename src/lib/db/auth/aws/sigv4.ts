@@ -8,6 +8,9 @@
  * scope and the hex SHA-256 of the canonical request; the key is HMAC("AWS4" + secret, date), then region, service
  * and `aws4_request`.
  *
+ * `sigV4Headers` builds the headers a signed request carries (authorization, x-amz-date and, for a temporary
+ * credential, x-amz-security-token), and `payloadSha256` is the payload hash of a text body.
+ *
  * Only the keys a caller passes sign: this module reads no environment variable, no file and no instance metadata,
  * and imports nothing that could. It is the only module of the layer that imports `node:crypto`.
  */
@@ -22,6 +25,12 @@ const NO_EQUALS = 'The request query holds a pair with no "=", so it cannot be s
 export interface AwsSigningKeys {
   readonly accessKeyId: string;
   readonly secretAccessKey: string;
+}
+
+/** The credentials a signed request is sent with: a key pair and, for a temporary credential, its session token. */
+export interface AwsCredentials extends AwsSigningKeys {
+  /** A temporary credential's token; signed and sent as x-amz-security-token. Absent for a long-term key pair. */
+  readonly sessionToken?: string;
 }
 
 export interface CanonicalRequest {
@@ -56,6 +65,11 @@ function canonicalValue(value: string): string {
     .replace(/[\r\n]/g, " ")
     .replace(/[ \t]+/g, " ")
     .replace(/^ | $/g, "");
+}
+
+/** The hex SHA-256 of a payload's UTF-8 bytes: the payload hash of a request whose body is that text. */
+export function payloadSha256(text: string): string {
+  return sha256Hex(text);
 }
 
 /** The Authorization header value of a canonical request, for a key pair and a scope. */
@@ -111,4 +125,48 @@ export function canonicalQueryOf(query: string): string {
     .sort(compareEncodedPairs)
     .map(([name, value]) => `${name}=${value}`)
     .join("&");
+}
+
+/** The headers sigV4Headers sets and signs itself, which the caller's signed headers must not name. */
+const OWN_SIGNED = Object.freeze(["host", "x-amz-date", "x-amz-security-token"]);
+
+/**
+ * The headers a signed request carries: authorization and x-amz-date, plus x-amz-security-token when the credentials
+ * hold a session token. The signed set is host, the caller's `signed` headers (lower-case names), x-amz-date and
+ * x-amz-security-token; the payload hash is the caller's. `signed` naming one of the three headers set here throws an
+ * Error, so no caller can sign one value and send another.
+ */
+export function sigV4Headers(
+  request: {
+    readonly method: string;
+    readonly host: string;
+    readonly canonicalUri: string;
+    readonly canonicalQuery: string;
+    readonly signed: Readonly<Record<string, string>>;
+    readonly payloadHash: string;
+  },
+  credentials: AwsCredentials,
+  scope: { readonly region: string; readonly service: string },
+  now: Date,
+): Readonly<Record<string, string>> {
+  for (const name of OWN_SIGNED) {
+    if (Object.hasOwn(request.signed, name)) {
+      throw new Error(`The signed headers name ${name}, which the signature sets itself`);
+    }
+  }
+  const amzDate = amzDateOf(now);
+  const token: Readonly<Record<string, string>> =
+    credentials.sessionToken === undefined ? {} : { "x-amz-security-token": credentials.sessionToken };
+  const authorization = signatureV4(
+    {
+      method: request.method,
+      canonicalUri: request.canonicalUri,
+      canonicalQuery: request.canonicalQuery,
+      headers: { ...request.signed, host: request.host, "x-amz-date": amzDate, ...token },
+      payloadHash: request.payloadHash,
+    },
+    credentials,
+    { region: scope.region, service: scope.service, amzDate },
+  );
+  return { authorization, "x-amz-date": amzDate, ...token };
 }
