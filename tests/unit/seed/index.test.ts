@@ -17,6 +17,7 @@ import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
 import { DEFAULT_SEED_CONFIG_PATH } from "@/lib/seed/sources/file";
 import { SQLITE_SAMPLE_SEED_ID, setSqliteSampleSeedState } from "@/lib/seed/sqlite-sample";
 import { logger } from "@/lib/logger";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/seed-connections");
@@ -82,6 +83,13 @@ describe("seed/index orchestrator", () => {
     expect(conn).toBeNull();
   });
 
+  it("sets the literal-mode marker on no operator entry, on either lookup, while SEED_LITERAL_VALUES is off", async () => {
+    const admin = await getManagedConnections(["admin"]);
+    expect(admin.length).toBeGreaterThanOrEqual(3);
+    expect(admin.map((c) => c[LITERAL_SEED_FILE])).toEqual(admin.map(() => undefined));
+    expect((await getSeedConnectionByIdUnfiltered("user-only"))?.[LITERAL_SEED_FILE]).toBeUndefined();
+  });
+
   it("returns empty array when config file missing", async () => {
     process.env.SEED_CONFIG_PATH = "/nonexistent.yaml";
     resetCache();
@@ -94,15 +102,16 @@ describe("seed/index orchestrator", () => {
     process.env.SEED_LITERAL_VALUES = "true";
     try {
       const admin = await getManagedConnections(["admin"]);
-      expect(admin.map((c) => [c.seedId, c.password, c.literal])).toEqual([
-        ["admin-only", "${ADMIN_PG_PASS}", true],
-        ["everyone", "${SHARED_PG_PASS}", true],
-        ["admin-and-user", "${BOTH_PG_PASS}", true],
+      expect(admin.map((c) => [c.seedId, c.password, c.literal, c[LITERAL_SEED_FILE]])).toEqual([
+        ["admin-only", "${ADMIN_PG_PASS}", true, true],
+        ["everyone", "${SHARED_PG_PASS}", true, true],
+        ["admin-and-user", "${BOTH_PG_PASS}", true, true],
       ]);
 
       const unfiltered = await getSeedConnectionByIdUnfiltered("user-only");
       expect(unfiltered?.password).toBe("${USER_MYSQL_PASS}");
       expect(unfiltered?.literal).toBe(true);
+      expect(unfiltered?.[LITERAL_SEED_FILE]).toBe(true);
     } finally {
       delete process.env.SEED_LITERAL_VALUES;
     }
@@ -164,6 +173,20 @@ describe("seed/index with discovered connections", () => {
     expect(admin.map((c) => c.seedId)).toEqual(["caprover-pg", SQLITE_SAMPLE_SEED_ID]);
     expect(admin.find((c) => c.seedId === "caprover-pg")?.literal).toBe(true);
     expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toEqual([]);
+  });
+
+  it("never sets the literal-mode marker on a discovered connection or a sample, even in literal mode", async () => {
+    process.env.SEED_LITERAL_VALUES = "true";
+    try {
+      const conns = await getManagedConnections(["admin"]);
+      expect(conns.find((c) => c.seedId === "everyone")?.[LITERAL_SEED_FILE]).toBe(true);
+      const discovered = conns.find((c) => c.seedId === "caprover-pg");
+      expect(discovered?.literal).toBe(true);
+      expect(discovered?.[LITERAL_SEED_FILE]).toBeUndefined();
+      expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)?.[LITERAL_SEED_FILE]).toBeUndefined();
+    } finally {
+      delete process.env.SEED_LITERAL_VALUES;
+    }
   });
 
   it("marks a discovered connection literal and leaves the file seeds and samples unmarked", async () => {

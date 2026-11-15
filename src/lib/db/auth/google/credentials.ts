@@ -11,7 +11,7 @@
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { type HttpOrigin, validateHost, validatePort } from "@/lib/db/http/endpoint";
-import type { DatabaseType } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, WithLiteralSeedFile } from "@/lib/types";
 import { type AuthEnv, admitServerIdentity, type ServerIdentityGate } from "../server-identity-gate";
 
 /** The kinds a credential text can be. */
@@ -302,18 +302,20 @@ function readServerIdentity<K extends GooglePastedKind>(
 }
 
 /**
- * A non-blank pasted text is parsed; a blank one goes through admitServerIdentity, then the ADC chain. The only way
- * to the ADC chain: its reader is module-private. createGoogleTokenSource accepts any credential, so a provider passes
- * it only what this returns and never builds a metadata credential itself.
+ * A non-blank password is parsed; an empty one goes through admitServerIdentity(rules.serverIdentity, connection, ...),
+ * then the ADC chain. The only way to the ADC chain: its reader is module-private. createGoogleTokenSource accepts any
+ * credential, so a provider passes it only what this returns and never builds a metadata credential itself.
+ * The provider passes the record it was given, never a copy built field by field, so the literal-mode marker it
+ * may carry reaches the gate.
  */
 export function resolveGoogleCredential<K extends GooglePastedKind>(
-  connection: { readonly text: string | undefined; readonly managed: boolean | undefined },
+  connection: Pick<DatabaseConnection, "password" | "managed"> & WithLiteralSeedFile,
   rules: GoogleCredentialRules<K>,
   io: GoogleCredentialIo,
 ): GoogleCredentialsOf<K> | GoogleCredentialsOf<"metadata"> {
-  const text = connection.text?.trim() ?? "";
+  const text = connection.password?.trim() ?? "";
   if (text !== "") return parseGoogleCredentialText(text, rules);
-  admitServerIdentity(rules.serverIdentity, connection.managed, io.env, rules.provider);
+  admitServerIdentity(rules.serverIdentity, connection, io.env, rules.provider);
   return readServerIdentity(io, rules);
 }
 

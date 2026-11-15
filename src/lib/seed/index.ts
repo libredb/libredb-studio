@@ -15,6 +15,7 @@ import {
   getSqliteSampleSeedState,
   SQLITE_SAMPLE_SEED_ID,
 } from "./sqlite-sample";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import type { ManagedConnection } from "./types";
 
 export type { ManagedConnection } from "./types";
@@ -31,11 +32,16 @@ export { KUBERNETES_REVIEWED_ROLE, seedRolesOf } from "./roles";
  * filterByRoles, because filterByRoles copies a fixed field list and SeedConnectionSchema strips an undeclared key,
  * so a marker set any earlier would not survive; filterByRoles builds a new object for every connection, so setting
  * it never reaches the loader's cache.
+ *
+ * The same entry also carries LITERAL_SEED_FILE (src/lib/types.ts): a seed file read in literal mode is written by a
+ * platform from data its users control, so its rows are not server-written and never sign in with the server's own
+ * cloud identity. This is the one place it is set; a discovered or governed row carries `literal` but never this
+ * marker, and a built-in sample carries neither.
  */
 function projectOperatorEntries(entries: readonly OperatorEntry[], roles: string[]): ManagedConnection[] {
   return entries.flatMap((entry) =>
     filterByRoles([entry.connection], roles).map((conn) =>
-      entry.literal ? Object.assign(conn, { literal: true as const }) : conn,
+      entry.literal ? Object.assign(conn, { literal: true as const, [LITERAL_SEED_FILE]: true as const }) : conn,
     ),
   );
 }

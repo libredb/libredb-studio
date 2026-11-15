@@ -19,7 +19,7 @@ Imports name the file, such as `@/lib/db/auth/google/credentials`: the layer has
 
 There are three ways, all explicit:
 
-1. Values in the rules object: the accepted kinds, the server-identity gate (its opt-in name and the provider's two sentences), the quota-project rule and the provider label.
+1. Values in the rules object: the accepted kinds, the server-identity gate (its opt-in name and the provider's three sentences), the quota-project rule and the provider label.
 2. Composition around the call: the provider runs its own checks before or after the shared one, such as an emulator rule that runs before the credential is resolved.
 3. Injected seams: the environment, files, clock, deadlines and the transport factory come in as parameters, so a provider wires its own effects and tests fake them.
 
@@ -33,14 +33,18 @@ A provider whose engine has its own sign-in scheme writes it in its own director
 
 | File | What it holds |
 | --- | --- |
-| `server-identity-gate.ts` | `admitServerIdentity`: the server's own identity only for a connection whose `managed` flag is exactly true and whose provider opt-in (a variable ending in `_SERVER_CREDENTIALS`) is exactly `"true"`; it reads nothing but that one variable |
+| `server-identity-gate.ts` | `isServerWritten`: the one definition of a server-written connection; `admitServerIdentity`: the server's own identity only for a server-written connection whose provider opt-in (a variable ending in `_SERVER_CREDENTIALS`) is exactly `"true"`; it reads nothing but that one variable |
 | `lanes.ts` | `authLaneOptions`: the transport options of every request to a credential endpoint, imported only inside the layer |
 | `refresh.ts` | `createRefreshingValue`: a cached expiring value with an early refresh, one shared refresh on its own deadline, and `close()` |
 
 `managed` exactly true is set only on the server side: the operator's seed file, the governance control plane or a discovery source.
 Every record a browser sends reaches a provider with `managed: false`.
-Server identity is admitted only when `managed` is exactly true and the provider's opt-in is exactly `"true"`, never on `managed` alone.
 `managed: true` does not mean the server side wrote the credential text: a literal-mode seed file is written by a platform from data its users control.
+So Studio sets `LITERAL_SEED_FILE` (`src/lib/types.ts`), a symbol key no file or request body can carry, on every row of a seed file read in literal mode (`SEED_LITERAL_VALUES`), and on no discovered, sample or governed row.
+A connection is server-written when `managed` is exactly true and the record does not carry that marker; `isServerWritten` is the one definition, and `admitServerIdentity` is its reader.
+Server identity is admitted only on a server-written connection whose provider's opt-in is exactly `"true"`, never on `managed` alone.
+The gate refuses with the provider's `unmanaged` sentence when `managed` is not exactly true, with its `literalSeedFile` sentence when the record carries the marker, and then with its `withoutOptIn` sentence; it reads the opt-in only after the first two checks pass.
+The provider cache key frames the marker, so a provider opened before literal mode was switched on is never served to a row that carries it.
 
 An auth lane has one socket, checks TLS against its origin's host when the origin is https, fails a 101 answer at once, and refuses link-local addresses unless it is a metadata endpoint, which lives at one.
 Only the layer builds an auth lane, so no provider can turn the link-local refusal off for an origin it chose.
@@ -103,6 +107,7 @@ A non-blank pasted credential always wins.
 A blank one goes through the gate, then the Application Default Credentials chain: the file `GOOGLE_APPLICATION_CREDENTIALS` names (an unreadable one is an error), gcloud's well-known file under `HOME` or, on Windows, `APPDATA` (absent, `ENOENT` or `ENOTDIR`, moves on; any other read failure is an error), then the metadata server at `metadata.google.internal` or at `GCE_METADATA_HOST`, validated as a host with an optional port and no scheme.
 The chain reads those four variables and nothing else, and its reader is not exported: `resolveGoogleCredential`, which runs the gate first, is the only way to it.
 A blank value of any of the four counts as unset.
+A provider passes `resolveGoogleCredential` the connection record it was given, never a copy built field by field, so the `LITERAL_SEED_FILE` marker reaches the gate and a keyless row of a literal-mode seed file is refused before any request.
 `createGoogleTokenSource` takes whatever credential it is given, so a provider passes it only what `resolveGoogleCredential` returned and never builds a `metadata` credential itself.
 The ADC file accepts the JSON kinds the provider lists; an access token is never a file kind.
 

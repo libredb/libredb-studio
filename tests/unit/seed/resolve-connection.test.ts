@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, setSystemTime, spyOn } fro
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "path";
-import type { DatabaseConnection } from "@/lib/types";
+import { type DatabaseConnection, LITERAL_SEED_FILE } from "@/lib/types";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import {
@@ -398,6 +398,21 @@ describe("resolve-connection with discovered connections", () => {
     // The marker is on what resolveConnection received from the list, after the role filter.
     expect((result as ManagedConnection).literal).toBe(true);
     expect(readVaultSecret).not.toHaveBeenCalled();
+  });
+
+  it("in literal mode, hands over the seed file's row carrying the literal-mode marker and the discovered row without it", async () => {
+    process.env.SEED_LITERAL_VALUES = "true";
+    try {
+      const fromFile = (await resolveConnection({ connectionId: "seed:caprover-x" }, ADMIN)) as ManagedConnection;
+      expect(fromFile.literal).toBe(true);
+      expect(fromFile[LITERAL_SEED_FILE]).toBe(true);
+      const discovered = (await resolveConnection({ connectionId: "seed:caprover-pg" }, ADMIN)) as ManagedConnection;
+      expect(discovered.literal).toBe(true);
+      expect(discovered[LITERAL_SEED_FILE]).toBeUndefined();
+      expect(readVaultSecret).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.SEED_LITERAL_VALUES;
+    }
   });
 
   it("still resolves a seed-file connection whose id starts with caprover- through Vault", async () => {

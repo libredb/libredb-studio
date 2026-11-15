@@ -9,7 +9,7 @@ import {
   SSH_TUNNEL_FIELDS,
   SSL_FIELDS,
 } from "@/lib/storage/connection-secrets";
-import type { DatabaseConnection } from "@/lib/types";
+import { type DatabaseConnection, LITERAL_SEED_FILE, type WithLiteralSeedFile } from "@/lib/types";
 
 /**
  * The read-only mode in the provider cache key, and in nothing else (#1089).
@@ -311,6 +311,37 @@ describe("providerCacheKey frames the operator's managed grant", () => {
     expect(await providerCacheKey(seeded, undefined, "alice-subject")).not.toBe(
       await providerCacheKey(demoted, undefined, "alice-subject"),
     );
+  });
+});
+
+/**
+ * The literal-mode marker. A seed-file row read in literal mode (SEED_LITERAL_VALUES) carries LITERAL_SEED_FILE, and
+ * such a row is not server-written, so it never signs in with the server's own identity. The operator loader reads
+ * the mode on every call, so the same record can arrive with and without the marker; a provider opened without it must
+ * never be handed to the record carrying it. Framed last and only when set, so every other key stays byte for byte.
+ */
+describe("providerCacheKey frames the literal-mode seed-file marker", () => {
+  const seeded: DatabaseConnection & WithLiteralSeedFile = {
+    id: "seed:bq",
+    name: "Demo BigQuery",
+    type: "bigquery",
+    database: "demo-project",
+    password: "",
+    managed: true,
+    createdAt: new Date(0),
+  };
+  const today =
+    "7:seed:bq64:739c7337b3e9ca314d6f2972d0962962bc250329bdbce39c19cfe440640d597b64:e418ef0ce22bc6e06582a93c1f496129e56c82f0f40e5891a880559a71b3ff6e10:read-write";
+
+  test("the same record with and without the marker answers different keys", async () => {
+    expect(await providerCacheKey({ ...seeded, [LITERAL_SEED_FILE]: true })).not.toBe(await providerCacheKey(seeded));
+    expect(await providerCacheKey({ ...seeded, [LITERAL_SEED_FILE]: true }, undefined, "alice-subject")).not.toBe(
+      await providerCacheKey(seeded, undefined, "alice-subject"),
+    );
+  });
+
+  test("a record without the marker keeps today's key, byte for byte", async () => {
+    expect(await providerCacheKey(seeded)).toBe(today);
   });
 });
 

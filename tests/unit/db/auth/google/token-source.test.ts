@@ -183,7 +183,12 @@ describe("google token source grants", () => {
         provider: "firestore",
         accepts: ["service_account"],
         quotaProjectRefusal: () => null,
-        serverIdentity: { optIn: "SAMPLE_SERVER_CREDENTIALS", unmanaged: "unmanaged", withoutOptIn: "without opt-in" },
+        serverIdentity: {
+          optIn: "SAMPLE_SERVER_CREDENTIALS",
+          unmanaged: "unmanaged",
+          withoutOptIn: "without opt-in",
+          literalSeedFile: "literal seed file",
+        },
       },
     );
     const { seams, source } = sourceOf(hostile, () => tokenAnswer("sa-token"));

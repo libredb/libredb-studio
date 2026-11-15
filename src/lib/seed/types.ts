@@ -7,7 +7,7 @@ import {
   WRITE_REACH,
 } from "@/lib/db/compatibility";
 import type { WriteReach } from "@/lib/db/write-reach";
-import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, WithLiteralSeedFile } from "@/lib/types";
 import { publishedDefaultPairWarning, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import {
   CONNECTION_FIELDS,
@@ -659,7 +659,7 @@ export type SeedConnection = z.infer<typeof SeedConnectionSchema>;
 export type SeedDefaults = z.infer<typeof SeedDefaultsSchema>;
 export type SeedConfig = z.infer<typeof SeedConfigSchema>;
 
-export interface ManagedConnection extends DatabaseConnection {
+export interface ManagedConnection extends DatabaseConnection, WithLiteralSeedFile {
   managed: boolean;
   roles: string[];
   seedId: string;
@@ -670,7 +670,8 @@ export interface ManagedConnection extends DatabaseConnection {
    * operator entry, by src/lib/seed/index.ts when the operator loader's fill read it as literal (every
    * file-like entry while SEED_LITERAL_VALUES is on); never read from a file;
    * stripped by GET /api/connections/managed. A connection carrying it is used with its values as
-   * written: no `${NAME}` or `${vault:...}` in it is resolved.
+   * written: no `${NAME}` or `${vault:...}` in it is resolved. An operator entry read in literal mode also carries
+   * LITERAL_SEED_FILE, the second marker, which keeps the server's own cloud identity off it; a discovered row does not.
    */
   literal?: true;
   /**

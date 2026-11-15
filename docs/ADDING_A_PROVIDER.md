@@ -150,7 +150,7 @@ The older HTTP providers keep their own transports until D37 in [`BACKLOG.md`](B
 
 **Sign in to a cloud through `src/lib/db/auth`.**
 A provider that signs in to a cloud service with a credential (Google's token endpoint or metadata server) uses the shared layer described in [`DB_AUTH.md`](DB_AUTH.md) and never writes a second copy of its mechanism.
-It declares a rules object in its own `credential-policy.ts`: the kinds it accepts, its quota-project rule, and its server-identity gate, an opt-in variable ending in `_SERVER_CREDENTIALS` with its two refusal sentences.
+It declares a rules object in its own `credential-policy.ts`: the kinds it accepts, its quota-project rule, and its server-identity gate, an opt-in variable ending in `_SERVER_CREDENTIALS` with its three refusal sentences (`unmanaged`, `literalSeedFile`, `withoutOptIn`).
 It resolves the connection's credential with `resolveGoogleCredential`, builds a token source with `createGoogleTokenSource` over its own transport factory, and feeds `googleCredentialSecrets` to `secretForms` for its error mapping.
 A new server-identity opt-in also needs its row in `src/lib/governance/preflight.ts`, which `tests/unit/lib/governance/preflight.test.ts` holds.
 

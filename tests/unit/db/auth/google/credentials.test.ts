@@ -5,6 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import {
   acceptedKindSentences,
   GOOGLE_ADC_ENV_NAMES,
@@ -31,6 +32,7 @@ const rules: GoogleCredentialRules<GooglePastedKind> = {
     optIn: OPT_IN,
     unmanaged: "Paste a credential: the server's own identity is for managed connections",
     withoutOptIn: `Set ${OPT_IN}=true to let this connection use the server's own identity`,
+    literalSeedFile: "Paste a credential: the server's own identity is not used for a seed file read in literal mode",
   },
 };
 /** The sentences of the three kinds, which the parser raises for these rules. */
@@ -47,7 +49,7 @@ function fakeSeams(options: FakeIoOptions = {}): FakeIo {
 
 /** The server's own identity, the one way there is to it: an empty text on a managed connection. */
 const readServerIdentity = (io: FakeIo, given: GoogleCredentialRules<GooglePastedKind>) =>
-  resolveGoogleCredential({ text: "", managed: true }, given, io);
+  resolveGoogleCredential({ password: "", managed: true }, given, io);
 
 const PEM = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----\n";
 const SECRETS = ["MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", "kid-123", "user-secret-value", "1//refresh-token-value"];
@@ -403,7 +405,7 @@ describe("the accept list", () => {
       env: { GOOGLE_APPLICATION_CREDENTIALS: "/srv/key.json" },
       files: { "/srv/key.json": serviceAccountJson },
     });
-    expect(refusal(() => resolveGoogleCredential({ text: "", managed: true }, narrow, io)).message).toBe(
+    expect(refusal(() => resolveGoogleCredential({ password: "", managed: true }, narrow, io)).message).toBe(
       sentences.unsupportedType("service_account"),
     );
   });
@@ -420,7 +422,7 @@ describe("resolveGoogleCredential", () => {
   test("a non-blank pasted text wins, with no opt-in and on a browser-sent connection, and reads nothing", () => {
     for (const managed of [false, undefined, true]) {
       const io = fakeIo();
-      expect(resolveGoogleCredential({ text: ` ${TOKEN} `, managed }, rules, io)).toEqual({
+      expect(resolveGoogleCredential({ password: ` ${TOKEN} `, managed }, rules, io)).toEqual({
         type: "access_token",
         token: TOKEN,
       });
@@ -433,7 +435,7 @@ describe("resolveGoogleCredential", () => {
     for (const text of ["", "   ", undefined]) {
       for (const managed of [false, undefined]) {
         const io = fakeSeams();
-        const error = refusal(() => resolveGoogleCredential({ text, managed }, rules, io));
+        const error = refusal(() => resolveGoogleCredential({ password: text, managed }, rules, io));
         expect(error.message).toBe(rules.serverIdentity.unmanaged);
         expect(error.provider).toBe(rules.provider);
         expect(io.fileReads).toEqual([]);
@@ -444,10 +446,30 @@ describe("resolveGoogleCredential", () => {
   test("a managed connection without the opt-in exactly true is refused, and no file is read", () => {
     for (const value of [undefined, "TRUE", "1", " true"]) {
       const io = fakeIo({ env: value === undefined ? {} : { [OPT_IN]: value } });
-      const error = refusal(() => resolveGoogleCredential({ text: "", managed: true }, rules, io));
+      const error = refusal(() => resolveGoogleCredential({ password: "", managed: true }, rules, io));
       expect(error.message).toBe(rules.serverIdentity.withoutOptIn);
       expect(io.fileReads).toEqual([]);
     }
+  });
+
+  test("a blank text on a seed-file row read in literal mode is refused with the rules' sentence, and nothing is read", () => {
+    const io = fakeIo({ env: { [OPT_IN]: "true" } });
+    const error = refusal(() =>
+      resolveGoogleCredential({ password: "", managed: true, [LITERAL_SEED_FILE]: true }, rules, io),
+    );
+    expect(error.message).toBe(rules.serverIdentity.literalSeedFile);
+    expect(io.envReads).toEqual([]);
+    expect(io.fileReads).toEqual([]);
+  });
+
+  test("a pasted credential on a seed-file row read in literal mode is parsed as on any other row", () => {
+    const io = fakeIo();
+    const marked = { managed: true, [LITERAL_SEED_FILE]: true } as const;
+    expect(resolveGoogleCredential({ password: ` ${TOKEN} `, ...marked }, rules, io)).toEqual({
+      type: "access_token",
+      token: TOKEN,
+    });
+    expect(io.envReads).toEqual([]);
   });
 
   test("with the gate passed, the ADC chain reads no variable but the opt-in and the listed names", () => {
@@ -456,7 +478,7 @@ describe("resolveGoogleCredential", () => {
     const io = fakeSeams({
       env: { PATH: "/usr/bin", JWT_SECRET: "hostile", GOOGLE_CLOUD_PROJECT: "x", CLOUDSDK_CONFIG: "/x" },
     });
-    expect(resolveGoogleCredential({ text: "", managed: true }, rules, io)).toEqual({
+    expect(resolveGoogleCredential({ password: "", managed: true }, rules, io)).toEqual({
       type: "metadata",
       host: "metadata.google.internal",
     });

@@ -26,6 +26,7 @@ import { ERROR_SENTENCES, mapGoogleError } from "@/lib/db/providers/document/fir
 import { FIRESTORE_PROVIDER_SENTENCES, FirestoreProvider } from "@/lib/db/providers/document/firestore/index";
 import { FIRESTORE_KEY_SCAN_SENTENCES } from "@/lib/db/providers/document/firestore/key-scan";
 import { resolveSeams } from "@/lib/db/providers/document/firestore/seams";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import { jsonAnswer, scriptedTransport, UNRECORDED_ANSWER } from "../../../helpers/firestore-replay";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -79,10 +80,13 @@ const count = (value: number) => value.toLocaleString("en-US");
 const bytes = (value: number) => (value >= 1024 * 1024 ? `${value / (1024 * 1024)} MiB` : `${value / 1024} KiB`);
 
 describe("the sentences the doc quotes are the code's", () => {
-  test("the two empty-credential refusals", () => {
+  test("the three empty-credential refusals", () => {
     const seams = resolveSeams({ env: {} });
     expect(quoted(refusal(() => resolveFirestoreAuth({ password: "", managed: false }, seams)))).toBe(true);
     expect(quoted(refusal(() => resolveFirestoreAuth({ password: "", managed: true }, seams)))).toBe(true);
+    expect(
+      quoted(refusal(() => resolveFirestoreAuth({ password: "", managed: true, [LITERAL_SEED_FILE]: true }, seams))),
+    ).toBe(true);
   });
 
   test("the credential refusal on an emulator server, for the documented host", () => {

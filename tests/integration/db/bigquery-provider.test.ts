@@ -6,12 +6,13 @@
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createVerify, generateKeyPairSync } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuthenticationError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import type { NodeRequest, NodeResponse, NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { BIGQUERY_DRY_RUN_MARKER } from "@/lib/explain/bigquery-dryrun";
-import type { DatabaseConnection } from "@/lib/types";
+import { type DatabaseConnection, LITERAL_SEED_FILE } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 const realNode = { ...(await import("@/lib/db/http/node-transport")) };
@@ -194,6 +195,7 @@ mock.module("@/lib/db/http/node-transport", () => ({
   createNodeTransport: (options: NodeTransportOptions) => google.create(options),
 }));
 const { BigQueryProvider } = await import("@/lib/db/providers/sql/bigquery");
+const { BIGQUERY_CREDENTIAL_SENTENCES } = await import("@/lib/db/providers/sql/bigquery/credential-policy");
 
 // ============================================================================
 // Harness
@@ -332,6 +334,43 @@ describe("sign-in through the shared Google auth", () => {
     expect(google.built.some((options) => options.origin.host !== "bigquery.googleapis.com")).toBe(false);
     expect(google.tokensIssued).toBe(0);
     expect(queriesWith(/^SELECT 1$/)[0].authorization).toBe("Bearer ya29.a-pasted-access-token-value");
+  });
+});
+
+describe("the server's own identity on a seed-file row read in literal mode", () => {
+  const ENV = ["BIGQUERY_SERVER_CREDENTIALS", "GOOGLE_APPLICATION_CREDENTIALS"] as const;
+  const saved = Object.fromEntries(ENV.map((name) => [name, process.env[name]]));
+  let scratch: string;
+
+  beforeEach(() => {
+    scratch = mkdtempSync(join(tmpdir(), "libredb-bq-literal-"));
+    const keyFile = join(scratch, "server-key.json");
+    writeFileSync(keyFile, KEY_JSON);
+    process.env.BIGQUERY_SERVER_CREDENTIALS = "true";
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = keyFile;
+  });
+  afterEach(() => {
+    for (const name of ENV) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  test("a managed row carrying the marker with an empty password is refused at connect, with no request", async () => {
+    const marked = { ...connection({ password: "", managed: true }), [LITERAL_SEED_FILE]: true as const };
+    const failure = await new BigQueryProvider(marked).connect().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BIGQUERY_CREDENTIAL_SENTENCES.literalSeedFile);
+    expect(google.built).toHaveLength(0);
+    expect(google.requests).toHaveLength(0);
+    expect(google.tokensIssued).toBe(0);
+  });
+
+  test("the same row without the marker signs in as the server, as today", async () => {
+    const provider = await open({ password: "", managed: true });
+    expect(provider.isConnected()).toBe(true);
+    expect(google.tokensIssued).toBe(1);
   });
 });
 

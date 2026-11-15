@@ -25,6 +25,7 @@ import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-conne
 import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
 import { SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
 import type { ManagedConnection } from "@/lib/seed/types";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import { resetVaultCache } from "@/lib/seed/vault-client";
 
 /** A seed file as a platform writes it: JSON, managed, a `${NAME}` user, a `${vault:...}` password and an admin-only `${JWT_SECRET}` user. */
@@ -139,9 +140,9 @@ describe("SEED_LITERAL_VALUES", () => {
 
       const forUser = await getManagedConnections(["user"]);
 
-      expect(forUser.map((conn) => [conn.seedId, conn.literal])).toEqual([
-        ["orders", true],
-        ["cache", true],
+      expect(forUser.map((conn) => [conn.seedId, conn.literal, conn[LITERAL_SEED_FILE]])).toEqual([
+        ["orders", true, true],
+        ["cache", true, true],
       ]);
     });
 
@@ -165,8 +166,10 @@ describe("SEED_LITERAL_VALUES", () => {
         expect(bySeedId.get("orders")?.literal).toBe(true);
         expect(bySeedId.has(SQLITE_SAMPLE_SEED_ID)).toBe(true);
         expect(bySeedId.get(SQLITE_SAMPLE_SEED_ID)?.literal).toBeUndefined();
+        expect(bySeedId.get(SQLITE_SAMPLE_SEED_ID)?.[LITERAL_SEED_FILE]).toBeUndefined();
         expect(bySeedId.has(SAMPLE_SEED_ID)).toBe(true);
         expect(bySeedId.get(SAMPLE_SEED_ID)?.literal).toBeUndefined();
+        expect(bySeedId.get(SAMPLE_SEED_ID)?.[LITERAL_SEED_FILE]).toBeUndefined();
       } finally {
         delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
         delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
@@ -182,6 +185,8 @@ describe("SEED_LITERAL_VALUES", () => {
       expect(opened.password).toBe(VAULT_REFERENCE);
       // The marker is on what resolveConnection received from the list, after the role filter.
       expect((opened as ManagedConnection).literal).toBe(true);
+      // So is the literal-mode marker, which keeps the server's own identity off the row.
+      expect((opened as ManagedConnection)[LITERAL_SEED_FILE]).toBe(true);
       expect(vaultCalls).toEqual([]);
     });
 
@@ -258,6 +263,7 @@ describe("SEED_LITERAL_VALUES", () => {
     expect(bySeedId.get("orders")?.user).toBe("user-from-the-environment");
     expect(bySeedId.get("cache")?.password).toBe(VAULT_REFERENCE);
     expect([...bySeedId.values()].map((conn) => conn.literal)).toEqual([undefined, undefined, undefined]);
+    expect([...bySeedId.values()].map((conn) => conn[LITERAL_SEED_FILE])).toEqual([undefined, undefined, undefined]);
     expect(vaultCalls).toEqual([]);
 
     const opened = await resolveConnection({ connectionId: "seed:cache" }, USER);

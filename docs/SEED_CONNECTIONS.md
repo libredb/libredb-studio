@@ -654,6 +654,7 @@ Resolving a reference in such a file would hand Studio's own environment to whoe
 A platform user who names a database user `${JWT_SECRET}` would have Studio send its session signing secret, as that user name, to a database the platform user runs, and read it back from that database's log.
 With the secret, that user could sign a Studio admin session.
 Literal mode removes the resolution itself, so no value a platform user controls can make Studio read its environment or its Vault, including a value the platform failed to filter out.
+In such a file a connection with an empty password never signs in with the server's own cloud identity: BigQuery and Firestore refuse it even when `BIGQUERY_SERVER_CREDENTIALS` or `FIRESTORE_SERVER_CREDENTIALS` is `true`, because the empty field is a platform user's choice, not the operator's grant ([providers/bigquery.md](providers/bigquery.md), [providers/firestore.md](providers/firestore.md)).
 
 Turn the mode on only for a file in which every value is meant literally: a file written by hand that relies on `${ENV_VAR}` or `${vault:...}` references stops resolving them.
 Keep such a file `managed: true`, the default, so its passwords stay on the server, and mount it read-only from a directory other users on the host cannot enter.
@@ -1716,7 +1717,7 @@ This is the standard application logger (`src/lib/logger.ts`), not a persisted a
 | `SEED_CONFIG_PATH` | `/app/config/seed-connections.yaml` | Path to config file |
 | `SEED_CACHE_TTL_MS` | `60000` | Cache TTL in milliseconds |
 | `ALLOW_CUSTOM_CONNECTIONS` | `true` | `false`, `0`, `off` or `no` refuses every connection that is not a seed, and so does any unrecognised value; see [Custom Connections](#custom-connections) |
-| `SEED_LITERAL_VALUES` | unset | `true`, `1`, `on` or `yes` (trimmed, any case) reads every seed value as written: no `${ENV_VAR}` or `${vault:...}` reference is resolved and the plaintext-password warning is not logged. `false`, `0`, `off`, `no` or empty keep references resolved, and so does any other value, with one warning ([Literal values written by a platform](#literal-values-written-by-a-platform)) |
+| `SEED_LITERAL_VALUES` | unset | `true`, `1`, `on` or `yes` (trimmed, any case) reads every seed value as written: no `${ENV_VAR}` or `${vault:...}` reference is resolved and the plaintext-password warning is not logged, and a keyless BigQuery or Firestore row never uses the server's own Google identity. `false`, `0`, `off`, `no` or empty keep references resolved, and so does any other value, with one warning ([Literal values written by a platform](#literal-values-written-by-a-platform)) |
 | `SEED_DISCOVERY_PATH` | unset (off) | Path of the discovery export file inside the Studio container; see [Platform discovery (CapRover)](#platform-discovery-caprover) |
 | `SEED_DISCOVERY_MAX_AGE_MS` | `60000` | Age of the export's `generatedAt` after which discovered connections are withdrawn; keep it well above the exporter's `DISCOVERY_INTERVAL_MS` (10000 by default) |
 | `SEED_KUBERNETES_DISCOVERY_PATH` | unset (off) | Path of the Kubernetes discovery export file, the `export.json` of the mounted export Secret; see [Platform discovery (Kubernetes)](#platform-discovery-kubernetes) |
