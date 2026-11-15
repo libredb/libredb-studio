@@ -58,7 +58,7 @@ function canonicalValue(value: string): string {
     .replace(/^ | $/g, "");
 }
 
-/** The Authorization header value; exported for the suite vectors. */
+/** The Authorization header value of a canonical request, for a key pair and a scope. */
 export function signatureV4(request: CanonicalRequest, keys: AwsSigningKeys, scope: SigningScope): string {
   // Code-unit order on purpose: SigV4's canonical header order is byte order, which a locale comparison breaks.
   const names = Object.keys(request.headers).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));

@@ -27,7 +27,7 @@ Subclassing, overriding, monkey-patching, a branch on a type id inside the layer
 A need two providers share becomes a new kind, source or option in the shared module, used only by a provider whose rules list it.
 A new optional field is allowed only when its absence means the narrower behaviour, and its docblock says so.
 
-A provider whose engine has its own sign-in scheme writes it in its own directory, but never a second copy of a shared mechanism: the Google grants and token endpoint, or the metadata path.
+A provider whose engine has its own sign-in scheme writes it in its own directory, but never a second copy of a shared mechanism: the Google grants and token endpoint, the metadata path, or the SigV4 core.
 
 ## Root pieces
 

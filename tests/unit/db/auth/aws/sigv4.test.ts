@@ -126,6 +126,12 @@ describe("helpers", () => {
     expect(amzDateOf(new Date("2015-08-30T12:36:00.123Z"))).toBe("20150830T123600Z");
   });
 
+  test("compareEncodedPairs orders by code unit, name first, and an equal pair is 0", () => {
+    expect(compareEncodedPairs(["B", "1"], ["a", "0"])).toBe(-1);
+    expect(compareEncodedPairs(["a", "1"], ["a", "0"])).toBe(1);
+    expect(compareEncodedPairs(["a", "1"], ["a", "1"])).toBe(0);
+  });
+
   test("canonicalQueryOf sorts pairs by encoded name then value and keeps the empty query", () => {
     expect(canonicalQueryOf("")).toBe("");
     expect(canonicalQueryOf("prefix=&max-keys=1&list-type=2&a=2&a=1")).toBe("a=1&a=2&list-type=2&max-keys=1&prefix=");

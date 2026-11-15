@@ -1,6 +1,6 @@
 # S3 provider fixtures
 
-Every file here is test data for `tests/unit/db/s3/`, except `captures/`, which the replay in `tests/integration/db/s3-provider.test.ts` reads, and states where it came from.
+Every file here is test data for `tests/unit/db/s3/`, except `sigv4-suite.json` (below) and `captures/`, which the replay in `tests/integration/db/s3-provider.test.ts` reads, and states where it came from.
 
 ## sigv4-suite.json
 
@@ -8,6 +8,7 @@ The 24 vectors of the AWS Signature Version 4 test suite as vendored by smithy-t
 Copyright Amazon.com, Inc. or its affiliates, licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 The file's `header` object records the repository, path, commit, licence and the conversion; the conversion only reshapes the exported array into JSON and changes no value.
 The key pair inside it is AWS's published documentation example, not a credential.
+The shared SigV4 test `tests/unit/db/auth/aws/sigv4.test.ts` reads it, not `tests/unit/db/s3/`; it stays here because the Secret Scan's pinned entry in `.gitleaksignore` names this path.
 
 ## xml/garage-list-objects-ctrl-0x01.xml
 

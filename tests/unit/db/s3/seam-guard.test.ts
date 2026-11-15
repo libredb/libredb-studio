@@ -1,7 +1,7 @@
 /**
  * The seams of the S3 provider directory: no file imports another provider's
  * directory but the read-only budget's shared sentences, which every agent reader words its budgets with, an AWS SDK package, `minio`, `fast-xml-parser` or any XML package; no file imports
- * `node:crypto`, because the SigV4 core is the shared one in src/lib/db/auth/aws/sigv4.ts; `createNodeByteTransport` is named only by index.ts, as the default of `deps.createTransport`; no file
+ * `node:crypto` or `crypto`, by import or require(), because the SigV4 core is the shared one in src/lib/db/auth/aws/sigv4.ts; `createNodeByteTransport` is named only by index.ts, as the default of `deps.createTransport`; no file
  * names `plaintextSecretRefusal`, whose sentence says a password would cross the network, which is false under SigV4;
  * and no file defines a byte-size formatter, because the shared `formatBytes` exists.
  * Proven both ways: the real sources pass, and each planted line fails by name.
@@ -22,7 +22,8 @@ const PROVIDERS_DIR = posixPath(join(ROOT, "src/lib/db/providers"));
 const READ_ONLY_BUDGET = posixPath(join(ROOT, "src/lib/db/providers/sql/read-only-budget"));
 const S3_DIR_POSIX = posixPath(S3_DIR);
 
-const SPECIFIER = /\bfrom\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\bimport\s+["']([^"']+)["']/g;
+const SPECIFIER =
+  /\bfrom\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\bimport\s+["']([^"']+)["']|\brequire\s*\(\s*["']([^"']+)["']\s*\)/g;
 const LIBRARY = /^(?:@aws-sdk\/|aws-sdk$|aws4|minio$|fast-xml-parser$)/;
 const BYTE_FORMATTER = /\b(?:function\s+|const\s+|let\s+)(?:humanSize|formatBytes|formatSize)\b/;
 
@@ -39,7 +40,7 @@ function sourceFiles(dir: string): string[] {
 }
 
 function specifiers(source: string): string[] {
-  return [...source.matchAll(SPECIFIER)].map((match) => match[1] ?? match[2] ?? match[3]);
+  return [...source.matchAll(SPECIFIER)].map((match) => match[1] ?? match[2] ?? match[3] ?? match[4]);
 }
 
 /** Whether a specifier reaches a provider directory other than this one. */
@@ -61,8 +62,8 @@ function findings(file: string, source: string): string[] {
     const bare = !specifier.startsWith(".") && !specifier.startsWith("@/") && !specifier.startsWith("node:");
     if (bare && (LIBRARY.test(specifier) || /xml/i.test(specifier)))
       found.push(`${file} imports ${specifier}, an S3 or XML library`);
-    if (specifier === "node:crypto")
-      found.push(`${file} imports node:crypto; the SigV4 core is src/lib/db/auth/aws/sigv4.ts`);
+    if (specifier === "node:crypto" || specifier === "crypto")
+      found.push(`${file} imports ${specifier}; the SigV4 core is src/lib/db/auth/aws/sigv4.ts`);
   }
   if (file !== "index.ts" && /\bcreateNodeByteTransport\b/.test(source))
     found.push(
@@ -122,6 +123,17 @@ describe("the S3 provider directory's seams", () => {
       "sigv4.ts",
       "sigv4.ts imports node:crypto; the SigV4 core is src/lib/db/auth/aws/sigv4.ts",
     ],
+    [
+      'import { createHmac } from "crypto";\n',
+      "sigv4.ts",
+      "sigv4.ts imports crypto; the SigV4 core is src/lib/db/auth/aws/sigv4.ts",
+    ],
+    [
+      'const { createHash } = require("node:crypto");\n',
+      "sigv4.ts",
+      "sigv4.ts imports node:crypto; the SigV4 core is src/lib/db/auth/aws/sigv4.ts",
+    ],
+    ['const { Client } = require("minio");\n', "client.ts", "client.ts imports minio, an S3 or XML library"],
     [
       'import { createNodeByteTransport } from "@/lib/db/http/node-transport";\n',
       "client.ts",
