@@ -402,6 +402,7 @@ describe("the real tree holds every rule", () => {
       `${LAYER}/google/credentials.ts`,
       `${LAYER}/google/token-source.ts`,
       `${LAYER}/lanes.ts`,
+      `${LAYER}/refresh.ts`,
       `${LAYER}/server-identity-gate.ts`,
     ]);
     expect(MARKER_EXCEPTIONS.length).toBeGreaterThan(0);

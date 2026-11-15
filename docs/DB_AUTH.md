@@ -35,6 +35,7 @@ A provider whose engine has its own sign-in scheme writes it in its own director
 | --- | --- |
 | `server-identity-gate.ts` | `admitServerIdentity`: the server's own identity only for a connection whose `managed` flag is exactly true and whose provider opt-in (a variable ending in `_SERVER_CREDENTIALS`) is exactly `"true"`; it reads nothing but that one variable |
 | `lanes.ts` | `authLaneOptions`: the transport options of every request to a credential endpoint, imported only inside the layer |
+| `refresh.ts` | `createRefreshingValue`: a cached expiring value with an early refresh, one shared refresh on its own deadline, and `close()` |
 
 `managed` exactly true is set only on the server side: the operator's seed file, the governance control plane or a discovery source.
 Every record a browser sends reaches a provider with `managed: false`.
@@ -44,6 +45,21 @@ Server identity is admitted only when `managed` is exactly true and the provider
 An auth lane has one socket, checks TLS against its origin's host when the origin is https, fails a 101 answer at once, and refuses link-local addresses unless it is a metadata endpoint, which lives at one.
 Only the layer builds an auth lane, so no provider can turn the link-local refusal off for an origin it chose.
 Every auth request goes through the transport factory a provider passes, which is `createNodeTransport` in production, so the egress guard, the refusal of redirects and proxies, and the byte caps apply to it.
+
+### Shared refresh
+
+`createRefreshingValue` holds one expiring value for one connection, such as an access token or a temporary database password.
+It is given the refresh function, the early-refresh margin `earlyMs`, the clock, the deadline factory and the sentence it raises once closed; it keeps no module-level state.
+
+- A cached value is served while the clock reads earlier than `expiresAt - earlyMs`; from that instant the next `get()` refreshes.
+- Concurrent callers share one refresh, which runs on its own 30-second deadline combined with `close()`, so no caller's abort fails the others.
+- A caller's own abort rejects only that caller: as a timeout when its signal's reason is a `TimeoutError`, otherwise as cancelled.
+- A failed refresh caches nothing, so the next `get()` refreshes again.
+- A refresh is given a `RefreshRun`: its `signal`, which every request of the refresh takes, and `throwIfClosed()` for a step that takes no signal, such as signing.
+- `throwIfClosed()` reads `close()` alone, so a deadline that fires during such a step surfaces as the timeout of the next request, never as closed.
+- `close()` aborts a refresh in flight, drops the value, and makes every later `get()` reject as closed with the given sentence.
+
+There is no synchronous read of the value: every consumer awaits `get()`.
 
 ## Transport facts the signer relies on
 
@@ -99,7 +115,7 @@ The ADC file accepts the JSON kinds the provider lists; an access token is never
 | `access_token` | None: the pasted token is returned as is, and `close()` does nothing |
 
 Each refreshing kind has one strategy in a typed table, so a kind without a strategy does not compile.
-A token is cached and refreshed 60 seconds before it expires; concurrent callers share one refresh, which runs on its own 30-second deadline, so no caller's abort fails the others; a failed refresh caches nothing.
+A token is held by the shared refresh: cached and refreshed 60 seconds before it expires; concurrent callers share one refresh, which runs on its own 30-second deadline, so no caller's abort fails the others; a failed refresh caches nothing.
 An answer without a usable `expires_in` lives Google's documented one hour.
 A refusal reports `error_description`, then `error`, then `HTTP <status>`; a reason quoted from the server is withheld whole when it holds any form of the credential's secrets, and is then cut to 300 characters.
 `close()` aborts a refresh in flight, drops the token, closes every lane, and makes every later call fail as closed.
