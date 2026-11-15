@@ -148,8 +148,7 @@ The `password` field holds one of three things:
 
 The fourth form is no credential at all: the server's own identity, for an operator-seeded connection only (section 4.4), or an emulator server (section 4.5).
 Every other `type` (`external_account`, `impersonated_service_account`, `external_account_authorized_user` and any unknown value) is refused with a sentence.
-Every URL a credential file carries (`token_uri`, `auth_uri`, `universe_domain`, `credential_source` and any other) is ignored: the token URL is the constant above.
-The password input strips line feeds, which a key file survives: its line breaks are JSON whitespace and its private key's breaks are `\n` escapes.
+How a credential is parsed, which of its fields are dropped and which endpoints it reaches is the shared Google auth's, in [DB_AUTH.md](../DB_AUTH.md#google).
 
 An empty field on a server without `FIRESTORE_EMULATOR_HOST` is refused, for a connection sent by a browser with:
 
@@ -159,7 +158,7 @@ and for an operator seed on a server without the opt-in with:
 
 > Set FIRESTORE_SERVER_CREDENTIALS=true on the server to let this seeded connection use the server's own Google identity
 
-The token source keeps one token per connection, refreshes it 60 seconds before it expires, shares one refresh among concurrent requests, caches nothing on failure, and never logs or reports a token, an assertion, a key or a key id.
+How tokens are cached, refreshed and refused is the shared token source's, in [DB_AUTH.md](../DB_AUTH.md#tokens).
 
 ### 4.3 IAM and Security Rules
 
@@ -170,7 +169,7 @@ A missing `datastore.entities.list` is not proven on connect; the first listing 
 ### 4.4 Server identity
 
 With `FIRESTORE_SERVER_CREDENTIALS=true` on the server and an operator-seeded connection (`managed: true`, which a browser-sent connection can never claim) whose field is empty, Studio reads the server's identity in Application Default Credentials order: the file `GOOGLE_APPLICATION_CREDENTIALS` names, then gcloud's well-known file (`$HOME/.config/gcloud/application_default_credentials.json`, or `%APPDATA%\gcloud\application_default_credentials.json` on Windows), then the metadata server (`GCE_METADATA_HOST`, or `metadata.google.internal`).
-A named credentials file that cannot be read is an error, never a fallback to the metadata server.
+Which read failures move the chain on and which are refused is the shared chain's, in [DB_AUTH.md](../DB_AUTH.md#server-identity).
 On GKE with Workload Identity, the pod's service account is the identity.
 
 ### 4.5 The emulator

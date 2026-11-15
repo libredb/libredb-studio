@@ -2,9 +2,11 @@
  * BigQuery REST v2 over the shared node transport. The only file that knows the wire envelope.
  */
 
+import { quotaProjectHeaders } from "@/lib/db/auth/google/credentials";
+import { createGoogleTokenSource } from "@/lib/db/auth/google/token-source";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createNodeTransport, type NodeTransport, TransportError } from "@/lib/db/http/node-transport";
-import { createTokenSource, type GoogleCredentials, tokenOrigin } from "./auth";
+import { type BigQueryCredentials, bigQueryTokenSourceDeps, projectIdRefusal } from "./credential-policy";
 
 const API_HOST = "bigquery.googleapis.com";
 const RESPONSE_BYTES = 64 * 1024 * 1024;
@@ -155,27 +157,19 @@ export function apiOrigin(env: Readonly<Record<string, string | undefined>> = pr
 
 export function createBigQueryTransport(
   project: string,
-  creds: GoogleCredentials,
+  creds: BigQueryCredentials,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): BigQueryTransport {
-  // encodeURIComponent keeps "." and "..", which would climb out of /projects/ in the URL path.
-  if (!/^[a-z][a-z0-9:.-]{0,200}$/i.test(project) || project === "." || project === "..") {
+  if (projectIdRefusal(project) !== null) {
     throw new DatabaseConfigError("BigQuery project id is not a valid project id", "bigquery");
   }
   const tls = (identity: string) => ({ rejectUnauthorized: true, identity });
   const api = apiOrigin(env);
-  const origin = tokenOrigin(creds);
-  // The emulator checks no credential, so none is minted and none leaves the process.
-  const oauth = emulatorHost(env)
-    ? null
-    : createNodeTransport({
-        origin,
-        tls: origin.scheme === "https" ? tls(origin.host) : null,
-        maxSockets: 1,
-        // The metadata server answers only requests that carry this header.
-        headers: creds.type === "metadata" ? { "metadata-flavor": "Google" } : {},
-      });
-  const token = oauth ? createTokenSource(creds, oauth) : async () => null;
+  // The emulator checks no credential, so none is minted and none leaves the process. The token source builds its
+  // auth lane on the first refresh, and a pasted access token builds none.
+  const tokens = emulatorHost(env) ? null : createGoogleTokenSource(creds, bigQueryTokenSourceDeps());
+  // An authorized user's quota project bills the API calls; the token requests never carry it.
+  const quota = quotaProjectHeaders(creds);
   const base = `${new URL(`${api.scheme}://${api.host}:${api.port}`).origin}/bigquery/v2/projects/${encodeURIComponent(project)}`;
 
   // The node transport owns Authorization as a connection header, so each token gets its own transport.
@@ -184,12 +178,14 @@ export function createBigQueryTransport(
   const lanes = new Set<Lane>();
   let current: Lane | null = null;
   let closed = false;
+  const closedError = () => new TransportError("aborted", "The BigQuery connection is closed");
+  // A bearer is null only under the emulator, which is sent no credential and no quota project.
   const laneTransport = (bearer: string | null) =>
     createNodeTransport({
       origin: api,
       tls: api.scheme === "https" ? tls(api.host) : null,
       maxSockets: 8,
-      headers: bearer === null ? {} : { authorization: `Bearer ${bearer}` },
+      headers: bearer === null ? {} : { ...quota, authorization: `Bearer ${bearer}` },
     });
   const retire = (lane: Lane) => {
     if (lane !== current && lane.inFlight === 0) {
@@ -198,9 +194,11 @@ export function createBigQueryTransport(
     }
   };
   async function lane(signal: AbortSignal): Promise<Lane> {
-    const bearer = await token(signal);
+    // Checked before asking: a closed token source answers with its own sentence, or a pasted token as is.
+    if (closed) throw closedError();
+    const bearer = tokens === null ? null : await tokens.token(signal);
     // Checked after the await too: close() may land while the token is on its way.
-    if (closed) throw new TransportError("aborted", "The BigQuery connection is closed");
+    if (closed) throw closedError();
     if (current?.token !== bearer) {
       const previous = current;
       current = { token: bearer, node: laneTransport(bearer), inFlight: 0 };
@@ -219,8 +217,16 @@ export function createBigQueryTransport(
       maxResponseBytes: RESPONSE_BYTES,
     });
 
-  async function call(method: "GET" | "POST", path: string, signal: AbortSignal, body?: Wire): Promise<Wire> {
+  /** `ran`, when given, records the bearer of the lane the call ran on, for a later cancel of its job. */
+  async function call(
+    method: "GET" | "POST",
+    path: string,
+    signal: AbortSignal,
+    body?: Wire,
+    ran?: { bearer: string | null },
+  ): Promise<Wire> {
     const held = await lane(signal);
+    if (ran) ran.bearer = held.token;
     held.inFlight += 1;
     let response: Awaited<ReturnType<NodeTransport["request"]>>;
     try {
@@ -250,13 +256,14 @@ export function createBigQueryTransport(
 
   /**
    * Best effort, on its own deadline (the caller's signal is spent) and its own transport, closed straight after,
-   * so it still goes out when close() is what aborted the query.
+   * so it still goes out when close() is what aborted the query. It carries the bearer of the lane the job last ran
+   * on, so it never asks the token source, which close() may have closed.
    */
-  async function cancelJob(jobId: string, location: string | undefined): Promise<void> {
+  async function cancelJob(jobId: string, location: string | undefined, bearer: string | null): Promise<void> {
     const signal = AbortSignal.timeout(5000);
     const query = location ? `?${new URLSearchParams({ location })}` : "";
     try {
-      const node = laneTransport(await token(signal));
+      const node = laneTransport(bearer);
       try {
         await send(node, "POST", `/jobs/${encodeURIComponent(jobId)}/cancel${query}`, signal);
       } finally {
@@ -271,23 +278,30 @@ export function createBigQueryTransport(
     async query(sql, options) {
       const started = performance.now();
       let job: { jobId: string; location?: string } | undefined;
+      const ran: { bearer: string | null } = { bearer: null };
       try {
         // An abort while this POST is still in flight cannot name the job (jobs.query takes no client job id), so
         // that job runs on, bounded by jobTimeoutMs; jobs.insert with our own id would close it.
-        let page = await call("POST", "/queries", options.signal, {
-          query: sql,
-          ...(options.location ? { location: options.location } : {}),
-          useLegacySql: false,
-          dryRun: options.dryRun ?? false,
-          maxResults: Math.min(options.maxRows, PAGE_ROWS),
-          timeoutMs: options.jobTimeoutMs,
-          // int64 is a JSON string in the REST schema; the emulator refuses a number.
-          jobTimeoutMs: String(options.jobTimeoutMs),
-          formatOptions: { useInt64Timestamp: true },
-          ...(options.defaultDataset
-            ? { defaultDataset: { projectId: project, datasetId: options.defaultDataset } }
-            : {}),
-        });
+        let page = await call(
+          "POST",
+          "/queries",
+          options.signal,
+          {
+            query: sql,
+            ...(options.location ? { location: options.location } : {}),
+            useLegacySql: false,
+            dryRun: options.dryRun ?? false,
+            maxResults: Math.min(options.maxRows, PAGE_ROWS),
+            timeoutMs: options.jobTimeoutMs,
+            // int64 is a JSON string in the REST schema; the emulator refuses a number.
+            jobTimeoutMs: String(options.jobTimeoutMs),
+            formatOptions: { useInt64Timestamp: true },
+            ...(options.defaultDataset
+              ? { defaultDataset: { projectId: project, datasetId: options.defaultDataset } }
+              : {}),
+          },
+          ran,
+        );
         const first = page;
         const ref = page.jobReference as { jobId?: unknown; location?: unknown } | undefined;
         if (typeof ref?.jobId === "string") {
@@ -310,7 +324,13 @@ export function createBigQueryTransport(
                 ? { pageToken: page.pageToken }
                 : {}),
             });
-            page = await call("GET", `/queries/${encodeURIComponent(job.jobId)}?${params}`, options.signal);
+            page = await call(
+              "GET",
+              `/queries/${encodeURIComponent(job.jobId)}?${params}`,
+              options.signal,
+              undefined,
+              ran,
+            );
             fields = fieldsOf(page.schema) ?? fields;
             if (page.jobComplete !== false) rows.push(...decodeRows(fields, page.rows));
           }
@@ -326,7 +346,7 @@ export function createBigQueryTransport(
           executionTimeMs: performance.now() - started,
         };
       } catch (error) {
-        if (job) await cancelJob(job.jobId, job.location);
+        if (job) await cancelJob(job.jobId, job.location, ran.bearer);
         throw error;
       }
     },
@@ -376,7 +396,7 @@ export function createBigQueryTransport(
       current = null;
       for (const held of lanes) held.node.close();
       lanes.clear();
-      oauth?.close();
+      tokens?.close();
     },
   };
 }

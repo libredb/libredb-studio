@@ -100,8 +100,9 @@ The refusal sentences word the accepted kinds in a fixed order (service account,
 ### Server identity
 
 A non-blank pasted credential always wins.
-A blank one goes through the gate, then the Application Default Credentials chain: the file `GOOGLE_APPLICATION_CREDENTIALS` names (an unreadable one is an error), gcloud's well-known file under `HOME` or, on Windows, `APPDATA` (absent moves on, unreadable is an error), then the metadata server at `metadata.google.internal` or at `GCE_METADATA_HOST`, validated as a host with an optional port and no scheme.
+A blank one goes through the gate, then the Application Default Credentials chain: the file `GOOGLE_APPLICATION_CREDENTIALS` names (an unreadable one is an error), gcloud's well-known file under `HOME` or, on Windows, `APPDATA` (absent, `ENOENT` or `ENOTDIR`, moves on; any other read failure is an error), then the metadata server at `metadata.google.internal` or at `GCE_METADATA_HOST`, validated as a host with an optional port and no scheme.
 The chain reads those four variables and nothing else, and its reader is not exported: `resolveGoogleCredential`, which runs the gate first, is the only way to it.
+A blank value of any of the four counts as unset.
 `createGoogleTokenSource` takes whatever credential it is given, so a provider passes it only what `resolveGoogleCredential` returned and never builds a `metadata` credential itself.
 The ADC file accepts the JSON kinds the provider lists; an access token is never a file kind.
 
@@ -115,6 +116,8 @@ The ADC file accepts the JSON kinds the provider lists; an access token is never
 | `access_token` | None: the pasted token is returned as is, and `close()` does nothing |
 
 Each refreshing kind has one strategy in a typed table, so a kind without a strategy does not compile.
+A lane is built on the first refresh that needs it, at most one per kind, and a pasted access token builds none.
+`quotaProjectHeaders` gives the `x-goog-user-project` header for the provider's own API requests; no token request carries it.
 A token is held by the shared refresh: cached and refreshed 60 seconds before it expires; concurrent callers share one refresh, which runs on its own 30-second deadline, so no caller's abort fails the others; a failed refresh caches nothing.
 An answer without a usable `expires_in` lives Google's documented one hour.
 A refusal reports `error_description`, then `error`, then `HTTP <status>`; a reason quoted from the server is withheld whole when it holds any form of the credential's secrets, and is then cut to 300 characters.
@@ -137,6 +140,7 @@ It is the only file of the layer that imports `node:crypto`.
 - AUTH3: no external engine's type id, comments included.
 - AUTH4: no module state: top-level code is a closed list of declarations and frozen literals.
 - AUTH5: under `src/`, only providers and the layer import the layer, and only the layer imports `lanes.ts`.
-- AUTH6: the mechanism markers (the Google token host, the JWT-bearer grant, the metadata path, and SigV4's `AWS4-HMAC-SHA256` and `aws4_request`) appear under `src/` only in the layer, apart from listed exceptions that each name the PR removing them.
+- AUTH6: the mechanism markers (the Google token host, the JWT-bearer grant, the metadata path, and SigV4's `AWS4-HMAC-SHA256` and `aws4_request`) appear under `src/` only in the layer.
+  Its exception list is empty; a copy that must stay outside the layer for a while is listed there with its line count and the PR that removes it.
 
 `tests/unit/lib/governance/preflight.test.ts` checks that governance mode refuses every server-identity opt-in a literal under `src/` names, so a new opt-in without a preflight row fails the build.

@@ -15,6 +15,7 @@ import type {
 import type { DatabaseConnection } from "@/lib/types";
 
 const realTransport = { ...(await import("@/lib/db/providers/sql/bigquery/transport")) };
+const realPolicy = { ...(await import("@/lib/db/providers/sql/bigquery/credential-policy")) };
 const { BigQueryApiError } = realTransport;
 const { TransportError } = await import("@/lib/db/http/node-transport");
 
@@ -95,8 +96,21 @@ mock.module("@/lib/db/providers/sql/bigquery/transport", () => ({
     return fake;
   },
 }));
-mock.module("@/lib/db/providers/sql/bigquery/auth", () => ({
-  readCredentials: (password?: string) => ({ kind: "fake", password }),
+// A pasted credential comes back as a marker; an empty one goes through the real policy, opted in, with no ADC file,
+// so the provider's own refusal and the server's identity are the policy's.
+mock.module("@/lib/db/providers/sql/bigquery/credential-policy", () => ({
+  ...realPolicy,
+  resolveBigQueryCredential: (connection: Pick<DatabaseConnection, "password" | "managed">) =>
+    connection.password?.trim()
+      ? { kind: "fake", password: connection.password }
+      : realPolicy.resolveBigQueryCredential(connection, {
+          env: { BIGQUERY_SERVER_CREDENTIALS: "true" },
+          readFile: () => {
+            throw Object.assign(new Error("absent"), { code: "ENOENT" });
+          },
+          homeDir: () => "/nowhere",
+          platform: "linux",
+        }),
 }));
 
 const { BigQueryProvider, jobLocation, catalogLimits } = await import("@/lib/db/providers/sql/bigquery");
@@ -207,7 +221,7 @@ describe("connect / disconnect", () => {
     expect(createCalls).toHaveLength(0);
     const seeded = await connected({ password: undefined, managed: true });
     expect(seeded.isConnected()).toBe(true);
-    expect(createCalls[0]).toEqual(["my-proj", { kind: "fake", password: undefined }]);
+    expect(createCalls[0]).toEqual(["my-proj", { type: "metadata", host: "metadata.google.internal" }]);
   });
 
   test("a datasets listing the principal may not read leaves the location to BigQuery", async () => {

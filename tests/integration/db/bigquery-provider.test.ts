@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AuthenticationError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { AuthenticationError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import type { NodeRequest, NodeResponse, NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { BIGQUERY_DRY_RUN_MARKER } from "@/lib/explain/bigquery-dryrun";
 import type { DatabaseConnection } from "@/lib/types";
@@ -29,6 +29,7 @@ interface Logged {
   params: URLSearchParams;
   body: Wire | null;
   authorization: string | undefined;
+  userProject: string | undefined;
 }
 
 const CAPTURES = join(import.meta.dir, "..", "..", "fixtures", "bigquery", "2026-10-13-eu");
@@ -54,6 +55,12 @@ const { privateKey, publicKey } = generateKeyPairSync("rsa", {
 });
 const CLIENT_EMAIL = "studio@demo-project.iam.gserviceaccount.com";
 const KEY_JSON = JSON.stringify({ type: "service_account", client_email: CLIENT_EMAIL, private_key: privateKey });
+const USER_GRANT = {
+  client_id: "cid.apps.googleusercontent.com",
+  client_secret: "user-secret",
+  refresh_token: "1//rt",
+};
+const USER_JSON = JSON.stringify({ type: "authorized_user", ...USER_GRANT, quota_project_id: "quota-project" });
 
 const ok = (json: Wire): Reply => ({ status: 200, json });
 const apiError = (status: number, message: string, reason: string): Reply => ({
@@ -69,16 +76,21 @@ class FakeGoogle {
   datasetsReply: Reply | null = null;
   tokensIssued = 0;
   closed = 0;
+  /** Every transport's options, in the order they were built. */
+  built: NodeTransportOptions[] = [];
+  /** The protected header of each service-account assertion. */
+  assertionHeaders: Wire[] = [];
   /** A test's own answer for a jobs.query / GET getQueryResults; return undefined to fall through. */
   onQuery: (sql: string, body: Wire) => Reply | undefined = () => undefined;
   onPoll: (jobId: string, params: URLSearchParams) => Reply | undefined = () => undefined;
 
   create(options: NodeTransportOptions) {
-    const authorization = options.headers.authorization;
+    this.built.push(options);
+    const { authorization, "x-goog-user-project": userProject } = options.headers;
     return {
       request: async (request: NodeRequest): Promise<NodeResponse> => {
         const url = new URL(request.url);
-        const reply = this.route(request, url, authorization);
+        const reply = this.route(request, url, authorization, userProject);
         return {
           status: reply.status,
           contentType: "application/json",
@@ -92,11 +104,16 @@ class FakeGoogle {
     };
   }
 
-  private route(request: NodeRequest, url: URL, authorization: string | undefined): Reply {
+  private route(
+    request: NodeRequest,
+    url: URL,
+    authorization: string | undefined,
+    userProject: string | undefined,
+  ): Reply {
     if (url.host === "oauth2.googleapis.com") return this.token(request);
     const path = url.pathname.replace("/bigquery/v2/projects/demo-project", "");
     const body = request.body ? (JSON.parse(request.body) as Wire) : null;
-    this.requests.push({ method: request.method, path, params: url.searchParams, body, authorization });
+    this.requests.push({ method: request.method, path, params: url.searchParams, body, authorization, userProject });
     if (url.host !== "bigquery.googleapis.com" || !url.pathname.startsWith("/bigquery/v2/projects/demo-project")) {
       return apiError(404, "no such route", "notFound");
     }
@@ -123,12 +140,18 @@ class FakeGoogle {
   private token(request: NodeRequest): Reply {
     if (this.tokenReply) return this.tokenReply;
     const form = request.form!;
+    if (form.grant_type === "refresh_token") {
+      expect(form).toEqual({ grant_type: "refresh_token", ...USER_GRANT });
+      this.tokensIssued += 1;
+      return ok({ access_token: `ya29.fake-token-${this.tokensIssued}`, expires_in: 3600 });
+    }
     expect(form.grant_type).toBe("urn:ietf:params:oauth:grant-type:jwt-bearer");
     const [header, payload, signature] = form.assertion.split(".");
     const verified = createVerify("RSA-SHA256")
       .update(`${header}.${payload}`)
       .verify(publicKey, signature, "base64url");
     expect(verified).toBe(true);
+    this.assertionHeaders.push(JSON.parse(Buffer.from(header, "base64url").toString()) as Wire);
     const claims = JSON.parse(Buffer.from(payload, "base64url").toString()) as Wire;
     expect(claims).toMatchObject({ iss: CLIENT_EMAIL, scope: "https://www.googleapis.com/auth/bigquery" });
     this.tokensIssued += 1;
@@ -256,6 +279,59 @@ describe("connect", () => {
     expect((failure as Error).message).toContain("Invalid grant: account not found");
     expect(provider.isConnected()).toBe(false);
     expect(google.closed).toBeGreaterThan(0);
+  });
+});
+
+describe("sign-in through the shared Google auth", () => {
+  const refusedBeforeSending = async (password: string) => {
+    const failure = await new BigQueryProvider(connection({ password })).connect().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect(google.built).toHaveLength(0);
+    expect(google.tokensIssued).toBe(0);
+    return (failure as Error).message;
+  };
+
+  test("a credential that does not parse is refused with the shared sentence, before anything is sent", async () => {
+    expect(await refusedBeforeSending("{nope")).toBe(
+      "The credential starts like JSON but is not valid JSON: paste a service-account key JSON, an authorized-user JSON or an access token",
+    );
+  });
+
+  test("a key with an empty client_email is refused before any request", async () => {
+    expect(await refusedBeforeSending(JSON.stringify({ ...(JSON.parse(KEY_JSON) as Wire), client_email: "" }))).toBe(
+      "The service-account key JSON needs client_email and private_key as non-empty strings",
+    );
+  });
+
+  test("the assertion header carries the key id as kid", async () => {
+    await open({ password: JSON.stringify({ ...(JSON.parse(KEY_JSON) as Wire), private_key_id: "key-id-1" }) });
+    expect(google.assertionHeaders).toEqual([{ alg: "RS256", typ: "JWT", kid: "key-id-1" }]);
+  });
+
+  test("an authorized user's quota project goes as x-goog-user-project on API and cancel requests", async () => {
+    google.onQuery = (sql) => (sql === "SELECT slow" ? captured("slow-job", 0) : undefined);
+    google.onPoll = () => {
+      throw new TransportError("timeout", "request timed out");
+    };
+    const provider = await open({ password: USER_JSON });
+    await expect(provider.query("SELECT slow")).rejects.toBeInstanceOf(TimeoutError);
+    const job = (captured("slow-job", 0).json.jobReference as { jobId: string }).jobId;
+    expect(posted(`/jobs/${encodeURIComponent(job)}/cancel`)).toHaveLength(1);
+    expect(google.requests.length).toBeGreaterThan(2);
+    for (const request of google.requests) expect(request.userProject).toBe("quota-project");
+  });
+
+  test("the token lane refuses link-local addresses and upgrades, and a pasted token builds none", async () => {
+    await open();
+    const tokenLanes = google.built.filter((options) => options.origin.host === "oauth2.googleapis.com");
+    expect(tokenLanes).toHaveLength(1);
+    expect(tokenLanes[0]).toMatchObject({ maxSockets: 1, refusesLinkLocal: true, refusesUpgrade: true });
+
+    google = new FakeGoogle();
+    await open({ password: "ya29.a-pasted-access-token-value" });
+    expect(google.built.some((options) => options.origin.host !== "bigquery.googleapis.com")).toBe(false);
+    expect(google.tokensIssued).toBe(0);
+    expect(queriesWith(/^SELECT 1$/)[0].authorization).toBe("Bearer ya29.a-pasted-access-token-value");
   });
 });
 

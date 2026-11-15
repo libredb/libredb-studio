@@ -14,7 +14,6 @@ const DOC = readFileSync(path.join(ROOT, "docs/providers/firestore.md"), "utf8")
 
 const ENTRIES = [
   "### D293. Firestore connections cannot write",
-  "### D294. The Google credential and token code exists twice",
   "### D295. Firestore Pipelines are not offered",
   "### D296. A Firestore database in Datastore mode is refused",
   "### D297. Firestore's MongoDB-compatible API is reached only through the `mongodb` type, unmeasured",
