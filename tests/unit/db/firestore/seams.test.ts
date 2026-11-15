@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
-import { ENV } from "@/lib/db/providers/document/firestore/constants";
+import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { FIRESTORE_ENV_NAMES, readFirestoreEnv, resolveSeams } from "@/lib/db/providers/document/firestore/seams";
 import { fakeSeams } from "../../../helpers/firestore-seams";
 
@@ -14,10 +14,10 @@ const LANE_OPTIONS = {
 describe("firestore readFirestoreEnv", () => {
   test("names exactly the variables the provider reads", () => {
     expect(FIRESTORE_ENV_NAMES).toEqual([
-      ENV.emulatorHost,
-      ENV.serverCredentials,
-      ENV.credentialsFile,
-      ENV.metadataHost,
+      "FIRESTORE_EMULATOR_HOST",
+      "FIRESTORE_SERVER_CREDENTIALS",
+      "GOOGLE_APPLICATION_CREDENTIALS",
+      "GCE_METADATA_HOST",
       "APPDATA",
       "HOME",
     ]);
@@ -57,6 +57,10 @@ describe("firestore resolveSeams real defaults", () => {
     expect(Object.isFrozen(seams)).toBe(true);
     expect(Object.isFrozen(seams.env)).toBe(true);
     for (const name of Object.keys(seams.env)) expect(FIRESTORE_ENV_NAMES).toContain(name);
+  });
+
+  test("the transport factory is the shared node transport's own, so its identity can be pinned", () => {
+    expect(seams.createTransport).toBe(createNodeTransport);
   });
 
   test("clock, platform, home directory and file read are the runtime's", () => {

@@ -27,6 +27,7 @@
  * Source tab are refused, and every reading Firestore does not report answers its reason. MCP read stays closed on this
  * engine.
  */
+import { googleCredentialSecrets } from "@/lib/db/auth/google/credentials";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryCancelledError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
@@ -145,15 +146,7 @@ interface Probed {
 export function sessionBase(auth: FirestoreAuth): CallBase {
   if (auth.mode === "emulator") return { credential: "emulator", secretForms: [] };
   const credentials = auth.credentials;
-  const secrets =
-    credentials.type === "access_token"
-      ? [credentials.token]
-      : credentials.type === "service_account"
-        ? [credentials.privateKey, ...(credentials.privateKeyId === undefined ? [] : [credentials.privateKeyId])]
-        : credentials.type === "authorized_user"
-          ? [credentials.clientSecret, credentials.refreshToken]
-          : [];
-  return { credential: credentials.type, secretForms: secretForms(secrets) };
+  return { credential: credentials.type, secretForms: secretForms(googleCredentialSecrets(credentials)) };
 }
 
 function closeSession(session: Pick<FirestoreSession, "client" | "lifetime">): void {

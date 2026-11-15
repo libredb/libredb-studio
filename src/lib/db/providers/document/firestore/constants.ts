@@ -16,16 +16,12 @@ export interface FirestoreTarget {
 
 /** The only API origin; regional endpoints are later work and would come from a closed list. */
 export const FIRESTORE_API_ORIGIN = "https://firestore.googleapis.com";
-/** The only token URL; a credential's own `token_uri` is never read. */
-export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 export const FIRESTORE_SCOPE = "https://www.googleapis.com/auth/datastore";
 
 /** The server environment variables this provider reads, each only through the seams. */
 export const ENV = Object.freeze({
   emulatorHost: "FIRESTORE_EMULATOR_HOST",
   serverCredentials: "FIRESTORE_SERVER_CREDENTIALS",
-  credentialsFile: "GOOGLE_APPLICATION_CREDENTIALS",
-  metadataHost: "GCE_METADATA_HOST",
 } as const);
 
 export const DEFAULT_DATABASE_ID = "(default)";

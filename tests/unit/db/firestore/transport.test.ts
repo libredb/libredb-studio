@@ -11,7 +11,7 @@ import {
   mapTransportFailure,
   readGoogleError,
 } from "@/lib/db/providers/document/firestore/errors";
-import type { GoogleCredentials } from "@/lib/db/providers/document/firestore/google-credentials";
+import type { GoogleCredentials } from "@/lib/db/auth/google/credentials";
 import type { FirestoreTarget } from "@/lib/db/providers/document/firestore/names";
 import { buildRequest, type FirestoreRequest } from "@/lib/db/providers/document/firestore/requests";
 import type { LaneKind } from "@/lib/db/providers/document/firestore/seams";

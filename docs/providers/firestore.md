@@ -71,8 +71,8 @@ The embedded workspace has no Keys panel, no connection dialog and no Explain bu
 | `constants.ts` | Type id, limits, endpoints, environment names, shared sentences | Yes |
 | `labels.ts`, `connection-options.ts` | Labels, the statement-language sentence, the field rules | Yes |
 | `names.ts`, `field-path.ts`, `values.ts` | Id rules and path encoding, field paths, REST values both ways | Yes |
-| `google-credentials.ts`, `google-token-source.ts` | Credential parsing, the ADC chain, the grants and the token cache | No |
-| `credential-policy.ts` | The server-identity opt-in, the operator-seed rule, the emulator refusal | No |
+| `src/lib/db/auth/google/credentials.ts`, `token-source.ts` (shared, [DB_AUTH.md](../DB_AUTH.md#google)) | Credential parsing, the ADC chain, the grants and the token cache | No |
+| `credential-policy.ts` | Firestore's rules for the shared Google auth: the accepted kinds, the server-identity opt-in and its sentences, the emulator refusal | No |
 | `requests.ts` | The closed table of the seven read requests | Yes |
 | `transport.ts` | One lane per bearer value, the emulator lane, routing headers, response caps | No |
 | `console/lexer.ts`, `console/parser.ts`, `console/compile.ts`, `console/guard.ts`, `console/generators.ts` | The query chain: tokens, statement, request, the browser-side refusal, generated text | Yes |

@@ -9,7 +9,6 @@ import {
   FIRESTORE_API_ORIGIN,
   FIRESTORE_TYPE,
   FIRESTORE_SCOPE,
-  GOOGLE_TOKEN_URL,
   LIMITS,
   SENTENCES,
 } from "@/lib/db/providers/document/firestore/constants";
@@ -18,7 +17,6 @@ describe("Firestore constants", () => {
   test("the type id, the fixed origins, the scope and the default database id", () => {
     expect(FIRESTORE_TYPE).toBe("firestore");
     expect(FIRESTORE_API_ORIGIN).toBe("https://firestore.googleapis.com");
-    expect(GOOGLE_TOKEN_URL).toBe("https://oauth2.googleapis.com/token");
     expect(FIRESTORE_SCOPE).toBe("https://www.googleapis.com/auth/datastore");
     expect(DEFAULT_DATABASE_ID).toBe("(default)");
   });
@@ -27,8 +25,6 @@ describe("Firestore constants", () => {
     expect(ENV).toEqual({
       emulatorHost: "FIRESTORE_EMULATOR_HOST",
       serverCredentials: "FIRESTORE_SERVER_CREDENTIALS",
-      credentialsFile: "GOOGLE_APPLICATION_CREDENTIALS",
-      metadataHost: "GCE_METADATA_HOST",
     });
     expect(Object.isFrozen(ENV)).toBe(true);
   });

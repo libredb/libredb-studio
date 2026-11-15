@@ -14,13 +14,10 @@ import { generateKeyPairSync } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { importSPKI, jwtVerify } from "jose";
+import { GOOGLE_TOKEN_URL } from "@/lib/db/auth/google/token-source";
 import { AuthenticationError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { type NodeRequest, type NodeResponse, TransportError } from "@/lib/db/http/node-transport";
-import {
-  FIRESTORE_API_ORIGIN,
-  FIRESTORE_SCOPE,
-  GOOGLE_TOKEN_URL,
-} from "@/lib/db/providers/document/firestore/constants";
+import { FIRESTORE_API_ORIGIN, FIRESTORE_SCOPE } from "@/lib/db/providers/document/firestore/constants";
 import { FirestoreProvider } from "@/lib/db/providers/document/firestore/index";
 import type { LaneKind } from "@/lib/db/providers/document/firestore/seams";
 import { FIRESTORE_EXPLAIN_MARKER } from "@/lib/explain/firestore-explain";

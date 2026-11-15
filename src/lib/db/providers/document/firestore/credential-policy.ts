@@ -1,5 +1,6 @@
 /**
- * Firestore's credential policy over the Google-generic half: which credential a connection uses, and when.
+ * Firestore's credential policy, composed over the shared Google auth (src/lib/db/auth/google): which credential a
+ * connection uses, and when.
  *
  * - FIRESTORE_EMULATOR_HOST set (server environment only): every connection talks to that emulator, a credential in
  *   the field is refused, and nothing else is read, FIRESTORE_SERVER_CREDENTIALS included.
@@ -8,16 +9,15 @@
  *   resolveConnection forces false on every browser-sent connection) refused unless FIRESTORE_SERVER_CREDENTIALS is
  *   exactly "true", and then the server's own identity in ADC order.
  */
+import {
+  type GoogleCredentialRules,
+  type GoogleCredentialsOf,
+  resolveGoogleCredential,
+} from "@/lib/db/auth/google/credentials";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { validateHost, validatePort } from "@/lib/db/http/endpoint";
 import type { DatabaseConnection } from "@/lib/types";
 import { ENV, FIRESTORE_TYPE } from "./constants";
-import {
-  type CredentialRules,
-  type GoogleCredentials,
-  parseCredentialText,
-  readServerIdentity,
-} from "./google-credentials";
 import { projectIdRefusal } from "./names";
 import type { FirestoreEnv, FirestoreSeams } from "./seams";
 
@@ -31,14 +31,14 @@ export interface EmulatorAddress {
   readonly display: string;
 }
 
+const FIRESTORE_KINDS = Object.freeze(["service_account", "authorized_user", "access_token"] as const);
+type FirestoreKind = (typeof FIRESTORE_KINDS)[number];
+/** Firestore's credentials: a kind another provider lists never reaches this type. */
+export type FirestoreCredentials = GoogleCredentialsOf<FirestoreKind | "metadata">;
+
 export type FirestoreAuth =
   | { readonly mode: "emulator"; readonly emulator: EmulatorAddress }
-  | { readonly mode: "google"; readonly credentials: GoogleCredentials };
-
-export const FIRESTORE_CREDENTIAL_RULES: CredentialRules = Object.freeze({
-  provider: FIRESTORE_TYPE,
-  quotaProjectRefusal: projectIdRefusal,
-});
+  | { readonly mode: "google"; readonly credentials: FirestoreCredentials };
 
 export const FIRESTORE_CREDENTIAL_SENTENCES = Object.freeze({
   browserEmpty:
@@ -50,6 +50,18 @@ export const FIRESTORE_CREDENTIAL_SENTENCES = Object.freeze({
 });
 
 const S = FIRESTORE_CREDENTIAL_SENTENCES;
+
+export const FIRESTORE_CREDENTIAL_RULES: GoogleCredentialRules<FirestoreKind> = Object.freeze({
+  provider: FIRESTORE_TYPE,
+  accepts: FIRESTORE_KINDS,
+  quotaProjectRefusal: projectIdRefusal,
+  serverIdentity: Object.freeze({
+    optIn: ENV.serverCredentials,
+    unmanaged: S.browserEmpty,
+    withoutOptIn: S.seedWithoutOptIn,
+  }),
+});
+
 /** `host:port` or `[ipv6]:port`: no scheme, no path, no user, a port always. */
 const EMULATOR_HOST = /^(\[[^\]]+\]|[^:[\]/@?#\s]+):(\d{1,5})$/;
 
@@ -86,9 +98,12 @@ export function resolveFirestoreAuth(
     if (password !== "") throw new DatabaseConfigError(S.emulatorCredential(emulator.display), FIRESTORE_TYPE);
     return { mode: "emulator", emulator };
   }
-  if (password !== "")
-    return { mode: "google", credentials: parseCredentialText(password, FIRESTORE_CREDENTIAL_RULES) };
-  if (connection.managed !== true) throw new DatabaseConfigError(S.browserEmpty, FIRESTORE_TYPE);
-  if (seams.env[ENV.serverCredentials] !== "true") throw new DatabaseConfigError(S.seedWithoutOptIn, FIRESTORE_TYPE);
-  return { mode: "google", credentials: readServerIdentity(seams, FIRESTORE_CREDENTIAL_RULES) };
+  return {
+    mode: "google",
+    credentials: resolveGoogleCredential(
+      { text: connection.password, managed: connection.managed },
+      FIRESTORE_CREDENTIAL_RULES,
+      seams,
+    ),
+  };
 }

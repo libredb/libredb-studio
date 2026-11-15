@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { DEFAULT_DATABASE_ID, LIMITS } from "@/lib/db/providers/document/firestore/constants";
 import { type ErrorContext, mapTransportFailure } from "@/lib/db/providers/document/firestore/errors";
-import type { GoogleCredentials } from "@/lib/db/providers/document/firestore/google-credentials";
+import type { GoogleCredentials } from "@/lib/db/auth/google/credentials";
 import type { FirestoreTarget } from "@/lib/db/providers/document/firestore/names";
 import type { LaneKind } from "@/lib/db/providers/document/firestore/seams";
 import {
