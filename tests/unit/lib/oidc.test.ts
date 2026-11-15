@@ -1062,10 +1062,10 @@ describe("getPublicOrigin", () => {
         forwardedRequest({
           host: "internal:3000",
           "x-forwarded-host": "app.example:8443 , proxy.internal",
-          "x-forwarded-proto": "HTTPS , http",
+          "x-forwarded-proto": "HTTP , https",
         }),
       ),
-    ).toBe("https://app.example:8443");
+    ).toBe("http://app.example:8443");
   });
 
   test.each(["ftp", "https://evil.example", ", https"])("falls back past an unusable forwarded proto: %s", (proto) => {
@@ -1079,19 +1079,25 @@ describe("getPublicOrigin", () => {
     ).toBe("http://studio.example:3000");
   });
 
-  test.each(["good.example@evil.example", "evil.example/path", "bad host", "bad:notaport"])(
-    "skips an invalid forwarded authority: %s",
-    (host) => {
-      expect(
-        getPublicOrigin(
-          forwardedRequest({
-            host: "studio.example:3000",
-            "x-forwarded-host": host,
-          }),
-        ),
-      ).toBe("http://studio.example:3000");
-    },
-  );
+  test.each([
+    "good.example@evil.example",
+    "evil.example/path",
+    "bad host",
+    "bad:notaport",
+    "good.example?x",
+    "good.example#f",
+    "good.example*",
+    "good.example\\evil",
+  ])("skips an invalid forwarded authority: %s", (host) => {
+    expect(
+      getPublicOrigin(
+        forwardedRequest({
+          host: "studio.example:3000",
+          "x-forwarded-host": host,
+        }),
+      ),
+    ).toBe("http://studio.example:3000");
+  });
 
   test("keeps a valid IPv6 forwarded host with a port", () => {
     expect(
