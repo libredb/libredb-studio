@@ -48,12 +48,16 @@ describe("parseAwsRegion", () => {
   test.each(["cn-north-1", "cn-northwest-1", "us-gov-west-1", "us-iso-east-1", "xx-north-1"])(
     "%s is outside the partitions and quoted",
     (value) => {
-      const error = refusal(() => parseAwsRegion(value, undefined));
+      const error = refusal(() => parseAwsRegion(value, "postgres"));
       expect(error.message).toBe(AWS_REGION_SENTENCES.outsidePartitions(value));
       expect(error.message).toContain(value);
-      expect(error.provider).toBeUndefined();
+      expect(error.provider).toBe("postgres");
     },
   );
+
+  test("a refusal without a provider carries none", () => {
+    expect(refusal(() => parseAwsRegion("cn-north-1", undefined)).provider).toBeUndefined();
+  });
 
   test.each([
     ["local", "local"],
@@ -62,10 +66,15 @@ describe("parseAwsRegion", () => {
     ["a padded region", " us-east-2"],
     ["a region with a host after it", "us-east-1.evil.example"],
     ["markup", "<script>us-east-1</script>"],
+    ["a region name with three trailing digits", "cn-north-123"],
+    ["an upper-case region name", "CN-NORTH-1"],
+    // The European Sovereign Cloud's region has four letters before its first hyphen, so it is not region-shaped.
+    ["the European Sovereign Cloud's region", "eusc-de-east-1"],
   ])("%s is not a region and is not quoted", (_label, value) => {
     const error = refusal(() => parseAwsRegion(value, "postgres"));
     expect(error.message).toBe(AWS_REGION_SENTENCES.notARegion);
     expect(error.message).not.toContain(value);
+    expect(error.provider).toBe("postgres");
   });
 
   test("the sentences", () => {

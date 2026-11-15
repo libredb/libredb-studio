@@ -1,7 +1,7 @@
 /**
  * createAwsSigner, the signing policy for AWS JSON and Query API requests on the text transport: host, content-type,
- * every x-amz-* header and the SHA-256 of the body are signed, the session token is always signed when present, and
- * only the path "/" is signed.
+ * every x-amz-* header and the SHA-256 of the body are signed, the session token is always signed when present, only
+ * the path "/" is signed, and only a query already RFC 3986-encoded is signed.
  *
  * It is held three ways. Directly: the nine POST vectors of the AWS SigV4 suite whose signed set is this policy are fed
  * to sign() with the suite's host, clock and keys and reproduce the suite's Authorization; the three POST vectors
@@ -18,7 +18,7 @@ import { resolveAwsCredentials } from "@/lib/db/auth/aws/credentials";
 import { createAwsSigner } from "@/lib/db/auth/aws/signer";
 import { type AwsCredentials, canonicalQueryOf, EMPTY_PAYLOAD_SHA256, signatureV4 } from "@/lib/db/auth/aws/sigv4";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { endpointUrl, httpOrigin, rfc3986Encode } from "@/lib/db/http/endpoint";
+import { endpointUrl, httpOrigin, rfc3986Encode, rfc3986Query } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeTransport, type SigningInput } from "@/lib/db/http/node-transport";
 import { closeAll, httpListener, jsonAnswer, type Seen } from "../../../../helpers/node-transport-fixtures";
 
@@ -264,6 +264,49 @@ describe("the policy", () => {
       'The request query holds a pair with no "=", so it cannot be signed',
     );
   });
+
+  test.each([
+    ["URLSearchParams form encoding", new URLSearchParams({ k: "a~b* c" }).toString()],
+    ["a lower-case escape", "k=%7e"],
+    ["a bare *", "k=*"],
+    ["a raw space", "k=a b"],
+    ["a + for a space", "k=a+b"],
+    ["an = inside a value", "k=a=b"],
+    ["a non-ASCII character", "k=é"],
+    ["a truncated escape", "k=%7"],
+    ["a form-encoded name", "a+b=c"],
+  ])("refuses a query with %s, before reading the clock", (_label, query) => {
+    let read = 0;
+    const counting = createAwsSigner({
+      credentials: () => {
+        read += 1;
+        return { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret" };
+      },
+      region: "us-east-1",
+      service: "dynamodb",
+      clock: () => {
+        read += 1;
+        return SUITE_CLOCK();
+      },
+    });
+    expect(() => counting.sign({ ...base, query })).toThrow(
+      "The AWS request signer signs only a query whose every name and value is RFC 3986-encoded, as rfc3986Query builds it: A-Z a-z 0-9 - . _ ~ and upper-case %XX",
+    );
+    expect(read).toBe(0);
+  });
+
+  test("an RFC 3986-encoded query signs as the suite's get-vanilla-query-unreserved", () => {
+    const one = vector("get-vanilla-query-unreserved");
+    const signed = suiteSigner(suiteCredentials(one)).sign({
+      method: "GET",
+      host: one.request.headers.host,
+      path: "/",
+      query: wireQuery(one.request.query),
+      headers: {},
+      body: "",
+    });
+    expect(signed.authorization).toBe(one.authorization);
+  });
 });
 
 describe("refusals when the signer is built", () => {
@@ -490,6 +533,58 @@ describe("through a real text transport", () => {
     }
     expect((thrown as Error).message).toStartWith('The AWS request signer signs only the path "/"');
     expect(listener.seen).toHaveLength(0);
+  });
+
+  test("a query with ~, * and a space signs when built with rfc3986Query and is refused when built by endpointUrl", async () => {
+    const listener = await httpListener(jsonAnswer(200, "{}"));
+    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const keys = { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret" };
+    const transport = createNodeTransport({
+      origin,
+      tls: null,
+      maxSockets: 1,
+      headers: {},
+      signer: createAwsSigner({ credentials: () => keys, region: "us-east-1", service: "sts", clock: SUITE_CLOCK }),
+    });
+    transports.push(transport);
+    const send = (url: string) =>
+      transport.request({
+        method: "POST",
+        url,
+        form: { Action: "GetCallerIdentity" },
+        signal: AbortSignal.timeout(5000),
+        maxResponseBytes: MIB,
+      });
+
+    await send(`${endpointUrl(origin, "/")}?${rfc3986Query([["k", "a~b* c"]])}`);
+    const [seen] = listener.seen;
+    expect(seen.url).toBe("/?k=a~b%2A%20c");
+    expect(seen.headers.authorization).toBe(
+      signatureV4(
+        {
+          method: "POST",
+          canonicalUri: "/",
+          canonicalQuery: "k=a~b%2A%20c",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            host: String(seen.headers.host),
+            "x-amz-date": header.amzDate,
+          },
+          payloadHash: sha256(seen.body),
+        },
+        keys,
+        { region: "us-east-1", service: "sts", amzDate: header.amzDate },
+      ),
+    );
+
+    let thrown: unknown;
+    try {
+      await send(endpointUrl(origin, "/", new URLSearchParams({ k: "a~b* c" })));
+    } catch (error) {
+      thrown = error;
+    }
+    expect((thrown as Error).message).toStartWith("The AWS request signer signs only a query whose every name");
+    expect(listener.seen).toHaveLength(1);
   });
 });
 

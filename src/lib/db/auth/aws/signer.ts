@@ -7,7 +7,10 @@
  * the credentials hold a session token; the payload hash is the SHA-256 of the exact body. Nothing else a transport
  * sets is signed, since accept-encoding and content-length are the transport's own and Connection is appended by the
  * runtime after the signer runs. Only the path "/" is signed: both protocols post to it, and for every service but one
- * SigV4 encodes any other canonical URI a second time, which this signer does not implement.
+ * SigV4 encodes any other canonical URI a second time, which this signer does not implement. The query is signed as it
+ * is sent, so every name and value must already be RFC 3986-encoded as rfc3986Query builds it: only A-Z a-z 0-9 - . _ ~
+ * and upper-case %XX. A form-encoded query, such as endpointUrl builds from URLSearchParams (~ as %7E, a space as +,
+ * a bare *), is refused rather than rewritten, since its canonical form is not the one AWS computes.
  *
  * The service name is the caller's; this module names none. Only the credentials the getter returns sign.
  */
@@ -33,6 +36,10 @@ export interface AwsSignerOptions {
 const REGION_REFUSED = "The AWS signing region must be 1 to 64 letters, digits, hyphens or underscores";
 const PATH_REFUSED =
   'The AWS request signer signs only the path "/": the JSON and Query protocols post to it, and any other path would need a second encoding this signer does not implement';
+const QUERY_REFUSED =
+  "The AWS request signer signs only a query whose every name and value is RFC 3986-encoded, as rfc3986Query builds it: A-Z a-z 0-9 - . _ ~ and upper-case %XX";
+/** One name or name=value pair in its canonical form; a pair with no "=" is left to the core, which refuses it. */
+const ENCODED_PAIR = /^(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})*(?:=(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})*)?$/;
 const ROOT = "/";
 const CONTENT_TYPE = "content-type";
 const AMZ_PREFIX = "x-amz-";
@@ -40,8 +47,9 @@ const AMZ_PREFIX = "x-amz-";
 /**
  * headerNames: authorization, x-amz-date, x-amz-security-token. Building refuses, with DatabaseConfigError quoting
  * nothing, a region outside AWS_SIGNING_REGION and a malformed service name, and reads neither the credentials nor the
- * clock. `sign` refuses a path other than "/" with an Error before it reads either, which the transport hands to the
- * caller unchanged with nothing sent; a query pair with no "=" is refused by the core the same way.
+ * clock. `sign` refuses a path other than "/" and a query that is not RFC 3986-encoded with an Error before it reads
+ * either, which the transport hands to the caller unchanged with nothing sent; a query pair with no "=" is refused by
+ * the core the same way.
  */
 export function createAwsSigner(options: AwsSignerOptions): RequestSigner {
   const { region, service, credentials, clock } = options;
@@ -51,6 +59,9 @@ export function createAwsSigner(options: AwsSignerOptions): RequestSigner {
     headerNames: ["authorization", "x-amz-date", "x-amz-security-token"],
     sign(input: SigningInput) {
       if (input.path !== ROOT) throw new Error(PATH_REFUSED);
+      if (input.query !== "" && !input.query.split("&").every((pair) => ENCODED_PAIR.test(pair))) {
+        throw new Error(QUERY_REFUSED);
+      }
       const signed: Record<string, string> = {};
       for (const [name, value] of Object.entries(input.headers)) {
         if (name === CONTENT_TYPE || name.startsWith(AMZ_PREFIX)) signed[name] = value;

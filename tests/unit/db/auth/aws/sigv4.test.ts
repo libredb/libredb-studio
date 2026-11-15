@@ -1,7 +1,8 @@
 /**
  * The shared SigV4 core: 24 of 24 AWS suite vectors, the smithy vector, the canonical header order, the empty-payload
- * hash, the two helpers, and payloadSha256 and sigV4Headers, which build the three headers a signed request carries. The suite stays at tests/fixtures/s3/sigv4-suite.json, where the Secret Scan's pinned
- * entry names it; each vector's canonical query is built with the shared rfc3986Query and compareEncodedPairs.
+ * hash, the two helpers, payloadSha256, the payload hash of a text body, and sigV4Headers, which builds the three
+ * headers a signed request carries. The suite stays at tests/fixtures/s3/sigv4-suite.json, where the Secret Scan's
+ * pinned entry names it; each vector's canonical query is built with the shared rfc3986Query and compareEncodedPairs.
  */
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";

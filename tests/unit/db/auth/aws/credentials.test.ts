@@ -71,6 +71,7 @@ describe("resolveAwsCredentials admits typed keys", () => {
 
   test("the result is frozen", () => {
     expect(Object.isFrozen(resolveAwsCredentials(input({ sessionToken: TOKEN }), undefined))).toBe(true);
+    expect(Object.isFrozen(resolveAwsCredentials(input({}), undefined))).toBe(true);
   });
 });
 

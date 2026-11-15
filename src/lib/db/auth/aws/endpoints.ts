@@ -1,12 +1,13 @@
 /**
  * AWS regional endpoints: the one partition this version supports, the commercial "aws" partition, as a row of fixed
- * values, and the https origin of a service in one of its regions. China, GovCloud, the isolated partitions and the
- * European sovereign cloud are refused with a sentence naming the region, so a partition is a row added when an
- * operator needs it, never a guess.
+ * values, and the https origin of a service in one of its regions. China, GovCloud and the isolated partitions are
+ * refused with a sentence naming the region. The European Sovereign Cloud's eusc-de-east-1 is not shaped as a region
+ * name by the quoting rule, so it is refused as notARegion, unquoted. A partition is a row added when an operator needs
+ * it, never a guess.
  *
  * The region rule is AWS's own `regionRegex` for the "aws" partition, copied from partitions.js in the npm package
- * @aws-sdk/core 3.977.9 (dist-es/submodules/client/util-endpoints/lib/aws/partitions.js, the package's integrity
- * sha512-reqPFEQrZxDZpeGj4PFMepBeR5LGYHRqq/L0motTzgFkCRBA4rFdaVXDSLYyGHhxVz7sT2PDnPN9CluGSfgyJA== in bun.lock),
+ * @aws-sdk/core 3.977.9 (dist-es/submodules/client/util-endpoints/lib/aws/partitions.js; the registry's integrity for
+ * that version is sha512-reqPFEQrZxDZpeGj4PFMepBeR5LGYHRqq/L0motTzgFkCRBA4rFdaVXDSLYyGHhxVz7sT2PDnPN9CluGSfgyJA==),
  * whose row gives the DNS suffix amazonaws.com. No FIPS or dual-stack endpoint is built.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";

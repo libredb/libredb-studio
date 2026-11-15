@@ -142,8 +142,9 @@ It is the only file of the layer that imports `node:crypto`.
 `aws/endpoints.ts` holds one partition, the commercial `aws` partition, as a row of fixed values.
 `parseAwsRegion` admits a region that matches AWS's own `regionRegex` for that partition, copied with its source in the file's docblock, and gives it the DNS suffix `amazonaws.com`.
 A blank region is refused as missing.
-A value shaped as an AWS region name, such as `cn-north-1` or `us-gov-west-1`, is refused with a sentence that names it, because China, GovCloud and the other partitions are not supported in this version.
+A value shaped as an AWS region name, such as `cn-north-1` or `us-gov-west-1`, is refused with a sentence that names it, because China, GovCloud and the isolated partitions are not supported in this version.
 Any other value, such as `local` or a secret pasted into the wrong field, is refused without being quoted.
+The European Sovereign Cloud's `eusc-de-east-1` is one of those: it is not shaped as a region name by that rule, so it is refused unquoted as not a region.
 `awsServiceOrigin(service, region)` is `https://<service>.<region>.amazonaws.com:443`; the service name is the provider's own and matches `^[a-z][a-z0-9-]{1,62}$`, and the region must be one `parseAwsRegion` returned.
 No FIPS or dual-stack endpoint is built.
 
@@ -180,6 +181,8 @@ It signs `host`, `content-type`, every `x-amz-*` header the request carries, `x-
 It returns only `authorization`, `x-amz-date` and `x-amz-security-token`.
 Building it refuses a region outside `AWS_SIGNING_REGION` and a malformed service name, quoting neither.
 It signs only the path `/`: the JSON and Query protocols post to it, and for every service but one SigV4 encodes any other canonical URI a second time, which this signer does not implement, so any other path is refused and nothing is sent.
+It signs the query exactly as it is sent, so every name and value must already be RFC 3986-encoded, as `rfc3986Query` builds it: only `A-Z a-z 0-9 - . _ ~` and upper-case `%XX`.
+A form-encoded query, such as `endpointUrl` builds from `URLSearchParams` (`~` as `%7E`, a space as `+`, a bare `*`), is refused and nothing is sent, because its canonical form is not the one AWS computes.
 It is tested directly on the nine POST vectors of the AWS SigV4 suite whose signed set is this policy, and through a real text transport against a loopback listener, where the `Authorization` received equals one recomputed from what the listener received.
 
 A provider wires it as `createNodeTransport` with `signer: createAwsSigner({ credentials: () => credentials, region, service, clock })`, its `jsonContentType`, `requestHeaderNames` for the headers its protocol needs, such as `x-amz-target`, `refusesLinkLocal` and `refusesUpgrade`.
