@@ -249,6 +249,7 @@ describe("providerCacheKey frames every public field that decides who a connecti
     ],
     ["role", { ...base, role: "STUDIO_RO" }, { ...base, role: "STUDIO_RW" }],
     ["authMethod", { ...base, authMethod: "keypair" }, { ...base, authMethod: "pat" }],
+    ["managed", { ...base, managed: true }, base],
     [
       "sshTunnel.authMethod",
       { ...base, sshTunnel: { ...tunnel, authMethod: "privateKey" } },
@@ -271,6 +272,45 @@ describe("providerCacheKey frames every public field that decides who a connecti
 
   test("an empty region and an absent one answer the same key, because both mean us-east-1", async () => {
     expect(await providerCacheKey({ ...base, region: "" })).toBe(await providerCacheKey(base));
+  });
+});
+
+/**
+ * The operator's grant. `managed: true` decides whom an empty credential signs in as: BigQuery and Firestore sign a
+ * keyless connection in with the server's own identity only under it. A seed demoted to `managed: false` keeps its id,
+ * server and empty credential, so without the grant in the key it was handed the provider opened as the server
+ * (tests/api/db/demoted-seed.test.ts reproduces it through POST /api/db/query).
+ */
+describe("providerCacheKey frames the operator's managed grant", () => {
+  const today =
+    "7:cluster64:e2db789313b86b9d6312f61cf097d28ccb162834df6429c22d049c2d64f138c564:a955208a182148bc3f483b9983aab19b4d188b568948e46de77efd445e57d7c210:read-write";
+
+  test("two records that differ only in managed answer different keys", async () => {
+    expect(await providerCacheKey({ ...base, managed: true })).not.toBe(
+      await providerCacheKey({ ...base, managed: false }),
+    );
+  });
+
+  test("a record without managed and one with managed: false keep today's key, byte for byte", async () => {
+    expect(await providerCacheKey(base)).toBe(today);
+    expect(await providerCacheKey({ ...base, managed: false })).toBe(today);
+  });
+
+  test("a governed-shape keyless BigQuery seed and its demoted copy never share an entry", async () => {
+    const seeded: DatabaseConnection = {
+      id: "seed:bq",
+      name: "Demo BigQuery",
+      type: "bigquery",
+      database: "demo-project",
+      password: "",
+      managed: true,
+      createdAt: new Date(0),
+    };
+    const demoted: DatabaseConnection = { ...seeded, managed: false };
+    expect(await providerCacheKey(seeded)).not.toBe(await providerCacheKey(demoted));
+    expect(await providerCacheKey(seeded, undefined, "alice-subject")).not.toBe(
+      await providerCacheKey(demoted, undefined, "alice-subject"),
+    );
   });
 });
 
