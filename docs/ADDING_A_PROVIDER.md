@@ -142,6 +142,10 @@ A `signer` is called once per request just before it is written, with the exact 
 Its connection headers meet the rule a request's own headers meet, so `authorization` comes from the signer alone.
 It never reaches a link-local address or AWS's IPv6 instance metadata address, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says.
 `createNodeTransport` takes both of the byte transport's refusals on request, each off when absent: `refusesLinkLocal: true` keeps a text transport off those addresses the same way, a literal when the transport is built and a DNS answer at the lookup, and `refusesUpgrade: true` fails a 101 answer at once instead of leaving the request to its deadline.
+It also takes the byte transport's `signer`, off when absent: the signer is handed the exact method, Host, path, query, headers and payload text of each POST or GET just before it is written, and the transport then sets Host itself, so the Host signed is the Host sent.
+A signer's header values may be up to 8192 bytes, so an AWS session token fits, while a request's own headers stay at 1024.
+`jsonContentType` sends a JSON body as `application/x-amz-json-1.0` or `application/x-amz-json-1.1` for an AWS JSON API instead of `application/json`, and any other value is refused when the transport is built.
+A connection header named in two spellings is refused, as the byte transport refuses one.
 The older HTTP providers keep their own transports until D37 in [`BACKLOG.md`](BACKLOG.md) moves them.
 
 **Sign in to a cloud through `src/lib/db/auth`.**

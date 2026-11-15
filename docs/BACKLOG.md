@@ -2750,7 +2750,9 @@ There is no session token field, so credentials issued by AWS STS (an access key
 
 Found 2026-10-09 while designing the S3 provider.
 
-**Done when:** a secret-classified session token field signs as `X-Amz-Security-Token`, refused on every other type, with a test that it never reaches an error, a log line or the fingerprint in the clear, measured against a server that issues temporary credentials, and the byte transport's header value cap, 1024 bytes in `src/lib/db/http/node-transport.ts`, admits the token, which STS issues longer than that.
+**Done when:** a secret-classified session token field signs as `X-Amz-Security-Token`, refused on every other type, with a test that it never reaches an error, a log line or the fingerprint in the clear, measured against a server that issues temporary credentials.
+
+The transport half is done: a signer's header values may now be up to 8192 bytes on both transports in `src/lib/db/http/node-transport.ts`, while a request's own stay at 1024, so a session token that STS issues longer than 1024 bytes fits.
 
 ### D263. S3 connections address buckets by path only
 

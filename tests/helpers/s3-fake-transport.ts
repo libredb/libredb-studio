@@ -127,6 +127,7 @@ export function fakeS3Transport(handler: FakeS3Handler): FakeS3Transport {
           path: request.target.path,
           query: request.target.query,
           headers: Object.freeze({ ...base }),
+          body: "",
         };
         const signing = options.signer === undefined ? null : { input, headers: options.signer.sign(input) };
         exchanges.push({ request, signing });

@@ -1198,6 +1198,7 @@ describe("the signer at send time", () => {
           host: `127.0.0.1:${listener.port}`,
           "accept-encoding": "identity",
         },
+        body: "",
       },
     ]);
     expect(Object.isFrozen(inputs[0].headers)).toBe(true);
@@ -1311,12 +1312,12 @@ describe("the signer at send time", () => {
     [
       "a line feed in a value",
       () => ({ authorization: "AWS4\nx-injected: 1" }),
-      "Invalid signature headers: the value of authorization must be visible ASCII or space, at most 1024 bytes",
+      "Invalid signature headers: the value of authorization must be visible ASCII or space, at most 8192 bytes",
     ],
     [
-      "a 1025-character value",
-      () => ({ authorization: "a".repeat(1025) }),
-      "Invalid signature headers: the value of authorization must be visible ASCII or space, at most 1024 bytes",
+      "an 8193-character value",
+      () => ({ authorization: "a".repeat(8193) }),
+      "Invalid signature headers: the value of authorization must be visible ASCII or space, at most 8192 bytes",
     ],
     [
       "an array",
@@ -1341,10 +1342,10 @@ describe("the signer at send time", () => {
     expect(listener.accepted()).toBe(0);
   });
 
-  test("a 1024-character value is sent", async () => {
+  test("an 8192-character value is sent", async () => {
     const listener = await rawHttpListener(OK);
-    await connect(listener, { signer: signer(() => ({ authorization: "a".repeat(1024) })) }).request(get("/b/k"));
-    expect(lines(listener.heads[0])).toContain(`authorization: ${"a".repeat(1024)}`);
+    await connect(listener, { signer: signer(() => ({ authorization: "a".repeat(8192) })) }).request(get("/b/k"));
+    expect(lines(listener.heads[0]).includes(`authorization: ${"a".repeat(8192)}`)).toBe(true);
   });
 });
 
