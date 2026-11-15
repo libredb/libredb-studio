@@ -520,6 +520,26 @@ describe("connection headers in two spellings", () => {
   test("positive control: one spelling of each name is accepted", () => {
     expect(build({ headers: { "X-Api": "a", authorization: "Bearer a" } })).not.toThrow();
   });
+
+  test("a header named __proto__ is sent, as it was before, and never dropped", async () => {
+    const listener = await rawHttpListener(OK);
+    const { transport, url } = connect(listener, { headers: JSON.parse('{"__proto__":"x","x-a":"1"}') });
+    await transport.request(get(url("/")));
+    expect(lines(listener.heads[0])).toEqual([
+      "GET / HTTP/1.1",
+      "__proto__: x",
+      "x-a: 1",
+      "accept-encoding: identity",
+      `Host: 127.0.0.1:${listener.port}`,
+      "Connection: keep-alive",
+    ]);
+  });
+
+  test("__proto__ in two spellings is refused like any other name", () => {
+    const error = thrownBy(build({ headers: JSON.parse('{"__proto__":"x","__PROTO__":"y"}') }));
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toBe("Invalid headers: __proto__ is named twice");
+  });
 });
 
 describe("refusals when the transport is built", () => {

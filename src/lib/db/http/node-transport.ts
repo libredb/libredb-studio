@@ -60,8 +60,9 @@
  * A signer's header values may be up to 8192 bytes on both transports, so a session token fits, while a request's own
  * stay at 1024. The text transport also takes `reportsUnreachable`, off when absent, which the byte transport does
  * not: a deadline that fires before the socket connected is then kind "unreachable", naming host, port and the seconds
- * waited. Its `jsonContentType` picks the type a JSON body is sent under, application/json when absent or one of AWS's
- * application/x-amz-json-1.0 and 1.1, and anything else is refused when the transport is built. Both transports
+ * waited. Its `jsonContentType` picks the type a JSON body is sent under: one of application/json (the default when
+ * absent), application/x-amz-json-1.0 or application/x-amz-json-1.1, and any other value is refused when the transport
+ * is built. Both transports
  * refuse a connection header named in two spellings, so none is dropped silently and a signer sees one set.
  *
  * `nodeTlsMaterial` is the TLS mapping D37 counts, shared here so that a new REST provider takes it instead of
@@ -225,7 +226,8 @@ export interface ResponseHeaderSelection {
 
 /**
  * What the signer is given: the method, Host, target, every header the transport sets, before the signer's own, and the
- * body. The runtime also appends `Connection: keep-alive` after these, which is not in `headers` and must not be signed.
+ * body. The runtime also appends `Connection: keep-alive` after these, and `Content-Length: 0` on a POST with no
+ * payload; neither is in `headers` and neither must be signed.
  */
 export interface SigningInput {
   /** GET or HEAD on the byte transport, GET or POST on the text transport. */
@@ -639,7 +641,8 @@ const TRANSPORT_HEADERS: ReadonlySet<string> = new Set(["content-length", "trans
  * the byte transport's sentence, so a signer sees one unambiguous set and none is dropped silently.
  */
 function lowerCased(headers: Readonly<Record<string, string>>): Record<string, string> {
-  const lowered: Record<string, string> = {};
+  // No prototype, so a header named __proto__ is an own entry like any other rather than a setter that drops it.
+  const lowered: Record<string, string> = Object.create(null);
   for (const [written, value] of Object.entries(headers)) {
     const name = written.toLowerCase();
     if (Object.hasOwn(lowered, name)) throw new DatabaseConfigError(`Invalid headers: ${name} is named twice`);
