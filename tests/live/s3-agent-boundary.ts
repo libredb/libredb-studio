@@ -34,7 +34,7 @@ import {
   type NodeByteTransportOptions,
 } from "@/lib/db/http/node-transport";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
-import { amzDateOf, canonicalQueryOf, signatureV4 } from "@/lib/db/providers/objectstore/s3/sigv4";
+import { amzDateOf, canonicalQueryOf, signatureV4 } from "@/lib/db/auth/aws/sigv4";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 

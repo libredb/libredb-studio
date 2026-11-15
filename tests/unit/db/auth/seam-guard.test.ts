@@ -53,8 +53,11 @@ interface MarkerException {
 const MARKER_EXCEPTIONS: readonly MarkerException[] = [
   { path: "src/lib/db/providers/sql/bigquery/auth.ts", lines: 3, removedBy: "G2" },
 ];
-/** The markers of each mechanism the layer holds: the Google token endpoint, the JWT-bearer grant, the metadata path. */
-const MARKERS = /oauth2\.googleapis\.com|grant-type:jwt-bearer|computeMetadata\/v1/;
+/**
+ * The markers of each mechanism the layer holds: the Google token endpoint, the JWT-bearer grant, the metadata path,
+ * and SigV4's algorithm name and scope terminator.
+ */
+const MARKERS = /oauth2\.googleapis\.com|grant-type:jwt-bearer|computeMetadata\/v1|AWS4-HMAC-SHA256|aws4_request/;
 
 // -- reading files ------------------------------------------------------------------------------------------------
 
@@ -399,6 +402,7 @@ describe("the real tree holds every rule", () => {
   test("the rules read files, so none passes over nothing", () => {
     const { files } = repositoryOf(ROOT);
     expect(files.filter((file) => inLayer(file.path)).map((file) => file.path)).toEqual([
+      SIGV4,
       `${LAYER}/google/credentials.ts`,
       `${LAYER}/google/token-source.ts`,
       `${LAYER}/lanes.ts`,
@@ -703,7 +707,7 @@ describe("planted violations: each rule fails by name", () => {
   );
 
   test(
-    "AUTH6: a marker outside the layer, in a comment too, and an exception whose count no longer matches",
+    "AUTH6: a Google or SigV4 marker outside the layer, in a comment too, and an exception whose count no longer matches",
     () => {
       const copy = "src/lib/db/providers/document/sample/token.ts";
       expect(
@@ -715,6 +719,25 @@ describe("planted violations: each rule fails by name", () => {
         `AUTH6 one copy: ${copy}:2 holds oauth2.googleapis.com outside ${LAYER}/`,
         `AUTH6 one copy: ${copy}:3 holds computeMetadata/v1 outside ${LAYER}/`,
       ]);
+      const signer = "src/lib/db/providers/objectstore/sample/sigv4.ts";
+      expect(
+        planted(
+          {
+            [signer]:
+              'export {};\n// the string to sign starts with AWS4-HMAC-SHA256\nconst SCOPE = "/aws4_request";\n',
+          },
+          (root, env) => auth6OneCopy(root, env),
+        ),
+      ).toEqual([
+        `AUTH6 one copy: ${signer}:2 holds AWS4-HMAC-SHA256 outside ${LAYER}/`,
+        `AUTH6 one copy: ${signer}:3 holds aws4_request outside ${LAYER}/`,
+      ]);
+      expect(
+        planted(
+          { [SIGV4]: 'export const ALGORITHM = "AWS4-HMAC-SHA256";\nexport const END = "aws4_request";\n' },
+          (root, env) => auth6OneCopy(root, env),
+        ),
+      ).toEqual([]);
       expect(planted({ [EXCEPTION.path]: "export {};\n" }, (root, env) => auth6OneCopy(root, env))).toEqual([
         `AUTH6 one copy: ${EXCEPTION.path} is listed with ${EXCEPTION.lines} marker lines (removed by ${EXCEPTION.removedBy}) and holds 0`,
       ]);
