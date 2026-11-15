@@ -181,6 +181,27 @@ describe("the connection headers meet the rule a request's own headers meet, whe
     await connect(listener, { headers: { "x-tenant": "t1", "x-long": "a".repeat(1024) } }).request(get("/b/k"));
     expect(lines(listener.heads[0])).toEqual(expect.arrayContaining(["x-tenant: t1", `x-long: ${"a".repeat(1024)}`]));
   });
+
+  test("a header named __proto__ is sent, and never dropped", async () => {
+    const listener = await rawHttpListener(OK);
+    await connect(listener, { headers: JSON.parse('{"__proto__":"x","x-a":"1"}') }).request(get("/b/k"));
+    expect(lines(listener.heads[0])).toEqual([
+      "GET /b/k HTTP/1.1",
+      "__proto__: x",
+      "x-a: 1",
+      `host: 127.0.0.1:${listener.port}`,
+      "accept-encoding: identity",
+      "Connection: keep-alive",
+    ]);
+  });
+
+  test("__proto__ in two spellings is refused like any other name, and no socket is opened", async () => {
+    const listener = await rawHttpListener(OK);
+    const error = refusal(() => connect(listener, { headers: JSON.parse('{"__proto__":"x","__PROTO__":"y"}') }));
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toBe("Invalid headers: __proto__ is named twice");
+    expect(listener.accepted()).toBe(0);
+  });
 });
 
 describe("request refusals before any socket", () => {
