@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { GOOGLE_CREDENTIAL_SENTENCES } from "@/lib/db/auth/google/credentials";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { FIRESTORE_TYPE } from "@/lib/db/providers/document/firestore/constants";
 import {
@@ -8,7 +9,6 @@ import {
   parseEmulatorHost,
   resolveFirestoreAuth,
 } from "@/lib/db/providers/document/firestore/credential-policy";
-import { GOOGLE_CREDENTIAL_SENTENCES } from "@/lib/db/providers/document/firestore/google-credentials";
 import { projectIdRefusal } from "@/lib/db/providers/document/firestore/names";
 import { fakeSeams } from "../../../helpers/firestore-seams";
 
@@ -50,6 +50,25 @@ describe("firestore credential sentences", () => {
   test("the rules carry the provider and the project id rule", () => {
     expect(FIRESTORE_CREDENTIAL_RULES.provider).toBe(FIRESTORE_TYPE);
     expect(FIRESTORE_CREDENTIAL_RULES.quotaProjectRefusal).toBe(projectIdRefusal);
+  });
+
+  test("the rules accept exactly the three kinds, and gate the server's identity on Firestore's opt-in and sentences", () => {
+    expect(FIRESTORE_CREDENTIAL_RULES.accepts).toEqual(["service_account", "authorized_user", "access_token"]);
+    expect(FIRESTORE_CREDENTIAL_RULES.serverIdentity).toEqual({
+      optIn: "FIRESTORE_SERVER_CREDENTIALS",
+      unmanaged: S.browserEmpty,
+      withoutOptIn: S.seedWithoutOptIn,
+    });
+  });
+
+  test("an external_account and an impersonated_service_account JSON are refused with today's sentence", () => {
+    const accepted = "paste a service-account key JSON, an authorized-user JSON or an access token";
+    for (const type of ["external_account", "impersonated_service_account"]) {
+      const password = JSON.stringify({ type, token_url: "https://evil.example/sts" });
+      const error = refusal(() => resolveFirestoreAuth({ password, managed: true }, fakeSeams()));
+      expect(error.message).toBe(`Credentials of type "${type}" are not supported: ${accepted}`);
+      expect(error.provider).toBe(FIRESTORE_TYPE);
+    }
   });
 });
 

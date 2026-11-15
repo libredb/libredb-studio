@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { GOOGLE_TOKEN_URL } from "@/lib/db/auth/google/token-source";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { QueryError } from "@/lib/db/errors";
 import { compileStatement } from "@/lib/db/providers/document/firestore/console/compile";
@@ -16,7 +17,6 @@ import {
   ENV,
   FIRESTORE_API_ORIGIN,
   FIRESTORE_SCOPE,
-  GOOGLE_TOKEN_URL,
   LIMITS,
   SENTENCES,
 } from "@/lib/db/providers/document/firestore/constants";
@@ -206,7 +206,9 @@ describe("the limits table is LIMITS", () => {
 
 describe("names, endpoints and declarations", () => {
   test("every environment variable the provider reads, and the fixed endpoints and scope", () => {
-    for (const name of Object.values(ENV)) expect(DOC).toContain(`\`${name}\``);
+    for (const name of [...Object.values(ENV), "GOOGLE_APPLICATION_CREDENTIALS", "GCE_METADATA_HOST"]) {
+      expect(DOC).toContain(`\`${name}\``);
+    }
     for (const value of [FIRESTORE_API_ORIGIN, GOOGLE_TOKEN_URL, FIRESTORE_SCOPE])
       expect(DOC).toContain(`\`${value}\``);
   });

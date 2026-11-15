@@ -1,29 +1,34 @@
+/**
+ * Google OAuth2 access tokens with no Google SDK: the grants, the metadata server, the cache and its one shared
+ * refresh, the refusal reasons and the lanes, over neutral fakes.
+ */
 import { describe, expect, spyOn, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
 import { decodeProtectedHeader, importSPKI, jwtVerify } from "jose";
-import { AuthenticationError } from "@/lib/db/errors";
-import { type NodeTransportOptions, TransportError } from "@/lib/db/http/node-transport";
 import {
-  FIRESTORE_TYPE,
-  FIRESTORE_SCOPE,
+  type GoogleCredentials,
+  googleCredentialSecrets,
+  parseGoogleCredentialText,
+} from "@/lib/db/auth/google/credentials";
+import {
+  createGoogleTokenSource,
+  GOOGLE_TOKEN_SOURCE_SENTENCES as S,
   GOOGLE_TOKEN_URL,
-  LIMITS,
-} from "@/lib/db/providers/document/firestore/constants";
-import { type GoogleCredentials, parseCredentialText } from "@/lib/db/providers/document/firestore/google-credentials";
+  type GoogleAuthLane,
+  type GoogleTokenSourceDeps,
+} from "@/lib/db/auth/google/token-source";
+import { AuthenticationError } from "@/lib/db/errors";
+import { TransportError } from "@/lib/db/http/node-transport";
+import { secretForms } from "@/lib/db/utils/server-text";
 import {
-  createTokenSource,
-  TOKEN_SOURCE_SENTENCES as S,
-  type TokenSourceDeps,
-} from "@/lib/db/providers/document/firestore/google-token-source";
-import {
-  type FakeFirestoreSeams,
-  type FirestoreAnswer,
+  type FakeAnswer,
   FIXED_NOW,
-  fakeSeams,
+  fakeClock,
+  fakeTransports,
   held,
   jsonAnswer,
   tokenAnswer,
-} from "../../../helpers/firestore-seams";
+} from "../../../../helpers/auth-fakes";
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
@@ -31,12 +36,8 @@ const { privateKey, publicKey } = generateKeyPairSync("rsa", {
   publicKeyEncoding: { type: "spki", format: "pem" },
 });
 
-const LANE: NodeTransportOptions = {
-  origin: { scheme: "https", host: "oauth2.googleapis.com", port: 443 },
-  tls: null,
-  maxSockets: 1,
-  headers: {},
-};
+const SCOPE = "https://www.googleapis.com/auth/datastore";
+const TOKEN_RESPONSE_BYTES = 64 * 1024;
 const signal = new AbortController().signal;
 const serviceAccount: GoogleCredentials = {
   type: "service_account",
@@ -54,25 +55,26 @@ const metadata: GoogleCredentials = { type: "metadata", host: "meta.internal:808
 const METADATA_URL =
   "http://meta.internal:8080/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdatastore";
 
-function depsOf(seams: FakeFirestoreSeams): TokenSourceDeps {
+/** The clock, its deadlines and the recorded lanes of one source. */
+function fakeSeams(answer: FakeAnswer<GoogleAuthLane>) {
+  return { ...fakeClock(), ...fakeTransports(answer) };
+}
+type FakeSeams = ReturnType<typeof fakeSeams>;
+
+function depsOf(seams: FakeSeams): GoogleTokenSourceDeps {
   return {
-    scope: FIRESTORE_SCOPE,
-    provider: FIRESTORE_TYPE,
-    maxResponseBytes: LIMITS.tokenResponseBytes,
+    scope: SCOPE,
+    provider: "firestore",
+    maxResponseBytes: TOKEN_RESPONSE_BYTES,
     now: () => seams.now(),
     timeoutSignal: (ms) => seams.timeoutSignal(ms),
-    tokenTransport: () => seams.createTransport(LANE, "token"),
-    metadataTransport: (host) =>
-      seams.createTransport(
-        { ...LANE, origin: { scheme: "http", host, port: 80 }, headers: { "metadata-flavor": "Google" } },
-        "metadata",
-      ),
+    createTransport: seams.createTransport,
   };
 }
 
-function sourceOf(credentials: GoogleCredentials, answer: FirestoreAnswer) {
-  const seams = fakeSeams({ answer });
-  return { seams, source: createTokenSource(credentials, depsOf(seams)) };
+function sourceOf(credentials: GoogleCredentials, answer: FakeAnswer<GoogleAuthLane>) {
+  const seams = fakeSeams(answer);
+  return { seams, source: createGoogleTokenSource(credentials, depsOf(seams)) };
 }
 
 /** Lets queued microtasks run, so a refresh that awaits key import or a grant reaches its transport. */
@@ -81,7 +83,11 @@ async function settle(): Promise<void> {
   for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
 }
 
-describe("firestore token source grants", () => {
+describe("google token source grants", () => {
+  test("the token endpoint is Google's OAuth 2.0 token URL", () => {
+    expect(GOOGLE_TOKEN_URL).toBe("https://oauth2.googleapis.com/token");
+  });
+
   test("a service account posts one JWT-bearer grant to the token constant, signed RS256 with its key", async () => {
     const { seams, source } = sourceOf(serviceAccount, () => tokenAnswer("sa-token"));
     expect(await source.token(signal)).toBe("sa-token");
@@ -90,7 +96,7 @@ describe("firestore token source grants", () => {
     expect(request.method).toBe("POST");
     expect(request.url).toBe(GOOGLE_TOKEN_URL);
     expect(request.body).toBeUndefined();
-    expect(request.maxResponseBytes).toBe(LIMITS.tokenResponseBytes);
+    expect(request.maxResponseBytes).toBe(TOKEN_RESPONSE_BYTES);
     expect(Object.keys(request.form ?? {}).sort()).toEqual(["assertion", "grant_type"]);
     expect(request.form?.grant_type).toBe("urn:ietf:params:oauth:grant-type:jwt-bearer");
     const assertion = request.form?.assertion ?? "";
@@ -103,7 +109,7 @@ describe("firestore token source grants", () => {
     expect(payload).toEqual({
       iss: "reader@demo-p.iam.gserviceaccount.com",
       aud: GOOGLE_TOKEN_URL,
-      scope: FIRESTORE_SCOPE,
+      scope: SCOPE,
       iat: FIXED_NOW / 1000,
       exp: FIXED_NOW / 1000 + 3600,
     });
@@ -139,12 +145,12 @@ describe("firestore token source grants", () => {
     const { seams, source } = sourceOf(metadata, () => tokenAnswer("meta-token"));
     expect(await source.token(signal)).toBe("meta-token");
     expect(seams.lanes.map((lane) => lane.lane)).toEqual(["metadata"]);
-    expect(seams.lanes[0].options.origin.host).toBe("meta.internal:8080");
+    expect(seams.lanes[0].options.origin).toEqual({ scheme: "http", host: "meta.internal", port: 8080 });
     const request = seams.lanes[0].requests[0];
     expect(request.method).toBe("GET");
     expect(request.url).toBe(METADATA_URL);
     expect(request.form).toBeUndefined();
-    expect(request.maxResponseBytes).toBe(LIMITS.tokenResponseBytes);
+    expect(request.maxResponseBytes).toBe(TOKEN_RESPONSE_BYTES);
     const fallback = sourceOf({ type: "metadata", host: "metadata.google.internal" }, () => tokenAnswer("m"));
     await fallback.source.token(signal);
     expect(fallback.seams.lanes[0].requests[0].url).toStartWith(
@@ -165,7 +171,7 @@ describe("firestore token source grants", () => {
   });
 
   test("a credential file's token_uri is never dialled", async () => {
-    const hostile = parseCredentialText(
+    const hostile = parseGoogleCredentialText(
       JSON.stringify({
         type: "service_account",
         client_email: "reader@demo-p.iam.gserviceaccount.com",
@@ -173,7 +179,12 @@ describe("firestore token source grants", () => {
         token_uri: "https://evil.example/token",
         universe_domain: "evil.example",
       }),
-      { provider: FIRESTORE_TYPE, quotaProjectRefusal: () => null },
+      {
+        provider: "firestore",
+        accepts: ["service_account"],
+        quotaProjectRefusal: () => null,
+        serverIdentity: { optIn: "SAMPLE_SERVER_CREDENTIALS", unmanaged: "unmanaged", withoutOptIn: "without opt-in" },
+      },
     );
     const { seams, source } = sourceOf(hostile, () => tokenAnswer("sa-token"));
     await source.token(signal);
@@ -182,7 +193,7 @@ describe("firestore token source grants", () => {
   });
 });
 
-describe("firestore token source cache", () => {
+describe("google token source cache", () => {
   test("a token is reused until 60 seconds before it expires", async () => {
     let issued = 0;
     const { seams, source } = sourceOf(user, () => tokenAnswer(`t${++issued}`, 3600));
@@ -242,7 +253,7 @@ describe("firestore token source cache", () => {
   });
 });
 
-describe("firestore token source errors", () => {
+describe("google token source errors", () => {
   test("a refusal reports error_description, then error, then the status, and never a secret", async () => {
     const cases: readonly (readonly [ReturnType<typeof jsonAnswer>, string])[] = [
       [
@@ -263,7 +274,7 @@ describe("firestore token source errors", () => {
         expect(error).toBeInstanceOf(AuthenticationError);
         const message = (error as Error).message;
         expect(message).toBe(sentence);
-        expect((error as AuthenticationError).provider).toBe(FIRESTORE_TYPE);
+        expect((error as AuthenticationError).provider).toBe("firestore");
         const sent = seams.lanes[0].requests[0].form ?? {};
         for (const secret of [
           sent.assertion,
@@ -280,7 +291,8 @@ describe("firestore token source errors", () => {
 
   test("a long error_description is cut to 300 characters", async () => {
     const { source } = sourceOf(user, () => jsonAnswer({ error_description: "x".repeat(1000) }, 400));
-    await expect(source.token(signal)).rejects.toThrow(S.refused("x".repeat(300)));
+    const error = await source.token(signal).catch((caught: unknown) => caught);
+    expect((error as Error).message).toBe(S.refused("x".repeat(300)));
   });
 
   test("a key jose cannot import is refused before any request, without the key", async () => {
@@ -298,7 +310,7 @@ describe("firestore token source errors", () => {
   });
 });
 
-describe("firestore token source callers and close", () => {
+describe("google token source callers and close", () => {
   test("a caller that aborts is rejected at once and does not fail a longer caller", async () => {
     const answer = held<ReturnType<typeof tokenAnswer>>();
     const { seams, source } = sourceOf(metadata, () => answer.promise);
@@ -362,5 +374,121 @@ describe("firestore token source callers and close", () => {
     expect(await source.token(signal)).toBe("cached");
     source.close();
     await expect(source.token(signal)).rejects.toThrow(S.closed);
+  });
+});
+
+describe("google token source refusal reasons (the credential's forms withheld)", () => {
+  test("a reason that holds the refresh token, or the base64 of the client secret, is withheld whole", async () => {
+    const forms = [
+      "invalid_grant for 1//refresh-token-value",
+      `bad client ${Buffer.from("user-secret-value").toString("base64")}`,
+      `bad client ${encodeURIComponent("user-secret-value")}`,
+    ];
+    for (const reason of forms) {
+      const { source } = sourceOf(user, () => jsonAnswer({ error: "invalid_grant", error_description: reason }, 400));
+      // oxlint-disable-next-line no-await-in-loop -- one reason at a time, so a failure names it.
+      const error = await source.token(signal).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(AuthenticationError);
+      const message = (error as Error).message;
+      expect(message).toBe(
+        S.refused("(the server's text was withheld because it contained the configured credential)"),
+      );
+      expect(message).not.toContain("refresh-token-value");
+      expect(message).not.toContain("user-secret-value");
+    }
+  });
+
+  test("a service account's key id in an error is withheld too, and the forms are the credential's own", async () => {
+    const { source } = sourceOf(serviceAccount, () =>
+      jsonAnswer({ error: "invalid_grant", error_description: "kid kid-123 unknown" }, 400),
+    );
+    expect(((await source.token(signal).catch((caught: unknown) => caught)) as Error).message).not.toContain("kid-123");
+    expect(secretForms(googleCredentialSecrets(serviceAccount))).toContain("kid-123");
+  });
+
+  test("a reason that holds no form is unchanged, and a long one is cut to 300 characters after the check", async () => {
+    const { source } = sourceOf(user, () =>
+      jsonAnswer({ error_description: "Token has been expired or revoked." }, 400),
+    );
+    const plain = await source.token(signal).catch((caught: unknown) => caught);
+    expect((plain as Error).message).toBe(S.refused("Token has been expired or revoked."));
+    const long = sourceOf(user, () => jsonAnswer({ error_description: `${"y".repeat(400)}z` }, 400));
+    const cut = await long.source.token(signal).catch((caught: unknown) => caught);
+    expect((cut as Error).message).toBe(S.refused("y".repeat(300)));
+    const secretAtTheEnd = `${"x".repeat(400)}1//refresh-token-value`;
+    const late = sourceOf(user, () => jsonAnswer({ error_description: secretAtTheEnd }, 400));
+    await expect(late.source.token(signal)).rejects.toThrow(
+      S.refused("(the server's text was withheld because it contained the configured credential)"),
+    );
+  });
+});
+
+describe("google token source deadlines while signing", () => {
+  test("a deadline that fires while the key is signed reports a timeout, never the closed sentence", async () => {
+    const { seams, source } = sourceOf(serviceAccount, () => new Promise(() => {}));
+    const call = source.token(signal).catch((error: unknown) => error);
+    seams.fireDeadline(0);
+    const error = await call;
+    expect(error).toBeInstanceOf(TransportError);
+    expect(error).toMatchObject({ kind: "timeout" });
+    expect((error as Error).message).not.toBe(S.closed);
+  });
+
+  test("a close() while the key is signed reports the closed sentence", async () => {
+    const { seams, source } = sourceOf(serviceAccount, () => tokenAnswer("never"));
+    const call = source.token(signal).catch((error: unknown) => error);
+    source.close();
+    expect(await call).toMatchObject({ kind: "aborted", message: S.closed });
+    expect(seams.lanes).toEqual([]);
+  });
+});
+
+describe("google token source lanes", () => {
+  test("the token lane and the metadata lane equal the options the shared transport is given today, key for key", async () => {
+    const token = sourceOf(user, () => tokenAnswer("t"));
+    await token.source.token(signal);
+    expect(token.seams.lanes.map((lane) => lane.lane)).toEqual(["token"]);
+    expect(token.seams.lanes[0].options).toEqual({
+      origin: { scheme: "https", host: "oauth2.googleapis.com", port: 443 },
+      tls: { rejectUnauthorized: true, identity: "oauth2.googleapis.com" },
+      maxSockets: 1,
+      headers: {},
+      refusesLinkLocal: true,
+      refusesUpgrade: true,
+    });
+    const meta = sourceOf(metadata, () => tokenAnswer("m"));
+    await meta.source.token(signal);
+    expect(meta.seams.lanes[0].options).toEqual({
+      origin: { scheme: "http", host: "meta.internal", port: 8080 },
+      tls: null,
+      maxSockets: 1,
+      headers: { "metadata-flavor": "Google" },
+      refusesUpgrade: true,
+    });
+    expect("refusesLinkLocal" in meta.seams.lanes[0].options).toBe(false);
+  });
+
+  test("close closes every lane the source built", async () => {
+    const { seams, source } = sourceOf(metadata, () => tokenAnswer("m"));
+    await source.token(signal);
+    source.close();
+    expect(seams.lanes.map((lane) => lane.closed)).toEqual([1]);
+  });
+
+  test("two sources from two credentials over one factory never return each other's token", async () => {
+    const seams = fakeSeams((request) =>
+      tokenAnswer(request.form?.client_id === "first" ? "first-token" : "second-token"),
+    );
+    const first = createGoogleTokenSource({ ...user, clientId: "first" } as GoogleCredentials, depsOf(seams));
+    const second = createGoogleTokenSource({ ...user, clientId: "second" } as GoogleCredentials, depsOf(seams));
+    expect(await Promise.all([first.token(signal), second.token(signal), first.token(signal)])).toEqual([
+      "first-token",
+      "second-token",
+      "first-token",
+    ]);
+    first.close();
+    expect(await second.token(signal)).toBe("second-token");
+    expect(seams.lanes).toHaveLength(2);
+    expect(FIXED_NOW).toBe(seams.now());
   });
 });

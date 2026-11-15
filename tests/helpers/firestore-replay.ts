@@ -141,6 +141,9 @@ export function replayKey(
       const line = `${lane} ${request.method} ${sortedPath(request.path)}`;
       return request.method === "POST" && request.body !== undefined ? `${line} ${request.body}` : line;
     }
+    default:
+      // A lane the shared Google auth adds later has no recorded format here: name it rather than key it silently.
+      throw new Error(`replayKey has no format for the lane ${String(lane)}`);
   }
 }
 

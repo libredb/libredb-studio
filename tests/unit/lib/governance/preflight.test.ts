@@ -8,7 +8,10 @@
  */
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import ts from "typescript";
 import { customConnectionsAllowed } from "@/lib/config/custom-connections";
 import { governanceEnabled, governanceSource } from "@/lib/governance/config";
 import { resetGovernanceKeyring } from "@/lib/governance/keyring";
@@ -391,5 +394,137 @@ describe("governance/preflight verifyGovernanceEnvAtBoot", () => {
       expect(readMcpSwitch().state, value).not.toBe("off");
       expect(governed("LIBREDB_MCP_ENABLED", value), value).toBe(false);
     }
+  });
+});
+
+/**
+ * The server-identity opt-in guard (one opt-in per provider that may use the server's own cloud identity, each named
+ * `<PREFIX>_SERVER_CREDENTIALS`).
+ *
+ * It finds every opt-in by its suffix, not from a list: each string literal and substitution-free template literal
+ * under src/ that ends in `_SERVER_CREDENTIALS` is a name the preflight must refuse when set to "true", so a provider
+ * that adds an opt-in without a preflight row fails here whichever file declares it. A template expression with
+ * substitutions whose text ends in the suffix is refused outright, since its name cannot be read without running it.
+ * Type positions are not values and are skipped, so a type such as `${string}_SERVER_CREDENTIALS` passes.
+ *
+ * What a text scan cannot see: a name assembled in pieces (a suffix split across template parts or joined at run
+ * time) is out of its reach and is a review matter.
+ */
+const OPT_IN_SUFFIX = "_SERVER_CREDENTIALS";
+const SCANNED = /\.(c|m)?(t|j)sx?$/;
+
+interface OptInScan {
+  /** Every opt-in name a literal under src/ spells, sorted, each once. */
+  readonly names: readonly string[];
+  /** Every template expression with substitutions that ends in the suffix, as `path:line`. */
+  readonly templates: readonly string[];
+}
+
+function sourceFilesUnder(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory()) return sourceFilesUnder(full);
+    return SCANNED.test(entry.name) ? [full] : [];
+  });
+}
+
+function inTypePosition(node: ts.Node): boolean {
+  for (let parent = node.parent; parent !== undefined; parent = parent.parent) {
+    if (ts.isTypeNode(parent)) return true;
+  }
+  return false;
+}
+
+function scanOptIns(root: string): OptInScan {
+  const names = new Set<string>();
+  const templates: string[] = [];
+  for (const file of sourceFilesUnder(path.join(root, "src"))) {
+    const text = readFileSync(file, "utf8");
+    if (!text.includes(OPT_IN_SUFFIX)) continue;
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const visit = (node: ts.Node) => {
+      if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && !inTypePosition(node)) {
+        if (node.text.endsWith(OPT_IN_SUFFIX)) names.add(node.text);
+      } else if (ts.isTemplateExpression(node) && !inTypePosition(node)) {
+        const tail = node.templateSpans[node.templateSpans.length - 1].literal.text;
+        if (tail.endsWith(OPT_IN_SUFFIX)) {
+          const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+          templates.push(`${path.relative(root, file).split(path.sep).join("/")}:${line}`);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  return { names: [...names].sort(), templates };
+}
+
+/** The names a governance boot does not refuse when each, alone, is set to "true". */
+function unrefusedOptIns(names: readonly string[]): string[] {
+  return names.filter((name) => {
+    const saved = process.env[name];
+    process.env[name] = "true";
+    try {
+      const run = runPreflight();
+      return run.passed || !run.problems.some((problem) => problem.startsWith(`${name} is "true"`));
+    } finally {
+      setEnv(name, saved);
+    }
+  });
+}
+
+/** Runs `check` over a temporary directory holding `files`, then removes it. */
+function inPlantedTree<T>(files: Readonly<Record<string, string>>, check: (root: string) => T): T {
+  const root = mkdtempSync(path.join(tmpdir(), "opt-in-guard-"));
+  try {
+    for (const [file, text] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      writeFileSync(path.join(root, file), text);
+    }
+    return check(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+describe("governance/preflight refuses every server-identity opt-in under src/", () => {
+  const ROOT = path.resolve(import.meta.dir, "../../../..");
+
+  test("every opt-in a literal under src/ names is refused when set to true, and none is assembled", () => {
+    const scan = scanOptIns(ROOT);
+    expect(scan.names.length).toBeGreaterThan(1);
+    expect(unrefusedOptIns(scan.names)).toEqual([]);
+    expect(scan.templates).toEqual([]);
+  });
+
+  test("a planted opt-in the preflight does not know fails, naming it", () => {
+    const scan = inPlantedTree(
+      {
+        "src/lib/db/providers/sample/policy.ts": 'export const OPT_IN = "SAMPLE_SERVER_CREDENTIALS";\n',
+        "src/lib/db/providers/sample/other.ts": "export const SAME = `FIRESTORE_SERVER_CREDENTIALS`;\n",
+      },
+      scanOptIns,
+    );
+    expect(scan.names).toEqual(["FIRESTORE_SERVER_CREDENTIALS", "SAMPLE_SERVER_CREDENTIALS"]);
+    expect(unrefusedOptIns(scan.names)).toEqual(["SAMPLE_SERVER_CREDENTIALS"]);
+  });
+
+  test("a planted template ending in the suffix fails, and a type position and prose pass", () => {
+    const scan = inPlantedTree(
+      {
+        "src/lib/db/providers/sample/name.ts": [
+          'const prefix = "SAMPLE";',
+          "export const OPT_IN = `${prefix}_SERVER_CREDENTIALS`;",
+          "export type OptIn = `${string}_SERVER_CREDENTIALS`;",
+          'export interface Gate { readonly optIn: "TYPED_SERVER_CREDENTIALS" }',
+          "// GHOST_SERVER_CREDENTIALS in a comment is prose.",
+          "export const SENTENCE = `Set ${prefix}_SERVER_CREDENTIALS=true on the server`;",
+          "",
+        ].join("\n"),
+        "src/notes.md": 'const MD = "MARKDOWN_SERVER_CREDENTIALS";\n',
+      },
+      scanOptIns,
+    );
+    expect(scan).toEqual({ names: [], templates: ["src/lib/db/providers/sample/name.ts:2"] });
   });
 });
