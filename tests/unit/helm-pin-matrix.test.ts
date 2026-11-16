@@ -54,7 +54,7 @@ const WORKFLOW_FILES = readdirSync(WORKFLOWS)
   .filter((name) => /\.ya?ml$/.test(name))
   .sort();
 
-const SETUP_HELM_SHA = "9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310";
+const SETUP_HELM_SHA = "2f5e7bc67f1f9972ab16657bb795f36d8f04de0e";
 const HELM_4 = "v4.1.3";
 const HELM_3 = "v3.16.0";
 
@@ -184,7 +184,7 @@ describe("parseHelmPins", () => {
       "    steps:",
       "      # why this one is different",
       "      - name: Set up Helm",
-      `        uses: azure/setup-helm@${SETUP_HELM_SHA} # v5.0.1`,
+      `        uses: azure/setup-helm@${SETUP_HELM_SHA} # v5.1.0`,
       "        with:",
       "          version: v4.1.3",
       "",

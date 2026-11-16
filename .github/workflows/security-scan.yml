@@ -335,7 +335,7 @@ jobs:
         # A fork pull request's token cannot write security events. Same guard
         # shape as ci.yml's SonarCloud job, for the same reason.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@0911ee96d2d6c8def97122c36c5cadd93829a4b4 # v4
+        uses: github/codeql-action/upload-sarif@3ea37a44b6e4e6847c46edae209410d258d548d1 # v4
         with:
           sarif_file: ${{ runner.temp }}/trivy-out/deps.sarif
           # Without a category this run would overwrite CodeQL's own results for
@@ -584,7 +584,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the findings to the security tab
-        uses: github/codeql-action/upload-sarif@0911ee96d2d6c8def97122c36c5cadd93829a4b4 # v4
+        uses: github/codeql-action/upload-sarif@3ea37a44b6e4e6847c46edae209410d258d548d1 # v4
         with:
           sarif_file: ${{ runner.temp }}/trivy-out/image.sarif
           category: trivy-image-${{ matrix.variant }}
