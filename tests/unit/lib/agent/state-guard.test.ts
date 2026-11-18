@@ -352,6 +352,8 @@ describe("assertPersistableState — CREDENTIAL_KEY", () => {
         "passphrase",
         "apiKeyId",
         "apiKeySecret",
+        // Redis's sentinels' AUTH password, sealed like the master's (src/lib/storage/secret-fields.ts).
+        "sentinelPassword",
       ]),
     );
   });

@@ -174,6 +174,11 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  *   connection whose consent was taken back must not be handed a provider opened under it.
  * - `dataServers` decides which hosts receive the token (O6), so a connection whose list changed must
  *   not be handed a provider whose policy admitted other hosts.
+ * - `masterName` and `sentinelNodes` (Redis Sentinel) decide which master a connection resolves through its
+ *   sentinels, so they move the fingerprint and are not framed here; `sentinelNodes` is framed here as well,
+ *   the dataServers rule one level up, because the sentinel nodes are also the hosts the sentinel password is
+ *   sent to, and `sentinelPassword` is a secret the classification walk reaches. Both are framed only when set,
+ *   so every connection without them keeps the key it had.
  * - `warehouse` decides which Databend compute every statement runs on (`X-DATABEND-WAREHOUSE`), and so which
  *   servers receive the password and which warehouse Cloud resumes and bills, so a connection naming another
  *   warehouse must not be handed a provider whose requests name this one. The fingerprint does not frame it, and
@@ -241,6 +246,12 @@ async function credentialDigest(connection: DatabaseConnection & WithLiteralSeed
     tunnel?.hostKeyFingerprint ?? "",
     // Last and only when set, so every connection without roots keeps the key it had.
     ...(connection.agentReadRoots === undefined ? [] : [JSON.stringify(connection.agentReadRoots)]),
+    // Redis Sentinel, tagged and only when set, so every connection without the fields keeps the key it had: the
+    // sentinel nodes are also the hosts the sentinel password is sent to (the dataServers rule, one level up), and
+    // the password itself is a secret the classification walk reaches. `masterName` is not framed here: it names the
+    // server, not the principal, and the fingerprint already carries it.
+    ...(connection.sentinelNodes ? [`sentinelNodes=${connection.sentinelNodes}`] : []),
+    ...(connection.sentinelPassword ? [`sentinelPassword=${connection.sentinelPassword}`] : []),
     // After the fixed parts and only under the grant, so every connection without it keeps the key it had.
     ...(connection.managed === true ? ["managed"] : []),
     // Last and only when set, so every connection without the literal-mode marker keeps the key it had.

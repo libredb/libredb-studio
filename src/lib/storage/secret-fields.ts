@@ -76,6 +76,13 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   allowInsecureAuth: "public",
   // Addresses, as `host` is. The token they receive is the secret, classified above.
   dataServers: "public",
+  // Redis's Sentinel master group: a name the deployment chose (Bitnami's REDIS_MASTER_SET), as `warehouse` is a
+  // name the cloud chose. Nothing about it is a credential.
+  masterName: "public",
+  // More addresses, as `host` is. The password they receive is the secret, classified below.
+  sentinelNodes: "public",
+  // The sentinels' AUTH password: a credential for the reason `password` is, sealed with it.
+  sentinelPassword: "secret",
   // The warehouse: a compute name, from Databend Cloud's DSN or a Snowflake account. It picks where a statement
   // runs and grants nothing; the password, token or key sent with it is the secret, classified above.
   warehouse: "public",

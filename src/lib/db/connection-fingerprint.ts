@@ -145,6 +145,11 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  *
  * `region` (S3) is NOT in the frame either: it changes how a request is signed, never which server receives it;
  * `src/lib/db/provider-cache-key.ts` frames it.
+ *
+ * `masterName` and `sentinelNodes` (Redis Sentinel) are IN the frame, tagged and only when set, because on a
+ * Sentinel connection they, not `host` and `port`, decide which master answers - the two fields a standalone
+ * Redis connection leaves empty keep that connection's digest unchanged. `sentinelPassword` is not, on the rule the
+ * database password already follows; the provider cache key frames it, as it frames `password`.
  */
 export async function connectionFingerprint(connection: DatabaseConnection & WithTunnelFarEnd): Promise<string> {
   // The address this connection actually reaches: the tunnel's far end when the factory
@@ -168,6 +173,12 @@ export async function connectionFingerprint(connection: DatabaseConnection & Wit
     // An AMQP port: a read goes to that listener, which can belong to another server than the one at host and port.
     // Framed only when set and tagged, as the two above, so every other connection's digest is unchanged.
     ...(connection.amqpPort ? [`amqpPort=${connection.amqpPort}`] : []),
+    // Redis's Sentinel address: in Sentinel mode the sentinels and the master group, not host and port, decide which
+    // server answers. Framed only when set and tagged, as the three above, so every standalone connection's digest is
+    // unchanged. `sentinelPassword` is NOT framed, on the rule the master's own password already follows: rotating a
+    // credential changes who may reach the machine and never which machine it is.
+    ...(connection.masterName ? [`masterName=${connection.masterName}`] : []),
+    ...(connection.sentinelNodes ? [`sentinelNodes=${connection.sentinelNodes}`] : []),
   ]
     .map((value) => `${value.length}:${value}`)
     .join("");

@@ -94,12 +94,24 @@ describe("the connection-field records (src/lib/db/connection-fields.ts)", () =>
       "securityMode",
       "serverCertificateThumbprint",
     ]);
+    expect(CONNECTION_FIELDS.redis).toEqual([
+      "host",
+      "port",
+      "user",
+      "password",
+      "database",
+      // The Sentinel trio: an alternative to the Host row rather than extra always-on
+      // fields, so it comes last and the dialog places it behind the Advanced accordion.
+      "masterName",
+      "sentinelNodes",
+      "sentinelPassword",
+    ]);
     expect(CONNECTION_FIELDS.libredb).toEqual(["database"]);
   });
 
-  test("only Elasticsearch, Modbus, NETCONF and OPC UA declare seed-only fields", () => {
+  test("only Elasticsearch, Modbus, NETCONF, OPC UA and Redis declare seed-only fields", () => {
     const declared = (Object.keys(SEED_ONLY_FIELDS) as DatabaseType[]).filter((id) => SEED_ONLY_FIELDS[id] !== null);
-    expect(declared.sort()).toEqual(["elasticsearch", "modbus", "netconf", "opcua"]);
+    expect(declared.sort()).toEqual(["elasticsearch", "modbus", "netconf", "opcua", "redis"]);
   });
 
   test("a seed-only field is in no other engine's connection fields, so no engine's seed is refused for its own box", () => {

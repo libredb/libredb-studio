@@ -270,6 +270,7 @@ const NAMED_CITATIONS = [
       "prepareQuery",
       "validate",
       "buildTLSOptions",
+      "redisOptions",
       "openClient",
       "connect",
       "disconnect",

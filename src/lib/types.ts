@@ -476,6 +476,29 @@ export interface DatabaseConnection {
    */
   dataServers?: string;
   /**
+   * Redis only: the master group name its Sentinel deployment monitors, ioredis's `name`, absent meaning a standalone
+   * server at `host` and `port`. Either this or {@link sentinelNodes} puts the connection in Sentinel mode, where the
+   * master's address is asked of the sentinels at every connect and `host` and `port` are not read at all; the two
+   * fields must be set together, and a connection that sets one without the other is refused before any socket. A name
+   * the deployment chose, trimmed by the provider, not a secret. Read by no other engine.
+   */
+  masterName?: string;
+  /**
+   * Redis only: the addresses of a Sentinel deployment's sentinel nodes, `host[:port]` entries separated by commas or
+   * newlines, stored byte for byte as given and parsed at open. A node without a port takes Sentinel's own default
+   * 26379; an entry that is not a host[:port] address is refused naming the entry. Either this or {@link masterName}
+   * puts the connection in Sentinel mode. Addresses, as `host` is, not a secret. Read by no other engine.
+   */
+  sentinelNodes?: string;
+  /**
+   * Redis only: the AUTH password for the sentinel nodes themselves, absent meaning the master's own `password` - the
+   * ordinary chart deployment (Bitnami's `sentinel.enabled`) protects Redis and Sentinel with one secret, and a
+   * sentinel that requires no password accepts one anyway. There is no separate sentinel ACL user: the connection's
+   * `user` is the master's, and the sentinels authenticate with `default`. A secret, classified and sealed as
+   * `password` is. Read by no other engine.
+   */
+  sentinelPassword?: string;
+  /**
    * Databend and Snowflake: the warehouse the statements of this connection run on. Databend sends it as the
    * `X-DATABEND-WAREHOUSE` header; Databend Cloud requires one and resumes a suspended warehouse on the first
    * statement, billing while it runs, and self-hosted Databend leaves it empty. Snowflake sends it as the `warehouse`

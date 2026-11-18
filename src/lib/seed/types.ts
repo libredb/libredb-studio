@@ -425,6 +425,15 @@ export const SeedConnectionSchema = z
     // Oxia only (O6): an address list the provider parses and refuses entry by entry; resolvable as `host` is
     // (`RESOLVABLE_FIELDS`).
     dataServers: z.string().optional(),
+    // Redis only: a Sentinel deployment's master group name, its sentinel nodes and the sentinels' own password.
+    // Declared for the reason skipObjectScan is: zod strips an undeclared key in silence, and a seeded Sentinel
+    // connection would reach the provider as a standalone one at host and port, connecting to the wrong server
+    // with no error anywhere. The password is resolvable as `password` is, and the two address fields as `host`
+    // is, so a deployment keeps all three in its environment or Vault; refused on every other type through
+    // SEED_ONLY_FIELDS.redis.
+    masterName: z.string().optional(),
+    sentinelNodes: z.string().optional(),
+    sentinelPassword: z.string().optional(),
     // Databend and Snowflake: the warehouse statements run on, a compute name rather than a credential. Declared
     // for the reason skipObjectScan is: zod strips an undeclared key silently, and a seeded Databend Cloud connection
     // would lose the warehouse Cloud refuses to run without, a Snowflake one the warehouse it names over the user's

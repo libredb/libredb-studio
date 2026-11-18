@@ -34,6 +34,9 @@ export const FIELD_PROMPTS: Readonly<Record<ConnectionField, { readonly label: s
     // A checkbox in the web dialog.
     allowInsecureAuth: { label: "Allow credentials without TLS", input: "none" },
     dataServers: { label: "Data servers", input: "text" },
+    masterName: { label: "Master name", input: "text" },
+    sentinelNodes: { label: "Sentinel nodes", input: "text" },
+    sentinelPassword: { label: "Sentinel password", input: "text" },
     warehouse: { label: "Warehouse", input: "text" },
     location: { label: "Location", input: "text" },
     region: { label: "Region", input: "text" },

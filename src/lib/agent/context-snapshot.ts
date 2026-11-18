@@ -997,6 +997,13 @@ export function connectionIdentity(connection: DatabaseConnection): string {
         // another catalog view; the provider cache key frames it too. Tagged and only when set, so no connection
         // without one moves.
         ...(connection.location ? [`location=${connection.location}`] : []),
+        // Redis's Sentinel address: in Sentinel mode the master group and the sentinel nodes, not host and port,
+        // decide which master answers, so either one names another catalog. Tagged and only when set, as the three
+        // above, so every standalone connection keeps the identity it had. The sentinel password is excluded on
+        // the rule the database password already follows: rotating a credential changes who may reach the catalog,
+        // never which catalog it is.
+        ...(connection.masterName ? [`masterName=${connection.masterName}`] : []),
+        ...(connection.sentinelNodes ? [`sentinelNodes=${connection.sentinelNodes}`] : []),
       ]),
     )
     .digest("hex");

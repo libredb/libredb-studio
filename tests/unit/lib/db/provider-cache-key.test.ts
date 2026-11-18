@@ -232,6 +232,7 @@ describe("providerCacheKey frames every public field that decides who a connecti
     ["authSource", { ...base, authSource: "admin" }, { ...base, authSource: "app" }],
     ["allowInsecureAuth", { ...base, allowInsecureAuth: true }, base],
     ["dataServers", { ...base, dataServers: "a.internal:6648" }, { ...base, dataServers: "b.internal:6648" }],
+    ["sentinelNodes", { ...base, sentinelNodes: "s1:26379" }, { ...base, sentinelNodes: "s2:26379" }],
     ["warehouse", { ...base, warehouse: "analytics" }, { ...base, warehouse: "etl" }],
     ["location", { ...base, location: "EU" }, { ...base, location: "US" }],
     ["region", { ...base, region: "eu-central-1" }, { ...base, region: "us-east-1" }],

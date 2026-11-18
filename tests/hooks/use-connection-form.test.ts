@@ -42,8 +42,9 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   libsql: ["host", "port", "user", "password", "connectionString"],
   // Named explicitly even though it matches the default: it is the one this table exists
   // for, and `user` being present here is a statement about the real config, not a
-  // convenience.
-  redis: ["host", "port", "user", "password", "database"],
+  // convenience. The three Sentinel fields are part of the real list: a mock that dropped
+  // them would let `buildConnection` discard a Sentinel form between the boxes and the save.
+  redis: ["host", "port", "user", "password", "database", "masterName", "sentinelNodes", "sentinelPassword"],
   druid: ["host", "port", "user", "password"],
   elasticsearch: ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
   opensearch: ["host", "port", "user", "password"],
@@ -3615,6 +3616,36 @@ describe("useConnectionForm", () => {
     const saved = (onConnect.mock.calls as unknown[][])[0][0] as DatabaseConnection;
     expect(saved.user).toBe("probe");
     expect(saved.password).toBe("probepw");
+  });
+
+  test("a Sentinel master name and node list reach the saved connection", async () => {
+    // The same mechanism as the ACL user test above, for the fields that switch a Redis
+    // connection to Sentinel mode: the write list names them, so the values survive the
+    // save - and a form that leaves them empty writes nothing, keeping a standalone
+    // connection free of Sentinel fields it does not carry.
+    mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+
+    const onConnect = mock(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    act(() => {
+      result.current.setType("redis");
+      result.current.setFieldValue("masterName", "mymaster");
+      result.current.setFieldValue("sentinelNodes", "sentinel-1:26379, sentinel-2:26379");
+      result.current.setFieldValue("sentinelPassword", "sentinel-pw");
+    });
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    const saved = (onConnect.mock.calls as unknown[][])[0][0] as DatabaseConnection;
+    expect(saved.masterName).toBe("mymaster");
+    // The node list is stored as typed, not normalised: the provider owns the parsing.
+    expect(saved.sentinelNodes).toBe("sentinel-1:26379, sentinel-2:26379");
+    expect(saved.sentinelPassword).toBe("sentinel-pw");
   });
 
   test("a user name typed for libSQL is saved and a database is not, matching what it takes", async () => {

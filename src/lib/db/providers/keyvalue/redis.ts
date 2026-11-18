@@ -1086,13 +1086,25 @@ const REDIS_AUTH_REPLIES: readonly string[] = Object.freeze(["WRONGPASS ", "NOAU
  * "connect ECONNREFUSED 127.0.0.1:6379", "getaddrinfo ENOTFOUND host",
  * "self-signed certificate in certificate chain") travels only on the event.
  *
+ * A Sentinel connection names its master instead of a host: the address is only known after the
+ * sentinels answer, so the sentence a reader can act on is the one that names the master group
+ * they were asked for. `host` and `port` stay unset there, because no single endpoint was dialed.
+ *
  * Only the MESSAGE is carried, never the error object: a `ReplyError` to `AUTH` holds the command
  * it answered, password included, on its `command` field. None of the measured messages contains
  * a credential; the host and port in a network one are the ones the user typed.
  */
-function connectFailure(cause: unknown, host: string | undefined, port: number): DatabaseError {
+function connectFailure(
+  cause: unknown,
+  host: string | undefined,
+  port: number | undefined,
+  masterName?: string,
+): DatabaseError {
   const reason = cause instanceof Error ? cause.message : String(cause);
-  const message = `Failed to connect to Redis: ${reason}`;
+  const message =
+    masterName === undefined
+      ? `Failed to connect to Redis: ${reason}`
+      : `Failed to connect to the Redis master ${JSON.stringify(masterName)} through its sentinels: ${reason}`;
   if (isServerErrorReply(cause) && REDIS_AUTH_REPLIES.some((prefix) => reason.startsWith(prefix))) {
     return new AuthenticationError(message, "redis");
   }
@@ -1293,6 +1305,50 @@ function redisSessionActivity(flags: string): SessionActivity {
 }
 
 // ============================================================================
+// Sentinel
+// ============================================================================
+
+/** Sentinel's own default port, which a node listed without one takes. */
+const DEFAULT_SENTINEL_PORT = 26379;
+
+/** How many times the whole sentinel list is retried before a connect gives up. */
+const SENTINEL_RETRY_ATTEMPTS = 3;
+
+/**
+ * Bounded, unlike ioredis's default, which retries forever: `connect()` awaits the master's
+ * address, so with every sentinel unreachable an unbounded strategy never settles and the
+ * connection test hangs with no sentence at all. A bounded one rejects with ioredis's own
+ * "All sentinels are unreachable" and the last error it saw (measured in
+ * `SentinelConnector.connect`, ioredis 5.11.1: a NUMBER retries the whole list after that many
+ * milliseconds, anything else gives up with "retry is disabled").
+ */
+function sentinelRetryStrategy(attempt: number): number | null {
+  return attempt > SENTINEL_RETRY_ATTEMPTS ? null : Math.min(attempt * 200, 1000);
+}
+
+/**
+ * The connection's sentinel list as ioredis takes it: `host[:port]` entries separated by commas
+ * or newlines, blanks dropped, a bracketed `[::1]:26379` read as an IPv6 host. A port that is not
+ * a TCP port is refused rather than defaulted, because a typo there is a sentinel nobody runs.
+ */
+function parseSentinelNodes(list: string): Array<{ host: string; port: number }> {
+  return list
+    .split(/[,\n]/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => {
+      const match = /^(?:\[([^\]]+)\]|([^:]+))(?::(.*))?$/.exec(entry);
+      const host = match?.[1] ?? match?.[2];
+      const portText = match?.[3];
+      const port = portText === undefined ? DEFAULT_SENTINEL_PORT : Number(portText);
+      if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new DatabaseConfigError(`Redis Sentinel node "${entry}" is not a host[:port] address`, "redis");
+      }
+      return { host, port };
+    });
+}
+
+// ============================================================================
 // Redis Provider
 // ============================================================================
 
@@ -1456,9 +1512,47 @@ export class RedisProvider extends BaseDatabaseProvider {
 
   public override validate(): void {
     super.validate();
+    if (this.usesSentinel()) {
+      if (this.sentinelNodes().length === 0) {
+        throw new DatabaseConfigError("Redis Sentinel mode requires at least one sentinel node", "redis");
+      }
+      if (this.masterName() === undefined) {
+        throw new DatabaseConfigError("Redis Sentinel mode requires the master group name", "redis");
+      }
+      // The factory forwards `host:port` through a tunnel, and a Sentinel connection has
+      // neither: the master's address is only known after the sentinels answer. Refused
+      // rather than connected around the bastion the user configured.
+      if (this.config.sshTunnel?.enabled) {
+        throw new DatabaseConfigError("Redis Sentinel mode cannot run through an SSH tunnel", "redis");
+      }
+      return;
+    }
     if (!this.config.host) {
       throw new DatabaseConfigError("Redis host is required", "redis");
     }
+  }
+
+  /**
+   * Sentinel mode: the master's address is asked of the sentinels at every connect, which is
+   * what makes a failover transparent. Either Sentinel field puts the connection in it, so a
+   * half-filled Sentinel form is refused by `validate()` rather than read as a standalone node.
+   */
+  private usesSentinel(): boolean {
+    return this.masterName() !== undefined || this.sentinelNodes().length > 0;
+  }
+
+  /** The master group the sentinels monitor, trimmed, or undefined when the connection names none. */
+  private masterName(): string | undefined {
+    return this.config.masterName?.trim() || undefined;
+  }
+
+  /**
+   * The connection's sentinel nodes as ioredis takes them, an empty list when the connection
+   * names none. A malformed entry raises here, which `validate()` and every `redisOptions()`
+   * build reach through the one parser.
+   */
+  private sentinelNodes(): Array<{ host: string; port: number }> {
+    return parseSentinelNodes(this.config.sentinelNodes ?? "");
   }
 
   /**
@@ -1509,12 +1603,15 @@ export class RedisProvider extends BaseDatabaseProvider {
 
   /**
    * Every option ioredis needs, for any numbered database: `openClient` selects the database.
+   *
+   * In Sentinel mode the two addressing fields give way to the ones ioredis's SentinelConnector
+   * reads (selected on `sentinels` alone, ioredis 5.11.1 `Redis.js`): `sentinels` and `name`,
+   * with `role` left at ioredis's own default `master`. The master's address is asked of the
+   * sentinels on every connect and reconnect, which is what makes a failover transparent.
    */
   private redisOptions(): RedisOptions {
     const tls = this.buildTLSOptions();
-    return {
-      host: this.config.host,
-      port: this.config.port || 6379,
+    const options: RedisOptions = {
       username: this.config.user || undefined,
       password: this.config.password || undefined,
       connectTimeout: this.queryTimeout,
@@ -1534,6 +1631,22 @@ export class RedisProvider extends BaseDatabaseProvider {
       // then warns of the refusal on every connection, which is one per agent command. The proof's HELLO is the check.
       ...(this.readOnlyProfile ? { enableReadyCheck: false } : {}),
       ...(tls ? { tls } : {}),
+    };
+    if (!this.usesSentinel()) {
+      return { host: this.config.host, port: this.config.port || 6379, ...options };
+    }
+    return {
+      ...options,
+      sentinels: this.sentinelNodes(),
+      name: this.masterName(),
+      // The Redis password when none of its own is given: the common charts (Bitnami's
+      // `sentinel.enabled`) protect both with one secret, and a sentinel that requires no
+      // password accepts one anyway - ioredis logs the refused AUTH and carries on.
+      sentinelPassword: this.config.sentinelPassword || this.config.password || undefined,
+      sentinelRetryStrategy,
+      // One TLS setting covers both hops: ioredis otherwise speaks plaintext to the master
+      // it resolved and to the sentinels, whatever `tls` says.
+      ...(tls ? { enableTLSForSentinelMode: true, sentinelTLS: tls } : {}),
     };
   }
 
@@ -1572,11 +1685,18 @@ export class RedisProvider extends BaseDatabaseProvider {
       if (connecting) firstError ??= error;
       else logger.warn(`[Redis] ${error.message}`, { provider: "redis" });
     });
+    // A failed connect names its target: in Sentinel mode the master group through its sentinels,
+    // which has no single host and port to carry; the recorded address otherwise.
+    const master = this.masterName();
+    const failureHost: string | undefined = master === undefined ? this.config.host : undefined;
+    const failurePort: number | undefined = master === undefined ? this.config.port || 6379 : undefined;
+    const failedConnect = (cause: unknown): DatabaseError =>
+      connectFailure(firstError ?? cause, failureHost, failurePort, master);
     try {
       await client
         .connect()
         .catch((error: unknown) => {
-          throw connectFailure(firstError ?? error, this.config.host, this.config.port || 6379);
+          throw failedConnect(error);
         })
         .finally(() => {
           connecting = false;
@@ -1585,9 +1705,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       // closed it in the same turn, so a one-command connection that failed while connecting is raised here, before
       // anything is sent on it. A timeout stays the driver's own error, which the agent words as the time budget.
       if (commandTimeout !== undefined && firstError !== undefined) {
-        throw firstError.message === REDIS_COMMAND_TIMED_OUT
-          ? firstError
-          : connectFailure(firstError, this.config.host, this.config.port || 6379);
+        throw firstError.message === REDIS_COMMAND_TIMED_OUT ? firstError : failedConnect(firstError);
       }
       if (db !== 0) {
         await client.select(db).catch((error: unknown) => {
@@ -1633,6 +1751,13 @@ export class RedisProvider extends BaseDatabaseProvider {
         });
       }
       this.client = client;
+      // A client that gave up for good - a Sentinel connection whose sentinels all stayed
+      // unreachable through a reconnect - never comes back by itself. Saying so is what lets
+      // the provider cache open a fresh one instead of serving the dead client; the guard
+      // keeps a short-lived object-surface client from marking a live session closed.
+      client.on("end", () => {
+        if (this.client === client) this.setConnected(false);
+      });
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));

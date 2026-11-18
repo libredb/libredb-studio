@@ -49,6 +49,33 @@ describe("seed-only fields at load", () => {
     expect(issues[0].message).toBe(OPCUA_SENTENCE("securityMode"));
     expect(issues[1].message.startsWith(API_KEY_PREFIX)).toBe(true);
   });
+
+  const REDIS_SENTENCE = (field: string) =>
+    `${field} is Redis only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove ${field} from this connection.`;
+
+  test("each Sentinel field on postgres is refused at its own path", () => {
+    const issues = seedIssues({
+      ...seedBase("postgres"),
+      masterName: "mymaster",
+      sentinelNodes: "s1:26379",
+      sentinelPassword: "pw",
+    });
+    expect(issues).toEqual([
+      { path: ["masterName"], message: REDIS_SENTENCE("masterName") },
+      { path: ["sentinelNodes"], message: REDIS_SENTENCE("sentinelNodes") },
+      { path: ["sentinelPassword"], message: REDIS_SENTENCE("sentinelPassword") },
+    ]);
+  });
+
+  test("a redis seed carries all three Sentinel fields with no seed-only issue", () => {
+    const issues = seedIssues({
+      ...seedBase("redis"),
+      masterName: "mymaster",
+      sentinelNodes: "s1:26379, s2:26379",
+      sentinelPassword: "pw",
+    });
+    expect(issues.filter((i) => i.message.includes("Redis only"))).toEqual([]);
+  });
 });
 
 describe("seed-only fields at projection", () => {

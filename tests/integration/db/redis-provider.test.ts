@@ -12,6 +12,7 @@ import ts from "typescript";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { isSourcePartUnavailable, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/types";
+import { SeedConnectionSchema } from "@/lib/seed/types";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 import { describeConsequence, renderSegments, userPositionOf, EDIT_CHARACTER_LIMIT } from "@/lib/db/object-edit";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
@@ -546,6 +547,13 @@ let connectFailure: Error[] | null = null;
 /** Every `error` listener each opened connection carries, in the order the connections opened. */
 const errorListeners: Array<Array<(error: Error) => void>> = [];
 
+/**
+ * Every `end` listener each opened connection carries, in the order the connections opened. ioredis emits `end` when a
+ * client gives up for good - a Sentinel connection whose bounded retries ran out - so the listener the provider
+ * attaches in `connect()` is driven through this, exactly as the `error` one is.
+ */
+const endListeners: Array<Array<() => void>> = [];
+
 /** Every pipelined batch the provider sent, by command name, in the order it sent it. */
 const pipelineBatches: string[][] = [];
 
@@ -574,14 +582,18 @@ mock.module("ioredis", () => {
 
     /** This connection's `error` listeners, registered through `on`: the one event read. */
     private readonly _errorListeners: Array<(error: Error) => void> = [];
+    /** This connection's `end` listeners, registered through `on`, as the error ones above. */
+    private readonly _endListeners: Array<() => void> = [];
 
     on(event: string, listener: (error: Error) => void) {
       if (event === "error") this._errorListeners.push(listener);
+      if (event === "end") this._endListeners.push(listener as () => void);
       return this;
     }
 
     async connect() {
       errorListeners.push(this._errorListeners);
+      endListeners.push(this._endListeners);
       if (connectFailure !== null) {
         for (const error of connectFailure) for (const listener of this._errorListeners) listener(error);
         throw new Error("Connection is closed.");
@@ -1173,6 +1185,325 @@ describe("RedisProvider", () => {
         ca: "-----BEGIN CERTIFICATE-----ca-----END CERTIFICATE-----",
         cert: "-----BEGIN CERTIFICATE-----client-----END CERTIFICATE-----",
         key: "client-key-pem",
+      });
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Sentinel (master discovery, failover, sentinel TLS)
+  // --------------------------------------------------------------------------
+
+  describe("Sentinel mode", () => {
+    /** The options object of the connection this test just opened. */
+    const lastOptions = (): Record<string, unknown> => capturedRedisOptions[capturedRedisOptions.length - 1];
+
+    /** A complete Sentinel connection, the shape the three Advanced boxes build. */
+    const sentinelConfig = (): DatabaseConnection => ({
+      ...baseConfig,
+      host: undefined,
+      masterName: "mymaster",
+      sentinelNodes: "sentinel-0:26379, sentinel-1:26379",
+      password: "secret",
+    });
+
+    const connectSentinel = async (extra: Partial<DatabaseConnection> = {}) => {
+      provider = new RedisProvider({ ...sentinelConfig(), ...extra });
+      await provider.connect();
+      return lastOptions();
+    };
+
+    test("a connection that names neither Sentinel field keeps requiring a host", () => {
+      expect(() => new RedisProvider({ ...baseConfig, host: undefined })).toThrow(DatabaseConfigError);
+    });
+
+    test("either Sentinel field alone is refused as a half-filled form, naming what is missing", () => {
+      expect(() => new RedisProvider({ ...sentinelConfig(), sentinelNodes: undefined })).toThrow(
+        "Redis Sentinel mode requires at least one sentinel node",
+      );
+      expect(() => new RedisProvider({ ...sentinelConfig(), masterName: undefined })).toThrow(
+        "Redis Sentinel mode requires the master group name",
+      );
+      // A blank value counts as none: the box the user left empty owns the field.
+      expect(() => new RedisProvider({ ...sentinelConfig(), masterName: "   " })).toThrow(
+        "Redis Sentinel mode requires the master group name",
+      );
+    });
+
+    test("a Sentinel connection needs no host, and one that carries a host ignores it", () => {
+      // `host` stays on the record the form saved; the provider simply does not read it in
+      // Sentinel mode, which is what the dialog's Host row becomes there.
+      expect(() => new RedisProvider({ ...sentinelConfig() })).not.toThrow();
+      expect(() => new RedisProvider({ ...sentinelConfig(), host: "ignored" })).not.toThrow();
+    });
+
+    test("an SSH tunnel is refused in Sentinel mode: the sentinels would bypass the bastion", () => {
+      expect(
+        () =>
+          new RedisProvider({
+            ...sentinelConfig(),
+            sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },
+          }),
+      ).toThrow("Redis Sentinel mode cannot run through an SSH tunnel");
+      // A tunnel the user switched off is not a route at all.
+      expect(
+        () =>
+          new RedisProvider({
+            ...sentinelConfig(),
+            sshTunnel: { enabled: false, host: "bastion", port: 22, username: "u", authMethod: "password" },
+          }),
+      ).not.toThrow();
+    });
+
+    test("a node list entry that is not a host[:port] address is refused naming the entry", () => {
+      for (const entry of ["host:abc", "host:", "host:70000", "host:-1", "::1"]) {
+        expect(() => new RedisProvider({ ...sentinelConfig(), sentinelNodes: entry })).toThrow(
+          `Redis Sentinel node "${entry}" is not a host[:port] address`,
+        );
+      }
+    });
+
+    test("the node list parses commas and newlines, drops blanks, and defaults the port to 26379", async () => {
+      const options = await connectSentinel({ sentinelNodes: "a, b:26380,\n\n[c::1]:26381 ,\n d" });
+      expect(options.sentinels).toEqual([
+        { host: "a", port: 26379 },
+        { host: "b", port: 26380 },
+        { host: "c::1", port: 26381 },
+        { host: "d", port: 26379 },
+      ]);
+    });
+
+    test("hands ioredis the sentinels and the master name, and no host or port at all", async () => {
+      const options = await connectSentinel();
+      expect(options.sentinels).toEqual([
+        { host: "sentinel-0", port: 26379 },
+        { host: "sentinel-1", port: 26379 },
+      ]);
+      expect(options.name).toBe("mymaster");
+      expect(options).not.toHaveProperty("host");
+      expect(options).not.toHaveProperty("port");
+      // ioredis picks the SentinelConnector on `sentinels` alone and asks the sentinels for
+      // the master on every connect; `role` stays the driver's own default, `master`.
+      expect(options.role).toBeUndefined();
+    });
+
+    test("a standalone connection is untouched: no sentinels, no name, no sentinel options", async () => {
+      await provider.connect();
+      const options = lastOptions();
+      expect(options.host).toBe("localhost");
+      expect(options.port).toBe(6379);
+      expect(options).not.toHaveProperty("sentinels");
+      expect(options).not.toHaveProperty("name");
+      expect(options).not.toHaveProperty("sentinelPassword");
+      expect(options).not.toHaveProperty("sentinelRetryStrategy");
+    });
+
+    test("the master password and database travel as the ordinary redis fields", async () => {
+      openedClients.length = 0;
+      const options = await connectSentinel({ database: "2", user: "probe" });
+      expect(options.password).toBe("secret");
+      // The `SELECT` is sent by `openClient` after the sentinels answer, exactly as on a
+      // standalone connection, so there is no `db` option to check here: the database the
+      // session lands in is the mock's own state.
+      expect(openedDatabases()).toEqual([2]);
+      // The ACL user is the master's only; the sentinels authenticate as `default`.
+      expect(options.username).toBe("probe");
+    });
+
+    describe("the sentinel password", () => {
+      test("a password of its own reaches the driver, and empty falls back to the master's", async () => {
+        expect((await connectSentinel({ sentinelPassword: "sentinel-pw" })).sentinelPassword).toBe("sentinel-pw");
+        expect((await connectSentinel({ sentinelPassword: "" })).sentinelPassword).toBe("secret");
+      });
+
+      test("neither password sends nothing at all, not an empty string", async () => {
+        const options = await connectSentinel({ password: undefined });
+        expect(options.sentinelPassword).toBeUndefined();
+      });
+    });
+
+    describe("the sentinel retry strategy", () => {
+      /**
+       * The strategy ioredis holds, read off the captured options: ioredis takes it at
+       * construction time and calls it when every sentinel in the list has failed, so the
+       * 200/400/600-then-give-up schedule is observable only as this function's answers.
+       */
+      const strategyOf = async (): Promise<(attempt: number) => number | null> => {
+        const options = await connectSentinel();
+        return options.sentinelRetryStrategy as (attempt: number) => number | null;
+      };
+
+      test("retries the whole list at 200, 400 and 600 ms, then gives up", async () => {
+        const strategy = await strategyOf();
+        expect([strategy(1), strategy(2), strategy(3)]).toEqual([200, 400, 600]);
+        // `null` and not `undefined`: ioredis treats any non-number as "retry is disabled"
+        // and throws "All sentinels are unreachable" with the last error it saw, so a
+        // strategy that answered `undefined` past the bound would look identical here and
+        // hang nothing - the null is what the give-up is made of.
+        expect(strategy(4)).toBeNull();
+        expect(strategy(5)).toBeNull();
+      });
+    });
+
+    describe("the TLS options in Sentinel mode", () => {
+      test("one TLS setting covers both hops: the master's and every sentinel's", async () => {
+        const options = await connectSentinel({ ssl: { mode: "verify-full" } });
+        // ioredis otherwise speaks plaintext to the master it resolved and to the
+        // sentinels, whatever `tls` says; the pair is what makes one panel cover both.
+        expect(options.enableTLSForSentinelMode).toBe(true);
+        expect(options.sentinelTLS).toEqual({ rejectUnauthorized: true });
+        expect(options.tls).toEqual({ rejectUnauthorized: true });
+      });
+
+      test("no TLS mode sends no TLS options to either hop", async () => {
+        const options = await connectSentinel({ ssl: { mode: "disable" } });
+        expect(options).not.toHaveProperty("tls");
+        expect(options).not.toHaveProperty("sentinelTLS");
+        expect(options).not.toHaveProperty("enableTLSForSentinelMode");
+      });
+    });
+
+    describe("a refused connect names the master", () => {
+      afterEach(() => {
+        connectFailure = null;
+      });
+
+      const refusal = async (events: Error[]): Promise<Error> => {
+        connectFailure = events;
+        provider = new RedisProvider({ ...sentinelConfig() });
+        const raised = await provider.connect().then(
+          () => new Error("connect() resolved"),
+          (error: Error) => error,
+        );
+        expect(provider.isConnected()).toBe(false);
+        return raised;
+      };
+
+      test("a Sentinel failure names the master group, not a host it never dialled", async () => {
+        const error = await refusal([
+          Object.assign(
+            new Error(
+              "All sentinels are unreachable. Retrying from scratch after 200ms. Last error: connect ECONNREFUSED 10.0.0.1:26379",
+            ),
+            {
+              code: "ECONNREFUSED",
+            },
+          ),
+        ]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe(
+          'Failed to connect to the Redis master "mymaster" through its sentinels: All sentinels are unreachable. ' +
+            "Retrying from scratch after 200ms. Last error: connect ECONNREFUSED 10.0.0.1:26379",
+        );
+      });
+
+      test("a wrong sentinel password is still an AuthenticationError, in the server's words", async () => {
+        const error = await refusal([replyError("WRONGPASS invalid username-password pair or user is disabled.")]);
+        expect(error).toBeInstanceOf(AuthenticationError);
+        expect(error.message).toBe(
+          'Failed to connect to the Redis master "mymaster" through its sentinels: WRONGPASS invalid username-password pair or user is disabled.',
+        );
+        expect(isRetryableError(error)).toBe(false);
+      });
+
+      test("a standalone failure keeps today's sentence and address, byte for byte", async () => {
+        connectFailure = [Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:6379"), { code: "ECONNREFUSED" })];
+        provider = new RedisProvider({ ...baseConfig });
+        const error = await provider.connect().then(
+          () => new Error("connect() resolved"),
+          (raised: Error) => raised,
+        );
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: connect ECONNREFUSED 127.0.0.1:6379");
+        expect(error).toMatchObject({ host: "localhost", port: 6379 });
+      });
+    });
+
+    describe("a client that gave up for good", () => {
+      test("an `end` the session client emits marks the provider disconnected", async () => {
+        await provider.connect();
+        expect(provider.isConnected()).toBe(true);
+        // The mock's recorded listener for the session client, driven as ioredis would.
+        endListeners[endListeners.length - 1][0]();
+        expect(provider.isConnected()).toBe(false);
+      });
+
+      test("an `end` after the provider was disconnected changes nothing", async () => {
+        await provider.connect();
+        await provider.disconnect();
+        endListeners[endListeners.length - 1][0]();
+        expect(provider.isConnected()).toBe(false);
+      });
+
+      test("an `end` on a short-lived object-surface client does not close the session", async () => {
+        await provider.connect();
+        // `countObjects` opens its own connection per numbered database; only the session
+        // client carries the provider's `end` listener, so nothing a live driver emits on
+        // the short-lived one can mark the session disconnected.
+        await provider.countObjects(["0"]);
+        expect(endListeners[endListeners.length - 1]).toEqual([]);
+        expect(provider.isConnected()).toBe(true);
+      });
+    });
+
+    describe("the connection fingerprint of a Sentinel connection", () => {
+      test("the two address fields decide the server: they move the digest, the password does not", async () => {
+        const standalone = await connectionFingerprint({ ...baseConfig });
+        const sentinel = await connectionFingerprint({
+          ...baseConfig,
+          host: undefined,
+          masterName: "mymaster",
+          sentinelNodes: "s0:26379, s1:26379",
+        });
+        expect(sentinel).not.toBe(standalone);
+        // Tagged frames: a master name whose text is another field's frame is still its own.
+        expect(await connectionFingerprint({ ...baseConfig, masterName: "amqpPort=1" })).not.toBe(
+          await connectionFingerprint({ ...baseConfig, amqpPort: "1" }),
+        );
+        expect(
+          await connectionFingerprint({ ...baseConfig, masterName: "othermaster", sentinelNodes: "s0:26379" }),
+        ).not.toBe(await connectionFingerprint({ ...baseConfig, masterName: "mymaster", sentinelNodes: "s0:26379" }));
+        expect(await connectionFingerprint({ ...baseConfig, sentinelNodes: "s2:26379" })).not.toBe(
+          await connectionFingerprint({ ...baseConfig, sentinelNodes: "s0:26379" }),
+        );
+        // Rotating the sentinels' password changes who may reach the machine, never which
+        // machine it is, on the rule the master's own password already follows.
+        expect(await connectionFingerprint({ ...baseConfig, sentinelNodes: "s0:26379", sentinelPassword: "one" })).toBe(
+          await connectionFingerprint({ ...baseConfig, sentinelNodes: "s0:26379", sentinelPassword: "two" }),
+        );
+        // Absent and empty are one value, so a standalone connection's digest never moves.
+        expect(await connectionFingerprint({ ...baseConfig, masterName: "", sentinelNodes: "" })).toBe(standalone);
+      });
+    });
+
+    describe("the seed file", () => {
+      const seed = { id: "redis-ha", name: "Redis HA", type: "redis", roles: ["*"] } as Record<string, unknown>;
+
+      test("accepts a Sentinel connection, all three fields carried", () => {
+        const parsed = SeedConnectionSchema.safeParse({
+          ...seed,
+          masterName: "mymaster",
+          sentinelNodes: "s0:26379, s1:26379",
+          sentinelPassword: "pw",
+        });
+        expect(parsed.success).toBe(true);
+      });
+
+      test("refuses a Sentinel connection that also carries a connection string", () => {
+        // Precedence, stated as a refusal: the provider reads the discrete fields only, so a
+        // pasted URL never overrides the sentinel fields - a seed that carries both is not
+        // loaded rather than connected to whatever the other fields say.
+        const parsed = SeedConnectionSchema.safeParse({
+          ...seed,
+          masterName: "mymaster",
+          sentinelNodes: "s0:26379",
+          connectionString: "redis://ignored:6379/0",
+        });
+        expect(parsed.success).toBe(false);
+        expect(parsed.error?.issues.map((issue) => issue.path.join("."))).toEqual(["connectionString"]);
+        expect(parsed.error?.issues[0].message).toBe(
+          'Seed connection "redis-ha" sets connectionString, which the redis provider does not read: ' +
+            "move the value into host, port, user, password and database",
+        );
       });
     });
   });

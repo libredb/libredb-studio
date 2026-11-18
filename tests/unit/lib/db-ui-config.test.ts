@@ -751,6 +751,9 @@ const FIELD_CHECKLIST: Record<ConnectionField, true> = {
   saslMechanism: true,
   allowInsecureAuth: true,
   dataServers: true,
+  masterName: true,
+  sentinelNodes: true,
+  sentinelPassword: true,
   warehouse: true,
   location: true,
   region: true,
@@ -1055,7 +1058,7 @@ describe("declared connection-field copy (#1085)", () => {
     }
   });
 
-  test("only libsql, mongodb, oracle, db2, mssql, couchbase, trino, cassandra, prometheus, kafka, etcd, neo4j, milvus, qdrant, weaviate, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only libsql, mongodb, redis, oracle, db2, mssql, couchbase, trino, cassandra, prometheus, kafka, etcd, neo4j, milvus, qdrant, weaviate, the two InfluxDB types, oxia, databend, bigquery, snowflake, spark, s3, kubernetes, mqtt, firestore, rabbitmq, opcua, mtconnect and modbus declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -1063,6 +1066,9 @@ describe("declared connection-field copy (#1085)", () => {
       "libsql",
       // The labels and hints the dialog chose by type id until these entries declared them (engine contract, row 8).
       "mongodb",
+      // Redis declares the Sentinel trio's hints: the boxes behind the Advanced accordion say what
+      // switches a connection to Sentinel mode and what an empty box falls back to.
+      "redis",
       "oracle",
       "db2",
       "mssql",

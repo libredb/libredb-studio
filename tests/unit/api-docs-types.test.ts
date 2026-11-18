@@ -221,9 +221,12 @@ describe("the allowInsecureAuth field names every engine that reads it", () => {
 
 describe("the warehouse field", () => {
   test("docs/API_DOCS.md names it among the fields the server reads, as Databend's and Snowflake's, in the source's field order", () => {
-    expect(API_DOCS).toContain("`dataServers` (Oxia), `warehouse` (Databend, Snowflake)");
+    expect(API_DOCS).toContain(
+      "`dataServers` (Oxia), `masterName`, `sentinelNodes` and `sentinelPassword` (Redis Sentinel), `warehouse` (Databend, Snowflake)",
+    );
     const fields = topLevelFields(DATA_TYPES, "DatabaseConnection");
-    expect(fields.indexOf("warehouse")).toBe(fields.indexOf("dataServers") + 1);
+    // The Redis Sentinel trio sits between the two, in the same order as the source interface.
+    expect(fields.indexOf("warehouse")).toBe(fields.indexOf("dataServers") + 4);
     expect(DATA_TYPES).toMatch(/warehouse\?: string; +\/\/ Databend and Snowflake:/);
   });
 });
