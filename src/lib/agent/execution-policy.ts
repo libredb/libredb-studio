@@ -483,6 +483,27 @@ export const AGENT_TRANSPORT_TURN_RETRIES = 2;
 export const AGENT_UNREADABLE_TOOL_CALL_ANSWERS = 2;
 
 /**
+ * How many times a run may be told that a turn was stopped at the endpoint's output limit.
+ *
+ * One, and the number is deliberately not the two above. Those two bound a fault in the
+ * TRANSPORT: a broken frame and arguments the endpoint could not parse are accidents of a
+ * connection, and a run that meets either twice met it over different bytes. This one bounds a
+ * property of the answer itself. The sentence says what to do differently and it is a thing the
+ * model can comply with on the next turn, without luck: write less, and act instead of narrating.
+ * A model that hears it and produces another answer of the same length has been told, and the run
+ * should end rather than spend its remaining turns repeating the same cut.
+ *
+ * Read off the ledger (`guidanceDelivered`) rather than held as a flag in the drive, for the reason
+ * `AGENT_UNREADABLE_TOOL_CALL_ANSWERS` records: the bound describes the RUN. A drive that resumes
+ * a run already told is not a second decision to spend on the same sentence, unlike the per-call
+ * ceiling in `turn-cut-off`, which bounds a call and is granted again with each drive.
+ *
+ * The alternative to the re-ask is ending the run, so the ask is free on the argument every
+ * recovery here rests on: the run had already lost the turn, and the notice cannot cost it a pass.
+ */
+export const AGENT_MODEL_OUTPUT_LIMIT_ASKS = 1;
+
+/**
  * How many statements that FAILED AT THE DATABASE a run may try to repair.
  *
  * Policy denials and approval requirements deliberately do not consume one — they
