@@ -3960,6 +3960,52 @@ describe("a turn the model server cut at its output limit", () => {
   });
 
   /*
+    Once per RUN and not once per drive, which is the claim the bound's docblock makes and nothing
+    pinned.
+
+    `guidanceDelivered` seeds the counter from the ledger, so a resumed drive must not spend the
+    sentence again. Driven as two drives over one data directory, which is what a resume is in this
+    suite: the first drive is cut, is told, and then dies where the loop cannot decide (a 401 leaves
+    the run running), so the second is a genuine resume with its own counters.
+  */
+  test("a resumed drive is not told again, because the delivery is on the ledger", async () => {
+    const dataDir = freshDataDir();
+    const first = boot(dataDir);
+    const run = await startRun(first);
+    const firstScript = scriptedModel(
+      () => chatTextCutStream("The orders table is read by a sequential scan because"),
+      () => endpointError(401, "invalid api key"),
+    );
+
+    await expect(
+      runInvestigation(run.runId, {
+        service: first.service,
+        model: await modelOver(firstScript.fetch),
+        resources: first.resources,
+      }),
+    ).rejects.toBeInstanceOf(LLMAuthError);
+    expect(guidanceDelivered(await eventsOf(first.store, run.runId))["model-output-limit"]).toBe(1);
+
+    // A second process over the same ledger. Its one turn is cut as well, and the only thing
+    // standing between it and a second telling is what the ledger says.
+    const second = boot(dataDir);
+    const secondScript = scriptedModel(() => chatTextCutStream("and the index on created_at is not used"));
+
+    const result = await runInvestigation(run.runId, {
+      service: second.service,
+      model: await modelOver(secondScript.fetch),
+      resources: second.resources,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.stopReason).toBe("model-output-limit");
+    expect(result.turns).toBe(1);
+    expect(guidanceDelivered(await eventsOf(second.store, run.runId))["model-output-limit"]).toBe(1);
+    const sent = secondScript.turns.flatMap((turn) => JSON.stringify(turn.body.messages ?? []));
+    expect(sent.some((messages) => messages.includes("stopped at this server's output limit"))).toBe(false);
+  });
+
+  /*
     The discrimination, which is the whole point of reading the field rather than inferring a cut
     from an answer that looks short: a turn that ended by itself is still the model stopping, and
     must not be relabelled. The second and third turns are identical prose because the first is

@@ -529,12 +529,12 @@ output is one of these. An agent run's is an aside, except when it is the only t
 behind, which is exactly when it is worth seeing. It is written only when the prose is non-empty.
 
 **`run-finished` carries how the loop ended**, as `stopReason`: `report-composed`, `model-stopped`,
-`cancelled`, `deadline-exceeded`, `model-timeout` or `turn-limit`. This is what separates *succeeded*
-from *answered* — a run that stopped because the model composed a cited report and one that stopped
-because the model had nothing more to say are both `succeeded`, and only this says which. The rail
-reads it and states the difference. The STATUS word is deliberately not the thing that carries it —
-[Whether the run answered](#whether-the-run-answered) is the field that does, beside the status
-rather than instead of it.
+`cancelled`, `deadline-exceeded`, `model-timeout`, `model-output-limit` or `turn-limit`. This is what
+separates *succeeded* from *answered* — a run that stopped because the model composed a cited report
+and one that stopped because the model had nothing more to say are both `succeeded`, and only this
+says which. The rail reads it and states the difference. The STATUS word is deliberately not the
+thing that carries it — [Whether the run answered](#whether-the-run-answered) is the field that
+does, beside the status rather than instead of it.
 
 `stopReason` sits beside `reason`, which says why a drive died before or outside the loop. They
 answer different questions and are mutually exclusive in practice; when both are present, `reason`
