@@ -3,8 +3,8 @@
  * browser bundle may hold.
  *
  * Client-safe on purpose, like `engine-support.ts`: besides types it imports only the language packs' and the engines'
- * client facets (`languages/client.ts`, `languages/engines/client.ts`) and the leaf `workflow-tool-sets.ts`, which are
- * client-safe themselves, because the rail, the safety strip and the posture read it, and a provider module or
+ * client facets (`languages/client.ts`, `languages/engines/client.ts`), the leaf `workflow-tool-sets.ts` and the type id
+ * check `@/lib/db/type-id.ts`, which are client-safe themselves, because the rail, the safety strip and the posture read it, and a provider module or
  * `node:crypto` here would reach a browser bundle. What a language DOES (its fingerprint, its advice, its admission) is
  * server code and lives in `languages/server.ts`.
  *
@@ -12,6 +12,7 @@
  * comparison is written anywhere. `tests/unit/lib/agent/agent-manifest.test.ts` holds it to every provider: an engine
  * has a language exactly when its provider has `queryReadOnly`.
  */
+import { assertDatabaseType } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import type { AgentGoalVerifierId } from "./goal-verifier";
 import {
@@ -366,6 +367,9 @@ function variantIn(
  * The arms in the order they exclude each other. Plan mode first, because it executes nothing it drafts and so no
  * adapter gates it. Then operations, which sends no statement and opens on every engine, language or not. Only then
  * does the language matter, then whether it has the workflow, then whether the engine holds what the variant needs.
+ * Before all of them, a type that is not a type id is refused by name (FND-1), so no table answers for it.
+ *
+ * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
  */
 export function workflowAvailability(
   mode: AgentRunMode,
@@ -373,6 +377,7 @@ export function workflowAvailability(
   type: DatabaseType,
   tables: AgentAvailabilityTables = MANIFEST_TABLES,
 ): AgentWorkflowAvailability {
+  assertDatabaseType(type);
   const language = tables.languages[type];
   if (mode === "planning") {
     return {

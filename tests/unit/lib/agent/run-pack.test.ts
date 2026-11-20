@@ -7,6 +7,8 @@ import { MONGO_SERVER_PACK } from "@/lib/agent/languages/mongo/server";
 import { CURATED_CALL_LANGUAGE, languageServerPack } from "@/lib/agent/languages/server";
 import { SQL_SERVER_PACK } from "@/lib/agent/languages/sql/server";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER } from "@/lib/agent/types";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -83,6 +85,23 @@ describe("runServerPack", () => {
     expect((runServerPack(undefined, "postgres") as { dialect?: unknown }).dialect).toBe(
       engineServerDialect("postgres"),
     );
+  });
+
+  // Before the persisted language is read, so neither the SQL default nor another family's pack answers for a type
+  // that names no provider (FND-1).
+  test("runServerPack refuses a connection type that is no type id before it reads the run's language", () => {
+    for (const type of ["acmefoo", "constructor", undefined, 5] as unknown[]) {
+      for (const language of [undefined, "mongo", "cobol"] as const) {
+        let thrown: unknown;
+        try {
+          runServerPack(language as never, type as DatabaseType);
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(UnknownProviderError);
+        expect((thrown as UnknownProviderError).message).toBe(typeIdRefusal(type)?.sentence as string);
+      }
+    }
   });
 
   test("a language this server does not know is the named error", () => {
