@@ -6,20 +6,22 @@
  * the real `OracleProvider` builds a real Thin pool, and the far side is a plain TCP server that
  * answers the way a refusing HTTPS proxy or a broken TNS listener does.
  *
- * Two transport failures are pinned, each as a named error on the call that dialled, with the socket
+ * Three transport failures are pinned, each as a named error on the call that dialled, with the socket
  * closed by the client:
  *
  *  - A descriptor that names `HTTPS_PROXY` makes the driver send an HTTP CONNECT. A proxy that answers
  *    anything but 200 fails the connect with NJS-504 and the status, and the socket the proxy answered
- *    on is closed then, not left open with no error listener (`patches/oracledb@26.0.0.patch`).
+ *    on is destroyed then, not left open with no error listener (`patches/oracledb@26.0.0.patch`).
  *  - A TNS packet header whose length field is below the 8-byte header size fails the connect with
  *    NJS-500 naming the invalid length, and the event loop keeps running (oracledb 26.0.0).
+ *  - The same header arriving after the client has closed the session itself is refused on the socket
+ *    that read it, so the connect still fails with its own error (the same patch).
  *
  * docs/providers/oracle.md section 4.5 states both as a user sees them.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import net from "node:net";
-import { ConnectionError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { OracleProvider } from "@/lib/db/providers/sql/oracle";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -29,6 +31,8 @@ interface PeerConnection {
   /** Settles when the client closes its side (FIN or close). */
   closedByClient: Promise<void>;
   clientClosed: boolean;
+  /** Settles when the client answers with a reset, which only a destroyed socket does. */
+  resetByClient: Promise<void>;
 }
 
 interface Peer {
@@ -55,26 +59,47 @@ afterEach(async () => {
 /**
  * A TCP peer that answers the client's first bytes once.
  * `onAccept` answers before the client has said anything.
+ * With `probeAfterFin`, the peer keeps its own side open after the client's FIN and writes to the
+ * client: a destroyed client socket answers with a reset, one that was only ended reads the bytes.
  */
-async function startPeer(answer: (socket: net.Socket, first: Buffer) => void, onAccept?: (socket: net.Socket) => void) {
+async function startPeer(
+  answer: (socket: net.Socket, first: Buffer) => void,
+  onAccept?: (socket: net.Socket) => void,
+  probeAfterFin = false,
+) {
   const connections: PeerConnection[] = [];
-  const server = net.createServer((socket) => {
+  const server = net.createServer({ allowHalfOpen: probeAfterFin }, (socket) => {
     let markClosed!: () => void;
+    let markReset!: () => void;
     const connection: PeerConnection = {
       socket,
       clientClosed: false,
       closedByClient: new Promise<void>((resolve) => {
         markClosed = resolve;
       }),
+      resetByClient: new Promise<void>((resolve) => {
+        markReset = resolve;
+      }),
     };
     const closed = () => {
       connection.clientClosed = true;
       markClosed();
     };
-    socket.on("end", closed);
+    socket.on("end", () => {
+      closed();
+      if (probeAfterFin) {
+        socket.write("are you still reading?");
+      }
+    });
     socket.on("close", closed);
-    // A reset from the client is the client closing, too; the peer must not throw on it.
-    socket.on("error", closed);
+    // A reset from the client is the client closing, too; the peer must not throw on it. Node reports
+    // the reset as ECONNRESET, bun as EPIPE on the read.
+    socket.on("error", (error: NodeJS.ErrnoException) => {
+      closed();
+      if (error.code === "ECONNRESET" || error.code === "EPIPE") {
+        markReset();
+      }
+    });
     connections.push(connection);
     // The peer reads everything the client sends, because a socket that is not read never reports the
     // client's FIN. Both clients send their opening request in one write (the HTTP CONNECT head, or the
@@ -121,6 +146,21 @@ async function connectError(config: DatabaseConnection): Promise<Error> {
   throw new Error("connect() resolved against a peer that is not an Oracle listener");
 }
 
+/**
+ * How the client left a connection to a `probeAfterFin` peer, after up to `ms`: "reset" when it
+ * destroyed its socket, "half-open" when it only ended its side and still reads, "open" with no FIN.
+ */
+async function clientExitWithin(connection: PeerConnection, ms: number): Promise<"reset" | "half-open" | "open"> {
+  const reset = await Promise.race([
+    connection.resetByClient.then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), ms)),
+  ]);
+  if (reset) {
+    return "reset";
+  }
+  return connection.clientClosed ? "half-open" : "open";
+}
+
 /** Settles with "closed" once the client has closed the connection, or "open" after `ms`. */
 function closedWithin(connection: PeerConnection, ms: number): Promise<"closed" | "open"> {
   return Promise.race([
@@ -134,14 +174,19 @@ describe("Oracle Thin transport: a proxy that refuses the CONNECT", () => {
     ["403 Forbidden", "403"],
     ["407 Proxy Authentication Required", "407"],
   ])(
-    "a %s answer fails the connect with NJS-504 and the client closes the proxy socket",
+    "a %s answer fails the connect with NJS-504 and the client destroys the proxy socket",
     async (statusLine, status) => {
       // The answer keeps the connection open, as a proxy that allows keep-alive does: whether the
-      // socket is closed is then the client's doing alone.
-      const proxy = await startPeer((socket, first) => {
-        expect(first.toString("latin1")).toStartWith("CONNECT 127.0.0.2:2484 HTTP/1.1");
-        socket.write(`HTTP/1.1 ${statusLine}\r\nContent-Length: 0\r\n\r\n`);
-      });
+      // socket is closed is then the client's doing alone. The proxy also keeps its side open after
+      // the client's FIN, so a socket the client only ended, and could still be reset later, shows.
+      const proxy = await startPeer(
+        (socket, first) => {
+          expect(first.toString("latin1")).toStartWith("CONNECT 127.0.0.2:2484 HTTP/1.1");
+          socket.write(`HTTP/1.1 ${statusLine}\r\nContent-Length: 0\r\n\r\n`);
+        },
+        undefined,
+        true,
+      );
       const descriptor =
         `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCPS)(HOST=127.0.0.2)(PORT=2484)` +
         `(HTTPS_PROXY=127.0.0.1)(HTTPS_PROXY_PORT=${proxy.port}))(CONNECT_DATA=(SERVICE_NAME=FREEPDB1)))`;
@@ -153,8 +198,9 @@ describe("Oracle Thin transport: a proxy that refuses the CONNECT", () => {
       expect(error.message).toContain(`web proxy at host 127.0.0.1 port ${proxy.port} failed`);
       expect(error.message).toEndWith(`\n${status}`);
       expect(proxy.connections).toHaveLength(1);
-      // Closed by the time the call has answered, or within the same turn of the event loop.
-      expect(await closedWithin(proxy.connections[0], 1000)).toBe("closed");
+      // Destroyed by the time the call has answered: the bytes the proxy writes after the client's
+      // FIN are answered with a reset, not read.
+      expect(await clientExitWithin(proxy.connections[0], 1000)).toBe("reset");
     },
   );
 });
@@ -204,4 +250,55 @@ describe("Oracle Thin transport: a TNS packet header shorter than the header its
       expect(await closedWithin(listener.connections[0], 1000)).toBe("closed");
     },
   );
+});
+
+describe("Oracle Thin transport: a packet header the driver cannot read, after the client closed the session", () => {
+  /**
+   * A TNS ACCEPT packet of protocol version 314, one below the lowest the Thin driver accepts, with
+   * native network services off, so the session comes up and the client then refuses it with NJS-138
+   * and closes it gracefully: an EOF data packet, then its FIN.
+   */
+  const acceptVersion314 = () => {
+    const packet = Buffer.alloc(32);
+    packet.writeUInt16BE(32, 0); // packet length
+    packet[4] = 2; // ACCEPT
+    packet.writeUInt16BE(314, 8); // protocol version
+    packet.writeUInt16BE(8192, 12); // SDU
+    packet.writeUInt16BE(65535, 14); // TDU
+    packet.writeUInt16BE(0x0100, 16);
+    packet.writeUInt16BE(32, 20); // offset of the (empty) connect data
+    packet[23] = 0x08; // flags: no native network services
+    return packet;
+  };
+
+  test("a header of length 0 that answers the client's EOF leaves the connect failing with NJS-138", async () => {
+    const listener = await startPeer((socket, first) => {
+      socket.write(acceptVersion314());
+      // The CONNECT packet may be followed by its connect data in a DATA packet; read packets until the
+      // client's EOF (a DATA packet whose data flags carry 0x40) and answer that with 8 zero bytes.
+      let pending = first.subarray(Math.min(first.readUInt16BE(0), first.length));
+      const read = (chunk: Buffer) => {
+        pending = Buffer.concat([pending, chunk]);
+        while (pending.length >= 10 && pending.readUInt16BE(0) <= pending.length) {
+          const length = pending.readUInt16BE(0);
+          const isEof = pending[4] === 6 && (pending.readUInt16BE(8) & 0x40) !== 0;
+          pending = pending.subarray(length);
+          if (isEof) {
+            socket.write(Buffer.alloc(8));
+          }
+        }
+      };
+      read(Buffer.alloc(0));
+      socket.on("data", read);
+    });
+
+    const error = await connectError(
+      oracleConnection({ host: "127.0.0.1", port: listener.port, serviceName: "FREEPDB1" }),
+    );
+
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toContain("NJS-138");
+    expect(listener.connections).toHaveLength(1);
+    expect(await closedWithin(listener.connections[0], 1000)).toBe("closed");
+  });
 });
