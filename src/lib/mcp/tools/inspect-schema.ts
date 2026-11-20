@@ -403,18 +403,19 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
   if (connection === null) return refuse("mcp_connection_not_visible", MCP_NOT_VISIBLE_TEXT);
 
   const resolved: McpCallRecord = { ...record, connectionName: connection.seedId };
-  // Ahead of any acquisition, so no provider is built or dialled for an engine with no table to list.
+  // Ahead of any acquisition and of the tableless check: a connection no MCP open can serve for this caller, one whose
+  // type names no provider included, is refused with the sentence list_connections lists it with, so no provider is
+  // built for an open that would be refused and no per-engine fact is read for a type that names no engine.
+  const unavailable = mcpConnectionUnavailable(call.context.caller, connection);
+  if (unavailable !== null)
+    return recordOrRefuse(() => recordMcpDecision(resolved, "mcp_execution_failed")) ?? ownWordsError(unavailable);
+  // Ahead of any acquisition too, so no provider is built or dialled for an engine with no table to list.
   const tableless = mcpTablelessReadTool(connection.type);
   if (tableless !== null)
     return (
       recordOrRefuse(() => recordMcpDecision(resolved, "mcp_execution_failed")) ??
       ownWordsError(tablelessText(connection.type, tableless))
     );
-  // Ahead of any acquisition too: a connection no MCP open can serve for this caller is refused with the sentence
-  // list_connections lists it with, so no provider is built for an open that would be refused.
-  const unavailable = mcpConnectionUnavailable(call.context.caller, connection);
-  if (unavailable !== null)
-    return recordOrRefuse(() => recordMcpDecision(resolved, "mcp_execution_failed")) ?? ownWordsError(unavailable);
   const unrecorded = recordOrRefuse(() => recordMcpDecision(resolved));
   if (unrecorded !== null) return unrecorded;
 

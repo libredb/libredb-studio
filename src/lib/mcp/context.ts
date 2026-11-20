@@ -3,6 +3,7 @@ import type { Role } from "@/lib/auth";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { MCP_AGENT_CREDENTIAL_REQUIRED, READ_ROOTS_REQUIRED } from "@/lib/db/compatibility";
 import { ExecutionProfileError } from "@/lib/db/errors";
+import { assertDatabaseType } from "@/lib/db/type-id";
 import { acquireExecutionProfileProvider, profiledCacheKey, type ExecutionProfile } from "@/lib/db/factory";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
@@ -101,12 +102,15 @@ async function resolvedSecrets(connection: ManagedConnection): Promise<ManagedCo
  * neither `agentUser` nor `agentPassword`, so it is never read under its own login: the seed schema refuses such a
  * seed at load, and this is the open's own check, for a connection built in memory or loaded past the schema. One
  * that sets either field is the factory's to hold to the engine's form. Read from the registry by the connection's
- * type, never a type-id branch; the sentence names no engine.
+ * type, never a type-id branch; the sentence names no engine. A type that is not a type id is refused with
+ * `UnknownProviderError` before the registry is read (FND-1); `acquire` calls this check first, so such a connection is
+ * refused before any secret is read or any provider built.
  */
 export function assertAgentCredentialWhereRequired(
   connection: ManagedConnection,
   required: Readonly<Record<ManagedConnection["type"], boolean>> = MCP_AGENT_CREDENTIAL_REQUIRED,
 ): void {
+  assertDatabaseType(connection.type);
   if (!required[connection.type]) return;
   if (connection.agentUser !== undefined || connection.agentPassword !== undefined) return;
   throw new ExecutionProfileError(
@@ -119,12 +123,14 @@ export function assertAgentCredentialWhereRequired(
  * Refuses a connection of an engine MCP reads only beneath read roots its seed declares when it declares none, so it is
  * never read across the whole server: the seed schema refuses such a seed at load, and this is the open's own check,
  * for a connection built in memory or loaded past the schema. Read from the registry by the connection's type, never
- * a type-id branch.
+ * a type-id branch. A type that is not a type id is refused with `UnknownProviderError` before the registry is read
+ * (FND-1).
  */
 export function assertReadRootsWhereRequired(
   connection: ManagedConnection,
   required: Readonly<Record<ManagedConnection["type"], boolean>> = READ_ROOTS_REQUIRED,
 ): void {
+  assertDatabaseType(connection.type);
   if (!required[connection.type] || connection.agentReadRoots !== undefined) return;
   throw new ExecutionProfileError(
     `Connection "${connection.id}" is read by MCP only beneath read roots its seed entry declares, and it declares none: an operator sets agentReadRoots on this seed.`,

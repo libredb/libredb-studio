@@ -16,13 +16,15 @@ import {
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
 import { MCP_STATEMENT_READ, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { relationKindIds } from "@/lib/db/object-kinds";
 import type { McpToolAction } from "@/lib/mcp/audit";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_TOOL_INPUT_SCHEMAS, type McpToolName } from "@/lib/mcp/tools";
-import { ListedConnectionSchema } from "@/lib/mcp/tools/list-connections";
+import { ListedConnectionSchema, registerListConnections } from "@/lib/mcp/tools/list-connections";
 import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
 import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 import { registerStatementTools } from "@/lib/mcp/tools/run-statement";
@@ -181,6 +183,23 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpWithholdsDatabase("sparkplug")).toBe(true);
     expect(mcpWithholdsDatabase("postgres")).toBe(false);
     expect(mcpWithholdsDatabase("spark")).toBe(false);
+  });
+
+  // A type that names no provider (FND-1) has no language row to read, and an inherited key such as `constructor` would
+  // read `Object.prototype`'s: each lookup refuses it by name rather than answering a tool, null or false.
+  test("mcpStatementToolFor, mcpTablelessReadTool and mcpWithholdsDatabase refuse a type that is no type id by name", () => {
+    for (const type of ["acmefoo", "constructor", undefined] as unknown[]) {
+      for (const read of [mcpStatementToolFor, mcpTablelessReadTool, mcpWithholdsDatabase]) {
+        let thrown: unknown;
+        try {
+          read(type as DatabaseType);
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(UnknownProviderError);
+        expect((thrown as UnknownProviderError).message).toBe(typeIdRefusal(type)?.sentence as string);
+      }
+    }
   });
 
   test("finds an arm by its tool, and names the tool no language declares", () => {
@@ -1420,6 +1439,53 @@ describe("the tool each engine is read with", () => {
       arms,
     );
     expect(reachSqlite.mock.calls.map(([name]) => name)).toEqual(["run_read_query"]);
+  });
+});
+
+describe("list_connections on a connection whose type names no provider (FND-1)", () => {
+  test("lists its type as written, no read tool, the refusal's sentence and no database, reading no per-engine fact", async () => {
+    let handler: ((args: unknown, ctx: unknown) => Promise<{ structuredContent?: unknown }>) | undefined;
+    const registerTool = (_name: string, _config: unknown, callback: typeof handler) => {
+      handler = callback;
+    };
+    const record = {
+      id: "seed:acme",
+      name: "Acme Store",
+      type: "acmefoo",
+      database: "/srv/acme/store.db",
+      environment: "production",
+      createdAt: new Date(),
+      managed: true,
+      roles: ["*"],
+      seedId: "acme",
+    };
+    const context = {
+      caller: { username: "alice", role: "admin" },
+      visibleConnections: async () => [record],
+    } as unknown as McpConnectionContext;
+    registerListConnections({ registerTool } as unknown as McpServer, context);
+    if (handler === undefined) throw new Error("list_connections was not registered");
+
+    const result = await handler(
+      { environment: "all", offset: 0 },
+      { mcpReq: { signal: new AbortController().signal } },
+    );
+
+    expect(result.structuredContent).toEqual({
+      connections: [
+        {
+          id: "seed:acme",
+          name: "Acme Store",
+          engine: "acmefoo",
+          environment: "production",
+          read_tool: null,
+          unavailable: unknownTypeSentence("acmefoo"),
+        },
+      ],
+      total_connections: 1,
+      has_more: false,
+      next_offset: null,
+    });
   });
 });
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { REFUSES_DENIED_FILE_ACCESS, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { MCP_CONNECTION_UNAVAILABLE_TEXT, mcpConnectionUnavailable } from "@/lib/mcp/availability";
 import type { McpCaller } from "@/lib/mcp/context";
 import type { ManagedConnection } from "@/lib/seed";
@@ -64,6 +65,20 @@ describe("mcpConnectionUnavailable", () => {
     const copy = copyFor(ADMIN, "sqlite", ["admin", "user"]);
     expect(copy.roles).toEqual(["admin"]);
     expect(mcpConnectionUnavailable(ADMIN, copy)).toBe(MCP_CONNECTION_UNAVAILABLE_TEXT);
+  });
+
+  // A connection whose type names no provider (FND-1) has no row in any table, so its refusal is the one sentence every
+  // surface gives it, before any posture is asked; an inherited key such as `constructor` reads no row either.
+  test("answers the refusal's sentence for a connection whose type names no provider, before any posture", () => {
+    const listed = (type: unknown) =>
+      ({ ...copyFor(ADMIN, "sqlite", ["admin"]), type }) as unknown as ManagedConnection;
+    expect(mcpConnectionUnavailable(ADMIN, listed("acmefoo"))).toBe(unknownTypeSentence("acmefoo"));
+    expect(mcpConnectionUnavailable(USER, listed("constructor"))).toBe(unknownTypeSentence("constructor"));
+    const untyped = { ...copyFor(ADMIN, "sqlite", ["admin"]) } as Record<string, unknown>;
+    delete untyped.type;
+    expect(mcpConnectionUnavailable(ADMIN, untyped as unknown as ManagedConnection)).toBe(
+      typeIdRefusal(undefined)?.sentence as string,
+    );
   });
 
   test("the sentence names no engine and says what an operator changes", () => {
