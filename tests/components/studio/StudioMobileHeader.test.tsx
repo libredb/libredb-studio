@@ -70,6 +70,7 @@ mock.module("lucide-react", () => {
 import { StudioMobileHeader } from "@/components/studio/StudioMobileHeader";
 import { CANCEL_UNAVAILABLE_REASON } from "@/components/studio/QueryToolbar";
 import type { DatabaseConnection } from "@/lib/types";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 
 const conn: DatabaseConnection = {
   id: "1",
@@ -154,6 +155,20 @@ describe("StudioMobileHeader", () => {
     const { queryAllByText, container } = render(<StudioMobileHeader {...defaults} />);
     expect(queryAllByText("prod-db").length).toBeGreaterThan(0);
     expect(container.textContent).toContain("Online");
+  });
+
+  // FND-1: every list says the same thing of a connection whose type names no provider; a pick of it goes to the
+  // shell's setter, which refuses it by name.
+  test("marks a connection whose type names no provider as unavailable in the connection menu", () => {
+    const unknown = { ...conn, id: "u-1", name: "Acme Store", type: "acmefoo" } as unknown as typeof conn;
+    const onSelectConnection = mock((_c: unknown) => {});
+    const { getByTitle, getByText } = render(
+      <StudioMobileHeader {...defaults} connections={[conn, unknown]} onSelectConnection={onSelectConnection} />,
+    );
+
+    expect(getByTitle(unknownTypeSentence("acmefoo")).textContent).toBe("Unavailable");
+    fireEvent.click(getByText("Acme Store"));
+    expect(onSelectConnection).toHaveBeenCalledWith(unknown);
   });
 
   test("keeps the healthy, degraded and error pulse dots as they were", () => {

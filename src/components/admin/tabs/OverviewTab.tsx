@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
-import { getDBIcon, getDBColor, getDBConfig } from "@/lib/db-ui-config";
+import { getDBIcon, getDBColor, getDBConfig, UNAVAILABLE_CONNECTION_ICON } from "@/lib/db-ui-config";
+import { isDatabaseType } from "@/lib/db/type-id";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import {
@@ -755,7 +756,10 @@ function FleetHealthSection({
         >
           {fleetHealth.map((item) => {
             const colors = getStatusColor(item.status);
-            const Icon = getDBIcon(item.type as DatabaseType);
+            // An item whose type names no provider (FND-1) draws the unavailable icon with no lookup; its `error` is the
+            // server's refusal, which names the type.
+            const known = isDatabaseType(item.type);
+            const Icon = known ? getDBIcon(item.type) : UNAVAILABLE_CONNECTION_ICON;
             const maxLatency = 500;
             const latencyPct = Math.min((item.latencyMs / maxLatency) * 100, 100);
 
@@ -793,7 +797,7 @@ function FleetHealthSection({
                       </Badge>
                     )}
                     <div className="p-1 rounded bg-fill">
-                      <Icon className={`w-3.5 h-3.5 ${getDBColor(item.type as DatabaseType)}`} />
+                      <Icon className={known ? `w-3.5 h-3.5 ${getDBColor(item.type)}` : "w-3.5 h-3.5 text-fg-muted"} />
                     </div>
                   </div>
                 </div>

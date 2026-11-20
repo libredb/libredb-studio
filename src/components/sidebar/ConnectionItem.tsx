@@ -1,7 +1,8 @@
 import React from "react";
 import { DatabaseConnection, ENVIRONMENT_LABELS } from "@/lib/types";
 import { Lock, Trash2, Pencil, Copy, Star, GripVertical, FolderInput, Check } from "lucide-react";
-import { getDBIcon } from "@/lib/db-ui-config";
+import { getDBIcon, UNAVAILABLE_CONNECTION_ICON } from "@/lib/db-ui-config";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -67,6 +68,12 @@ export const ConnectionItem = React.memo(function ConnectionItem({
   onDragEnd,
   onDrop,
 }: ConnectionItemProps) {
+  // A stored connection whose type names no provider (FND-1) is drawn with no per-engine lookup: the unavailable icon,
+  // a marker that carries the refusal's sentence, and no Edit or Duplicate, since the dialog cannot draw an engine this
+  // Studio does not have and a duplicate would copy an unusable record. A click still reaches onSelect, which refuses
+  // it by name.
+  const refusal = typeIdRefusal(conn.type);
+  const unavailable = refusal !== null;
   return (
     <div
       // A real `<button>` cannot wrap the edit/duplicate/delete buttons below (nested
@@ -75,6 +82,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
       role="button"
       tabIndex={0}
+      aria-disabled={unavailable ? true : undefined}
       draggable={draggable}
       onDragStart={draggable ? () => onDragStart?.() : undefined}
       onDragEnter={draggable ? () => onDragEnter?.() : undefined}
@@ -126,13 +134,24 @@ export const ConnectionItem = React.memo(function ConnectionItem({
           isActive ? "bg-brand-tint/20" : "bg-muted group-hover:bg-accent",
         )}
       >
-        {React.createElement(getDBIcon(conn.type), { className: "w-3 h-3" })}
+        {React.createElement(unavailable ? UNAVAILABLE_CONNECTION_ICON : getDBIcon(conn.type), {
+          className: "w-3 h-3",
+        })}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="truncate min-w-[4ch] block font-medium text-xs" title={conn.name}>
             {conn.name}
           </span>
+          {refusal !== null && (
+            <span
+              title={refusal.sentence}
+              className="text-[0.5rem] font-medium px-1.5 py-0.5 rounded-sm shrink-0 bg-fill text-fg-muted"
+            >
+              Unavailable
+              <span className="sr-only">: {refusal.sentence}</span>
+            </span>
+          )}
           {conn.environment && conn.environment !== "other" && (
             <span
               className="text-[0.5rem] font-medium px-1.5 py-0.5 rounded-sm truncate"
@@ -167,7 +186,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
             <Star strokeWidth={1.5} className={cn("w-3 h-3", isFavorite && "fill-current")} />
           </button>
         )}
-        {showsReadOnlyMarker(conn) && <ReadOnlyMarker compact />}
+        {!unavailable && showsReadOnlyMarker(conn) && <ReadOnlyMarker compact />}
         {onMoveToGroup && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -210,7 +229,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
             <Lock strokeWidth={1.5} className="w-3 h-3" />
           </div>
         )}
-        {!conn.managed && onEdit && (
+        {!conn.managed && !unavailable && onEdit && (
           <button
             className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-brand-tint/20 hover:text-brand"
             aria-label="Edit connection"
@@ -223,7 +242,7 @@ export const ConnectionItem = React.memo(function ConnectionItem({
             <Pencil strokeWidth={1.5} className="w-3 h-3" />
           </button>
         )}
-        {!conn.managed && onDuplicate && (
+        {!conn.managed && !unavailable && onDuplicate && (
           <button
             className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-brand-tint/20 hover:text-brand"
             aria-label="Duplicate connection"

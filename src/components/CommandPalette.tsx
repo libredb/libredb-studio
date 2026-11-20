@@ -31,7 +31,8 @@ import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import { pathKey } from "@/lib/db/object-path";
 import { offersSchemaDiagram, type ProviderCapabilities } from "@/lib/db/types";
 import { storage } from "@/lib/storage";
-import { getDBIcon } from "@/lib/db-ui-config";
+import { getDBIcon, UNAVAILABLE_CONNECTION_ICON } from "@/lib/db-ui-config";
+import { typeIdRefusal } from "@/lib/db/type-id";
 
 interface CommandPaletteProps {
   connections: DatabaseConnection[];
@@ -201,11 +202,19 @@ export function CommandPalette({
         {connections.length > 0 && (
           <CommandGroup heading="Connections">
             {connections.map((conn) => {
-              const Icon = getDBIcon(conn.type);
+              // A connection whose type names no provider (FND-1) is listed with no per-engine lookup, and a pick of
+              // it reaches onSelectConnection, which refuses it by name.
+              const refusal = typeIdRefusal(conn.type);
+              const Icon = refusal === null ? getDBIcon(conn.type) : UNAVAILABLE_CONNECTION_ICON;
               return (
                 <CommandItem key={conn.id} onSelect={() => runAction(() => onSelectConnection(conn))}>
                   <Icon className="w-3.5 h-3.5" />
                   <span>{conn.name}</span>
+                  {refusal !== null && (
+                    <span className="ml-auto text-xs text-fg-muted font-medium" title={refusal.sentence}>
+                      Unavailable
+                    </span>
+                  )}
                   {activeConnection?.id === conn.id && (
                     <span className="ml-auto text-xs text-success font-medium">Active</span>
                   )}
