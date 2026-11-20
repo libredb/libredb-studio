@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
 import { startManagedListRefresh } from "@/lib/connection-refresh";
+import { isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
 import {
   connectionAllowed,
   connectionsUnderPolicy,
@@ -26,6 +27,16 @@ import {
   type ManagedConnectionPayload,
   type ServedSeeds,
 } from "./use-connection-payload";
+
+/**
+ * The connections of `list` this Studio has a provider for (FND-1). Every selection the hook makes by itself chooses
+ * among these: a stored connection whose type names no provider is listed, marked unavailable by each list, and never
+ * made active, so no per-engine table, editor or agent surface is ever handed its type. Availability is derived here
+ * and never written into the record, so a later save cannot change what was stored.
+ */
+function availableConnections(list: readonly DatabaseConnection[]): DatabaseConnection[] {
+  return list.filter((connection) => isDatabaseType(connection.type));
+}
 
 /** Pending-seed poll: 1s ticks, give up after 30. NEXT_PUBLIC_MANAGED_POLL_MS
  * shortens the tick in source builds and tests only — NEXT_PUBLIC_ values are
@@ -478,16 +489,38 @@ export function useConnectionManager(storageReady = false) {
    * A pick is a use of the connection. Picking the one already active changes nothing the shell's
    * connection effect reads, so the read a restore held for it is taken here.
    */
+  /**
+   * Says that `connection` cannot be opened and why, in the refusal's own sentence (FND-1). The same toast answers a
+   * pick from any list and a link that names the connection.
+   */
+  const refuseUnavailable = useCallback(
+    (connection: DatabaseConnection, sentence: string) => {
+      toast({ title: "Connection unavailable", description: `${connection.name}: ${sentence}`, variant: "destructive" });
+    },
+    [toast],
+  );
+
+  /**
+   * The setter every picker gets (sidebar, mobile list and header, command palette). Answers whether it selected: a
+   * connection whose type names no provider is refused by name and changes nothing, not the active connection, not
+   * the used id, not a pending link (FND-1).
+   */
   const selectConnection = useCallback(
-    (next: DatabaseConnection | null) => {
+    (next: DatabaseConnection | null): boolean => {
+      const refusal = next === null ? null : typeIdRefusal(next.type);
+      if (next !== null && refusal !== null) {
+        refuseUnavailable(next, refusal.sentence);
+        return false;
+      }
       pendingLinkIdRef.current = null;
       markUsed(next?.id ?? null);
       setActiveConnection(next);
       if (next !== null && next === activeConnectionRef.current && heldIdRef.current === next.id) {
         void fetchSchema(next);
       }
+      return true;
     },
-    [fetchSchema, markUsed],
+    [fetchSchema, markUsed, refuseUnavailable],
   );
 
   /**
@@ -685,7 +718,7 @@ export function useConnectionManager(storageReady = false) {
               setActiveConnection((prev) =>
                 prev !== null && connectionAllowed(prev, currentPolicy)
                   ? prev
-                  : (connectionsUnderPolicy(merged, currentPolicy)[0] ?? null),
+                  : (availableConnections(connectionsUnderPolicy(merged, currentPolicy))[0] ?? null),
               );
             }
             if (failed) return; // transient HTTP failure — keep polling until the attempt budget runs out
@@ -721,7 +754,7 @@ export function useConnectionManager(storageReady = false) {
     const settlePendingLink = (next: DatabaseConnection[]) => {
       const linkedId = pendingLinkIdRef.current;
       if (linkedId === null) return;
-      const linked = connectionsUnderPolicy(next, currentPolicy).find((c) => c.id === linkedId);
+      const linked = availableConnections(connectionsUnderPolicy(next, currentPolicy)).find((c) => c.id === linkedId);
       if (linked !== undefined) {
         pendingLinkIdRef.current = null;
         setActiveConnection(linked);
@@ -751,7 +784,7 @@ export function useConnectionManager(storageReady = false) {
     */
     const applyManagedRefresh = (next: DatabaseConnection[]) => {
       const active = activeConnectionRef.current;
-      const selectable = connectionsUnderPolicy(next, currentPolicy);
+      const selectable = availableConnections(connectionsUnderPolicy(next, currentPolicy));
       setConnections(
         active !== null && next.some((c) => c.id === active.id)
           ? next.map((c) => (c.id === active.id ? active : c))
@@ -800,15 +833,20 @@ export function useConnectionManager(storageReady = false) {
       list: DatabaseConnection[],
       { answered, sessionEnded }: { answered: boolean; sessionEnded: boolean },
     ) => {
-      const selectable = connectionsUnderPolicy(list, currentPolicy);
+      const listed = connectionsUnderPolicy(list, currentPolicy);
+      const selectable = availableConnections(listed);
       const linkedId = sessionEnded ? null : takeLinkedConnectionId();
-      const linked = linkedId === null ? undefined : selectable.find((c) => c.id === linkedId);
-      if (linked !== undefined) {
+      const linked = linkedId === null ? undefined : listed.find((c) => c.id === linkedId);
+      const linkRefusal = linked === undefined ? null : typeIdRefusal(linked.type);
+      // A link naming a connection the list shows but no provider can open is decided now, by name, and the default
+      // selection below applies: waiting for a refresh would only repeat the answer (FND-1).
+      if (linked !== undefined && linkRefusal !== null) refuseUnavailable(linked, linkRefusal.sentence);
+      if (linked !== undefined && linkRefusal === null) {
         setActiveConnection(linked);
         return;
       }
-      if (linkedId !== null && answered) pendingLinkIdRef.current = linkedId;
-      if (linkedId !== null && !answered) {
+      if (linkedId !== null && linked === undefined && answered) pendingLinkIdRef.current = linkedId;
+      if (linkedId !== null && linked === undefined && !answered) {
         toast({
           title: "Connections not loaded",
           description:
@@ -895,7 +933,7 @@ export function useConnectionManager(storageReady = false) {
       stopPoll();
       stopRefresh?.();
     };
-  }, [storageReady, toast]);
+  }, [storageReady, toast, refuseUnavailable]);
 
   // Persist active connection ID
   useEffect(() => {

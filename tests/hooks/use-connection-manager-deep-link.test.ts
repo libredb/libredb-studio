@@ -12,6 +12,7 @@ import type { ManagedConnectionPayload } from "@/hooks/use-connection-payload";
 import { onSessionEnded } from "@/lib/config/base-path";
 import { storage } from "@/lib/storage";
 import type { DatabaseConnection } from "@/lib/types";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 
 /*
   `/?connection=<id>` opens the editor on one connection.
@@ -148,6 +149,32 @@ describe("opening the editor on a linked connection", () => {
     const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => expect(result.current.activeConnection?.id).toBe("seed:billing"));
+  });
+
+  test("a link naming a connection whose type names no provider is refused with the reason, and the default opens", async () => {
+    // FND-1: the connection is listed, so the link is decided at once rather than left pending: it names the
+    // connection and why it cannot be opened.
+    const unknown = { ...mine("unknown-1"), name: "Acme Store", type: "acmefoo" } as unknown as DatabaseConnection;
+    storage.saveConnection(unknown);
+    storage.saveConnection(mine("mine-2"));
+    const before = storage.getConnections().find((c) => c.id === "unknown-1");
+    window.history.replaceState(null, "", "/?connection=unknown-1");
+    mockGlobalFetch(routes(answer([])));
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => expect(result.current.activeConnection?.id).toBe("mine-2"));
+    expect(window.location.search).toBe("");
+    expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+      description: `Acme Store: ${unknownTypeSentence("acmefoo")}`,
+    });
+
+    // Decided: a refresh after the seed cache has nothing left to say about it.
+    passSeedCache();
+    focusWindow();
+    await sleep(50);
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+    expect(storage.getConnections().find((c) => c.id === "unknown-1")).toEqual(before);
   });
 
   test("an id the server did not list keeps the default selection, and a refresh after the seed cache that does not list it either says so without saying why", async () => {
