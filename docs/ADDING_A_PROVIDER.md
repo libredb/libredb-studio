@@ -1126,7 +1126,6 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/db/providers/<family>/<type-id>/execution-ui.ts` (or `<type-id>-execution-ui.ts` beside a flat provider file): **new:** the type's `ExecutionUiSpec`, its `commitKeyword` (`SQL_COMMIT_KEYWORD` unless the engine keeps a transaction with another keyword) and `consentDeadline` (`null` unless a long read ends differently on it); add its row to `EXECUTION_UI` in `src/lib/db/execution-ui/index.ts` and run `UPDATE_GOLDEN=1` for `tests/unit/db/execution-ui/golden.test.tsx`
 - [ ] `src/lib/db/connection-form.ts`: **append** to `CONNECTION_PICKER_ORDER` (do not retype the array)
 - [ ] `src/components/icons/db-icons.tsx` — the engine's mark (`strokeWidth={1.5}`, no HTML size attrs)
-- [ ] `src/lib/seed/types.ts` — the seed-config `type` enum, or seeded connections fail validation
 - [ ] `src/lib/db/compatibility.ts` — the `SHIPPED` record. It is an exhaustive
       `Record<DatabaseType, true>`, so the compiler refuses the omission rather than letting the
       published engine count silently undercount; it is listed here because the count in `README.md`

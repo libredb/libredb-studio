@@ -591,7 +591,7 @@ try {
 ```
 DatabaseError (base)
 ├── DatabaseConfigError    - Configuration errors
-│   └── UnknownProviderError - The connection's type is absent or names no provider (code PROVIDER_UNKNOWN)
+│   └── UnknownProviderError - The connection's type is absent, not text, or names no provider (code PROVIDER_UNKNOWN)
 ├── ConnectionError        - Connection failures
 ├── AuthenticationError    - Invalid credentials
 ├── PermissionDeniedError  - A privilege the credential lacks
