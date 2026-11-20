@@ -8,13 +8,14 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 import type { NodeRequest, NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import {
+  COUCHBASE_RESPONSE_CAP_BYTES,
   CouchbaseHttpTransport,
   nodeRequestJson,
   type CouchbaseHttpTransportDeps,
@@ -1002,6 +1003,228 @@ describe("nodeRequestJson", () => {
 
     expect(error).toBeInstanceOf(CouchbaseError);
     expect(error.code).toBe(0);
+    expect(error.retriable).toBe(true);
+  });
+});
+
+// ============================================================================
+// Answer bounds: the byte cap and an answer that stops before it is complete
+// ============================================================================
+
+/** The cap in the words the too-large message uses. */
+const CAP_MIB = `${COUCHBASE_RESPONSE_CAP_BYTES / (1024 * 1024)} MiB`;
+
+/**
+ * Serves `{"ok":true}` padded with spaces to `total` bytes, written a MiB at a time under backpressure, so no test holds
+ * the whole answer, and records how many bytes it wrote and whether the socket closed before the answer was finished.
+ */
+function streamingListener(total: number) {
+  const outcome = { written: 0, closedEarly: false };
+  const head = Buffer.from('{"ok":true}');
+  const pad = Buffer.alloc(1024 * 1024, 0x20);
+  const listener = (req: IncomingMessage, res: ServerResponse) => {
+    req.resume();
+    res.writeHead(200, { "content-type": "application/json", "content-length": String(total) });
+    res.on("close", () => {
+      outcome.closedEarly = !res.writableFinished;
+    });
+    res.write(head);
+    outcome.written = head.length;
+    const pump = () => {
+      while (outcome.written < total && !res.destroyed) {
+        const size = Math.min(pad.length, total - outcome.written);
+        outcome.written += size;
+        if (!res.write(pad.subarray(0, size))) {
+          res.once("drain", pump);
+          return;
+        }
+      }
+      if (!res.destroyed) res.end();
+    };
+    pump();
+  };
+  return { outcome, listener };
+}
+
+/**
+ * A raw listener that answers every request with `101 Switching Protocols` and an Upgrade header, then closes the socket
+ * (`fin`) or keeps it open (`open`). close() destroys any socket still open, so the listener can stop.
+ */
+async function startSwitchingServer(how: "fin" | "open") {
+  const sockets = new Set<Socket>();
+  const server = createNetServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.once("data", () => {
+      socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+      if (how === "fin") socket.end();
+    });
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+/** Declares 1000 bytes, writes 100, then closes (`fin`) or resets (`reset`) the socket. */
+function cutListener(how: "fin" | "reset" | "chunked-fin") {
+  return (req: IncomingMessage, res: ServerResponse) => {
+    req.resume();
+    res.writeHead(200, {
+      "content-type": "application/json",
+      ...(how === "chunked-fin" ? {} : { "content-length": "1000" }),
+    });
+    res.write(`{"results":[${"1,".repeat(40)}`, () => {
+      if (how === "reset") res.socket?.resetAndDestroy();
+      else res.socket?.end();
+    });
+  };
+}
+
+describe("nodeRequestJson answer bounds", () => {
+  test("reads an answer of exactly the cap", async () => {
+    const { listener } = streamingListener(COUCHBASE_RESPONSE_CAP_BYTES);
+    const server = await startServer(listener);
+
+    try {
+      const response = await nodeRequestJson(server.url, GET_INIT, NO_TLS);
+
+      expect(response).toEqual({ httpCode: 200, payload: { ok: true } });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("refuses an answer past the cap by name, and closes the socket before the rest is sent", async () => {
+    const { outcome, listener } = streamingListener(COUCHBASE_RESPONSE_CAP_BYTES * 4);
+    const server = await startServer(listener);
+
+    const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+    // Waits for the server side of the socket to close, so the outcome below is final.
+    await server.close();
+
+    expect(error).toBeInstanceOf(CouchbaseError);
+    expect(error.message).toBe(`Couchbase answered with more than ${CAP_MIB}, so the answer was not read further`);
+    expect(error.code).toBe(0);
+    expect(error.retriable).toBe(false);
+    expect(outcome.closedEarly).toBe(true);
+    expect(outcome.written).toBeLessThan(COUCHBASE_RESPONSE_CAP_BYTES * 4);
+  });
+
+  test.each([
+    ["the server closes the socket", "fin"],
+    ["a chunked answer's socket closes before its last chunk", "chunked-fin"],
+  ] as const)("rejects with a named network failure when %s before the answer is complete", async (_label, how) => {
+    const server = await startServer(cutListener(how));
+
+    try {
+      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+
+      expect(error).toBeInstanceOf(CouchbaseError);
+      expect(error.message).toBe("Couchbase request failed: the server ended the answer before it was complete");
+      expect(error.code).toBe(0);
+      expect(error.retriable).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("rejects with a named network failure when the server resets the socket mid-answer", async () => {
+    const server = await startServer(cutListener("reset"));
+
+    try {
+      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+
+      expect(error).toBeInstanceOf(CouchbaseError);
+      expect(error.message).toStartWith("Couchbase request failed: ");
+      expect(error.message).toContain("ECONNRESET");
+      expect(error.code).toBe(0);
+      expect(error.retriable).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test.each([
+    ["closes the socket", "fin"],
+    ["keeps the socket open", "open"],
+  ] as const)("rejects with a named network failure when the server switches protocols and %s", async (_label, how) => {
+    const server = await startSwitchingServer(how);
+
+    try {
+      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+
+      expect(error).toBeInstanceOf(CouchbaseError);
+      expect(error.message).toBe("Couchbase request failed: the server switched protocols instead of answering");
+      expect(error.code).toBe(0);
+      expect(error.retriable).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("CouchbaseHttpTransport plaintext answer bounds", () => {
+  /** A body of `total` bytes, pulled a MiB at a time, so no test holds the whole answer. */
+  function streamedBody(total: number): ReadableStream<Uint8Array> {
+    const pad = new Uint8Array(1024 * 1024).fill(0x20);
+    let sent = 0;
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent >= total) {
+          controller.close();
+          return;
+        }
+        const size = Math.min(pad.length, total - sent);
+        sent += size;
+        controller.enqueue(pad.subarray(0, size));
+      },
+    });
+  }
+
+  test("refuses a management answer past the cap by name", async () => {
+    handler = () => new Response(streamedBody(COUCHBASE_RESPONSE_CAP_BYTES + 1), { status: 200 });
+
+    const error = (await makeTransport()
+      .manage("/pools/default")
+      .catch((e: unknown) => e)) as CouchbaseError;
+
+    expect(error).toBeInstanceOf(CouchbaseError);
+    expect(error.message).toBe(`Couchbase answered with more than ${CAP_MIB}, so the answer was not read further`);
+    expect(error.retriable).toBe(false);
+  });
+
+  test("reports a query answer that fails mid-read as a named network failure", async () => {
+    // What undici rejects a body read with when the socket closes before the answer is complete.
+    const cut = new TypeError("terminated", { cause: { code: "UND_ERR_SOCKET", address: "127.0.0.1", port: 8093 } });
+    const cluster = routeQuery(successPayload());
+    handler = (url) => {
+      if (!url.includes("/query/service")) return cluster(url);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"results":['));
+            controller.error(cut);
+          },
+        }),
+        { status: 200 },
+      );
+    };
+
+    const error = (await makeTransport()
+      .query("SELECT 1")
+      .catch((e: unknown) => e)) as CouchbaseError;
+
+    expect(error).toBeInstanceOf(CouchbaseError);
+    expect(error.message).toBe("Couchbase request failed: connection to 127.0.0.1:8093 was reset (UND_ERR_SOCKET)");
     expect(error.retriable).toBe(true);
   });
 });

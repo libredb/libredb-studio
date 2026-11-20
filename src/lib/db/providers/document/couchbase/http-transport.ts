@@ -26,6 +26,7 @@
 import { promises as dns, type SrvRecord } from "node:dns";
 import { request as httpRequest, type RequestOptions as HttpRequestOptions } from "node:http";
 import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
+import { BodyLimitExceededError, readBoundedText } from "@/lib/db/http/bounded-body";
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
@@ -64,6 +65,13 @@ const DEFAULT_QUERY_TLS_PORT = 18093;
 const QUERY_PATH = "/query/service";
 const NODE_SERVICES_PATH = "/pools/default/nodeServices";
 const WHOAMI_PATH = "/whoami";
+
+/**
+ * The most bytes one answer outside the agent path may hold: 16 MiB, the cap the Qdrant, InfluxDB and Databend
+ * transports put on one answer. Past it the answer is refused by name and its socket closed, so no more of it is read,
+ * and every answer that is decoded is far below the longest string the runtime can build.
+ */
+export const COUCHBASE_RESPONSE_CAP_BYTES = 16 * 1024 * 1024;
 
 /** Sockets an agent transport may hold open to one origin: agent calls run one at a time. */
 const AGENT_MAX_SOCKETS = 4;
@@ -284,6 +292,25 @@ function networkError(error: unknown, url: string): CouchbaseError {
   return new CouchbaseError(`Couchbase request failed: ${describeFetchFailure(error, url)}`, 0, true);
 }
 
+/** Not retriable: the same request draws the same answer, so it needs a narrower statement, not another attempt. */
+function answerTooLargeError(): CouchbaseError {
+  return new CouchbaseError(
+    `Couchbase answered with more than ${COUCHBASE_RESPONSE_CAP_BYTES / (1024 * 1024)} MiB, so the answer was not read further`,
+    0,
+    false,
+  );
+}
+
+/** A network fault like any other: the connection went away before the answer was complete. */
+function answerEndedEarlyError(): CouchbaseError {
+  return new CouchbaseError("Couchbase request failed: the server ended the answer before it was complete", 0, true);
+}
+
+/** A network fault like any other: the server answered with another protocol, which this transport does not read. */
+function switchedProtocolsError(): CouchbaseError {
+  return new CouchbaseError("Couchbase request failed: the server switched protocols instead of answering", 0, true);
+}
+
 function throwIfFailed(response: JsonResponse): void {
   const failure = payloadError(response.payload);
   if (failure) throw failure;
@@ -315,6 +342,7 @@ function buildTlsMaterial(ssl: SSLConfig | undefined): CouchbaseTlsMaterial | nu
 
 async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonResponse> {
   let response: Response;
+  let text: string;
   try {
     // A followed redirect would carry the credential to wherever it points.
     response = await httpTransportFetch(url, {
@@ -323,11 +351,13 @@ async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonRespon
       body: init.body,
       redirect: "manual",
     });
+    // Read under the cap and inside this try, so a body that passes the cap or stops mid-read is a named failure.
+    text = await readBoundedText(response, COUCHBASE_RESPONSE_CAP_BYTES);
   } catch (error) {
     if (error instanceof DatabaseConfigError) throw error;
+    if (error instanceof BodyLimitExceededError) throw answerTooLargeError();
     throw networkError(error, url);
   }
-  const text = await response.text();
   rejectRedirect(response, url);
   return { httpCode: response.status, payload: parseJsonBody(text) };
 }
@@ -335,6 +365,12 @@ async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonRespon
 /**
  * TLS-capable request over the Node built-ins. Exported so the TLS path is
  * exercised directly against a local server instead of being mocked away.
+ *
+ * The body is counted as it arrives: past COUCHBASE_RESPONSE_CAP_BYTES the request is destroyed, which closes the
+ * socket, and the call fails by name. An answer whose connection closes or resets before it is complete fails as a
+ * network fault: node:http then emits no "end", only "close" on a message that is not complete. A 101 answer that
+ * switches protocols fails as a network fault too, and its socket is destroyed. The body is decoded and parsed in a
+ * promise continuation, so nothing in that step can throw out of an event handler.
  */
 export function nodeRequestJson(url: string, init: JsonRequestInit, tls: CouchbaseTlsMaterial): Promise<JsonResponse> {
   const target = new URL(url);
@@ -352,15 +388,24 @@ export function nodeRequestJson(url: string, init: JsonRequestInit, tls: Couchba
     rejectUnauthorized: tls.rejectUnauthorized,
   };
 
-  return new Promise<JsonResponse>((resolve, reject) => {
+  const received = new Promise<{ httpCode: number; body: Buffer }>((resolve, reject) => {
     const onResponse = (response: import("node:http").IncomingMessage) => {
       const chunks: Buffer[] = [];
-      response.on("data", (chunk: Buffer) => chunks.push(chunk));
-      response.on("end", () => {
-        resolve({
-          httpCode: response.statusCode ?? 0,
-          payload: parseJsonBody(Buffer.concat(chunks).toString("utf8")),
-        });
+      let bytes = 0;
+      response.on("data", (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes > COUCHBASE_RESPONSE_CAP_BYTES) {
+          clientRequest.destroy();
+          reject(answerTooLargeError());
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("end", () => resolve({ httpCode: response.statusCode ?? 0, body: Buffer.concat(chunks) }));
+      // After "end" this is a no-op; after a refusal above, or a reset the request already reported, the promise has
+      // settled and this rejection is ignored.
+      response.on("close", () => {
+        if (!response.complete) reject(answerEndedEarlyError());
       });
     };
 
@@ -372,9 +417,17 @@ export function nodeRequestJson(url: string, init: JsonRequestInit, tls: Couchba
     clientRequest.on("error", (error: Error) =>
       reject(error instanceof DatabaseConfigError ? error : networkError(error, target.href)),
     );
+    // node:http hands a 101 with Connection: upgrade and an Upgrade header to this event, never to onResponse, and
+    // without a listener the request never settles. The switched socket is no longer the request's, so it is destroyed here.
+    clientRequest.on("upgrade", (_answer: import("node:http").IncomingMessage, socket: import("node:net").Socket) => {
+      socket.destroy();
+      reject(switchedProtocolsError());
+    });
     if (init.body !== undefined) clientRequest.write(init.body);
     clientRequest.end();
   });
+
+  return received.then(({ httpCode, body }) => ({ httpCode, payload: parseJsonBody(body.toString("utf8")) }));
 }
 
 // ============================================================================
