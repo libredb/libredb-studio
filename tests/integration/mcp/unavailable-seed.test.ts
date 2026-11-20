@@ -65,7 +65,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
     return (await session.client.callTool({ name, arguments: args })) as {
       isError?: boolean;
       content: Array<{ type: string; text: string }>;
-      structuredContent?: Record<string, any>;
+      structuredContent?: Record<string, unknown>;
     };
   } finally {
     await session.close();
