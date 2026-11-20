@@ -99,6 +99,18 @@ interface PooledTunnel {
 const activeTunnels = new Map<string, PooledTunnel>();
 
 /**
+ * The dial in progress for a pool key, under the same key as {@link activeTunnels}, so concurrent
+ * calls for one tunnel share one SSH connection: a call that finds no pooled forward but a dial
+ * under way is handed that dial, and every caller waiting on it receives the one forward it opens,
+ * or the one error it fails with.
+ *
+ * An entry lives only while its dial is pending. A dial that succeeds has put its forward in
+ * `activeTunnels` before it resolves, so the next call finds the forward there; a dial that fails
+ * leaves nothing behind, so the next call dials again.
+ */
+const pendingDials = new Map<string, Promise<TunnelInfo>>();
+
+/**
  * Length-framed, every component by the same `${length}:${value}` rule and none of them bare, so
  * no two different (id, far end, route) tuples can slide across a boundary and answer one key -
  * `connectionFingerprint`'s own rule, for its own reason: a connection id is a string the caller
@@ -202,14 +214,19 @@ export async function createSSHTunnel(
   // Return the existing tunnel for THIS route and far end if one is already active.
   // A tunnel whose SSH session ssh2 has seen end is not here: that end runs its cleanup. A session that
   // drops without a FIN or an RST still is, and may be stale, since neither SSH nor TCP keepalive is configured.
+  // A call made while the dial for this forward is still under way shares that dial.
   if (shared) {
     const existing = activeTunnels.get(key);
     if (existing) {
       return existing.info;
     }
+    const pending = pendingDials.get(key);
+    if (pending) {
+      return pending;
+    }
   }
 
-  return new Promise((resolve, reject) => {
+  const dial = new Promise<TunnelInfo>((resolve, reject) => {
     const sshClient = new Client();
     let localServer: net.Server | null = null;
     // What the host key verifier decided, read back after ssh2 reports the handshake
@@ -392,6 +409,13 @@ export async function createSSHTunnel(
 
     sshClient.connect(connectOptions);
   });
+
+  if (shared) {
+    pendingDials.set(key, dial);
+    const settled = () => pendingDials.delete(key);
+    dial.then(settled, settled);
+  }
+  return dial;
 }
 
 /**
