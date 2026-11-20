@@ -1054,10 +1054,12 @@ describe("useConnectionManager", () => {
 
   // An entry whose type names no provider is listed managed whatever the file says (FND-1), so the dismissal a user
   // recorded by deleting their copy of it is kept while it is listed so: it would otherwise come back as an
-  // Unavailable row the user cannot delete.
+  // Unavailable row the user cannot delete. A dismissed seed the operator lists managed with a known type is kept.
   test("skips a dismissed seed listed managed because its type names no provider", async () => {
     storage.saveConnection(makeConnection({ id: "dismiss-me", seedId: "seed-dismissed" }));
     storage.deleteConnection("dismiss-me");
+    storage.saveConnection(makeConnection({ id: "dismiss-known", seedId: "seed-dismissed-known" }));
+    storage.deleteConnection("dismiss-known");
 
     mockGlobalFetch({
       "/api/connections/managed": {
@@ -1076,6 +1078,12 @@ describe("useConnectionManager", () => {
               seedId: "seed-kept",
               type: "acmefoo" as never,
             }),
+            makeManagedConnection({
+              id: "seed:seed-dismissed-known",
+              managed: true,
+              seedId: "seed-dismissed-known",
+              type: "postgres",
+            }),
           ],
         },
       },
@@ -1085,7 +1093,7 @@ describe("useConnectionManager", () => {
     const { result } = renderHook(() => useConnectionManager(true));
 
     await waitFor(() => {
-      expect(result.current.connections.map((c) => c.id)).toEqual(["seed:seed-kept"]);
+      expect(result.current.connections.map((c) => c.id)).toEqual(["seed:seed-kept", "seed:seed-dismissed-known"]);
     });
   });
 
