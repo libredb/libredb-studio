@@ -59,7 +59,6 @@ test.describe("a stored connection whose type names no provider", () => {
 
   test("the studio loads and lists both stored connections as unavailable, with the reason", async ({ page }) => {
     await expect(page.getByRole("tab", { name: "Query 1" })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("Something went wrong")).toHaveCount(0);
 
     const unknownRow = row(page, UNKNOWN.name);
     await expect(unknownRow).toBeVisible();
@@ -73,6 +72,8 @@ test.describe("a stored connection whose type names no provider", () => {
     await expect(unknownRow.getByRole("button", { name: "Edit connection" })).toHaveCount(0);
     await expect(unknownRow.getByRole("button", { name: "Duplicate connection" })).toHaveCount(0);
     await expect(unknownRow.getByRole("button", { name: "Delete connection" })).toHaveCount(1);
+    // Last, once the list and its markers have rendered: a crash after the first render would come before this.
+    await expect(page.getByText("Something went wrong")).toHaveCount(0);
   });
 
   test("opening one is refused by name and the active connection stays", async ({ page }) => {
@@ -83,8 +84,10 @@ test.describe("a stored connection whose type names no provider", () => {
 
     await row(page, UNKNOWN.name).click();
 
-    await expect(page.getByText("Connection unavailable").first()).toBeVisible();
-    await expect(page.getByText(unknownTypeSentence(UNKNOWN.type), { exact: false }).first()).toBeVisible();
+    // Scoped to the toast: the row's own screen-reader text carries the same sentence before the click.
+    const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Connection unavailable" });
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText(`${UNKNOWN.name}: ${unknownTypeSentence(UNKNOWN.type)}`);
     expect(await page.evaluate((key) => localStorage.getItem(key), ACTIVE_KEY)).toBe(activeBefore);
   });
 
