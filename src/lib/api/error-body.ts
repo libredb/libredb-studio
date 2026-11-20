@@ -18,6 +18,7 @@ import {
   TimeoutError,
   TransactionLostError,
   UnknownProviderError,
+  type TypeIdRefusal,
 } from "@/lib/db/errors";
 import { quoteTypeId } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/db/types";
@@ -39,8 +40,8 @@ export interface DatabaseErrorLog {
   readonly context: {
     readonly provider?: DatabaseType;
     readonly duration?: number;
-    /** On a `PROVIDER_UNKNOWN` refusal only: whether the type was absent or named no provider. */
-    readonly reason?: "absent" | "unknown";
+    /** On a `PROVIDER_UNKNOWN` refusal only: whether the type was absent, not text, or named no provider. */
+    readonly reason?: TypeIdRefusal["reason"];
     /** On an `unknown` refusal only: the refused type, quoted by `quoteTypeId` so it stays one line in the log. */
     readonly type?: string;
   };

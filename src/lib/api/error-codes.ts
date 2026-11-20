@@ -9,7 +9,7 @@ export const ApiErrorCode = {
   QUERY_ERROR: "QUERY_ERROR",
   CONFIG_ERROR: "CONFIG_ERROR",
   /**
-   * The connection's type is absent or names no provider this Studio has (400, `UnknownProviderError`), answered before
+   * The connection's type is absent, not text, or names no provider this Studio has (400, `UnknownProviderError`), answered before
    * any provider is built or any SSH tunnel opened. Distinct from CONFIG_ERROR, which is a provider this Studio has
    * refusing a setting: the remedy here is a provider, not a field, and the sentence quotes the type when it is a
    * non-empty string.

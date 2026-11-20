@@ -2,8 +2,8 @@
  * The one check of a connection's `type` against the `DatabaseType` union (FND-1).
  *
  * A record read from storage or from a request may carry any value in `type`: a connection saved by a newer Studio that
- * shares the same server storage, a hand-edited record, or one with no type at all. A value that is not exactly a type
- * id is refused by name, never normalised (no trimming, no lowercasing).
+ * shares the same server storage, a hand-edited record, one with no type at all, or one whose type is not text. A value
+ * that is not exactly a type id is refused by name, never normalised (no trimming, no lowercasing).
  *
  * The provider factory, `resolveConnection`, the `db-ui-config` lookups, the Studio connection lists and the connection
  * hook ask this module first. Not every per-engine read does yet: the contract registries still answer an unknown type
@@ -23,8 +23,15 @@ export type { TypeIdRefusal } from "./errors";
 
 const TYPE_IDS: ReadonlySet<string> = new Set(SHIPPED_DATABASE_TYPES);
 
-/** The refusal of a connection whose `type` is missing, empty or not a string. */
+/** The refusal of a connection whose `type` is missing, `null` or empty. */
 export const ABSENT_TYPE_SENTENCE = "This connection names no type, so no provider in this LibreDB Studio can open it.";
+
+/**
+ * The refusal of a connection whose `type` is present and not a string: a number, a boolean, an array or an object.
+ * It quotes nothing, so a value that is not text is never repeated in a sentence or a log line.
+ */
+export const MALFORMED_TYPE_SENTENCE =
+  "This connection's type is not text, so it is not a type id, and no provider in this LibreDB Studio can open it.";
 
 /**
  * The code points `JSON.stringify` leaves raw that could still break or reorder a line: the C1 controls (U+0080 to
@@ -61,14 +68,16 @@ export function isDatabaseType(value: unknown): value is DatabaseType {
 /** `null` for a type id, otherwise why the value is refused and the sentence that says so. */
 export function typeIdRefusal(value: unknown): TypeIdRefusal | null {
   if (isDatabaseType(value)) return null;
-  if (typeof value !== "string" || value === "") return { reason: "absent", sentence: ABSENT_TYPE_SENTENCE };
+  if (value === undefined || value === null || value === "")
+    return { reason: "absent", sentence: ABSENT_TYPE_SENTENCE };
+  if (typeof value !== "string") return { reason: "malformed", sentence: MALFORMED_TYPE_SENTENCE };
   return { reason: "unknown", typeId: value, sentence: unknownTypeSentence(value) };
 }
 
 /**
  * Refuses a value that is not a type id with `UnknownProviderError`.
  *
- * @throws {UnknownProviderError} When `value` is absent or names no provider.
+ * @throws {UnknownProviderError} When `value` is absent, not text, or names no provider.
  */
 export function assertDatabaseType(value: unknown): asserts value is DatabaseType {
   const refusal = typeIdRefusal(value);

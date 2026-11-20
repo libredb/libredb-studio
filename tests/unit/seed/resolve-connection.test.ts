@@ -23,7 +23,7 @@ import * as seedIndex from "@/lib/seed";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { UnknownProviderError } from "@/lib/db/errors";
-import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
+import { ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import * as vaultClient from "@/lib/seed/vault-client";
 import { logger } from "@/lib/logger";
@@ -148,16 +148,20 @@ describe("resolve-connection", () => {
   });
 
   /*
-   * An inline record whose `type` is missing, empty or not a string names no provider, and one whose `type` is a string
-   * that is not exactly a type id names none either (FND-1): both are refused by naming the type, with the one
-   * refusal the factory raises, before any route reads a per-engine table or builds a provider.
+   * An inline record whose `type` is missing or empty names no provider, one whose `type` is present and not text is
+   * not a type id, and one whose `type` is a string that is not exactly a type id names none either (FND-1): each is
+   * refused by naming the type, with the one refusal the factory raises, before any route reads a per-engine table or builds a provider.
    */
   it.each([
     ["no type", {}, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
     ["an empty type", { type: "" }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
-    ["a type that is a number", { type: 5 }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
+    ["a type that is a number", { type: 5 }, { reason: "malformed", message: MALFORMED_TYPE_SENTENCE }],
     ["a type that is null", { type: null }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
-    ["a type that is an object", { type: { id: "postgres" } }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
+    [
+      "a type that is an object",
+      { type: { id: "postgres" } },
+      { reason: "malformed", message: MALFORMED_TYPE_SENTENCE },
+    ],
     ["an unknown type", { type: "acmefoo" }, { reason: "unknown", message: unknownTypeSentence("acmefoo") }],
     [
       "a case variant of a type id",

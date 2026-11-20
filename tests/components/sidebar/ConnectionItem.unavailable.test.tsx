@@ -6,7 +6,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { ConnectionItem } from "@/components/sidebar/ConnectionItem";
 import { ConnectionsList } from "@/components/sidebar/ConnectionsList";
-import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
+import { ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseConnection } from "@/lib/types";
 
 /*
@@ -73,6 +73,18 @@ describe("a sidebar row for a connection whose type names no provider", () => {
 
     expect(within(row).getByText("Untyped Record")).toBeTruthy();
     expect(within(row).getByTitle(ABSENT_TYPE_SENTENCE).textContent).toContain("Unavailable");
+  });
+
+  test("a row whose type is not text says so", () => {
+    const { row } = renderItem({
+      ...postgres,
+      id: "m-1",
+      name: "Numbered Record",
+      type: 5,
+    } as unknown as DatabaseConnection);
+
+    expect(within(row).getByText("Numbered Record")).toBeTruthy();
+    expect(within(row).getByTitle(MALFORMED_TYPE_SENTENCE).textContent).toContain("Unavailable");
   });
 
   test("its Delete button deletes it", () => {
