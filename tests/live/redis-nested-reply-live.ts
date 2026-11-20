@@ -2,19 +2,17 @@
  * Live Redis check: a reply nested deeper than the runtime's stack fails its command with a named error, and the
  * connection serves the next command.
  *
- * A Lua table comes back from `EVAL` and `EVAL_RO` as nested RESP arrays, so a real Redis builds such a reply on
- * request: redis 8.10.2 nests up to 7995 levels before its own `reached lua stack limit`. ioredis 5.11.1 reads replies
- * with a recursive parser inside its socket `data` listener, and patches/ioredis@5.11.1.patch sends a parser throw down
- * ioredis's fatal-error path instead of out of that listener (docs/TOOLCHAIN.md, "Patched dependencies"). The fatal
- * error rejects the command in flight, and the editor connection, which keeps ioredis's default retry strategy,
- * reconnects for the next one. This script drives the real provider against a real server through `query()`, the
- * method the editor route calls, and checks for each script: what the caller got, that a PING after it answers, and
- * that no error escaped a call meanwhile.
+ * A Lua table comes back from `EVAL` and `EVAL_RO` as nested RESP arrays, so this script asks a real server for tables
+ * nested 1000 and 7990 levels deep through `query()`, the method the editor route calls, and checks for each: what the
+ * caller got, that a PING after it answers, and that no error escaped a call meanwhile. ioredis 5.11.1 reads replies
+ * inside its socket `data` listener, and patches/ioredis@5.11.1.patch sends a parser throw down ioredis's fatal-error
+ * path (docs/TOOLCHAIN.md, "Patched dependencies"), which rejects the command in flight; the editor connection keeps
+ * ioredis's default retry strategy and reconnects for the next one.
  *
- * The bytes are the same on every runtime, but whether the stack holds them is the runtime's: measured 2026-11-21,
- * Node 24.22.1 overflows at 3000 levels and Bun 1.4.4 reads 7990 levels. So under Node the 7990-level script must fail
- * with the named error, and under Bun it may answer instead; redis-driver.test.ts holds the same path on both runtimes
- * with a reply no stack holds.
+ * Which stack overflows on the deeper table, the parser's or Studio's own decoding of the reply, depends on the runtime
+ * and on how far it has optimized the parser, so the check accepts either named error, `Redis error: Maximum call stack
+ * size exceeded` with or without ioredis's `Please report this.`, and on Bun also an answer. redis-driver.test.ts holds
+ * the parser path itself on both runtimes with a reply no stack holds.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
  * CI runs it in the "Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)" job of .github/workflows/ci.yml, under Bun and
@@ -32,7 +30,8 @@ import type { DatabaseConnection } from "@/lib/types";
 
 const REDIS_CONTAINER = `${process.env.LIBREDB_LIVE_REDIS_CONTAINER_PREFIX ?? "libredb-live-nested-reply-redis"}-${randomBytes(4).toString("hex")}`;
 const RUNTIME = typeof Bun === "undefined" ? "node" : "bun";
-const NESTING_FAILED = /^Redis error: Maximum call stack size exceeded\.?\. Please report this\.$/;
+/** The parser's overflow carries ioredis's fatal-error ending; an overflow in Studio's decoding of the reply does not. */
+const NESTING_FAILED = /^Redis error: Maximum call stack size exceeded\.?(?:\. Please report this\.)?$/;
 
 /** Every error that escaped a call instead of reaching its caller, in order. */
 const processEvents: string[] = [];
@@ -116,14 +115,19 @@ async function main(): Promise<void> {
     };
     const provider = new RedisProvider(connection, { queryTimeout: 8_000 });
     await provider.connect();
+    let failure: unknown;
     try {
       for (const verb of ["EVAL", "EVAL_RO"] as const) {
         // oxlint-disable-next-line no-await-in-loop
         for (const depth of [1000, 7990]) await check(provider, verb, depth);
       }
-    } finally {
-      await provider.disconnect();
+    } catch (error) {
+      failure = error;
     }
+    // Bounded: a connection left waiting never answers the QUIT a disconnect sends.
+    const closed = await settle(() => provider.disconnect());
+    if (failure !== undefined) throw failure;
+    if (closed !== undefined) throw new Error(`disconnect after the checks: ${closed.message}`);
   } catch (error) {
     console.error("FAIL live Redis nested-reply check");
     console.error(error);

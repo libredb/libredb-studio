@@ -535,10 +535,10 @@ jobs:
           rm -rf "$OUT"
 
       - name: Redis nested-reply live check
-        # An EVAL whose Lua table a real Redis returns nested deeper than the runtime's stack must fail that command
-        # with a named error, and the connection must answer the next one (patches/ioredis@5.11.1.patch). Under Bun
-        # and then under Node, bundled with `bun build --target=node`, because only Node's stack overflows on the
-        # deepest reply Redis builds. The script starts and removes its own container.
+        # A reply from a real Redis nested deeper than the runtime's stack must fail its command with a named error,
+        # and the connection must answer the next one (patches/ioredis@5.11.1.patch). Under Bun and then under Node,
+        # bundled with `bun build --target=node`, because the two runtimes' stacks differ and production runs Node.
+        # The script starts and removes its own container.
         run: |
           bun tests/live/redis-nested-reply-live.ts
           OUT="$(mktemp -d)"

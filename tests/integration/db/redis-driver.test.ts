@@ -5,9 +5,9 @@
  * redis-provider.test.ts replaces ioredis with a stand-in, so it cannot see the driver's own socket handling. This file
  * runs redis-driver-harness.ts in a Bun child and, bundled with `bun build --target=node`, in one Node child per binary
  * NODE_TRANSPORT_NODES lists (or the node on PATH), so CI's Node 24 suite and its step on the image's Node both run it.
- * The two runtimes report an error raised in a socket handler differently: measured on ioredis 5.11.1 without
- * patches/ioredis@5.11.1.patch, Bun reported the parser's throw as an uncaught exception but raised no second TLS
- * error at all, while Node reported both, so the Node child is the one that holds the stream fix.
+ * The two runtimes report socket errors differently: after an unreadable TLS record Bun raises no second error on the
+ * socket while Node does, so the Node child is the one that holds the stream fix, through the `[Redis]` warnings the
+ * provider logs.
  *
  * The driver is patched (docs/TOOLCHAIN.md, "Patched dependencies"): the parser's throw takes ioredis's own fatal-error
  * path, which rejects the commands in flight and reconnects under the provider's options (the editor connection keeps
@@ -24,6 +24,7 @@ interface CaseReport {
   readonly name: string;
   readonly call: string;
   readonly next?: string;
+  readonly logged: string[];
   readonly escaped: string[];
 }
 
@@ -65,7 +66,8 @@ beforeAll(async () => {
   const build = await Bun.build({ entrypoints: [HARNESS], target: "node", format: "esm", outdir: dir });
   if (!build.success) throw new Error(`Bun.build could not bundle the harness: ${build.logs.join("\n")}`);
   const { server } = loadTlsFixtures();
-  const env = { REDIS_HARNESS_TLS_CERT: server.cert, REDIS_HARNESS_TLS_KEY: server.key };
+  // LOG_LEVEL is set so an inherited LOG_LEVEL=error cannot hide the `[Redis]` warnings the TLS cases read.
+  const env = { REDIS_HARNESS_TLS_CERT: server.cert, REDIS_HARNESS_TLS_KEY: server.key, LOG_LEVEL: "warn" };
   reports.push(run(process.execPath, [HARNESS], env));
   for (const node of nodeBinaries()) reports.push(run(node, [join(dir, "redis-driver-harness.js")], env));
 }, 300_000);
@@ -112,6 +114,8 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
   test("an unreadable TLS record and then a reset on an idle connection is reported, and the next command answers", () => {
     for (const report of reports) {
       const idle = find(report, "unreadable TLS record then reset");
+      // Bun raises no error for the reset, so only Node's log holds the second one.
+      if (report.runtime === "node") expect(idle.logged).toContainEqual(expect.stringMatching(/read ECONNRESET/));
       expect(idle.next).toBe(PONG);
       expect(idle.escaped).toEqual([]);
     }
@@ -120,6 +124,7 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
   test("an unreadable TLS record and then a command: the failed write is reported and the command answers", () => {
     for (const report of reports) {
       const write = find(report, "unreadable TLS record then a command");
+      if (report.runtime === "node") expect(write.logged).toContainEqual(expect.stringMatching(/write EPROTO/));
       expect(write.call).toBe(PONG);
       expect(write.escaped).toEqual([]);
     }

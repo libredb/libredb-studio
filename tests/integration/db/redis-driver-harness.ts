@@ -9,8 +9,8 @@
  *  - on a TLS connection, one record the client cannot decrypt written under the TLS layer, then a reset, or one more
  *    client write, which Node reports as a second `error` on the same socket.
  *
- * Each case records what the caller got, what the next command got, and every error that escaped a call instead of
- * reaching its caller (uncaughtException, unhandledRejection). The test runs this file twice, under Bun and, bundled
+ * Each case records what the caller got, what the next command got, the `[Redis]` warnings the provider logged, and
+ * every error that escaped a call instead of reaching its caller (uncaughtException, unhandledRejection). The test runs this file twice, under Bun and, bundled
  * with `bun build --target=node`, under Node, because the two runtimes report an error raised in a socket handler
  * differently. It prints one JSON report on stdout. The peer's certificate and key come in the environment
  * (REDIS_HARNESS_TLS_CERT, REDIS_HARNESS_TLS_KEY) because the fixture loader reads its directory in a Bun-only way.
@@ -26,6 +26,15 @@ process.on("uncaughtException", (error) => escaped.push(`uncaughtException: ${er
 process.on("unhandledRejection", (reason) =>
   escaped.push(`unhandledRejection: ${reason instanceof Error ? reason.message : String(reason)}`),
 );
+
+/** Every `[Redis]` warning the provider logged, in order: an error the client's listener took after connecting. */
+const logged: string[] = [];
+const warn = console.warn;
+console.warn = (...args: unknown[]) => {
+  const line = args.map(String).join(" ");
+  if (line.includes("[Redis]")) logged.push(line.slice(line.indexOf("[Redis]")));
+  warn(...args);
+};
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -160,6 +169,7 @@ interface CaseReport {
   readonly call: string;
   /** What the next command on the same provider settled with, when the case sends one. */
   readonly next?: string;
+  readonly logged: string[];
   readonly escaped: string[];
 }
 
@@ -169,15 +179,16 @@ async function runCase(
   body: (provider: RedisProvider, peer: Peer) => Promise<{ call: string; next?: string }>,
 ): Promise<CaseReport> {
   escaped.length = 0;
+  logged.length = 0;
   const peer = await startPeer(secure);
   const provider = new RedisProvider(connection(peer.port, secure), { queryTimeout: 5_000 });
   try {
     const outcome = await body(provider, peer);
     // A second socket error lands after the call settles, so the case waits before it reads the record.
     await sleep(300);
-    return { name, ...outcome, escaped: [...escaped] };
+    return { name, ...outcome, logged: [...logged], escaped: [...escaped] };
   } finally {
-    // Bounded: without the fix a wedged connection never answers the QUIT a disconnect sends.
+    // Bounded: a connection left waiting never answers the QUIT a disconnect sends.
     await settle(2_000, () => provider.disconnect());
     peer.close();
   }
