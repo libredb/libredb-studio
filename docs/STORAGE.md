@@ -19,6 +19,7 @@ This document is split into two parts. Most readers want **[Part 1 — Setup & C
 - [2. SQLite Mode](#2-sqlite-mode)
 - [3. PostgreSQL Mode](#3-postgresql-mode)
 - [Migration: Local to Server](#migration-local-to-server)
+- [Connections whose type this Studio has no provider for](#connections-whose-type-this-studio-has-no-provider-for)
 - [Credential Encryption at Rest](#credential-encryption-at-rest)
 - [Environment Variables Reference](#environment-variables-reference)
 - [Health Check](#health-check)
@@ -478,6 +479,24 @@ When you switch from local mode to SQLite or PostgreSQL, **existing browser data
 > From then on the browser copy belongs to that account (`libredb_workspace_owner`), and a different account signing in on the same browser starts from its own server data.
 
 For the full migration lifecycle and the underlying merge semantics, see [Migration Flow](#10-migration-flow) in Part 2.
+
+---
+
+## Connections whose type this Studio has no provider for
+
+A stored connection can carry a `type` that names no provider this Studio has, or no `type` at all.
+It happens when a newer Studio that shares the same server storage saved a connection of an engine this one does not ship, or when a record was written by hand or by another tool.
+
+Studio keeps such a record exactly as it was saved, in the browser copy and in server storage alike, and never rewrites its `type`.
+Whether a connection is available is decided each time it is listed, from its `type`, and never written into the record, so a later save of another connection cannot change it.
+
+Every list that shows connections, the sidebar, the mobile connections list and header menu, the command palette and the admin overview, shows it with an **Unavailable** marker whose tooltip gives the reason, such as `No provider for the connection type "acmefoo" is installed in this LibreDB Studio.`
+It cannot be opened: a pick of it, or a `?connection=` link that names it, is refused with a **Connection unavailable** notice that names the connection and the reason, and the active connection stays as it was.
+Studio never makes it the active connection by itself, at sign-in, on a reload or when another connection is deleted.
+It cannot be edited or duplicated, because the connection dialog has no form for an engine this Studio does not have; it can be deleted, favourited, grouped and reordered like any other.
+A Studio that has the provider lists and opens the same record as usual.
+
+The API answers a request that sends such a connection with `400 PROVIDER_UNKNOWN` and the same sentence, before any provider is built or any SSH tunnel opened (see [API_DOCS.md](./API_DOCS.md#post-apidbquery)).
 
 ---
 

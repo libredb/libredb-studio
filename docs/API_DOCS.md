@@ -586,9 +586,12 @@ The same answer comes from `POST /api/db/multi-query`, `/api/db/transaction`, `/
 `POST /api/db/monitoring` answers JSON that is not an object the same way, and keeps `400 { "error": "Invalid JSON in request body" }` for text that is not JSON.
 Its `options`, when sent, must be an object as well: anything else (`null`, a number, an array) answers `400 { "error": "options must be an object" }` before any connection resolves.
 
-**An inline connection with no type, or a type or name that is not a string:**
+**An inline connection whose type names no provider, or whose name is not a string:**
 
-An inline `connection` whose `type` is missing, empty or not a string, or whose `name` is present and not a string, `null` included, answers `400 { "error": "Valid connection configuration is required", "code": "CONFIG_ERROR", "statusCode": 400 }` when the connection resolves, before any provider is built; a `connection` that is not an object is refused the same way.
+An inline `connection` whose `type` is missing, empty or not a string answers `400 { "error": "This connection names no type, so no provider in this LibreDB Studio can open it.", "code": "PROVIDER_UNKNOWN", "statusCode": 400 }` when the connection resolves, before any registry is read or any provider built.
+One whose `type` is a string that is not exactly a type id, a case variant such as `"Postgres"` or a padded value included, answers `400 { "error": "No provider for the connection type \"acmefoo\" is installed in this LibreDB Studio.", "code": "PROVIDER_UNKNOWN", "statusCode": 400 }`, the type quoted as it was sent.
+Earlier releases answered both with `400 CONFIG_ERROR`: a type that was not a string in the sentence below, and an unknown string in the factory's `Unknown database type` sentence once its provider was about to be built.
+A `connection` whose `name` is present and not a string, `null` included, answers `400 { "error": "Valid connection configuration is required", "code": "CONFIG_ERROR", "statusCode": 400 }`, and a `connection` that is not an object is refused the same way.
 A `connection` without a `name` is still accepted, as a connection with no name.
 Every route that takes a `connection` answers it the same way, `POST /api/db/test-connection` included, and `POST /api/admin/fleet-health` reports it as that item's `error`.
 `POST /api/db/disconnect` reads the record's `id` before it resolves anything, so a `connection` that is not an object, or a record with no `id`, answers its own `400 { "success": false, "error": "Either connection or connectionId is required" }`.
@@ -1111,11 +1114,12 @@ Every field a decision lists is present, and no other field is; a client that re
 A statement confirmed by typing the connection's name answers `refuse` on a connection with no name, because an empty expected value would let an empty field confirm it.
 
 **Errors:** the connection is resolved before any field is read, so a connection the caller may not resolve answers its `403`, `404` or `503` whatever the body holds.
-A type the server cannot build, one `LIBREDB_ENABLED_PROVIDERS` leaves out, an unknown type or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
+A type that is absent or names no provider is refused when the connection resolves, `400 PROVIDER_UNKNOWN` (see [`POST /api/db/query`](#post-apidbquery)).
+A type `LIBREDB_ENABLED_PROVIDERS` leaves out, or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
 
 | Status | When |
 |--------|------|
-| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required`, `Valid connection configuration is required` for an inline connection whose `type` is missing, empty or not a string or whose `name` is present and not a string, `null` included (see [`POST /api/db/query`](#post-apidbquery)), or a type `LIBREDB_ENABLED_PROVIDERS` leaves out |
+| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required`, `Valid connection configuration is required` for an inline connection whose `name` is present and not a string, `null` included, or a type `LIBREDB_ENABLED_PROVIDERS` leaves out; and, with code `PROVIDER_UNKNOWN`, an inline connection whose `type` is absent or names no provider (see [`POST /api/db/query`](#post-apidbquery)) |
 | `413` | A text over 1,000,000 UTF-16 code units: `The text is <n> UTF-16 code units long, over the 1000000-unit limit for statement analysis. Shorten it to run it.` |
 | `401` | No session (`AUTH_REQUIRED`) |
 | `403` | `CUSTOM_CONNECTIONS_DISABLED` for an inline connection while custom connections are off, or, without governance and the Kubernetes access review, `AUTH_ERROR` for a seed the caller's role may not use |
@@ -2732,6 +2736,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_ERROR` | SQL syntax or execution error (400) |
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
+| `PROVIDER_UNKNOWN` | The connection's `type` is absent or names no provider this Studio has (400), answered before any provider is built or any SSH tunnel opened, with a sentence that quotes the type as it was given; the type ids are the `type DatabaseType` union this page lists |
 | `AUTH_ERROR` | A database refused the credential (401), read from the driver's code as the paragraph above says |
 | `PERMISSION_DENIED` | A database accepted the credential and refused the statement for a privilege that credential lacks (403), with `"Permission denied: "` in front of the engine's own sentence; read from the driver's code as the paragraph above says. The browser treats it as the statement's error and never signs in again for it |
 | `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off, or governance mode is on, and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |
