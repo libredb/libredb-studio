@@ -8,6 +8,9 @@
  */
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
+import type { ServerResponse } from "node:http";
+import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -22,7 +25,10 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
-import type { CouchbaseHttpTransportDeps } from "@/lib/db/providers/document/couchbase/http-transport";
+import {
+  COUCHBASE_RESPONSE_CAP_BYTES,
+  type CouchbaseHttpTransportDeps,
+} from "@/lib/db/providers/document/couchbase/http-transport";
 import { type NodeRequest, TransportError } from "@/lib/db/http/node-transport";
 import {
   declaredKinds,
@@ -38,6 +44,7 @@ import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output"
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { loadTlsFixtures } from "../../helpers/tls-fixtures";
 
 // ============================================================================
 // Connection
@@ -810,6 +817,158 @@ describe("CouchbaseProvider error mapping", () => {
     queryHandler = () => ({ requestID: "req-1", status: "errors" });
 
     await expect(provider.query("SELECT 1")).rejects.toBeInstanceOf(QueryError);
+  });
+});
+
+// ============================================================================
+// Answer bounds: the byte cap and an answer cut short
+// ============================================================================
+
+describe("CouchbaseProvider answer bounds", () => {
+  const TLS = loadTlsFixtures();
+  const TOO_LARGE = `Couchbase answered with more than ${COUCHBASE_RESPONSE_CAP_BYTES / (1024 * 1024)} MiB, so the answer was not read further`;
+  const ENDED_EARLY = "Couchbase request failed: the server ended the answer before it was complete";
+  const servers: HttpsServer[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.closeAllConnections();
+            server.close(() => resolve());
+          }),
+      ),
+    );
+  });
+
+  /** Writes a MiB of spaces at a time under backpressure, past the cap, until the client closes the socket. */
+  function writePastTheCap(res: ServerResponse): void {
+    const pad = Buffer.alloc(1024 * 1024, 0x20);
+    let written = 0;
+    const pump = () => {
+      while (written <= COUCHBASE_RESPONSE_CAP_BYTES && !res.destroyed) {
+        written += pad.length;
+        if (!res.write(pad)) {
+          res.once("drain", pump);
+          return;
+        }
+      }
+      if (!res.destroyed) res.end();
+    };
+    pump();
+  }
+
+  /**
+   * A TLS cluster on one port, the query service included, signed by the test CA: every path answers its fixture
+   * except `path`, which answers past the cap (`too-large`), or declares 1000 bytes, sends a few and then closes the
+   * socket (`fin`). A reset is pinned in the transport's own tests: Bun cannot reset a TLS socket.
+   */
+  async function tlsCluster(path: string, how: "too-large" | "fin"): Promise<number> {
+    let port = 0;
+    const server = createHttpsServer({ cert: TLS.server.cert, key: TLS.server.key }, (req, res) => {
+      req.resume();
+      const target = new URL(req.url ?? "/", "https://127.0.0.1").pathname;
+      if (target === path && how === "too-large") {
+        res.writeHead(200, { "content-type": "application/json" });
+        writePastTheCap(res);
+        return;
+      }
+      if (target === path) {
+        res.writeHead(200, { "content-type": "application/json", "content-length": "1000" });
+        res.write('{"results":[', () => res.socket?.end());
+        return;
+      }
+      const answers: Record<string, unknown> = {
+        "/pools/default": POOLS,
+        [`/pools/default/buckets/${BUCKET}`]: BUCKET_INFO,
+        "/pools/default/nodeServices": { nodesExt: [{ hostname: "127.0.0.1", services: { n1qlSSL: port } }] },
+        "/query/service": queryPayload([{ id: "hotel::1" }]),
+      };
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(answers[target] ?? {}));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    port = (server.address() as AddressInfo).port;
+    return port;
+  }
+
+  function tlsProvider(port: number): CouchbaseProvider {
+    return new CouchbaseProvider(makeConnection({ port, ssl: { mode: "verify-ca", caCert: TLS.ca } }));
+  }
+
+  test("a TLS cluster whose pools answer passes the cap fails Test Connection, naming the cap", async () => {
+    const provider = tlsProvider(await tlsCluster("/pools/default", "too-large"));
+
+    const error = await provider.connect().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(`Failed to connect to Couchbase: ${TOO_LARGE}`);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a TLS query answer past the cap fails as a QueryError naming the cap", async () => {
+    const provider = tlsProvider(await tlsCluster("/query/service", "too-large"));
+    await provider.connect();
+
+    const error = await provider.query("SELECT 1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(TOO_LARGE);
+    await provider.disconnect();
+  });
+
+  test("a TLS query answer the server closes before it is complete fails as a ConnectionError", async () => {
+    const provider = tlsProvider(await tlsCluster("/query/service", "fin"));
+    await provider.connect();
+
+    const error = await provider.query("SELECT 1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(ENDED_EARLY);
+    await provider.disconnect();
+  });
+
+  test("a TLS pools answer the server closes before it is complete fails Test Connection by name", async () => {
+    const provider = tlsProvider(await tlsCluster("/pools/default", "fin"));
+
+    const error = await provider.connect().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(`Failed to connect to Couchbase: ${ENDED_EARLY}`);
+  });
+
+  test("a plaintext query answer past the cap fails as a QueryError naming the cap", async () => {
+    const provider = await connectProvider();
+    const cluster = globalThis.fetch;
+    const pad = new Uint8Array(1024 * 1024).fill(0x20);
+    const total = 2 * COUCHBASE_RESPONSE_CAP_BYTES;
+    let sent = 0;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (!String(input).includes("/query/service")) return cluster(input, init);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (sent >= total) {
+              controller.close();
+              return;
+            }
+            sent += pad.length;
+            controller.enqueue(pad);
+          },
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const error = await provider.query("SELECT 1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(TOO_LARGE);
+    expect(sent).toBeLessThan(total);
   });
 });
 
