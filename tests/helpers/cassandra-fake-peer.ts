@@ -13,8 +13,13 @@
  * - `truncated-auth`: the answer to the first STARTUP is an AUTHENTICATE frame whose string length runs past the body.
  * - `header-mismatch`: the answer to the first STARTUP is a v1 READY header (8 bytes) followed by a v4 header cut
  *   to 8 bytes, so the driver, which sizes every later header from the first byte it read, reads past it.
+ * - `negotiation-cut`: the refusal of the first STARTUP, at a version above v4, is followed in the same write by the
+ *   `truncated-error` frame, so the driver meets the unreadable frame while it is negotiating its version down.
+ * - `unknown-stream`: the answer to the first STARTUP is a READY at stream id 32512, which the driver never allocated.
  * - `malformed-answer`: the node is healthy until a query whose text holds {@link MALFORMED_MARKER}, which gets the
  *   `truncated-error` frame; the queries after it are answered normally.
+ * - `malformed-event`: the node is healthy until the case asks it to push a STATUS_CHANGE EVENT on the connection that
+ *   registered for events, while no request is pending there; the event's address says 4 bytes and carries 2.
  *
  * `runCassandraFrameCases` drives Studio's real provider through each case and returns what a caller saw, so the
  * same run can be made under Bun in the test process and under Node from a bundle of this file.
@@ -28,7 +33,10 @@ export const CASSANDRA_FRAME_CASES = [
   "truncated-error",
   "truncated-auth",
   "header-mismatch",
+  "negotiation-cut",
+  "unknown-stream",
   "malformed-answer",
+  "malformed-event",
 ] as const;
 export type CassandraFrameCase = (typeof CASSANDRA_FRAME_CASES)[number];
 
@@ -42,6 +50,7 @@ const OPCODE = {
   query: 0x07,
   result: 0x08,
   register: 0x0b,
+  event: 0x0c,
 } as const;
 const PROTOCOL_ERROR = 0x000a;
 const VARCHAR = 0x000d;
@@ -96,6 +105,12 @@ function truncatedError(version: number, streamId: number): Buffer {
   return frame(version, streamId, OPCODE.error, Buffer.from([0x00, 0x00]));
 }
 
+/** A STATUS_CHANGE EVENT whose [inet] address says 4 bytes and carries 2, on the stream id the protocol gives events. */
+function malformedEvent(version: number): Buffer {
+  const cutAddress = Buffer.from([0x04, 127, 0]);
+  return frame(version, -1, OPCODE.event, Buffer.concat([cqlString("STATUS_CHANGE"), cqlString("UP"), cutAddress]));
+}
+
 /** What the peer saw: every connection it accepted, and how many of them have closed. */
 interface FakePeerLog {
   accepted: number;
@@ -106,6 +121,8 @@ interface FakePeerLog {
 interface FakeCassandraPeer {
   readonly port: number;
   readonly log: FakePeerLog;
+  /** Sends {@link malformedEvent} on the connection that registered for events. */
+  pushMalformedEvent(): void;
   close(): Promise<void>;
 }
 
@@ -113,11 +130,13 @@ async function startFakeCassandraPeer(mode: CassandraFrameCase): Promise<FakeCas
   const log: FakePeerLog = { accepted: 0, closed: 0, queries: [] };
   const sockets = new Set<Socket>();
   let startupsAnswered = 0;
+  let registered: Socket | null = null;
 
   const answer = (socket: Socket, version: number, streamId: number, opcode: number, body: Buffer): void => {
     if (opcode === OPCODE.startup && version > 4) {
       const message = `Invalid or unsupported protocol version (${version}); supported versions are (3/v3, 4/v4)`;
-      socket.write(frame(4, streamId, OPCODE.error, Buffer.concat([int(PROTOCOL_ERROR), cqlString(message)])));
+      const refusal = frame(4, streamId, OPCODE.error, Buffer.concat([int(PROTOCOL_ERROR), cqlString(message)]));
+      socket.write(mode === "negotiation-cut" ? Buffer.concat([refusal, truncatedError(4, streamId)]) : refusal);
       return;
     }
     if (opcode === OPCODE.startup) {
@@ -137,6 +156,10 @@ async function startFakeCassandraPeer(mode: CassandraFrameCase): Promise<FakeCas
         socket.write(Buffer.concat([v1Ready, v4Cut]));
         return;
       }
+      if (startupsAnswered === 1 && mode === "unknown-stream") {
+        socket.write(frame(version, 32512, OPCODE.ready, Buffer.alloc(0)));
+        return;
+      }
       socket.write(frame(version, streamId, OPCODE.ready, Buffer.alloc(0)));
       return;
     }
@@ -146,6 +169,7 @@ async function startFakeCassandraPeer(mode: CassandraFrameCase): Promise<FakeCas
       return;
     }
     if (opcode === OPCODE.register) {
+      registered = socket;
       socket.write(frame(version, streamId, OPCODE.ready, Buffer.alloc(0)));
       return;
     }
@@ -197,6 +221,10 @@ async function startFakeCassandraPeer(mode: CassandraFrameCase): Promise<FakeCas
   return {
     port: (server.address() as AddressInfo).port,
     log,
+    pushMalformedEvent: () => {
+      if (registered === null) throw new Error("No connection has registered for events on the fake peer");
+      registered.write(malformedEvent(4));
+    },
     close: () =>
       new Promise<void>((resolve) => {
         for (const socket of sockets) socket.destroy();
@@ -212,9 +240,12 @@ export interface CassandraFrameOutcome {
   readonly connect: string;
   /** The malformed query's outcome, for `malformed-answer` only. */
   readonly malformedQuery: string | null;
-  /** The next query's outcome on the same provider, for `malformed-answer` only. */
+  /** The next query's outcome on the same provider, for `malformed-answer` and `malformed-event` only. */
   readonly nextQuery: string | null;
-  /** Wall time from the start of the call that met the malformed frame to its settling. */
+  /**
+   * Wall time from the start of the call that met the malformed frame to its settling; for `malformed-event`, from
+   * the push of the event to the close of the connection that received it.
+   */
   readonly settledMs: number;
   /** Connections the peer had accepted and seen closed when the call that meets the malformed frame started. */
   readonly acceptedBefore: number;
@@ -222,6 +253,9 @@ export interface CassandraFrameOutcome {
   /** Connections the peer accepted and saw closed before the provider was disconnected. */
   readonly accepted: number;
   readonly closedBeforeDisconnect: number;
+  /** Connections the peer accepted and saw closed a moment after the provider was disconnected. */
+  readonly acceptedAfterDisconnect: number;
+  readonly closedAfterDisconnect: number;
   /** Errors that reached the process instead of a caller while this case ran. */
   readonly uncaught: readonly string[];
 }
@@ -239,6 +273,12 @@ async function settle(call: () => Promise<unknown>): Promise<string> {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * How long a case watches the peer after the provider is disconnected: a connection the driver dialled and no
+ * longer owns would be accepted inside it, since the driver dials as soon as its version negotiation resumes.
+ */
+const AFTER_DISCONNECT_MS = 300;
 
 /** Waits for a condition the peer can observe, up to a bound; the caller's assertions say what was not reached. */
 async function waitFor(condition: () => boolean, boundMs: number): Promise<void> {
@@ -273,18 +313,27 @@ async function runCase(name: CassandraFrameCase): Promise<CassandraFrameOutcome>
     let nextQuery: string | null = null;
     let acceptedBefore = 0;
     let closedBefore = 0;
-    if (name === "malformed-answer") {
+    const midSession = name === "malformed-answer" || name === "malformed-event";
+    let queriesBefore = 0;
+    if (midSession) {
       acceptedBefore = peer.log.accepted;
       closedBefore = peer.log.closed;
+      queriesBefore = peer.log.queries.length;
       started = Date.now();
+    }
+    if (name === "malformed-answer") {
       malformedQuery = await settle(() => provider.query(`SELECT ${MALFORMED_MARKER} FROM system.local`));
     }
+    if (name === "malformed-event") {
+      // Nothing is pending on the connection that receives the event, so only its close shows the failure.
+      peer.pushMalformedEvent();
+      await waitFor(() => peer.log.closed > closedBefore, 3_000);
+    }
     const settledMs = Date.now() - started;
-    if (name === "malformed-answer") {
+    if (midSession) {
       // The driver's control connection reconnects as soon as its connection closes and reads the topology again
       // on the new one; the next query goes out once that read is answered and the host is back up.
-      const marker = peer.log.queries.findIndex((text) => text.includes(MALFORMED_MARKER));
-      await waitFor(() => peer.log.queries.slice(marker + 1).includes("SELECT * FROM system.peers"), 3_000);
+      await waitFor(() => peer.log.queries.slice(queriesBefore).includes("SELECT * FROM system.peers"), 3_000);
       await sleep(100);
       nextQuery = await settle(() => provider.query("SELECT key FROM system.local"));
     } else {
@@ -294,8 +343,9 @@ async function runCase(name: CassandraFrameCase): Promise<CassandraFrameOutcome>
     const accepted = peer.log.accepted;
     const closedBeforeDisconnect = peer.log.closed;
     await provider.disconnect();
-    // One more turn of the loop, so an error raised while the connections close is counted against this case.
-    await sleep(50);
+    // Long enough for an error raised while the connections close to be counted against this case and, after a
+    // failed connect, for a connection dialled after the failure to reach the peer.
+    await sleep(midSession ? 50 : AFTER_DISCONNECT_MS);
     return {
       name,
       connect,
@@ -306,6 +356,8 @@ async function runCase(name: CassandraFrameCase): Promise<CassandraFrameOutcome>
       closedBefore,
       accepted,
       closedBeforeDisconnect,
+      acceptedAfterDisconnect: peer.log.accepted,
+      closedAfterDisconnect: peer.log.closed,
       uncaught,
     };
   } finally {

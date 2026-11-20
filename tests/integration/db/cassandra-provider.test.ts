@@ -14,6 +14,9 @@
  * `BigDecimal`, `Duration` and `Vector` instances - so the mapping under test is the
  * one a cluster feeds. `mock.module()` is not used: it is process-wide in bun and
  * poisons sibling files.
+ * The one exception is the last block, "a frame the driver cannot parse fails the
+ * connection by name": there the real driver runs against a fake node on a real
+ * socket (tests/helpers/cassandra-fake-peer.ts), so the node is the stand-in.
  *
  * Six measured behaviours drive what is asserted:
  *
@@ -4648,28 +4651,41 @@ describe("a frame the driver cannot parse fails the connection by name", () => {
     }));
   }
 
-  const CONNECT_FAILURE =
-    /^ConnectionError: Failed to connect to Apache Cassandra: The connection to 127\.0\.0\.1:\d+ failed while reading a response: RangeError\b/;
+  const connectFailure = (errorClass: string) =>
+    new RegExp(
+      `^ConnectionError: Failed to connect to Apache Cassandra: The connection to 127\\.0\\.0\\.1:\\d+ failed while reading a response: ${errorClass}\\b`,
+    );
 
   test.each([
-    ["truncated-error", "an ERROR frame whose body cannot hold its code"],
-    ["truncated-auth", "an AUTHENTICATE frame whose string runs past its body"],
-    ["header-mismatch", "a v1 header followed by a v4 header cut short"],
-  ] as const)("%s: %s answering STARTUP fails the connect by name and closes the connection", (name) => {
-    for (const { runtime, outcome } of outcomesOf(name)) {
-      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
-      expect({ runtime, connect: outcome.connect }).toEqual({
-        runtime,
-        connect: expect.stringMatching(CONNECT_FAILURE),
-      });
-      expect({ runtime, fast: outcome.settledMs < SETTLE_BOUND_MS, ms: outcome.settledMs }).toMatchObject({
-        runtime,
-        fast: true,
-      });
-      // Every connection the node accepted was closed by the client before Studio disconnected.
-      expect({ runtime, closed: outcome.closedBeforeDisconnect }).toEqual({ runtime, closed: outcome.accepted });
-    }
-  });
+    ["truncated-error", "an ERROR frame whose body cannot hold its code", "RangeError"],
+    ["truncated-auth", "an AUTHENTICATE frame whose string runs past its body", "RangeError"],
+    ["header-mismatch", "a v1 header followed by a v4 header cut short", "RangeError"],
+    ["negotiation-cut", "the version refusal followed by an ERROR frame whose body cannot hold its code", "RangeError"],
+    ["unknown-stream", "a READY on a stream id the driver never allocated", "TypeError"],
+  ] as const)(
+    "%s: %s answering STARTUP fails the connect by name and closes the connection",
+    (name, _frame, errorClass) => {
+      for (const { runtime, outcome } of outcomesOf(name)) {
+        expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+        expect({ runtime, connect: outcome.connect }).toEqual({
+          runtime,
+          connect: expect.stringMatching(connectFailure(errorClass)),
+        });
+        expect({ runtime, fast: outcome.settledMs < SETTLE_BOUND_MS, ms: outcome.settledMs }).toMatchObject({
+          runtime,
+          fast: true,
+        });
+        // Every connection the node accepted was closed by the client before Studio disconnected, and the failed
+        // connect left no connection behind: none was dialled after it, so none is open once Studio has disconnected.
+        expect({ runtime, closed: outcome.closedBeforeDisconnect }).toEqual({ runtime, closed: outcome.accepted });
+        expect({
+          runtime,
+          accepted: outcome.acceptedAfterDisconnect,
+          closed: outcome.closedAfterDisconnect,
+        }).toEqual({ runtime, accepted: outcome.accepted, closed: outcome.accepted });
+      }
+    },
+  );
 
   test("malformed-answer: a malformed answer to a query fails that query by name, and the next query is served on a new connection", () => {
     for (const { runtime, outcome } of outcomesOf("malformed-answer")) {
@@ -4694,6 +4710,26 @@ describe("a frame the driver cannot parse fails the connection by name", () => {
         dialledSince: true,
         open: outcome.acceptedBefore - outcome.closedBefore,
       });
+    }
+  });
+
+  test("malformed-event: an event the driver cannot read on an idle connection closes that connection, and the next query is served on a new one", () => {
+    for (const { runtime, outcome } of outcomesOf("malformed-event")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      // No request was pending, so the close of the connection is the failure's only trace, and it comes at once.
+      expect({
+        runtime,
+        closedSince: outcome.closedBeforeDisconnect > outcome.closedBefore,
+        fast: outcome.settledMs < SETTLE_BOUND_MS,
+        ms: outcome.settledMs,
+      }).toMatchObject({ runtime, closedSince: true, fast: true });
+      expect({ runtime, next: outcome.nextQuery }).toEqual({ runtime, next: "resolved" });
+      expect({
+        runtime,
+        dialledSince: outcome.accepted > outcome.acceptedBefore,
+        open: outcome.accepted - outcome.closedBeforeDisconnect,
+      }).toEqual({ runtime, dialledSince: true, open: outcome.acceptedBefore - outcome.closedBefore });
     }
   });
 });
