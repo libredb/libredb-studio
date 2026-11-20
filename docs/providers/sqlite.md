@@ -276,6 +276,14 @@ child, and the read-only deadline is preemptive. Measured on 2026-10-03, before 
 300M-row recursive CTE kept running after Cancel, and `/api/health` answered after 69.7 s instead of
 the usual 6 ms.
 
+**Stopping a statement that is still being written to the child.**
+A request reaches the child as one line on its stdin, and a statement larger than the 64 KiB pipe buffer is still being written when a cancel, the query timeout or a disconnect kills the child.
+The rest of that write then fails with `EPIPE` on the worker's stdin.
+The client listens for `error` on the child's stdin, stdout and stderr, so such a failure is reported as `SQLiteWorkerError` instead of being thrown out of the stream's event handler.
+After the provider's own kill the request has already been rejected (`SQLite worker was terminated`, or `SQLite worker timed out after <n>ms (query)` for the query timeout), and the failed write is logged at debug level (shown with `LOG_LEVEL=debug`) as `[sqlite-worker] stdin failed after terminate(): ...`: it is the expected end of that write, not a new failure.
+Any other stream failure, for example a child that died on its own before the next request was written, rejects every request with `SQLite worker <stream> failed: <reason>`, is logged as a warning, and stops the child, so the next statement starts a fresh one.
+Nothing is retried.
+
 **The escape hatch `LIBREDB_SQLITE_WORKER=0`** restores the old synchronous behaviour — the test
 suite sets it because Bun 1.4.x hangs a SQLite child process a `bun test` run spawned. With the
 worker off, on-disk statements run on the server thread again, `supportsQueryCancel` reads `false`,
@@ -1407,6 +1415,7 @@ the result codes of a refused statement from the `sqlite` row of `DRIVER_ERROR_C
 | Write statement on a file opened read-only because it is not writable | `QueryError` ("SQLite database `<path>` is open read-only because …") |
 | Statement errors whose message matches a heuristic (e.g. *syntax error*, *no such column*) | `QueryError` |
 | Other engine errors | generic `QueryError` / `DatabaseError` with the original message |
+| A pipe to the worker child fails (a cancel, a deadline or a disconnect while a large statement is still being written, or a child that died on its own) | `SQLiteWorkerError` from the worker, surfaced as `DatabaseError` (`TimeoutError` for the query timeout) ([§3.4](#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)) |
 
 ---
 
