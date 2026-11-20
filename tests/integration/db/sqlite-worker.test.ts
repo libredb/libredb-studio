@@ -10,7 +10,9 @@
  */
 
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -367,6 +369,7 @@ describe("SQLite child-process worker (#1623)", () => {
   test("terminating the worker while a large statement is still being written rejects it with the worker's named error", async () => {
     const watch = watchUncaught();
     const debug = spyOn(logger, "debug");
+    const warn = spyOn(logger, "warn");
     const client = await SQLiteWorkerClient.start({
       dbPath: join(dir, "large-terminate.db"),
       readonly: false,
@@ -374,6 +377,7 @@ describe("SQLite child-process worker (#1623)", () => {
     });
     try {
       const closed = stdinClosed(client);
+      const exited = once((client as unknown as { child: ChildProcessWithoutNullStreams }).child, "exit");
       const outcome = client.queryRows(LARGE, []).then(
         () => null,
         (error: unknown) => error,
@@ -392,9 +396,13 @@ describe("SQLite child-process worker (#1623)", () => {
       expect(debug).toHaveBeenCalledWith(
         expect.stringMatching(/^\[sqlite-worker\] stdin failed after terminate\(\): .*EPIPE/),
       );
+      // The client stopped the child on purpose, so its exit is not reported as a failure.
+      await exited;
+      expect(warn).not.toHaveBeenCalled();
     } finally {
       watch.stop();
       debug.mockRestore();
+      warn.mockRestore();
       client.terminate();
     }
   });
@@ -409,6 +417,7 @@ describe("SQLite child-process worker (#1623)", () => {
     });
     try {
       const closed = stdinClosed(client);
+      const exited = once((client as unknown as { child: ChildProcessWithoutNullStreams }).child, "exit");
       // Killed from outside the client, so the client still believes it is alive and
       // writes the statement into a pipe nobody reads any more.
       (client as unknown as { child: ChildProcessWithoutNullStreams }).child.kill("SIGKILL");
@@ -424,6 +433,9 @@ describe("SQLite child-process worker (#1623)", () => {
       await new Promise((resolve) => setImmediate(resolve));
       expect(watch.seen).toEqual([]);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[sqlite-worker\] stdin failed: .*EPIPE/));
+      // The failed write does not say why the child is gone; its exit does.
+      await exited;
+      expect(warn).toHaveBeenCalledWith("[sqlite-worker] child exited (code null, signal SIGKILL)");
     } finally {
       watch.stop();
       warn.mockRestore();
@@ -462,6 +474,62 @@ describe("SQLite child-process worker (#1623)", () => {
       }
     },
   );
+
+  test("a worker whose executable cannot be found fails to start with the worker's named error", async () => {
+    const watch = watchUncaught();
+    const realSpawn = childProcess.spawn;
+    const spawn = spyOn(childProcess, "spawn").mockImplementation(((
+      _command: string,
+      args: readonly string[],
+      options: childProcess.SpawnOptions,
+    ) => realSpawn("libredb-missing-sqlite-worker", args, options)) as unknown as typeof childProcess.spawn);
+    try {
+      const failure = (await SQLiteWorkerClient.start({
+        dbPath: join(dir, "missing-executable.db"),
+        readonly: false,
+        queryOnly: false,
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      )) as Error;
+
+      expect(failure.name).toBe("SQLiteWorkerError");
+      expect(failure.message).toMatch(/^SQLite worker failed: .*libredb-missing-sqlite-worker/);
+      expect(watch.seen).toEqual([]);
+    } finally {
+      watch.stop();
+      spawn.mockRestore();
+    }
+  });
+
+  test("a spawn that cannot create the worker's pipes fails to start with the worker's named error", async () => {
+    // Out of file descriptors (EMFILE, ENFILE), Node returns a child with no pipes and
+    // reports the reason as the child's `error` event on the next tick.
+    const watch = watchUncaught();
+    const spawn = spyOn(childProcess, "spawn").mockImplementation((() => {
+      const child = new EventEmitter();
+      process.nextTick(() => child.emit("error", Object.assign(new Error("spawn node EMFILE"), { code: "EMFILE" })));
+      return child;
+    }) as unknown as typeof childProcess.spawn);
+    try {
+      const failure = (await SQLiteWorkerClient.start({
+        dbPath: join(dir, "no-pipes.db"),
+        readonly: false,
+        queryOnly: false,
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      )) as Error;
+
+      expect(failure.name).toBe("SQLiteWorkerError");
+      expect(failure.message).toBe("SQLite worker failed: spawn node EMFILE");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(watch.seen).toEqual([]);
+    } finally {
+      watch.stop();
+      spawn.mockRestore();
+    }
+  });
 
   test("disconnect returns at once while a long statement runs", async () => {
     const dbPath = await seedFile(dir, "disconnect.db");

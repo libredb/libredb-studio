@@ -8,6 +8,7 @@
  */
 
 import { describe, test, expect, afterEach, beforeAll, beforeEach, afterAll, spyOn } from "bun:test";
+import * as childProcess from "node:child_process";
 import { spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Database as BunDatabase, constants as sqliteConstants } from "bun:sqlite";
 import {
@@ -1683,6 +1684,31 @@ describe("SQLiteProvider", () => {
           }
         },
       );
+    });
+
+    test("a worker restart that cannot spawn rejects the statement, and a later statement starts a worker again", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: join(fileTmpDir, "restart-spawn.db") }));
+      await provider.connect();
+      (provider as unknown as { worker: SQLiteWorkerClient }).worker.terminate();
+      const realSpawn = childProcess.spawn;
+      const spawn = spyOn(childProcess, "spawn").mockImplementation(((
+        _command: string,
+        args: readonly string[],
+        options: childProcess.SpawnOptions,
+      ) => realSpawn("libredb-missing-sqlite-worker", args, options)) as unknown as typeof childProcess.spawn);
+      let failure: Error;
+      try {
+        failure = (await provider.query("SELECT 1 AS one").then(
+          () => null,
+          (error: unknown) => error,
+        )) as Error;
+      } finally {
+        spawn.mockRestore();
+      }
+
+      expect(failure).toBeInstanceOf(DatabaseError);
+      expect(failure.message).toMatch(/SQLite worker failed: .*libredb-missing-sqlite-worker/);
+      expect((await provider.query("SELECT 1 AS one")).rows).toEqual([{ one: 1 }]);
     });
   });
 
