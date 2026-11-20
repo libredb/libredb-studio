@@ -119,6 +119,29 @@ describe("delegation", () => {
   });
 });
 
+// FND-1: a stored connection may carry a type no provider has, or none. Sealing and opening never read the type, so
+// such a record round-trips like any other: its type unchanged, an absent type still absent.
+describe("a connection whose type names no provider", () => {
+  test("a connection whose type names no provider is sealed and opened like any other", async () => {
+    const unknown = { ...connection, id: "u1", type: "acmefoo" } as unknown as DatabaseConnection;
+    const untyped: Record<string, unknown> = { ...connection, id: "n1" };
+    delete untyped.type;
+    const inner = stubProvider();
+    const provider = withCredentialEncryption(inner);
+
+    await provider.setCollection("u", "connections", [unknown, untyped as unknown as DatabaseConnection]);
+    const setCollection = inner.setCollection as unknown as ReturnType<typeof mock>;
+    const written = (setCollection.mock.calls[0] as unknown[])[2] as Record<string, unknown>[];
+    expect(written.map((record) => record.type)).toEqual(["acmefoo", undefined]);
+    expect("type" in written[1]).toBe(false);
+    expect(written[0].password).not.toBe("s3cret");
+
+    const reader = withCredentialEncryption(stubProvider({ getCollection: mock(async () => written) as never }));
+    const opened = (await reader.getCollection("u", "connections")) as unknown;
+    expect(JSON.parse(JSON.stringify(opened))).toEqual(JSON.parse(JSON.stringify([unknown, untyped])));
+  });
+});
+
 describe("passkeys", () => {
   test("passes a sign-in conflict through unchanged", async () => {
     const conflict = new PasskeySignInConflict("account_changed");

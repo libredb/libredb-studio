@@ -1,4 +1,4 @@
-import { type LucideIcon } from "lucide-react";
+import { type LucideIcon, Unplug } from "lucide-react";
 import {
   PostgreSQLIcon,
   MySQLIcon,
@@ -46,6 +46,7 @@ import {
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import type { ConnectionField } from "@/lib/db/connection-fields";
 import { CONNECTION_FORM, type ConnectionFormSpec, type FieldPlacementDeclaration } from "@/lib/db/connection-form";
+import { assertDatabaseType } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 
 export {
@@ -293,16 +294,33 @@ export const DB_UI_CONFIG: {
   libredb: branded(CONNECTION_FORM.libredb, LibreDBIcon, "text-hue-violet"),
 };
 
-export function getDBConfig(type: DatabaseType): DatabaseUIConfig {
+/**
+ * The icon of a connection whose type names no provider this Studio has (FND-1): the sidebar row, the command palette
+ * and the admin overview draw it in place of an engine's icon, with no lookup in the table above.
+ */
+export const UNAVAILABLE_CONNECTION_ICON: DBIcon = Unplug;
+
+/**
+ * The one read of an entry by the lookups below. A stored or listed connection may carry any value in `type`, so an id
+ * outside the union is refused with `UnknownProviderError` (FND-1) rather than answered with a TypeError, `undefined`,
+ * or the prototype's own member for a key such as `"constructor"`. A surface that lists connections decides
+ * availability with `typeIdRefusal` before it asks for an icon; this turns any path that does not into a named error.
+ */
+function entryOf(type: DatabaseType): DatabaseUIConfig {
+  assertDatabaseType(type);
   return DB_UI_CONFIG[type];
 }
 
+export function getDBConfig(type: DatabaseType): DatabaseUIConfig {
+  return entryOf(type);
+}
+
 export function getDBIcon(type: DatabaseType): DBIcon {
-  return DB_UI_CONFIG[type].icon;
+  return entryOf(type).icon;
 }
 
 export function getDBColor(type: DatabaseType): string {
-  return DB_UI_CONFIG[type].color;
+  return entryOf(type).color;
 }
 
 /**
@@ -310,7 +328,7 @@ export function getDBColor(type: DatabaseType): string {
  * Derived from connectionFields so callers never hard-code provider type ids.
  */
 export function isFileBased(type: DatabaseType): boolean {
-  const fields = DB_UI_CONFIG[type].connectionFields;
+  const fields = entryOf(type).connectionFields;
   return fields.length === 1 && fields[0] === "database";
 }
 
@@ -326,7 +344,7 @@ export function isFileBased(type: DatabaseType): boolean {
  * the UI equivalent of reporting an absence as a measurement.
  */
 export function takesConnectionField(type: DatabaseType, field: ConnectionField): boolean {
-  return DB_UI_CONFIG[type].connectionFields.includes(field);
+  return entryOf(type).connectionFields.includes(field);
 }
 
 const NO_HOST_URI_SCHEMES: readonly HostUriScheme[] = Object.freeze([]);
@@ -340,7 +358,7 @@ const NO_HOST_URI_SCHEMES: readonly HostUriScheme[] = Object.freeze([]);
  * was saved.
  */
 export function hostUriSchemes(type: DatabaseType): readonly HostUriScheme[] {
-  return DB_UI_CONFIG[type].hostAcceptsUri ?? NO_HOST_URI_SCHEMES;
+  return entryOf(type).hostAcceptsUri ?? NO_HOST_URI_SCHEMES;
 }
 
 /**
@@ -357,5 +375,5 @@ export function hostUriSchemes(type: DatabaseType): readonly HostUriScheme[] {
  * connection without a host and port (docs/BACKLOG.md records the dialog's SSH state).
  */
 export function offersSshTunnel(type: DatabaseType): boolean {
-  return DB_UI_CONFIG[type].showSshTunnel !== false;
+  return entryOf(type).showSshTunnel !== false;
 }

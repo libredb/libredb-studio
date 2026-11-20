@@ -58,7 +58,9 @@ import {
   ExecutionProfileError,
   RefusedBeforeSendError,
   TimeoutError,
+  UnknownProviderError,
 } from "@/lib/db/errors";
+import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
@@ -463,22 +465,6 @@ describe("createDatabaseProvider", () => {
     expect((provider as unknown as { queryTimeout: number }).queryTimeout).toBe(expected);
   });
 
-  test("throws DatabaseConfigError for unknown type", async () => {
-    const conn = makeConnection("unknown");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Unknown database type: unknown/);
-  });
-
-  test("the unknown-type error lists every supported type", async () => {
-    // The list inside that message is a hand-written string literal, not something
-    // TypeScript checks, so a new provider is only named there because a test pins it.
-    // Every SHIPPED type is pinned here rather than a sample of them: the surface that
-    // silently drifts is exactly the one nobody notices.
-    const conn = makeConnection("unknown");
-    for (const type of SHIPPED_DATABASE_TYPES) {
-      await expect(createDatabaseProvider(conn)).rejects.toThrow(new RegExp(type));
-    }
-  });
-
   test('creates provider for type "postgres"', async () => {
     const conn = makeConnection("postgres");
     const provider = await createDatabaseProvider(conn);
@@ -600,13 +586,6 @@ describe("createDatabaseProvider", () => {
     };
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     expect((await createDatabaseProvider(conn)).type).toBe("firestore");
-  });
-
-  test("the factory error lists firestore between couchbase and redis, the order of the cases", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bmongodb, couchbase, firestore, redis\b/,
-    );
   });
 
   test('creates provider for type "elasticsearch"', async () => {
@@ -1228,18 +1207,6 @@ describe("createDatabaseProvider", () => {
     await expect(createDatabaseProvider(conn)).rejects.toThrow(DatabaseConfigError);
   });
 
-  test("the factory error lists databend after trino, in the SQL block", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bdruid, trino, databend, bigquery, snowflake, spark, cassandra\b/,
-    );
-  });
-
-  test("the factory error lists spark after snowflake, in the SQL block", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/\bsnowflake, spark, cassandra\b/);
-  });
-
   test('creates provider for type "spark", unconnected, with the factory passing no transport', async () => {
     const { SparkProvider } = await import("@/lib/db/providers/sql/spark/index");
     const provider = await createDatabaseProvider(makeConnection("spark", { host: "127.0.0.1", port: 15002 }));
@@ -1312,13 +1279,6 @@ describe("createDatabaseProvider", () => {
     };
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     expect((await createDatabaseProvider(conn)).type).toBe("influxdb3");
-  });
-
-  test("the factory error lists both InfluxDB types after prometheus, in their family block", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bprometheus, influxdb, influxdb3, kafka\b/,
-    );
   });
 
   test('creates provider for type "kafka"', async () => {
@@ -1447,11 +1407,6 @@ describe("createDatabaseProvider", () => {
     expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
   });
 
-  test("the factory error lists oxia among the supported types, after etcd and before prometheus", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\betcd, oxia, prometheus\b/);
-  });
-
   test('creates provider for type "milvus"', async () => {
     // The constructor validates nothing and opens nothing, as etcd's, so the provider is built, and declares its
     // language, its dialect and its read-only enforcement, with no Milvus running (vector-family spec 5.7).
@@ -1468,13 +1423,6 @@ describe("createDatabaseProvider", () => {
     const conn = { ...makeConnection("milvus", { port: 19530, database: undefined }), readOnly: true };
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     expect((await createDatabaseProvider(conn)).type).toBe("milvus");
-  });
-
-  test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bneo4j, milvus, qdrant, weaviate, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb$/,
-    );
   });
 
   test("a kubernetes connection is built unconnected, with the kubectl dialect, and keeps readOnly", async () => {
@@ -1509,18 +1457,6 @@ describe("createDatabaseProvider", () => {
     lifetime.abort();
   });
 
-  test("the factory error lists weaviate between qdrant and s3", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bqdrant, weaviate, s3\b.*, libredb$/,
-    );
-  });
-
-  test("the factory error lists qdrant among the supported types, before the embedded store", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bqdrant\b.*, libredb$/);
-  });
-
   test('creates provider for type "s3"', async () => {
     // A blank key pair is an unsigned connection, and an empty Bucket pins nothing. The constructor validates nothing
     // and opens nothing, as Oxia's, so the provider is built, and declares its language, its dialect and its read-only
@@ -1541,13 +1477,6 @@ describe("createDatabaseProvider", () => {
     };
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     expect((await createDatabaseProvider(conn)).type).toBe("s3");
-  });
-
-  test("the factory error lists s3 between qdrant and kubernetes, kubernetes before the embedded store", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bqdrant, weaviate, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb$/,
-    );
   });
 
   test('creates provider for type "libredb"', async () => {
@@ -5069,6 +4998,146 @@ describe("assertReadOnlyHonoured", () => {
     );
 
     expect(run).not.toHaveBeenCalled();
+  });
+});
+
+// ─── A connection whose type names no provider is refused before anything else (FND-1) ──
+
+describe("a connection whose type names no provider (FND-1)", () => {
+  // `mockHasTunnel` is not reset by the file-level beforeEach, and the assertions below are that no pool is consulted.
+  beforeEach(() => {
+    mockHasTunnel.mockClear();
+  });
+
+  const bastion: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+    password: "pw",
+  };
+
+  /** The lines `createDatabaseProvider` logs, one for every provider it builds. */
+  const buildLines = (log: { readonly mock: { readonly calls: readonly (readonly unknown[])[] } }) =>
+    log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"));
+
+  const rejection = async (run: () => Promise<unknown>): Promise<unknown> => {
+    try {
+      await run();
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  };
+
+  const tunnelled = (type: string | undefined) =>
+    ({
+      id: `fnd1-${String(type)}`,
+      name: "Unknown",
+      type,
+      host: "db.internal",
+      port: 5432,
+      sshTunnel: bastion,
+      createdAt: new Date(),
+    }) as unknown as DatabaseConnection;
+
+  test("createDatabaseProvider refuses an unknown type by name before it builds anything", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const error = await rejection(() => createDatabaseProvider(makeConnection("acmefoo")));
+      expect(error).toBeInstanceOf(UnknownProviderError);
+      expect((error as UnknownProviderError).reason).toBe("unknown");
+      expect((error as UnknownProviderError).typeId).toBe("acmefoo");
+      expect((error as Error).message).toBe(unknownTypeSentence("acmefoo"));
+      expect(buildLines(log)).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("createDatabaseProvider refuses a connection with no type as absent, not with a TypeError", async () => {
+    const connection = makeConnection("postgres");
+    delete (connection as { type?: unknown }).type;
+    const error = await rejection(() => createDatabaseProvider(connection));
+    expect(error).toBeInstanceOf(UnknownProviderError);
+    expect((error as UnknownProviderError).reason).toBe("absent");
+    expect((error as Error).message).toBe(ABSENT_TYPE_SENTENCE);
+  });
+
+  test.each(["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"])(
+    "createDatabaseProvider refuses the prototype key %p as unknown",
+    async (type) => {
+      const error = await rejection(() => createDatabaseProvider(makeConnection(type)));
+      expect(error).toBeInstanceOf(UnknownProviderError);
+      expect((error as UnknownProviderError).typeId).toBe(type);
+    },
+  );
+
+  test("an unknown type with readOnly: true is refused for its type, not for the mode", async () => {
+    const error = await rejection(() => createDatabaseProvider(makeConnection("acmefoo", { readOnly: true })));
+    expect(error).toBeInstanceOf(UnknownProviderError);
+    expect((error as Error).message).toBe(unknownTypeSentence("acmefoo"));
+  });
+
+  test("an unknown type is refused for its type while LIBREDB_ENABLED_PROVIDERS is set", async () => {
+    const before = process.env.LIBREDB_ENABLED_PROVIDERS;
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres";
+    try {
+      const error = await rejection(() => createDatabaseProvider(makeConnection("acmefoo")));
+      expect(error).toBeInstanceOf(UnknownProviderError);
+      expect((error as Error).message).toBe(unknownTypeSentence("acmefoo"));
+    } finally {
+      if (before === undefined) delete process.env.LIBREDB_ENABLED_PROVIDERS;
+      else process.env.LIBREDB_ENABLED_PROVIDERS = before;
+    }
+  });
+
+  test("a record with neither an id nor a type is refused for its type by both cached entry points", async () => {
+    const connection = { name: "Neither", host: "db.internal", port: 5432 } as unknown as DatabaseConnection;
+    const cached = await rejection(() => getOrCreateProvider(connection));
+    expect(cached).toBeInstanceOf(UnknownProviderError);
+    const profiled = await rejection(() => acquireExecutionProfileProvider(connection, "agent-operations"));
+    expect(profiled).toBeInstanceOf(UnknownProviderError);
+    expect(getProviderCacheStats().size).toBe(0);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("getOrCreateProvider refuses an unknown tunnelled type before the tunnel and the cache", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const error = await rejection(() => getOrCreateProvider(tunnelled("acmefoo")));
+      expect(error).toBeInstanceOf(UnknownProviderError);
+      expect(buildLines(log)).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+    expect(mockHasTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+
+  test("acquireExecutionProfileProvider refuses an unknown tunnelled type before the tunnel and the cache", async () => {
+    const error = await rejection(() => acquireExecutionProfileProvider(tunnelled("acmefoo"), "agent-operations"));
+    expect(error).toBeInstanceOf(UnknownProviderError);
+    expect(mockHasTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("withOneShotTunnel refuses an unknown tunnelled type before it dials, and never runs its callback", async () => {
+    const run = mock(async () => "ran");
+    const error = await rejection(() => withOneShotTunnel(tunnelled("acmefoo"), run));
+    expect(error).toBeInstanceOf(UnknownProviderError);
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  test("the same tunnelled record with a type id opens its tunnel and is cached, as before", async () => {
+    const provider = await getOrCreateProvider(tunnelled("postgres"));
+    expect(provider.isConnected()).toBe(true);
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+    expect(getProviderCacheStats().connections).toEqual(["fnd1-postgres"]);
   });
 });
 

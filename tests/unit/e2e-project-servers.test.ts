@@ -32,6 +32,7 @@ const SECOND_SERVER_SPECS = [
   "firestore-connection.spec.ts",
   "rabbitmq-provider.spec.ts",
   "mqtt-provider.spec.ts",
+  "unknown-provider-connection.spec.ts",
 ];
 
 type Project = NonNullable<typeof config.projects>[number];

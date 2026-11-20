@@ -70,6 +70,7 @@ import { useFavoriteConnections } from "@/hooks/use-favorite-connections";
 import { storage } from "@/lib/storage";
 import { applyConnectionOrder } from "@/lib/connection-order";
 import { connectionAllowed, connectionsUnderPolicy, mergeVisibleOrder } from "@/lib/connection-policy";
+import { isDatabaseType } from "@/lib/db/type-id";
 import {
   type MaskingConfig,
   loadMaskingConfig,
@@ -1291,9 +1292,11 @@ export default function Studio() {
     // Rebuilt from storage, `updated` still holds the connections the server refuses while custom
     // connections are off, so the next selection is the first connection the lists show. The page
     // chooses it, not the person, so it is not counted as used: one whose requests resume billed
-    // compute is held until the person uses it (CL-CORE-2).
+    // compute is held until the person uses it (CL-CORE-2). A connection whose type names no provider is listed but
+    // never made active (FND-1), so the fallback is the first one listed that a provider can open.
     const listed = connectionsUnderPolicy(updated, { customConnections: conn.customConnections });
-    if (conn.activeConnection?.id === id) conn.activateFallback(listed[0] ?? null);
+    const fallback = listed.find((c) => isDatabaseType(c.type)) ?? null;
+    if (conn.activeConnection?.id === id) conn.activateFallback(fallback);
   };
 
   const confirmDeleteConnection = () => {
@@ -1524,8 +1527,8 @@ export default function Studio() {
                     connections={conn.connections}
                     activeConnection={conn.activeConnection}
                     onSelectConnection={(c) => {
-                      conn.setActiveConnection(c);
-                      setActiveMobileTab("editor");
+                      // A refused pick (FND-1) leaves the list open, where the refusal was made.
+                      if (conn.setActiveConnection(c)) setActiveMobileTab("editor");
                     }}
                     onDeleteConnection={requestDeleteConnection}
                     onDuplicateConnection={duplicateConnectionAction}

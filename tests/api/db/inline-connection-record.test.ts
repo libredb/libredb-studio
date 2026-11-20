@@ -3,9 +3,10 @@ import * as realAuth from "@/lib/auth";
 import { ALL_ROUTES, CONNECTION_ROUTES } from "../../security/helpers/provider-routes";
 
 /**
- * An inline connection whose `type` is missing, empty or not a string, or whose `name` is present and not a string,
- * `null` included, is answered 400 CONFIG_ERROR, "Valid connection configuration is required", by every route that
- * resolves a caller's connection, before any provider is built.
+ * An inline connection whose `type` is missing, empty or not a string, or a string that names no provider, is answered
+ * 400 PROVIDER_UNKNOWN with the sentence that names its type (FND-1), and one whose `name` is present and not a
+ * string, `null` included, is answered 400 CONFIG_ERROR, "Valid connection configuration is required", by every route
+ * that resolves a caller's connection, before any provider is built.
  *
  * Measured on 2026-11-04 on the production server (Node 24) before the change, with an inline record sent to every
  * route below. A type of `5`, or a name of `5` or an object, answered 500 `INTERNAL_ERROR`, "e.replace is not a
@@ -16,7 +17,9 @@ import { ALL_ROUTES, CONNECTION_ROUTES } from "../../security/helpers/provider-r
  * refused it in this sentence without a code, and the test-connection route in a sentence of its own. An empty type
  * answered the factory's "Unknown database type" on the routes without a check of their own, and a `null` name was
  * built as a connection with no name everywhere but the statement analysis. The fleet health check reported the
- * runtime's TypeError as the item's error.
+ * runtime's TypeError as the item's error. Until FND-1 every type refusal was the CONFIG_ERROR sentence above, and a
+ * string type that names no provider, such as "acmefoo", passed this check and was built by the factory before its
+ * default branch refused it.
  *
  * The routes are the connection route inventory, `CONNECTION_ROUTES` in tests/security/helpers/provider-routes.ts,
  * which tests/security/governance-grants.test.ts holds equal to every provider route that passes its request body to
@@ -41,6 +44,7 @@ mock.module("@/lib/auth", () => ({
 }));
 
 const { clearRateLimitState } = await import("@/lib/api/rate-limit");
+const { ABSENT_TYPE_SENTENCE, unknownTypeSentence } = await import("@/lib/db/type-id");
 
 const SENTENCE = "Valid connection configuration is required";
 const REFUSAL = { status: 400, body: { error: SENTENCE, code: "CONFIG_ERROR", statusCode: 400 } };
@@ -48,11 +52,26 @@ const REFUSAL = { status: 400, body: { error: SENTENCE, code: "CONFIG_ERROR", st
 /** A record of the caller's own that would reach a server if anything let it through: nothing listens on port 1. */
 const RECORD = { id: "user-probe", host: "127.0.0.1", port: 1, user: "u", password: "p", database: "d" };
 
+/** A record whose type names no provider, and the sentence its refusal carries. */
+const NO_PROVIDER: ReadonlyArray<readonly [string, Record<string, unknown>, string]> = [
+  ["no type", { ...RECORD, name: "Probe" }, ABSENT_TYPE_SENTENCE],
+  ["an empty type", { ...RECORD, name: "Probe", type: "" }, ABSENT_TYPE_SENTENCE],
+  ["a type that is a number", { ...RECORD, name: "Probe", type: 5 }, ABSENT_TYPE_SENTENCE],
+  ["a type that is null", { ...RECORD, name: "Probe", type: null }, ABSENT_TYPE_SENTENCE],
+  ["an unknown type", { ...RECORD, name: "Probe", type: "acmefoo" }, unknownTypeSentence("acmefoo")],
+  [
+    "a prototype key as its type",
+    { ...RECORD, name: "Probe", type: "constructor" },
+    unknownTypeSentence("constructor"),
+  ],
+];
+
+const providerUnknown = (sentence: string) => ({
+  status: 400,
+  body: { error: sentence, code: "PROVIDER_UNKNOWN", statusCode: 400 },
+});
+
 const MALFORMED: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
-  ["no type", { ...RECORD, name: "Probe" }],
-  ["an empty type", { ...RECORD, name: "Probe", type: "" }],
-  ["a type that is a number", { ...RECORD, name: "Probe", type: 5 }],
-  ["a type that is null", { ...RECORD, name: "Probe", type: null }],
   ["a name that is a number", { ...RECORD, type: "postgres", name: 5 }],
   ["a name that is an object", { ...RECORD, type: "postgres", name: { first: "orders" } }],
   ["a name that is null", { ...RECORD, type: "postgres", name: null }],
@@ -140,6 +159,18 @@ describe("the routes this file sends a record to", () => {
 
 for (const route of Object.keys(ROUTES)) {
   describe(`POST /api/${route}`, () => {
+    test.each(NO_PROVIDER)(
+      "answers an inline connection with %s 400 PROVIDER_UNKNOWN, and builds nothing",
+      async (_label, record, sentence) => {
+        const { result, built } = await counted(() =>
+          Promise.all(bodiesFor(route, record).map((body) => answer(route, body))),
+        );
+
+        expect(result).toEqual(bodiesFor(route, record).map(() => providerUnknown(sentence)));
+        expect(built).toBe(0);
+      },
+    );
+
     test.each(MALFORMED)(
       "answers an inline connection with %s 400 CONFIG_ERROR, and builds nothing",
       async (_label, record) => {
@@ -172,7 +203,7 @@ describe("POST /api/db/disconnect, where the record check does not reach", () =>
     expect(built).toBe(0);
   });
 
-  test.each(MALFORMED)(
+  test.each([...NO_PROVIDER.map(([label, record]) => [label, record] as const), ...MALFORMED])(
     "under governance removes the caller's providers of a record with %s without reading it",
     async (_label, record) => {
       process.env.GOVERNANCE_SOURCE = "postgres";
@@ -195,6 +226,19 @@ describe("POST /api/db/disconnect, where the record check does not reach", () =>
 });
 
 describe("POST /api/admin/fleet-health", () => {
+  test.each(NO_PROVIDER)(
+    "reports an inline connection with %s as that item's refusal, naming its type, and builds nothing",
+    async (_label, record, sentence) => {
+      const { result, built } = await counted(() => answer("admin/fleet-health", { connections: [record] }));
+
+      expect(result.status).toBe(200);
+      expect((result.body as { results: unknown[] }).results).toEqual([
+        expect.objectContaining({ connectionId: "user-probe", status: "error", error: sentence }),
+      ]);
+      expect(built).toBe(0);
+    },
+  );
+
   test.each(MALFORMED)(
     "reports an inline connection with %s as that item's refusal, and builds nothing",
     async (_label, record) => {

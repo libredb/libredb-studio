@@ -30,9 +30,12 @@ import {
   S3_FIELD_HINTS,
   S3_FIELD_RULES,
   takesConnectionField,
+  UNAVAILABLE_CONNECTION_ICON,
   type ConnectionField,
   type DatabaseUIConfig,
 } from "@/lib/db-ui-config";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { UnknownProviderError } from "@/lib/db/errors";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import { readAmqpPort, readPathPrefix } from "@/lib/db/providers/stream/rabbitmq/connection-options";
 import { AMQP_PORT_SHAPE } from "@/lib/db/providers/stream/rabbitmq/errors";
@@ -2038,5 +2041,51 @@ describe("the read-only control's two sentences", () => {
       (type) => "readOnlyHint" in DB_UI_CONFIG[type],
     );
     expect(declaring).toEqual([]);
+  });
+});
+
+// FND-1: a stored connection may carry any value in `type`, so every lookup reads its entry through one accessor that
+// refuses an id outside the union by name, instead of a TypeError, `undefined`, or the prototype's own member.
+describe("the db-ui-config lookups and an id outside the union", () => {
+  const LOOKUPS: ReadonlyArray<readonly [string, (type: DatabaseType) => unknown]> = [
+    ["getDBConfig", getDBConfig],
+    ["getDBIcon", getDBIcon],
+    ["getDBColor", getDBColor],
+    ["isFileBased", isFileBased],
+    ["takesConnectionField", (type) => takesConnectionField(type, "host")],
+    ["hostUriSchemes", hostUriSchemes],
+    ["offersSshTunnel", offersSshTunnel],
+  ];
+  const OUTSIDE: readonly unknown[] = ["acmefoo", undefined, "constructor", "__proto__"];
+
+  test("every lookup refuses an id outside the union by name", () => {
+    for (const [name, lookup] of LOOKUPS) {
+      for (const value of OUTSIDE) {
+        let thrown: unknown;
+        try {
+          lookup(value as DatabaseType);
+        } catch (error) {
+          thrown = error;
+        }
+        expect({ name, value, refused: thrown instanceof UnknownProviderError }).toEqual({
+          name,
+          value,
+          refused: true,
+        });
+      }
+    }
+  });
+
+  test("every type id answers as its entry says", () => {
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      expect(getDBConfig(type)).toBe(DB_UI_CONFIG[type]);
+      expect(getDBIcon(type)).toBe(DB_UI_CONFIG[type].icon);
+      expect(getDBColor(type)).toBe(DB_UI_CONFIG[type].color);
+    }
+  });
+
+  test("the unavailable icon is a component of its own, no engine's", () => {
+    expect(UNAVAILABLE_CONNECTION_ICON).toBeDefined();
+    for (const type of SHIPPED_DATABASE_TYPES) expect(DB_UI_CONFIG[type].icon).not.toBe(UNAVAILABLE_CONNECTION_ICON);
   });
 });

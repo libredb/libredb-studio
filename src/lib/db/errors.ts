@@ -55,13 +55,44 @@ export class DatabaseError extends Error {
 // ============================================================================
 
 /**
- * Configuration error - missing or invalid configuration
+ * Configuration error - missing or invalid configuration. `code` is `CONFIG_ERROR` unless a subclass names a more
+ * specific one, as `UnknownProviderError` does.
  */
 export class DatabaseConfigError extends DatabaseError {
-  constructor(message: string, provider?: DatabaseType) {
-    super(message, provider, ApiErrorCode.CONFIG_ERROR);
+  constructor(message: string, provider?: DatabaseType, code: ApiErrorCode = ApiErrorCode.CONFIG_ERROR) {
+    super(message, provider, code);
     this.name = "DatabaseConfigError";
     Object.setPrototypeOf(this, DatabaseConfigError.prototype);
+  }
+}
+
+/**
+ * Why a connection's `type` is not a type id, as `typeIdRefusal` in `./type-id` answers it: `absent` when the value is
+ * missing, empty or not a string, `unknown` when it is a string that names no provider, which `typeId` then carries
+ * verbatim. `sentence` is the user-facing refusal, the same on every surface. Declared here as a type so this module
+ * gains no runtime import.
+ */
+export type TypeIdRefusal =
+  | { readonly reason: "absent"; readonly sentence: string }
+  | { readonly reason: "unknown"; readonly typeId: string; readonly sentence: string };
+
+/**
+ * A connection whose `type` is absent or names no provider this Studio has (FND-1). Raised before any provider is
+ * built, any SSH tunnel opened or any per-engine table read, and answered 400 `PROVIDER_UNKNOWN` with the refusal's
+ * sentence. A `DatabaseConfigError`, so every existing classification of a configuration error still holds; its
+ * `provider` is undefined because the value is not a `DatabaseType`.
+ */
+export class UnknownProviderError extends DatabaseConfigError {
+  readonly reason: TypeIdRefusal["reason"];
+  /** The refused value, verbatim; only for an `unknown` type. */
+  readonly typeId?: string;
+
+  constructor(refusal: TypeIdRefusal) {
+    super(refusal.sentence, undefined, ApiErrorCode.PROVIDER_UNKNOWN);
+    this.name = "UnknownProviderError";
+    this.reason = refusal.reason;
+    if (refusal.reason === "unknown") this.typeId = refusal.typeId;
+    Object.setPrototypeOf(this, UnknownProviderError.prototype);
   }
 }
 

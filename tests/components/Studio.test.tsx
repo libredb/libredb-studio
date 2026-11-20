@@ -47,7 +47,8 @@ let originalMatchMedia: typeof window.matchMedia;
 const mockHandleLogout = mock(() => {});
 // Connection Manager
 const mockSetConnections = mock(() => {});
-const mockSetActiveConnection = mock(() => {});
+/** The hook's setter answers whether it selected: true for every pick here unless a test refuses one (FND-1). */
+const mockSetActiveConnection = mock<(next: unknown) => boolean>(() => true);
 const mockSetSchema = mock(() => {});
 const mockFetchSchema = mock(() => {});
 const mockLoadObjects = mock(() => {});
@@ -987,6 +988,21 @@ describe("Studio", () => {
 
     expect(mockActivateFallback).toHaveBeenCalledWith(remaining[0]);
     expect(mockSetActiveConnection).not.toHaveBeenCalled();
+  });
+
+  // FND-1: a connection whose type names no provider is never made active by the page, so the fallback skips it.
+  test("deleting the active connection falls back past a connection whose type names no provider", () => {
+    const unknown = { id: "u1", type: "acmefoo", name: "Acme" };
+    const next = { id: "c2", type: "mysql", name: "MySQL" };
+    mockStorageGetConnections.mockReturnValue([unknown, next]);
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn, unknown, next] };
+    render(<Studio />);
+
+    act(() => (capturedSidebarProps.onDeleteConnection as (id: string) => void)("c1"));
+    fireEvent.click(within(document.body as HTMLElement).getByText("Delete"));
+
+    expect(mockActivateFallback).toHaveBeenCalledWith(next);
+    expect(mockActivateFallback).not.toHaveBeenCalledWith(unknown);
   });
 
   /**
@@ -2920,6 +2936,19 @@ describe("Studio", () => {
     act(() => selectFn(pgConn));
     expect(mockSetActiveConnection).toHaveBeenCalledWith(pgConn);
     expect(queryByTestId("connections-list")).toBeNull();
+  });
+
+  test("a refused pick keeps the mobile connections list open", () => {
+    const unknown = { id: "u1", type: "acmefoo", name: "Acme" };
+    connMgrOverride = { connections: [pgConn, unknown] };
+    const { queryByTestId } = render(<Studio />);
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("database"));
+    mockSetActiveConnection.mockImplementationOnce(() => false);
+
+    act(() => (capturedConnectionsListProps.onSelectConnection as (c: unknown) => void)(unknown));
+
+    expect(mockSetActiveConnection).toHaveBeenCalledWith(unknown);
+    expect(queryByTestId("connections-list")).not.toBeNull();
   });
 
   /*

@@ -9,8 +9,8 @@ import { LAUNCH_E2E_ENV } from "./e2e/helpers/launch-token";
 const port = Number(process.env.E2E_PORT ?? 3000);
 
 // offline-editor.spec.ts, the kafka, etcd, neo4j, milvus, qdrant and weaviate provider specs, the influxdb
-// providers spec and the oxia, databend, snowflake, spark, s3, kubernetes, rabbitmq and mqtt provider specs get a second server
-// process on its own port - see the projects and the webServer array below for why. Override with
+// providers spec and the oxia, databend, snowflake, spark, s3, kubernetes, rabbitmq and mqtt provider specs and the
+// unknown-provider connection spec get a second server process on its own port - see the projects and the webServer array below for why. Override with
 // E2E_OFFLINE_PORT under the same collision circumstances as E2E_PORT.
 const offlinePort = Number(process.env.E2E_OFFLINE_PORT ?? 3010);
 
@@ -69,11 +69,11 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
       // offline-editor.spec.ts, the kafka, etcd, neo4j, milvus, qdrant and weaviate provider specs, the influxdb providers
-      // spec, the oxia, databend, snowflake, spark, s3, kubernetes, rabbitmq and mqtt provider specs and the firestore dialog spec
-      // run under their own projects below, against the second server, passkey.spec.ts against the third,
+      // spec, the oxia, databend, snowflake, spark, s3, kubernetes, rabbitmq and mqtt provider specs, the firestore dialog spec and
+      // the unknown-provider connection spec run under their own projects below, against the second server, passkey.spec.ts against the third,
       // launch.spec.ts against the fourth and the firestore browse spec against the fifth.
       testIgnore:
-        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|weaviate-provider|influxdb-providers|mtconnect-provider|modbus-provider|oxia-provider|databend-provider|snowflake-provider|spark-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|rabbitmq-provider|mqtt-provider|passkey|totp-enrolment-qr|launch)\.spec\.ts/,
+        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|weaviate-provider|influxdb-providers|mtconnect-provider|modbus-provider|oxia-provider|databend-provider|snowflake-provider|spark-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|rabbitmq-provider|mqtt-provider|unknown-provider-connection|passkey|totp-enrolment-qr|launch)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -235,6 +235,14 @@ export default defineConfig({
       name: "chromium-mqtt",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /mqtt-provider\.spec\.ts/,
+    },
+    {
+      // unknown-provider-connection.spec.ts reloads the studio in every test, so it pays the shared account's hydration
+      // requests twice, and its file sorts late, where the specs before it have spent that account's "query" bucket on
+      // the shared server. It takes the second server for the reason kafka-provider.spec.ts does.
+      name: "chromium-unknown-provider",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
+      testMatch: /unknown-provider-connection\.spec\.ts/,
     },
     {
       // Passkeys need an account registry, so this server runs in store mode (STORAGE_PROVIDER=sqlite)

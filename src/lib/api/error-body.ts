@@ -16,7 +16,9 @@ import {
   QueryError,
   QueryCancelledError,
   TimeoutError,
+  UnknownProviderError,
 } from "@/lib/db/errors";
+import { quoteTypeId } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/db/types";
 
 export interface ApiErrorResponse {
@@ -33,7 +35,14 @@ export interface ApiErrorResponse {
 export interface DatabaseErrorLog {
   readonly level: "info" | "warn" | "error";
   readonly message: string;
-  readonly context: { readonly provider?: DatabaseType; readonly duration?: number };
+  readonly context: {
+    readonly provider?: DatabaseType;
+    readonly duration?: number;
+    /** On a `PROVIDER_UNKNOWN` refusal only: whether the type was absent or named no provider. */
+    readonly reason?: "absent" | "unknown";
+    /** On an `unknown` refusal only: the refused type, quoted by `quoteTypeId` so it stays one line in the log. */
+    readonly type?: string;
+  };
 }
 
 /** A database error's body, whose `statusCode` is the HTTP status, and the log line it calls for. */
@@ -65,6 +74,23 @@ export function databaseErrorBody(error: unknown): DatabaseErrorAnswer | null {
           error.position !== undefined || error.detail ? { position: error.position, detail: error.detail } : undefined,
       },
       log: { level: "warn", message: "Query error", context: { provider: error.provider } },
+    };
+  }
+
+  // --- DB: UnknownProviderError ---
+  // Before the DatabaseConfigError branch it subclasses: the connection's type names no provider, so there is none to
+  // log against. The log names the reason and, quoted, the refused type, so an operator can tell the two apart.
+  if (error instanceof UnknownProviderError) {
+    return {
+      body: { error: error.message, code: ApiErrorCode.PROVIDER_UNKNOWN, statusCode: 400 },
+      log: {
+        level: "warn",
+        message: "Unknown provider",
+        context:
+          error.typeId === undefined
+            ? { reason: error.reason }
+            : { reason: error.reason, type: quoteTypeId(error.typeId) },
+      },
     };
   }
 

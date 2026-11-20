@@ -17,7 +17,8 @@ import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
 import { registerOwnerRemoval } from "./owner-removal";
-import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE, SHIPPED_DATABASE_TYPES } from "./compatibility";
+import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
+import { assertDatabaseType, isDatabaseType } from "./type-id";
 import { TUNNEL_FAR_END, type DatabaseType, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import { runShutdownHooks } from "@/lib/shutdown";
@@ -49,7 +50,9 @@ import * as path from "path";
  *   `false`, so called without a context it opens with the trusted reach. An `owner` makes the provider
  *   that user's own (docs/GOVERNANCE.md#per-user-providers): its pool opens with `min: 0` and `max: ownerPoolMax`.
  * @returns Promise<DatabaseProvider> instance
- * @throws DatabaseConfigError if connection type is not supported or is left out of a set
+ * @throws UnknownProviderError if the connection's type is absent or names no provider, before anything else is
+ *   checked, logged or built (FND-1; see `assertDatabaseType` in ./type-id)
+ * @throws DatabaseConfigError if connection type is left out of a set
  *   `LIBREDB_ENABLED_PROVIDERS` (see assertProviderEnabled), if its `readOnly` cannot be
  *   honoured (see assertReadOnlyHonoured), or if an owner comes without a whole `ownerPoolMax`
  *   from 1 (see assertOwnerPoolHonoured)
@@ -125,7 +128,8 @@ function assertConnectionIdPresent(connection: DatabaseConnection): void {
  * and `tests/unit/db/read-only-enforced-capability.test.ts` holds the map equal to the summary of every
  * provider's `writeReach`.
  *
- * WHERE IT RUNS. The first statement of `createDatabaseProvider` and `withOneShotTunnel`, and of
+ * WHERE IT RUNS. Right after the type check (`assertDatabaseType`, FND-1), which is the first statement of
+ * `createDatabaseProvider` and `withOneShotTunnel`, and of
  * `getOrCreateProvider` and `acquireExecutionProfileProvider`, ahead of their cache lookup and of
  * `createSSHTunnel`: those two open the tunnel before they call `createDatabaseProvider`, outside the
  * try that closes a fresh one, so a refusal raised only inside the factory would dial the bastion and
@@ -175,9 +179,6 @@ function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: Prov
 // Enabled providers (LIBREDB_ENABLED_PROVIDERS)
 // ============================================================================
 
-/** Every connection type id, the embedded LibreDB store included: the exhaustive shipped set. */
-const CONNECTION_TYPE_IDS: ReadonlySet<string> = new Set<string>(SHIPPED_DATABASE_TYPES);
-
 /**
  * The connection types this server may open: `LIBREDB_ENABLED_PROVIDERS` as a comma list, trimmed, with empty
  * entries dropped and each type kept once in first-seen order, or `null` when the variable is unset or blank, which
@@ -202,7 +203,7 @@ export function enabledProviderTypes(): readonly DatabaseType[] | null {
       "LIBREDB_ENABLED_PROVIDERS is set but lists no connection type id. Leave it unset to enable every provider.",
     );
   }
-  const unknown = entries.find((entry) => !CONNECTION_TYPE_IDS.has(entry));
+  const unknown = entries.find((entry) => !isDatabaseType(entry));
   if (unknown !== undefined) {
     throw new DatabaseConfigError(
       `LIBREDB_ENABLED_PROVIDERS names ${JSON.stringify(unknown)}, which is not a connection type id. List type ids such as postgres, separated by commas.`,
@@ -233,6 +234,9 @@ export async function createDatabaseProvider(
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
+  // First, before every other check, the log line and the switch below: a type that names no provider is refused by
+  // name, and no other refusal or default speaks for it (FND-1).
+  assertDatabaseType(connection.type);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertOwnerPoolHonoured(connection, execution);
@@ -247,6 +251,9 @@ export async function createDatabaseProvider(
     options = { ...options, pool: { ...options.pool, min: 0, max: execution.ownerPoolMax } };
   }
 
+  // No `default`: `assertDatabaseType` above refused every value that is not a type id, and the compiler holds this
+  // switch exhaustive over the `DatabaseType` union, so a type id without a case fails the typecheck (TS2366) rather
+  // than reaching the end of the function at run time.
   switch (connection.type) {
     // SQL Databases - dynamically imported to reduce memory
     case "postgres": {
@@ -573,15 +580,6 @@ export async function createDatabaseProvider(
       const { LibreDBProvider } = await import("./providers/embedded/libredb");
       return new LibreDBProvider(connection, options, execution);
     }
-
-    default:
-      throw new DatabaseConfigError(
-        // This list is NOT type-checked against the union - a new case above with no
-        // entry here is silent - so it is kept in the same order as the cases and
-        // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, databend, bigquery, snowflake, spark, cassandra, elasticsearch, opensearch, mongodb, couchbase, firestore, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, weaviate, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb`,
-        connection.type,
-      );
   }
 }
 
@@ -667,6 +665,8 @@ export async function withOneShotTunnel<T>(
   connection: DatabaseConnection,
   run: (effective: DatabaseConnection) => Promise<T>,
 ): Promise<T> {
+  // First, before the tunnel is dialled: a type that names no provider is refused by name (FND-1).
+  assertDatabaseType(connection.type);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   if (!connection.sshTunnel?.enabled || !connection.host || !connection.port) {
@@ -1162,6 +1162,8 @@ function ownerContext(owner: string | undefined, requester: EditorExecutionConte
  *   A `readOnly` in it is refused (`DatabaseConfigError`): this cache holds writable providers,
  *   and a read-only one comes from `createDatabaseProvider` or an execution profile.
  * @returns Cached or new DatabaseProvider instance
+ * @throws UnknownProviderError if the connection's type is absent or names no provider, before the cache key, the
+ *   lookup and any tunnel (FND-1)
  */
 export async function getOrCreateProvider(
   connection: DatabaseConnection,
@@ -1170,7 +1172,9 @@ export async function getOrCreateProvider(
 ): Promise<DatabaseProvider> {
   // First, ahead of the cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured. The id
   // refusal shares the place: the cache key length-frames connection.id, so a missing id must be
-  // refused before the key is computed, as the DatabaseConfigError the provider would have raised (#1539).
+  // refused before the key is computed, as the DatabaseConfigError the provider would have raised (#1539). The type
+  // check comes before both: the key frames the type too, and a type that names no provider is refused by name (FND-1).
+  assertDatabaseType(connection.type);
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
@@ -1585,7 +1589,9 @@ export async function acquireExecutionProfileProvider(
   requester: EditorExecutionContext = {},
 ): Promise<DatabaseProvider> {
   // First, ahead of the profiled cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
-  // The id refusal shares the place for the same reason: the profiled key frames connection.id (#1539).
+  // The id refusal shares the place for the same reason: the profiled key frames connection.id (#1539). The type check
+  // comes before both, as in getOrCreateProvider (FND-1).
+  assertDatabaseType(connection.type);
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
