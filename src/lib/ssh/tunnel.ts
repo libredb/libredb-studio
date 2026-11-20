@@ -4,7 +4,7 @@
  * Uses ssh2 library for tunnel creation.
  */
 
-import { Client } from "ssh2";
+import { Client, type ClientChannel } from "ssh2";
 import net from "net";
 import crypto from "crypto";
 import { tunnelRoute } from "@/lib/db/connection-fingerprint";
@@ -262,20 +262,37 @@ export async function createSSHTunnel(
     sshClient.on("ready", () => {
       // Create a local TCP server that forwards to the remote host through SSH
       localServer = net.createServer((socket) => {
-        sshClient.forwardOut("127.0.0.1", 0, remoteHost, remotePort, (err, stream) => {
-          if (err) {
-            socket.end();
-            return;
-          }
-          // Prevent unhandled stream errors from crashing the process
-          stream.on("error", () => {
-            socket.destroy();
-          });
-          socket.on("error", () => {
-            stream.close();
-          });
-          socket.pipe(stream).pipe(socket);
+        // Attached first: the socket can fail (a client reset) while the channel open is still pending,
+        // and a socket with no 'error' listener raises the error instead of reporting it.
+        let channel: ClientChannel | null = null;
+        socket.on("error", () => {
+          channel?.close();
         });
+        // A channel the bastion refuses, or one ssh2 cannot ask for because its session is no longer
+        // writable ('Not connected', thrown synchronously), fails this connection only, with that error.
+        const failOpen = (err: Error) => {
+          logger.warn(
+            `SSH tunnel for ${connectionId} could not open a channel to ${remoteHost}:${remotePort}: ${err.message}`,
+            { connectionId },
+          );
+          socket.destroy(err);
+        };
+        try {
+          sshClient.forwardOut("127.0.0.1", 0, remoteHost, remotePort, (err, stream) => {
+            if (err) {
+              failOpen(err);
+              return;
+            }
+            channel = stream;
+            // Prevent unhandled stream errors from crashing the process
+            stream.on("error", () => {
+              socket.destroy();
+            });
+            socket.pipe(stream).pipe(socket);
+          });
+        } catch (err) {
+          failOpen(err as Error);
+        }
       });
 
       // Attach error handler before listen to catch bind/listen errors

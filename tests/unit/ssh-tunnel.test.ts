@@ -577,7 +577,7 @@ describe("SSH Tunnel", () => {
       });
     });
 
-    test("ends the local socket when forwardOut fails", async () => {
+    test("destroys the local socket with the bastion's refusal and logs it once", async () => {
       const connId = "test-fwderr-" + Date.now();
       lastConnectionId = connId;
 
@@ -603,16 +603,71 @@ describe("SSH Tunnel", () => {
         _port: number,
         cb: (err: Error | null, stream: unknown) => void,
       ) => {
-        cb(new Error("Channel open failure"), null);
+        cb(new Error("(SSH) Channel open failure: Connection refused"), null);
       };
 
-      const mockSocket = new MockDuplexStream();
-      let ended = false;
-      (mockSocket as unknown as { end: () => void }).end = () => {
-        ended = true;
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const mockSocket = new MockDuplexStream();
+        const destroyedWith: unknown[] = [];
+        (mockSocket as unknown as { destroy: (error?: Error) => void }).destroy = (error?: Error) => {
+          destroyedWith.push(error);
+          // net.Socket#destroy(error) emits the error on the socket, which is why its listener comes first.
+          if (error) mockSocket.emit("error", error);
+        };
+        mockServerInstance.connectionHandler!(mockSocket);
+
+        expect(destroyedWith).toHaveLength(1);
+        expect(String(destroyedWith[0])).toContain("Channel open failure: Connection refused");
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain("db.internal:5432");
+        expect(String(warn.mock.calls[0][0])).toContain("Channel open failure: Connection refused");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    test("a forwardOut that throws destroys that socket with the error instead of throwing out of the handler", async () => {
+      const connId = "test-fwdthrow-" + Date.now();
+      lastConnectionId = connId;
+      await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+
+      // What ssh2 1.17.0 does when its socket is no longer writable (node_modules/ssh2/lib/client.js, forwardOut).
+      mockSSHInstance.forwardOut = () => {
+        throw new Error("Not connected");
       };
+
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const mockSocket = new MockDuplexStream();
+        const destroyedWith: unknown[] = [];
+        (mockSocket as unknown as { destroy: (error?: Error) => void }).destroy = (error?: Error) => {
+          destroyedWith.push(error);
+          if (error) mockSocket.emit("error", error);
+        };
+
+        expect(() => mockServerInstance.connectionHandler!(mockSocket)).not.toThrow();
+        expect(destroyedWith.map(String)).toEqual(["Error: Not connected"]);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain("Not connected");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    test("a loopback socket that fails while its channel open is pending is handled on that socket", async () => {
+      const connId = "test-pending-" + Date.now();
+      lastConnectionId = connId;
+      await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+
+      // The bastion has not answered the channel open yet, so the callback has not run.
+      mockSSHInstance.forwardOut = () => mockSSHInstance;
+
+      const mockSocket = new MockDuplexStream();
       mockServerInstance.connectionHandler!(mockSocket);
-      expect(ended).toBe(true);
+
+      // An EventEmitter with no 'error' listener throws what it is handed, as a net.Socket does.
+      expect(() => mockSocket.emit("error", new Error("read ECONNRESET"))).not.toThrow();
     });
 
     test("destroys the socket on stream error and closes the stream on socket error", async () => {
