@@ -1981,6 +1981,22 @@ describe("useConnectionManager", () => {
       expect(mockToastError).toHaveBeenCalledTimes(1);
     });
 
+    test("a saved active id naming the unknown connection is refused by name when nothing else is available", async () => {
+      storage.saveConnection(unknown());
+      storage.setActiveConnectionId("unknown-1");
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+          description: `Acme Store: ${unknownTypeSentence("acmefoo")}`,
+        });
+      });
+      expect(mockToastError).toHaveBeenCalledTimes(1);
+      expect(result.current.activeConnection).toBeNull();
+      expect(storage.getActiveConnectionId()).toBe("unknown-1");
+    });
+
     test("a saved active id naming nothing listed opens the first available one with no toast", async () => {
       storage.saveConnection(plain());
       storage.setActiveConnectionId("gone-1");

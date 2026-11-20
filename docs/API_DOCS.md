@@ -590,7 +590,7 @@ Its `options`, when sent, must be an object as well: anything else (`null`, a nu
 
 An inline `connection` whose `type` is missing, empty or not a string answers `400 { "error": "This connection names no type, so no provider in this LibreDB Studio can open it.", "code": "PROVIDER_UNKNOWN", "statusCode": 400 }` when the connection resolves, before any registry is read or any provider built.
 One whose `type` is a string that is not exactly a type id, a case variant such as `"Postgres"` or a padded value included, answers `400 { "error": "No provider for the connection type \"acmefoo\" is installed in this LibreDB Studio.", "code": "PROVIDER_UNKNOWN", "statusCode": 400 }`, the type quoted as it was sent.
-The quote is the JSON string of the type, with C1 control characters, the Unicode line and paragraph separators and the bidirectional controls also escaped as `\uXXXX`, so the sentence stays one line and reads in order.
+The quote is the JSON string of the type, with C1 control characters, the Unicode line and paragraph separators and all twelve bidirectional controls of Unicode's `Bidi_Control` property also escaped as `\uXXXX`, so the sentence stays one line and reads in order.
 Release 1.3.0 answered both with `400 CONFIG_ERROR`: a missing, empty or non-string type in the sentence below, and an unknown string in the factory's `Unknown database type` sentence once its provider was about to be built.
 A `connection` whose `name` is present and not a string, `null` included, answers `400 { "error": "Valid connection configuration is required", "code": "CONFIG_ERROR", "statusCode": 400 }`, and a `connection` that is not an object is refused the same way.
 A `connection` without a `name` is still accepted, as a connection with no name.
@@ -2737,7 +2737,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_ERROR` | SQL syntax or execution error (400) |
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
-| `PROVIDER_UNKNOWN` | The connection's `type` is absent or names no provider this Studio has (400), answered before any provider is built or any SSH tunnel opened, with a sentence that quotes the type when one was given; the type ids are the `type DatabaseType` union this page lists |
+| `PROVIDER_UNKNOWN` | The connection's `type` is absent or names no provider this Studio has (400), answered before any provider is built or any SSH tunnel opened, with a sentence that quotes the type when it is a non-empty string; the type ids are the `type DatabaseType` union this page lists |
 | `AUTH_ERROR` | A database refused the credential (401), read from the driver's code as the paragraph above says |
 | `PERMISSION_DENIED` | A database accepted the credential and refused the statement for a privilege that credential lacks (403), with `"Permission denied: "` in front of the engine's own sentence; read from the driver's code as the paragraph above says. The browser treats it as the statement's error and never signs in again for it |
 | `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off, or governance mode is on, and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |

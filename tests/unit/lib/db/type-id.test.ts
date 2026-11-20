@@ -68,12 +68,16 @@ describe("isDatabaseType and typeIdRefusal", () => {
   });
 
   // JSON.stringify escapes only U+0000 to U+001F, the quote and the backslash; these code points would otherwise reach
-  // the sentence raw: C1 controls, the Unicode line and paragraph separators, and the bidirectional controls.
+  // the sentence raw: C1 controls, the Unicode line and paragraph separators, and the bidirectional controls, the
+  // Arabic letter mark and the left-to-right and right-to-left marks included.
   test.each([
     ["\u0085", "\\u0085"],
     ["\u0080", "\\u0080"],
     ["\u009b", "\\u009b"],
     ["\u009f", "\\u009f"],
+    ["\u061c", "\\u061c"],
+    ["\u200e", "\\u200e"],
+    ["\u200f", "\\u200f"],
     ["\u2028", "\\u2028"],
     ["\u2029", "\\u2029"],
     ["\u202a", "\\u202a"],

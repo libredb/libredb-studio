@@ -177,6 +177,42 @@ describe("opening the editor on a linked connection", () => {
     expect(storage.getConnections().find((c) => c.id === "unknown-1")).toEqual(before);
   });
 
+  test("a refused link and a saved active id naming another connection with no provider are each refused by name", async () => {
+    storage.saveConnection({ ...mine("u-1"), name: "U Store", type: "acmefoo" } as unknown as DatabaseConnection);
+    storage.saveConnection({ ...mine("v-1"), name: "V Store", type: "zetadb" } as unknown as DatabaseConnection);
+    storage.saveConnection(mine("p-1"));
+    storage.setActiveConnectionId("v-1");
+    window.history.replaceState(null, "", "/?connection=u-1");
+    mockGlobalFetch(routes(answer([])));
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => expect(result.current.activeConnection?.id).toBe("p-1"));
+    expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+      description: `U Store: ${unknownTypeSentence("acmefoo")}`,
+    });
+    expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+      description: `V Store: ${unknownTypeSentence("zetadb")}`,
+    });
+    expect(mockToastError).toHaveBeenCalledTimes(2);
+  });
+
+  test("a refused link naming the saved active connection is refused once", async () => {
+    storage.saveConnection({ ...mine("u-1"), name: "U Store", type: "acmefoo" } as unknown as DatabaseConnection);
+    storage.saveConnection(mine("p-1"));
+    storage.setActiveConnectionId("u-1");
+    window.history.replaceState(null, "", "/?connection=u-1");
+    mockGlobalFetch(routes(answer([])));
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => expect(result.current.activeConnection?.id).toBe("p-1"));
+    expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+      description: `U Store: ${unknownTypeSentence("acmefoo")}`,
+    });
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+  });
+
   test("a link left pending that names a connection whose type names no provider when a refresh lists it is refused with the reason", async () => {
     // FND-1: the linked record reaches storage after the first load, from another tab or a later storage sync of a
     // connection a newer Studio saved. Once listed it is decided at once, by name, and never made active.

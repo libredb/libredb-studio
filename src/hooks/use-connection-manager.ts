@@ -862,14 +862,14 @@ export function useConnectionManager(storageReady = false) {
           variant: "destructive",
         });
       }
-      if (selectable.length === 0) return;
       const savedId = storage.getActiveConnectionId();
-      const saved = savedId ? selectable.find((c: DatabaseConnection) => c.id === savedId) : null;
-      // The connection the reader had open last time, when no provider can open it, is not replaced in silence. A link
-      // that was refused above has already said so.
-      const savedListed = savedId && linked === undefined ? listed.find((c) => c.id === savedId) : undefined;
+      // The connection the reader had open last time, when no provider can open it, is not replaced or left closed in
+      // silence, even when nothing else can be opened. A link naming that same connection has already said so above.
+      const savedListed = savedId && savedId !== linkedId ? listed.find((c) => c.id === savedId) : undefined;
       const savedRefusal = savedListed === undefined ? null : typeIdRefusal(savedListed.type);
       if (savedListed !== undefined && savedRefusal !== null) refuseUnavailable(savedListed, savedRefusal.sentence);
+      if (selectable.length === 0) return;
+      const saved = savedId ? selectable.find((c: DatabaseConnection) => c.id === savedId) : null;
       setActiveConnection(saved ?? selectable[0]);
     };
 

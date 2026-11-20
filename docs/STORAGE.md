@@ -493,8 +493,8 @@ Whether a connection is available is decided each time it is listed, from its `t
 
 The sidebar, the mobile connections list, the mobile header menu and the command palette show it with an **Unavailable** marker whose tooltip gives the reason, such as `No provider for the connection type "acmefoo" is installed in this LibreDB Studio.`
 The admin overview's fleet card draws it with the unavailable icon and the same marker, and shows the server's refusal as the item's error.
-The monitoring dashboard, the admin Operations tab and the schema diff still list it by name and type with no marker; the server refuses it there with `400 PROVIDER_UNKNOWN` and the same sentence.
-It cannot be opened: a pick of it, a `?connection=` link that names it, or the connection the browser had open last time naming it, is refused with a **Connection unavailable** notice that names the connection and the reason, and the active connection stays as it was or falls to the first available one.
+The monitoring dashboard and the admin Operations tab still list it by name and type, and the schema diff by name, with no marker; a pick of it there is accepted, and the server refuses the request with `400 PROVIDER_UNKNOWN` and the same sentence.
+It cannot be opened: a pick of it from one of the four marked lists, a `?connection=` link that names it, or the connection the browser had open last time naming it, is refused with a **Connection unavailable** notice that names the connection and the reason, and the active connection stays as it was or falls to the first available one, if there is one.
 Studio never makes it the active connection by itself, at sign-in, on a reload or when another connection is deleted.
 It cannot be edited or duplicated, because the connection dialog has no form for an engine this Studio does not have; it can be deleted, favourited, grouped and reordered like any other.
 A Studio that has the provider lists and opens the same record as usual.

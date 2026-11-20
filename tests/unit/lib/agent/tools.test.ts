@@ -3550,8 +3550,9 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
    * the generic construction below sound. The exception, `UnknownProviderError`, takes the
    * refusal `typeIdRefusal` answers, so `BUILT_FROM` builds it from a real one. The
    * generic construction asserts that the message it passed is the message it got, so a
-   * future class whose constructor takes something else fails loudly here instead of
-   * being fed junk; it then gets a `BUILT_FROM` entry of its own.
+   * future class whose first argument is not the message fails loudly here; it then gets
+   * a `BUILT_FROM` entry of its own. A class whose second argument is not the provider
+   * is not caught by that assertion.
    */
   test("every DatabaseError subclass in the error module has a deliberate repairability verdict", async () => {
     /** The verdict at the QUERY phase. Nothing is repairable at the acquisition phase. */
