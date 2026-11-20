@@ -1,7 +1,7 @@
 import "../../../setup";
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import net from "node:net";
-import { Server as SshServer, utils, type Connection } from "ssh2";
+import { Server as SshServer, utils, type Connection, type ServerChannel } from "ssh2";
 import { logger } from "@/lib/logger";
 import type { SSHTunnelConfig } from "@/lib/types";
 import { closeSSHTunnel, createSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
@@ -24,6 +24,8 @@ import { closeSSHTunnel, createSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
 /** How the bastion treats the next client: hold its channel opens pending, or close before the handshake. */
 let bastionMode: "serve" | "hold-channels" | "close-before-handshake" = "serve";
 const sessions: Connection[] = [];
+/** The channel opens the bastion is holding, each confirmed when the test calls it. */
+const heldChannels: Array<() => ServerChannel> = [];
 
 let bastion: SshServer;
 let bastionPort = 0;
@@ -51,7 +53,10 @@ beforeAll(async () => {
     session.on("authentication", (ctx) => ctx.accept());
     session.on("ready", () => {
       session.on("tcpip", (accept, _reject, info) => {
-        if (bastionMode === "hold-channels") return;
+        if (bastionMode === "hold-channels") {
+          heldChannels.push(accept);
+          return;
+        }
         const channel = accept();
         const upstream = net.connect(info.destPort, info.destIP);
         upstream.on("error", () => channel.close());
@@ -179,11 +184,12 @@ describe("a tunnel whose bastion closes the connection before the handshake", ()
   });
 });
 
-// Under Bun this passed before the fix as well: Bun does not raise the reset on an accepted socket with no
-// 'error' listener, which Node does. The listener's order is held by `tests/unit/ssh-tunnel.test.ts`; this
-// pins, against a real bastion, that the reset ends that one connection and not the tunnel.
+// Under Bun the reset alone passed before the fix as well: Bun does not raise the reset on an accepted socket
+// with no 'error' listener, which Node does. The listener's order is held by `tests/unit/ssh-tunnel.test.ts`;
+// this pins, against a real bastion, that the reset ends that one connection and not the tunnel, and that the
+// channel the bastion confirms afterwards is closed rather than left open with nothing to end it.
 describe("a loopback connection whose channel open is still pending", () => {
-  test("a client that resets it closes that connection only, and the tunnel keeps serving", async () => {
+  test("a client that resets it closes that connection and its late channel, and the tunnel keeps serving", async () => {
     bastionMode = "hold-channels";
     const connId = `session-end-pending-${Date.now()}`;
     const tunnel = await open(connId);
@@ -195,6 +201,16 @@ describe("a loopback connection whose channel open is still pending", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     socket.resetAndDestroy();
     await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(heldChannels).toHaveLength(1);
+    const channel = heldChannels.splice(0)[0]();
+    let channelClosed = false;
+    channel.on("close", () => {
+      channelClosed = true;
+    });
+    // A channel reports 'close' after its readable side ended, which needs it to be read.
+    channel.resume();
+    await until("the late channel to close", () => channelClosed);
 
     bastionMode = "serve";
     expect(hasTunnel(connId, forwardOf())).toBe(true);

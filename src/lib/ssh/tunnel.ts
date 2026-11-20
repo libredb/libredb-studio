@@ -200,7 +200,8 @@ export async function createSSHTunnel(
   const key = poolKey(connectionId, sshConfig, remoteHost, remotePort);
 
   // Return the existing tunnel for THIS route and far end if one is already active.
-  // A tunnel whose SSH session has ended is not here: the session's end runs its cleanup.
+  // A tunnel whose SSH session ssh2 has seen end is not here: that end runs its cleanup. A session that
+  // drops without a FIN or an RST still is, and may be stale, since neither SSH nor TCP keepalive is configured.
   if (shared) {
     const existing = activeTunnels.get(key);
     if (existing) {
@@ -225,10 +226,11 @@ export async function createSSHTunnel(
     const cleanup = async () => {
       if (closed) return;
       closed = true;
-      // Only a pooled tunnel owns its map entry. A one-shot tunnel may share the id of a
-      // pooled one serving live providers, and deleting that entry would orphan it: the
-      // SSH client and local server would stay open with nothing left holding a handle.
-      if (shared) {
+      // Only a pooled tunnel owns its map entry, and only while the entry is still its own. A one-shot
+      // tunnel may share the id of a pooled one serving live providers, and a newer forward may hold the
+      // key by now. Deleting another forward's entry would orphan it: its SSH client and local server
+      // would stay open with nothing left holding a handle.
+      if (shared && activeTunnels.get(key)?.info.close === cleanup) {
         activeTunnels.delete(key);
       }
       if (localServer) {
@@ -238,10 +240,11 @@ export async function createSSHTunnel(
       sshClient.end();
     };
 
-    // The SSH session is gone while the tunnel it carried is still open. Cleanup takes the forward out
-    // of the pool and closes its loopback listener, so the provider that used it meets a refused
-    // connection on its next dial, and the next request for the forward opens a new session. Logged
-    // once here, since the event that ended the session reaches no caller once the tunnel resolved.
+    // The SSH session is gone or can no longer open channels. Cleanup takes the forward out of the pool
+    // and closes its loopback listener, so the provider that used it meets a refused connection on its
+    // next dial, and the next request for the forward opens a new session. Once the tunnel was handed
+    // out, the loss is logged once here, since the event that ended the session reaches no caller. Before
+    // that, the same event is the dial's own failure, which the caller receives as the rejection.
     const sessionLost = (cause: string) => {
       if (handedOut && !closed) {
         logger.warn(`SSH tunnel for ${connectionId} to ${remoteHost}:${remotePort} closed: ${cause}`, {
@@ -268,8 +271,9 @@ export async function createSSHTunnel(
         socket.on("error", () => {
           channel?.close();
         });
-        // A channel the bastion refuses, or one ssh2 cannot ask for because its session is no longer
-        // writable ('Not connected', thrown synchronously), fails this connection only, with that error.
+        // A channel the bastion refuses fails this connection only, with that error. One ssh2 cannot ask
+        // for because its session is no longer writable ('Not connected', thrown synchronously) fails this
+        // connection the same way and also ends the tunnel, since no later connection could open a channel.
         const failOpen = (err: Error) => {
           logger.warn(
             `SSH tunnel for ${connectionId} could not open a channel to ${remoteHost}:${remotePort}: ${err.message}`,
@@ -288,10 +292,17 @@ export async function createSSHTunnel(
             stream.on("error", () => {
               socket.destroy();
             });
+            // The loopback client went away while the open was pending. A reset destroys the socket without
+            // an 'end', so a pipe would never end this channel, and the bastion would hold it open.
+            if (socket.destroyed) {
+              stream.close();
+              return;
+            }
             socket.pipe(stream).pipe(socket);
           });
         } catch (err) {
           failOpen(err as Error);
+          sessionLost(`the SSH session can no longer open channels: ${(err as Error).message}`);
         }
       });
 
