@@ -29,6 +29,7 @@ function report(overrides: Partial<OperatorSourceReport> = {}): OperatorSourceRe
     connected: [{ id: "reporting", name: "Reporting", type: "postgres" }],
     skipped: [],
     notes: [],
+    unavailable: [],
     ...overrides,
   };
 }

@@ -190,10 +190,9 @@ describe("SeedConnectionSchema", () => {
   });
 
   /**
-   * The hand-kept enum held to the registry it has to follow (#1085). `SeedDatabaseType` is a zod
-   * VALUE, so an id missing from it is no compile error: a seed file naming an engine the product
-   * ships is refused at startup with "invalid enum value". Driven from `SHIPPED_DATABASE_TYPES`,
-   * so the next type-id fails here the day it lands rather than on somebody's deployment.
+   * The enum held to the registry it follows (#1085). `SeedDatabaseType` is a zod VALUE, so an id missing from it would
+   * be no compile error: a seed file naming an engine the product ships would be refused at startup. Driven from
+   * `SHIPPED_DATABASE_TYPES`, so the next type-id fails here the day it lands rather than on somebody's deployment.
    */
   it("accepts every type-id the product ships", () => {
     const refused = SHIPPED_DATABASE_TYPES.filter(
@@ -202,6 +201,12 @@ describe("SeedConnectionSchema", () => {
     // Vacuity, by name: an empty registry would refuse nothing and pass.
     expect(SHIPPED_DATABASE_TYPES.length).toBeGreaterThan(0);
     expect(refused).toEqual([]);
+  });
+
+  it("takes its type options from SHIPPED_DATABASE_TYPES, the one list", () => {
+    expect([...(SeedConnectionSchema.shape.type as z.ZodEnum).options].sort()).toEqual(
+      [...SHIPPED_DATABASE_TYPES].sort(),
+    );
   });
 });
 
@@ -1910,5 +1915,114 @@ describe("SeedDefaultsSchema and SeedConfigSchema: an agent credential", () => {
       ["connections.0.agentPassword", unmanaged("managed: false from defaults.managed")],
     ]);
     expect(issuesOf({ defaults: { managed: false }, connections: [{ ...qdrant, managed: true }] })).toEqual([]);
+  });
+});
+
+/**
+ * A seed entry whose `type` is text that names no provider this Studio has (FND-1): a newer Studio's engine, or one not
+ * installed here. It refuses only itself: the file loads, its other entries are connections, and it is kept apart in
+ * `unavailable` with only the fields Studio reads from it, so a credential it carries is never validated, resolved or
+ * listed. A `type` that is missing, empty or not text names no provider anywhere, and still fails the file.
+ */
+describe("SeedConfigSchema: an entry whose type names no provider (FND-1)", () => {
+  const pg = { id: "pg", name: "PG", type: "postgres", host: "db", roles: ["*"] };
+  const acme = {
+    id: "acme",
+    name: "Acme Store",
+    type: "acmefoo",
+    host: "acme.example",
+    password: "CANARY-7f3a",
+    managed: false,
+    roles: ["*"],
+    mcp: true,
+  };
+  const parse = (connections: unknown[], defaults?: unknown) =>
+    SeedConfigSchema.safeParse({ version: "1", ...(defaults ? { defaults } : {}), connections });
+  const issuesOf = (connections: unknown[]) => {
+    const result = parse(connections);
+    if (result.success) throw new Error("the premise: the file is refused");
+    return result.error.issues.map((issue) => ({ path: issue.path, message: issue.message }));
+  };
+
+  it("keeps the file's other entries and carries the entry apart, with only the fields Studio reads", () => {
+    const result = parse([acme, pg]);
+    if (!result.success) throw new Error(result.error.message);
+    expect(result.data.connections.map((conn) => conn.id)).toEqual(["pg"]);
+    expect(result.data.unavailable).toEqual([
+      { id: "acme", name: "Acme Store", type: "acmefoo", roles: ["*"], mcp: true },
+    ]);
+    expect(JSON.stringify(result.data.unavailable)).not.toContain("CANARY");
+    expect(JSON.stringify(result.data.unavailable)).not.toContain("acme.example");
+  });
+
+  it("carries the envelope's optional fields when the entry sets them", () => {
+    const result = parse([{ ...acme, environment: "production", group: "Shop", color: "#112233" }]);
+    if (!result.success) throw new Error(result.error.message);
+    expect(result.data.unavailable).toEqual([
+      {
+        id: "acme",
+        name: "Acme Store",
+        type: "acmefoo",
+        roles: ["*"],
+        mcp: true,
+        environment: "production",
+        group: "Shop",
+        color: "#112233",
+      },
+    ]);
+  });
+
+  it("loads a file whose only entry names no provider, with no connection", () => {
+    const result = parse([acme]);
+    if (!result.success) throw new Error(result.error.message);
+    expect(result.data.connections).toEqual([]);
+    expect(result.data.unavailable.map((entry) => entry.id)).toEqual(["acme"]);
+  });
+
+  it.each(["constructor", "Postgres", " postgres"])("carries %p apart, named as written", (type) => {
+    const result = parse([{ ...acme, type }, pg]);
+    if (!result.success) throw new Error(result.error.message);
+    expect(result.data.unavailable.map((entry) => entry.type)).toEqual([type]);
+    expect(result.data.connections.map((conn) => conn.id)).toEqual(["pg"]);
+  });
+
+  it.each([
+    ["an id that is not lowercase", { id: "Bad Id" }, "id"],
+    ["no name", { name: undefined }, "name"],
+    ["no role", { roles: [] }, "roles"],
+    ["an mcp that is not a boolean", { mcp: "yes" }, "mcp"],
+    ["a color that is not hex", { color: "red" }, "color"],
+    ["a group over 64 characters", { group: "g".repeat(65) }, "group"],
+  ])("fails the file at the field's path for %s, as a known entry does", (_label, fields, field) => {
+    const issues = issuesOf([{ ...acme, ...fields }, pg]);
+    expect(issues.map((issue) => issue.path)).toEqual([["connections", 0, field]]);
+  });
+
+  it("moves no later entry's path", () => {
+    expect(issuesOf([acme, { ...pg, port: "x" }]).map((issue) => issue.path)).toEqual([["connections", 1, "port"]]);
+  });
+
+  it("fails the file at the repeat's path when it and a known entry share an id", () => {
+    expect(issuesOf([acme, { ...pg, id: "acme" }])).toEqual([
+      { path: ["connections", 1, "id"], message: 'Connection id "acme" is declared more than once' },
+    ]);
+  });
+
+  it("is listed whatever its managed and agent fields say, since neither is read", () => {
+    const result = parse([{ ...acme, readOnly: true, agentUser: "agent" }], { managed: false });
+    expect(result.success).toBe(true);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["empty", ""],
+    ["null", null],
+    ["a number", 5],
+    ["a list", ["postgres"]],
+    ["an object", { id: "postgres" }],
+  ])("still fails the whole file at connections.<n>.type for a type that is %s", (_label, type) => {
+    const issues = issuesOf([pg, { ...acme, type }]);
+    expect(issues.map((issue) => issue.path)).toEqual([["connections", 1, "type"]]);
+    expect(issues[0]?.message).toStartWith("Invalid option: expected one of");
   });
 });

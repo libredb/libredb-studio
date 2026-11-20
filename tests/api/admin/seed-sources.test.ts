@@ -14,6 +14,7 @@ import * as realAuth from "@/lib/auth";
 import * as realOperatorLoader from "@/lib/seed/operator-loader";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 import type { SeedSourcesResponse } from "@/app/api/admin/seed-sources/route";
 import { parseResponseJSON } from "../../helpers/mock-next";
 
@@ -221,6 +222,7 @@ describe("GET /api/admin/seed-sources: reports", () => {
             connected: [{ id: "reporting", name: "Reporting", type: "postgres" }],
             skipped: [],
             notes: [],
+            unavailable: [],
           },
         ],
       });
@@ -228,6 +230,65 @@ describe("GET /api/admin/seed-sources: reports", () => {
       expect(JSON.stringify(body)).not.toContain("db.internal");
     } finally {
       info.mockRestore();
+    }
+  });
+
+  test("reports an entry whose type names no provider as unavailable, with its reason, and the source as loaded", async () => {
+    process.env.SEED_CONFIG_PATH = seedPath;
+    writeFileSync(
+      seedPath,
+      [
+        'version: "1"',
+        "connections:",
+        '  - id: "acme"',
+        '    name: "Acme Store"',
+        "    type: acmefoo",
+        '    host: "acme.internal"',
+        `    password: "${CANARY}"`,
+        '    roles: ["*"]',
+        '  - id: "reporting"',
+        '    name: "Reporting"',
+        "    type: postgres",
+        '    host: "db.internal"',
+        '    roles: ["admin"]',
+        "",
+      ].join("\n"),
+    );
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+
+    try {
+      const { status, body } = await answer();
+
+      expect(status).toBe(200);
+      expect(body).toEqual({
+        sources: [
+          {
+            source: "SEED_CONFIG_PATH",
+            location: seedPath,
+            state: "ok",
+            checkedAt: expect.any(String),
+            error: null,
+            connected: [{ id: "reporting", name: "Reporting", type: "postgres" }],
+            skipped: [],
+            notes: [],
+            unavailable: [
+              {
+                id: "acme",
+                name: "Acme Store",
+                type: "acmefoo",
+                origin: seedPath,
+                reason: unknownTypeSentence("acmefoo"),
+              },
+            ],
+          },
+        ],
+      });
+      expect(JSON.stringify(body)).not.toContain(CANARY);
+      expect(JSON.stringify(body)).not.toContain("acme.internal");
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
     }
   });
 
@@ -248,6 +309,7 @@ describe("GET /api/admin/seed-sources: reports", () => {
           connected: [],
           skipped: [],
           notes: [],
+          unavailable: [],
         },
       ]);
       expect(warn).toHaveBeenCalledWith("Seed config file not found, seed connections disabled", {
@@ -259,9 +321,10 @@ describe("GET /api/admin/seed-sources: reports", () => {
     }
   });
 
-  // The Zod message shape: a zod failure on a string field must not put the field's value into the answer. The
-  // first connection fails an enum (type), the second a regex (color), and the second also carries the canary
-  // as a password, the field a careless message would echo first.
+  // The Zod message shape: a zod failure on a field must not put the field's value into the answer. The first
+  // connection fails the type enum with a list that holds the canary (a type that is text and names no provider is an
+  // entry of its own, FND-1), the second a regex (color), and the second also carries the canary as a password, the
+  // field a careless message would echo first.
   test("answers error with code invalid for a schema failure, and the body carries no value from the file", async () => {
     process.env.SEED_CONFIG_PATH = seedPath;
     writeFileSync(
@@ -271,7 +334,7 @@ describe("GET /api/admin/seed-sources: reports", () => {
         "connections:",
         '  - id: "first"',
         '    name: "First"',
-        `    type: "${CANARY}"`,
+        `    type: ["${CANARY}"]`,
         '    roles: ["admin"]',
         '  - id: "second"',
         '    name: "Second"',
@@ -408,6 +471,7 @@ describe("GET /api/admin/seed-sources: reports", () => {
             },
           ],
           notes: [],
+          unavailable: [],
         },
       ]);
       expect(error).toHaveBeenCalledTimes(1);

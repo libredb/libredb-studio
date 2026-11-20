@@ -215,6 +215,14 @@ describe("reachableTypes", () => {
     expect(await new McpConnectionContext(alice).reachableTypes()).toEqual(new Set());
   });
 
+  test("reachableTypes leaves out a seed whose type names no provider", async () => {
+    writeSeedFile(dir, [
+      { id: "acme", type: "acmefoo" },
+      { id: "shop", type: "sqlite", database: join(dir, "shop.db") },
+    ]);
+    expect(await new McpConnectionContext(alice).reachableTypes()).toEqual(new Set(["sqlite"]));
+  });
+
   test("answers unreadable for a seed file that cannot be parsed", async () => {
     const path = join(dir, "broken.json");
     writeFileSync(path, "{ this is not json");

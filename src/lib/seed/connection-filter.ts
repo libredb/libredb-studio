@@ -1,7 +1,7 @@
 import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
-import type { DatabaseConnection, SSLConfig } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, SSLConfig } from "@/lib/types";
 import { KUBERNETES_REVIEWED_ROLE } from "./roles";
-import type { SeedConnection, SeedDefaults, ManagedConnection } from "./types";
+import type { SeedConnection, SeedDefaults, ManagedConnection, UnavailableSeedEntry } from "./types";
 
 export function mergeDefaults(conn: SeedConnection, defaults: SeedDefaults | undefined): SeedConnection {
   if (!defaults) return conn;
@@ -204,4 +204,38 @@ export function projectSeedConnection(conn: SeedConnection, userRoles: string[])
     ...(conn.roles.some((r) => r !== "admin") ? { sharedWithNonAdminRoles: true as const } : {}),
     seedId: conn.id,
   };
+}
+
+/**
+ * The managed connection a seed entry whose type names no provider this Studio has (FND-1) becomes for a caller holding
+ * `userRoles`: the fields Studio reads from it and nothing else, so no engine field and no server-only marker
+ * (`literal`, `LITERAL_SEED_FILE`, `sharedWithNonAdminRoles`), because no route opens it. Listed `managed: true`
+ * whatever the file says: the browser copies an unmanaged seed into the user's own connections, and that copy would
+ * hide the operator's entry once its type names a provider. Its roles are the caller's own, plus `*`, as
+ * `projectSeedConnection` narrows them.
+ */
+export function projectUnavailableSeed(entry: UnavailableSeedEntry, userRoles: string[]): ManagedConnection {
+  return {
+    id: `seed:${entry.id}`,
+    name: entry.name,
+    // The one place a listed record's type is not a type id by construction. `DatabaseConnection.type` says a listed
+    // record may carry any value there, and every reader checks it: the client derives Unavailable from it, and the
+    // server refuses it by name wherever the record is opened (resolveConnection, the MCP lookups).
+    type: entry.type as DatabaseType,
+    environment: entry.environment,
+    group: entry.group,
+    color: entry.color,
+    mcp: entry.mcp,
+    createdAt: new Date(),
+    managed: true,
+    roles: entry.roles.filter((r) => r === "*" || userRoles.includes(r)),
+    seedId: entry.id,
+  };
+}
+
+/** The entries of `entries` these roles may see, each projected by `projectUnavailableSeed`. */
+export function filterUnavailableByRoles(entries: UnavailableSeedEntry[], userRoles: string[]): ManagedConnection[] {
+  return entries
+    .filter((entry) => rolesMatch(entry.roles, userRoles))
+    .map((entry) => projectUnavailableSeed(entry, userRoles));
 }

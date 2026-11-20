@@ -3,10 +3,10 @@
  * and the environment URLs. Each source reads its own input and hands the operator loader validated entries;
  * the loader resolves them, refuses collisions, caches them and records each source's status for the admin view.
  * Every message, skip and note a source writes carries variable, parameter, field, file and id names only, never a
- * value.
+ * value, and the type an unavailable entry names, which names a provider, not a credential.
  */
 import type { DatabaseType } from "@/lib/types";
-import type { SeedConnection } from "../types";
+import type { SeedConnection, UnavailableSeedEntry } from "../types";
 
 /** The variable that turns a source on, which is also its name in the admin status. */
 export type OperatorSourceName =
@@ -38,6 +38,16 @@ export interface OperatorEntry {
   origin: string;
 }
 
+/**
+ * A seed entry whose type names no provider this Studio has (FND-1): listed as unavailable, opened by no route. It
+ * carries only the fields Studio reads from it (`UnavailableSeedEntrySchema`), its `environment` defaulted.
+ */
+export interface OperatorUnavailableEntry {
+  entry: UnavailableSeedEntry;
+  /** A file path or a variable name, never a value. */
+  origin: string;
+}
+
 export type SourceNote =
   | { kind: "ignored-variable"; name: string }
   | { kind: "ignored-parameter"; origin: string; name: string };
@@ -53,6 +63,8 @@ export interface OperatorSkip {
 
 export interface OperatorSourceResult {
   entries: OperatorEntry[];
+  /** The entries whose type names no provider (FND-1), apart from `entries`. */
+  unavailable: OperatorUnavailableEntry[];
   skips: OperatorSkip[];
   notes: SourceNote[];
   /** A source never reports "error": it throws, and the loader records the error status. */
@@ -81,4 +93,16 @@ export interface OperatorSourceReport {
   connected: { id: string; name: string; type: DatabaseType }[];
   skipped: OperatorSkip[];
   notes: SourceNote[];
+  /** The entries listed as unavailable because their type names no provider (FND-1), each with the refusal. */
+  unavailable: OperatorUnavailable[];
+}
+
+/** One entry of a source's report listed as unavailable: its names, the type as written, and the refusal's sentence. */
+export interface OperatorUnavailable {
+  id: string;
+  name: string;
+  type: string;
+  origin: string;
+  /** `unknownTypeSentence(type)`: the sentence every surface refuses the entry with. */
+  reason: string;
 }

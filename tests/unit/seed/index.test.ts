@@ -78,6 +78,27 @@ describe("seed/index orchestrator", () => {
     expect(conn!.seedId).toBe("admin-only");
   });
 
+  it("the unfiltered lookup finds an unavailable entry, so a role it excludes gets 403", async () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), "libredb-seed-index-unavailable-"));
+    try {
+      const file = path.join(scratch, "seed-connections.json");
+      writeFileSync(
+        file,
+        JSON.stringify({
+          version: "1",
+          connections: [{ id: "acme", name: "Acme", type: "acmefoo", roles: ["admin"] }],
+        }),
+      );
+      process.env.SEED_CONFIG_PATH = file;
+      resetCache();
+
+      expect((await getSeedConnectionByIdUnfiltered("acme"))?.type).toBe("acmefoo" as never);
+      expect(await getManagedConnections(["user"])).toEqual([]);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it("getSeedConnectionByIdUnfiltered returns null for nonexistent ID", async () => {
     const conn = await getSeedConnectionByIdUnfiltered("nonexistent");
     expect(conn).toBeNull();
@@ -194,6 +215,52 @@ describe("seed/index with discovered connections", () => {
     expect(conns.find((c) => c.seedId === "caprover-pg")?.literal).toBe(true);
     expect(conns.find((c) => c.seedId === "everyone")?.literal).toBeUndefined();
     expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)?.literal).toBeUndefined();
+  });
+
+  it("lists unavailable entries after the operator's other entries, for the roles they name", async () => {
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          { id: "acme", name: "Acme", type: "acmefoo", host: "acme.example", password: "CANARY", roles: ["*"] },
+          { id: "ops", name: "Ops", type: "zetadb", roles: ["admin"] },
+          { id: "file-pg", name: "File PG", type: "postgres", host: "file-pg.internal", roles: ["*"] },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+
+    expect((await getManagedConnections(["admin"])).map((c) => c.seedId)).toEqual([
+      "file-pg",
+      "acme",
+      "ops",
+      "caprover-pg",
+      SQLITE_SAMPLE_SEED_ID,
+    ]);
+    expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toEqual(["file-pg", "acme"]);
+    const acme = (await getManagedConnections(["user"])).find((c) => c.seedId === "acme");
+    expect(acme).not.toHaveProperty("host");
+    expect(JSON.stringify(acme)).not.toContain("CANARY");
+  });
+
+  it("drops a discovered connection whose id an unavailable entry declares", async () => {
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [{ id: "caprover-pg", name: "Newer engine", type: "acmefoo", roles: ["admin"] }],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+    resetDiscoveryCache();
+
+    const clashing = (await getManagedConnections(["admin"])).filter((c) => c.seedId === "caprover-pg");
+    expect(clashing.map((c) => [c.name, c.type])).toEqual([["Newer engine", "acmefoo"]]);
   });
 
   it("keeps the seed file's connection when a discovered one takes its id", async () => {

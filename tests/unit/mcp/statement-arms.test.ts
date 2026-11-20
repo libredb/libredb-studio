@@ -39,6 +39,7 @@ import {
   mcpWithholdsDatabase,
   servingStatementArms,
 } from "@/lib/mcp/tools/statement-arms";
+import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? [] : [arm]));

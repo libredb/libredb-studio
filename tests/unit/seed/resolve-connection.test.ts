@@ -386,6 +386,78 @@ describe("resolve-connection", () => {
   would send one of Studio's own Vault secrets to that app as a password. readVaultSecret is replaced by a spy
   so a call to it is counted, not made.
 */
+/**
+ * A seed entry whose type names no provider this Studio has (FND-1) is listed, and refused by name wherever it is
+ * opened: after the access decision, so a caller who may not see it learns nothing of its type, and before any Vault
+ * reference is read. The file's other seeds still resolve.
+ */
+describe("resolve-connection with a seed entry whose type names no provider (FND-1)", () => {
+  const VAULT_REFERENCE = "${vault:secret/data/x#y}";
+  const originalSeedPath = process.env.SEED_CONFIG_PATH;
+  let scratch: string;
+  let readVaultSecret: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    scratch = mkdtempSync(path.join(tmpdir(), "libredb-resolve-unknown-"));
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          {
+            id: "acme",
+            name: "Acme Store",
+            type: "acmefoo",
+            host: "acme.example",
+            password: VAULT_REFERENCE,
+            roles: ["*"],
+          },
+          { id: "acme-admins", name: "Acme Admins", type: "acmefoo", roles: ["admin"] },
+          { id: "pg", name: "PG", type: "postgres", host: "pg.internal", password: VAULT_REFERENCE, roles: ["*"] },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+    readVaultSecret = spyOn(vaultClient, "readVaultSecret").mockResolvedValue("vault-resolved-secret");
+  });
+
+  afterEach(() => {
+    readVaultSecret.mockRestore();
+    process.env.SEED_CONFIG_PATH = originalSeedPath;
+    resetCache();
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it("refuses a seed whose type names no provider by name after the access decision, reading no Vault reference", async () => {
+    const refusal = await resolveConnection({ connectionId: "seed:acme" }, { role: "admin", username: "test" }).catch(
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(UnknownProviderError);
+    expect((refusal as UnknownProviderError).reason).toBe("unknown");
+    expect((refusal as UnknownProviderError).typeId).toBe("acmefoo");
+    expect((refusal as UnknownProviderError).message).toBe(unknownTypeSentence("acmefoo"));
+    expect(readVaultSecret).not.toHaveBeenCalled();
+  });
+
+  it("resolves the file's other seed", async () => {
+    const resolved = await resolveConnection({ connectionId: "seed:pg" }, { role: "user", username: "test" });
+    expect(resolved.type).toBe("postgres");
+    expect(resolved.password).toBe("vault-resolved-secret");
+  });
+
+  it("answers a role it excludes with the 403 any seed gets", async () => {
+    const refusal = await resolveConnection(
+      { connectionId: "seed:acme-admins" },
+      { role: "user", username: "test" },
+    ).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(SeedConnectionError);
+    expect(refusal).toMatchObject({ statusCode: 403 });
+    expect((refusal as Error).message).not.toContain("acmefoo");
+  });
+});
+
 describe("resolve-connection with discovered connections", () => {
   const VAULT_REFERENCE = "${vault:secret/data/x#y}";
   const ADMIN = { role: "admin", username: "test" };
