@@ -18,6 +18,7 @@ import {
   QueryCancelledError,
   QueryError,
   TimeoutError,
+  TransactionLostError,
   UnknownProviderError,
 } from "@/lib/db/errors";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
@@ -127,6 +128,16 @@ const ROWS: readonly Row[] = [
       retryable: true,
     },
     log: { level: "error", message: "Connection error", context: { provider: "postgres" } },
+  },
+  {
+    name: "TransactionLostError, which is a ConnectionError and not retryable",
+    error: new TransactionLostError("The transaction was lost: its database session ended (x).", "postgres"),
+    body: {
+      error: "The transaction was lost: its database session ended (x).",
+      code: ApiErrorCode.TRANSACTION_LOST,
+      statusCode: 503,
+    },
+    log: { level: "warn", message: "Transaction lost", context: { provider: "postgres" } },
   },
   {
     name: "PoolExhaustedError",

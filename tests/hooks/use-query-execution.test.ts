@@ -3897,6 +3897,8 @@ describe("useQueryExecution", () => {
     const answers: [number, Record<string, unknown>, boolean][] = [
       [409, { error: "Your access changed.", code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: true }, true],
       [400, { error: "No active transaction", code: "QUERY_ERROR", statusCode: 400 }, true],
+      [503, { error: "The transaction was lost.", code: "TRANSACTION_LOST", statusCode: 503 }, true],
+      [503, { error: "connect ECONNREFUSED", code: "CONNECTION_ERROR", statusCode: 503, retryable: true }, false],
       [400, { error: 'relation "t" does not exist', code: "QUERY_ERROR", statusCode: 400 }, false],
     ];
     for (const [status, body, ends] of answers) {

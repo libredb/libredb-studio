@@ -84,6 +84,7 @@ import {
   ExecutionProfileError,
   PoolExhaustedError,
   QueryError,
+  TransactionLostError,
   NO_TRANSACTION_OPENED,
   NO_ACTIVE_TRANSACTION,
 } from "../../errors";
@@ -251,11 +252,35 @@ interface NoticeBatch {
 }
 
 /**
- * The client every pool of this provider builds, so its notices are kept from the first byte.
+ * The first error each pooled client reported on its own session, kept by the client's own listener
+ * (`NoticeKeepingClient`). A client is in this map once its connection has failed or ended: `pg`
+ * marks it unqueryable before it emits, fails every statement still queued on it, and `pg-pool`
+ * discards it on release instead of handing it out again. The held transaction reads it to report
+ * the transaction lost (`refuseLostTransaction`). Weak for the reason `pendingNotices` is.
+ */
+const endedSessions = new WeakMap<ClientBase, Error>();
+
+/** What the log says when a pooled client reports an error on its own session. */
+const SESSION_ERROR_LOG = "PostgreSQL connection error on a pooled session";
+
+/**
+ * The client every pool of this provider builds, so its notices are kept from the first byte and
+ * its `error` is heard for its whole life.
  *
  * A listener attached after `pool.connect()` would be too late for the startup handshake, which
  * is where Materialize reports a missing session database: the pool resolves the borrow only
  * after ReadyForQuery, and the NOTICE arrives before it.
+ *
+ * `pg` emits `error` on a client whose connection fails or ends, whether the server ended the
+ * session (a terminated backend, an idle-in-transaction timeout, a failover) or the network did,
+ * and an `error` event with no listener is thrown out of the emit instead of reaching a caller as
+ * a named error. `pg-pool` listens on a client
+ * only while it is idle: it takes its listener off for as long as the client is checked out, which
+ * for the held transaction client is the whole transaction. So the listener is the client's own,
+ * attached at construction, and no borrow, however it is written, can hold a client without one.
+ * It records the error for the held transaction and logs the event, naming only the provider and
+ * the driver's message: the client's config, which holds the credentials, is never read here. It
+ * is the only place the event is logged, idle clients included (see `attachPoolListeners`).
  */
 class NoticeKeepingClient extends Client {
   constructor(config?: string | ClientConfig) {
@@ -266,7 +291,25 @@ class NoticeKeepingClient extends Client {
       if (batch.kept.length < NOTICE_KEEP_LIMIT) batch.kept.push(notice);
       else batch.dropped++;
     });
+    this.on("error", (error: Error) => {
+      if (!endedSessions.has(this)) endedSessions.set(this, error);
+      logger.warn(SESSION_ERROR_LOG, {
+        provider: "postgres",
+        error: error.message,
+        code: (error as { code?: string }).code,
+      });
+    });
   }
+}
+
+/**
+ * What a call on the held transaction answers once its session has ended. The server rolls back
+ * what is still open when a session ends, but the sentence does not claim that nothing was
+ * committed: a COMMIT can reach the server and its answer be lost with the session (a typed
+ * `COMMIT`, or one in a text whose later statement ended the session), and that work stays.
+ */
+function transactionLostSentence(cause: Error): string {
+  return `The transaction was lost: its database session ended (${cause.message}). The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again. Begin a new transaction to continue.`;
 }
 
 /** Everything `client` has received and not yet handed out, emptied as it is read. */
@@ -3231,21 +3274,18 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
-   * A client that fails while CHECKED OUT rejects its own query, which is why ordinary
-   * query failures behave correctly. A client that fails while IDLE — the server dropped
-   * it, the network went away — has no query to reject, so `pg` removes and destroys it
-   * and then emits `error` on the pool. An `error` event with no listener is an uncaught
-   * exception, so without this handler a dropped idle connection takes the whole server
-   * process down (#298).
+   * A client that fails while IDLE (the server dropped it, the network went away) has no
+   * query to reject, so `pg-pool` removes and destroys it and then emits `error` on the pool.
+   * An `error` event with no listener is thrown out of the emit, so the pool needs this
+   * listener for that re-emit (#298).
    *
-   * The client is already gone by the time this fires, so the handler exists to keep the
-   * event non-fatal and visible — not to reconnect. The pool opens a fresh client on the
-   * next acquire by itself.
+   * The event is already visible by the time this fires: the client's own listener
+   * (`NoticeKeepingClient`) heard it first and logged it, and logging it here as well would
+   * report one event twice. The handler is not there to reconnect either: the pool opens a
+   * fresh client on the next acquire by itself.
    */
   private attachPoolListeners(pool: Pool): void {
-    pool.on("error", (error) => {
-      console.error("[Postgres] Idle pool client error:", error);
-    });
+    pool.on("error", () => {});
     // Most borrows (the object browser, monitoring) never read their notices, so a client
     // returned to the pool drops what it holds rather than keeping it for the life of the
     // process. A statement that reports them took them before its own release.
@@ -3707,6 +3747,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async commitTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "postgres");
+    this.refuseLostTransaction(this.txClient);
     this.clearTxTimeout();
     const client = this.txClient;
     try {
@@ -3718,6 +3759,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "postgres");
+    this.refuseLostTransaction(this.txClient);
     this.clearTxTimeout();
     const client = this.txClient;
     try {
@@ -3729,6 +3771,25 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public isInTransaction(): boolean {
     return this.txActive;
+  }
+
+  /**
+   * Raise, before anything is sent, when the session the transaction is held on has ended since
+   * the transaction began (`endedSessions`): the server ended the transaction with it, so a
+   * statement, a COMMIT or a ROLLBACK has nothing left to act on. The client goes back with the
+   * session's error, so the pool discards it, and the provider holds no transaction from here on:
+   * this call reports the loss and the next one answers `NO_ACTIVE_TRANSACTION`. A
+   * `TransactionLostError`, a `ConnectionError`, because the connection and not the statement is
+   * what failed.
+   */
+  private refuseLostTransaction(client: PoolClient): void {
+    const ended = endedSessions.get(client);
+    if (ended === undefined) return;
+    this.clearTxTimeout();
+    this.txClient = null;
+    this.txActive = false;
+    client.release(ended);
+    throw new TransactionLostError(transactionLostSentence(ended), "postgres", this.config.host, this.config.port);
   }
 
   /**
@@ -3913,6 +3974,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
     if (!this.txClient || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "postgres");
+    this.refuseLostTransaction(this.txClient);
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {

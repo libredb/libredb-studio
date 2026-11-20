@@ -101,7 +101,8 @@ export class UnknownProviderError extends DatabaseConfigError {
 // ============================================================================
 
 /**
- * Connection error - failed to connect to database
+ * Connection error - failed to connect to database. `code` is `CONNECTION_ERROR` unless a subclass names a more
+ * specific one, as `TransactionLostError` does.
  */
 export class ConnectionError extends DatabaseError {
   constructor(
@@ -109,10 +110,25 @@ export class ConnectionError extends DatabaseError {
     provider?: DatabaseType,
     public readonly host?: string,
     public readonly port?: number,
+    code: ApiErrorCode = ApiErrorCode.CONNECTION_ERROR,
   ) {
-    super(message, provider, ApiErrorCode.CONNECTION_ERROR);
+    super(message, provider, code);
     this.name = "ConnectionError";
     Object.setPrototypeOf(this, ConnectionError.prototype);
+  }
+}
+
+/**
+ * A call on a held transaction whose database session has ended since the transaction began. The server ended the
+ * transaction with its session, so the provider holds none from then on and its next call answers
+ * `NO_ACTIVE_TRANSACTION`. A `ConnectionError`, because the connection and not the statement failed, with the code
+ * `TRANSACTION_LOST`, which the editor reads as the end of its transaction.
+ */
+export class TransactionLostError extends ConnectionError {
+  constructor(message: string, provider?: DatabaseType, host?: string, port?: number) {
+    super(message, provider, host, port, ApiErrorCode.TRANSACTION_LOST);
+    this.name = "TransactionLostError";
+    Object.setPrototypeOf(this, TransactionLostError.prototype);
   }
 }
 
@@ -441,7 +457,8 @@ export function isRetryableError(error: unknown): boolean {
   if (
     error instanceof AuthenticationError ||
     error instanceof PermissionDeniedError ||
-    error instanceof DatabaseConfigError
+    error instanceof DatabaseConfigError ||
+    error instanceof TransactionLostError
   ) {
     return false;
   }

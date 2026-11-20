@@ -13,12 +13,14 @@ import { buildConnectionPayload, catalogField } from "./use-connection-payload";
  * TRANSACTION_CREDENTIAL_CHANGED, after which Studio rolled it back because the caller's access changed
  * (docs/GOVERNANCE.md#per-user-providers), or a 400 QUERY_ERROR whose sentence is `NO_ACTIVE_TRANSACTION`, which the
  * provider answers after it rolled the transaction back on its own five-minute timer and the route answers under
- * governance for a caller who owns no transaction there. Any other refusal leaves the transaction open on the server,
- * so the editor keeps it.
+ * governance for a caller who owns no transaction there, or a 503 TRANSACTION_LOST, after which the provider holds no
+ * transaction because the database session it ran on ended. Any other refusal leaves the transaction open on the
+ * server, so the editor keeps it.
  */
 export function transactionGone(answer: { code?: unknown; error?: unknown }): boolean {
   return (
     answer.code === ApiErrorCode.TRANSACTION_CREDENTIAL_CHANGED ||
+    answer.code === ApiErrorCode.TRANSACTION_LOST ||
     (answer.code === ApiErrorCode.QUERY_ERROR && answer.error === NO_ACTIVE_TRANSACTION)
   );
 }

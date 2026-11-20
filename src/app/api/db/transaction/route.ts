@@ -490,7 +490,21 @@ export async function POST(req: NextRequest) {
         // One row past the page, so a full last page is not taken for a full page (#1440).
         const probe = probePastPage(provider, statementSql, options, prepared);
         const result = await provider.queryInTransaction(probe.query, bound.params).catch((error: unknown) => {
-          recordStatement("error", { error });
+          // A statement can fail and leave no transaction behind: the provider found its database session ended
+          // (TRANSACTION_LOST), or the statement was a COMMIT the server ended in failure. The record goes now, with the
+          // transaction's terminal event as `recordFailedEnd` records it, so the next request's reconcile does not
+          // record it as timed out.
+          if (provider.isInTransaction()) recordStatement("error", { error });
+          else {
+            releaseTransaction(owned);
+            if (owner !== null)
+              endTransactionEvent(owner, "rolled-back", {
+                statement: sql,
+                status: "error",
+                started,
+                ...eventError(error),
+              });
+          }
           // An error that names the bound the limiter added says so (`noteAppendedBound`).
           throw noteAppendedBound(error, statementSql, probe.query);
         });

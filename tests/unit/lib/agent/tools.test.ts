@@ -3571,6 +3571,8 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       // A grant the agent's least-privilege credential lacks: reading another object is the repair.
       PermissionDeniedError: "repairable",
       ConnectionError: "propagates",
+      // A ConnectionError: the transaction's database session ended, which no statement can bring back.
+      TransactionLostError: "propagates",
       PoolExhaustedError: "propagates",
       DatabaseConfigError: "propagates",
       // A DatabaseConfigError: the connection's type names no provider, which no statement can change (FND-1).

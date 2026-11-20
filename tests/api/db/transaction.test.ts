@@ -20,6 +20,7 @@ import {
   isTimeoutError,
   isAuthenticationError,
   isRetryableError,
+  TransactionLostError,
   NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
@@ -1732,6 +1733,29 @@ describe("POST /api/db/transaction under governance", () => {
       transactionOutcome: "open",
     });
     expect(recordedEvents[0]?.rowCount).toBeUndefined();
+  });
+
+  test("governance: a statement that finds its transaction lost records the transaction's end, not a timeout", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    // The provider found the transaction's database session ended: it holds no transaction from here on.
+    provider?.queryInTransaction.mockImplementationOnce(async () => {
+      await provider.rollbackTransaction();
+      throw new TransactionLostError("The transaction was lost: its database session ended (x).", "postgres");
+    });
+
+    const lost = await send({ action: "query", sql: "SELECT 1" });
+    expect(lost.status).toBe(503);
+    expect(transactionGone(await parseResponseJSON<{ code?: string; error?: string }>(lost))).toBe(true);
+    // The next request finds no record to reconcile, so nothing is recorded as timed out.
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(
+      recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status, event.errorCode]),
+    ).toEqual([["rolled-back", "SELECT 1", "error", "TRANSACTION_LOST"]]);
+    expect((await send({ action: "begin" })).status).toBe(200);
   });
 
   test("governance: a COMMIT that ends the transaction in failure records rolled-back, one that leaves it open records open", async () => {
