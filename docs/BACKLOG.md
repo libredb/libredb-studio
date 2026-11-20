@@ -1567,6 +1567,8 @@ From the repository root, one request per case:
 Found 2026-09-23 while writing the Prometheus request path (#1085, section 3.4), whose release of a refused redirect's body lost the refusal to the same reset, as a raw `TypeError`, until that release stopped rethrowing the runtime's error.
 Not fixed in #1085: the maintainer's decision for that PR is that it touches no other provider.
 
+Amended 2026-11-21: `fetchJson` now reads the body inside its `try`, under the 16 MiB answer cap, so a Couchbase 200 whose body cannot be read fails as `CouchbaseError` ("Couchbase request failed: ..."); a 3xx whose body cannot be read still fails that way instead of as the redirect refusal, and libSQL is unchanged, so this entry stays open for both.
+
 **Done when:** a Couchbase or libSQL answer whose body cannot be read fails as that transport's own error, a 3xx is refused by `rejectRedirect` whether or not its body arrives, and a test drives each transport against a local server that answers a 302 and resets, with the whole 302 and a reset before any answer as its controls.
 
 ### D110. The response byte cap is not sized against the heap the image ships with
