@@ -13,6 +13,7 @@
  */
 import { afterAll, afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/governance/keyring-file";
+import { standInProcess } from "../../../helpers/uncaught-exception-stand-in";
 import {
   answerSnapshot,
   EMPTY_SOURCE,
@@ -47,6 +48,7 @@ const { resetGovernanceKeyring } = await import("@/lib/governance/keyring");
 const { resetShutdownHooks, runShutdownHooks } = await import("@/lib/shutdown");
 const { register } = await import("@/instrumentation");
 const { logger } = await import("@/lib/logger");
+const { installUncaughtExceptionExit, resetUncaughtExceptionExit } = await import("@/lib/uncaught-exception");
 
 const KEYRING_FILE = keyringFileOf(testKey());
 
@@ -423,6 +425,11 @@ describe("the listener", () => {
 });
 
 describe("register()", () => {
+  // register() installs the uncaught-exception exit once per process; installed on a stand-in first, its own install
+  // attaches nothing, so these tests never bind the real process.exit.
+  beforeEach(() => installUncaughtExceptionExit(standInProcess()));
+  afterEach(() => resetUncaughtExceptionExit());
+
   test("register() starts the refresher under governance without waiting for its first load", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.AUTH_BOOTSTRAP = "off";
