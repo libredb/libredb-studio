@@ -1117,12 +1117,13 @@ Every field a decision lists is present, and no other field is; a client that re
 A statement confirmed by typing the connection's name answers `refuse` on a connection with no name, because an empty expected value would let an empty field confirm it.
 
 **Errors:** the connection is resolved before any field is read, so a connection the caller may not resolve answers its `403`, `404` or `503` whatever the body holds.
-A type that is absent, not text or names no provider, on an inline connection or on the seed entry a `connectionId` names, is refused when the connection resolves, `400 PROVIDER_UNKNOWN` (see [`POST /api/db/query`](#post-apidbquery)).
+An inline connection whose type is absent, not text or names no provider, or a seed entry named by `connectionId` whose type names no provider, is refused when the connection resolves, `400 PROVIDER_UNKNOWN` (see [`POST /api/db/query`](#post-apidbquery)).
+A seed entry whose type is absent or not text fails the whole seed file instead, so every `seed:` id of that file answers `500`.
 A type `LIBREDB_ENABLED_PROVIDERS` leaves out, or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
 
 | Status | When |
 |--------|------|
-| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required`, `Valid connection configuration is required` for an inline connection whose `name` is present and not a string, `null` included, or a type `LIBREDB_ENABLED_PROVIDERS` leaves out; and, with code `PROVIDER_UNKNOWN`, an inline connection or a named seed entry whose `type` is absent, not text or names no provider (see [`POST /api/db/query`](#post-apidbquery)) |
+| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required`, `Valid connection configuration is required` for an inline connection whose `name` is present and not a string, `null` included, or a type `LIBREDB_ENABLED_PROVIDERS` leaves out; and, with code `PROVIDER_UNKNOWN`, an inline connection whose `type` is absent, not text or names no provider, or a named seed entry whose `type` names no provider (see [`POST /api/db/query`](#post-apidbquery)) |
 | `413` | A text over 1,000,000 UTF-16 code units: `The text is <n> UTF-16 code units long, over the 1000000-unit limit for statement analysis. Shorten it to run it.` |
 | `401` | No session (`AUTH_REQUIRED`) |
 | `403` | `CUSTOM_CONNECTIONS_DISABLED` for an inline connection while custom connections are off, or, without governance and the Kubernetes access review, `AUTH_ERROR` for a seed the caller's role may not use |
@@ -2452,7 +2453,8 @@ In governance mode (`GOVERNANCE_SOURCE` set) no operator source is read, so it a
 `error.code` is `unreadable`, `unparseable`, `invalid` or `duplicate-id`.
 `notes` is always empty.
 Further operator sources add their own entries, error codes and notes; the response shape does not change.
-Every message, skip and note names files, variables, fields and ids only, never a value, and the answer never quotes a seed file.
+Every message, skip and note names files, variables, fields and ids only, never a value, and the answer never quotes a seed file, with one exception: an entry listed in `unavailable` carries its type as written, in `type` and quoted in `reason`.
+Only a type shaped as a type id can be listed so ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)).
 A source that fails is reported here with `state: "error"` while `GET /api/connections/managed` answers `500` with `reason: "seed-config-unreadable"`; this route answers `500` only when reading the status itself throws.
 
 ---
