@@ -25,7 +25,8 @@ async function requireAdmin(request: Request, route: string) {
  * connections it listed, the ones it or the resolution skipped, and the names it ignored. A source that
  * failed is reported here with its error while GET /api/connections/managed answers 500 on the same error,
  * so an admin reads why without the server logs. Every message, skip and note names files, variables,
- * fields and ids only, never a value. Under governance no source is read, so the list is empty and the
+ * fields and ids only, never a value, except that an entry listed as unavailable carries its type as written,
+ * in `type` and quoted in `reason` (UNAVAILABLE_TYPE_SHAPE bounds it to a type id's shape). Under governance no source is read, so the list is empty and the
  * status is never asked for (docs/SEED_CONNECTIONS.md, governance mode).
  */
 export async function GET(request: Request) {

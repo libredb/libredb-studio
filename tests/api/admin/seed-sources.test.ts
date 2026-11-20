@@ -292,6 +292,50 @@ describe("GET /api/admin/seed-sources: reports", () => {
     }
   });
 
+  // An unavailable entry's type is repeated as written wherever the entry is listed, so text no type id can be, here a
+  // connection URL that carries the canary as its password, is not kept: the file fails at the type, quoting nothing.
+  test("answers error at the type, quoting nothing, for a type that is text no type id can be", async () => {
+    process.env.SEED_CONFIG_PATH = seedPath;
+    writeFileSync(
+      seedPath,
+      [
+        'version: "1"',
+        "connections:",
+        '  - id: "orders"',
+        '    name: "Orders"',
+        `    type: "postgresql://app:${CANARY}@db.internal:5432/app"`,
+        '    roles: ["*"]',
+        '  - id: "reporting"',
+        '    name: "Reporting"',
+        "    type: postgres",
+        '    host: "db.internal"',
+        '    roles: ["admin"]',
+        "",
+      ].join("\n"),
+    );
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+
+    try {
+      const { status, body } = await answer();
+
+      expect(status).toBe(200);
+      const [report] = body.sources;
+      expect(report?.state).toBe("error");
+      expect(report?.error?.code).toBe("invalid");
+      expect(report?.error?.message).toContain("connections.0.type: Invalid option: expected one of");
+      expect(report?.unavailable).toEqual([]);
+      expect(JSON.stringify(body)).not.toContain(CANARY);
+      const logged = JSON.stringify([info.mock.calls, warn.mock.calls, error.mock.calls]);
+      expect(logged).not.toContain(CANARY);
+    } finally {
+      info.mockRestore();
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+
   test("answers missing, with the path, for an explicit SEED_CONFIG_PATH that does not exist", async () => {
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
 

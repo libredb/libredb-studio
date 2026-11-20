@@ -7,7 +7,7 @@ import {
   SHIPPED_DATABASE_TYPES,
   WRITE_REACH,
 } from "@/lib/db/compatibility";
-import { isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
+import { isDatabaseType } from "@/lib/db/type-id";
 import type { WriteReach } from "@/lib/db/write-reach";
 import type { DatabaseConnection, DatabaseType, WithLiteralSeedFile } from "@/lib/types";
 import { publishedDefaultPairWarning, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
@@ -560,8 +560,22 @@ function unmanagedAgentCredentialMessage(fromDefaults: boolean): string {
 }
 
 /**
+ * The text an unavailable entry's `type` may be: at most 64 ASCII letters, digits, `.`, `_`, `-` and spaces, the shape a
+ * provider's type id can take. The type of an unavailable entry is repeated as written wherever the entry is listed (the
+ * managed list, MCP, the refusal of a request that names it, the admin card, the log), so any other text, a misplaced
+ * connection URL with its password say, is not kept: it fails the file at `connections.<n>.type` with the enum's
+ * message, which repeats no value.
+ */
+export const UNAVAILABLE_TYPE_SHAPE = /^[A-Za-z0-9._ -]{1,64}$/;
+
+/** Whether `type` is text that names no provider and has the shape `UNAVAILABLE_TYPE_SHAPE` allows. */
+const isUnavailableType = (type: unknown): type is string =>
+  typeof type === "string" && !isDatabaseType(type) && UNAVAILABLE_TYPE_SHAPE.test(type);
+
+/**
  * A seed entry whose `type` is text that names no provider this Studio has (FND-1): an engine of a newer Studio, or one
- * not installed here. Only the fields Studio reads from such an entry are declared, each with the schema
+ * not installed here, its type shaped as `UNAVAILABLE_TYPE_SHAPE` allows. Only the fields Studio reads from such an
+ * entry are declared, each with the schema
  * `SeedConnectionSchema` gives it, so they are checked as a known entry's are; every other key, a credential, an
  * address or `managed` included, is stripped unread, because Studio cannot validate an engine field for an engine it
  * does not have and must not hand an unvalidated credential to a browser. The entry is checked whole, with the file,
@@ -570,7 +584,7 @@ function unmanagedAgentCredentialMessage(fromDefaults: boolean): string {
 export const UnavailableSeedEntrySchema = z.object({
   id: SeedConnectionSchema.shape.id,
   name: SeedConnectionSchema.shape.name,
-  type: z.string(),
+  type: z.string().regex(UNAVAILABLE_TYPE_SHAPE),
   roles: SeedConnectionSchema.shape.roles,
   environment: SeedConnectionSchema.shape.environment,
   group: SeedConnectionSchema.shape.group,
@@ -590,9 +604,10 @@ const isSeedConnection = (entry: SeedEntry): entry is z.infer<typeof SeedConnect
 const SeedConnectionFieldsSchema = z.object(SeedConnectionSchema.shape);
 
 /**
- * One entry of `connections`, parsed by the schema its type chooses before any other field is read: a type that is text
- * and names no provider by `UnavailableSeedEntrySchema`, every other entry by `SeedConnectionSchema`, so a missing,
- * empty or non-text type still fails the file with the enum's message. The chosen schema's issues are forwarded as they
+ * One entry of `connections`, parsed by the schema its type chooses before any other field is read: a type that is text,
+ * names no provider and has the shape `UNAVAILABLE_TYPE_SHAPE` allows by `UnavailableSeedEntrySchema`, every other entry
+ * by `SeedConnectionSchema`, so a missing, empty, non-text or otherwise shaped type still fails the file with the enum's
+ * message. The chosen schema's issues are forwarded as they
  * are, so each keeps its code, message and path under `connections.<n>`. A union would report a known entry's own
  * issue as the union's instead.
  *
@@ -605,7 +620,7 @@ const SeedConnectionFieldsSchema = z.object(SeedConnectionSchema.shape);
  */
 const SeedEntrySchema = z.unknown().transform((value, ctx): SeedEntry => {
   const type = typeof value === "object" && value !== null ? (value as { readonly type?: unknown }).type : undefined;
-  if (typeIdRefusal(type)?.reason === "unknown") {
+  if (isUnavailableType(type)) {
     const unavailable = UnavailableSeedEntrySchema.safeParse(value);
     if (unavailable.success) return unavailable.data;
     for (const issue of unavailable.error.issues) ctx.addIssue({ ...issue });

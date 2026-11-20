@@ -2025,4 +2025,71 @@ describe("SeedConfigSchema: an entry whose type names no provider (FND-1)", () =
     expect(issues.map((issue) => issue.path)).toEqual([["connections", 1, "type"]]);
     expect(issues[0]?.message).toStartWith("Invalid option: expected one of");
   });
+
+  // The type of an unavailable entry is repeated as written on every surface that lists it, so only text that can be a
+  // type id is kept: anything else, a misplaced connection URL say, fails the file with the enum's message, which
+  // repeats no value.
+  it.each([
+    ["a connection URL", "postgresql://app:CANARY-7f3a@db.internal:5432/app"],
+    ["text over 64 characters", "a".repeat(65)],
+    ["a line break", "acme\nfoo"],
+    ["a character outside ASCII", "acm\u00e9"],
+    ["a quote", 'acme"foo'],
+  ])("fails the whole file at connections.<n>.type, quoting nothing, for a type that is %s", (_label, type) => {
+    const issues = issuesOf([pg, { ...acme, type }]);
+    expect(issues.map((issue) => issue.path)).toEqual([["connections", 1, "type"]]);
+    expect(issues[0]?.message).toStartWith("Invalid option: expected one of");
+    expect(JSON.stringify(issues)).not.toContain(type);
+  });
+
+  it.each(["a".repeat(64), "acme.store_v2-beta 1", "ACME"])("carries %p apart, a type id's shape", (type) => {
+    const result = parse([{ ...acme, type }, pg]);
+    if (!result.success) throw new Error(result.error.message);
+    expect(result.data.unavailable.map((entry) => entry.type)).toEqual([type]);
+  });
+});
+
+/**
+ * The file-wide checks (a repeated id, an unmanaged readOnly, an unmanaged agent credential) run once every entry's own
+ * fields are valid. An entry refused only by its engine's rules, a readOnly its engine does not offer say, still lets
+ * them run, so both are reported; a field refusal in any entry stops the parse there, and the operator learns of a
+ * file-wide refusal once that field is fixed. SEED_CONNECTIONS.md, Error Handling, says so.
+ */
+describe("SeedConfigSchema: the file-wide checks run once every entry's own fields are valid", () => {
+  const pg = { name: "PG", type: "postgres", host: "db", roles: ["*"] };
+  const etcd = { id: "cluster", name: "Cluster", type: "etcd", host: "etcd.internal", roles: ["*"] };
+  const pathsOf = (connections: unknown[]) => {
+    const result = SeedConfigSchema.safeParse({ version: "1", connections });
+    if (result.success) throw new Error("the premise: the file is refused");
+    return result.error.issues.map((issue) => issue.path.join("."));
+  };
+
+  it("reports a field refusal and not a repeated id behind it", () => {
+    expect(
+      pathsOf([
+        { ...pg, id: "Bad Id" },
+        { ...pg, id: "a" },
+        { ...pg, id: "a" },
+      ]),
+    ).toEqual(["connections.0.id"]);
+    expect(
+      pathsOf([
+        { ...pg, id: "b" },
+        { ...pg, id: "a" },
+        { ...pg, id: "a" },
+      ]),
+    ).toEqual(["connections.2.id"]);
+  });
+
+  it("reports a field refusal and not an unmanaged readOnly behind it", () => {
+    const unmanagedReadOnly = { ...etcd, readOnly: true, managed: false };
+    expect(pathsOf([{ ...pg, id: "a", name: "" }, unmanagedReadOnly])).toEqual(["connections.0.name"]);
+    expect(pathsOf([{ ...pg, id: "a" }, unmanagedReadOnly])).toEqual(["connections.1.readOnly"]);
+  });
+
+  it("reports a field refusal and not an unmanaged agent credential behind it", () => {
+    const unmanagedAgent = { ...pg, id: "b", managed: false, agentUser: "agent", agentPassword: "${P}" };
+    expect(pathsOf([{ ...pg, id: "a", color: "red" }, unmanagedAgent])).toEqual(["connections.0.color"]);
+    expect(pathsOf([{ ...pg, id: "a" }, unmanagedAgent])).toEqual(["connections.1.agentUser"]);
+  });
 });
