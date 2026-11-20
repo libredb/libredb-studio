@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D466, U17 · 344
+- [Drivers and connections](#drivers-and-connections) — D1-D468, U17 · 346
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -1580,6 +1580,11 @@ A body under the cap can exhaust that heap inside `JSON.parse`, before the trans
 
 Found 2026-09-23 while measuring the result byte budget for #1085 (section 5.4).
 Not fixed in #1085: re-deciding M12, or parsing under a bound on what the parse may allocate, is a transport change of its own, and the one process every user shares is the one the parse runs in.
+
+Amended 2026-11-21: Couchbase's editor paths now read every answer under `COUCHBASE_RESPONSE_CAP_BYTES`, 16 MiB, in `src/lib/db/providers/document/couchbase/http-transport.ts`, and that cap has the same gap.
+Measured on Node 24.22.1 and 26.12.1 with `--max-old-space-size=384` in a bare process with no app baseline: a valid `/query/service` answer of 16,777,211 bytes of empty-object rows aborted the process with `Reached heap limit` and exit code 134 on the plaintext and TLS paths, and the transport's read and parse alone peaked at 350 MiB of heap and 715 MiB RSS.
+12,582,908 and 8,388,605 bytes completed in the same process, and 4 MiB peaked at 317 MiB RSS; the server's own baseline lowers each of these.
+The row shaping after the parse adds to the parse's cost, so InfluxDB's measurement of the same cap does not carry over to Couchbase.
 
 **Done when:** the cap is re-measured against the 384 MiB heap and the chart's `512Mi` limit with the most expensive body shape under it, or the body is parsed under a bound on what the parse may allocate, and a test holds that bound.
 
@@ -4579,6 +4584,31 @@ The token refusals of the shared Google auth already pass `serverText`; the API 
 Found 2026-11-15 while moving BigQuery onto the shared Google auth.
 
 **Done when:** BigQuery computes its credential's forms once at connect with `googleCredentialSecrets` and `secretForms`, every API error text passes `serverText` before a sentence is built from it, and a test shows an answer that echoes the key or token withheld.
+
+### D467. A Couchbase answer without length framing that is cut short reads as an empty result
+
+An answer with no `Content-Length` and no chunked encoding ends where its connection closes, so the transport cannot tell a cut answer from a whole one.
+`parseJsonBody` in `src/lib/db/providers/document/couchbase/http-transport.ts` returns `null` for a body that is not JSON, and `throwIfFailed` accepts a 2xx with a `null` payload, so a statement whose answer is cut that way resolves with 0 rows and no error.
+The same cut on `/pools/default` lets Test Connection pass, and on `/pools/default/nodeServices` the query fails with an unclassified `DatabaseError` reading `Cannot read properties of null (reading 'nodesExt')`.
+Measured 2026-11-21 on Node 24.22.1 and 26.12.1 against a local listener answering `200`, `Connection: close`, no length framing, with a JSON body cut mid-row and then a close: the TLS, plaintext and guarded paths all resolved with 0 rows; a reset gives the same on the plaintext and guarded paths, while TLS reports it as `ECONNRESET`.
+The behaviour predates the answer cap.
+
+Found 2026-11-21 by the review of the Couchbase answer bounds change.
+Not fixed there: failing every 2xx whose body is not JSON changes how each Couchbase read is interpreted, which is the maintainer's decision.
+
+**Done when:** a Couchbase 2xx whose body is not JSON fails by name as a retriable `CouchbaseError` that reads as a `ConnectionError`, or the decision to keep reading it as empty is recorded in `docs/providers/couchbase.md` section 4.5, and a test drives both paths against a local listener that cuts a close-delimited answer.
+
+### D468. The guarded plaintext adapter never settles a 101 answer
+
+`httpTransportFetch` in `src/lib/db/http/egress-policy.ts`, the adapter every `fetch`-based provider transport uses when `DB_HTTP_BLOCK_PRIVATE_HOSTS` is set, sends its request through `node:http` with no `upgrade` listener.
+node:http hands a `101 Switching Protocols` answer with Connection: upgrade and an Upgrade header to that event, never to the response callback, so the returned promise never settles.
+Measured 2026-11-21 on Node 24.22.1 with a Couchbase plaintext query against a local listener that answers a 101 and then closes: still pending after 8 s, where the unguarded `fetch` fails at once with `UND_ERR_SOCKET`.
+D259 is the same gap in `createNodeTransport`; Couchbase's TLS path refuses a 101 since the answer bounds change.
+The adapter serves seven provider transports, so the fix is outside any one provider.
+
+Found 2026-11-21 by the review of the Couchbase answer bounds change.
+
+**Done when:** `httpTransportFetch` rejects a 101 answer at once as a network failure and destroys its socket, with a test against a local listener that answers a 101 and closes, and one that keeps the socket open.
 
 ## Value interpolation
 
