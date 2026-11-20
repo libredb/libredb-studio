@@ -1464,16 +1464,18 @@ releases it in a `finally` block.
 
 #### Idle-client failures are handled, not fatal
 
-`connect()` attaches an `error` listener to the pool as soon as it is constructed. This is not
-optional bookkeeping: a client that fails while **checked out** rejects its own query, but a client
-that fails while **idle** (the server dropped it, the network went away) has no query to reject, so
-`pg` removes and destroys it and emits `error` on the pool instead. An `error` event with no listener
-is an uncaught exception — i.e. a long-running server process would die from a dropped idle
-connection.
+`pg` emits `error` on a client whose connection fails or ends: the server ended the session (a terminated backend, an idle-in-transaction timeout, a failover) or the network went away.
+An `error` event with no listener is an uncaught exception in the server process, so every client has to be heard for its whole life, checked out or idle.
 
-The listener reports the failure with the file's usual bracketed-prefix `console.error` and does
-nothing else. `pg` has already discarded the client, so the handler exists to keep the event
-non-fatal and visible, not to reconnect; the pool opens a fresh client on the next acquire.
+Every client the provider's pools build is a `NoticeKeepingClient`, which attaches its own `error` listener at construction ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)).
+That is the part that covers a client while it is **checked out**: `pg-pool` takes its own listener off a client for as long as somebody holds it, which for the transaction client is the whole transaction, so a listener attached by each borrow would have to be repeated at every checkout and could be forgotten at one.
+The listener logs the event once through the server logger, as `PostgreSQL connection error on a pooled session` with the provider and the driver's message (`terminating connection due to administrator command`, `Connection terminated unexpectedly`), never the connection's config or credentials.
+It also records the error on the client, which is how a held transaction learns its session is gone ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)).
+
+A client that fails while **idle** is removed and destroyed by `pg-pool`, which then emits the same `error` on the pool.
+`connect()` attaches a listener to the pool as soon as it is constructed, so that re-emit is heard as well.
+It logs nothing itself: the client's own listener has already reported the event, and a second line would report one failure twice.
+`pg` has already discarded the client, so neither listener reconnects; the pool opens a fresh client on the next acquire.
 
 The same guard is on the PostgreSQL **storage** pool (see [STORAGE.md](../STORAGE.md)), which is a
 second long-lived `pg.Pool` when `STORAGE_PROVIDER=postgres`. Across the other pooled drivers, only
@@ -2071,8 +2073,8 @@ the client is not returned to the pool until commit/rollback. Surfaced via `POST
 | Method | Behaviour |
 |--------|-----------|
 | `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active, and refuses a `BEGIN` that opened nothing ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
-| `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. Ends the session when the statement ended the transaction itself ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
-| `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. Throws if none active. |
+| `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. Ends the session when the statement ended the transaction itself ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)), and reports the transaction lost when its database session has ended ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)). |
+| `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. Throws if none active, and reports the transaction lost when its database session has ended ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)). |
 | `expireTransaction()` | The timeout callback — auto-`ROLLBACK` to prevent leaked locks if a transaction is abandoned. |
 | `isInTransaction()` | Current state. |
 
@@ -2160,6 +2162,26 @@ Measured through the provider against the same server, three writes each followe
 A server that already has the setting on is left alone.
 The read-only profile ([12](#12-agent-read-only-execution-profile-328)) asks nothing: it writes nothing, and a probe at connect would be a statement outside its `BEGIN READ ONLY` envelope.
 A session that refuses the `SET` is reported on the server console and stays in the pool, where its writes behave as they did before.
+
+
+### 8.0.2 A session that ends while a statement or the transaction holds it
+
+The server can end a session at any time: `pg_terminate_backend` from the session itself or from another one, `idle_in_transaction_session_timeout`, a restart or failover, or a network reset.
+Each of these is reported as a named error, and the provider never retries, reconnects the transaction or carries on as if nothing happened.
+
+- **The statement in flight fails with the server's own message**, for example `terminating connection due to administrator command`, as any failed statement does, on `query()`, `queryInTransaction()` and `queryReadOnly()` alike.
+  The agent read-only path then meets a dead client at its `ROLLBACK` and hands the client back with that error, so the pool discards it.
+- **The next statement on that client fails too.**
+  A statement sent at once after one that ended its own session can be handed the same pooled client before its socket has closed, and answers `Connection terminated unexpectedly`.
+  Once the connection has ended, `pg` marks the client unqueryable and `pg-pool` discards it on release, so it is never handed out again and later statements get a fresh session.
+- **A held transaction is reported lost.**
+  The next `queryInTransaction()`, `commitTransaction()` or `rollbackTransaction()` sends nothing and answers a `ConnectionError` (HTTP 503 `CONNECTION_ERROR`): `The transaction was lost: its database session ended (<the server's or the driver's message>). The server ends an open transaction with its session, so nothing in it was committed. Begin a new transaction to continue.`
+  The held client goes back with the session's error, so the pool discards it, and the provider holds no transaction from then on: `isInTransaction()` answers false and a further COMMIT or ROLLBACK answers `NO_ACTIVE_TRANSACTION`, which the editor reads as the transaction having ended.
+  Until that next call the provider still reports the transaction open, because nothing has asked it yet; the event itself is in the server log at once ([§4.2](#42-connection-pooling)).
+
+Measured on PostgreSQL 17 through this provider under Node: a terminated backend reports `terminating connection due to administrator command` (`57P01`) and then `Connection terminated unexpectedly`, and an idle-in-transaction timeout reports `terminating connection due to idle-in-transaction timeout` (`25P03`) and then the same second error.
+The cause named in the sentence is the first error the session reported.
+`tests/live/postgres-held-session-live.ts` drives each of these cases against a real server, under Bun and under Node, and fails if the process sees an uncaught exception or an unhandled rejection.
 
 ### 8.1 `endOpenQueryTransaction()` — a transaction left open on a pooled client
 
@@ -2499,6 +2521,7 @@ the shared hierarchy:
 | A privilege the role lacks (SQLSTATE `42501`: `permission denied for table orders`, `must be owner of table orders`) | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | A refused credential (SQLSTATE class `28`: `28P01` a wrong password, `28000` a `pg_hba.conf` refusal or an unknown role) | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Pool exhausted / too many connections | `PoolExhaustedError` |
+| A call on a held transaction whose database session has ended | `ConnectionError`, answered `503 CONNECTION_ERROR` with the transaction-lost sentence ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)) |
 
 The two refusals are read from the SQLSTATE and never from the words, so `column "password" does not exist` (`42703`) is a `QueryError`.
 Only an error `pg` raises itself, which carries no SQLSTATE, is read by its words, such as `SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string`.
@@ -2798,6 +2821,14 @@ nothing should: a `libredb-postgres` already running on a machine may hold someb
 databases.
 
 The E2E suite (`e2e/`) has been verified against PostgreSQL 18.x.
+
+### 13.5 Live checks CI runs
+
+Two scripts under `tests/live/` start their own PostgreSQL container, on a loopback port Docker picks, and run in the "Functional Smoke" job of [`ci.yml`](../../.github/workflows/ci.yml).
+They are not part of `bun run test`.
+
+- `postgres-read-only-live.ts`: the agent read-only profile against a real server ([§12](#12-agent-read-only-execution-profile-328)).
+- `postgres-held-session-live.ts`: a session that ends under a statement or a held transaction ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)), run under Bun and, bundled with `bun build --target=node`, under Node.
 
 ---
 
