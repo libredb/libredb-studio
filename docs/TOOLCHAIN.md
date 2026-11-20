@@ -521,6 +521,17 @@ Do not re-add it without a number. The measurement takes one build and one page 
 `@biomejs/biome@^2.5`, `oxlint@^1.71`, `@arethetypeswrong/cli@^0.18.4`. `eslint` / `eslint-config-next` /
 `typescript-eslint` / `knip` stay at their current Studio versions.
 
+## Patched dependencies
+
+A dependency flaw that Studio cannot fix through the package's public API is fixed by patching the installed package with `bun patch`.
+`bun patch <package>` prepares `node_modules/<package>` for editing, and `bun patch --commit node_modules/<package>` writes `patches/<package>@<version>.patch` and its `patchedDependencies` entry in `package.json` and `bun.lock`; every `bun install` then applies it.
+Each patch is minimal, held by a test that fails without it, and removed when an upstream release ships the fix.
+Upstream reports are drafted and sent only with the owner's approval.
+
+| Package and version | Patch file | What it fixes | Test that holds it | Upstream | Remove when |
+|---|---|---|---|---|---|
+| `cassandra-driver` 4.10.0 | [`patches/cassandra-driver@4.10.0.patch`](../patches/cassandra-driver@4.10.0.patch) | The connection's three read streams (`Protocol`, `Parser`, `ResultEmitter` in `lib/connection.js`) have no `error` listener, so a frame the driver cannot parse is thrown out of the stream's handler and the connection stops reading. The patch adds one listener that destroys the socket with a `DriverError` naming the host, so the connect or the pending requests fail by name through the driver's own socket-error path and the pool replaces the connection ([`docs/providers/cassandra.md`](providers/cassandra.md) §3.10). | [`tests/integration/db/cassandra-provider.test.ts`](../tests/integration/db/cassandra-provider.test.ts), "a frame the driver cannot parse fails the connection by name", with [`tests/helpers/cassandra-fake-peer.ts`](../tests/helpers/cassandra-fake-peer.ts) | Not yet reported; the project tracks issues in the Apache JIRA project CASSNODEJS. Unfixed on `trunk` as of 2026-11-21. | A `cassandra-driver` release listens for `error` on the three streams; delete the patch and its `patchedDependencies` entry, keep the test. |
+
 ## Coverage measurement (100% line coverage, held since 2026-07-14)
 
 The merged `coverage/lcov.info` sits at 100% lines (#192/#195/#196) and CI enforces it:
