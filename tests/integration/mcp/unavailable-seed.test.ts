@@ -2,7 +2,7 @@
  * A seed entry whose type names no provider this Studio has (FND-1), opted in to MCP: it keeps its opt-in and is
  * listed by `list_connections` with its type as written, no read tool and the refusal's sentence in `unavailable`;
  * every tool that names it answers that sentence before anything is acquired; and a token whose only connection it is
- * lists the two metadata tools and no statement tool. The seed file's other entries are served as before.
+ * lists the metadata tools and no statement tool. The seed file's other entries are served as before.
  *
  * Measured on 2026-11-20 before the change: one such entry failed the whole seed file, so every tool answered that the
  * configuration could not be read, and tools/list answered JSON-RPC -32603.
@@ -18,7 +18,7 @@ import { MCP_READ_ONLY_ANNOTATIONS } from "@/lib/mcp/output";
 import { servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
-import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
+import { listedMcpToolNames, registeredMcpToolNames } from "../../helpers/mcp-tool-names";
 
 pinMcpTestEnvironment();
 
@@ -114,12 +114,13 @@ describe("a seed whose type names no provider, opted in to MCP", () => {
     }
   });
 
-  test("a token whose only connection it is lists the two metadata tools, inspect_schema with the read-only hints", async () => {
+  test("a token whose only connection it is lists the metadata tools alone, inspect_schema with the read-only hints", async () => {
     writeSeedFile(dir, [{ id: "acme", name: "Acme Store", type: "acmefoo" }]);
     const session = await connectClient(admin);
     try {
       const { tools } = await session.client.listTools();
-      expect(tools.map((tool) => tool.name)).toEqual(["list_connections", "inspect_schema"]);
+      // The tools a token that reaches no engine lists: the metadata tools, and no statement tool.
+      expect(tools.map((tool) => tool.name)).toEqual(listedMcpToolNames(new Set()));
       expect(tools.find((tool) => tool.name === "inspect_schema")?.annotations).toEqual({
         ...MCP_READ_ONLY_ANNOTATIONS,
       });

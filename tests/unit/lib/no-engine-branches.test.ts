@@ -179,12 +179,6 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: "each engine's icon and identity colour, joined to the UI-free form data of src/lib/db/connection-form.ts",
   },
-  {
-    path: "src/lib/seed/types.ts",
-    declaration: "SeedDatabaseType",
-    count: 1,
-    reason: "the seed file's validation mirror of the type-id union",
-  },
   { path: "src/lib/seed/discovery-fingerprint.ts", declaration: "IMAGE_ENGINES", count: 3, reason: INBOUND },
   {
     path: "src/lib/seed/discovery-fingerprint.ts",
