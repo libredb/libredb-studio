@@ -1597,9 +1597,23 @@ describe("SQLiteProvider", () => {
       const LARGE = `SELECT '${"x".repeat(8 * 1024 * 1024)}' AS v`;
 
       /**
+       * A statement the child takes minutes to answer: a billion-row recursive count, in
+       * constant memory, at about 12 million rows a second on node:sqlite. The child answers
+       * one line at a time, so while it counts it reads nothing more from its stdin.
+       */
+      const BUSY =
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000000000) SELECT count(*) FROM n";
+
+      /**
        * Connect a provider on a fresh file and hand back its worker, plus a promise that
        * settles once the worker's stdin has closed: the statement is written to that
        * stream, and the part still queued fails with EPIPE when the child is killed.
+       *
+       * The child is given BUSY first, written to its stdin by the test itself under an id
+       * the client never issues, so the statement under test stays queued in the pipe
+       * however late the stop comes. Without it the child could read the whole statement
+       * before a late stop, as it did on a slow windows-latest runner, and then no write
+       * was left to fail.
        */
       async function connectLarge(name: string, queryTimeout?: number) {
         provider = new SQLiteProvider(makeSQLiteConfig({ database: join(fileTmpDir, name) }), { queryTimeout });
@@ -1608,6 +1622,7 @@ describe("SQLiteProvider", () => {
         const stdin = (worker as unknown as { child: ChildProcessWithoutNullStreams }).child.stdin;
         // Not `events.once`, which would reject on the very `error` event under test.
         const closed = new Promise<void>((resolve) => stdin.once("close", () => resolve()));
+        stdin.write(`${JSON.stringify({ id: 0, op: "get", sql: BUSY })}\n`);
         return { worker, closed };
       }
 
@@ -1660,8 +1675,10 @@ describe("SQLiteProvider", () => {
         async (_trigger, name, queryTimeout, stop, message) => {
           const watch = watchUncaught();
           const debug = spyOn(logger, "debug");
+          let worker: SQLiteWorkerClient | null = null;
           try {
-            const { worker, closed } = await connectLarge(name, queryTimeout);
+            const large = await connectLarge(name, queryTimeout);
+            worker = large.worker;
             const outcome = provider.query(LARGE, undefined, "large-q").then(
               () => null,
               (error: unknown) => error,
@@ -1671,7 +1688,7 @@ describe("SQLiteProvider", () => {
             const failure = (await outcome) as Error;
             expect(failure).toBeInstanceOf(DatabaseError);
             expect(failure.message).toContain(message);
-            await closed;
+            await large.closed;
             await new Promise((resolve) => setImmediate(resolve));
             expect(watch.seen).toEqual([]);
             // The write really was cut short, so the case above is not passing vacuously.
@@ -1679,6 +1696,8 @@ describe("SQLiteProvider", () => {
               expect.stringMatching(/^\[sqlite-worker\] stdin failed after terminate\(\): .*EPIPE/),
             );
           } finally {
+            // A test that fails before its stop leaves the child counting BUSY for minutes.
+            worker?.terminate();
             watch.stop();
             debug.mockRestore();
           }
