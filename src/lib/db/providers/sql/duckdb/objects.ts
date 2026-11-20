@@ -1028,6 +1028,9 @@ export function objectDetailFromRows(path: readonly string[], schema: string, ro
       // consumer, so the explicit form keeps the object shape constant across rows.
       defaultValue: readCatalogDefault(row.column_default),
       defaultExpression: row.column_default ?? undefined,
+      // DuckDB numbers a column only through a sequence default, `nextval('seq')`; it has no
+      // identity column and no AUTOINCREMENT (R5).
+      autoIncrement: /^nextval\(/i.test(row.column_default ?? ""),
     })),
     // A composite foreign key is ONE constraint over several columns and `ForeignKeySchema`
     // is per column, so the two aligned arrays are zipped out.

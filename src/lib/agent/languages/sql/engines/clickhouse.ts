@@ -27,7 +27,9 @@ const CLICKHOUSE_PLAN_ESTIMATE: AgentPlanEstimate = Object.freeze({
 });
 
 /** The schemas ClickHouse keeps for itself, excluded from every catalog read below. */
-const CLICKHOUSE_SCHEMA_EXCLUSION = "database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')";
+const CLICKHOUSE_SYSTEM_SCHEMAS = Object.freeze(["system", "INFORMATION_SCHEMA", "information_schema"] as const);
+
+const CLICKHOUSE_SCHEMA_EXCLUSION = `database NOT IN (${CLICKHOUSE_SYSTEM_SCHEMAS.map((schema) => `'${schema}'`).join(", ")})`;
 
 /**
  * The column inventory, one row per column, in each table's own column order. `data_type` is the type verbatim, its
@@ -104,6 +106,7 @@ const CLICKHOUSE_CATALOG_READ: AgentCatalogRead = Object.freeze({
     indexes: composeClickhouseIndexes,
     statistics: composeClickhouseStatistics,
   }),
+  systemSchemas: CLICKHOUSE_SYSTEM_SCHEMAS,
 });
 
 export const CLICKHOUSE_SERVER_OVERLAY = {

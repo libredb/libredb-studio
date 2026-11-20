@@ -226,6 +226,35 @@ describe("runEditorQuery", () => {
     expect(callsOf(endOpenQueryTransaction)).toHaveLength(1);
   });
 
+  /** Q5: the session a session-changing statement kept for this run is handed back, after the ender. */
+  test("the run's scope is handed back after the ender, under the run's own name", async () => {
+    const order: string[] = [];
+    const endOpenQueryTransaction = mock(async () => {
+      order.push("ender");
+      return "none";
+    });
+    const endQueryScope = mock(async () => {
+      order.push("scope");
+    });
+    const provider = fake(resultOf(rowsOf(1)), { endOpenQueryTransaction, endQueryScope });
+    await runEditorQuery(provider, runOf({ statement: "SET @v = 42" }));
+    expect(callsOf(endQueryScope)).toEqual([[callsOf(provider.query)[0][3]]]);
+    expect(order).toEqual(["ender", "scope"]);
+  });
+
+  test("the scope is handed back when the ender raises, and the ender's error still reaches the caller", async () => {
+    const refused = new Error("Could not roll back");
+    const endQueryScope = mock(async () => {});
+    const provider = fake(resultOf(rowsOf(1)), {
+      endOpenQueryTransaction: mock(async () => {
+        throw refused;
+      }),
+      endQueryScope,
+    });
+    await expect(runEditorQuery(provider, runOf())).rejects.toBe(refused);
+    expect(callsOf(endQueryScope)).toHaveLength(1);
+  });
+
   test("an abort while the statement runs cancels it under the request's id", async () => {
     const controller = new AbortController();
     let settle: (value: QueryResult) => void = () => {};

@@ -281,7 +281,10 @@ function readerOf(engine: DatabaseType): (text: string) => string {
       return redaction.read;
     case "sql": {
       const { nameQuote } = redaction;
-      return (text) => redactSql(text, grammar, nameQuote);
+      // A dollar-quoted run is masked on every SQL engine, an engine where `$` is code (`dollarQuotes: false`)
+      // included: reading too much as a literal costs a name, reading too little keeps a value.
+      const masking: SqlGrammar = { ...grammar, dollarQuotes: undefined };
+      return (text) => redactSql(text, masking, nameQuote);
     }
     case "none":
       return keepNothing;

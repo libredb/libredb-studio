@@ -1144,3 +1144,80 @@ describe("connectPhase", () => {
     expect(await connectPhase(() => Promise.reject(denied)).catch((e: unknown) => e)).toBe(denied);
   });
 });
+
+/**
+ * A `pg` error's words are not read as a timeout where its SQLSTATE says it is none (A09). Measured on PostgreSQL 19.0
+ * and 18.7 on 2026-11-20: `WAIT FOR LSN ... WITH (TIMEOUT '1s')` ends with 57014 "timed out while waiting for target
+ * LSN ...", the statement's own wait limit and no budget Studio or the server set, and `RAISE EXCEPTION 'timed out
+ * while waiting'` ends with P0001, the author's words. Both reached the shared 504 sentence, which dropped them.
+ */
+describe("mapDatabaseError: PostgreSQL errors whose words say timeout and whose SQLSTATE does not (A09)", () => {
+  const shaped = (message: string, fields: Record<string, unknown>) => Object.assign(new Error(message), fields);
+  const WAIT_LSN =
+    "timed out while waiting for target LSN FFFFFFFF/00000000 to be flushed; current primary_flush LSN 1/C62B53F0";
+
+  test("a WAIT FOR LSN timeout (57014) keeps the engine's text and is no TimeoutError", () => {
+    const mapped = mapDatabaseError(shaped(WAIT_LSN, { code: "57014" }), "postgres", "WAIT FOR LSN 'FFFFFFFF/0'");
+    expect(mapped).not.toBeInstanceOf(TimeoutError);
+    expect(mapped).not.toBeInstanceOf(QueryCancelledError);
+    expect(mapped).toBeInstanceOf(DatabaseError);
+    expect(mapped.message).toBe(WAIT_LSN);
+    expect(mapped.sqlstate).toBe("57014");
+    expect(mapped.query).toBe("WAIT FOR LSN 'FFFFFFFF/0'");
+  });
+
+  test.each(["timed out while waiting", "canceling statement due to statement timeout", "operation timeout"])(
+    "a RAISE EXCEPTION %p (P0001) is never a TimeoutError and keeps its words",
+    (message) => {
+      const mapped = mapDatabaseError(shaped(message, { code: "P0001" }), "postgres");
+      expect(mapped).not.toBeInstanceOf(TimeoutError);
+      expect(mapped).not.toBeInstanceOf(QueryCancelledError);
+      expect(mapped.message).toBe(message);
+      expect(mapped.sqlstate).toBe("P0001");
+    },
+  );
+
+  test("an ASSERT that fails (P0004) with a timeout word is not a TimeoutError either", () => {
+    expect(mapDatabaseError(shaped("timeout budget wrong", { code: "P0004" }), "postgres")).not.toBeInstanceOf(
+      TimeoutError,
+    );
+  });
+
+  test("a RAISE EXCEPTION worded as a cancel (P0001) is not a QueryCancelledError", () => {
+    const mapped = mapDatabaseError(shaped("canceling statement due to user request", { code: "P0001" }), "postgres");
+    expect(mapped).not.toBeInstanceOf(QueryCancelledError);
+    expect(mapped.message).toBe("canceling statement due to user request");
+  });
+
+  test.each([
+    ["canceling statement due to statement timeout", "57014"],
+    ["canceling statement due to lock timeout", "55P03"],
+    // CockroachDB's statement_timeout, measured on v26.3.2: its words, not PostgreSQL's.
+    ["query execution canceled due to statement timeout", "57014"],
+    ["terminating connection due to idle-in-transaction timeout", "25P03"],
+  ])("a time budget the server enforced, %p (%s), stays a TimeoutError", (message, code) => {
+    expect(mapDatabaseError(shaped(message, { code }), "postgres")).toBeInstanceOf(TimeoutError);
+  });
+
+  test("an operator cancel (57014, due to user request) stays a QueryCancelledError", () => {
+    expect(
+      mapDatabaseError(shaped("canceling statement due to user request", { code: "57014" }), "postgres"),
+    ).toBeInstanceOf(QueryCancelledError);
+  });
+
+  test.each([
+    // mysql2's lock wait timeout (1205): SQLSTATE HY000, read by its words as before.
+    ["Lock wait timeout exceeded; try restarting transaction", { errno: 1205, sqlState: "HY000" }, "mysql"],
+    // Db2's SQL0911N reason 68, a lock timeout under SQLSTATE 40001.
+    [
+      'SQL0911N The current transaction has been rolled back because of a deadlock or timeout.  Reason code "68".',
+      { sqlstate: "40001", sqlcode: -911 },
+      "db2",
+    ],
+    // tedious' request timeout carries a system code, no SQLSTATE.
+    ["Timeout: Request failed to complete in 15000ms", { code: "ETIMEOUT" }, "mssql"],
+    ["DPI-1067: call timeout of 1000 ms exceeded", { errorNum: 0 }, "oracle"],
+  ] as const)("another driver's timeout %p is still a TimeoutError", (message, fields, provider) => {
+    expect(mapDatabaseError(shaped(message, fields), provider)).toBeInstanceOf(TimeoutError);
+  });
+});

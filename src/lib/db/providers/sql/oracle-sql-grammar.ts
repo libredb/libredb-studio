@@ -11,6 +11,11 @@ const ORACLE_GRAMMAR: SqlGrammar = {
   // the slashes. Nothing on that line is hidden.
   doubleSlashComment: false,
   backslashAlwaysEscapes: false,
+  // No dollar-quoted literal: `$` is a name character after the first (`col$a$x` is a column) and refused elsewhere
+  // (`SELECT $$a$$ FROM dual` is ORA-00911, measured on XE 21 through node-oracledb 2026-11-20), and `$$PLSQL_UNIT` is
+  // an inquiry directive, not a string. Read as an opener, `$a$` inside `col$a$x` hid a `;` and a DELETE up to the next
+  // such name (R1).
+  dollarQuotes: false,
   // PL/SQL units and SQL*Plus's `/` line. Measured on 26ai Free 23.26.3 before the fact
   // existed: the procedure cut at its inner `;` was stored INVALID with PLS-00103, and the
   // unit is refused without the `;` after its `END`, so the splitter keeps that one.

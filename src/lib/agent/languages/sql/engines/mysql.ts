@@ -51,6 +51,9 @@ const MYSQL_PLAN_ESTIMATE: AgentPlanEstimate = Object.freeze({
   prefix: "EXPLAIN FORMAT=JSON",
 });
 
+/** The schemas MySQL and MariaDB keep for themselves, left out of every catalog read (`mysqlSchemaExclusion`). */
+const MYSQL_SYSTEM_SCHEMAS = Object.freeze(["information_schema", "performance_schema", "mysql", "sys"] as const);
+
 /**
  * The schemas MySQL and MariaDB reserve, excluded from every catalog read below.
  *
@@ -69,7 +72,7 @@ const MYSQL_PLAN_ESTIMATE: AgentPlanEstimate = Object.freeze({
  * lower case, and the alias is what makes the two hand back the same keys.
  */
 function mysqlSchemaExclusion(column: string): string {
-  return `${column} NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')`;
+  return `${column} NOT IN (${MYSQL_SYSTEM_SCHEMAS.map((schema) => `'${schema}'`).join(", ")})`;
 }
 
 /**
@@ -199,6 +202,7 @@ const MYSQL_CATALOG_READ: AgentCatalogRead = Object.freeze({
     indexes: composeMysqlIndexes,
     statistics: composeMysqlStatistics,
   }),
+  systemSchemas: MYSQL_SYSTEM_SCHEMAS,
 });
 
 export const MYSQL_SERVER_OVERLAY = {

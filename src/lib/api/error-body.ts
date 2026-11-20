@@ -51,6 +51,7 @@ export interface DatabaseErrorAnswer {
   readonly log: DatabaseErrorLog;
 }
 
+/** The body of a `TimeoutError` that carries no message of its own. */
 export const TIMEOUT_SENTENCE = "Query timed out. Please try a simpler query or increase timeout.";
 
 /** The answer for a database error, or `null` when `error` is not one and the caller goes on to its own branches. */
@@ -128,9 +129,13 @@ export function databaseErrorBody(error: unknown): DatabaseErrorAnswer | null {
   // --- DB: TimeoutError ---
   // 504: Chromium sends a POST answered Request Timeout on a reused connection again, so the statement ran again
   // on the database. `retryable` is a hint for the person; no client resends on it.
+  // The error's own message is the body: the engine's report, such as PostgreSQL's "canceling statement due
+  // to statement timeout" or MySQL's "Lock wait timeout exceeded", or the provider's sentence for its own deadline,
+  // which says what became of the statement and the transaction. The shared sentence answers only an error with none.
   if (error instanceof TimeoutError) {
+    const message = error.message.trim() === "" ? TIMEOUT_SENTENCE : error.message;
     return {
-      body: { error: TIMEOUT_SENTENCE, code: ApiErrorCode.TIMEOUT_ERROR, statusCode: 504, retryable: true },
+      body: { error: message, code: ApiErrorCode.TIMEOUT_ERROR, statusCode: 504, retryable: true },
       log: { level: "warn", message: "Query timeout", context: { provider: error.provider, duration: error.timeout } },
     };
   }

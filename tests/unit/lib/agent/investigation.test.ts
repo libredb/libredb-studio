@@ -1195,6 +1195,43 @@ describe("a step's identity is the call it makes", () => {
   });
 });
 
+describe("a repeated SQL call the guard refused", () => {
+  // G-S1: the repeat is answered from the ledger, and the ledger keeps WHICH refusal the guard made.
+  test("is told the guard's reason again, from the ledger", async () => {
+    const postgres: DatabaseConnection = { id: "conn_pg", name: "Orders", type: "postgres", createdAt: new Date(0) };
+    const capabilities: ProviderCapabilities = {
+      queryLanguage: "sql",
+      supportsExplain: true,
+      explainFormat: "postgres-json",
+      supportsExternalQueryLimiting: true,
+      supportsInlineRowEdit: true,
+      supportsMaintenance: false,
+      maintenanceOperations: [],
+      supportsConnectionString: true,
+      defaultPort: 5432,
+      schemaRefreshPattern: "manual",
+    };
+    const { events, turns } = await agentDrive(postgres, { capabilities, labels: TABLE_LABELS }, [
+      callsTool("run_read_query", { sql: "SHOW server_version" }, "call_1"),
+      callsTool("run_read_query", { sql: "SHOW server_version" }, "call_2"),
+    ]);
+
+    expect(events.filter((event) => event.kind === "tool-refused")).toMatchObject([
+      {
+        refusal: {
+          class: "policy-denied",
+          reasonCode: "INPUT_VALIDATION_FAILED",
+          guardViolation: "NON_READ_STATEMENT",
+        },
+      },
+    ]);
+    expect(promptText(turns[1] as Turn)).toContain("SELECT current_setting('<name>')");
+    expect(promptText(turns[2] as Turn)).toContain(
+      "INPUT_VALIDATION_FAILED (the statement guard's reason: NON_READ_STATEMENT). That is a boundary decision",
+    );
+  });
+});
+
 describe("a resumed mongo run that already recommended an index", () => {
   test("is told the index it already recommended, by collection, with no statement", async () => {
     const recommended: AgentRunEvent = {

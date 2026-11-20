@@ -172,6 +172,26 @@ describe("POST /api/ai/query-safety", () => {
     expect(user?.content).toContain("DROP TABLE users");
   });
 
+  // The editor asks before PostgreSQL's table rewrites (C10), and the analysis it shows says what they cost: a lock that
+  // stops every read and write of the table, not rows changed.
+  test("the prompt names the table rewrites and the lock they hold", async () => {
+    const req = createMockRequest("/api/ai/query-safety", {
+      method: "POST",
+      body: { query: "VACUUM FULL t", databaseType: "postgres" },
+    });
+
+    const res = await POST(req as never);
+    expect(res.status).toBe(200);
+
+    const callArgs = (mockStream.mock.calls as unknown[][])[0][0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const system = callArgs.messages.find((m) => m.role === "system")?.content ?? "";
+    expect(system).toContain(
+      '- VACUUM FULL, CLUSTER and REPACK rewrite the whole table and its indexes and hold an ACCESS EXCLUSIVE lock that blocks every read and write of it until they finish (REPACK CONCURRENTLY holds it only briefly); they change no rows: riskLevel is at least "medium", with a "lock" warning',
+    );
+  });
+
   test("a marker written into the query is neutralised, not allowed to close the envelope", async () => {
     const req = createMockRequest("/api/ai/query-safety", {
       method: "POST",
@@ -373,5 +393,25 @@ describe("POST /api/ai/query-safety", () => {
     caller.abort();
     const res = await pending;
     expect(res.status).not.toBe(504);
+  });
+
+  // The dialog drops its request when the user decides before the analysis is done. That is a cancel,
+  // not a provider failure: it used to be logged as an "LLM stream error" with an empty message.
+  test("a caller that goes away gets a 499 cancel, not an LLM stream error", async () => {
+    mockStream.mockImplementation(hangUntilAborted);
+    const caller = new AbortController();
+    const req = new Request("http://localhost:3000/api/ai/query-safety", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "DELETE FROM users" }),
+      signal: caller.signal,
+    });
+
+    const pending = POST(req as never);
+    caller.abort();
+    const res = await pending;
+    expect(res.status).toBe(499);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+    expect(data.code).toBe("QUERY_CANCELLED");
   });
 });

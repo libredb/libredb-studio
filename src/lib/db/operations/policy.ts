@@ -31,6 +31,7 @@ import type { Role } from "@/lib/auth";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ExecutionBudget, ExecutionUsage } from "./budgets";
 import type { OperationRegistry } from "./registry";
+import { type AgentStatementRefusalCode, readAgentStatementRefusal } from "./statement-guard";
 
 /**
  * Execution modes this layer serves today. The normal editor path is
@@ -130,6 +131,11 @@ interface PolicyApprovalDecision extends PolicyDecisionBase {
 interface PolicyDenyDecision extends PolicyDecisionBase {
   readonly kind: "deny";
   readonly reasonCode: PolicyDenyCode;
+  /**
+   * On `INPUT_VALIDATION_FAILED` for an input the agent statement guard refused, the guard's own code, read back from
+   * the issue it wrote (`readAgentStatementRefusal`). Absent on every other denial.
+   */
+  readonly guardViolation?: AgentStatementRefusalCode;
 }
 
 export type PolicyDecision = PolicyAllowDecision | PolicyApprovalDecision | PolicyDenyDecision;
@@ -301,7 +307,13 @@ export function evaluateOperation(params: PolicyEvaluationParams): PolicyDecisio
 
   // Stage 3 — schema-validated input.
   const parsed = descriptor.inputSchema.safeParse(request.input);
-  if (!parsed.success) return deny("INPUT_VALIDATION_FAILED");
+  if (!parsed.success) {
+    const guardViolation = parsed.error.issues
+      .map((issue) => readAgentStatementRefusal(issue.message))
+      .find((code) => code !== null);
+    const denied = deny("INPUT_VALIDATION_FAILED");
+    return guardViolation === undefined ? denied : { ...denied, guardViolation };
+  }
 
   // Stage 4 — provider capability (fast deny; never the security boundary).
   const capabilityView: Partial<ProviderCapabilities> = capabilities ?? {};

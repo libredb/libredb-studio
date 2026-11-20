@@ -400,6 +400,37 @@ describe("readSqlSpan", () => {
     test("an unterminated dollar string reports terminated: false", () => {
       expect(readSqlSpan("$$ body", 0)).toEqual({ kind: "dollar-string", end: 7, terminated: false });
     });
+
+    // PostgreSQL's lexer takes `$` as an identifier character after the first one, so `col$a$x` is one name and no
+    // dollar quote opens inside it (`dollarInNames`). Reading `$a$` there as an opener ran the span to the `$a$` of the
+    // next such name, and a `;` and a DELETE between the two hid inside one "literal" (F09).
+    test.each<[string, string, number]>([
+      ["a tag inside a name", "SELECT col$a$x FROM t", 10],
+      ["the closing `$` of that tag", "SELECT col$a$x FROM t", 12],
+      ["an untagged pair after a name", "SELECT x$$ FROM t", 8],
+      ["the second `$` of that pair", "SELECT x$$ FROM t", 9],
+      ["a tag after a positional parameter", "SELECT $1$a$ FROM t", 9],
+      ["a tag after a non-ASCII letter", "SELECT ğ$a$ FROM t", 8],
+    ])("%s is code where `$` continues a name", (_label, sql, index) => {
+      expect(sql[index]).toBe("$");
+      expect(readSqlSpan(sql, index, resolveSqlGrammar("postgres"))).toBeNull();
+      expect(readSqlSpan(sql, index, { ...DEFAULT_SQL_GRAMMAR, dollarInNames: true })).toBeNull();
+    });
+
+    test("where `$` does not continue a name, the tag after one still opens a run, as before", () => {
+      expect(spanOf("SELECT col$a$x FROM t; DELETE FROM v; SELECT y$a$z", 10)).toBe(
+        "dollar-string|$a$x FROM t; DELETE FROM v; SELECT y$a$",
+      );
+      expect(spanOf("SELECT a$$x$$", 8, resolveSqlGrammar("spark"))).toBe("dollar-string|$$x$$");
+    });
+
+    test("a dollar quote still opens after a space, a paren, an operator or a quoted name", () => {
+      const POSTGRES = resolveSqlGrammar("postgres");
+      expect(spanOf("$a$ x $a$", 0, POSTGRES)).toBe("dollar-string|$a$ x $a$");
+      expect(spanOf("($a$ x $a$)", 1, POSTGRES)).toBe("dollar-string|$a$ x $a$");
+      expect(spanOf("1+$a$ x $a$", 2, POSTGRES)).toBe("dollar-string|$a$ x $a$");
+      expect(spanOf('"c"$a$ x $a$', 3, POSTGRES)).toBe("dollar-string|$a$ x $a$");
+    });
   });
 
   // A dialect whose only dollar-quoted form is the untagged `$$` (`dollarTags: false`, Snowflake's row) reads the
@@ -1219,5 +1250,36 @@ describe("readSqlSpan: line comments a carriage return ends", () => {
     expect(spanOf("-- a\rb\nSELECT 1", 0)).toBe("line-comment|-- a\rb\n");
     const sql = "SELECT 1 -- a\rDROP TABLE t";
     expect(readSqlSpan(sql, 9)).toEqual({ kind: "line-comment", end: sql.length, terminated: true });
+  });
+});
+
+// A dialect with no dollar-quoted form (`dollarQuotes: false`: Oracle, MySQL, SQL Server, Db2, SQLite and libSQL) reads
+// every `$` as code, untagged pair, tagged opener and a `$` inside a name alike, so nothing a `$` starts can hide a
+// `;` or stay open (R1, R2).
+describe("no dollar-quoted strings at all", () => {
+  const NO_DOLLAR: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, dollarQuotes: false };
+
+  test.each(["$$x$$", "$t$x$t$", "SELECT c$a$ FROM t", "SELECT $$a; DELETE FROM t; $$"])(
+    "no `$` of %j opens a span",
+    (sql) => {
+      for (let index = 0; index < sql.length; index++) {
+        if (sql[index] === "$") expect(readSqlSpan(sql, index, NO_DOLLAR)).toBeNull();
+      }
+      expect(hasUnterminatedSpan(sql, NO_DOLLAR)).toBe(false);
+    },
+  );
+
+  test.each(["oracle", "mysql", "mssql", "db2", "sqlite", "libsql"] as const)("%s reads `c$a$` as a name", (type) => {
+    expect(hasUnterminatedSpan("SELECT c$a$ FROM t", resolveSqlGrammar(type))).toBe(false);
+    expect(readSqlSpan("$$x$$", 0, resolveSqlGrammar(type))).toBeNull();
+  });
+
+  test("absent, the dollar string reads as it always did", () => {
+    expect(readSqlSpan("$$x$$", 0, { ...DEFAULT_SQL_GRAMMAR, dollarQuotes: true })).toEqual({
+      kind: "dollar-string",
+      end: 5,
+      terminated: true,
+    });
+    expect(hasUnterminatedSpan("SELECT c$a$ FROM t")).toBe(true);
   });
 });

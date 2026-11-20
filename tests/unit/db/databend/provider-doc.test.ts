@@ -1158,7 +1158,7 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     script.expectDone();
   });
 
-  test("the resuming sentence reaches a route as written and a timeout gets the route's own, as 4.4, 5.8 and 10 say (GAP-CL-1)", async () => {
+  test("the resuming sentence and a timeout's sentence each reach a route as written, as 4.4, 5.8 and 10 say (GAP-CL-1)", async () => {
     const ctx: DatabendFailureContext = {
       request: "get",
       origin: "provider",
@@ -1177,14 +1177,14 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     );
     const timeout = createErrorResponse(new TimeoutError(DATABEND_ERROR_SENTENCES.deadline("10"), "databend", 10_000));
     expect(timeout.status).toBe(504);
-    const routeSentence = ((await timeout.json()) as { error: string }).error;
+    expect(((await timeout.json()) as { error: string }).error).toBe(DATABEND_ERROR_SENTENCES.deadline("10"));
     const cloud = flat(sectionOf(DOC, "### 4.4 Databend Cloud: warehouse, cold start and billing"));
     expect(cloud).toContain(
       "It is a `ConnectionError`, which Studio's routes answer with HTTP 503 and the sentence itself, so the object tree, the monitoring page and Test Connection show it as written.",
     );
     const cancellation = flat(sectionOf(DOC, "### 5.8 Cancellation and deadlines"));
     expect(cancellation).toContain(
-      `answer it with HTTP 504 and their own sentence, "${routeSentence}", a status no browser sends again`,
+      "Studio's statement routes answer each of these sentences unchanged with HTTP 504, a status no browser sends again",
     );
     expect(cancellation).toContain(
       "The resuming sentence of section 4.4 and the slot wait above are no statement's timeout: each is a `ConnectionError`, which Studio's routes answer with HTTP 503 and the sentence itself.",

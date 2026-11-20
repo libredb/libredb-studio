@@ -172,9 +172,14 @@ function mapNativeError(error: Error, provider: DatabaseType, query?: string): D
     return new QueryError(error.message, provider, query, (error as { position?: number }).position);
   }
 
+  // An error whose code says it is no elapsed time budget, such as one the statement raised itself in words of its
+  // own choosing, is never read as a timeout by its words: answered as one, its text was replaced by the shared
+  // timeout sentence.
+  const mayBeTimeout = !DRIVER_ERROR_CLASSIFIERS.some((row) => row.notTimeout?.(message, fields) === true);
+
   // An engine's own report of a time budget that elapsed, in its own words, read before the cancellation words a
   // driver row may share with it.
-  if (DRIVER_ERROR_CLASSIFIERS.some((row) => row.timeout?.(message) === true)) {
+  if (mayBeTimeout && DRIVER_ERROR_CLASSIFIERS.some((row) => row.timeout?.(message) === true)) {
     return new TimeoutError(error.message, provider, undefined, query);
   }
 
@@ -187,7 +192,7 @@ function mapNativeError(error: Error, provider: DatabaseType, query?: string): D
   }
 
   // Timeout errors
-  if (message.includes("timeout") || message.includes("timed out")) {
+  if (mayBeTimeout && (message.includes("timeout") || message.includes("timed out"))) {
     return new TimeoutError(`Query timeout: ${error.message}`, provider, undefined, query);
   }
 

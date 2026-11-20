@@ -297,6 +297,9 @@ const { types: realPgTypes } = await import("pg");
  * unless a test asks for it through `mockPooledClient`.
  */
 class MockPgClient extends EventEmitter {
+  /** `pg`'s wire connection, which emits every protocol message by name; the COPY output tests play it (A06). */
+  public readonly connection = new EventEmitter();
+
   constructor(public readonly clientConfig?: unknown) {
     super();
   }
@@ -574,6 +577,7 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
           wait_event: null,
           duration: "1.2s",
           duration_ms: "1200",
+          blocked: false,
         },
       ],
       fields: [],
@@ -1253,6 +1257,43 @@ describe("PostgresProvider", () => {
       expect(refused).toBeInstanceOf(AuthenticationError);
       expect(createErrorResponse(refused, { route: "api/db/query" }).status).toBe(401);
     });
+
+    // A09, measured on PostgreSQL 19.0 and 18.7 on 2026-11-20: a statement's own wait limit (WAIT FOR LSN ... TIMEOUT,
+    // 57014) and a RAISE EXCEPTION worded as a timeout (P0001) reached the shared 504 sentence, which dropped the text.
+    test.each([
+      [
+        "timed out while waiting for target LSN FFFFFFFF/00000000 to be flushed; current primary_flush LSN 1/C62B53F0",
+        "57014",
+      ],
+      ["timed out while waiting", "P0001"],
+    ])("%p (%s) is answered with the engine's own text, never the timeout sentence", async (message, code) => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      mockQueryFn = async () => {
+        throw Object.assign(new Error(message), { code });
+      };
+
+      const refused = await provider.query("SELECT 1").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(DatabaseError);
+      expect((refused as DatabaseError).name).toBe("DatabaseError");
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({ error: message, code: ApiErrorCode.DATABASE_ERROR, statusCode: 500 });
+    });
+
+    test("a statement_timeout (57014) is still a TimeoutError answered 504", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      mockQueryFn = async () => {
+        throw Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" });
+      };
+
+      const refused = await provider.query("SELECT pg_sleep(2)").catch((error: unknown) => error);
+
+      expect((refused as DatabaseError).name).toBe("TimeoutError");
+      expect(createErrorResponse(refused, { route: "api/db/query" }).status).toBe(504);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -1495,6 +1536,36 @@ describe("PostgresProvider", () => {
       await provider.rollbackTransaction();
       expect(provider.isInTransaction()).toBe(false);
     });
+
+    /**
+     * RG-DIGER1-6's PostgreSQL side, measured on PostgreSQL 19.0 on 2026-11-20 with a
+     * one-client pool: an advisory lock taken inside the transaction survived its ROLLBACK,
+     * and after a COMMIT the next ordinary query also read the transaction's TEMP table and
+     * its `SET SESSION application_name`. The held client is destroyed rather than returned,
+     * however the transaction ends.
+     */
+    for (const [label, end] of [
+      ["COMMIT", (p: InstanceType<typeof PostgresProvider>) => p.commitTransaction()],
+      ["ROLLBACK", (p: InstanceType<typeof PostgresProvider>) => p.rollbackTransaction()],
+      ["the timeout's auto-rollback", (p: InstanceType<typeof PostgresProvider>) => p.expireTransaction()],
+    ] as const) {
+      test(`${label} destroys the transaction's client instead of returning its session to the pool`, async () => {
+        provider = new PostgresProvider(makePgConfig());
+        await provider.connect();
+        await provider.beginTransaction();
+        const release = spyOn(mockClient, "release");
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          await end(provider);
+          expect(provider.isInTransaction()).toBe(false);
+          expect(release).toHaveBeenCalledTimes(1);
+          expect(release).toHaveBeenCalledWith(true);
+        } finally {
+          release.mockRestore();
+          warn.mockRestore();
+        }
+      });
+    }
 
     test("double beginTransaction throws", async () => {
       provider = new PostgresProvider(makePgConfig());
@@ -2090,6 +2161,132 @@ describe("PostgresProvider", () => {
       // record must not survive to answer for a session that no longer exists.
       expect(await provider.endOpenQueryTransaction("scope-a")).toBe("none");
       expect(client.issued).not.toContain("ROLLBACK");
+    });
+
+    /**
+     * Q5: a session-changing statement's client is never pooled. Measured on PostgreSQL 19 and 18
+     * on 2026-11-20: a script's `SET statement_timeout = '7s'` and `set_config('x.v', '42', false)`
+     * were read back by about half of the later runs on the same stored connection.
+     */
+    describe("endQueryScope(): session state stays with its own scope (Q5)", () => {
+      /**
+       * A `fakeClient` that reads the user's statement out of the array-row config `query()` sends
+       * it in, and records how it left each call: `true` is pg's destroy.
+       */
+      function recordingClient(afterStatement: "I" | "T" | "E" = "I") {
+        const client = fakeClient(afterStatement);
+        const answer = client.query;
+        const releases: Array<boolean | undefined> = [];
+        return Object.assign(client, {
+          query: (sql: string | { text: string }) => answer(typeof sql === "string" ? sql : sql.text),
+          releases,
+          release: (destroy?: boolean) => {
+            releases.push(destroy);
+          },
+        });
+      }
+
+      test("a SET keeps its client for the scope's later statements, and endQueryScope closes it", async () => {
+        provider = await connectedProvider();
+        const first = recordingClient();
+        const other = recordingClient();
+        handOut(first, other);
+
+        await provider.query("SET statement_timeout = '7s'", undefined, undefined, "scope-q");
+        await provider.query("SHOW statement_timeout", undefined, undefined, "scope-q");
+
+        expect(first.issued.filter((sql) => !sql.includes("pg_backend_pid"))).toEqual([
+          "SET statement_timeout = '7s'",
+          "SHOW statement_timeout",
+        ]);
+        expect(other.issued).toEqual([]);
+        expect(first.releases).toEqual([]);
+
+        await provider.endQueryScope("scope-q");
+        expect(first.releases).toEqual([true]);
+
+        // Spent: a second end, and an end of a scope that kept nothing, are no-ops.
+        await provider.endQueryScope("scope-q");
+        await provider.endQueryScope("never-used");
+        expect(first.releases).toEqual([true]);
+      });
+
+      test("a statement that changes nothing goes back to the pool", async () => {
+        provider = await connectedProvider();
+        const client = recordingClient();
+        handOut(client);
+
+        await provider.query("SELECT 1", undefined, undefined, "scope-q");
+        await provider.query("UPDATE t SET a = 1");
+
+        expect(client.releases).toEqual([undefined, undefined]);
+      });
+
+      test("without a scope a session-changing statement's client is closed at once", async () => {
+        provider = await connectedProvider();
+        const client = recordingClient();
+        handOut(client);
+
+        await provider.query("SELECT set_config('fx.v', '42', false)");
+
+        expect(client.releases).toEqual([true]);
+      });
+
+      test("a transaction left open on the kept client is still the ender's to roll back, before the close", async () => {
+        provider = await connectedProvider();
+        const client = recordingClient();
+        handOut(client);
+
+        await provider.query("SET statement_timeout = '7s'", undefined, undefined, "scope-q");
+        await provider.query("BEGIN", undefined, undefined, "scope-q");
+
+        expect(await provider.endOpenQueryTransaction("scope-q")).toBe("rolled-back");
+        expect(client.issued).toContain("ROLLBACK");
+        await provider.endQueryScope("scope-q");
+        expect(client.releases).toEqual([true]);
+      });
+
+      test("disconnect closes a kept client first, since the pool's end waits for it", async () => {
+        provider = await connectedProvider();
+        const client = recordingClient();
+        handOut(client);
+
+        await provider.query("CREATE TEMP TABLE fx_tmp (a int)", undefined, undefined, "scope-q");
+        await provider.disconnect();
+        await provider.endQueryScope("scope-q");
+
+        expect(client.releases).toEqual([true]);
+      });
+
+      /** The PostgreSQL vocabulary, one row per entry of `POSTGRES_SESSION_STATE`, and reads that stay pooled. */
+      for (const [sql, kept] of [
+        ["SET search_path = app", true],
+        ["-- note\nset local work_mem = '64MB'", true],
+        ["RESET ALL", true],
+        ["LISTEN fx_channel", true],
+        ["PREPARE fx_s AS SELECT 1", true],
+        ["LOAD 'auto_explain'", true],
+        ["DECLARE fx_c CURSOR WITH HOLD FOR SELECT 1", true],
+        ["CREATE TEMP TABLE fx_tmp (a int)", true],
+        ["CREATE TEMPORARY TABLE fx_tmp (a int)", true],
+        ["CREATE GLOBAL TEMPORARY TABLE fx_tmp (a int)", true],
+        ["SELECT set_config('fx.v', '42', false)", true],
+        ["SELECT pg_advisory_lock(1)", true],
+        ["SELECT pg_try_advisory_lock_shared(1)", true],
+        ["SELECT pg_advisory_xact_lock(1)", false],
+        ["SELECT current_setting('statement_timeout')", false],
+        ["UPDATE t SET a = 1", false],
+        ["CREATE TABLE fx_t (a int)", false],
+      ] as const) {
+        test(`${kept ? "keeps" : "pools"} the session of: ${sql.replace(/\n/g, " ")}`, async () => {
+          provider = await connectedProvider();
+          const client = recordingClient();
+          handOut(client);
+          await provider.query(sql, undefined, undefined, "scope-v");
+          expect(client.releases).toEqual(kept ? [] : [undefined]);
+          await provider.endQueryScope("scope-v");
+        });
+      }
     });
   });
 
@@ -3414,7 +3611,296 @@ describe("PostgresProvider", () => {
       expect(typeof session.query).toBe("string");
       expect(typeof session.duration).toBe("string");
       expect(typeof session.durationMs).toBe("number");
+      // The server's own answer for a session no other one blocks, not a constant (D11b).
       expect(session.blocked).toBe(false);
+    });
+
+    // D11b: measured on PostgreSQL 19.0 and 18.7 on 2026-11-20, a session waiting on a row lock
+    // another holds answered pg_blocking_pids = {holder} in psql, and Studio reported it
+    // blocked: false, because the provider wrote the constant.
+    test("a session waiting on another's lock is blocked, read from pg_blocking_pids", async () => {
+      let sent = "";
+      mockQueryFn = (query: string) => {
+        if (query.includes("wait_event_type") && query.includes("clock_timestamp()")) {
+          sent = query;
+          return Promise.resolve({
+            rows: [
+              {
+                pid: 11,
+                user: "a",
+                database: "testdb",
+                state: "active",
+                wait_event_type: "Lock",
+                query: "UPDATE t",
+                duration: "14s",
+                duration_ms: "14000",
+                blocked: true,
+              },
+              {
+                pid: 10,
+                user: "a",
+                database: "testdb",
+                state: "active",
+                wait_event_type: "Timeout",
+                query: "SELECT pg_sleep(120)",
+                duration: "16s",
+                duration_ms: "16000",
+                blocked: false,
+              },
+            ],
+            fields: [],
+            rowCount: 2,
+          });
+        }
+        return defaultMockQuery(query);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const sessions = await provider.getActiveSessions();
+
+      expect(sent).toContain("pg_blocking_pids(pid)");
+      expect(sent).toContain("AS blocked");
+      expect(sessions.map((session) => [session.pid, session.blocked])).toEqual([
+        [11, true],
+        [10, false],
+      ]);
+    });
+
+    test("a relative without pg_blocking_pids still lists its sessions, with blocked left unknown", async () => {
+      const sent: string[] = [];
+      mockQueryFn = (query: string) => {
+        if (query.includes("wait_event_type") && query.includes("clock_timestamp()")) {
+          sent.push(query);
+          if (query.includes("pg_blocking_pids")) {
+            return Promise.reject(Object.assign(new Error("unknown function: pg_blocking_pids()"), { code: "42883" }));
+          }
+          return Promise.resolve({
+            rows: [
+              {
+                pid: 12,
+                user: "a",
+                database: "testdb",
+                state: "active",
+                wait_event_type: "Lock",
+                query: "UPDATE t",
+                duration: "1s",
+                duration_ms: "1000",
+              },
+            ],
+            fields: [],
+            rowCount: 1,
+          });
+        }
+        return defaultMockQuery(query);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const sessions = await provider.getActiveSessions();
+
+      expect(sent).toHaveLength(2);
+      expect(sent[1]).not.toContain("pg_blocking_pids");
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].pid).toBe(12);
+      expect("blocked" in sessions[0]).toBe(false);
+    });
+
+    // R10, measured on RisingWave 3.1.1 on 2026-11-20: its pg_stat_activity has no `state`,
+    // `query_start` or `wait_event_type` column ("Failed to bind expression: query_start"),
+    // so both forms of the list failed, and the view holds no row even with sessions open.
+    // `SHOW PROCESSLIST` is where RisingWave lists them, with `Id` as `<worker>:<pid>`.
+    test("a relative whose pg_stat_activity cannot answer lists its sessions from SHOW PROCESSLIST", async () => {
+      const sent: string[] = [];
+      mockQueryFn = (query: string) => {
+        sent.push(query);
+        if (query.toLowerCase().includes("from pg_stat_activity")) {
+          return Promise.reject(new Error("Failed to run the query: Failed to bind expression: query_start"));
+        }
+        if (query === "SELECT pg_backend_pid() AS pid") {
+          return Promise.resolve({ rows: [{ pid: 103 }], fields: [], rowCount: 1 });
+        }
+        if (query === "SHOW PROCESSLIST") {
+          const row = (Id: string, Database: string, Time: string, Info: string, User = "root") => ({
+            "Worker Id": "1",
+            Id,
+            User,
+            Host: "172.17.6.1:43052",
+            Database,
+            Time,
+            Info,
+          });
+          return Promise.resolve({
+            rows: [
+              row("1:10", "testdb", "", "", ""),
+              row("1:98", "testdb", "993ms", "SELECT pg_sleep(8)"),
+              row("1:103", "testdb", "0ms", "SHOW PROCESSLIST"),
+              row("1:12", "otherdb", "5ms", "SELECT 1"),
+              row("1:13", "testdb", "", ""),
+            ],
+            fields: [],
+            rowCount: 5,
+          });
+        }
+        return defaultMockQuery(query);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const sessions = await provider.getActiveSessions();
+      expect(sent.filter((query) => query.toLowerCase().includes("from pg_stat_activity"))).toHaveLength(2);
+      // Its own session and another database's are left out; the running statement comes first.
+      expect(sessions).toEqual([
+        {
+          pid: "1:98",
+          user: "root",
+          database: "testdb",
+          clientAddr: "172.17.6.1:43052",
+          state: "active",
+          activity: "active",
+          query: "SELECT pg_sleep(8)",
+          duration: "993ms",
+          durationMs: 993,
+          terminable: false,
+        },
+        {
+          pid: "1:10",
+          user: "unknown",
+          database: "testdb",
+          clientAddr: "172.17.6.1:43052",
+          state: "idle",
+          activity: "idle",
+          query: "",
+          duration: "N/A",
+          durationMs: 0,
+          terminable: false,
+        },
+        {
+          pid: "1:13",
+          user: "root",
+          database: "testdb",
+          clientAddr: "172.17.6.1:43052",
+          state: "idle",
+          activity: "idle",
+          query: "",
+          duration: "N/A",
+          durationMs: 0,
+          terminable: false,
+        },
+      ]);
+      expect(await provider.getActiveSessions({ limit: 1 })).toHaveLength(1);
+    });
+
+    test("a server with neither pg_stat_activity nor SHOW PROCESSLIST has no sessions to show", async () => {
+      // Materialize: no pg_stat_activity relation, and SHOW reads a configuration parameter.
+      mockQueryFn = (query: string) => {
+        if (query.toLowerCase().includes("from pg_stat_activity")) {
+          return Promise.reject(new Error("unknown catalog item 'pg_stat_activity'"));
+        }
+        if (query === "SHOW PROCESSLIST") {
+          return Promise.reject(new Error('unrecognized configuration parameter "processlist"'));
+        }
+        return defaultMockQuery(query);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      expect(await provider.getActiveSessions()).toEqual([]);
+    });
+
+    // Q4, measured on CockroachDB 26.4.1 on 2026-11-20: with two sessions open its
+    // pg_stat_activity answered both forms of the list with no row, so Monitoring > Sessions said
+    // "No active sessions found". CockroachDB lists them in crdb_internal.cluster_sessions, keyed
+    // by a hex session id, with no database column and no pg_terminate_backend().
+    test("an empty pg_stat_activity is read again from crdb_internal.cluster_sessions", async () => {
+      const sent: { sql: string; params?: unknown[] }[] = [];
+      mockQueryFn = async (query: string, params?: unknown[]) => {
+        sent.push({ sql: query, params });
+        if (query.toLowerCase().includes("from pg_stat_activity")) {
+          if (query.includes("pg_blocking_pids")) throw new Error("unknown function: pg_blocking_pids()");
+          return { rows: [], fields: [], rowCount: 0 };
+        }
+        if (query.includes("crdb_internal.cluster_sessions")) {
+          return {
+            rows: [
+              {
+                pid: "18e9c5ac4d041009",
+                user: "root",
+                application_name: "fx_holder",
+                client_addr: "127.0.0.1:50850",
+                state: "ACTIVE",
+                query: "SELECT pg_sleep(30)",
+                query_start: "2026-11-20T14:01:10.301Z",
+                duration_ms: "1500",
+              },
+              {
+                pid: "18e9c5ac882bcb52",
+                user: "",
+                application_name: "",
+                client_addr: "",
+                state: "IDLE",
+                query: "",
+                query_start: null,
+                duration_ms: "0",
+              },
+            ],
+            fields: [],
+            rowCount: 2,
+          };
+        }
+        return defaultMockQuery(query);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const sessions = await provider.getActiveSessions({ limit: 7 });
+      const fallback = sent.find((statement) => statement.sql.includes("crdb_internal.cluster_sessions"));
+      expect(fallback?.params).toEqual([7]);
+      expect(fallback?.sql).toContain("pg_backend_pid IS DISTINCT FROM pg_backend_pid()");
+      expect(fallback?.sql).toContain("'libredb-studio'");
+      expect(sessions).toEqual([
+        {
+          pid: "18e9c5ac4d041009",
+          user: "root",
+          database: "",
+          applicationName: "fx_holder",
+          clientAddr: "127.0.0.1:50850",
+          state: "active",
+          activity: "active",
+          query: "SELECT pg_sleep(30)",
+          queryStart: new Date("2026-11-20T14:01:10.301Z"),
+          duration: "1.5s",
+          durationMs: 1500,
+          terminable: false,
+        },
+        {
+          pid: "18e9c5ac882bcb52",
+          user: "unknown",
+          database: "",
+          applicationName: undefined,
+          clientAddr: undefined,
+          state: "idle",
+          activity: "idle",
+          query: "",
+          queryStart: undefined,
+          duration: "N/A",
+          durationMs: 0,
+          terminable: false,
+        },
+      ]);
+    });
+
+    test("an empty pg_stat_activity on a server without crdb_internal has no sessions to show", async () => {
+      // PostgreSQL with nobody else connected: the view is empty and the second catalog absent.
+      mockQueryFn = async (query: string) => {
+        if (query.toLowerCase().includes("from pg_stat_activity")) return { rows: [], fields: [], rowCount: 0 };
+        if (query.includes("crdb_internal.cluster_sessions")) {
+          throw Object.assign(new Error('relation "crdb_internal.cluster_sessions" does not exist'), { code: "42P01" });
+        }
+        return defaultMockQuery(query);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      expect(await provider.getActiveSessions()).toEqual([]);
     });
 
     test("respects limit option", async () => {
@@ -4036,6 +4522,164 @@ describe("PostgresProvider", () => {
       raised["SELECT 1"] = [{ name: "notice", severity: "WARNING", code: "01000" } as unknown as Notice];
       const result = await (await connected()).query("SELECT 1");
       expect(result.warnings).toEqual([{ message: "", code: "01000", severity: "WARNING" }]);
+    });
+  });
+
+  // A06: measured 2026-11-20 on PostgreSQL 19.0 and 18.7, `COPY (SELECT ...) TO STDOUT` answered
+  // its rows in psql, and in Studio an empty grid reading "3 rows affected": `pg` drops CopyData.
+  describe("COPY ... TO STDOUT output (A06)", () => {
+    type Wire = { name: string; message: Record<string, unknown> };
+    type Session = EventEmitter & { connection: EventEmitter };
+
+    const COPY_CSV = "COPY (SELECT id, status FROM t_a.orders ORDER BY id LIMIT 3) TO STDOUT (FORMAT csv)";
+    const copyOut = (binary = false): Wire => ({ name: "copyOutResponse", message: { binary } });
+    const copyData = (text: string): Wire => ({ name: "copyData", message: { chunk: Buffer.from(text) } });
+    const complete = (text: string): Wire => ({ name: "commandComplete", message: { text } });
+
+    /** What the server sends on the wire for each statement, keyed by its text, before `pg` resolves. */
+    let wire: Record<string, Wire[]>;
+    let session: Session | undefined;
+
+    beforeEach(() => {
+      wire = {};
+      session = undefined;
+      mockTxStatus = "I";
+      mockPooledClient = (pool) => {
+        if (session) return session;
+        const SessionClient = lastPoolConfig.Client as new (config: unknown) => Session;
+        const built = new SessionClient(lastPoolConfig);
+        session = Object.assign(built, {
+          query: async (sql: string | { text: string }, params?: unknown[]) => {
+            for (const sent of wire[typeof sql === "string" ? sql : sql.text] ?? []) {
+              built.connection.emit(sent.name, sent.message);
+            }
+            return mockClient.query(sql, params);
+          },
+          getTransactionStatus: mockClient.getTransactionStatus,
+          release: () => {
+            pool.emit("release", undefined, built);
+          },
+        });
+        return session;
+      };
+      mockQueryFn = (sql: string) => {
+        if (/^\s*COPY\b/i.test(sql)) return Promise.resolve({ rows: [], fields: [], rowCount: 3 });
+        return defaultMockQuery(sql);
+      };
+    });
+
+    afterEach(() => {
+      mockPooledClient = undefined;
+    });
+
+    async function connected() {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      return provider;
+    }
+
+    test("the rows COPY sent are the result, one line per row, not an empty 'rows affected'", async () => {
+      wire[COPY_CSV] = [
+        copyOut(),
+        copyData("1,paid\n"),
+        copyData("2,shipped\n"),
+        copyData("4,new\n"),
+        complete("COPY 3"),
+      ];
+      const result = await (await connected()).query(COPY_CSV);
+
+      expect(result.fields).toEqual(["copy_output"]);
+      expect(result.rows).toEqual([{ copy_output: "1,paid" }, { copy_output: "2,shipped" }, { copy_output: "4,new" }]);
+      expect(result.rowCount).toBe(3);
+      expect(result.columnTypes).toEqual({ copy_output: "text" });
+      expect("warnings" in result).toBe(false);
+    });
+
+    test("a binary COPY shows no bytes and says why", async () => {
+      wire[COPY_CSV] = [copyOut(true), copyData("PGCOPY\n\xff\r\n\0"), complete("COPY 3")];
+      const result = await (await connected()).query(COPY_CSV);
+
+      expect(result.fields).toEqual(["copy_output"]);
+      expect(result.rows).toEqual([]);
+      expect(result.warnings).toEqual([
+        {
+          message:
+            "COPY TO STDOUT sent its output in binary format, which cannot be shown here. Use FORMAT text or csv, or run the query as a SELECT.",
+        },
+      ]);
+    });
+
+    test("past the line limit the rest are counted, and the result says so", async () => {
+      const lines = Array.from({ length: 1003 }, (_, index) => copyData(`${index + 1}\n`));
+      wire[COPY_CSV] = [copyOut(), ...lines, complete("COPY 1003")];
+      const result = await (await connected()).query(COPY_CSV);
+
+      expect(result.rows).toHaveLength(1000);
+      expect(result.rows.at(-1)).toEqual({ copy_output: "1000" });
+      expect(result.warnings).toEqual([
+        {
+          message:
+            "COPY TO STDOUT sent 1003 lines; only the first 1000 are shown here. Run the query as a SELECT to page through it, or use Export.",
+        },
+      ]);
+    });
+
+    test("past the byte budget the rest are counted too", async () => {
+      const big = `${"x".repeat(1.5 * 1024 * 1024)}\n`;
+      wire[COPY_CSV] = [copyOut(), copyData(big), copyData(big), copyData(big), complete("COPY 3")];
+      const result = await (await connected()).query(COPY_CSV);
+
+      expect(result.rows).toHaveLength(2);
+      expect(result.warnings![0].message).toContain("sent 3 lines; only the first 2 are shown");
+    });
+
+    test("in a text of several statements the output lands on the COPY's own result", async () => {
+      const text = `SELECT 1 AS a; ${COPY_CSV}`;
+      wire[text] = [complete("SELECT 1"), copyOut(), copyData("1,paid\n"), complete("COPY 1")];
+      mockQueryFn = (sql: string) =>
+        sql === text
+          ? (Promise.resolve([
+              { rows: [{ a: 1 }], fields: [{ name: "a", dataTypeID: 23 }], rowCount: 1 },
+              { rows: [], fields: [], rowCount: 1 },
+            ]) as unknown as ReturnType<typeof mockQueryFn>)
+          : defaultMockQuery(sql);
+      const result = await (await connected()).query(text);
+
+      expect(result.rows).toEqual([{ a: 1 }]);
+      expect(result.resultSets?.map((set) => set.rows)).toEqual([[{ a: 1 }], [{ copy_output: "1,paid" }]]);
+    });
+
+    test("one statement's COPY output is not shown on the next statement over the same session", async () => {
+      wire[COPY_CSV] = [copyOut(), copyData("1,paid\n"), complete("COPY 1")];
+      const opened = await connected();
+      await opened.query(COPY_CSV);
+      // Output that reached the client outside any statement of this call (the pid read) is dropped too.
+      wire["SELECT pg_backend_pid() as pid"] = [copyOut(), copyData("stray\n")];
+      const second = await opened.query("SELECT 1 AS a", undefined, "run-1");
+
+      expect(second.fields).not.toContain("copy_output");
+      expect(second.rows).not.toContainEqual({ copy_output: "1,paid" });
+      expect(second.rows).not.toContainEqual({ copy_output: "stray" });
+    });
+
+    test("a COPY inside a transaction reports its rows the same way", async () => {
+      wire[COPY_CSV] = [copyOut(), copyData("1,paid\n"), complete("COPY 1")];
+      const opened = await connected();
+      await opened.beginTransaction();
+      const result = await opened.queryInTransaction(COPY_CSV);
+      await opened.commitTransaction();
+
+      expect(result.rows).toEqual([{ copy_output: "1,paid" }]);
+    });
+
+    test("a COPY to a server file, which sends no output, keeps its count", async () => {
+      const toFile = "COPY t_a.orders TO '/tmp/orders.csv'";
+      wire[toFile] = [complete("COPY 3")];
+      const result = await (await connected()).query(toFile);
+
+      expect(result.fields).toEqual([]);
+      expect(result.rows).toEqual([]);
+      expect(result.rowCount).toBe(3);
     });
   });
 
@@ -6765,7 +7409,8 @@ describe("object surface", () => {
     const counts = await provider.countObjects(["app"]);
     expect(attempts).toBeGreaterThan(1);
     expect(counts.table).toEqual({ count: 2 });
-    expect(counts.function).toEqual({ unavailable: 'column "prokind" does not exist' });
+    expect(counts.function).toEqual({ count: 0 });
+    expect(counts.procedure).toEqual({ count: 0 });
     await provider.disconnect();
   });
 });
@@ -7414,6 +8059,254 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
+  /**
+   * Whether the engine numbers a column is read from the catalog (D27). Measured on
+   * PostgreSQL 19.0 and 18.7: `id int PRIMARY KEY` has no default and `attidentity = ''`, a
+   * `serial` has `nextval(...)` as its default and `attidentity = ''`, and an identity column has
+   * no `pg_attrdef` row at all and `attidentity` 'a' or 'd'. The Test Data Generator took the
+   * first for an auto-increment key by its name and left it out of the INSERT.
+   */
+  test("object detail says which columns the engine numbers: identity and sequence-fed, not a plain key (D27)", async () => {
+    const columns = [
+      { name: "plain", type: "integer", nullable: false, defaultValue: null, identity: false },
+      { name: "ident", type: "integer", nullable: false, defaultValue: null, identity: true },
+      {
+        name: "serial_id",
+        type: "integer",
+        nullable: false,
+        defaultValue: "nextval('t_d.x_serial_id_seq'::regclass)",
+        identity: false,
+      },
+      { name: "status", type: "text", nullable: true, defaultValue: "'new'::text", identity: false },
+    ];
+    const seen: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (sql.includes("pg_type") && sql.includes("typtype")) return { rows: [] };
+      if (!sql.includes("format_type")) return { rows: [] };
+      seen.push(sql);
+      expect(sql).toContain("'identity', a.attidentity <> ''");
+      if (sql.includes("described_columns")) {
+        return { rows: [{ name: "x", pk_columns: ["plain"], columns, indexes: null, foreign_keys: null }] };
+      }
+      return { rows: [{ pk_columns: ["plain"], columns, indexes: null, foreign_keys: null }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const autoIncrementOf = (detail: ObjectDetail) => detail.columns.map((c) => [c.name, c.autoIncrement]);
+    const expected = [
+      ["plain", false],
+      ["ident", true],
+      ["serial_id", true],
+      ["status", false],
+    ];
+    expect(autoIncrementOf(await provider.describeObject(["t_d", "x"], "table"))).toEqual(expected);
+    expect(autoIncrementOf((await provider.describeObjects(["t_d"], "table")).details[0])).toEqual(expected);
+    expect(seen).toHaveLength(2);
+    await provider.disconnect();
+  });
+
+  test("a fork with no attidentity is read again without it, and says nothing about auto-increment (D27)", async () => {
+    const sent: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("object_columns")) return { rows: [] };
+      sent.push(sql);
+      if (sql.includes("attidentity")) throw new Error("column a.attidentity does not exist");
+      return {
+        rows: [
+          {
+            pk_columns: ["id"],
+            columns: [{ name: "id", type: "integer", nullable: false, defaultValue: null, identity: null }],
+            indexes: null,
+            foreign_keys: null,
+          },
+        ],
+      };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const detail = await provider.describeObject(["app", "t"], "table");
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toContain("'identity', NULL::boolean");
+    expect(detail.columns[0]).not.toHaveProperty("autoIncrement");
+    await provider.disconnect();
+  });
+
+  /**
+   * A generated column's expression sits in `pg_attrdef` like a default, so the schema-diff migration wrote
+   * `vt integer DEFAULT (a * 3)`, which PostgreSQL 19.0 refuses with `cannot use column reference in DEFAULT
+   * expression` (R9). `attgenerated` tells the two apart: 's' stored, 'v' virtual (PostgreSQL 18), '' neither.
+   */
+  test("object detail says which columns are generated, stored or virtual (R9)", async () => {
+    const columns = [
+      { name: "a", type: "integer", nullable: true, defaultValue: null, identity: false, generated: "" },
+      { name: "vt", type: "integer", nullable: true, defaultValue: "(a * 3)", identity: false, generated: "s" },
+      { name: "vv", type: "integer", nullable: true, defaultValue: "(a + 1)", identity: false, generated: "v" },
+    ];
+    const seen: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (sql.includes("pg_type") && sql.includes("typtype")) return { rows: [] };
+      if (!sql.includes("format_type")) return { rows: [] };
+      seen.push(sql);
+      expect(sql).toContain("'generated', a.attgenerated::text");
+      if (sql.includes("described_columns")) {
+        return { rows: [{ name: "x", pk_columns: [], columns, indexes: null, foreign_keys: null }] };
+      }
+      return { rows: [{ pk_columns: [], columns, indexes: null, foreign_keys: null }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const generatedOf = (detail: ObjectDetail) => detail.columns.map((c) => [c.name, c.generated, c.defaultValue]);
+    const expected = [
+      ["a", undefined, undefined],
+      ["vt", "stored", "(a * 3)"],
+      ["vv", "virtual", "(a + 1)"],
+    ];
+    expect(generatedOf(await provider.describeObject(["t_g", "x"], "table"))).toEqual(expected);
+    expect(generatedOf((await provider.describeObjects(["t_g"], "table")).details[0])).toEqual(expected);
+    expect(seen).toHaveLength(2);
+    await provider.disconnect();
+  });
+
+  test("a fork with no attgenerated is read again without it, and says nothing about generated columns (R9)", async () => {
+    const sent: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("object_columns")) return { rows: [] };
+      sent.push(sql);
+      if (sql.includes("attgenerated")) throw new Error("column a.attgenerated does not exist");
+      return {
+        rows: [
+          {
+            pk_columns: ["id"],
+            columns: [
+              { name: "id", type: "integer", nullable: false, defaultValue: null, identity: false, generated: null },
+            ],
+            indexes: null,
+            foreign_keys: null,
+          },
+        ],
+      };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const detail = await provider.describeObject(["app", "t"], "table");
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toContain("'generated', NULL::text");
+    expect(detail.columns[0]).not.toHaveProperty("generated");
+    await provider.disconnect();
+  });
+
+  /**
+   * The schema-diff migration recreated a sequence as `CREATE SEQUENCE IF NOT EXISTS name;`, so one declared
+   * `START 1000 INCREMENT 5` came back numbering from 1, and no longer belonged to its column (Q2). The read now
+   * carries the `pg_sequence` options of the sequence a default calls, and whether the column owns it.
+   */
+  test("object detail carries the options and owner of the sequence a default calls", async () => {
+    const sequence = {
+      dataType: "integer",
+      start: "1000",
+      increment: "5",
+      min: "1000",
+      max: "2147483647",
+      cache: "1",
+      cycle: false,
+      ownedByColumn: true,
+    };
+    const columns = [
+      {
+        name: "id",
+        type: "integer",
+        nullable: false,
+        defaultValue: "nextval('app.t_id_seq'::regclass)",
+        identity: false,
+        generated: "",
+        sequence,
+      },
+      {
+        name: "note",
+        type: "text",
+        nullable: true,
+        defaultValue: null,
+        identity: false,
+        generated: "",
+        sequence: null,
+      },
+    ];
+    const seen: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (sql.includes("pg_type") && sql.includes("typtype")) return { rows: [] };
+      if (!sql.includes("format_type")) return { rows: [] };
+      seen.push(sql);
+      expect(sql).toContain("JOIN pg_catalog.pg_sequence sq ON sq.seqrelid = sd.refobjid");
+      expect(sql).toContain("LEFT JOIN column_sequences cs ON cs.attrdef_oid = ad.oid");
+      if (sql.includes("described_columns")) {
+        return { rows: [{ name: "t", pk_columns: [], columns, indexes: null, foreign_keys: null }] };
+      }
+      return { rows: [{ pk_columns: [], columns, indexes: null, foreign_keys: null }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    for (const detail of [
+      await provider.describeObject(["app", "t"], "table"),
+      (await provider.describeObjects(["app"], "table")).details[0],
+    ]) {
+      expect(detail.columns[0].sequence).toEqual(sequence);
+      expect(detail.columns[1]).not.toHaveProperty("sequence");
+    }
+    expect(seen).toHaveLength(2);
+    await provider.disconnect();
+  });
+
+  test("a fork with no pg_sequence is read again without it, and says nothing about sequences", async () => {
+    const sent: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("object_columns")) return { rows: [] };
+      sent.push(sql);
+      // Materialize v26.51.1, measured.
+      if (sql.includes("pg_sequence")) throw new Error("unknown catalog item 'pg_catalog.pg_sequence'");
+      return {
+        rows: [
+          {
+            pk_columns: ["id"],
+            columns: [
+              { name: "id", type: "integer", nullable: false, defaultValue: null, identity: false, sequence: null },
+            ],
+            indexes: null,
+            foreign_keys: null,
+          },
+        ],
+      };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const detail = await provider.describeObject(["app", "t"], "table");
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toContain("SELECT NULL::oid AS attrdef_oid, NULL::jsonb AS sequence");
+    expect(detail.columns[0]).not.toHaveProperty("sequence");
+    await provider.disconnect();
+  });
+
+  test("a sequence read is retried only for an error that names its catalogs", async () => {
+    const sent: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("object_columns")) return { rows: [] };
+      sent.push(sql);
+      if (sent.length === 1) throw new Error('relation "pg_depend" does not exist');
+      throw "connection reset";
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    await expect(provider.describeObject(["app", "t"], "table")).rejects.toThrow();
+    expect(sent.length).toBeGreaterThanOrEqual(2);
+    await provider.disconnect();
+  });
+
   test("a kind with no columns describes as three empty lists, not as a failure", async () => {
     mockQueryFn = async (sql) => {
       if (!sql.includes("object_columns")) return { rows: [] };
@@ -7568,10 +8461,12 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
-  test("Materialize's XX000 for the missing prokind costs the routine folders, not the container", async () => {
+  test("Materialize's XX000 for the missing prokind is retried with every routine counted as a function", async () => {
     // Measured on Materialize v26.44.1 on 2026-10-04: the routine arm answers SQLSTATE XX000
     // (internal_error), not 42703, with `column "p.prokind" does not exist`. Keying the
-    // retry on the code lost all seven folders there; the routine-free statement answers.
+    // retry on the code lost all seven folders there. R11 (Materialize 26.51.1, 2026-11-20):
+    // the two routine folders then showed that sentence; a server without prokind has no
+    // procedures, so the retry counts its routines as functions and the procedures as none.
     const statements: string[] = [];
     mockQueryFn = async (sql) => {
       if (!sql.includes("GROUP BY kind")) return { rows: [] };
@@ -7592,30 +8487,71 @@ describe("PostgreSQL object listing and detail", () => {
 
     const counts = await provider.countObjects(["public"]);
     expect(statements).toHaveLength(2);
-    expect(statements[1]).not.toContain("pg_proc");
+    expect(statements[1]).toContain("SELECT 'function'");
+    expect(statements[1]).toContain("pg_catalog.pg_proc");
     expect(counts.table).toEqual({ count: 1 });
     expect(counts.view).toEqual({ count: 1 });
     expect(counts.materialized_view).toEqual({ count: 1 });
     expect(counts.sequence).toEqual({ count: 0 });
     expect(counts.trigger).toEqual({ count: 0 });
-    expect(counts.function).toEqual({ unavailable: 'column "p.prokind" does not exist' });
-    expect(counts.procedure).toEqual({ unavailable: 'column "p.prokind" does not exist' });
+    expect(counts.function).toEqual({ count: 0 });
+    expect(counts.procedure).toEqual({ count: 0 });
+    await provider.disconnect();
+  });
+
+  test("a server without prokind lists every routine under Functions and none under Procedures", async () => {
+    // Q3, measured on Materialize 26.51.1 on 2026-11-20: after R11 both routine folders counted
+    // 0, but opening one sent the listing, which still named `p.prokind`, and the folder showed
+    // `column "p.prokind" does not exist` (XX000). The repair is the counting rule: the kind is
+    // still bound, and only a function matches, so Procedures is empty rather than refused.
+    const listings: { sql: string; params?: unknown[] }[] = [];
+    mockQueryFn = async (sql, params) => {
+      if (!sql.includes("p.proname AS name")) return { rows: [] };
+      listings.push({ sql, params });
+      if (sql.includes("prokind")) {
+        throw Object.assign(new Error('column "p.prokind" does not exist'), { code: "XX000" });
+      }
+      // Its pg_proc has no argument types either, so a routine's identity is its name there.
+      if (sql.includes("proargtypes")) {
+        throw Object.assign(new Error('column "p.proargtypes" does not exist'), { code: "XX000" });
+      }
+      return params?.[1] === "f" ? { rows: [{ name: "mz_fn", identity: "mz_fn" }] } : { rows: [] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    expect((await provider.listObjects(["public"], "function")).map((object) => object.path)).toEqual([
+      ["public", "mz_fn"],
+    ]);
+    expect(await provider.listObjects(["public"], "procedure")).toEqual([]);
+    expect(listings).toHaveLength(6);
+    expect(listings[1].sql).not.toContain("prokind");
+    expect(listings[1].sql).toContain("$2::text = 'f'");
+    expect(listings[2].sql).not.toContain("proargtypes");
+    expect(listings[2].sql).toContain("p.proname AS identity");
+    expect(listings[2].params).toEqual(["public", "f"]);
+    expect(listings[5].params).toEqual(["public", "p"]);
     await provider.disconnect();
   });
 
   test("a code-less refusal naming prokind is handled alike: the column name is the key, not the SQLSTATE", async () => {
     mockQueryFn = async (sql) => {
       if (!sql.includes("GROUP BY kind")) return { rows: [] };
-      if (sql.includes("pg_proc")) throw new Error('column "p.prokind" does not exist');
-      return { rows: [{ kind: "table", n: 4 }] };
+      if (sql.includes("prokind")) throw new Error('column "p.prokind" does not exist');
+      return {
+        rows: [
+          { kind: "table", n: 4 },
+          { kind: "function", n: 2 },
+        ],
+      };
     };
     const provider = makeProvider();
     await provider.connect();
 
     const counts = await provider.countObjects(["app"]);
     expect(counts.table).toEqual({ count: 4 });
-    expect(counts.function).toEqual({ unavailable: 'column "p.prokind" does not exist' });
-    expect(counts.procedure).toEqual({ unavailable: 'column "p.prokind" does not exist' });
+    expect(counts.function).toEqual({ count: 2 });
+    expect(counts.procedure).toEqual({ count: 0 });
     await provider.disconnect();
   });
 
@@ -11702,5 +12638,54 @@ describe("PostgreSQL server-level connection (#1530)", () => {
       ).toBe(refusal as never);
       await provider.disconnect();
     });
+  });
+});
+
+// The PostgreSQL grammar row's statement facts, pinned beside the provider with the doc sentences that state them
+// (§5.8 and §5.9): `$` continues a name (F09), a `BEGIN ATOMIC` routine body is one statement (F08), and the table
+// rewrites ask (C10, C14). Measured on 18.7 and 19.0 through the editor and psql.
+describe("PostgreSQL grammar row: names with `$`, BEGIN ATOMIC bodies and table rewrites", () => {
+  const doc = readFileSync(path.join(import.meta.dir, "../../..", "docs/providers/postgres.md"), "utf8");
+
+  test("a `$tag$` inside a name opens no dollar quote, so the DELETE between two such names is its own statement", async () => {
+    const { resolveSqlGrammar } = await import("@/lib/sql/grammar");
+    const { splitCursorTargets } = await import("@/lib/sql/statement-splitter");
+    const { isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+    const text = "SELECT col$a$x FROM t_f.dollar;\nDELETE FROM t_f.dollar_victim;\nSELECT y$a$z FROM t_f.dollar";
+
+    expect(splitCursorTargets(text, resolveSqlGrammar("postgres")).map((target) => target.sql)).toEqual([
+      "SELECT col$a$x FROM t_f.dollar",
+      "DELETE FROM t_f.dollar_victim",
+      "SELECT y$a$z FROM t_f.dollar",
+    ]);
+    expect(isDangerousQuery(text, "postgres")).toBe(true);
+    expect(doc).toContain("`dollarInNames` is set: `$` continues a name after its first character");
+  });
+
+  test("a BEGIN ATOMIC function is one statement and a bare BEGIN is still a transaction", async () => {
+    const { resolveSqlGrammar } = await import("@/lib/sql/grammar");
+    const { splitCursorTargets } = await import("@/lib/sql/statement-splitter");
+    const fn = "CREATE FUNCTION t_f.add_one(x int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT x + 1; END";
+
+    expect(
+      splitCursorTargets(`${fn};\nSELECT t_f.add_one(1);`, resolveSqlGrammar("postgres")).map((t) => t.sql),
+    ).toEqual([fn, "SELECT t_f.add_one(1)"]);
+    expect(splitCursorTargets("BEGIN; END;", resolveSqlGrammar("postgres")).map((t) => t.sql)).toEqual([
+      "BEGIN",
+      "END",
+    ]);
+    expect(doc).toContain("`script.blocks` is `begin-atomic`");
+  });
+
+  test("REPACK, CLUSTER and VACUUM FULL ask, and a plain VACUUM or FULL false does not", async () => {
+    const { isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+
+    for (const sql of ["REPACK", "REPACK (CONCURRENTLY) t", "CLUSTER", "VACUUM FULL t", "VACUUM (ANALYZE, FULL) t"]) {
+      expect(isDangerousQuery(sql, "postgres"), sql).toBe(true);
+    }
+    for (const sql of ["VACUUM", "VACUUM ANALYZE t", "VACUUM (FULL false) t"]) {
+      expect(isDangerousQuery(sql, "postgres"), sql).toBe(false);
+    }
+    expect(doc).toContain("`confirmForms` names `REPACK` (PostgreSQL 19) and `CLUSTER` in every form");
   });
 });

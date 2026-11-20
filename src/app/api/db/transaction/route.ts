@@ -8,9 +8,16 @@ import type {
   BeginTransactionOptions,
   BeginTransactionResult,
   DatabaseProvider,
+  ExplainFormat,
   QueryPrepareOptions,
   QueryResult,
 } from "@/lib/db/types";
+import {
+  buildExplainStatement,
+  explainsSeveralStatements,
+  ONE_STATEMENT_EXPLAIN_MESSAGE,
+  readExplainRequest,
+} from "@/lib/api/explain-request";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -450,8 +457,30 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: optionError }, { status: 400 });
         }
 
+        // A PLAN ASKED OF THE TRANSACTION (D16). With BEGIN on, the editor's Explain button sends its ask here rather
+        // than to `/api/db/query`, whose pooled session cannot see what the transaction did: measured on PostgreSQL 19
+        // and 18, a table the transaction created was "relation does not exist" to it. The ask is read, a text of
+        // several statements refused and the EXPLAIN built exactly as `/api/db/query` does it, from the connected
+        // provider's strategy, so nothing is explained here that the other route refuses; an ANALYZE of what the
+        // strategy accepts runs inside the transaction, so its ROLLBACK undoes it.
+        const explain = readExplainRequest(body.explain);
+        if (!explain.valid) {
+          return NextResponse.json({ error: explain.message }, { status: 400 });
+        }
+        let plan: { statement: string; format: ExplainFormat } | undefined;
+        if (explain.explain) {
+          if (explainsSeveralStatements(sql, connection.type)) {
+            return NextResponse.json({ error: ONE_STATEMENT_EXPLAIN_MESSAGE }, { status: 400 });
+          }
+          const built = buildExplainStatement(provider.getCapabilities(), sql, explain.explain.mode);
+          if (!built.built) {
+            return NextResponse.json({ error: built.error }, { status: 400 });
+          }
+          plan = { statement: built.statement, format: built.format };
+        }
+
         // Under governance one `open` event per query action, carrying the text the user submitted
-        // (docs/GOVERNANCE.md#query-events).
+        // (docs/GOVERNANCE.md#query-events), and for a plan the mode it asked for.
         const started = queryEventStart();
         const recordStatement = (status: "success" | "error", outcome: { rowCount?: number; error?: unknown }) => {
           if (owner === null) return;
@@ -461,9 +490,29 @@ export async function POST(req: NextRequest) {
             status,
             started,
             rowCount: outcome.rowCount,
+            ...(explain.explain && { explain: explain.explain.mode }),
             ...failure,
           });
         };
+
+        if (plan !== undefined) {
+          // A plan is not a page of rows, so no row bound is added; the values bind the same placeholders, since every
+          // strategy only prefixes the statement.
+          const answered = await provider.queryInTransaction(plan.statement, bound.params).catch((error: unknown) => {
+            recordStatement("error", { error });
+            throw error;
+          });
+          recordStatement("success", { rowCount: eventRowCount(answered.rowCount) });
+          const stillOpen = provider.isInTransaction();
+          if (stillOpen) touchTransaction(owned);
+          else releaseTransaction(owned);
+          return NextResponse.json({
+            ...firstResultSet(answered),
+            rows: rowsWithNonFiniteWords(answered.rows),
+            inTransaction: stillOpen,
+            explainFormat: plan.format,
+          });
+        }
 
         // Several statements run one by one (#1390). Comment-only fragments are dropped first, so
         // a statement with a trailing `-- note` stays one statement on the path below. Never with

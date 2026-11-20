@@ -624,7 +624,23 @@ describe("script", () => {
     expect(resolveSqlGrammar(type).script).toEqual({ blocks: "trigger-body", separatorLine: null, unit: "statement" });
   });
 
-  test.each<DatabaseType>(["postgres", "mysql", "db2", "duckdb", "clickhouse", "trino", "cassandra", "influxdb3"])(
+  test("postgres reads a BEGIN ATOMIC routine body, with no separator line and one statement per request", () => {
+    // Cut at its inner `;`, `CREATE FUNCTION … BEGIN ATOMIC SELECT x + 1; END` was "syntax error at end of input" on 18.7
+    // and 19.0, and the bare `END` after it committed an open transaction (F08).
+    expect(resolveSqlGrammar("postgres").script).toEqual({
+      blocks: "begin-atomic",
+      separatorLine: null,
+      unit: "statement",
+    });
+  });
+
+  test("db2 reads SQL PL compound statements, with no separator line and one statement per request", () => {
+    // Cut at its inner `;`, `BEGIN DECLARE v INTEGER DEFAULT 0; SET v = 7; … END` was "Statement 1 of 5 failed",
+    // SQLCODE -104, on 12.1.0.0 (R3).
+    expect(resolveSqlGrammar("db2").script).toEqual({ blocks: "sql-pl", separatorLine: null, unit: "statement" });
+  });
+
+  test.each<DatabaseType>(["mysql", "duckdb", "clickhouse", "trino", "cassandra", "influxdb3"])(
     "%s keeps the default: every code `;` ends a statement",
     (type) => {
       expect(resolveSqlGrammar(type).script).toBe(DEFAULT_SQL_GRAMMAR.script);
@@ -652,6 +668,42 @@ describe("backslashAlwaysEscapes", () => {
     ),
   )("%s declares false", (type) => {
     expect(resolveSqlGrammar(type).backslashAlwaysEscapes).toBe(false);
+  });
+});
+
+// Whether `$` continues an unquoted name (`dollarInNames`, absent means false): PostgreSQL's lexer takes it after a
+// name's first character (scan.l `ident_cont`), so `col$a$x` is one name there, and the PostgreSQL row declares it
+// (F09), as does DuckDB's, measured on its own engine. Every other row keeps the reading it had.
+describe("dollarInNames", () => {
+  test("postgres and duckdb declare it, and every other row and the default leave it absent", () => {
+    expect(resolveSqlGrammar("postgres").dollarInNames).toBe(true);
+    expect(resolveSqlGrammar("duckdb").dollarInNames).toBe(true);
+    expect(DEFAULT_SQL_GRAMMAR.dollarInNames).toBeUndefined();
+    for (const type of (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter(
+      (type) => type !== "postgres" && type !== "duckdb",
+    )) {
+      expect(resolveSqlGrammar(type).dollarInNames, type).toBeUndefined();
+    }
+  });
+});
+
+// Whether the dialect has a dollar-quoted string at all (`dollarQuotes`, absent means true): Oracle, MySQL, SQL Server,
+// Db2 and SQLite (libSQL reads SQLite's grammar) have none, measured on each engine, so every `$` is code there (R1,
+// R2). Every other row keeps the reading it had.
+describe("dollarQuotes", () => {
+  const NONE = ["oracle", "mysql", "mssql", "db2", "sqlite", "libsql"] as const;
+
+  test.each(NONE)("%s declares false", (type) => {
+    expect(resolveSqlGrammar(type).dollarQuotes).toBe(false);
+  });
+
+  test("every other row and the default leave it absent", () => {
+    expect(DEFAULT_SQL_GRAMMAR.dollarQuotes).toBeUndefined();
+    for (const type of (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter(
+      (type) => !(NONE as readonly string[]).includes(type),
+    )) {
+      expect(resolveSqlGrammar(type).dollarQuotes, type).toBeUndefined();
+    }
   });
 });
 

@@ -486,7 +486,8 @@ say where it is not, and the splitter reads them:
 | Oracle | a PL/SQL unit: an anonymous block (`DECLARE` or `BEGIN` first) and `CREATE [OR REPLACE] PROCEDURE`, `FUNCTION`, `PACKAGE [BODY]`, `TRIGGER`, `TYPE BODY`, read to its matching `END`; the `;` after that `END` stays in the text, because Oracle refuses the unit without it | `/` alone on a line (SQL*Plus) | one statement |
 | SQL Server | none needed: the batch holds every body | `GO` alone on a line (sqlcmd, SSMS) | the whole batch between `GO` lines |
 | SQLite, libSQL | `CREATE [TEMP] TRIGGER … BEGIN … END`; a bare `BEGIN` is still a transaction | none | one statement |
-| every other dialect | none: PostgreSQL's routine bodies are `$$` literals the span reader already holds | none | one statement |
+| PostgreSQL | `CREATE [OR REPLACE] FUNCTION` or `PROCEDURE` with a `BEGIN ATOMIC … END` body, read as psql's scanner reads it: outside parentheses `BEGIN` opens a level, `CASE` one inside it, `END` closes one; a `$$` body is a literal the span reader already holds, and a bare `BEGIN` is still a transaction | none | one statement |
+| every other dialect | none | none | one statement |
 
 Inside a body, `CASE … END` closes a frame and `END IF` / `END LOOP` are skipped, and a declaration
 section shares its block's `END`. A compound trigger's section holds its timing points
@@ -946,6 +947,14 @@ statement with a 400: an EXPLAIN prefixes one statement, so the rest of the text
 statements of their own (measured on Materialize, AlloyDB Omni and Cloudberry: the INSERT was applied
 twice).
 
+**Inside a transaction (BEGIN on)** no background plan is asked for: the plan request would run on a
+pooled session outside the transaction, which cannot see what the transaction did (a table it created
+answered `relation ... does not exist`, measured on PostgreSQL 19 and 18), and the transaction's own session
+is not handed a statement nobody asked for. The **Explain** button plans inside the transaction instead,
+through `POST /api/db/transaction`, so on PostgreSQL its `EXPLAIN (ANALYZE, ...)` runs the SELECT inside the
+transaction. An Explain that fails clears the plan on the Explain tab, so the plan of the statement before
+is never shown under its error.
+
 The plan request carries a `queryId` of its own, and **Cancel** cancels it on the server together
 with the run. Closing an editor tab whose statement is still running cancels it the same way, run and
 plan, since the tab's Cancel button goes with it. That cancel raises no toast of its own, so the close's
@@ -1055,6 +1064,11 @@ Expected 100 rows, got 15.2K. Statistics may be outdated.
 
 Interactive, collapsible execution plan with:
 - Node type icons (Seq Scan, Index Scan, Join, Sort, etc.)
+- Join nodes labelled as PostgreSQL's text plan labels them: the JSON plan's `Node Type` and `Join Type`
+  read together, so `Hash Join` of type `Anti` shows as **Hash Anti Join**, `Nested Loop` of type `Left` as
+  **Nested Loop Left Join** and `Merge Join` of type `Semi` as **Merge Semi Join**; an inner join keeps its
+  node type. PostgreSQL 19 plans `NOT IN` over NOT NULL columns as an anti join, which read as a plain
+  `Hash Join` before.
 - Time bars showing relative cost
 - Row counts and costs
 - Filter conditions

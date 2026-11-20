@@ -1,4 +1,4 @@
-resolveSqlGrammar("libsql") => {"hash":"code","bracket":"quoted-identifier","blockComment":"flat","alternateQuoting":false,"doubleSlashComment":false,"backslashAlwaysEscapes":false,"script":{"blocks":"trigger-body","separatorLine":null,"unit":"statement"},"trailingLimitClauses":[]}
+resolveSqlGrammar("libsql") => {"hash":"code","bracket":"quoted-identifier","blockComment":"flat","alternateQuoting":false,"doubleSlashComment":false,"backslashAlwaysEscapes":false,"dollarQuotes":false,"script":{"blocks":"trigger-body","separatorLine":null,"unit":"statement"},"trailingLimitClauses":[]}
 readsSqlText("libsql") => true
 hashRunIsAmbiguous(resolveSqlGrammar("libsql")) => false
 readSqlSpan walk("SELECT 1 # c\nFROM t") => [["whitespace",6,7],["whitespace",8,9],["whitespace",10,11],["whitespace",12,13],["whitespace",17,18]]
@@ -13,8 +13,8 @@ readSqlSpan walk("SELECT 1 // c; DROP TABLE t") => [["whitespace",6,7],["whitesp
 splitStatements("SELECT 1 // c; DROP TABLE t") => [{"sql":"SELECT 1 // c","startLine":0,"start":0,"end":13},{"sql":"DROP TABLE t","startLine":0,"start":15,"end":27}]
 readSqlSpan walk("SELECT 'a\\'b'; SELECT 2") => [["whitespace",6,7],["string",7,23]]
 splitStatements("SELECT 'a\\'b'; SELECT 2") => [{"sql":"SELECT 'a\\'b'; SELECT 2","startLine":0,"start":0,"end":23}]
-readSqlSpan walk("SELECT $$x;$$, \"q\"\"n\", `b``t` FROM t") => [["whitespace",6,7],["dollar-string",7,13],["whitespace",14,15],["quoted-identifier",15,21],["whitespace",22,23],["quoted-identifier",23,29],["whitespace",29,30],["whitespace",34,35]]
-splitStatements("SELECT $$x;$$, \"q\"\"n\", `b``t` FROM t") => [{"sql":"SELECT $$x;$$, \"q\"\"n\", `b``t` FROM t","startLine":0,"start":0,"end":36}]
+readSqlSpan walk("SELECT $$x;$$, \"q\"\"n\", `b``t` FROM t") => [["whitespace",6,7],["whitespace",14,15],["quoted-identifier",15,21],["whitespace",22,23],["quoted-identifier",23,29],["whitespace",29,30],["whitespace",34,35]]
+splitStatements("SELECT $$x;$$, \"q\"\"n\", `b``t` FROM t") => [{"sql":"SELECT $$x","startLine":0,"start":0,"end":10},{"sql":"$$, \"q\"\"n\", `b``t` FROM t","startLine":0,"start":11,"end":36}]
 readSqlSpan walk("CREATE TRIGGER tr AFTER INSERT ON t BEGIN SELECT 1; END; SELECT 2") => [["whitespace",6,7],["whitespace",14,15],["whitespace",17,18],["whitespace",23,24],["whitespace",30,31],["whitespace",33,34],["whitespace",35,36],["whitespace",41,42],["whitespace",48,49],["whitespace",51,52],["whitespace",56,57],["whitespace",63,64]]
 splitStatements("CREATE TRIGGER tr AFTER INSERT ON t BEGIN SELECT 1; END; SELECT 2") => [{"sql":"CREATE TRIGGER tr AFTER INSERT ON t BEGIN SELECT 1; END","startLine":0,"start":0,"end":55},{"sql":"SELECT 2","startLine":0,"start":57,"end":65}]
 readSqlSpan walk("SELECT 1\nGO\nSELECT 2") => [["whitespace",6,7],["whitespace",8,9],["whitespace",11,12],["whitespace",18,19]]

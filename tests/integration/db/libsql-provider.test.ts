@@ -3937,3 +3937,25 @@ describe("MCP run_read_query on a libSQL connection", () => {
     expect(closed).toBe(true);
   });
 });
+
+// R1: `$` is never a dollar quote on this engine, measured on the engine itself and written in its doc, so a `$tag$`
+// inside a name hides no `;` and no write, and a plain read naming one is readable.
+describe("libSQL SQL grammar: dollarQuotes", () => {
+  test("a `$tag$` inside a name opens no dollar quote, so the DELETE between two such names asks", async () => {
+    const { resolveSqlGrammar } = await import("@/lib/sql/grammar");
+    const { splitCursorTargets } = await import("@/lib/sql/statement-splitter");
+    const { hasUnreadableRun, isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+    const doc = await Bun.file(`${import.meta.dir}/../../../docs/providers/libsql.md`).text();
+    const text = "SELECT col$a$x FROM t;\nDELETE FROM t;\nSELECT y$a$z FROM t";
+
+    expect(resolveSqlGrammar("libsql").dollarQuotes).toBe(false);
+    expect(splitCursorTargets(text, resolveSqlGrammar("libsql")).map((target) => target.sql)).toEqual([
+      "SELECT col$a$x FROM t",
+      "DELETE FROM t",
+      "SELECT y$a$z FROM t",
+    ]);
+    expect(isDangerousQuery(text, "libsql")).toBe(true);
+    expect(hasUnreadableRun("SELECT c$a$ FROM t", "libsql")).toBe(false);
+    expect(doc).toContain("`dollarQuotes` is false, a fact of the shared `SQLITE_GRAMMAR`");
+  });
+});

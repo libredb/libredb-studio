@@ -2751,7 +2751,11 @@ describe("runReadQueryTool — a policy denial is not a syntax error", () => {
     const outcome = await runReadQueryTool(h.context, { sql: "DELETE FROM orders" });
 
     if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
-    expect(outcome.refusal).toEqual({ class: "policy-denied", reasonCode: "INPUT_VALIDATION_FAILED" });
+    expect(outcome.refusal).toEqual({
+      class: "policy-denied",
+      reasonCode: "INPUT_VALIDATION_FAILED",
+      guardViolation: "NON_READ_STATEMENT",
+    });
     expect(h.queryReadOnly).not.toHaveBeenCalled();
     expect(h.acquireProvider).not.toHaveBeenCalled();
   });
@@ -2762,7 +2766,63 @@ describe("runReadQueryTool — a policy denial is not a syntax error", () => {
     const outcome = await runReadQueryTool(h.context, { sql: "DROP TABLE orders" });
 
     if (outcome.kind !== "refused") throw new Error("expected refused");
-    expect(Object.keys(outcome.refusal).sort()).toEqual(["class", "reasonCode"]);
+    // The guard's code is this server's closed vocabulary, never the statement's text.
+    expect(Object.keys(outcome.refusal).sort()).toEqual(["class", "guardViolation", "reasonCode"]);
+  });
+
+  /*
+    G-S1 (PostgreSQL 19, 2026-11-20): a local model wrote `SHOW server_version` in three runs out of three and heard
+    only INPUT_VALIDATION_FAILED, though the guard had written NON_READ_STATEMENT. The code now travels, the keywords
+    a read may be led by are named, and PostgreSQL adds the SELECT that reads the same setting.
+  */
+  test("a SHOW on PostgreSQL is told the guard's reason and the SELECT that reads the same setting", async () => {
+    const h = harness();
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SHOW server_version" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toEqual({
+      class: "policy-denied",
+      reasonCode: "INPUT_VALIDATION_FAILED",
+      guardViolation: "NON_READ_STATEMENT",
+    });
+    expect(outcome.modelText).toContain("The statement guard's reason: NON_READ_STATEMENT.");
+    expect(outcome.modelText).toContain("Only a statement led by SELECT, VALUES, TABLE, EXPLAIN");
+    expect(outcome.modelText).toContain("SELECT current_setting('<name>') or from the pg_settings view");
+    expect(outcome.modelText).toContain("SELECT version()");
+    // The shape sentence and the closing instruction still follow, in order.
+    expect(outcome.modelText.indexOf("NON_READ_STATEMENT")).toBeLessThan(
+      outcome.modelText.indexOf("differently shaped read may still be admitted"),
+    );
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+  });
+
+  test("an engine with no SELECT form to name gets the keywords alone", async () => {
+    const h = harness({ connection: { ...connection, type: "mysql" } });
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SHOW VARIABLES" });
+
+    expect(outcome.modelText).toContain("The statement guard's reason: NON_READ_STATEMENT.");
+    expect(outcome.modelText).toContain("Only a statement led by SELECT, VALUES, TABLE, EXPLAIN");
+    expect(outcome.modelText).not.toContain("current_setting");
+  });
+
+  test("an engine whose catalog read is unsupported gets the keywords alone", async () => {
+    const h = harness({ connection: { ...connection, type: "spark" } });
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SHOW TABLES" });
+
+    expect(outcome.modelText).toContain("Only a statement led by SELECT, VALUES, TABLE, EXPLAIN");
+    expect(outcome.modelText).not.toContain("current_setting");
+  });
+
+  test("another guard refusal names its code and no keyword list", async () => {
+    const outcome = await runReadQueryTool(harness().context, { sql: "SELECT 1; SELECT 2" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({ guardViolation: "MULTIPLE_STATEMENTS" });
+    expect(outcome.modelText).toContain("The statement guard's reason: MULTIPLE_STATEMENTS.");
+    expect(outcome.modelText).not.toContain("Only a statement led by");
   });
 
   test("the model is told this is a boundary decision, not a malformed statement", async () => {
@@ -2799,7 +2859,11 @@ describe("runReadQueryTool — a policy denial is not a syntax error", () => {
     if (shape.kind !== "refused" || target.kind !== "refused" || absolute.kind !== "refused") {
       throw new Error("expected all three to be refused");
     }
-    expect(shape.refusal).toEqual({ class: "policy-denied", reasonCode: "INPUT_VALIDATION_FAILED" });
+    expect(shape.refusal).toEqual({
+      class: "policy-denied",
+      reasonCode: "INPUT_VALIDATION_FAILED",
+      guardViolation: "SIDE_EFFECT_KEYWORD",
+    });
     expect(target.refusal).toEqual({ class: "policy-denied", reasonCode: "TARGET_OUT_OF_SCOPE" });
     expect(absolute.refusal).toEqual({ class: "policy-denied", reasonCode: "STATEMENT_BUDGET_EXCEEDED" });
 
@@ -3367,7 +3431,11 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
 
     const denied = await runReadQueryTool(h.context, { sql: "SELECT copy FROM ads" });
     if (denied.kind !== "refused") throw new Error(`expected refused, got ${denied.kind}`);
-    expect(denied.refusal).toEqual({ class: "policy-denied", reasonCode: "INPUT_VALIDATION_FAILED" });
+    expect(denied.refusal).toEqual({
+      class: "policy-denied",
+      reasonCode: "INPUT_VALIDATION_FAILED",
+      guardViolation: "SIDE_EFFECT_KEYWORD",
+    });
     expect(denied.modelText).toMatch(/differently shaped read may still be admitted/i);
 
     const repaired = await runReadQueryTool(h.context, { sql: 'SELECT "copy" FROM ads' });
@@ -3724,6 +3792,63 @@ describe("inspectSchemaTool — the server composes the catalog statement", () =
 
     if (outcome.kind !== "completed") throw new Error("expected completed");
     expect(outcome.artifact.operationId).toBe("sql.query.read");
+  });
+
+  /*
+    G-S2 (PostgreSQL 19, 2026-11-20): `inspect_schema` narrowed to `pg_catalog` was told "There is no object of that
+    name in this database" about `pg_locks` and `pg_stat_autovacuum_scores`, which exist. The composers leave the
+    engine's own schemas out by name, so that read could only be empty; it is now answered before anything is sent.
+  */
+  test.each([
+    ["postgres", "pg_catalog"],
+    ["postgres", "PG_CATALOG"],
+    ["postgres", "information_schema"],
+    ["mysql", "performance_schema"],
+    ["mssql", "sys"],
+    ["clickhouse", "system"],
+    ["trino", "information_schema"],
+  ] as const)(
+    "%s: a selector naming the system schema %s is told the tool lists user objects only",
+    async (type, schema) => {
+      const h = harness({ connection: { ...connection, type } });
+
+      const outcome = await inspectSchemaTool(h.context, { schema, table: "pg_locks" });
+
+      expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "CATALOG_SYSTEM_SCHEMA", detail: schema });
+      expect(outcome.modelText).toContain("inspect_schema lists user objects only");
+      expect(outcome.modelText).toContain("run_read_query");
+      expect(outcome.modelText).not.toContain("There is no object of that name");
+      expect(h.acquireProvider).not.toHaveBeenCalled();
+    },
+  );
+
+  test("a user schema is still read, whatever its name shares with a system one", async () => {
+    const h = harness();
+
+    const outcome = await inspectSchemaTool(h.context, { schema: "pg_catalog_archive" });
+
+    expect(outcome.kind).toBe("completed");
+  });
+
+  test("an empty column read on an engine that hides its own objects does not deny the object", async () => {
+    const h = harness({}, async () => queryResult({ rows: [], fields: [], rowCount: 0 }));
+
+    const outcome = await inspectSchemaTool(h.context, { table: "pg_stat_autovacuum_scores" });
+
+    expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "CATALOG_MATCHED_NO_USER_OBJECT" });
+    expect(outcome.modelText).toContain("No user object of that name");
+    expect(outcome.modelText).toContain("run_read_query");
+    expect(outcome.modelText).not.toContain("There is no object of that name");
+  });
+
+  test("an empty column read on an engine that hides no schema still says there is no such object", async () => {
+    const h = harness({ connection: { ...connection, type: "sqlite" } }, async () =>
+      queryResult({ rows: [], fields: [], rowCount: 0 }),
+    );
+
+    const outcome = await inspectSchemaTool(h.context, { table: "employee_listing" });
+
+    expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "CATALOG_MATCHED_NOTHING" });
   });
 
   test("the composed catalog read is dialect-correct for SQLite", async () => {
@@ -4147,7 +4272,11 @@ describe("inspectPlanTool — the estimating variant only", () => {
     const outcome = await inspectPlanTool(h.context, { sql: "DELETE FROM orders" });
 
     if (outcome.kind !== "refused") throw new Error("expected refused");
-    expect(outcome.refusal).toEqual({ class: "policy-denied", reasonCode: "INPUT_VALIDATION_FAILED" });
+    expect(outcome.refusal).toEqual({
+      class: "policy-denied",
+      reasonCode: "INPUT_VALIDATION_FAILED",
+      guardViolation: "SIDE_EFFECT_KEYWORD",
+    });
     expect(h.acquireProvider).not.toHaveBeenCalled();
   });
 
@@ -5803,6 +5932,24 @@ describe("inspectOperationsTool — what the engine says about ITSELF", () => {
     // Absent optional fields are projected as null rather than dropped, so every row
     // has the shape the declared columns promise.
     expect(stored?.value.rows[0]).toHaveProperty("clientAddr", null);
+  });
+
+  /*
+    D11b (PostgreSQL 19, 2026-11-20): a provider that could not tell whether a session is blocked leaves `blocked` out
+    (PostgreSQL's relative without `pg_blocking_pids()`). The reading says not known, the way every other absent
+    field is said, rather than `false`, which would state that nothing is blocked on a reading that never looked.
+  */
+  test("a session whose provider could not tell whether it is blocked reads as null, not false", async () => {
+    const unknown: Partial<typeof SESSION> = { ...SESSION };
+    delete unknown.blocked;
+    const h = curatedHarness({}, { getActiveSessions: mock(async () => [unknown, { ...unknown, blocked: false }]) });
+
+    const outcome = await inspectOperationsTool(h.context, { kind: "sessions" });
+
+    if (outcome.kind !== "completed") throw new Error("expected completed");
+    const stored = h.artifacts.get(outcome.artifact.correlationId, 1_000);
+    expect(stored?.value.rows[0]).toHaveProperty("blocked", null);
+    expect(stored?.value.rows[1]).toHaveProperty("blocked", false);
   });
 
   test("declares its columns even when the engine reports nothing", async () => {

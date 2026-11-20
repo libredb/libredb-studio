@@ -228,6 +228,23 @@ describe("evaluateOperation — input stage", () => {
       expectDeny(decision, "INPUT_VALIDATION_FAILED");
     }
   });
+
+  test("a denial the guard did not write carries no guard code", () => {
+    for (const input of [undefined, "SELECT 1", {}, { sql: 42 }, { sql: "SELECT 1", extra: true }]) {
+      expect(evaluateOperation(params({ request: { ...readRequest, input } }))).not.toHaveProperty("guardViolation");
+    }
+  });
+
+  // G-S1: the guard writes its code into the issue; the denial carries it, so the model hears WHY.
+  test.each([
+    ["SHOW server_version", "NON_READ_STATEMENT"],
+    ["SELECT 1; SELECT 2", "MULTIPLE_STATEMENTS"],
+    ["WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d", "SIDE_EFFECT_KEYWORD"],
+  ] as const)("a statement the guard refuses (%s) is denied with the guard's code %s", (sql, code) => {
+    const decision = evaluateOperation(params({ request: { ...readRequest, input: { sql } } }));
+    expectDeny(decision, "INPUT_VALIDATION_FAILED");
+    expect(decision).toMatchObject({ guardViolation: code });
+  });
 });
 
 // ─── Stage 4: provider capability ───────────────────────────────────────────

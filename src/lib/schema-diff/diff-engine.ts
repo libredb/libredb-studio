@@ -1,7 +1,47 @@
 import type { ColumnSchema, IndexSchema, ForeignKeySchema } from "@/lib/types";
 import type { StoredObject } from "@/lib/db/detailed-object";
+import { resolveObjectAddress } from "@/lib/db/object-address";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import type { SchemaDiff, TableDiff, ColumnDiff, IndexDiff, ForeignKeyDiff } from "./types";
+
+/** The declared type a column carries, as a field to spread: absent when the provider read none (D05). */
+function declared(key: "sourceDeclaredType" | "targetDeclaredType", col: ColumnSchema) {
+  return col.declaredType === undefined ? {} : { [key]: col.declaredType };
+}
+
+/**
+ * What the engine fills in an added column itself, as fields to spread, each absent unless the provider read it:
+ * whether it numbers the column (R8), and whether it computes it from the others (R9).
+ */
+function autoNumbered(col: ColumnSchema) {
+  return {
+    ...(col.autoIncrement === undefined ? {} : { targetAutoIncrement: col.autoIncrement }),
+    // A computed column, whose `defaultValue` is its generation expression (R9).
+    ...(col.generated === undefined ? {} : { targetGenerated: col.generated }),
+    // The options and owner of the sequence its default draws from.
+    ...(col.sequence === undefined ? {} : { targetSequence: col.sequence }),
+  };
+}
+
+/**
+ * Where a foreign key's referenced table is placed, given its spelling; `undefined` where it cannot be said
+ * (D05). Built once per diff by `diffSchemas`, which holds the target reading the spelling resolves in.
+ */
+type ReferencePlacer = (referencedTable: string) => readonly string[] | undefined;
+
+/** A foreign key the target has and the source lacks, its target placed where `place` can place it. */
+function addedForeignKey(fk: ForeignKeySchema, place: ReferencePlacer): ForeignKeyDiff {
+  const added: ForeignKeyDiff = {
+    action: "added",
+    columnName: fk.columnName,
+    targetReferencedTable: fk.referencedTable,
+    targetReferencedColumn: fk.referencedColumn,
+    changes: [`Added FK: ${fk.columnName} → ${fk.referencedTable}(${fk.referencedColumn})`],
+  };
+  const path = place(fk.referencedTable);
+  if (path !== undefined) added.targetReferencedPath = path;
+  return added;
+}
 
 function diffColumns(sourceCols: readonly ColumnSchema[], targetCols: readonly ColumnSchema[]): ColumnDiff[] {
   const diffs: ColumnDiff[] = [];
@@ -15,6 +55,8 @@ function diffColumns(sourceCols: readonly ColumnSchema[], targetCols: readonly C
         action: "added",
         columnName: name,
         targetType: col.type,
+        ...declared("targetDeclaredType", col),
+        ...autoNumbered(col),
         targetNullable: col.nullable,
         targetDefault: col.defaultValue,
         targetDefaultSql: col.defaultExpression,
@@ -31,6 +73,7 @@ function diffColumns(sourceCols: readonly ColumnSchema[], targetCols: readonly C
         action: "removed",
         columnName: name,
         sourceType: col.type,
+        ...declared("sourceDeclaredType", col),
         sourceNullable: col.nullable,
         sourceDefault: col.defaultValue,
         sourceIsPrimary: col.isPrimary,
@@ -46,8 +89,14 @@ function diffColumns(sourceCols: readonly ColumnSchema[], targetCols: readonly C
 
     const changes: string[] = [];
 
-    if (sourceCol.type.toLowerCase() !== targetCol.type.toLowerCase()) {
-      changes.push(`Type changed: ${sourceCol.type} → ${targetCol.type}`);
+    // The declarations where both sides carry one, so `character varying(30)` to `(50)` is a change (D05). A
+    // snapshot from before declared types has only the base name, and comparing it with today's declaration would
+    // report every column with a modifier as changed, so such a pair compares base names as it always did.
+    const bothDeclared = sourceCol.declaredType !== undefined && targetCol.declaredType !== undefined;
+    const sourceType = bothDeclared ? (sourceCol.declaredType as string) : sourceCol.type;
+    const targetType = bothDeclared ? (targetCol.declaredType as string) : targetCol.type;
+    if (sourceType.toLowerCase() !== targetType.toLowerCase()) {
+      changes.push(`Type changed: ${sourceType} → ${targetType}`);
     }
     if (sourceCol.nullable !== targetCol.nullable) {
       changes.push(`Nullable changed: ${sourceCol.nullable} → ${targetCol.nullable}`);
@@ -86,6 +135,8 @@ function diffColumns(sourceCols: readonly ColumnSchema[], targetCols: readonly C
         columnName: name,
         sourceType: sourceCol.type,
         targetType: targetCol.type,
+        ...declared("sourceDeclaredType", sourceCol),
+        ...declared("targetDeclaredType", targetCol),
         sourceNullable: sourceCol.nullable,
         targetNullable: targetCol.nullable,
         sourceDefault: sourceCol.defaultValue,
@@ -180,6 +231,7 @@ function diffIndexes(sourceIndexes: readonly IndexSchema[], targetIndexes: reado
 function diffForeignKeys(
   sourceFKs: readonly ForeignKeySchema[],
   targetFKs: readonly ForeignKeySchema[],
+  place: ReferencePlacer,
 ): ForeignKeyDiff[] {
   const diffs: ForeignKeyDiff[] = [];
 
@@ -190,13 +242,7 @@ function diffForeignKeys(
 
   for (const [key, fk] of targetMap) {
     if (!sourceMap.has(key)) {
-      diffs.push({
-        action: "added",
-        columnName: fk.columnName,
-        targetReferencedTable: fk.referencedTable,
-        targetReferencedColumn: fk.referencedColumn,
-        changes: [`Added FK: ${fk.columnName} → ${fk.referencedTable}(${fk.referencedColumn})`],
-      });
+      diffs.push(addedForeignKey(fk, place));
     }
   }
 
@@ -313,6 +359,18 @@ export function diffSchemas(source: readonly StoredObject[], target: readonly St
         ? entry.relative
         : [...readings.root, ...entry.relative];
 
+  // Where a foreign key of `from`, a target object, points (D05): the table its spelling names in the target reading,
+  // resolved from `from`'s own container the way the engine resolves an unqualified name, and placed where an added
+  // table would be. A reading without paths, or a spelling that names no single table there, places nothing.
+  const placer =
+    (from: Keyed): ReferencePlacer =>
+    (referencedTable) => {
+      if (from.relative === undefined) return undefined;
+      const segments = (entry: Keyed) => entry.object.path as readonly string[];
+      const resolution = resolveObjectAddress(readings.target, segments, referencedTable, segments(from).slice(0, -1));
+      return resolution.kind === "resolved" ? addedPath(resolution.object) : undefined;
+    };
+
   const tables: TableDiff[] = [];
   let added = 0,
     removed = 0,
@@ -329,6 +387,8 @@ export function diffSchemas(source: readonly StoredObject[], target: readonly St
           action: "added" as const,
           columnName: c.name,
           targetType: c.type,
+          ...declared("targetDeclaredType", c),
+          ...autoNumbered(c),
           targetNullable: c.nullable,
           targetDefault: c.defaultValue,
           targetDefaultSql: c.defaultExpression,
@@ -342,13 +402,7 @@ export function diffSchemas(source: readonly StoredObject[], target: readonly St
           targetUnique: idx.unique,
           changes: [`Added index "${idx.name}"`],
         })),
-        foreignKeys: (table.foreignKeys || []).map((fk) => ({
-          action: "added" as const,
-          columnName: fk.columnName,
-          targetReferencedTable: fk.referencedTable,
-          targetReferencedColumn: fk.referencedColumn,
-          changes: [`Added FK: ${fk.columnName} → ${fk.referencedTable}(${fk.referencedColumn})`],
-        })),
+        foreignKeys: (table.foreignKeys || []).map((fk) => addedForeignKey(fk, placer(entry))),
       });
       added++;
     }
@@ -389,7 +443,11 @@ export function diffSchemas(source: readonly StoredObject[], target: readonly St
       !Array.isArray(sourceTable.indexes) || !Array.isArray(targetTable.indexes)
         ? []
         : diffIndexes(sourceTable.indexes, targetTable.indexes);
-    const foreignKeys = diffForeignKeys(sourceTable.foreignKeys || [], targetTable.foreignKeys || []);
+    const foreignKeys = diffForeignKeys(
+      sourceTable.foreignKeys || [],
+      targetTable.foreignKeys || [],
+      placer(targetEntry),
+    );
 
     if (columns.length > 0 || indexes.length > 0 || foreignKeys.length > 0) {
       tables.push({

@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D466, U17 · 344
+- [Drivers and connections](#drivers-and-connections) — D1-D466, U17 · 343
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
@@ -2452,6 +2452,8 @@ Three other callers list every declared kind without asking the count first, so 
 
 Found 2026-10-04 by the review of the #1351 fix; pre-existing, not measured end to end through those three surfaces.
 
+Q3 (2026-11-20) removed the refusal at the provider: a listing refused for `prokind`, and then for `proargtypes`, is sent again without them, and on Materialize 26.51.1 `listObjects()` answered for all seven declared kinds in `public`. What is left is to measure the three surfaces end to end and delete this entry.
+
 **Done when:** on a Materialize connection, search, inventory and the agent's grounding answer for tables, views and materialized views, with the two routine kinds reported as unavailable rather than failing the read.
 
 ### D228. Platform discovery recognises only four engine families
@@ -3158,14 +3160,6 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 
 **Done when:** every line that lists the readers names MQTT, held by a test that compares the lists with the types that declare the field.
 
-### D315. The API replaces every provider's timeout sentence with one shared sentence
-
-`createErrorResponse` in `src/lib/api/errors.ts` answers every `TimeoutError` through `databaseErrorBody` in `src/lib/api/error-body.ts`, whose `TIMEOUT_SENTENCE` is "Query timed out. Please try a simpler query or increase timeout.", so a provider's phase-specific sentence, such as RabbitMQ's "No answer from {host}:{port} within {n} s.", never reaches the user; 19 provider files write such sentences today.
-
-Found 2026-10-12 while designing the RabbitMQ provider.
-
-**Done when:** `databaseErrorBody` passes a provider's own `TimeoutError` message through for every provider, in a shared PR with a route test per class.
-
 ### D316. The package does not export the object source part predicates
 
 `@libredb/studio` exports the `ObjectSourcePart` type (`src/exports/types.ts`) but neither `isSourcePartStatement` nor `isSourcePartUnavailable` (`src/lib/db/object-kinds.ts`), so an embedder that renders an object source itself cannot narrow a part to its statement or its refusal without copying the two predicates.
@@ -3306,7 +3300,7 @@ Found 2026-10-12 while designing the Snowflake provider.
 
 ### D331. Most SQL engines declare no confirmation forms of their own
 
-`SqlGrammar.confirmForms` and `confirmCodeForms` let a dialect name the destructive forms the shared keyword set misses, and only the Snowflake and Spark rows declare a full set; PostgreSQL's row declares only its `DO` block.
+`SqlGrammar.confirmForms` and `confirmCodeForms` let a dialect name the destructive forms the shared keyword set misses, and only the Snowflake and Spark rows declare a full set; PostgreSQL's row declares its `DO` block and its table rewrites (`REPACK`, `CLUSTER`, `VACUUM FULL` and `VACUUM (FULL)`).
 `MERGE` asks on every engine, as shared vocabulary; other engines' replace, call, unload and opaque-text forms still run unconfirmed; D246 covers Databend's, and the rest have no entry.
 
 Found 2026-10-12 while designing the Snowflake provider; narrowed 2026-10-14 when `MERGE` joined the shared set and PostgreSQL's row named `DO`.

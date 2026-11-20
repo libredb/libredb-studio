@@ -2369,3 +2369,181 @@ describe("generateMigrationSQL: the NETCONF reason counts the operations rather 
     expect(sql).not.toContain(`${counted} read operations and nothing else`);
   });
 });
+
+// ============================================================================
+// A PostgreSQL migration that runs: the declared type and a qualified FK target (D05)
+// ============================================================================
+
+/**
+ * Measured on PostgreSQL 19.0 and 18.7 through Schema Diff > SQL Migration: `app.orders` was
+ * written with `character varying` and `numeric` where `\d` says `character varying(50)` and
+ * `numeric(12,2)`, and its foreign key as `REFERENCES "app.customers"("id")`, one identifier,
+ * which PostgreSQL refuses with `relation "app.customers" does not exist` (D05).
+ */
+describe("generateMigrationSQL: declared types and qualified foreign key targets (D05)", () => {
+  const col = (name: string, type: string, declaredType?: string, extra: Partial<ColumnSchemaLike> = {}) => ({
+    name,
+    type,
+    ...(declaredType === undefined ? {} : { declaredType }),
+    nullable: true,
+    isPrimary: false,
+    ...extra,
+  });
+  type ColumnSchemaLike = { nullable: boolean; isPrimary: boolean; defaultValue: string };
+  const object = (
+    path: string[],
+    columns: ReturnType<typeof col>[],
+    foreignKeys: StoredObject["foreignKeys"] = [],
+  ): StoredObject => ({ name: path[path.length - 1], path, kind: "table", columns, indexes: [], foreignKeys });
+
+  const customers = object(["app", "customers"], [col("id", "integer", "integer", { isPrimary: true })]);
+  const orders = object(
+    ["app", "orders"],
+    [
+      col("id", "integer", "integer", { isPrimary: true, nullable: false }),
+      col("order_number", "character varying", "character varying(50)", { nullable: false }),
+      col("subtotal", "numeric", "numeric(12,2)"),
+      col("customer_id", "integer", "integer"),
+    ],
+    [{ columnName: "customer_id", referencedTable: "app.customers", referencedColumn: "id" }],
+  );
+
+  test("CREATE TABLE writes each column's declared type and names the referenced table by its path", () => {
+    const sql = generateMigrationSQL(diffSchemas([customers], [customers, orders]), "postgres");
+    expect(sql).toContain('"order_number" character varying(50) NOT NULL');
+    expect(sql).toContain('"subtotal" numeric(12,2)');
+    expect(sql).toContain('FOREIGN KEY ("customer_id") REFERENCES "app"."customers"("id");');
+    expect(sql).not.toContain('"app.customers"');
+  });
+
+  test("a table created in the same migration is referenced at the path it is created at", () => {
+    // Source rooted in `app`, target in `app2`: both tables are created under the source's root.
+    const sql = generateMigrationSQL(
+      diffSchemas(
+        [object(["app", "other"], [col("a", "integer")])],
+        [
+          object(["app2", "other"], [col("a", "integer")]),
+          object(["app2", "customers"], [col("id", "integer", "integer", { isPrimary: true })]),
+          object(
+            ["app2", "orders"],
+            [col("customer_id", "integer")],
+            [{ columnName: "customer_id", referencedTable: "app2.customers", referencedColumn: "id" }],
+          ),
+        ],
+      ),
+      "postgres",
+    );
+    expect(sql).toContain('CREATE TABLE "app"."customers" (');
+    expect(sql).toContain('REFERENCES "app"."customers"("id");');
+  });
+
+  test("a reference spelled bare, as a public table's is, resolves to the table's full path", () => {
+    const pub = object(["public", "users"], [col("id", "integer")]);
+    const posts = object(
+      ["public", "posts"],
+      [col("user_id", "integer")],
+      [{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }],
+    );
+    const sql = generateMigrationSQL(diffSchemas([pub], [pub, posts]), "postgres");
+    expect(sql).toContain('REFERENCES "public"."users"("id");');
+  });
+
+  test("a foreign key added to an existing table names its target by path too", () => {
+    const before = object(["app", "orders"], [col("customer_id", "integer", "integer")]);
+    const sql = generateMigrationSQL(diffSchemas([customers, before], [customers, orders]), "postgres");
+    expect(sql).toContain(
+      'ALTER TABLE "app"."orders" ADD CONSTRAINT "fk_orders_customer_id" FOREIGN KEY ("customer_id") REFERENCES "app"."customers"("id");',
+    );
+  });
+
+  test("the reference leaves out the containers it shares with the referencing table, keeping its schema", () => {
+    // SQL Server addresses `[shop].[dbo].[orders]`, but REFERENCES takes at most `schema.table`.
+    const three = (
+      schema: string,
+      name: string,
+      columns: ReturnType<typeof col>[],
+      fks: StoredObject["foreignKeys"] = [],
+    ) => object(["shop", schema, name], columns, fks);
+    const sql = generateMigrationSQL(
+      diffSchemas(
+        [three("dbo", "customers", [col("id", "int")]), three("sales", "regions", [col("id", "int")])],
+        [
+          three("dbo", "customers", [col("id", "int")]),
+          three("sales", "regions", [col("id", "int")]),
+          three(
+            "dbo",
+            "orders",
+            [col("customer_id", "int"), col("region_id", "int")],
+            [
+              { columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" },
+              { columnName: "region_id", referencedTable: "sales.regions", referencedColumn: "id" },
+            ],
+          ),
+        ],
+      ),
+      "mssql",
+    );
+    expect(sql).toContain("CREATE TABLE [shop].[dbo].[orders] (");
+    expect(sql).toContain("REFERENCES [dbo].[customers]([id]);");
+    expect(sql).toContain("REFERENCES [sales].[regions]([id]);");
+    expect(sql).not.toContain("REFERENCES [shop]");
+  });
+
+  test("a one-segment path is referenced by its name alone", () => {
+    const sql = generateMigrationSQL(
+      diffSchemas(
+        [object(["users"], [col("id", "integer")])],
+        [
+          object(["users"], [col("id", "integer")]),
+          object(
+            ["posts"],
+            [col("user_id", "integer")],
+            [{ columnName: "user_id", referencedTable: "users", referencedColumn: "id" }],
+          ),
+        ],
+      ),
+      "sqlite",
+    );
+    expect(sql).toContain('REFERENCES "users"("id")');
+  });
+
+  test("a target the reading does not hold is written as the reading spelled it", () => {
+    const sql = generateMigrationSQL(diffSchemas([], [orders]), "postgres");
+    expect(sql).toContain('REFERENCES "app.customers"("id");');
+  });
+
+  test("a change of length alone is a type change, written with the declared type", () => {
+    const narrow = object(["app", "t"], [col("code", "character varying", "character varying(30)")]);
+    const wide = object(["app", "t"], [col("code", "character varying", "character varying(50)")]);
+    const diff = diffSchemas([narrow], [wide]);
+    expect(diff.tables[0].columns[0].changes).toEqual(["Type changed: character varying(30) → character varying(50)"]);
+    const sql = generateMigrationSQL(diff, "postgres");
+    expect(sql).toContain('ALTER TABLE "app"."t" ALTER COLUMN "code" TYPE character varying(50);');
+  });
+
+  test("an added column carries its declared type", () => {
+    const sql = generateMigrationSQL(
+      diffSchemas(
+        [object(["app", "t"], [col("a", "integer", "integer")])],
+        [object(["app", "t"], [col("a", "integer", "integer"), col("p", "numeric", "numeric(12,2)")])],
+      ),
+      "postgres",
+    );
+    expect(sql).toContain('ALTER TABLE "app"."t" ADD COLUMN "p" numeric(12,2);');
+  });
+
+  test("a snapshot taken before declared types compares by the base type, and reports no change", () => {
+    const old = object(["app", "t"], [col("code", "character varying")]);
+    const now = object(["app", "t"], [col("code", "character varying", "character varying(50)")]);
+    expect(diffSchemas([old], [now]).hasChanges).toBe(false);
+  });
+
+  test("a column modified for another reason writes the type the target declares", () => {
+    const old = object(["app", "t"], [col("code", "character varying", undefined, { nullable: true })]);
+    const now = object(["app", "t"], [col("code", "character varying", "character varying(50)", { nullable: false })]);
+    const diff = diffSchemas([old], [now]);
+    expect(diff.tables[0].columns[0].targetDeclaredType).toBe("character varying(50)");
+    const sql = generateMigrationSQL(diff, "postgres");
+    expect(sql).toContain('ALTER TABLE "app"."t" ALTER COLUMN "code" SET NOT NULL;');
+  });
+});

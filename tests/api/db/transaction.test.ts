@@ -251,6 +251,128 @@ describe("POST /api/db/transaction", () => {
     expect(data.rows).toEqual([{ f: "NaN", r: "Infinity", n: "-Infinity", ok: 1.5, z: null }]);
   });
 
+  // ─── A plan asked of the open transaction (D16) ──────────────────────────
+  //
+  // With BEGIN on, the Explain button went to `/api/db/query`, a pooled session outside the transaction, so a table
+  // the transaction created was "relation does not exist" to it (measured on PostgreSQL 19 and 18). The ask is the one
+  // `/api/db/query` reads, and the EXPLAIN is built by the connected provider's strategy and run on the transaction.
+  describe("a query action that asks for a plan", () => {
+    const pgJson = { supportsExplain: true, explainFormat: "postgres-json" as const };
+    const planRows = [{ "QUERY PLAN": [{ Plan: { "Node Type": "Seq Scan" } }] }];
+
+    function explainRequest(extra: Record<string, unknown>) {
+      return createMockRequest("/api/db/transaction", {
+        method: "POST",
+        body: { connection: validConnection, action: "query", sql: "SELECT * FROM tx_only", ...extra },
+      });
+    }
+
+    const getCapabilities = mockTxProvider.getCapabilities as ReturnType<typeof mock>;
+    const declared = getCapabilities.getMockImplementation()!;
+
+    afterEach(() => {
+      getCapabilities.mockImplementation(declared);
+      mockTxProvider.isInTransaction.mockImplementation(() => true);
+    });
+
+    function capabilities(overrides: Record<string, unknown>) {
+      getCapabilities.mockImplementation(() => ({ ...declared(), ...overrides }));
+    }
+
+    test("runs the strategy's EXPLAIN on the transaction and names the format", async () => {
+      capabilities(pgJson);
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => ({
+        rows: planRows as never,
+        fields: ["QUERY PLAN"],
+        rowCount: 1,
+        executionTime: 2,
+      }));
+
+      const res = await POST(explainRequest({ explain: { mode: "analyze" }, options: {} }) as never);
+      const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+      expect(res.status).toBe(200);
+      expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
+      expect(mockTxProvider.queryInTransaction.mock.calls[0]).toEqual([
+        "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM tx_only",
+        undefined,
+      ] as never);
+      // A plan is not a page of rows: no row bound is added to the statement.
+      expect(mockTxProvider.prepareQuery).not.toHaveBeenCalled();
+      expect(data).toMatchObject({ rows: planRows, explainFormat: "postgres-json", inTransaction: true });
+    });
+
+    test("an estimate binds the statement's values to the same placeholders", async () => {
+      capabilities(pgJson);
+      const res = await POST(
+        explainRequest({ sql: "SELECT * FROM t WHERE id = $1", explain: { mode: "estimate" }, params: [7] }) as never,
+      );
+      expect(res.status).toBe(200);
+      expect(mockTxProvider.queryInTransaction.mock.calls[0]).toEqual([
+        "EXPLAIN (FORMAT JSON) SELECT * FROM t WHERE id = $1",
+        [7],
+      ] as never);
+    });
+
+    test("reports a transaction the plan's statement ended", async () => {
+      capabilities(pgJson);
+      mockTxProvider.isInTransaction.mockImplementation(() => false);
+      // The reconcile runs before the action and reads the state first, so the transaction is open until the plan ran.
+      mockTxProvider.isInTransaction.mockImplementationOnce(() => true);
+      const res = await POST(explainRequest({ explain: { mode: "analyze" } }) as never);
+      const data = await parseResponseJSON<{ inTransaction: boolean }>(res);
+      expect(res.status).toBe(200);
+      expect(data.inTransaction).toBe(false);
+    });
+
+    for (const [name, extra, overrides, error] of [
+      [
+        "an unreadable ask",
+        { explain: { mode: "run" } },
+        pgJson,
+        'explain must be { "mode": "estimate" } or { "mode": "analyze" }',
+      ],
+      [
+        "several statements",
+        { sql: "SELECT 1; INSERT INTO t VALUES (1)", explain: { mode: "analyze" } },
+        pgJson,
+        "Only a single statement can be explained",
+      ],
+      [
+        "a statement the strategy does not explain",
+        { sql: "UPDATE t SET a = 1", explain: { mode: "analyze" } },
+        pgJson,
+        "Only SELECT statements can be explained",
+      ],
+      [
+        "a server without EXPLAIN",
+        { explain: { mode: "analyze" } },
+        { supportsExplain: false },
+        "This server does not support EXPLAIN",
+      ],
+    ] as const) {
+      test(`refuses ${name} with a 400 and runs nothing`, async () => {
+        capabilities(overrides);
+        const res = await POST(explainRequest(extra) as never);
+        const data = await parseResponseJSON<{ error: string }>(res);
+        expect(res.status).toBe(400);
+        expect(data.error).toBe(error);
+        expect(mockTxProvider.queryInTransaction).not.toHaveBeenCalled();
+      });
+    }
+
+    test("a plan the database refuses is answered as the statement's error", async () => {
+      capabilities(pgJson);
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
+        throw new QueryError('relation "tx_only" does not exist', "postgres");
+      });
+      const res = await POST(explainRequest({ explain: { mode: "analyze" } }) as never);
+      const data = await parseResponseJSON<{ error: string }>(res);
+      expect(res.status).toBe(400);
+      expect(data.error).toBe('relation "tx_only" does not exist');
+    });
+  });
+
   test("returns 401 when no session exists", async () => {
     mockGetSession.mockResolvedValueOnce(null);
 
@@ -1732,6 +1854,31 @@ describe("POST /api/db/transaction under governance", () => {
       transactionOutcome: "open",
     });
     expect(recordedEvents[0]?.rowCount).toBeUndefined();
+  });
+
+  test("governance: a plan asked of the transaction records the submitted text with its plan mode", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject")!;
+    const capabilities = { ...provider.getCapabilities(), supportsExplain: true, explainFormat: "postgres-json" };
+    (provider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => capabilities);
+    provider.queryInTransaction.mockImplementationOnce(async () => {
+      throw new QueryError('relation "tx_only" does not exist', "postgres");
+    });
+
+    expect((await send({ action: "query", sql: "SELECT * FROM tx_only", explain: { mode: "analyze" } })).status).toBe(
+      400,
+    );
+    expect((await send({ action: "query", sql: "SELECT * FROM tx_only", explain: { mode: "estimate" } })).status).toBe(
+      200,
+    );
+
+    expect(recordedEvents.map((event) => [event.statement, event.status, event.explain])).toEqual([
+      ["SELECT * FROM tx_only", "error", "analyze"],
+      ["SELECT * FROM tx_only", "success", "estimate"],
+    ]);
+    expect(recordedEvents[0]).toMatchObject({ transactionOutcome: "open", errorCode: "QUERY_ERROR" });
   });
 
   test("governance: a COMMIT that ends the transaction in failure records rolled-back, one that leaves it open records open", async () => {

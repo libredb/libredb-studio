@@ -112,8 +112,19 @@ const ROWS: readonly Row[] = [
     log: { level: "warn", message: "Database permission denied", context: { provider: "postgres" } },
   },
   {
-    name: "TimeoutError",
-    error: new TimeoutError("query took too long", "postgres", 30000),
+    name: "TimeoutError, whose own message is the engine's or the provider's and reaches the reader",
+    error: new TimeoutError("canceling statement due to statement timeout", "postgres", 30000),
+    body: {
+      error: "canceling statement due to statement timeout",
+      code: ApiErrorCode.TIMEOUT_ERROR,
+      statusCode: 504,
+      retryable: true,
+    },
+    log: { level: "warn", message: "Query timeout", context: { provider: "postgres", duration: 30000 } },
+  },
+  {
+    name: "TimeoutError with no words of its own, answered with the shared sentence",
+    error: new TimeoutError("  ", "postgres", 30000),
     body: { error: TIMEOUT_SENTENCE, code: ApiErrorCode.TIMEOUT_ERROR, statusCode: 504, retryable: true },
     log: { level: "warn", message: "Query timeout", context: { provider: "postgres", duration: 30000 } },
   },

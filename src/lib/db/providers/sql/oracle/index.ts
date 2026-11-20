@@ -1285,13 +1285,15 @@ function objectDetailFromRows(path: readonly string[], owner: string, rows: Deta
   const columns: ColumnSchema[] = rows.columns.map((row) => {
     const dataType = String(row.DATA_TYPE);
     const type = declaredType(row);
+    const defaultValue = measuredDefault(row.DATA_DEFAULT);
     return {
       name: String(row.COLUMN_NAME),
       type,
       ...(type === dataType ? {} : { baseType: dataType }),
       nullable: String(row.NULLABLE) === "Y",
       isPrimary: primaryKey.has(String(row.COLUMN_NAME)),
-      defaultValue: measuredDefault(row.DATA_DEFAULT),
+      defaultValue,
+      autoIncrement: IDENTITY_DEFAULT.test(defaultValue ?? ""),
     };
   });
 
@@ -1403,6 +1405,15 @@ function measuredDefault(raw: unknown): string | undefined {
   if (raw === null || raw === undefined) return undefined;
   return String(raw).trim();
 }
+
+/**
+ * The default of an identity column, which the server numbers itself (R5): its own system sequence,
+ * `"SYSTEM"."ISEQ$$_75900".nextval`, for ALWAYS and BY DEFAULT ON NULL alike (measured on 21c XE). Read from the
+ * default rather than `IDENTITY_COLUMN`, which 11g's `ALL_TAB_COLUMNS` does not have. A user sequence default,
+ * `DEFAULT S.NEXTVAL` (read back as `"SYSTEM"."S"."NEXTVAL"`), is not an identity: it stays a default, which the
+ * Test Data Generator leaves to the server anyway and the schema-diff migration copies as written (R8).
+ */
+const IDENTITY_DEFAULT = /"?ISEQ\$\$_\d+"?\.\s*"?nextval"?$/i;
 
 // ============================================================================
 // Value shapes
@@ -1689,8 +1700,13 @@ export class OracleProvider extends SQLBaseProvider {
       // The Create Table form's grammar (#1822); reasons on the constant and in `docs/providers/oracle.md`.
       createTable: ORACLE_CREATE_TABLE,
       supportsInlineRowEdit: true,
-      // The Generate Test Data dialog's multi-row `INSERT INTO ... VALUES` (#1468).
+      // The Generate Test Data dialog's `INSERT INTO ... VALUES` (#1468).
       supportsTestDataGeneration: true,
+      // One INSERT per row, for the generator and the import alike. A VALUES list of several rows
+      // is 23ai and later: Oracle 21c XE answers `INSERT INTO t (a) VALUES (1), (2)` with ORA-00933
+      // "SQL command not properly ended" and inserts nothing, and this declaration is read before
+      // any server is, so it holds for every version the provider reaches.
+      supportsMultiRowInsert: false,
       // `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, built by this provider's own
       // `prepareQuery` override; page one is `FETCH FIRST n ROWS ONLY`.
       supportsResultPagination: true,

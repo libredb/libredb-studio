@@ -1,4 +1,4 @@
-resolveSqlGrammar("duckdb") => {"hash":"code","bracket":"subscript","blockComment":"nesting","alternateQuoting":false,"doubleSlashComment":false,"backslashAlwaysEscapes":false,"script":{"blocks":"none","separatorLine":null,"unit":"statement"},"trailingLimitClauses":[]}
+resolveSqlGrammar("duckdb") => {"hash":"code","bracket":"subscript","blockComment":"nesting","alternateQuoting":false,"doubleSlashComment":false,"backslashAlwaysEscapes":false,"dollarInNames":true,"script":{"blocks":"none","separatorLine":null,"unit":"statement"},"trailingLimitClauses":[]}
 readsSqlText("duckdb") => true
 hashRunIsAmbiguous(resolveSqlGrammar("duckdb")) => false
 readSqlSpan walk("SELECT 1 # c\nFROM t") => [["whitespace",6,7],["whitespace",8,9],["whitespace",10,11],["whitespace",12,13],["whitespace",17,18]]

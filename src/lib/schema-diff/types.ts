@@ -1,3 +1,5 @@
+import type { ColumnSequence } from "@/lib/types";
+
 export type DiffAction = "added" | "removed" | "modified";
 
 export interface ColumnDiff {
@@ -5,6 +7,30 @@ export interface ColumnDiff {
   columnName: string;
   sourceType?: string;
   targetType?: string;
+  /**
+   * The type as the column was declared, modifier included (`character varying(50)`,
+   * `numeric(12,2)`), carried from `ColumnSchema.declaredType` where the provider reads one.
+   * `targetType` is the base name, so DDL written from it alone dropped every length and
+   * precision (D05). The migration writes this one where it is present.
+   */
+  sourceDeclaredType?: string;
+  targetDeclaredType?: string;
+  /**
+   * Whether the engine numbers the added column itself, from `ColumnSchema.autoIncrement` where the provider read
+   * it: an identity column, `AUTO_INCREMENT`, or one a sequence feeds. Each engine's column definition writes its
+   * own clause for it (R8); absent, the column is written as a plain one, as it always was.
+   */
+  targetAutoIncrement?: boolean;
+  /**
+   * Whether the added column is computed, from `ColumnSchema.generated`: its `targetDefault` is then the generation
+   * expression, which an engine's column definition writes as one rather than as a DEFAULT (R9).
+   */
+  targetGenerated?: "stored" | "virtual";
+  /**
+   * The options and owner of the sequence the added column's default draws from, from `ColumnSchema.sequence`: the
+   * migration creates the sequence with them and gives it back to its column.
+   */
+  targetSequence?: ColumnSequence;
   sourceNullable?: boolean;
   targetNullable?: boolean;
   sourceDefault?: string;
@@ -38,6 +64,15 @@ export interface ForeignKeyDiff {
   columnName: string;
   sourceReferencedTable?: string;
   targetReferencedTable?: string;
+  /**
+   * The referenced table's path where the migration acts on it, segment by segment, when the
+   * target reading holds the table the foreign key names: placed the way an added table is, under
+   * the source's root. `targetReferencedTable` is one string each provider spells in its own
+   * dialect (`app.customers`), and quoting it whole made `"app.customers"`, one identifier that
+   * names no table (D05). Absent when the reading has no paths or does not hold the table, and the
+   * migration then writes the spelling as it always did.
+   */
+  targetReferencedPath?: readonly string[];
   sourceReferencedColumn?: string;
   targetReferencedColumn?: string;
   changes: string[];

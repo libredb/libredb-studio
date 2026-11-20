@@ -19,7 +19,9 @@ import {
 import type { AgentEngineServerOverlay, SqlServerDialect } from "../../pack";
 
 /** The schema Trino keeps for its own catalog views, excluded from the column read. */
-const TRINO_SCHEMA_EXCLUSION = "table_schema <> 'information_schema'";
+const TRINO_SYSTEM_SCHEMA = "information_schema";
+
+const TRINO_SCHEMA_EXCLUSION = `table_schema <> '${TRINO_SYSTEM_SCHEMA}'`;
 
 /** The selector's schema and table as conditions on `information_schema`'s own columns. */
 function narrowing(selector: AgentCatalogSelector): string {
@@ -69,6 +71,7 @@ const TRINO_CATALOG_READ: AgentCatalogRead = Object.freeze({
     indexes: refusing("index object on any connector"),
     statistics: refusing("row count a SELECT can read, only the SHOW STATS answer, which is not read here"),
   }),
+  systemSchemas: Object.freeze([TRINO_SYSTEM_SCHEMA]),
 });
 
 export const TRINO_SERVER_OVERLAY = {

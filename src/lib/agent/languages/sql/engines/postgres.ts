@@ -440,6 +440,14 @@ function isMissingExtensionCatalogError(message: string): boolean {
 }
 
 /**
+ * What a model that wrote `SHOW` is told (G1, PostgreSQL 19, 2026-11-20): the guard admits a statement led by SELECT,
+ * VALUES, TABLE or EXPLAIN alone, so `SHOW server_version` is refused, and the same answers are a SELECT away. Every
+ * function named here is stock PostgreSQL and reads without a privilege.
+ */
+const POSTGRES_NON_READ_ADVICE =
+  "On PostgreSQL, read a setting with SELECT current_setting('<name>') or from the pg_settings view instead of SHOW, and the server version with SELECT version().";
+
+/**
  * PostgreSQL's catalog read: the four kinds, each carrying both ownership tests, and the
  * one retry without them.
  *
@@ -456,6 +464,8 @@ const POSTGRES_CATALOG_READ: AgentCatalogRead = Object.freeze({
     statistics: composePostgresStatistics,
   }),
   retry: Object.freeze({ matches: isMissingExtensionCatalogError, rewrite: withoutExtensionOwnershipTest }),
+  systemSchemas: Object.freeze([...POSTGRES_SYSTEM_SCHEMAS]),
+  nonReadAdvice: POSTGRES_NON_READ_ADVICE,
 });
 
 /**

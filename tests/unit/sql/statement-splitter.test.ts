@@ -998,3 +998,240 @@ describe("splitExecutionUnits: one unit per statement where the unit is the stat
     expect(splitStatements("CREATE PROCEDURE p() BEGIN SELECT 1; END", resolveSqlGrammar("mysql"))).toHaveLength(2);
   });
 });
+
+// PostgreSQL's SQL-standard routine body (`BEGIN ATOMIC … END`, PostgreSQL 14 and later) is code, not a literal, so the
+// `;` inside it ends a body statement and not the CREATE. psql's own scanner (psqlscan.l) holds those `;` the same way:
+// in a statement that opens with CREATE [OR REPLACE] FUNCTION | PROCEDURE, at paren depth 0, BEGIN opens a level, CASE
+// opens one inside it and END closes one. Cut at the inner `;`, the caret sent a CREATE the server refused and a bare
+// `END`, which commits an open transaction (F08).
+describe("splitStatements: PostgreSQL BEGIN ATOMIC routine bodies", () => {
+  const POSTGRES = resolveSqlGrammar("postgres");
+
+  test("a function body is one statement with the statement after it on its own", () => {
+    const fn = "CREATE FUNCTION t_f.add_one(x int) RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT x + 1; END";
+
+    expect(sqlsOf(splitStatements(`${fn};\nSELECT t_f.add_one(1);`, POSTGRES))).toEqual([fn, "SELECT t_f.add_one(1)"]);
+    expect(sqlsOf(splitCursorTargets(`${fn};\nSELECT t_f.add_one(1);`, POSTGRES))).toEqual([
+      fn,
+      "SELECT t_f.add_one(1)",
+    ]);
+    expect(sqlsOf(splitExecutionUnits(`${fn};`, POSTGRES))).toEqual([fn]);
+  });
+
+  test("CREATE OR REPLACE PROCEDURE with several body statements and a CASE … END inside", () => {
+    const proc = [
+      "CREATE OR REPLACE PROCEDURE p(a int)",
+      "LANGUAGE sql",
+      "BEGIN ATOMIC",
+      "  INSERT INTO t VALUES (CASE WHEN a > 0 THEN a ELSE 0 END);",
+      "  SELECT CASE a WHEN 1 THEN 'one' END;",
+      "  DELETE FROM u;",
+      "END",
+    ].join("\n");
+
+    expect(sqlsOf(splitStatements(`${proc};\nCALL p(1);`, POSTGRES))).toEqual([proc, "CALL p(1)"]);
+  });
+
+  test("a parameter or a column named begin, case or end inside parens opens nothing", () => {
+    const fn = 'CREATE FUNCTION f(begin int, "end" int) RETURNS TABLE(case_ int) LANGUAGE sql RETURN 1';
+
+    expect(sqlsOf(splitStatements(`${fn}; SELECT 2;`, POSTGRES))).toEqual([fn, "SELECT 2"]);
+    expect(
+      sqlsOf(splitStatements("CREATE FUNCTION f(begin int) RETURNS int LANGUAGE sql RETURN 1; SELECT 2", POSTGRES)),
+    ).toEqual(["CREATE FUNCTION f(begin int) RETURNS int LANGUAGE sql RETURN 1", "SELECT 2"]);
+  });
+
+  test("a CASE outside the body is not counted, as psql does not count it", () => {
+    const fn = "CREATE FUNCTION f(x int) RETURNS int LANGUAGE sql RETURN CASE WHEN x > 0 THEN 1 ELSE 0 END";
+
+    expect(sqlsOf(splitStatements(`${fn}; SELECT 2;`, POSTGRES))).toEqual([fn, "SELECT 2"]);
+  });
+
+  test("a BEGIN alone is still a transaction, and END and COMMIT stay their own statements", () => {
+    expect(sqlsOf(splitStatements("BEGIN; DELETE FROM t; END; SELECT 1;", POSTGRES))).toEqual([
+      "BEGIN",
+      "DELETE FROM t",
+      "END",
+      "SELECT 1",
+    ]);
+    expect(sqlsOf(splitStatements("BEGIN ATOMIC; SELECT 1;", POSTGRES))).toEqual(["BEGIN ATOMIC", "SELECT 1"]);
+  });
+
+  test("a CREATE that is not a routine is plain, and so is a dollar-quoted body", () => {
+    expect(
+      sqlsOf(splitStatements("CREATE TABLE begin_t (a int); CREATE OR REPLACE VIEW v AS SELECT 1;", POSTGRES)),
+    ).toEqual(["CREATE TABLE begin_t (a int)", "CREATE OR REPLACE VIEW v AS SELECT 1"]);
+    const fn = "CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql";
+    expect(sqlsOf(splitStatements(`${fn}; SELECT 1;`, POSTGRES))).toEqual([fn, "SELECT 1"]);
+  });
+
+  test("a body that never reaches its END holds the rest of the text, the fail-safe direction", () => {
+    const text = "CREATE FUNCTION f() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; SELECT 2;";
+
+    expect(sqlsOf(splitStatements(text, POSTGRES))).toEqual([text]);
+  });
+});
+
+// `$` continues an identifier in PostgreSQL after its first character, so `col$a$x` is one name and no dollar quote
+// opens inside it. Reading `$a$` there as an opener held the `;` and the DELETE between two such names inside one
+// "literal", and the caret sent all three statements as one with no confirmation (F09).
+describe("splitStatements: a `$tag$` inside a name is not a dollar quote", () => {
+  test("three statements stay three", () => {
+    const text = "SELECT col$a$x FROM t_f.dollar;\nDELETE FROM t_f.dollar_victim;\nSELECT y$a$z FROM t_f.dollar";
+
+    expect(sqlsOf(splitCursorTargets(text, resolveSqlGrammar("postgres")))).toEqual([
+      "SELECT col$a$x FROM t_f.dollar",
+      "DELETE FROM t_f.dollar_victim",
+      "SELECT y$a$z FROM t_f.dollar",
+    ]);
+  });
+});
+
+// An engine with no dollar-quoted form at all (`dollarQuotes: false`) reads every `$` as code: Oracle, MySQL, SQL
+// Server, Db2 and SQLite each take `$` as a name character (`col$a$x` is one name) and none of them has `$tag$ … $tag$`
+// or `$$ … $$` (measured 2026-11-20: Oracle XE 21 ORA-00911 on `$$a$$`, MySQL 8.4 a syntax error, SQL Server 2025
+// "Incorrect syntax near '$a$$'", Db2 12.1 SQLCODE -206 naming `$$A$$` as a column, SQLite a bind parameter). Read as
+// an opener, the `$a$` inside `col$a$x` ran to the `$a$` of the next such name and hid the `;` and the DELETE between
+// them, so the three statements went as one and the gate never saw the DELETE (R1, the F09 shape on these engines).
+describe("splitStatements: no dollar quote where the engine has none", () => {
+  const text = "SELECT col$a$x FROM t;\nDELETE FROM t;\nSELECT y$a$z FROM t";
+
+  test.each(["oracle", "mysql", "mssql", "db2", "sqlite", "libsql"] as const)("%s keeps three statements", (type) => {
+    expect(sqlsOf(splitStatements(text, resolveSqlGrammar(type)))).toEqual([
+      "SELECT col$a$x FROM t",
+      "DELETE FROM t",
+      "SELECT y$a$z FROM t",
+    ]);
+    expect(sqlsOf(splitStatements("SELECT $$a; DELETE FROM t; $$", resolveSqlGrammar(type)))).toEqual([
+      "SELECT $$a",
+      "DELETE FROM t",
+      "$$",
+    ]);
+  });
+
+  // DuckDB has both forms: `$$a;b$$` and `$t$a;b$t$` are literals, and `col$a$x` is one name (measured on
+  // @duckdb/node-api 1.4), so `$` continues a name there as it does in PostgreSQL (`dollarInNames`).
+  test("duckdb keeps three statements and still reads its dollar strings", () => {
+    const DUCKDB = resolveSqlGrammar("duckdb");
+    expect(sqlsOf(splitStatements(text, DUCKDB))).toEqual([
+      "SELECT col$a$x FROM t",
+      "DELETE FROM t",
+      "SELECT y$a$z FROM t",
+    ]);
+    expect(sqlsOf(splitStatements("SELECT $$a;b$$; SELECT $t$a;b$t$", DUCKDB))).toEqual([
+      "SELECT $$a;b$$",
+      "SELECT $t$a;b$t$",
+    ]);
+  });
+});
+
+// Db2 SQL PL (`script.blocks: "sql-pl"`). A compound statement - `BEGIN [NOT ATOMIC | ATOMIC] … END` sent alone, and the
+// body of `CREATE [OR REPLACE] PROCEDURE | FUNCTION | TRIGGER` - is ONE statement to the server, whose `;` end its body
+// statements. Cut at them, the run sent `BEGIN DECLARE v INTEGER DEFAULT 0` alone and Db2 refused it (SQLCODE -104,
+// "Statement 1 of 5 failed"), so no compound statement ran from the editor (R3). `IF`, `LOOP`, `WHILE`, `REPEAT` and
+// `FOR` close with `END` and their own word, `CASE` with `END` or `END CASE`.
+describe("splitStatements: Db2 SQL PL compound statements", () => {
+  const DB2 = resolveSqlGrammar("db2");
+
+  test("an anonymous BEGIN … END block is one statement, with the statement after it on its own", () => {
+    const block =
+      "BEGIN DECLARE v INTEGER DEFAULT 0; SET v = 7; INSERT INTO RG_B.RG_PLAIN (ID, NAME) VALUES (v, 'blk; with semi'); END";
+
+    expect(sqlsOf(splitStatements(`${block}; SELECT COUNT(*) AS N FROM RG_B.RG_PLAIN WHERE ID = 7;`, DB2))).toEqual([
+      block,
+      "SELECT COUNT(*) AS N FROM RG_B.RG_PLAIN WHERE ID = 7",
+    ]);
+    expect(sqlsOf(splitCursorTargets(`${block};\nSELECT 1 FROM SYSIBM.SYSDUMMY1`, DB2))).toEqual([
+      block,
+      "SELECT 1 FROM SYSIBM.SYSDUMMY1",
+    ]);
+  });
+
+  test("BEGIN ATOMIC and BEGIN NOT ATOMIC are one statement each", () => {
+    expect(
+      sqlsOf(
+        splitStatements(
+          "BEGIN ATOMIC DECLARE v INTEGER DEFAULT 0; SET v = 7; END; BEGIN NOT ATOMIC SET v = 1; END; SELECT 1 FROM SYSIBM.SYSDUMMY1",
+          DB2,
+        ),
+      ),
+    ).toEqual([
+      "BEGIN ATOMIC DECLARE v INTEGER DEFAULT 0; SET v = 7; END",
+      "BEGIN NOT ATOMIC SET v = 1; END",
+      "SELECT 1 FROM SYSIBM.SYSDUMMY1",
+    ]);
+  });
+
+  test("a procedure whose body holds every SQL PL control statement and a nested labelled block is one statement", () => {
+    const proc = [
+      "CREATE OR REPLACE PROCEDURE RG_B.FX_P(IN n INTEGER)",
+      "LANGUAGE SQL",
+      "BEGIN",
+      "  DECLARE i INTEGER DEFAULT 0;",
+      "  DECLARE CONTINUE HANDLER FOR SQLEXCEPTION BEGIN SET i = -1; END;",
+      "  l1: WHILE i < n DO",
+      "    SET i = i + 1;",
+      "    IF i = 2 THEN ITERATE l1; ELSEIF i = 3 THEN SET i = i; ELSE SET i = i; END IF;",
+      "  END WHILE l1;",
+      "  REPEAT SET i = i + 1; UNTIL i > n + 2 END REPEAT;",
+      "  CASE WHEN i > 0 THEN SET i = i; ELSE SET i = 0; END CASE;",
+      "  FOR r AS SELECT ID FROM RG_B.FX_DOL DO SET i = i + 0; END FOR;",
+      "  l2: LOOP LEAVE l2; END LOOP l2;",
+      "  SET i = CASE WHEN i > 0 THEN 1 ELSE 0 END;",
+      "  inner: BEGIN DELETE FROM RG_B.FX_DOL WHERE ID = 7; END inner;",
+      "END",
+    ].join("\n");
+
+    expect(sqlsOf(splitStatements(`${proc};\nCALL RG_B.FX_P(3);`, DB2))).toEqual([proc, "CALL RG_B.FX_P(3)"]);
+  });
+
+  test("a procedure, a function and a trigger with a compound body are one statement each", () => {
+    const proc = "CREATE OR REPLACE PROCEDURE RG_B.RG_P() BEGIN DELETE FROM RG_B.RG_PLAIN; END";
+    const fn = "CREATE FUNCTION f(x INT) RETURNS INT BEGIN ATOMIC DECLARE y INT; SET y = x + 1; RETURN y; END";
+    const trigger =
+      "CREATE TRIGGER tr AFTER INSERT ON t REFERENCING NEW AS n FOR EACH ROW BEGIN ATOMIC UPDATE u SET a = n.a; END";
+
+    expect(sqlsOf(splitStatements(`${proc}; ${fn}; ${trigger}; CALL RG_B.RG_P()`, DB2))).toEqual([
+      proc,
+      fn,
+      trigger,
+      "CALL RG_B.RG_P()",
+    ]);
+  });
+
+  test("a routine with no compound body, a CASE expression or words in parentheses opens nothing", () => {
+    expect(
+      sqlsOf(
+        splitStatements(
+          "CREATE FUNCTION f(begin INT) RETURNS INT RETURN CASE WHEN f.begin > 0 THEN 1 ELSE 0 END; CREATE TRIGGER t2 AFTER DELETE ON t FOR EACH ROW UPDATE u SET a = 1; SELECT 1 FROM SYSIBM.SYSDUMMY1",
+          DB2,
+        ),
+      ),
+    ).toEqual([
+      "CREATE FUNCTION f(begin INT) RETURNS INT RETURN CASE WHEN f.begin > 0 THEN 1 ELSE 0 END",
+      "CREATE TRIGGER t2 AFTER DELETE ON t FOR EACH ROW UPDATE u SET a = 1",
+      "SELECT 1 FROM SYSIBM.SYSDUMMY1",
+    ]);
+  });
+
+  test("a statement that is not a compound statement keeps every `;` a boundary", () => {
+    expect(
+      sqlsOf(
+        splitStatements(
+          "DECLARE GLOBAL TEMPORARY TABLE SESSION.x (a INT); CREATE TABLE begin_t (a INT); SELECT 1 FROM SYSIBM.SYSDUMMY1",
+          DB2,
+        ),
+      ),
+    ).toEqual([
+      "DECLARE GLOBAL TEMPORARY TABLE SESSION.x (a INT)",
+      "CREATE TABLE begin_t (a INT)",
+      "SELECT 1 FROM SYSIBM.SYSDUMMY1",
+    ]);
+  });
+
+  test("a block that never reaches its END holds the rest of the text, the fail-safe direction", () => {
+    const text = "BEGIN DELETE FROM t; SELECT 1 FROM SYSIBM.SYSDUMMY1;";
+
+    expect(sqlsOf(splitStatements(text, DB2))).toEqual([text]);
+  });
+});

@@ -44,9 +44,18 @@ const POSTGRES_GRAMMAR: SqlGrammar = {
   // syntax error. `SELECT 1 AS a // note` is "syntax error at or near \"//\"".
   doubleSlashComment: false,
   backslashAlwaysEscapes: false,
-  // Established, and equal to the default: a routine body is a literal (`$$ … $$` or
-  // `'…'`), which the span reader already holds whole, so no `;` inside one is code.
-  script: DEFAULT_SQL_GRAMMAR.script,
+  // `$` continues a name after its first character (manual 4.1.1; `ident_cont` in scan.l), so `col$a$x` is one name
+  // and the `$a$` inside it opens no dollar quote. Read as an opener, it ran to the `$a$` of the next such name and hid
+  // the `;` and the DELETE between them: the caret sent three statements as one with no confirmation (F09, measured
+  // on 18.7 and 19.0).
+  dollarInNames: true,
+  // A routine body written as a literal (`$$ … $$` or `'…'`) is the span reader's, but the
+  // SQL-standard body of PostgreSQL 14 and later, `BEGIN ATOMIC … END`, is code whose `;`
+  // end body statements: cut there, the caret sent a CREATE the server refused ("syntax
+  // error at end of input") and a bare `END`, which commits an open transaction (F08,
+  // measured on 18.7 and 19.0). `begin-atomic` reads it as psql's scanner does
+  // (psqlscan.l). No separator line, and one statement per request.
+  script: { ...DEFAULT_SQL_GRAMMAR.script, blocks: "begin-atomic" },
   // Materialize's `AS OF [AT LEAST] <t>`, which shares this type-id route (E2E pass
   // of 2026-10-03/04, #1398): `SELECT * FROM ui_mv AS OF AT LEAST 0` sent with the
   // bound appended is `Expected end of statement, found LIMIT`, and with the bound
@@ -108,6 +117,15 @@ const POSTGRES_GRAMMAR: SqlGrammar = {
   // asks whatever the block does; `DO LANGUAGE <name>` writes the language before the body. The `DO` of
   // `ON CONFLICT DO NOTHING | UPDATE` and of `CREATE RULE ... DO INSTEAD | ALSO` is followed by a word and does not ask.
   confirmCodeForms: [{ wordThenBody: "DO" }, ["DO", "LANGUAGE"]],
+  // The table rewrites: REPACK (19), CLUSTER and VACUUM FULL write a new copy of the table and its indexes and, but for
+  // REPACK CONCURRENTLY, hold an ACCESS EXCLUSIVE lock while they run, so every read and write of the table waits
+  // behind them, and a rewrite needs room for a second copy of the table (manual, VACUUM, CLUSTER and REPACK). Every
+  // form of REPACK and CLUSTER asks, with or without a table, an index or options. VACUUM asks only when FULL is on:
+  // the keyword spelling (`VACUUM FULL`, where FULL can only come first) here, and the option list (`VACUUM (FULL)`,
+  // `VACUUM (ANALYZE, FULL true)`) below, read by `defGetBoolean`'s rule, so `VACUUM (FULL false)` and a plain VACUUM
+  // or VACUUM ANALYZE, which let reads and writes go on, do not ask (C10, C14; measured on 19.0).
+  confirmForms: [["REPACK"], ["CLUSTER"], ["VACUUM", "FULL"]],
+  confirmOptionForms: [{ keyword: "VACUUM", option: "FULL" }],
   // `EXPLAIN` only plans. `EXPLAIN ANALYZE` (and the British `ANALYSE`) executes the explained statement, and so does
   // a parenthesised `ANALYZE` whose value is absent or anything other than a boolean false (`false`, `off`, `no`, `0`
   // and their accepted prefixes) or an integer literal of value 0. `0x1`, `0b1`, `0o1` and `0_1` are 1, so they
