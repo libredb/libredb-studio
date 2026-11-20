@@ -593,7 +593,8 @@ One whose `type` is present and not a string, such as a number, an array or an o
 One whose `type` is a string that is not exactly a type id, a case variant such as `"Postgres"` or a padded value included, answers `400 { "error": "No provider for the connection type \"acmefoo\" is installed in this LibreDB Studio.", "code": "PROVIDER_UNKNOWN", "statusCode": 400 }`, the type quoted as it was sent.
 The quote is the JSON string of the type, with C1 control characters, the Unicode line and paragraph separators and all twelve bidirectional controls of Unicode's `Bidi_Control` property also escaped as `\uXXXX`, so the sentence stays one line and reads in order.
 Release 1.3.0 answered all three with `400 CONFIG_ERROR`: a missing, empty or non-string type in the sentence below, and an unknown string in the factory's `Unknown database type` sentence once its provider was about to be built.
-A `connectionId` that names a seed entry whose type names no provider answers the same `400 PROVIDER_UNKNOWN`, with the sentence that quotes its type, after the role check ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)); release 1.3.0 answered every `seed:` id of such a file `500 INTERNAL_ERROR`.
+A `connectionId` that names a seed entry whose type has the shape of a type id and names no provider answers the same `400 PROVIDER_UNKNOWN`, with the sentence that quotes its type, after the role check ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)); release 1.3.0 answered every `seed:` id of such a file `500 INTERNAL_ERROR`.
+A seed entry whose type is absent, not text, or text of any other shape fails the whole seed file instead, so every `seed:` id of that file answers `500 INTERNAL_ERROR`.
 A `connection` whose `name` is present and not a string, `null` included, answers `400 { "error": "Valid connection configuration is required", "code": "CONFIG_ERROR", "statusCode": 400 }`, and a `connection` that is not an object is refused the same way.
 A `connection` without a `name` is still accepted, as a connection with no name.
 Every route that takes a `connection` answers it the same way, `POST /api/db/test-connection` included, and `POST /api/admin/fleet-health` reports it as that item's `error`.
@@ -1117,13 +1118,13 @@ Every field a decision lists is present, and no other field is; a client that re
 A statement confirmed by typing the connection's name answers `refuse` on a connection with no name, because an empty expected value would let an empty field confirm it.
 
 **Errors:** the connection is resolved before any field is read, so a connection the caller may not resolve answers its `403`, `404` or `503` whatever the body holds.
-An inline connection whose type is absent, not text or names no provider, or a seed entry named by `connectionId` whose type names no provider, is refused when the connection resolves, `400 PROVIDER_UNKNOWN` (see [`POST /api/db/query`](#post-apidbquery)).
-A seed entry whose type is absent or not text fails the whole seed file instead, so every `seed:` id of that file answers `500`.
+An inline connection whose type is absent, not text or names no provider, or a seed entry named by `connectionId` whose type has the shape of a type id and names no provider, is refused when the connection resolves, `400 PROVIDER_UNKNOWN` (see [`POST /api/db/query`](#post-apidbquery)).
+A seed entry whose type is absent, not text, or text of any other shape fails the whole seed file instead, so every `seed:` id of that file answers `500` ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)).
 A type `LIBREDB_ENABLED_PROVIDERS` leaves out, or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
 
 | Status | When |
 |--------|------|
-| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required`, `Valid connection configuration is required` for an inline connection whose `name` is present and not a string, `null` included, or a type `LIBREDB_ENABLED_PROVIDERS` leaves out; and, with code `PROVIDER_UNKNOWN`, an inline connection whose `type` is absent, not text or names no provider, or a named seed entry whose `type` names no provider (see [`POST /api/db/query`](#post-apidbquery)) |
+| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required`, `Valid connection configuration is required` for an inline connection whose `name` is present and not a string, `null` included, or a type `LIBREDB_ENABLED_PROVIDERS` leaves out; and, with code `PROVIDER_UNKNOWN`, an inline connection whose `type` is absent, not text or names no provider, or a named seed entry whose `type` has the shape of a type id and names no provider (see [`POST /api/db/query`](#post-apidbquery)); a seed `type` of any other shape fails the whole seed file, `500`, instead ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)) |
 | `413` | A text over 1,000,000 UTF-16 code units: `The text is <n> UTF-16 code units long, over the 1000000-unit limit for statement analysis. Shorten it to run it.` |
 | `401` | No session (`AUTH_REQUIRED`) |
 | `403` | `CUSTOM_CONNECTIONS_DISABLED` for an inline connection while custom connections are off, or, without governance and the Kubernetes access review, `AUTH_ERROR` for a seed the caller's role may not use |
@@ -1919,7 +1920,7 @@ model provider.
 
 **Refusals:** `400` for a missing, non-string, empty or oversized `objective`; `401` without a
 session; `404` when this server runs no agents.
-A `connectionId` naming a seed entry whose type names no provider answers `400 PROVIDER_UNKNOWN` in the shared error shape, `error` plus `code` plus `statusCode`, with the sentence that quotes its type, and nothing is classified.
+A `connectionId` naming a seed entry whose type names no provider ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)) answers `400 PROVIDER_UNKNOWN` in the shared error shape, `error` plus `code` plus `statusCode`, with the sentence that quotes its type, and nothing is classified.
 
 ---
 
@@ -2069,7 +2070,7 @@ could arrive twice.
 > that discriminates on the `400` alone is not, and would relabel a malformed `mode`, or an
 > `autoExecute` asked for on a workflow that presents no answer, as the engine's refusal.
 >
-> A `connectionId` naming a seed entry whose type names no provider answers in that shared shape too, with `code` `"PROVIDER_UNKNOWN"`, the sentence that quotes its type and no `refused`.
+> A `connectionId` naming a seed entry whose type names no provider ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)) answers in that shared shape too, with `code` `"PROVIDER_UNKNOWN"`, the sentence that quotes its type and no `refused`.
 > It is answered before the engine check and before the model is probed.
 
 > `422` rather than `400`: the request is well-formed and it is the server's configuration that

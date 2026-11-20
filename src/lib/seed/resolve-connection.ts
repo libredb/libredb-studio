@@ -88,8 +88,9 @@ function auditUniformMiss(seedId: string, username: string, target: string): voi
  * since both branches refuse a type that is not one (FND-1), so a caller reads per-engine tables by it without a check
  * of its own.
  *
- * @throws {UnknownProviderError} When the inline record's type, or the seed entry's, is absent, not text, or names no
- * provider.
+ * @throws {UnknownProviderError} When the inline record's type is absent, not text, or names no provider, or the seed
+ * entry's type names no provider. A seed type that is absent, not text, or text of another shape than a type id's
+ * fails the whole seed file before this resolves.
  * @throws {SeedConnectionError} When the request names no connection, names one the caller may not open, or carries a
  * record that is not one.
  */

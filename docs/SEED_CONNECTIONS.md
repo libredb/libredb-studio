@@ -65,7 +65,7 @@ No file at the default path means no seed connections and no error.
 In [governance mode](#governance-mode) no seed file is read, not even at the default path.
 A file named explicitly in `SEED_CONFIG_PATH` that does not exist also leaves Studio running without seed connections, and the [Seed sources card](#diagnostics) reports it as "Not found" with the path.
 Any other read error, a parse error or a schema error fails the whole list (see [Error Handling](#error-handling)).
-The one schema error that refuses only its own entry is a type that names no provider this Studio has: it is listed as unavailable and the rest of the file loads (see [A connection whose type this Studio has no provider for](#a-connection-whose-type-this-studio-has-no-provider-for)).
+The one schema error that refuses only its own entry is a type that has the shape of a type id and names no provider this Studio has: it is listed as unavailable and the rest of the file loads (see [A connection whose type this Studio has no provider for](#a-connection-whose-type-this-studio-has-no-provider-for)).
 
 ### A connection whose type this Studio has no provider for
 
@@ -1705,7 +1705,8 @@ The checks across the file, a repeated id and a `readOnly` or agent credential o
 A connection refused only by its engine's rules, a `readOnly` its engine does not enforce say, does not hide them.
 There are two exceptions.
 An undefined `${ENV_VAR}` skips only the connection that names it, and the card lists the skip.
-A connection whose type names no provider this Studio has is listed as unavailable and opened by no route, and the card lists it with the reason.
+A connection whose type has the shape of a type id and names no provider this Studio has is listed as unavailable and opened by no route, and the card lists it with the reason ([the shape](#a-connection-whose-type-this-studio-has-no-provider-for)).
+A type that is absent, not text, or text of any other shape fails the whole list.
 Discovered connections are validated one by one, and a bad one never fails the list.
 
 ---
