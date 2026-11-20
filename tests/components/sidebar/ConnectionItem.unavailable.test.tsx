@@ -55,7 +55,8 @@ describe("a sidebar row for a connection whose type names no provider", () => {
     const marker = within(row).getByTitle(sentence);
     expect(marker.textContent).toContain("Unavailable");
     expect(marker.textContent).toContain(sentence);
-    expect(row.getAttribute("aria-disabled")).toBe("true");
+    // Not aria-disabled: that would read its Delete button as disabled to assistive technology.
+    expect(row.getAttribute("aria-disabled")).toBeNull();
     expect(within(row).queryByRole("button", { name: "Edit connection" })).toBeNull();
     expect(within(row).queryByRole("button", { name: "Duplicate connection" })).toBeNull();
   });
