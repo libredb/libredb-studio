@@ -90,9 +90,10 @@ interface PooledTunnel {
  * superseded forward either - the provider cache miss that opens the next one disconnects the
  * PROVIDER and leaves the forward pooled - so what takes them is the connection's own teardown,
  * `removeProvider` and the 30-minute idle sweep, both of which close BY CONNECTION ID and take
- * every forward with them. The count is therefore what one id accumulates inside one idle window,
- * and it is caller-driven: `src/lib/seed/resolve-connection.ts` returns a posted inline connection
- * verbatim, id included. Refusing instead would cap it at one, and is exactly what the paragraph
+ * every forward with them, or the end of that forward's own SSH session. The count is therefore
+ * what one id accumulates inside one idle window, and it is caller-driven:
+ * `src/lib/seed/resolve-connection.ts` returns a posted inline connection verbatim, id included.
+ * Refusing instead would cap it at one, and is exactly what the paragraph
  * above says the honest population cannot afford; bounding it is filed rather than guessed at.
  */
 const activeTunnels = new Map<string, PooledTunnel>();
@@ -172,7 +173,8 @@ export interface CreateSSHTunnelOptions {
    * Whether the tunnel joins the by-connection-id pool every other provider for that
    * connection reuses. Default true, which is the pooled lifecycle: the tunnel outlives
    * the call, and `removeProvider` / the idle sweep close it once nothing serves the
-   * connection.
+   * connection. A tunnel whose SSH session ends, by an error or by the bastion ending it,
+   * closes itself and leaves the pool, pooled or not.
    *
    * `false` requests a one-shot tunnel for a caller that owns the whole lifecycle and
    * closes it itself - the routes that build a provider outside both provider caches
@@ -198,8 +200,7 @@ export async function createSSHTunnel(
   const key = poolKey(connectionId, sshConfig, remoteHost, remotePort);
 
   // Return the existing tunnel for THIS route and far end if one is already active.
-  // Note: cached tunnel may be stale if the SSH connection dropped silently.
-  // Callers should handle connection errors and call closeSSHTunnel() to evict stale entries.
+  // A tunnel whose SSH session has ended is not here: the session's end runs its cleanup.
   if (shared) {
     const existing = activeTunnels.get(key);
     if (existing) {
@@ -215,8 +216,15 @@ export async function createSSHTunnel(
     // fingerprint, and the two fingerprints are the whole diagnostic value here.
     let hostKeyRejection: string | null = null;
     let acceptedFingerprint: string | undefined;
+    // Whether this call has handed its tunnel out, which happens once the loopback listener is up.
+    let handedOut = false;
+    // Set by the first cleanup. The session's end reaches cleanup again after the owner closed the
+    // tunnel, and by then a newer forward may hold this pool key, so only the first run may act.
+    let closed = false;
 
     const cleanup = async () => {
+      if (closed) return;
+      closed = true;
       // Only a pooled tunnel owns its map entry. A one-shot tunnel may share the id of a
       // pooled one serving live providers, and deleting that entry would orphan it: the
       // SSH client and local server would stay open with nothing left holding a handle.
@@ -228,6 +236,19 @@ export async function createSSHTunnel(
         localServer = null;
       }
       sshClient.end();
+    };
+
+    // The SSH session is gone while the tunnel it carried is still open. Cleanup takes the forward out
+    // of the pool and closes its loopback listener, so the provider that used it meets a refused
+    // connection on its next dial, and the next request for the forward opens a new session. Logged
+    // once here, since the event that ended the session reaches no caller once the tunnel resolved.
+    const sessionLost = (cause: string) => {
+      if (handedOut && !closed) {
+        logger.warn(`SSH tunnel for ${connectionId} to ${remoteHost}:${remotePort} closed: ${cause}`, {
+          connectionId,
+        });
+      }
+      cleanup();
     };
 
     // ssh2 (1.17.0) dials the bastion with Nagle left on, so under Node every small request
@@ -274,6 +295,7 @@ export async function createSSHTunnel(
           close: cleanup,
           hostKeyFingerprint: acceptedFingerprint,
         };
+        handedOut = true;
         if (shared) {
           activeTunnels.set(key, { connectionId, info: tunnelInfo });
         }
@@ -287,9 +309,22 @@ export async function createSSHTunnel(
     sshClient.on("error", (err) => {
       // Ensure SSH file descriptors are released before rejecting
       sshClient.end();
-      cleanup();
+      sessionLost(`SSH connection error: ${err.message}`);
       reject(new Error(hostKeyRejection ?? `SSH connection error: ${err.message}`));
     });
+
+    // A session that ends without an error: the bastion sent DISCONNECT by application, or closed its
+    // side of the TCP connection with a FIN, as a restarting bastion does. ssh2 reports both as 'end'
+    // and 'close' and not as 'error', so the tunnel listens for them as well. Before the tunnel is
+    // ready, the same end is the dial's failure.
+    const sessionEnded = () => {
+      sessionLost("the bastion ended the SSH session");
+      reject(
+        new Error(`SSH connection to ${pinAddress(sshConfig.host, sshConfig.port)} closed before the tunnel was ready`),
+      );
+    };
+    sshClient.on("end", sessionEnded);
+    sshClient.on("close", sessionEnded);
 
     // Build SSH connection options
     const connectOptions: Parameters<Client["connect"]>[0] = {

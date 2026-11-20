@@ -1126,8 +1126,8 @@ Each entry is an open SSH client plus a listening loopback socket. Nothing in th
 superseded one: the provider cache miss that opens the next forward disconnects the PROVIDER
 (`factory.ts`, the query-timeout arm) and leaves the forward pooled. What takes them is the
 connection's own teardown - `removeProvider` and the 30-minute idle sweep, both of which close BY
-CONNECTION ID and take every forward with them - so the count is what one id accumulates inside one
-idle window. It is caller-driven, on the same reachability D86 already established:
+CONNECTION ID and take every forward with them - or the end of a forward's own SSH session, so the
+count is what one id accumulates inside one idle window. It is caller-driven, on the same reachability D86 already established:
 `resolveConnection` in `src/lib/seed/resolve-connection.ts` returns a posted inline connection verbatim, id included,
 so the host, the port and the bastion of each request are the caller's to vary.
 
