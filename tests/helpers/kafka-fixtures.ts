@@ -62,10 +62,20 @@ type Answer = (...args: unknown[]) => unknown;
  * arguments, `(connection, maxWaitMs, minBytes, maxBytes, isolationLevel, sessionId,
  * sessionEpoch, topics, forgottenTopicsData, rackId)`, so a fetch override reads its topics at
  * index 7 and the broker it was sent to at `args[0].broker`.
+ *
+ * The event listeners the adapter adds land in `listeners`, as `[emitter, event, listener]`, with
+ * emitters `admin.connections`, `consumer.connections`, `pool` and `connection`, so a test can emit
+ * on them; adding one is no call, so it is not in `calls`.
  */
 export function recordedLib(overrides: Record<string, Answer> = {}) {
   const constructed: Array<[string, unknown]> = [];
   const calls: Array<[string, unknown[]]> = [];
+  const listeners: Array<[string, string, (...args: unknown[]) => void]> = [];
+  const emitter = (name: string) => ({
+    on: (event: string, listener: (...args: unknown[]) => void) => {
+      listeners.push([name, event, listener]);
+    },
+  });
   const record =
     (name: string, answer: Answer) =>
     async (...args: unknown[]) => {
@@ -93,19 +103,23 @@ export function recordedLib(overrides: Record<string, Answer> = {}) {
     findCoordinator: record("admin.findCoordinator", () => kafkaFixture("find-coordinator")),
     listApis: record("admin.listApis", () => kafkaFixture("api-versions")),
     close: record("admin.close", () => undefined),
+    connections: emitter("admin.connections"),
   };
   const consumer = {
     listOffsets: record("consumer.listOffsets", () => kafkaFixture("offsets-latest")),
     listOffsetsWithTimestamps: record("consumer.listOffsetsWithTimestamps", () => kafkaFixture("offsets-timestamp")),
     close: record("consumer.close", () => undefined),
+    connections: emitter("consumer.connections"),
   };
   const connection = {
     connect: record("connection.connect", () => undefined),
     close: record("connection.close", () => undefined),
+    ...emitter("connection"),
   };
   const pool = {
     get: record("pool.get", (broker) => ({ broker })),
     close: record("pool.close", () => undefined),
+    ...emitter("pool"),
   };
   const lib: PlatformaticLib = {
     Admin: class {
@@ -139,5 +153,5 @@ export function recordedLib(overrides: Record<string, Answer> = {}) {
       api: { async: record("fetchV13", () => kafkaFixture("fetch-orders-p1-o5")) as never },
     },
   };
-  return { lib, constructed, calls };
+  return { lib, constructed, calls, listeners };
 }
