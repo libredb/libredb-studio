@@ -1275,7 +1275,8 @@ const LIST_ROUTINES_SQL = `
 // either routine folder answered 400 with `column "p.prokind" does not exist` while the
 // folder counted 0; with this predicate pg_catalog lists 488 functions and no procedure.
 function withoutProkindTest(sql: string): string {
-  return sql.replace("p.prokind = $2", "$2::text = 'f'");
+  // A function, not a string: in a replacement string `$2` is a capture-group reference.
+  return sql.replace("p.prokind = $2", () => "$2::text = 'f'");
 }
 
 // The routine listing for a server whose pg_proc has no `proargtypes` (Q3), from which the
