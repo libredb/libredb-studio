@@ -39,6 +39,7 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { logger } from "@/lib/logger";
 import { normalizeSQLiteBigInt, toSQLiteBindValue, type SQLiteDeclaredColumn } from "./sqlite-driver";
 
 // ============================================================================
@@ -396,6 +397,8 @@ export class SQLiteWorkerClient implements SQLiteHandle {
   private readonly queue: Array<{ run(): void; reject(error: Error): void; key?: string }> = [];
   private busy = false;
   private alive = true;
+  /** Whether `terminate()` stopped the child, as opposed to the child exiting on its own. */
+  private terminated = false;
   /** The `queryId` of the request the child is executing now; null for internal ops. */
   private runningKey: string | null = null;
 
@@ -425,6 +428,9 @@ export class SQLiteWorkerClient implements SQLiteHandle {
       }
     });
     child.stderr.on("data", (chunk) => process.stderr.write(`[sqlite-worker] ${String(chunk)}`));
+    child.stdin.on("error", (error) => this.onStreamError("stdin", error));
+    child.stdout.on("error", (error) => this.onStreamError("stdout", error));
+    child.stderr.on("error", (error) => this.onStreamError("stderr", error));
     child.on("error", (error) => this.failAll(new SQLiteWorkerError(`SQLite worker failed: ${error.message}`)));
     child.on("exit", (code, signal) => {
       this.alive = false;
@@ -542,6 +548,29 @@ export class SQLiteWorkerClient implements SQLiteHandle {
     this.pump();
   }
 
+  /**
+   * A pipe to the child failed. Without a listener the stream's `error` event is thrown
+   * out of its event handler; here it is reported as the worker's named error instead.
+   *
+   * The usual case is a statement still being written when `terminate()` kills the
+   * child: the rest of the write meets a closed pipe (EPIPE). `terminate()` has already
+   * rejected that request with "SQLite worker was terminated", so this failure is the
+   * expected tail of a cancel, a deadline or a disconnect and is logged at debug level.
+   * Any other stream failure is unexpected (the child died on its own, or a pipe broke
+   * under a live child): it rejects every request with the named error, is logged as a
+   * warning, and stops the child, which can no longer be talked to, so the provider's
+   * next statement starts a fresh one. Nothing is retried.
+   */
+  private onStreamError(stream: "stdin" | "stdout" | "stderr", error: Error): void {
+    if (this.terminated) {
+      logger.debug(`[sqlite-worker] ${stream} failed after terminate(): ${error.message}`);
+      return;
+    }
+    logger.warn(`[sqlite-worker] ${stream} failed: ${error.message}`);
+    this.failAll(new SQLiteWorkerError(`SQLite worker ${stream} failed: ${error.message}`));
+    this.terminate();
+  }
+
   private failAll(error: Error): void {
     for (const timer of this.timeouts.values()) clearTimeout(timer);
     this.timeouts.clear();
@@ -585,6 +614,7 @@ export class SQLiteWorkerClient implements SQLiteHandle {
   terminate(): void {
     if (!this.alive) return;
     this.alive = false;
+    this.terminated = true;
     this.child.stdin.end();
     this.child.kill("SIGKILL");
     this.failAll(new SQLiteWorkerError("SQLite worker was terminated"));
