@@ -155,6 +155,13 @@ export const ApiErrorCode = {
   TRANSACTION_NOT_OWNED: "TRANSACTION_NOT_OWNED",
 
   /**
+   * The database session a held transaction ran on has ended (503): the server ended the transaction with it, so the
+   * provider holds none from then on. Distinct from CONNECTION_ERROR, after which a transaction may still be open: the
+   * editor leaves transaction mode for this code (`transactionGone()` in src/hooks/use-transaction-control.ts).
+   */
+  TRANSACTION_LOST: "TRANSACTION_LOST",
+
+  /**
    * Under governance, the control plane set the runtime setting `ai.enabled` to false, and a route of the AI bucket
    * refused the request before any LLM provider was built (403). Distinct from LLM_UNCONFIGURED, which is the
    * environment naming no model: this refusal is the control plane's switch, and no LLM_* variable changes it.

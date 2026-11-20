@@ -45,7 +45,7 @@ const GROUPS = {
     "ADMIN_REQUIRED",
     "ACCOUNT_STORE_UNAVAILABLE",
   ],
-  transaction: ["TRANSACTION_NOT_OWNED"],
+  transaction: ["TRANSACTION_NOT_OWNED", "TRANSACTION_LOST"],
   connectionPolicy: ["CUSTOM_CONNECTIONS_DISABLED"],
   governance: [
     "AI_DISABLED",

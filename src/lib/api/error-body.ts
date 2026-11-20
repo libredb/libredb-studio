@@ -16,6 +16,7 @@ import {
   QueryError,
   QueryCancelledError,
   TimeoutError,
+  TransactionLostError,
   UnknownProviderError,
 } from "@/lib/db/errors";
 import { quoteTypeId } from "@/lib/db/type-id";
@@ -132,6 +133,16 @@ export function databaseErrorBody(error: unknown): DatabaseErrorAnswer | null {
     return {
       body: { error: TIMEOUT_SENTENCE, code: ApiErrorCode.TIMEOUT_ERROR, statusCode: 504, retryable: true },
       log: { level: "warn", message: "Query timeout", context: { provider: error.provider, duration: error.timeout } },
+    };
+  }
+
+  // --- DB: TransactionLostError ---
+  // Before the ConnectionError branch it subclasses: the held transaction is gone with its session, so the answer is
+  // not `retryable`. Running the statement again cannot reach that transaction; a new one has to be begun.
+  if (error instanceof TransactionLostError) {
+    return {
+      body: { error: error.message, code: ApiErrorCode.TRANSACTION_LOST, statusCode: 503 },
+      log: { level: "warn", message: "Transaction lost", context: { provider: error.provider } },
     };
   }
 

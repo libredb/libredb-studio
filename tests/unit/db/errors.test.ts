@@ -11,6 +11,7 @@ import {
   TimeoutError,
   QueryCancelledError,
   UnknownProviderError,
+  TransactionLostError,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -154,6 +155,18 @@ describe("ConnectionError", () => {
   test("is instanceof DatabaseError", () => {
     const err = new ConnectionError("fail");
     expect(err).toBeInstanceOf(DatabaseError);
+  });
+});
+
+describe("TransactionLostError", () => {
+  test("is a ConnectionError with the TRANSACTION_LOST code, its host and its port", () => {
+    const err = new TransactionLostError("The transaction was lost", "postgres", "db.internal", 5432);
+    expect(err).toBeInstanceOf(ConnectionError);
+    expect(err.name).toBe("TransactionLostError");
+    expect(err.code).toBe("TRANSACTION_LOST");
+    expect(err.provider).toBe("postgres");
+    expect(err.host).toBe("db.internal");
+    expect(err.port).toBe(5432);
   });
 });
 
@@ -345,6 +358,10 @@ describe("isRetryableError", () => {
 
   test("AuthenticationError is NOT retryable", () => {
     expect(isRetryableError(new AuthenticationError("bad creds"))).toBe(false);
+  });
+
+  test("TransactionLostError is NOT retryable: the transaction it names is gone", () => {
+    expect(isRetryableError(new TransactionLostError("The transaction was lost"))).toBe(false);
   });
 
   test("PermissionDeniedError is NOT retryable", () => {

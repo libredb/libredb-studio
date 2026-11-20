@@ -234,6 +234,12 @@ describe("useTransactionControl", () => {
         json: { error: "Your access changed.", code: "TRANSACTION_CREDENTIAL_CHANGED", rolledBack: true },
       },
       { ok: false, status: 400, json: { error: "No active transaction", code: "QUERY_ERROR", statusCode: 400 } },
+      // The transaction's database session ended, and the server ended the transaction with it.
+      {
+        ok: false,
+        status: 503,
+        json: { error: "The transaction was lost.", code: "TRANSACTION_LOST", statusCode: 503 },
+      },
     ];
     for (const answer of answers) {
       mockGlobalFetch({ "/api/db/transaction": { ok: true, status: 200, json: { status: "active" } } });
