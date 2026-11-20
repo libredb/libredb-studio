@@ -23,6 +23,7 @@ const GROUPS = {
     "QUERY_CANCELLED",
     "QUERY_ERROR",
     "CONFIG_ERROR",
+    "PROVIDER_UNKNOWN",
     "AUTH_ERROR",
     "PERMISSION_DENIED",
     "TIMEOUT_ERROR",
@@ -79,6 +80,11 @@ describe("ApiErrorCode", () => {
 
   test("contains generic error codes", () => {
     for (const code of GROUPS.generic) expect(ApiErrorCode[code]).toBe(code);
+  });
+
+  test("contains the unknown-provider refusal, distinct from CONFIG_ERROR", () => {
+    expect(ApiErrorCode.PROVIDER_UNKNOWN).toBe("PROVIDER_UNKNOWN");
+    expect(ApiErrorCode.PROVIDER_UNKNOWN).not.toBe(ApiErrorCode.CONFIG_ERROR);
   });
 
   test("contains the database's privilege refusal code, distinct from its refused credential's AUTH_ERROR", () => {

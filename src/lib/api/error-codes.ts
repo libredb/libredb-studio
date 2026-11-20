@@ -8,6 +8,12 @@ export const ApiErrorCode = {
   QUERY_CANCELLED: "QUERY_CANCELLED",
   QUERY_ERROR: "QUERY_ERROR",
   CONFIG_ERROR: "CONFIG_ERROR",
+  /**
+   * The connection's type is absent or names no provider this Studio has (400, `UnknownProviderError`), answered before
+   * any provider is built or any SSH tunnel opened. Distinct from CONFIG_ERROR, which is a provider this Studio has
+   * refusing a setting: the remedy here is a provider, not a field, and the sentence names the type as it was given.
+   */
+  PROVIDER_UNKNOWN: "PROVIDER_UNKNOWN",
   AUTH_ERROR: "AUTH_ERROR",
   /**
    * A database accepted the credential and refused the statement for a privilege that credential lacks (403), such as

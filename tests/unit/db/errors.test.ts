@@ -10,6 +10,7 @@ import {
   OffsetUnsupportedError,
   TimeoutError,
   QueryCancelledError,
+  UnknownProviderError,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -106,6 +107,34 @@ describe("DatabaseConfigError", () => {
     const err = new DatabaseConfigError("bad config");
     expect(err).toBeInstanceOf(DatabaseError);
     expect(err).toBeInstanceOf(Error);
+  });
+});
+
+describe("UnknownProviderError", () => {
+  const sentence = 'No provider for the connection type "acmefoo" is installed in this LibreDB Studio.';
+
+  test("UnknownProviderError is a DatabaseConfigError with code PROVIDER_UNKNOWN and no provider", () => {
+    const err = new UnknownProviderError({ reason: "unknown", typeId: "acmefoo", sentence });
+    expect(err.name).toBe("UnknownProviderError");
+    expect(err.code).toBe(ApiErrorCode.PROVIDER_UNKNOWN);
+    expect(err.reason).toBe("unknown");
+    expect(err.typeId).toBe("acmefoo");
+    expect(err.message).toBe(sentence);
+    expect(err.provider).toBeUndefined();
+    expect(err.toJSON().code).toBe("PROVIDER_UNKNOWN");
+    expect(err).toBeInstanceOf(DatabaseConfigError);
+    expect(err).toBeInstanceOf(DatabaseError);
+  });
+
+  test("an absent type carries no type id", () => {
+    const err = new UnknownProviderError({ reason: "absent", sentence: "no type" });
+    expect(err.reason).toBe("absent");
+    expect(err.typeId).toBeUndefined();
+    expect(err.message).toBe("no type");
+  });
+
+  test("it is not retryable", () => {
+    expect(isRetryableError(new UnknownProviderError({ reason: "unknown", typeId: "acmefoo", sentence }))).toBe(false);
   });
 });
 

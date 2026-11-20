@@ -18,6 +18,7 @@ import {
   QueryCancelledError,
   QueryError,
   TimeoutError,
+  UnknownProviderError,
 } from "@/lib/db/errors";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
 
@@ -57,6 +58,33 @@ const ROWS: readonly Row[] = [
     error: new DatabaseConfigError("Host is required", "mysql"),
     body: { error: "Host is required", code: ApiErrorCode.CONFIG_ERROR, statusCode: 400 },
     log: { level: "warn", message: "Database config error", context: { provider: "mysql" } },
+  },
+  {
+    name: "an UnknownProviderError answers 400 PROVIDER_UNKNOWN with its sentence: an unknown type",
+    error: new UnknownProviderError({
+      reason: "unknown",
+      typeId: "acmefoo",
+      sentence: 'No provider for the connection type "acmefoo" is installed in this LibreDB Studio.',
+    }),
+    body: {
+      error: 'No provider for the connection type "acmefoo" is installed in this LibreDB Studio.',
+      code: ApiErrorCode.PROVIDER_UNKNOWN,
+      statusCode: 400,
+    },
+    log: { level: "warn", message: "Unknown provider", context: {} },
+  },
+  {
+    name: "an UnknownProviderError answers 400 PROVIDER_UNKNOWN with its sentence: an absent type",
+    error: new UnknownProviderError({
+      reason: "absent",
+      sentence: "This connection names no type, so no provider in this LibreDB Studio can open it.",
+    }),
+    body: {
+      error: "This connection names no type, so no provider in this LibreDB Studio can open it.",
+      code: ApiErrorCode.PROVIDER_UNKNOWN,
+      statusCode: 400,
+    },
+    log: { level: "warn", message: "Unknown provider", context: {} },
   },
   {
     name: "AuthenticationError with a fix statement",

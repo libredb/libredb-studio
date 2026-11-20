@@ -16,6 +16,7 @@ import {
   QueryError,
   QueryCancelledError,
   TimeoutError,
+  UnknownProviderError,
 } from "@/lib/db/errors";
 import type { DatabaseType } from "@/lib/db/types";
 
@@ -65,6 +66,16 @@ export function databaseErrorBody(error: unknown): DatabaseErrorAnswer | null {
           error.position !== undefined || error.detail ? { position: error.position, detail: error.detail } : undefined,
       },
       log: { level: "warn", message: "Query error", context: { provider: error.provider } },
+    };
+  }
+
+  // --- DB: UnknownProviderError ---
+  // Before the DatabaseConfigError branch it subclasses: the connection's type names no provider, so there is none to
+  // log against.
+  if (error instanceof UnknownProviderError) {
+    return {
+      body: { error: error.message, code: ApiErrorCode.PROVIDER_UNKNOWN, statusCode: 400 },
+      log: { level: "warn", message: "Unknown provider", context: {} },
     };
   }
 
