@@ -67,6 +67,7 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
@@ -3545,10 +3546,12 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
    * provider-local subclass is invisible; and the vacuity guard is the length
    * assertion below, which is what saves the walk if the module is ever stubbed.
    *
-   * Every class in the module takes `(message, provider?)`, which is what makes the
-   * generic construction below sound. A future class whose constructor takes something
-   * else would be fed junk silently rather than failing loudly — harmless for an
-   * `instanceof` classification, but not a signature check.
+   * Every class in the module but one takes `(message, provider?)`, which is what makes
+   * the generic construction below sound. The exception, `UnknownProviderError`, takes the
+   * refusal `typeIdRefusal` answers, so `BUILT_FROM` builds it from a real one. The
+   * generic construction asserts that the message it passed is the message it got, so a
+   * future class whose constructor takes something else fails loudly here instead of
+   * being fed junk; it then gets a `BUILT_FROM` entry of its own.
    */
   test("every DatabaseError subclass in the error module has a deliberate repairability verdict", async () => {
     /** The verdict at the QUERY phase. Nothing is repairable at the acquisition phase. */
@@ -3596,9 +3599,22 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       Object.keys(EXPECTED).length,
     );
 
+    /** The classes whose constructor does not take `(message, provider?)`, each built from a real argument. */
+    const BUILT_FROM: Readonly<Record<string, () => Error>> = {
+      UnknownProviderError: () => {
+        const refusal = typeIdRefusal("probe");
+        if (refusal === null) throw new Error('"probe" is not expected to be a type id');
+        return new errorModule.UnknownProviderError(refusal);
+      },
+    };
+
     for (const [name, Kind] of subclasses) {
       const verdict = EXPECTED[name];
-      const error = new Kind("probe", "postgres");
+      const build = BUILT_FROM[name];
+      const error = build === undefined ? new Kind("probe", "postgres") : build();
+      expect(error.message, `${name} was not built from what its constructor takes`).toBe(
+        build === undefined ? "probe" : unknownTypeSentence("probe"),
+      );
 
       // The acquisition phase first, where the verdict is universal: nothing that
       // failed before the statement was sent is a statement the model could repair.
