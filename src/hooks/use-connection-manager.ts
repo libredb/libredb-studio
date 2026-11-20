@@ -607,6 +607,9 @@ export function useConnectionManager(storageReady = false) {
 
       // Add managed:true connections (always from server)
       for (const mc of managedConns) {
+        // A seed whose type names no provider is listed managed whatever the file says (FND-1), so a dismissal the
+        // user recorded by deleting their copy of it is kept while it is listed so.
+        if (mc.seedId && dismissed.has(mc.seedId) && !isDatabaseType(mc.type)) continue;
         if (mc.managed) {
           merged.push({ ...mc, createdAt: new Date(mc.createdAt) });
         } else {
