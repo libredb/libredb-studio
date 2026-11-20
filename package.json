@@ -247,7 +247,7 @@
     "node-opcua-certificate-manager": "2.187.26",
     "node-opcua-client": "2.187.26",
     "openid-client": "^6.8.8",
-    "oracledb": "^6.10.0",
+    "oracledb": "26.0.0",
     "pg": "^8.23.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.8",
