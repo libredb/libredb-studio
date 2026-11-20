@@ -78,8 +78,15 @@ const SERVICE_NAME = z.string().regex(/^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/);
 /** The roles of a MongoDB user the exporter keeps, the first ones of the resource. */
 const MONGO_ROLES_MAX = 64;
 const METADATA = z.object({ namespace: NAMESPACE_NAME, name: OBJECT_NAME });
+/**
+ * The kinds the export may name, by the slug of their row in the contract table (KUBERNETES_CONTRACT in
+ * kubernetes-discovery-contract.ts). tests/unit/seed/kubernetes-discovery-contract.test.ts holds this list to the
+ * table's slugs and each row's type to the type ids, so a kind maps to one row and a row to a provider Studio has.
+ */
+export const KUBERNETES_DISCOVERY_KINDS = ["cnpg", "edbpg", "pgo", "mongo"] as const;
+
 /** A kind of the contract table, by its slug. */
-const KIND = z.enum(["cnpg", "edbpg", "pgo", "mongo"]);
+const KIND = z.enum(KUBERNETES_DISCOVERY_KINDS);
 
 const ExportStatusSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }),
