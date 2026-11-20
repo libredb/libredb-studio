@@ -119,7 +119,11 @@ const SEED = "docker/kafka/seed-binary.ts";
  */
 const SEED_TAKERS: string[] = [];
 
-/** Members the adapter may call on the library's objects (spec 3.6 K4). */
+/**
+ * Members the adapter may call on the library's objects (spec 3.6 K4). `on` and `connections` send
+ * nothing: through them the adapter keeps an error listener on every connection it opens, its clients'
+ * pools included.
+ */
 const ALLOWED = new Set([
   "metadata",
   "listTopics",
@@ -135,6 +139,8 @@ const ALLOWED = new Set([
   "close",
   "connect",
   "get",
+  "on",
+  "connections",
 ]);
 /** Receivers that hold library objects in the adapter, by the adapter's own naming. */
 const LIBRARY_RECEIVERS = new Set(["admin", "consumer", "connection", "fetchPool", "lib"]);
@@ -174,9 +180,11 @@ const DECLARED_SHAPES: Readonly<Record<string, Readonly<Record<string, string>>>
       "listGroups(o: object): Promise<Map<string, { id: string; state: string; groupType?: string; protocolType: string; }>>;",
     listTopics: "listTopics(o?: object): Promise<string[]>;",
     metadata: "metadata(o: object): Promise<LibMetadata>;",
+    connections: "readonly connections: ConnectionPoolLike;",
   },
   ConsumerLike: {
     close: "close(): Promise<void>;",
+    connections: "readonly connections: ConnectionPoolLike;",
     listOffsets: "listOffsets(o: object): Promise<Map<string, bigint[]>>;",
     listOffsetsWithTimestamps:
       "listOffsetsWithTimestamps(o: object): Promise<Map<string, Map<number, { offset: bigint; timestamp: bigint; }>>>;",
@@ -184,10 +192,12 @@ const DECLARED_SHAPES: Readonly<Record<string, Readonly<Record<string, string>>>
   ConnectionLike: {
     close: "close(): Promise<void>;",
     connect: "connect(host: string, port: number): Promise<void>;",
+    on: 'on(event: "error", listener: (error: unknown) => void): void;',
   },
   ConnectionPoolLike: {
     close: "close(): Promise<void>;",
     get: "get(broker: { host: string; port: number; }): Promise<ConnectionLike>;",
+    on: 'on(event: "connecting", listener: (opening: { connection: ConnectionLike; }) => void): void;',
   },
 };
 /**
@@ -276,7 +286,6 @@ const UNUSED_MEMBERS = new Set([
   "clientId",
   "closed",
   "connectToBrokers",
-  "connections",
   "context",
   "coordinatorId",
   "currentMetadata",
@@ -298,7 +307,6 @@ const UNUSED_MEMBERS = new Set([
   "lastHeartbeat",
   "memberId",
   "off",
-  "on",
   "once",
   "ownerId",
   "port",
@@ -1849,7 +1857,7 @@ describe("Kafka seam guard", () => {
     ["a @ts-nocheck", "// @ts-nocheck\nexport {};", [`${ADAPTER} switches tsc off with @ts-nocheck`]],
     [
       "a shape member whose signature widens what it answers",
-      "interface ConnectionPoolLike { get(broker: { host: string; port: number }): Promise<ConnectionLike & { socket: unknown }>; close(): Promise<void> }",
+      'interface ConnectionPoolLike { get(broker: { host: string; port: number }): Promise<ConnectionLike & { socket: unknown }>; close(): Promise<void>; on(event: "connecting", listener: (opening: { connection: ConnectionLike }) => void): void; }',
       [
         `${ADAPTER} declares ConnectionPoolLike.get as get(broker: { host: string; port: number; }): Promise<ConnectionLike & { socket: unknown; }>;`,
         `${ADAPTER} names socket`,
@@ -1857,13 +1865,13 @@ describe("Kafka seam guard", () => {
     ],
     [
       "a shape that inherits members",
-      "interface ConnectionLike extends Writer { connect(host: string, port: number): Promise<void>; close(): Promise<void> }",
+      'interface ConnectionLike extends Writer { connect(host: string, port: number): Promise<void>; close(): Promise<void>; on(event: "error", listener: (error: unknown) => void): void; }',
       [`${ADAPTER} declares ConnectionLike extends Writer`],
     ],
     [
       "a shape with an index signature",
-      "interface ConnectionLike { [member: string]: unknown; connect(host: string, port: number): Promise<void>; close(): Promise<void> }",
-      [`${ADAPTER} declares ConnectionLike as [member: string]: unknown;, close, connect`],
+      'interface ConnectionLike { [member: string]: unknown; connect(host: string, port: number): Promise<void>; close(): Promise<void>; on(event: "error", listener: (error: unknown) => void): void; }',
+      [`${ADAPTER} declares ConnectionLike as [member: string]: unknown;, close, connect, on`],
     ],
     [
       "a shape declared as a type alias",

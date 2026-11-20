@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { channel as diagnosticsChannel } from "node:diagnostics_channel";
 import { getEventListeners } from "node:events";
 import { type AddressInfo, createServer, isIP, type Socket } from "node:net";
 import {
@@ -1932,6 +1933,32 @@ describe("createPlatformaticClient", () => {
     expect(await description).toMatchObject({ groupId: "lag-kip848", groupType: "consumer" });
   });
 
+  test("the API 69 connection is heard from before it connects, and an error it reports after the answer leaves the description as answered", async () => {
+    let heardAtConnect = 0;
+    const recorded = fakeLib({ "connection.connect": () => void (heardAtConnect = heard().length) });
+    const heard = () => recorded.listeners.filter(([emitter, event]) => emitter === "connection" && event === "error");
+    const listing = { groupId: "lag-kip848", state: "Empty", groupType: "consumer" as const, protocolType: "consumer" };
+    const description = await createPlatformaticClient(OPTIONS, recorded.lib).describeGroup(listing);
+    expect(heardAtConnect).toBe(1);
+    for (const [, , listener] of heard())
+      listener(Object.assign(new Error("Connection error"), { code: "PLT_KFK_NETWORK" }));
+    expect(description).toMatchObject({ groupId: "lag-kip848", groupType: "consumer", protocolOrAssignor: "uniform" });
+    expect(recorded.calls.filter(([n]) => n === "connection.close").length).toBe(1);
+  });
+
+  test("each pool the adapter's clients open connections from puts an error listener on every connection it builds", () => {
+    const { lib, listeners } = fakeLib();
+    createPlatformaticClient(OPTIONS, lib);
+    const opening = listeners.filter(([, event]) => event === "connecting");
+    expect(opening.map(([emitter]) => emitter)).toEqual(["admin.connections", "consumer.connections", "pool"]);
+    for (const [, , listener] of opening) {
+      const added: Array<[string, (error: unknown) => void]> = [];
+      listener({ connection: { on: (event: string, heard: (error: unknown) => void) => added.push([event, heard]) } });
+      expect(added.map(([event]) => event)).toEqual(["error"]);
+      expect(() => added[0][1](new Error("Connection to localhost:9092 failed."))).not.toThrow();
+    }
+  });
+
   test("an API 69 entry answered GROUP_ID_NOT_FOUND is unknown-object in the adapter's own words, never the broker's (captured)", async () => {
     // The capture asked for lag-kip848 and lag-classic together; lag-classic's entry, second in the
     // answer, carries 69 with the broker's text "Group lag-classic is not a consumer group.".
@@ -3309,6 +3336,193 @@ describe("the installed client against a local broker (spec 3.6 K8)", () => {
     if (result instanceof Error) throw result;
     expect(result.records.map((r) => r.offset)).toEqual([big(3)]);
     expect(result.nextOffset).toBe(big(4));
+  });
+
+  /**
+   * Runs `work` with a recorder on the process's uncaughtException, and answers what it settled to
+   * and every exception that reached the process meanwhile, a short pause after it settled included.
+   */
+  async function withUncaughtRecorded<T>(work: () => Promise<T>) {
+    const uncaught: unknown[] = [];
+    const record = (error: unknown) => uncaught.push(error);
+    process.on("uncaughtException", record);
+    try {
+      const settled = await work().then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+      await pause(100);
+      return { settled, uncaught };
+    } finally {
+      process.off("uncaughtException", record);
+    }
+  }
+
+  /**
+   * A listener that reads each connection's first request frame and then fails the connection as
+   * `fail` says: "stray" answers with a correlation id no request carries, "reset" resets it.
+   */
+  async function failingListener(fail: "stray" | "reset") {
+    const received: number[] = [];
+    const server = createServer((socket) => {
+      socket.on("error", () => undefined);
+      let buffered = Buffer.alloc(0);
+      socket.on("data", (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (buffered.length < 4 || buffered.length < 4 + buffered.readInt32BE(0)) return;
+        const [apiKey, correlationId] = [buffered.readInt16BE(4), buffered.readInt32BE(8)];
+        buffered = Buffer.alloc(0);
+        received.push(apiKey);
+        if (fail === "stray") socket.write(Buffer.concat([int32(4), int32(correlationId + 1000)]));
+        else socket.resetAndDestroy();
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return {
+      port: (server.address() as AddressInfo).port,
+      received,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  /** The installed library, with only how a group's coordinator is found replaced: the broker names `port` on 127.0.0.1. */
+  async function namingCoordinator(port: number) {
+    const lib = await loadPlatformatic();
+    const Admin = class {
+      constructor(options: object) {
+        return Object.assign(new lib.Admin(options), {
+          findCoordinator: async (o: { keys: string[] }) =>
+            o.keys.map((key) => ({ key, nodeId: 7, host: "127.0.0.1", port })),
+        });
+      }
+    };
+    return { ...lib, Admin: Admin as never };
+  }
+
+  const SASL = { mechanism: "PLAIN" as const, username: "u", password: "p" };
+  test.each([
+    ["answers a correlation id no request carries", "stray" as const, {}, {}, [69]],
+    ["resets the connection", "reset" as const, { nodeCode: "ECONNRESET" }, {}, [69]],
+    // The SASL exchange's first request is ApiVersions. Such a connection reports the reset twice, the
+    // second time from its SASL step, which reads the closed connection.
+    [
+      "resets the connection during its SASL exchange",
+      "reset" as const,
+      { nodeCode: "ECONNRESET" },
+      { sasl: SASL },
+      [18],
+    ],
+  ])(
+    "a group coordinator that %s fails the description with a named error that names it, and nothing is thrown out of the connection",
+    async (_, fail, nodeCode, sasl, received) => {
+      const coordinator = await failingListener(fail);
+      const client = createPlatformaticClient(
+        { clientId: "libredb-studio", broker: { host: "127.0.0.1", port: 1 }, timeoutMs: 2000, ...sasl },
+        await namingCoordinator(coordinator.port),
+      );
+      const { settled, uncaught } = await withUncaughtRecorded(() =>
+        client.describeGroup({ groupId: "g", state: "Stable", groupType: "consumer", protocolType: "consumer" }),
+      );
+      await client.close();
+      await coordinator.close();
+      // What the coordinator received before it failed the connection: the ConsumerGroupDescribe request, or ApiVersions.
+      expect(coordinator.received).toEqual(received);
+      expect(uncaught).toEqual([]);
+      expect("error" in settled && settled.error).toBeInstanceOf(KafkaError);
+      const error = (settled as { error: KafkaError }).error;
+      const reason = fail === "stray" ? "PLT_KFK_UNEXPECTED_CORRELATION_ID" : "ECONNRESET";
+      expect([error.category, error.message, error.detail]).toEqual([
+        "advertised-unreachable",
+        `The connection to 127.0.0.1:${coordinator.port}, the coordinator the broker named for group "g", failed once it was open (${reason})`,
+        { host: "127.0.0.1", port: coordinator.port, ...nodeCode },
+      ]);
+    },
+  );
+
+  test("a group coordinator that refuses the connection is read as any connection failure is, at the address the broker named", async () => {
+    // While the connection connects, its error event and connect() carry the same error.
+    const closed = createServer();
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+    const port = (closed.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => closed.close(() => resolve()));
+    const client = createPlatformaticClient(
+      { clientId: "libredb-studio", broker: { host: "127.0.0.1", port: 1 }, timeoutMs: 2000 },
+      await namingCoordinator(port),
+    );
+    const { settled, uncaught } = await withUncaughtRecorded(() =>
+      client.describeGroup({ groupId: "g", state: "Stable", groupType: "consumer", protocolType: "consumer" }),
+    );
+    await client.close();
+    expect(uncaught).toEqual([]);
+    expect(settled).toMatchObject({
+      error: { category: "advertised-unreachable", detail: { host: "127.0.0.1", port, nodeCode: "ECONNREFUSED" } },
+    });
+  });
+
+  test("a broker that resets a SASL connection mid-exchange fails the read, and nothing is thrown out of the connection", async () => {
+    // The client reports such a connection's failure twice: once from the socket, then again from its
+    // SASL step, which reads the closed connection; the pool that opened it listens for the first alone.
+    const broker = await failingListener("reset");
+    const client = createPlatformaticClient(
+      {
+        clientId: "libredb-studio",
+        broker: { host: "127.0.0.1", port: broker.port },
+        timeoutMs: 2000,
+        sasl: SASL,
+      },
+      await loadPlatformatic(),
+    );
+    const { settled, uncaught } = await withUncaughtRecorded(() => client.listTopics());
+    await client.close();
+    await broker.close();
+    // ApiVersions, the first request of the SASL exchange, once per attempt.
+    expect(broker.received).toEqual([18, 18]);
+    expect(uncaught).toEqual([]);
+    expect("error" in settled && settled.error).toBeInstanceOf(KafkaError);
+  });
+
+  test("every connection the adapter opens keeps an error listener for its whole life", async () => {
+    // Every connection the library builds, from each of the adapter's pools and the description's own.
+    const opened: Array<{ emit(event: string, error: Error): boolean }> = [];
+    const instances = diagnosticsChannel("plt:kafka:instances");
+    const take = (message: unknown) => {
+      const { type, instance } = message as { type: string; instance: (typeof opened)[number] };
+      if (type === "connection") opened.push(instance);
+    };
+    instances.subscribe(take);
+    try {
+      const broker = await localBroker(Buffer.alloc(0));
+      try {
+        // The Admin's pool: metadata. The Consumer's pool: its metadata read before the offsets, which
+        // this listener does not answer. The fetch pool: the fetch to the leader.
+        const [orders] = (await broker.client.metadata(["orders"])).topics;
+        await broker.client.offsets("orders", "latest").catch(() => undefined);
+        await broker.client.fetch(orders, 0, big(0), AbortSignal.timeout(2500)).catch(() => undefined);
+      } finally {
+        await broker.close();
+      }
+      const coordinator = await failingListener("reset");
+      const describing = createPlatformaticClient(
+        { clientId: "libredb-studio", broker: { host: "127.0.0.1", port: 1 }, timeoutMs: 2000 },
+        await namingCoordinator(coordinator.port),
+      );
+      await describing
+        .describeGroup({ groupId: "g", state: "Stable", groupType: "consumer", protocolType: "consumer" })
+        .catch(() => undefined);
+      await describing.close();
+      await coordinator.close();
+    } finally {
+      instances.unsubscribe(take);
+    }
+    expect(opened.length).toBeGreaterThanOrEqual(4);
+    // A connection reports each failure as an error event, and one no listener hears is thrown. The
+    // library's own listeners take the first at most, so two in a row reach a listener of the adapter's.
+    for (const connection of opened) {
+      expect(() => {
+        connection.emit("error", new Error("first"));
+        connection.emit("error", new Error("second"));
+      }).not.toThrow();
+    }
   });
 
   test("a batch that will not decompress is protocol, named by zlib's code, and the read settles", async () => {

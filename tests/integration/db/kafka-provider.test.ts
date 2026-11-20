@@ -2382,6 +2382,33 @@ describe("failures (spec 5.6)", () => {
       expect(got).toEqual("value" in want ? { answered: want.value } : tableAnswer(want.error, failure));
     },
   );
+
+  test("a consumer-protocol group whose coordinator connection fails once open is a ConnectionError naming the coordinator, and the connection is closed", async () => {
+    // As the client reports a reset: an error event on the connection with the socket's error as its
+    // cause, then the request in flight rejected with a bare "Connection closed".
+    const reset = Object.assign(new Error("Connection error"), {
+      code: "PLT_KFK_NETWORK",
+      cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }),
+    });
+    const closed = Object.assign(new Error("Connection closed"), { code: "PLT_KFK_NETWORK" });
+    const { provider, recorded } = await connected({
+      "admin.findCoordinator": () => [{ key: "lag-kip848", nodeId: 2, host: "broker-2.example", port: 9093 }],
+      consumerGroupDescribeV0: () => {
+        for (const [emitter, event, listener] of recorded.listeners)
+          if (emitter === "connection" && event === "error") listener(reset);
+        throw closed;
+      },
+    });
+    const error = await provider.readObjectSource(["lag-kip848"], "consumer_group").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error).toMatchObject({
+      message:
+        'The connection to broker-2.example:9093, the coordinator the broker named for group "lag-kip848", failed once it was open (ECONNRESET)',
+      host: "broker-2.example",
+      port: 9093,
+    });
+    expect(closesOf(recorded.calls)).toEqual(["connection.close"]);
+  });
 });
 
 describe("delegation (spec 3.5)", () => {
