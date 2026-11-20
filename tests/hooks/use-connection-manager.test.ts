@@ -2130,6 +2130,68 @@ describe("useConnectionManager", () => {
       expect(result.current.activeConnection?.id).toBe("plain-1");
     });
 
+    // A seed entry whose type names no provider is listed by the server as a managed connection of that type (FND-1):
+    // the browser lists it, draws it Unavailable from its type, never opens it and never stores a copy of it.
+    test("a managed seed whose type names no provider is listed, never made active and never stored", async () => {
+      const acme = makeManagedConnection({
+        id: "seed:acme",
+        name: "Acme Store",
+        type: "acmefoo",
+        managed: true,
+        seedId: "acme",
+        host: undefined,
+        port: undefined,
+        database: undefined,
+        user: undefined,
+        password: undefined,
+      } as unknown as Partial<ManagedConnectionPayload>);
+      const pg = makeManagedConnection({ id: "seed:pg", name: "PG", managed: true, seedId: "pg" });
+      mockGlobalFetch({
+        "/api/connections/managed": { ok: true, json: { connections: [acme, pg] } },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("seed:pg");
+      });
+      expect(result.current.connections.map((c) => c.id)).toEqual(["seed:acme", "seed:pg"]);
+      expect(storage.getConnections()).toEqual([]);
+      expect(mockToastError).not.toHaveBeenCalled();
+    });
+
+    test("a refresh that finds the active seed's type names no provider moves to the first available connection and says why by name", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      storage.saveConnection(plain());
+      const pg = makeManagedConnection({ id: "seed:pg", name: "PG", managed: true, seedId: "pg" });
+      let managedCalls = 0;
+      mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return {
+            ok: true,
+            json: { connections: [managedCalls === 1 ? pg : { ...pg, type: "acmefoo" }] },
+          };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("seed:pg");
+      });
+
+      focusWindow();
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      expect(result.current.connections.find((c) => c.id === "seed:pg")?.type).toBe("acmefoo" as never);
+      expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+        description: `PG: ${unknownTypeSentence("acmefoo")}`,
+      });
+      expect(mockToastSuccess).not.toHaveBeenCalledWith("Connection removed", expect.anything());
+    });
+
     test("a managed refresh with nothing active never picks the unknown connection", async () => {
       process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
       storage.saveConnection(unknown());
