@@ -71,7 +71,7 @@ const ROWS: readonly Row[] = [
       code: ApiErrorCode.PROVIDER_UNKNOWN,
       statusCode: 400,
     },
-    log: { level: "warn", message: "Unknown provider", context: {} },
+    log: { level: "warn", message: "Unknown provider", context: { reason: "unknown", type: '"acmefoo"' } },
   },
   {
     name: "an UnknownProviderError answers 400 PROVIDER_UNKNOWN with its sentence: an absent type",
@@ -84,7 +84,7 @@ const ROWS: readonly Row[] = [
       code: ApiErrorCode.PROVIDER_UNKNOWN,
       statusCode: 400,
     },
-    log: { level: "warn", message: "Unknown provider", context: {} },
+    log: { level: "warn", message: "Unknown provider", context: { reason: "absent" } },
   },
   {
     name: "AuthenticationError with a fix statement",
@@ -233,7 +233,9 @@ describe("the error body is Next-free", () => {
     expect(closure.modules).toEqual([
       "src/lib/api/error-body.ts",
       "src/lib/api/error-codes.ts",
+      "src/lib/db/compatibility.ts",
       "src/lib/db/errors.ts",
+      "src/lib/db/type-id.ts",
     ]);
     expect(closure.packages).toEqual([]);
   });

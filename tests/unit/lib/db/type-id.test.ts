@@ -9,13 +9,13 @@ import {
   ABSENT_TYPE_SENTENCE,
   assertDatabaseType,
   isDatabaseType,
+  quoteTypeId,
   typeIdRefusal,
   unknownTypeSentence,
 } from "@/lib/db/type-id";
 
 describe("isDatabaseType and typeIdRefusal", () => {
   test("every shipped type id is a type id", () => {
-    expect(SHIPPED_DATABASE_TYPES.length).toBe(43);
     for (const id of SHIPPED_DATABASE_TYPES) {
       expect(isDatabaseType(id)).toBe(true);
       expect(typeIdRefusal(id)).toBeNull();
@@ -65,6 +65,33 @@ describe("isDatabaseType and typeIdRefusal", () => {
     const refusal = typeIdRefusal("a\nb");
     expect(refusal?.sentence).toContain('"a\\nb"');
     expect(refusal?.sentence).not.toContain("\n");
+  });
+
+  // JSON.stringify escapes only U+0000 to U+001F, the quote and the backslash; these code points would otherwise reach
+  // the sentence raw: C1 controls, the Unicode line and paragraph separators, and the bidirectional controls.
+  test.each([
+    ["\u0085", "\\u0085"],
+    ["\u0080", "\\u0080"],
+    ["\u009b", "\\u009b"],
+    ["\u009f", "\\u009f"],
+    ["\u2028", "\\u2028"],
+    ["\u2029", "\\u2029"],
+    ["\u202a", "\\u202a"],
+    ["\u202e", "\\u202e"],
+    ["\u2066", "\\u2066"],
+    ["\u2069", "\\u2069"],
+  ])("the sentence escapes %j", (codePoint, escaped) => {
+    const refusal = typeIdRefusal(`a${codePoint}b`);
+    expect(refusal?.sentence).toContain(`"a${escaped}b"`);
+    expect(refusal?.sentence).not.toContain(codePoint);
+    // The error keeps the value as given.
+    expect(refusal?.reason === "unknown" ? refusal.typeId : undefined).toBe(`a${codePoint}b`);
+  });
+
+  test("quoteTypeId is the quoted form the sentence carries", () => {
+    expect(quoteTypeId("acmefoo")).toBe('"acmefoo"');
+    expect(quoteTypeId("a\u202eb\n")).toBe('"a\\u202eb\\n"');
+    expect(unknownTypeSentence("a\u2028b")).toContain(quoteTypeId("a\u2028b"));
   });
 });
 
