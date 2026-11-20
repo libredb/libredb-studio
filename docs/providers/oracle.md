@@ -510,7 +510,9 @@ addition.
 
 Studio installs `oracledb` 26.0.0, pinned to that exact version, with one patch ([`patches/oracledb@26.0.0.patch`](../../patches/oracledb@26.0.0.patch), listed in [TOOLCHAIN.md, "Patched dependencies"](../TOOLCHAIN.md#patched-dependencies)).
 The cases below fail the connect with a named error, and the socket is closed when the call answers.
-[`oracle-thin-transport.test.ts`](../../tests/integration/db/oracle-thin-transport.test.ts) holds each against the real driver, with in-process peers that answer as a refusing proxy and a broken listener do.
+[`oracle-thin-transport.test.ts`](../../tests/integration/db/oracle-thin-transport.test.ts) holds each against the real driver, with peers that answer as a refusing proxy and a broken listener do.
+The proxy cases run in the test process.
+The packet header cases run in a Node child with a 256 MB heap limit and a hard timeout ([`oracle-thin-transport-harness.ts`](../../tests/integration/db/oracle-thin-transport-harness.ts)), because oracledb 6.10.0 answered that header by looping forever in its socket `data` handler while allocating, so a driver that does so again fails the test at the child's heap limit within seconds.
 
 **A proxy that refuses the CONNECT.**
 A TCPS descriptor can name an HTTPS proxy, `(ADDRESS=(PROTOCOL=TCPS)(HOST=...)(PORT=...)(HTTPS_PROXY=<host>)(HTTPS_PROXY_PORT=<port>))`, and a pasted descriptor reaches the driver unchanged ([§4.1](#41-configuration)).
