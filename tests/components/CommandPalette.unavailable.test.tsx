@@ -74,7 +74,7 @@ const postgres: DatabaseConnection = {
 };
 const unknown = { ...postgres, id: "u-1", name: "Acme Store", type: "acmefoo" } as unknown as DatabaseConnection;
 
-function renderPalette(onSelectConnection = mock((_conn: DatabaseConnection) => {})) {
+function renderPalette(onSelectConnection = mock<(conn: DatabaseConnection) => void>(() => {})) {
   const noop = () => {};
   const view = render(
     <CommandPalette

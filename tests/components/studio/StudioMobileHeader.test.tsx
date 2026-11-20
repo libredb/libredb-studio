@@ -161,7 +161,7 @@ describe("StudioMobileHeader", () => {
   // shell's setter, which refuses it by name.
   test("marks a connection whose type names no provider as unavailable in the connection menu", () => {
     const unknown = { ...conn, id: "u-1", name: "Acme Store", type: "acmefoo" } as unknown as typeof conn;
-    const onSelectConnection = mock((_c: unknown) => {});
+    const onSelectConnection = mock<(c: unknown) => void>(() => {});
     const { getByTitle, getByText } = render(
       <StudioMobileHeader {...defaults} connections={[conn, unknown]} onSelectConnection={onSelectConnection} />,
     );

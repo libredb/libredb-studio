@@ -48,7 +48,7 @@ const mockHandleLogout = mock(() => {});
 // Connection Manager
 const mockSetConnections = mock(() => {});
 /** The hook's setter answers whether it selected: true for every pick here unless a test refuses one (FND-1). */
-const mockSetActiveConnection = mock((_next: unknown): boolean => true);
+const mockSetActiveConnection = mock<(next: unknown) => boolean>(() => true);
 const mockSetSchema = mock(() => {});
 const mockFetchSchema = mock(() => {});
 const mockLoadObjects = mock(() => {});

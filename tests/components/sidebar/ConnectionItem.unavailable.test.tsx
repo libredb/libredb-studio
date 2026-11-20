@@ -32,10 +32,10 @@ const untyped = (() => {
 
 function renderItem(connection: DatabaseConnection) {
   const handlers = {
-    onSelect: mock((_conn: DatabaseConnection) => {}),
-    onDelete: mock((_id: string) => {}),
-    onEdit: mock((_conn: DatabaseConnection) => {}),
-    onDuplicate: mock((_conn: DatabaseConnection) => {}),
+    onSelect: mock<(conn: DatabaseConnection) => void>(() => {}),
+    onDelete: mock<(id: string) => void>(() => {}),
+    onEdit: mock<(conn: DatabaseConnection) => void>(() => {}),
+    onDuplicate: mock<(conn: DatabaseConnection) => void>(() => {}),
   };
   const view = render(<ConnectionItem connection={connection} isActive={false} {...handlers} />);
   const row = view.getAllByRole("button")[0];
