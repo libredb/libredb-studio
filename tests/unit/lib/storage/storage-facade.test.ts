@@ -189,6 +189,49 @@ describe("storage facade: threshold config", () => {
 
 // ── Favorite connections ─────────────────────────────────────────────────────
 
+// FND-1: a stored connection whose type names no provider, or one with no type, is kept as it was saved. Availability
+// is derived where a connection is listed and never written into the record, so saving or deleting another connection
+// leaves it unchanged, and deleting it removes it like any other.
+describe("a stored connection whose type names no provider", () => {
+  const unknown = { ...makeConnection({ id: "u1", name: "Acme" }), type: "acmefoo" } as unknown as DatabaseConnection;
+  const untyped = (() => {
+    const record: Record<string, unknown> = { ...makeConnection({ id: "n1", name: "Untyped" }) };
+    delete record.type;
+    return record as unknown as DatabaseConnection;
+  })();
+
+  beforeEach(() => {
+    localStorage.clear();
+    storage.saveConnection(unknown);
+    storage.saveConnection(untyped);
+  });
+
+  test("getConnections returns both as stored", () => {
+    expect(storage.getConnections()).toEqual([unknown, untyped]);
+    expect("type" in storage.getConnections()[1]).toBe(false);
+  });
+
+  test("saving and deleting another connection leaves both as they were", () => {
+    storage.saveConnection(makeConnection({ id: "p1" }));
+    storage.deleteConnection("p1");
+
+    expect(storage.getConnections()).toEqual([unknown, untyped]);
+  });
+
+  test("deleting one removes only it, with its favourite, order and group entries", () => {
+    storage.toggleFavoriteConnection("u1");
+    storage.setConnectionOrder(["u1", "n1"]);
+    storage.setConnectionGroups([{ id: "g1", name: "Group", connectionIds: ["u1", "n1"], collapsed: false }]);
+
+    storage.deleteConnection("u1");
+
+    expect(storage.getConnections()).toEqual([untyped]);
+    expect(storage.getFavoriteConnectionIds()).toEqual([]);
+    expect(storage.getConnectionOrder()).toEqual(["n1"]);
+    expect(storage.getConnectionGroups()[0].connectionIds).toEqual(["n1"]);
+  });
+});
+
 describe("storage facade: favorite connections", () => {
   beforeEach(() => {
     localStorage.clear();
