@@ -3,10 +3,10 @@ import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import { request as httpRequest, type RequestOptions } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { BlockList, isIP, type LookupFunction } from "node:net";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { urlToHttpOptions } from "node:url";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 /** The guard's refusal of a non-public destination, worded for any transport the guard serves: it names no protocol. */
@@ -225,6 +225,20 @@ export function socketEgress(host: string, rules: { readonly refusesLinkLocal: b
 }
 
 /**
+ * A body the server named gzip, deflate or br that did not decode. zlib's reason and code are in the message and its
+ * error is the cause, so a caller that reports only a code still finds one; the error carries no zlib code of its own,
+ * because `Readable.toWeb` replaces an error with a zlib code by a TypeError with an empty message.
+ */
+class AnswerDecodingError extends DatabaseError {
+  constructor(encoding: string, failure: Error & { readonly code?: string }) {
+    super(`The server's ${encoding} answer could not be decoded: ${failure.message} (${failure.code})`);
+    this.cause = failure;
+    this.name = "AnswerDecodingError";
+    Object.setPrototypeOf(this, AnswerDecodingError.prototype);
+  }
+}
+
+/**
  * The restricted mode uses Node's request socket so its DNS lookup can validate and
  * pin the address. The default path remains the transport's native fetch, including
  * its test injection point and normal local-network behavior.
@@ -252,23 +266,46 @@ export function httpTransportFetch(input: string | URL, init: RequestInit = {}):
           if (Array.isArray(value)) value.forEach((item) => headers.append(name, item));
           else if (value !== undefined) headers.set(name, value);
         }
-        let body: Readable = incoming;
         const encoding = headers.get("content-encoding")?.toLowerCase();
-        if (encoding === "gzip") body = incoming.pipe(createGunzip());
-        else if (encoding === "deflate") body = incoming.pipe(createInflate());
-        else if (encoding === "br") body = incoming.pipe(createBrotliDecompress());
-        if (body !== incoming) {
-          // A capped reader may cancel the decoded stream. Tear down the source
-          // socket too, and forward a socket failure to a reader waiting on it.
-          incoming.on("error", (error) => body.destroy(error));
-          body.on("close", () => incoming.destroy());
+        const createDecoder =
+          encoding === "gzip"
+            ? createGunzip
+            : encoding === "deflate"
+              ? createInflate
+              : encoding === "br"
+                ? createBrotliDecompress
+                : undefined;
+        if (createDecoder !== undefined) {
           headers.delete("content-encoding");
           headers.delete("content-length");
         }
         const status = incoming.statusCode ?? 0;
-        const noBody = [204, 205, 304].includes(status) || options.method === "HEAD";
+        let body: Readable | null = incoming;
+        // request.method is Node's own upper-cased value, so the body decision matches its parser's.
+        if ([204, 205, 304].includes(status) || request.method === "HEAD") {
+          // The answer has no body, so the message is closed here and no decoder is built: a decoder fed
+          // no input fails with "unexpected end of file", and with no reader to take that error it would
+          // be thrown out of the stream's event handler instead of reaching the caller.
+          incoming.destroy();
+          body = null;
+        } else if (encoding !== undefined && createDecoder !== undefined) {
+          const decoder = createDecoder();
+          const decoded = new PassThrough();
+          incoming.pipe(decoder).pipe(decoded);
+          // The decoded stream goes to the reader below in this same turn, so it always has a listener and
+          // its failures reach whoever reads the body. A decoding failure reaches it as a named error, a
+          // socket failure as itself. A capped reader may cancel it: tear down the decoder and the source
+          // socket too.
+          decoder.on("error", (failure) => decoded.destroy(new AnswerDecodingError(encoding, failure)));
+          incoming.on("error", (error) => decoded.destroy(error));
+          decoded.on("close", () => {
+            decoder.destroy();
+            incoming.destroy();
+          });
+          body = decoded;
+        }
         resolve(
-          new Response(noBody ? null : (Readable.toWeb(body) as unknown as ReadableStream<Uint8Array>), {
+          new Response(body === null ? null : (Readable.toWeb(body) as unknown as ReadableStream<Uint8Array>), {
             status,
             statusText: incoming.statusMessage,
             headers,
