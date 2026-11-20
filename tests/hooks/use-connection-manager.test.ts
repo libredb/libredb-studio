@@ -17,7 +17,7 @@ import { useTabManager } from "@/hooks/use-tab-manager";
 import { logger } from "@/lib/logger";
 import { storage } from "@/lib/storage";
 import type { DatabaseConnection } from "@/lib/types";
-import { unknownTypeSentence } from "@/lib/db/type-id";
+import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { rowWritableObjects } from "@/lib/db/detailed-object";
 import { S3_OBJECT_KINDS } from "@/lib/db/providers/objectstore/s3/objects";
 import { s3CompletionBucketsOf } from "@/lib/db/providers/objectstore/s3/editor-completions";
@@ -1964,7 +1964,7 @@ describe("useConnectionManager", () => {
       expect(storedUnknown()).toEqual(before);
     });
 
-    test("a saved active id naming the unknown connection opens the first available one", async () => {
+    test("a saved active id naming the unknown connection is refused by name, and the first available one opens", async () => {
       storage.saveConnection(unknown());
       storage.saveConnection(plain());
       storage.setActiveConnectionId("unknown-1");
@@ -1974,6 +1974,23 @@ describe("useConnectionManager", () => {
       await waitFor(() => {
         expect(result.current.activeConnection?.id).toBe("plain-1");
       });
+      // The connection the reader had open last time is not replaced in silence.
+      expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+        description: `Acme Store: ${unknownTypeSentence("acmefoo")}`,
+      });
+      expect(mockToastError).toHaveBeenCalledTimes(1);
+    });
+
+    test("a saved active id naming nothing listed opens the first available one with no toast", async () => {
+      storage.saveConnection(plain());
+      storage.setActiveConnectionId("gone-1");
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      expect(mockToastError).not.toHaveBeenCalled();
     });
 
     test("a pick of the unknown connection is refused by name and changes nothing", async () => {
@@ -1987,6 +2004,11 @@ describe("useConnectionManager", () => {
         expect(result.current.activeConnection?.id).toBe("plain-1");
       });
       const active = result.current.activeConnection;
+      // A pick of the available connection first, so it is used: a refused pick must not move the used id.
+      act(() => {
+        result.current.setActiveConnection(active);
+      });
+      expect(result.current.activeAwaitsUse).toBe(false);
       const target = result.current.connections.find((c) => c.id === "unknown-1");
       expect(target).toBeDefined();
 
@@ -1997,6 +2019,7 @@ describe("useConnectionManager", () => {
 
       expect(selected).toBe(false);
       expect(result.current.activeConnection).toBe(active);
+      expect(result.current.activeAwaitsUse).toBe(false);
       expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
         description: `Acme Store: ${unknownTypeSentence("acmefoo")}`,
       });
@@ -2013,12 +2036,57 @@ describe("useConnectionManager", () => {
         expect(result.current.activeConnection?.id).toBe("plain-1");
       });
 
+      const target = result.current.connections.find((c) => c.id === "plain-1");
+      expect(target).toBeDefined();
       let selected: boolean | undefined;
+      act(() => {
+        selected = result.current.setActiveConnection(target ?? null);
+      });
+      expect(selected).toBe(true);
+      expect(result.current.activeConnection?.id).toBe("plain-1");
+
       act(() => {
         selected = result.current.setActiveConnection(null);
       });
       expect(selected).toBe(true);
       expect(result.current.activeConnection).toBeNull();
+    });
+
+    test("a pick of a connection with no name and no type is refused as this connection", async () => {
+      const nameless = { id: "nameless-1", createdAt: new Date("2026-01-01") } as unknown as DatabaseConnection;
+      storage.saveConnection(nameless);
+      storage.saveConnection(plain());
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      const target = result.current.connections.find((c) => c.id === "nameless-1");
+      act(() => {
+        result.current.setActiveConnection(target ?? null);
+      });
+      expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+        description: `This connection: ${ABSENT_TYPE_SENTENCE}`,
+      });
+    });
+
+    test("a pick of a connection with an empty name is refused as this connection", async () => {
+      storage.saveConnection({ ...unknown(), name: "" });
+      storage.saveConnection(plain());
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      const target = result.current.connections.find((c) => c.id === "unknown-1");
+      act(() => {
+        result.current.setActiveConnection(target ?? null);
+      });
+      expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+        description: `This connection: ${unknownTypeSentence("acmefoo")}`,
+      });
     });
 
     test("a managed refresh that withdraws the active seed falls back past the unknown connection", async () => {

@@ -177,6 +177,86 @@ describe("opening the editor on a linked connection", () => {
     expect(storage.getConnections().find((c) => c.id === "unknown-1")).toEqual(before);
   });
 
+  test("a link left pending that names a connection whose type names no provider when a refresh lists it is refused with the reason", async () => {
+    // FND-1: the linked record reaches storage after the first load, from another tab or a later storage sync of a
+    // connection a newer Studio saved. Once listed it is decided at once, by name, and never made active.
+    storage.saveConnection(mine("mine-2"));
+    window.history.replaceState(null, "", "/?connection=late-1");
+    const fetchMock = mockGlobalFetch(routes(answer([])));
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => expect(result.current.activeConnection?.id).toBe("mine-2"));
+    expect(mockToastError).not.toHaveBeenCalled();
+
+    storage.saveConnection({ ...mine("late-1"), name: "Late Acme", type: "acmefoo" } as unknown as DatabaseConnection);
+    focusWindow();
+    await waitFor(() => expect(managedCalls(fetchMock)).toBe(2));
+    await waitFor(() =>
+      expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+        description: `Late Acme: ${unknownTypeSentence("acmefoo")}`,
+      }),
+    );
+    expect(result.current.activeConnection?.id).toBe("mine-2");
+
+    // Decided: a refresh after the seed cache has nothing more to say about it.
+    passSeedCache();
+    focusWindow();
+    await waitFor(() => expect(managedCalls(fetchMock)).toBe(3));
+    await sleep(50);
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+    expect(result.current.activeConnection?.id).toBe("mine-2");
+  });
+
+  test("a link naming a connection whose type names no provider is refused once when the managed list could not be loaded", async () => {
+    // The list was read from storage and names the connection, so "could not be loaded" would be false.
+    storage.saveConnection({
+      ...mine("unknown-1"),
+      name: "Acme Store",
+      type: "acmefoo",
+    } as unknown as DatabaseConnection);
+    storage.saveConnection(mine("mine-2"));
+    window.history.replaceState(null, "", "/?connection=unknown-1");
+    mockGlobalFetch(routes({ status: 500, json: { error: "Internal error" } }));
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => expect(result.current.activeConnection?.id).toBe("mine-2"));
+    expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+      description: `Acme Store: ${unknownTypeSentence("acmefoo")}`,
+    });
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+  });
+
+  test("a refused pick of a connection whose type names no provider leaves a pending link pending", async () => {
+    storage.saveConnection({
+      ...mine("unknown-1"),
+      name: "Acme Store",
+      type: "acmefoo",
+    } as unknown as DatabaseConnection);
+    window.history.replaceState(null, "", "/?connection=seed%3Abilling");
+    let calls = 0;
+    mockGlobalFetch(
+      routes(() => {
+        calls += 1;
+        return answer(calls === 1 ? [seed("orders")] : [seed("orders"), seed("billing")]);
+      }),
+    );
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => expect(result.current.activeConnection?.id).toBe("seed:orders"));
+    const unknown = result.current.connections.find((c) => c.id === "unknown-1");
+    let selected: boolean | undefined;
+    act(() => {
+      selected = result.current.setActiveConnection(unknown ?? null);
+    });
+    expect(selected).toBe(false);
+
+    focusWindow();
+    await waitFor(() => expect(result.current.activeConnection?.id).toBe("seed:billing"));
+  });
+
   test("an id the server did not list keeps the default selection, and a refresh after the seed cache that does not list it either says so without saying why", async () => {
     // `seed:payroll` stands for both causes: a seed that does not exist, and one whose roles leave
     // this reader out, which the route drops from the list before it answers.

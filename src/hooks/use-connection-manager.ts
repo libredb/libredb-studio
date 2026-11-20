@@ -482,22 +482,16 @@ export function useConnectionManager(storageReady = false) {
   }, [visibleActive, readSchema, markUsed]);
 
   /**
-   * The setter the shell picks connections with. A selection of the reader's own cancels a pending
-   * link, so a refresh that lists the linked connection later does not switch away from the
-   * reader's choice and discard its editor state. The hook's own selections use the raw setter.
-   *
-   * A pick is a use of the connection. Picking the one already active changes nothing the shell's
-   * connection effect reads, so the read a restore held for it is taken here.
-   */
-  /**
    * Says that `connection` cannot be opened and why, in the refusal's own sentence (FND-1). The same toast answers a
-   * pick from any list and a link that names the connection.
+   * pick from any list, a link that names the connection and a saved active id that names it. A record with no name
+   * is called "This connection", as the delete dialog calls it.
    */
   const refuseUnavailable = useCallback(
     (connection: DatabaseConnection, sentence: string) => {
+      const name = typeof connection.name === "string" && connection.name !== "" ? connection.name : "This connection";
       toast({
         title: "Connection unavailable",
-        description: `${connection.name}: ${sentence}`,
+        description: `${name}: ${sentence}`,
         variant: "destructive",
       });
     },
@@ -505,9 +499,16 @@ export function useConnectionManager(storageReady = false) {
   );
 
   /**
-   * The setter every picker gets (sidebar, mobile list and header, command palette). Answers whether it selected: a
-   * connection whose type names no provider is refused by name and changes nothing, not the active connection, not
-   * the used id, not a pending link (FND-1).
+   * The setter the shell picks connections with, and every picker gets it (sidebar, mobile list and header, command
+   * palette). A selection of the reader's own cancels a pending link, so a refresh that lists the linked connection
+   * later does not switch away from the reader's choice and discard its editor state. The hook's own selections use
+   * the raw setter.
+   *
+   * A pick is a use of the connection. Picking the one already active changes nothing the shell's
+   * connection effect reads, so the read a restore held for it is taken here.
+   *
+   * Answers whether it selected: a connection whose type names no provider is refused by name and changes nothing,
+   * not the active connection, not the used id, not a pending link (FND-1).
    */
   const selectConnection = useCallback(
     (next: DatabaseConnection | null): boolean => {
@@ -758,10 +759,13 @@ export function useConnectionManager(storageReady = false) {
     const settlePendingLink = (next: DatabaseConnection[]) => {
       const linkedId = pendingLinkIdRef.current;
       if (linkedId === null) return;
-      const linked = availableConnections(connectionsUnderPolicy(next, currentPolicy)).find((c) => c.id === linkedId);
+      const linked = connectionsUnderPolicy(next, currentPolicy).find((c) => c.id === linkedId);
       if (linked !== undefined) {
         pendingLinkIdRef.current = null;
-        setActiveConnection(linked);
+        // Listed now but no provider can open it: decided at once by name, as the first load decides it (FND-1).
+        const refusal = typeIdRefusal(linked.type);
+        if (refusal === null) setActiveConnection(linked);
+        else refuseUnavailable(linked, refusal.sentence);
         return;
       }
       if (Date.now() < firstLoadAnsweredAt + (firstLoadCacheHint ?? 0)) return;
@@ -861,6 +865,11 @@ export function useConnectionManager(storageReady = false) {
       if (selectable.length === 0) return;
       const savedId = storage.getActiveConnectionId();
       const saved = savedId ? selectable.find((c: DatabaseConnection) => c.id === savedId) : null;
+      // The connection the reader had open last time, when no provider can open it, is not replaced in silence. A link
+      // that was refused above has already said so.
+      const savedListed = savedId && linked === undefined ? listed.find((c) => c.id === savedId) : undefined;
+      const savedRefusal = savedListed === undefined ? null : typeIdRefusal(savedListed.type);
+      if (savedListed !== undefined && savedRefusal !== null) refuseUnavailable(savedListed, savedRefusal.sentence);
       setActiveConnection(saved ?? selectable[0]);
     };
 
