@@ -1126,8 +1126,9 @@ Each entry is an open SSH client plus a listening loopback socket. Nothing in th
 superseded one: the provider cache miss that opens the next forward disconnects the PROVIDER
 (`factory.ts`, the query-timeout arm) and leaves the forward pooled. What takes them is the
 connection's own teardown - `removeProvider` and the 30-minute idle sweep, both of which close BY
-CONNECTION ID and take every forward with them - so the count is what one id accumulates inside one
-idle window. It is caller-driven, on the same reachability D86 already established:
+CONNECTION ID and take every forward with them - or the end of a forward's own SSH session, so the
+count is what one id accumulates inside one idle window.
+It is caller-driven, on the same reachability D86 already established:
 `resolveConnection` in `src/lib/seed/resolve-connection.ts` returns a posted inline connection verbatim, id included,
 so the host, the port and the bastion of each request are the caller's to vary.
 
@@ -1938,7 +1939,7 @@ Not fixed there: the factory and the base constructor serve every engine.
 
 ### D138. A forward the SSH bastion refuses reaches the provider as a connection that closed
 
-The `forwardOut` callback in `createSSHTunnel` (`src/lib/ssh/tunnel.ts`) ends the local socket when the bastion refuses the channel, `if (err) { socket.end(); return; }`, and records the error nowhere, so the provider behind the tunnel meets a connection that closed and words it as a failure of its own.
+The `forwardOut` callback in `createSSHTunnel` (`src/lib/ssh/tunnel.ts`) destroys the local socket when the bastion refuses the channel and logs the refusal at warn on the server, but the error itself reaches no caller, so the provider behind the tunnel meets a connection that closed and words it as a failure of its own.
 Measured 2026-10-01 through the real tunnel, factory and error mapping against an in-process ssh2 bastion that answers `CHANNEL_OPEN_FAILURE`: ssh2 handed the callback "(SSH) Channel open failure: Connection refused", "Name or service not known" or "open failed", and the user read "No etcd answered a plaintext connection at" the far end, or under TLS that no TLS connection was established, "Connection terminated unexpectedly" on PostgreSQL and "Connection lost: The server closed the connection." on MySQL.
 The sharpest case is a bastion with forwarding disabled in front of a healthy plaintext etcd: the user is told that no etcd answered and is pointed at TLS first.
 
