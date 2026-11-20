@@ -19,6 +19,8 @@ import {
   type ManagedConnection,
   resetCache,
 } from "@/lib/seed";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import type { KubernetesDiscoveredDatabase } from "@/lib/seed/kubernetes-discovery-export";
 import {
@@ -26,6 +28,7 @@ import {
   resetKubernetesDiscoveryCache,
 } from "@/lib/seed/kubernetes-discovery-loader";
 import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
+import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import { SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
 import { LITERAL_SEED_FILE } from "@/lib/types";
@@ -241,6 +244,23 @@ describe("seed/index with the Kubernetes discovery source", () => {
       expect(before.filter((c) => c.kubernetesSecret !== undefined)).toEqual([]);
     }
     expect(admin.before.find((c) => c.seedId === ORDERS)?.host).toBe("db.internal");
+  });
+
+  // FND-1: an entry whose type names no provider is listed in before whichever section the review puts discovered rows
+  // in, so a route answers its seed: id with the refusal that names the type, not with the review's uniform 404.
+  it("with the review on, lists a seed entry whose type names no provider after the file's connections, and refuses it by name", async () => {
+    writeSeedFile([
+      { id: "pg", name: "PG", type: "postgres", host: "db.internal", roles: ["*"] },
+      { id: "acme", name: "Acme Store", type: "acmefoo", roles: ["*"] },
+    ]);
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    const { before } = await getSeedListing(["admin"]);
+    expect(seedIds(before).slice(0, 2)).toEqual(["pg", "acme"]);
+    const refused = await resolveConnection({ connectionId: "seed:acme" }, { role: "admin", username: "admin" }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(refused).toBeInstanceOf(UnknownProviderError);
+    expect((refused as UnknownProviderError).message).toBe(unknownTypeSentence("acmefoo"));
   });
 
   it("never lets a cached connection keep the section of a switch that changed", async () => {
