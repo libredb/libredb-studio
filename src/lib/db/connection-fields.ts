@@ -46,6 +46,12 @@ export type ConnectionField =
   | "allowInsecureAuth"
   // Oxia only (O6): a cluster's data-server addresses, one text box.
   | "dataServers"
+  // Redis only: a Sentinel deployment's master group name, its sentinel nodes and the sentinels' own password, three
+  // text boxes behind the Advanced accordion - an alternative to the single host and port, not extra always-on fields.
+  // Either of the first two puts the connection in Sentinel mode; the provider refuses one without the other.
+  | "masterName"
+  | "sentinelNodes"
+  | "sentinelPassword"
   // Databend and Snowflake: the warehouse statements run on, one text box. Databend sends it as the
   // X-DATABEND-WAREHOUSE header, which Databend Cloud requires; Snowflake as the warehouse field of every request
   // body, optional, the user's default warehouse when empty.
@@ -87,8 +93,19 @@ export type SeedOnlyField = "securityPolicyUri" | "clientCertificatePath" | "cli
  * The fields the connection dialog draws either in the open or behind its Advanced accordion, as the engine's
  * `fieldPlacement` in src/lib/db/connection-form.ts says. Every other field is drawn in the open by the dialog's own
  * layout.
+ *
+ * Redis's three Sentinel fields are placeable because they are an alternative MODE rather than extra always-on
+ * fields: the dialog keeps the Host row, and a connection that fills the Sentinel boxes ignores it.
  */
-export const PLACEABLE_FIELDS = ["authSource", "localDataCenter", "serviceName", "instanceName"] as const;
+export const PLACEABLE_FIELDS = [
+  "authSource",
+  "localDataCenter",
+  "serviceName",
+  "instanceName",
+  "masterName",
+  "sentinelNodes",
+  "sentinelPassword",
+] as const;
 export type PlaceableField = (typeof PLACEABLE_FIELDS)[number];
 /** Where the connection dialog draws a placeable field. */
 export type FieldPlacement = "open" | "advanced";
@@ -272,6 +289,32 @@ const CONNECTION_FIELD_DESCRIPTOR_ROWS = {
     control: VERBATIM_MONO,
   },
   dataServers: { slot: "body", save: "typed", label: "Data servers", icon: "server", control: UNCHECKED_MONO },
+  // Trimmed: the provider compares the group name as a word, so padding is a typo nobody sees.
+  masterName: {
+    slot: "body",
+    save: "trimmed",
+    label: "Master Name",
+    placeholder: "mymaster",
+    icon: "database",
+    control: VERBATIM_MONO,
+  },
+  // Saved byte for byte, as the provider parses the list and its refusals quote the entry as written.
+  sentinelNodes: {
+    slot: "body",
+    save: "nonEmpty",
+    label: "Sentinel Nodes",
+    placeholder: "sentinel-1:26379, sentinel-2:26379",
+    icon: "server",
+    control: UNCHECKED_MONO,
+  },
+  sentinelPassword: {
+    slot: "body",
+    save: "nonEmpty",
+    label: "Sentinel Password",
+    placeholder: "***",
+    icon: "shield",
+    control: { kind: "text", typing: "secret", monospace: true },
+  },
   warehouse: { slot: "body", save: "typed", label: "Warehouse", icon: "server", control: VERBATIM_MONO },
   location: {
     slot: "body",
@@ -458,7 +501,7 @@ const CONNECTION_FIELD_ROWS = {
   duckdb: ["database"],
   libsql: ["host", "port", "user", "password", "connectionString"],
   mongodb: ["host", "port", "user", "password", "database", "connectionString", "authSource"],
-  redis: ["host", "port", "user", "password", "database"],
+  redis: ["host", "port", "user", "password", "database", "masterName", "sentinelNodes", "sentinelPassword"],
   oracle: ["host", "port", "user", "password", "database", "serviceName"],
   db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
   mssql: ["host", "port", "user", "password", "database", "instanceName"],
@@ -591,6 +634,19 @@ const MODBUS_SEED_ONLY_FIELDS: SeedOnlyFields = Object.freeze({
   projectionRefusal: null,
 });
 
+/**
+ * Redis: the Sentinel trio. Only the Redis provider reads them, so a seed of another type that carries one would be
+ * listed as reaching through Sentinel and reach a single server instead. Refused at load by name, as the NETCONF pin
+ * is.
+ */
+const REDIS_SEED_ONLY_FIELDS: SeedOnlyFields = Object.freeze({
+  fields: Object.freeze(["masterName", "sentinelNodes", "sentinelPassword"] as const),
+  kind: "each",
+  refusal: (field: string) =>
+    `${field} is Redis only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove ${field} from this connection.`,
+  projectionRefusal: null,
+});
+
 /** Each type's seed-only fields, or null where a seed of another type may carry every field this type reads. */
 export const SEED_ONLY_FIELDS: Readonly<Record<DatabaseType, SeedOnlyFields | null>> = Object.freeze({
   postgres: null,
@@ -599,7 +655,7 @@ export const SEED_ONLY_FIELDS: Readonly<Record<DatabaseType, SeedOnlyFields | nu
   duckdb: null,
   libsql: null,
   mongodb: null,
-  redis: null,
+  redis: REDIS_SEED_ONLY_FIELDS,
   oracle: null,
   db2: null,
   mssql: null,

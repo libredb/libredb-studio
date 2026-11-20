@@ -513,6 +513,19 @@ export const CONNECTION_FORM: {
     // disagreed, and since it decides what a save WRITES, the value never reached the
     // driver that #502 taught to send it.
     connectionFields: CONNECTION_FIELDS.redis,
+    // The Sentinel trio is an alternative to the Host row rather than extra always-on
+    // fields, so it lives behind the Advanced accordion: a connection that fills them
+    // ignores Host and Port (`validate()` also stops requiring them), and one that does
+    // not is exactly the standalone connection the dialog always drew.
+    fieldPlacement: { masterName: "advanced", sentinelNodes: "advanced", sentinelPassword: "advanced" },
+    fieldHints: {
+      masterName:
+        "The master group your sentinels monitor (Sentinel's own name, e.g. mymaster). Setting this or Sentinel Nodes switches the connection to Sentinel mode: the master's address is asked of the sentinels on every connect, and Host and Port are ignored.",
+      sentinelNodes:
+        "The sentinel addresses as host[:port] entries separated by commas, e.g. sentinel-1:26379, sentinel-2:26379. A node without a port takes Sentinel's default 26379. Both this and Master Name are needed for Sentinel mode.",
+      sentinelPassword:
+        "The AUTH password for the sentinels themselves. Leave empty to reuse the Password field - the common chart deployment protects Redis and Sentinel with one secret.",
+    },
   },
   oracle: {
     label: "Oracle",

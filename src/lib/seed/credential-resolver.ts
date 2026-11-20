@@ -14,6 +14,12 @@ const RESOLVABLE_FIELDS = [
   "database",
   // Oxia's data servers (O6): addresses a deployment keeps out of the seed file, as `host` is.
   "dataServers",
+  // Redis's Sentinel trio: the master group name and the sentinel addresses are parts of the address a deployment
+  // keeps beside its host (Bitnami names them REDIS_MASTER_SET and the sentinel service), and the sentinel password
+  // is a credential kept as `password` is - one deployment secret may protect the master and the sentinels both.
+  "masterName",
+  "sentinelNodes",
+  "sentinelPassword",
   // The warehouse (I16): the compute a Databend Cloud DSN or a Snowflake account names, which a deployment keeps
   // beside its host, so a seeded `${DATABEND_WAREHOUSE}` is resolved rather than sent as a literal warehouse name.
   "warehouse",
@@ -74,6 +80,9 @@ interface VaultResolvableConnection {
   host?: string;
   database?: string;
   dataServers?: string;
+  masterName?: string;
+  sentinelNodes?: string;
+  sentinelPassword?: string;
   warehouse?: string;
   region?: string;
   apiPath?: string;

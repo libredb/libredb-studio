@@ -153,6 +153,11 @@ export function projectSeedConnection(conn: SeedConnection, userRoles: string[])
     // Oxia's data servers (O6), copied for the reason skipObjectScan is: dropped here, a seeded cluster would be
     // refused by the provider for leaders the file did list.
     dataServers: conn.dataServers,
+    // Redis's Sentinel trio, copied for the reason skipObjectScan is: dropped here, a seeded Sentinel connection
+    // would reach the provider as a standalone one at host and port, connecting to the wrong server.
+    masterName: conn.masterName,
+    sentinelNodes: conn.sentinelNodes,
+    sentinelPassword: conn.sentinelPassword,
     // The warehouse, copied for the reason skipObjectScan is: dropped here, a seeded Databend Cloud connection
     // would be refused for the warehouse the file did name, and a seeded Snowflake one would run on the user's
     // default warehouse instead.

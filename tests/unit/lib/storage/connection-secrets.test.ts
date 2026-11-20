@@ -40,6 +40,13 @@ function fullConnection(): DatabaseConnection {
     queryTimeout: 120000,
     user: "app",
     password: "CANARY-DB-PASSWORD",
+    // Redis's sentinels' own password: a secret classified and sealed exactly like `password`, even though this
+    // fixture is a postgres connection. The map is keyed by field, not by engine, so the canary belongs here.
+    sentinelPassword: "CANARY-SENTINEL-PASSWORD",
+    // The two Sentinel addresses are public, but declared so the exhaustive classification tripwire below stays
+    // a statement about the whole interface rather than one about the fields this fixture happens to carry.
+    masterName: "mymaster",
+    sentinelNodes: "sentinel-0:26379, sentinel-1:26379",
     database: "prod",
     connectionString: "postgres://app:CANARY-IN-URL@db.internal:5432/prod",
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -76,6 +83,7 @@ const CANARIES = [
   "CANARY-SSH-PASSWORD",
   "CANARY-SSH-PRIVATE-KEY",
   "CANARY-SSH-PASSPHRASE",
+  "CANARY-SENTINEL-PASSWORD",
   "CANARY-AGENT-PASSWORD",
   "CANARY-API-KEY-ID",
   "CANARY-API-KEY-SECRET",
@@ -111,6 +119,10 @@ describe("the classification is exhaustive by construction", () => {
         "createdAt",
         // Oxia's data-server addresses. Addresses, as host is; the token they receive is the secret.
         "dataServers",
+        // Redis Sentinel: the master group and the node list are addresses; the sentinels' own password is secret.
+        "masterName",
+        "sentinelNodes",
+        "sentinelPassword",
         "database",
         "schema",
         "environment",
@@ -181,7 +193,7 @@ describe("the classification is exhaustive by construction", () => {
     );
   });
 
-  test("exactly the eleven credential-bearing fields are classified secret", () => {
+  test("exactly the twelve credential-bearing fields are classified secret", () => {
     const secrets = [
       ...Object.keys(CONNECTION_FIELDS).filter((k) => CONNECTION_FIELDS[k as never] === "secret"),
       ...Object.keys(SSL_FIELDS)
@@ -201,6 +213,7 @@ describe("the classification is exhaustive by construction", () => {
         "password",
         "privateKey",
         "privateKeyPassphrase",
+        "sentinelPassword",
         "ssl.clientKey",
         "sshTunnel.passphrase",
         "sshTunnel.password",
@@ -349,8 +362,8 @@ describe("decryptConnections", () => {
     resetStorageEncryptionKey();
     const result = decryptConnections(encrypted);
 
-    // Eleven unreadable fields on one record.
-    expect(result.undecryptable).toBe(11);
+    // Twelve unreadable fields on one record, the Sentinel password among them.
+    expect(result.undecryptable).toBe(12);
     // The record SURVIVES. Dropping it would be persisted as a deletion by the write-through
     // cache on the next sync, destroying ciphertext a restored key could still have opened.
     expect(result.connections).toHaveLength(1);
@@ -368,7 +381,7 @@ describe("decryptConnections", () => {
     process.env.JWT_SECRET = "a-different-secret-that-cannot-open-it";
     resetStorageEncryptionKey();
 
-    expect(decryptConnections(encrypted).undecryptable).toBe(22);
+    expect(decryptConnections(encrypted).undecryptable).toBe(24);
   });
 
   test("an empty list is not an error", () => {

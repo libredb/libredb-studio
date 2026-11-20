@@ -151,6 +151,12 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // Which addresses a read may reach and the token may be sent to: two copies differing only here reach different
   // servers, so they do not resolve to the same connection.
   dataServers: "resolution",
+  // Redis's Sentinel fields: the master group and the sentinel addresses decide which master answers - they, not
+  // host and port, are the address in Sentinel mode - and the sentinel password decides as whom the sentinels are
+  // asked, so a copy differing in any of the three does not resolve to the same connection.
+  masterName: "resolution",
+  sentinelNodes: "resolution",
+  sentinelPassword: "resolution",
   // The warehouse a statement runs on (X21): two copies differing only here reach different compute, so a copy
   // naming another warehouse does not resolve to the seed's connection, the dataServers reasoning.
   warehouse: "resolution",

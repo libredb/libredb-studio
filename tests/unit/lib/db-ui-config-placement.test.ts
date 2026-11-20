@@ -1,15 +1,15 @@
 /**
  * Where the connection dialog draws a field, and what it calls it, as each engine declares it on `DB_UI_CONFIG`
- * (engine contract design, row 8). Oracle's service name and SQL Server's instance name are the two fields drawn
- * behind the Advanced accordion; every other field is drawn in the open. The labels, placeholders and hints the
- * dialog used to choose by type id are declarations now, so neither the dialog nor `buildConnection` compares the
- * type with an engine's id: the last case parses both files and holds them to that.
+ * (engine contract design, row 8). Oracle's service name, SQL Server's instance name and Redis's Sentinel trio are
+ * the fields drawn behind the Advanced accordion; every other field is drawn in the open. The labels, placeholders
+ * and hints the dialog used to choose by type id are declarations now, so neither the dialog nor `buildConnection`
+ * compares the type with an engine's id: the last case parses both files and holds them to that.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
-import { CONNECTION_FIELDS, PLACEABLE_FIELDS } from "@/lib/db/connection-fields";
+import { CONNECTION_FIELDS, PLACEABLE_FIELDS, type PlaceableField } from "@/lib/db/connection-fields";
 import {
   DB_UI_CONFIG,
   type DatabaseUIConfig,
@@ -21,19 +21,26 @@ import {
 import type { DatabaseType } from "@/lib/types";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
-const ADVANCED: Readonly<Record<string, string>> = { oracle: "serviceName", mssql: "instanceName" };
+const ADVANCED: Readonly<Record<string, readonly PlaceableField[]>> = {
+  oracle: ["serviceName"],
+  mssql: ["instanceName"],
+  // Redis's Sentinel trio is an alternative MODE rather than extra always-on fields, so the dialog keeps the Host row
+  // and draws these behind Advanced; a connection that fills them ignores host and port.
+  redis: ["masterName", "sentinelNodes", "sentinelPassword"],
+};
 
 describe("connectionFieldPlacement", () => {
-  test("Oracle's service name and SQL Server's instance name are drawn behind Advanced", () => {
+  test("Oracle's service name, SQL Server's instance name and Redis's Sentinel trio are drawn behind Advanced", () => {
     expect(connectionFieldPlacement(DB_UI_CONFIG.oracle, "serviceName")).toBe("advanced");
     expect(connectionFieldPlacement(DB_UI_CONFIG.mssql, "instanceName")).toBe("advanced");
+    for (const field of ADVANCED.redis) expect(connectionFieldPlacement(DB_UI_CONFIG.redis, field)).toBe("advanced");
   });
 
   test("every other placeable field an engine takes is drawn in the open", () => {
     const misplaced: string[] = [];
     for (const [id, fields] of Object.entries(CONNECTION_FIELDS)) {
       for (const field of PLACEABLE_FIELDS) {
-        if (!fields.includes(field) || ADVANCED[id] === field) continue;
+        if (!fields.includes(field) || ADVANCED[id]?.includes(field)) continue;
         const placement = connectionFieldPlacement(DB_UI_CONFIG[id as DatabaseType], field);
         if (placement !== "open") misplaced.push(`${id}.${field}=${placement}`);
       }

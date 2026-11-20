@@ -192,6 +192,18 @@ describe("the connection form layout", () => {
     expect(connectionFormLayout(CONNECTION_FORM.postgres, {}).advanced).toEqual([]);
   });
 
+  test("draws the Sentinel trio behind the Advanced accordion, not as always-on body fields", () => {
+    // An alternative MODE rather than extra fields: the Host row stays, and the three fields
+    // that replace it sit behind the accordion the dialog draws for an engine that places
+    // one there (src/components/ConnectionModal.tsx).
+    expect(bodyOf("redis")).toEqual(["address", "login(user,password)", "database"]);
+    expect(connectionFormLayout(CONNECTION_FORM.redis, {}).advanced).toEqual([
+      "masterName",
+      "sentinelNodes",
+      "sentinelPassword",
+    ]);
+  });
+
   test("says whether the address row has a port and whether the cleartext consent is offered", () => {
     expect(connectionFormLayout(CONNECTION_FORM.postgres, {})).toMatchObject({
       takesPort: true,

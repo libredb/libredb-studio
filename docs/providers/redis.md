@@ -14,7 +14,7 @@
 | **Query language** | `json` (plain command **or** JSON command object) |
 | **Default port** | `6379` |
 | **Connection pooling** | None — single lazy connection |
-| **SSL** | Yes — `connection.ssl` → ioredis `tls` ([§4.3](#43-ssl--tls)) |
+| **SSL** | Yes — `connection.ssl` → ioredis `tls` ([§4.3](#43-ssl--tls)); in Sentinel mode the same material also goes to the sentinels as `sentinelTLS` with `enableTLSForSentinelMode: true` ([§4.6](#46-sentinel-master-discovery-and-failover)) |
 | **Source** | [`src/lib/db/providers/keyvalue/redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts) |
 | **Tests** | [`tests/integration/db/redis-provider.test.ts`](../../tests/integration/db/redis-provider.test.ts) |
 | **Tracking issue** | [#7 — Implement Redis Provider](https://github.com/libredb/libredb-studio/issues/7) |
@@ -373,7 +373,10 @@ Redis uses the discrete-field form of `DatabaseConnection` (not `connectionStrin
 | `user` | — | The **Redis 6 ACL user**, sent as ioredis's `username`; empty means `default` ([§4.1a](#41a-acl-users-d29)) |
 | `password` | — | Sent as `password`; omit for unauthenticated instances |
 | `database` | — | Logical DB index, a run of digits; defaults to `0` when empty. Anything else is refused at connect with `A Redis database is a number, received "<value>"` rather than read as `0` |
-| `ssl` | — | `SSLConfig`; becomes the ioredis `tls` option ([§4.3](#43-ssl--tls)) |
+| `ssl` | — | `SSLConfig`; becomes the ioredis `tls` option ([§4.3](#43-ssl--tls)), and in Sentinel mode `sentinelTLS` too ([§4.6](#46-sentinel-master-discovery-and-failover)) |
+| `masterName` | ✅ Sentinel | The master group the sentinels monitor, trimmed, sent as ioredis's `name`. Either this or `sentinelNodes` puts the connection in Sentinel mode ([§4.6](#46-sentinel-master-discovery-and-failover)) |
+| `sentinelNodes` | ✅ Sentinel | `host[:port]` entries separated by commas or newlines; a node without a port takes Sentinel's default `26379`. Parsed by the provider, never normalised on save |
+| `sentinelPassword` | — | The sentinels' `AUTH`; empty falls back to the master's `password`. A secret, classified and sealed as `password` is |
 
 ```ts
 const connection = {
@@ -544,13 +547,116 @@ Measured 2026-10-30 on redis 8.2.11, ioredis 5.11.1:
 - Keys outside the reached node's slots still get `MOVED`.
 - Replica reads may lag (not measured; [source](https://redis.io/docs/latest/commands/readonly/)).
 
+### 4.6 Sentinel: master discovery and failover
+
+A connection that sets **`masterName`** or **`sentinelNodes`** is in **Sentinel mode**. `host` and
+`port` are then not read at all: `redisOptions()` hands ioredis the sentinel list and the group
+name (selected on `sentinels` alone, ioredis 5.11.1 `Redis.js`), and ioredis asks the sentinels for
+the current master **on every connect and reconnect**. That is what makes a failover transparent —
+when Sentinel promotes a replica it kills the old master's normal clients (`CLIENT KILL TYPE normal`
+is part of its reconfiguration), ioredis reconnects through the sentinels and lands on the new
+master. `role` stays ioredis's own default, `master`, and the `readOnly: true` ioredis option of
+[§4.5](#45-cluster-mode-replicas-2031) is for **Cluster** replicas: a Sentinel connection reads and
+writes the master, never a replica.
+
+The dialog keeps the Host row and draws the three Sentinel boxes behind **Advanced**: they are an
+alternative MODE, not extra always-on fields. A connection that fills them ignores Host and Port;
+one that leaves them empty is exactly the standalone connection the dialog always drew. Because the
+two addressing fields are alternatives, filling **one** without the other is a half-filled form and
+is refused — never silently read as a standalone node.
+
+#### Seed example
+
+```yaml
+connections:
+  - id: redis-ha
+    name: Cache (HA)
+    type: redis
+    masterName: mymaster
+    sentinelNodes: "redis-node-0.redis-headless:26379, redis-node-1.redis-headless:26379"
+    sentinelPassword: "${REDIS_PASSWORD}"   # optional; one secret may protect both hops
+    password: "${REDIS_PASSWORD}"
+    database: "0"
+    roles: ["*"]
+    managed: true
+    readOnly: true                          # the connection refuses writes; the master still serves them to others
+```
+
+All three fields are declared in `SeedConnectionSchema` (zod strips undeclared keys in silence, so a
+seeded Sentinel connection would otherwise reach the provider as a standalone one at `host` and
+`port`, connecting to the wrong server with no error). They are copied by the role filter, resolved
+from `${VAR}` and `${vault:...}` references like `host` and `password`, and refused by name on every
+**other** engine through `SEED_ONLY_FIELDS.redis`; the refusal names the field and says to remove it.
+`masterName` and `sentinelNodes` are classified as **public** addresses, `sentinelPassword` as a
+**secret** sealed at rest.
+
+#### Field mechanics
+
+- **Parsing.** `parseSentinelNodes()` splits `sentinelNodes` on commas and newlines, drops blanks,
+  reads a bracketed `[::1]:26380` as an IPv6 host, and gives a node without a port `26379`. A port
+  that is not a TCP port (`host:abc`, `host:`, `host:70000`, `host:-1`) and an unbracketed IPv6
+  address are refused with a `DatabaseConfigError` naming the entry, not defaulted — a typo there
+  is a sentinel nobody runs. `masterName` is trimmed; `sentinelNodes` is stored byte for byte as
+  typed, because the refusals quote the entry as written.
+- **`validate()`** refuses Sentinel mode with no sentinel node, with no master name, or with an SSH
+  tunnel enabled. The factory forwards `host:port` through a tunnel and a Sentinel connection has
+  neither, so the alternative would be a connection quietly going around the bastion the user
+  configured. A standalone connection still requires `host` as before.
+- **Sentinel password defaults to the Redis password.** The ordinary chart deployment (Bitnami's
+  `sentinel.enabled`) protects Redis and Sentinel with **one secret**, so an empty
+  `sentinelPassword` sends `password`. A sentinel that requires no password is still reached:
+  ioredis catches the server's *"AUTH ... called without any password configured"* reply, logs a
+  warning and carries on (`event_handler.js`, ioredis 5.11.1). Set `sentinelPassword` only when the
+  two differ. There is **no separate sentinel ACL user** (`sentinelUsername`): the connection's
+  `user` is the Redis ACL user only, and the sentinels authenticate as `default`. Neither password
+  set sends nothing at all, not an empty string.
+- **Bounded sentinel retries, and the failover window.** ioredis retries an unreachable sentinel
+  list forever by default, which would leave `connect()` — and Test Connection — never settling with
+  nothing on screen. `sentinelRetryStrategy` retries the whole list three times (200, 400 and 600 ms
+  apart) and then returns `null`, giving up with ioredis's own *"All sentinels are unreachable and
+  retry is disabled. Last error: …"*; the failed connect names the master group it was trying to
+  reach rather than a host it never dialled. A master that is **unreachable after the sentinels
+  answered** is a different case: ioredis's ordinary `retryStrategy` keeps retrying it, and that is
+  the failover window, not a reason to give up.
+- **A client that gave up is reported.** When the bounded retries run out during a *reconnect*,
+  ioredis ends the client for good. `connect()` attaches an `end` listener that marks the provider
+  disconnected, so the provider cache opens a fresh client on the next request instead of serving a
+  dead one; a short-lived object-surface client cannot mark a live session closed.
+- **TLS covers both hops.** The SSL panel of [§4.3](#43-ssl--tls) builds one `tls` object. In
+  Sentinel mode it is sent to the sentinels as `sentinelTLS` **and** to the resolved master via
+  `enableTLSForSentinelMode: true`; without that flag ioredis speaks plaintext to the master it
+  resolved and to the sentinels, whatever `tls` says. The mode matrix applies to both hops alike:
+
+  | `ssl.mode` | `tls` / `sentinelTLS` | `enableTLSForSentinelMode` |
+  |------------|----------------------|----------------------------|
+  | absent / `disable` | not present at all | not present |
+  | `require` | `{ rejectUnauthorized: false }` | `true` |
+  | `verify-system` | `{ rejectUnauthorized: true }` (runtime trust store) | `true` |
+  | `verify-ca` / `verify-full` | `{ rejectUnauthorized: true }` | `true` |
+
+  `caCert` / `clientCert` / `clientKey` become `ca` / `cert` / `key` in the shared object, and an
+  explicit `ssl.rejectUnauthorized` wins over the mode, on both hops.
+- **Per-database reads resolve too.** The object surface opens a short-lived client per numbered
+  database ([§6.1](#61-the-object-surface-789)). It goes through the same `redisOptions()`, so each
+  one asks the sentinels for the master as well — one extra round trip per read.
+- **Identity.** `connectionFingerprint` (the object-edit plan seal) and the agent's
+  `connectionIdentity` frame `masterName` and `sentinelNodes` only when set, tagged: on a Sentinel
+  connection they, not `host`/`port`, decide which server answers. `sentinelPassword` is excluded
+  from those digests on the rule the master's own password follows — rotating a credential changes
+  who may reach the catalog, never which catalog it is. The provider cache key and the seed-copy
+  resolution key additionally frame `sentinelNodes` and `sentinelPassword`, because the sentinel
+  nodes are also the hosts the sentinel password is sent to and a copy differing in either must not
+  be handed a provider opened under the other credentials.
+
 ### Connection string
 
 The scheme shown for Redis is `redis://`, and the parser also accepts `rediss://`.
 Its row in `CONNECTION_STRING` is declared in [`redis-connection-string.ts`](../../src/lib/db/providers/keyvalue/redis-connection-string.ts).
 Its `paste` claims `redis://` and `rediss://`, with port 6379 by default.
 It has no `readTls`: the scheme itself is the TLS, so `rediss://` sets `require` and `redis://` sets `disable`.
-It runs no seed load check.
+It runs no seed load check. Redis does declare seed-only fields: `masterName`, `sentinelNodes` and
+`sentinelPassword` ([§4.6](#46-sentinel-master-discovery-and-failover)) are refused by name on every
+other engine, because no other provider reads them.
 
 ### Execution UI
 
@@ -1992,6 +2098,16 @@ server's own `NOPERM` sentence out of `getHealth()`. The mock's `connect()` can 
 `error` events of [§4.4](#44-why-a-connect-failed-1356) before it rejects, which pins the typed error and
 the message each one becomes.
 
+**Sentinel mode** ([§4.6](#46-sentinel-master-discovery-and-failover)) is asserted the same way: the
+parsed sentinel list (commas, newlines, blanks, IPv6 form and the default port), the master name, the
+sentinel-password fallback, the bounded retry schedule, TLS on both hops, no `host`/`port` in the
+driver options, the `end` listener and every `validate()` refusal. The layers the provider cannot see
+— the seed schema, filter and credential resolver, the secret classification, the connection
+resolution key, the fingerprint, the provider cache key and the agent identity — are held in
+[`tests/unit/db/redis/sentinel-fields.test.ts`](../../tests/unit/db/redis/sentinel-fields.test.ts).
+**There is no live Sentinel in the suite**: failover, sentinel `AUTH` and TLS to both hops are
+asserted at the option/parser boundary, not measured against a running Sentinel deployment.
+
 ### 11.3 Run it
 
 ```bash
@@ -2137,8 +2253,11 @@ request/response contract.
   in a `rediss://` URL says whose certificate to trust - and the ordinary self-hosted `--tls-port`
   node presents a self-signed one, which a verifying mode would refuse. Verification therefore stays
   an explicit choice in the SSL panel; the URL alone never turns it on.
-- **No cluster-aware routing, and no Sentinel support.** Replica reads work; `MOVED` is not followed
-  ([§4.5](#45-cluster-mode-replicas-2031)).
+- **No cluster-aware routing.** Replica reads work; `MOVED` is not followed
+  ([§4.5](#45-cluster-mode-replicas-2031)). A Sentinel-managed master is supported
+  ([§4.6](#46-sentinel-master-discovery-and-failover)); Sentinel mode has no `sentinelUsername`,
+  cannot run through an SSH tunnel, never reads from replicas, and has not been verified against a
+  live Sentinel deployment.
 - **No pub/sub, `MONITOR` or blocking reads in the editor.** Each would change or hold the one client every request on the connection shares, so `query()` refuses them ([§5.2b](#52b-commands-that-would-change-the-shared-connection-1107)).
 - **`SCAN` is capped at 1000 keys** for schema discovery — prefixes that only appear beyond the cap
   won't show as "tables". This is a deliberate bound, not a bug. The object surface shares the same
