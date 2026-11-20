@@ -38,7 +38,7 @@
  *    come back alphabetically, so declaration order is not recoverable - the tree
  *    orders partition key, then clustering, then the rest by name, and says so.
  */
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { policies, types } from "cassandra-driver";
 import {
   AuthenticationError,
@@ -56,8 +56,9 @@ import { cassandraAgentStatementRefusal } from "@/lib/db/providers/sql/cassandra
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
 import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
 import type { DatabaseProvider } from "@/lib/db/types";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import {
@@ -102,6 +103,12 @@ import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { comparePaths } from "@/lib/db/object-path";
+import {
+  CASSANDRA_FRAME_CASES,
+  type CassandraFrameOutcome,
+  FAKE_PEER_READ_TIMEOUT_MS,
+  runCassandraFrameCases,
+} from "../../helpers/cassandra-fake-peer";
 
 const KEYSPACE = "probe";
 
@@ -4556,5 +4563,137 @@ describe("the agent read-only profile", () => {
       expect(timeouts[0]).toBeLessThanOrEqual(1_000);
       expect(sessions[0].state.shutdown).toBe(1);
     });
+  });
+});
+
+// ============================================================================
+// A frame the driver cannot parse, from a fake node on 127.0.0.1
+// ============================================================================
+
+/**
+ * cassandra-driver reads each connection through three streams (frame splitting, body parsing, result dispatch),
+ * and a stream that fails to read a frame reports it as an `error` event. Unpatched, nothing listens for that event,
+ * so it is thrown out of the stream's handler, the connection stays open but reads nothing more, and the caller waits
+ * for its read timeout. `patches/cassandra-driver@4.10.0.patch` gives the three streams a listener that fails the
+ * connection the way a socket error does, so the connect or the request in flight fails at once, by name, the
+ * connection is closed, and the driver's pool dials a replacement. docs/TOOLCHAIN.md, "Patched dependencies".
+ *
+ * Studio's real provider and the real (patched) driver run each case of tests/helpers/cassandra-fake-peer.ts under
+ * Bun in this process and under every Node binary in NODE_TRANSPORT_NODES (or the node on PATH), from a bundle,
+ * because the two runtimes report an error thrown in a stream handler differently.
+ */
+describe("a frame the driver cannot parse fails the connection by name", () => {
+  const HELPER = join(import.meta.dir, "..", "..", "helpers", "cassandra-fake-peer.ts");
+  // Every case settles well inside the read timeout, which is what an unread frame used to cost.
+  const SETTLE_BOUND_MS = FAKE_PEER_READ_TIMEOUT_MS / 2;
+  const runs: { runtime: string; outcomes: CassandraFrameOutcome[] }[] = [];
+
+  function nodeBinaries(): string[] {
+    const listed = process.env.NODE_TRANSPORT_NODES;
+    if (listed !== undefined) {
+      const binaries = listed.split(delimiter).filter((entry) => entry !== "");
+      if (binaries.length === 0) throw new Error("NODE_TRANSPORT_NODES is set and lists no Node binary");
+      return binaries;
+    }
+    const onPath = Bun.which("node");
+    if (onPath === null) throw new Error("No node on PATH: these cases run under Node too; install Node 24 or later");
+    return [onPath];
+  }
+
+  beforeAll(async () => {
+    runs.push({ runtime: `bun ${Bun.version}`, outcomes: await runCassandraFrameCases() });
+
+    const work = mkdtempSync(join(tmpdir(), "cassandra-frames-"));
+    try {
+      writeFileSync(
+        join(work, "child.ts"),
+        [
+          `import { runCassandraFrameCases } from ${JSON.stringify(HELPER)};`,
+          "const outcomes = await runCassandraFrameCases();",
+          'process.stdout.write(JSON.stringify(outcomes) + "\\n");',
+          "process.exit(0);",
+          "",
+        ].join("\n"),
+      );
+      const build = await Bun.build({
+        entrypoints: [join(work, "child.ts")],
+        target: "node",
+        format: "esm",
+        outdir: work,
+      });
+      expect({ success: build.success, logs: build.logs.map(String) }).toMatchObject({ success: true });
+      for (const binary of nodeBinaries()) {
+        const child = Bun.spawn([binary, join(work, "child.js")], { stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        expect({ binary, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ binary, exitCode: 0, stderr: "" });
+        const outcomes = JSON.parse(stdout.trim().split("\n").at(-1) as string) as CassandraFrameOutcome[];
+        runs.push({ runtime: `node ${binary}`, outcomes });
+      }
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  function outcomesOf(
+    name: (typeof CASSANDRA_FRAME_CASES)[number],
+  ): { runtime: string; outcome: CassandraFrameOutcome }[] {
+    expect(runs.length).toBeGreaterThanOrEqual(2);
+    return runs.map(({ runtime, outcomes }) => ({
+      runtime,
+      outcome: outcomes.find((candidate) => candidate.name === name) as CassandraFrameOutcome,
+    }));
+  }
+
+  const CONNECT_FAILURE =
+    /^ConnectionError: Failed to connect to Apache Cassandra: The connection to 127\.0\.0\.1:\d+ failed while reading a response: RangeError\b/;
+
+  test.each([
+    ["truncated-error", "an ERROR frame whose body cannot hold its code"],
+    ["truncated-auth", "an AUTHENTICATE frame whose string runs past its body"],
+    ["header-mismatch", "a v1 header followed by a v4 header cut short"],
+  ] as const)("%s: %s answering STARTUP fails the connect by name and closes the connection", (name) => {
+    for (const { runtime, outcome } of outcomesOf(name)) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({
+        runtime,
+        connect: expect.stringMatching(CONNECT_FAILURE),
+      });
+      expect({ runtime, fast: outcome.settledMs < SETTLE_BOUND_MS, ms: outcome.settledMs }).toMatchObject({
+        runtime,
+        fast: true,
+      });
+      // Every connection the node accepted was closed by the client before Studio disconnected.
+      expect({ runtime, closed: outcome.closedBeforeDisconnect }).toEqual({ runtime, closed: outcome.accepted });
+    }
+  });
+
+  test("malformed-answer: a malformed answer to a query fails that query by name, and the next query is served on a new connection", () => {
+    for (const { runtime, outcome } of outcomesOf("malformed-answer")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      // The request in flight gets the driver's own error for a lost connection, as it would for a reset.
+      expect({ runtime, query: outcome.malformedQuery }).toEqual({ runtime, query: "QueryError: Socket was closed" });
+      expect({ runtime, fast: outcome.settledMs < SETTLE_BOUND_MS, ms: outcome.settledMs }).toMatchObject({
+        runtime,
+        fast: true,
+      });
+      expect({ runtime, next: outcome.nextQuery }).toEqual({ runtime, next: "resolved" });
+      // The failed connection was closed, the driver dialled another for the next query, and that one is open.
+      expect({
+        runtime,
+        closedSince: outcome.closedBeforeDisconnect > outcome.closedBefore,
+        dialledSince: outcome.accepted > outcome.acceptedBefore,
+        open: outcome.accepted - outcome.closedBeforeDisconnect,
+      }).toEqual({
+        runtime,
+        closedSince: true,
+        dialledSince: true,
+        open: outcome.acceptedBefore - outcome.closedBefore,
+      });
+    }
   });
 });
