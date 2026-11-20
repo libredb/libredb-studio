@@ -324,7 +324,7 @@ Studio ships both as a standalone app and as the `@libredb/studio` npm package c
 
 Next.js runs `register()` once per server worker, **only** when Studio boots its own server (never when `@libredb/studio` is imported by libredb-platform) and only on the Node.js runtime.
 Before any of the steps below it installs the uncaught-exception exit (`src/lib/uncaught-exception.ts`), once per process however often `register()` runs.
-An exception that nothing catches is then logged by Studio in one redacted line, after Next.js 16.4's own print of it with its stack, and ends the process with exit code 70, so an orchestrator starts a fresh one ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)).
+An exception that nothing catches is then logged by Studio in one redacted line, after Next.js 16.4's own print of it with its stack, and ends the process with exit code 70, so whatever started it may start a fresh one ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)).
 It applies under `next dev` too: Next.js's dev command restarts its server only for its own exit code 77, so `bun dev` ends with code 70 and is started again by hand.
 Unhandled promise rejections stay non-fatal, as Next.js keeps them, unless Node.js runs with `--unhandled-rejections=strict`, which raises each one as an uncaught exception that then ends the process too.
 On standalone boot it:

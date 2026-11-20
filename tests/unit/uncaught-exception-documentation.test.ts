@@ -37,6 +37,8 @@ describe("docs/DISTRIBUTION.md, Uncaught errors and restarts", () => {
     expect(text).toContain(`back after code ${C}:`);
     expect(text).toContain(`the launcher exits with ${C}`);
     expect(text).toContain(`\`libredb-studio.exe\` exits with ${C}`);
+    expect(text).toContain(`shows \`exitCode=${C}\``);
+    expect(text).toContain(`systemd's \`status=${C}/SOFTWARE\``);
   });
 
   test("the line it shows is the line the server logs", () => {
@@ -59,6 +61,8 @@ describe("docs/DISTRIBUTION.md, Uncaught errors and restarts", () => {
   test("it says the query events still queued are lost and counted", () => {
     expect(section()).toContain("{route=uncaught-exception, queryEventsLost=");
     expect(read("docs/GOVERNANCE.md")).toContain("the line Studio logs for that exit counts them as `queryEventsLost`");
+    expect(section()).toContain("so the count is at most what was lost");
+    expect(read("docs/GOVERNANCE.md")).toContain("so the count is at most what was lost");
   });
 
   test.each([

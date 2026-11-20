@@ -217,13 +217,14 @@ The line names the exit code, the error's class with its `code` when that is a s
 Only Studio's line is redacted: the error Next.js prints before it is the error as thrown.
 The line carries no stack of its own, but a message that quotes one, as Node.js's `ERR_UNHANDLED_ERROR` does for an `error` event whose payload holds an Error, is logged as it is.
 Under governance, the query events still queued are not inserted on this exit, unlike at a shutdown on SIGTERM, and the line counts them, for example `{route=uncaught-exception, queryEventsLost=12}` ([GOVERNANCE.md](GOVERNANCE.md#query-events)).
+The count includes an insert under way, whose rows may have landed, so the count is at most what was lost.
 
 Code 70 is `UNCAUGHT_EXCEPTION_EXIT_CODE` in [`src/lib/uncaught-exception.ts`](../src/lib/uncaught-exception.ts), the `EX_SOFTWARE` value of `sysexits.h`, "internal software error".
-No launcher gives it another meaning: 0 is a clean stop on SIGTERM or SIGINT, and 1 is a boot check that refused the configuration, a launcher's own failure, an exception that nothing caught before the server had started, which Node.js ends with its own 1, or, under npx, a server that a signal ended, such as the out-of-memory killer's SIGKILL.
+No launcher gives it another meaning: 0 is a clean stop on SIGTERM or SIGINT, and 1 is a boot check that refused the configuration, a launcher's own failure, an exception that nothing caught before Next.js installed its own handler, which Node.js ends with its own 1, or, under npx, a server that a signal ended, such as the out-of-memory killer's SIGKILL.
 
 A promise rejection that nothing handles does not stop the server: Next.js logs it and keeps serving.
 That is Next.js's own choice: a server component may start a request early and drop its promise when the answer turns out not to be needed, and the rejection of such a promise is no fault.
-Node.js started with `--unhandled-rejections=strict`, for example through `NODE_OPTIONS`, is the one case where it does: Node.js then raises every unhandled rejection as an uncaught exception before Next.js sees it, so the server exits with 70 for it too, and the line begins `Unhandled rejection raised as an uncaught exception`.
+Node.js started with `--unhandled-rejections=strict`, for example through `NODE_OPTIONS`, is the one case where it does: Node.js then raises every unhandled rejection as an uncaught exception before Next.js's rejection handling sees it, so the server exits with 70 for it too, and the line begins `Unhandled rejection raised as an uncaught exception`.
 Whether Studio stops on an unhandled rejection too is open until such rejections have been counted in real sessions.
 
 How each channel brings the server back after code 70:
