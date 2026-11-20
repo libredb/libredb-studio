@@ -9,7 +9,10 @@
 FROM oven/bun:1.4.4 AS deps
 WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends && rm -rf /var/lib/apt/lists/*
+# patches/ holds the driver patches package.json's patchedDependencies names; bun install applies
+# them and refuses to run without them (docs/TOOLCHAIN.md, "Patched dependencies").
 COPY package.json bun.lock ./
+COPY patches ./patches
 RUN bun install --frozen-lockfile
 
 # Build with Node.js to avoid Bun/QEMU segfaults on ARM64.

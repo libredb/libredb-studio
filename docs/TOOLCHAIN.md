@@ -430,6 +430,56 @@ install sites across 9 workflows; duplicated, it would drift immediately.
 `tests/unit/ci-install.test.ts` covers the policy against a stub `bun` (first-try success, retry then
 success, exhaustion, custom attempt count, no dead sleep after the final attempt).
 
+## Patched dependencies
+
+A driver flaw that Studio cannot fix through the driver's public API is fixed by patching the installed package (owner decision, 2026-11-21).
+Each patch is the smallest change that fixes one flaw, is held by an end-to-end test, is listed in the table below, and is removed when the upstream release Studio installs carries a fix.
+A release that already fixes the flaw is installed instead, unless moving to it is work of its own, such as a major the Dependabot configuration holds back; the row then says so.
+
+### How a patch is made
+
+1. `bun patch <name>` copies the installed package out of Bun's global cache, so it can be edited in `node_modules/<name>`.
+2. Edit the files there, and run the test that holds the fix.
+3. `bun patch --commit node_modules/<name>` writes `patches/<name>@<version>.patch`, adds the entry to `patchedDependencies` in `package.json` and records it in `bun.lock`.
+4. Add the row to the table below.
+
+Never edit a file under `node_modules` any other way.
+Bun links an installed package's files from its global cache (`~/.bun/install/cache`), so an in-place edit changes the cache entry itself, and every later install that links that entry, in any checkout on the machine, gets the edited file.
+Measured 2026-11-21: a `cp` over `node_modules/ioredis/built/Redis.js` changed the patched cache entry, and a reinstall served the changed file; deleting that cache entry and reinstalling restored the patched one.
+
+### What Bun 1.4.4 does when a patch and the install disagree
+
+Measured 2026-11-21 in a scratch project with the ioredis patch:
+
+| Situation | `bun install` (with or without `--frozen-lockfile`) |
+| --- | --- |
+| The installed version no longer matches the key, as after a version bump | warns `patches/<file> no longer applies (<name> is now <version>)`, installs the package unpatched, drops the entry from `bun.lock`, exits 0 |
+| The patch file is missing | `error: patch file not found`, exits 1 |
+| A hunk does not apply to a package of the key's version | `error: failed applying patch file: hunk #1 does not apply`, exits 1 |
+| The entry is removed from `package.json` but kept in `bun.lock` | installs unpatched, exits 0 |
+
+The first row is the one a Dependabot bump reaches, and Bun lets it through.
+So [`tests/unit/patched-dependencies.test.ts`](../tests/unit/patched-dependencies.test.ts) fails instead: every entry's package must be installed at the key's version with every hunk of its patch present, every file in `patches/` must belong to an entry, `bun.lock` must record the same entries, every entry must have a row here and every row an entry, and each Dockerfile must copy the patches in before its install.
+A bump of a patched package therefore lands together with the patch made again for the new version, or with the patch removed because the new version fixes the flaw.
+
+### Where the patches are applied
+
+Every install from a full checkout applies them: the CI composite action above, the devcontainer's `postCreateCommand`, and a contributor's `bun install`.
+The three Dockerfiles install from a partial file set, so their deps stage copies `patches/` beside `package.json` and `bun.lock`; without it the install fails with the missing-file error above.
+The images, the standalone payload and the desktop, Linux, Windows, Homebrew, AUR, Chocolatey, winget, Flatpak and Snap packages are all built from those installs, and none of them installs dependencies again.
+The VS Code extension bundles the providers from the root `node_modules` (`absWorkingDir` in `vscode-extension/esbuild.mjs`; ioredis is not on `CHILD_EXTERNALS`), so its backend carries the patched code: measured 2026-11-21, the child bundle's ioredis inputs are `../node_modules/ioredis/built/DataHandler.js` and `Redis.js`, and its output holds both patched lines.
+
+The limit is the npm library.
+`build:lib` (tsup) keeps every database driver external, so an application that embeds `@libredb/studio` installs the drivers itself, unpatched, and `patches/` is not in the published package.
+Embedders read this in the README's "Embedding in your own app" section, which points here; they apply the same patch files, from the repository at the release's tag, with their own package manager.
+
+### The patches
+
+| Package and version | Patch file | What it fixes | Test that holds it | Upstream | Remove when |
+| --- | --- | --- | --- | --- | --- |
+| `ioredis@5.11.1` | `patches/ioredis@5.11.1.patch` | `built/DataHandler.js`: a reply redis-parser 3.0.0 throws on (an array header longer than a JS array can be, or arrays nested deeper than the stack) takes ioredis's fatal-error path, which rejects the commands in flight and reconnects, instead of leaving the socket's `data` listener as an exception with the command waiting forever ([redis.md §4.6](providers/redis.md#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) | [`redis-driver.test.ts`](../tests/integration/db/redis-driver.test.ts), [`redis-nested-reply-live.ts`](../tests/live/redis-nested-reply-live.ts) | Fixed in ioredis 6.0.0, whose `DataHandler` catches its decoder's throw the same way; not in any 5.x release | Studio moves to ioredis 6, a major `.github/dependabot.yml` holds back because it defaults to RESP3 |
+| `ioredis@5.11.1` | `patches/ioredis@5.11.1.patch` | `built/Redis.js`: the client listens on its socket's `error` for the socket's whole life (`on`, was `once`), so a second error on a TLS socket, which Node emits after a record it could not decrypt, reaches the client's `error` event like the first ([redis.md §4.6](providers/redis.md#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) | [`redis-driver.test.ts`](../tests/integration/db/redis-driver.test.ts), under Node | Still `once` in 6.0.0 and 6.1.0-beta.1; not reported yet | An ioredis release Studio installs keeps an `error` listener on its socket for the socket's whole life |
+
 ## Rollout order and per-phase gate
 
 1. Biome formatter + `.editorconfig` (one-shot reformat PR).
