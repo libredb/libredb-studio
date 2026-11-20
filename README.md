@@ -537,6 +537,11 @@ journalctl -u libredb-studio
   npm i @libredb/studio
   ```
 
+  **Install the database drivers yourself, and apply Studio's driver patches.**
+  The package keeps every driver external, so your application installs them, and your install does not carry the patches Studio applies to some of them.
+  Which packages are patched, why, and when each patch goes away are in [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md#patched-dependencies), "Patched dependencies".
+  Take the patch files from the repository's `patches/` directory at the release's tag and apply them with your package manager.
+
   **Adopt Studio's security headers from your own Next.js config.** The `@libredb/studio/security`
   subpath publishes the header policy as pure data — `securityHeaders()` returns a plain
   `Record<string, string>`, and the module it comes from imports nothing, so it is safe to load from

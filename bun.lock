@@ -144,6 +144,9 @@
     "oracledb",
     "ssh2",
   ],
+  "patchedDependencies": {
+    "ioredis@5.11.1": "patches/ioredis@5.11.1.patch",
+  },
   "overrides": {
     "@azure/msal-node": "^7.1.2",
     "adm-zip": "^0.6.1",

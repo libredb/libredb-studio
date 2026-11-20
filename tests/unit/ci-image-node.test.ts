@@ -37,6 +37,7 @@ const RUNTIME_FILES = [
   "tests/unit/db/rabbitmq/dial-runtimes.test.ts",
   "tests/unit/db/mqtt/dial-runtimes.test.ts",
   "tests/unit/db/snowflake/key-runtimes.test.ts",
+  "tests/integration/db/redis-driver.test.ts",
 ];
 
 /** The Node release a Dockerfile's runner stage names, read here independently of the step's own reader. */

@@ -10,7 +10,7 @@
 | **Status** | ✅ Implemented & shipped |
 | **Database type id** | `redis` |
 | **Family** | Key-Value |
-| **Driver** | `ioredis` (the version range is in `package.json`) |
+| **Driver** | `ioredis` (the version range is in `package.json`), patched ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
 | **Query language** | `json` (plain command **or** JSON command object) |
 | **Default port** | `6379` |
 | **Connection pooling** | None — single lazy connection |
@@ -543,6 +543,40 @@ Measured 2026-10-30 on redis 8.2.11, ioredis 5.11.1:
 - Writes on a replica still get `MOVED`.
 - Keys outside the reached node's slots still get `MOVED`.
 - Replica reads may lag (not measured; [source](https://redis.io/docs/latest/commands/readonly/)).
+
+### 4.6 A reply the driver cannot read, and a TLS stream that fails twice
+
+Studio runs ioredis 5.11.1 with a patch, `patches/ioredis@5.11.1.patch` ([`docs/TOOLCHAIN.md`](../TOOLCHAIN.md#patched-dependencies), "Patched dependencies"), for two ways a connection can fail that the driver did not report as an error.
+
+**A reply the parser cannot hold.**
+ioredis reads replies with redis-parser 3.0.0 inside the socket's `data` listener.
+That parser throws on an array header longer than a JS array can be (`*4294967296`) and on arrays nested deeper than the runtime's stack.
+Patched, the throw takes ioredis's fatal-error path, the one a protocol error already takes: ioredis rejects the commands in flight, logs the error as `[Redis] <message>` ([§4.4](#44-why-a-connect-failed-1356)), closes the connection and reconnects.
+What the user sees depends on where the reply arrives:
+
+| Where the reply arrives | What the user sees |
+| --- | --- |
+| The answer to an editor command | `QueryError` (400), *"Redis error: Maximum call stack size exceeded. Please report this."* for the nesting, *"Redis error: Invalid array length. Please report this."* for the header (Node's wording; Bun words the header *"Array length must be a positive integer of safe magnitude."*) |
+| The answer to the sign-in or the ready check of `connect()` | `ConnectionError` (503), *"Failed to connect to Redis: "* and the same message |
+| The answer to the `SELECT` of a numbered database, or to the agent profile's read-only proof, during `connect()` | the driver's own error, for example *"Invalid array length. Please report this."*, reported as a generic database error (500) |
+| The answer to the agent's one-command connection | the driver's own error: that connection sets `retryStrategy: () => null` and `enableOfflineQueue: false` (`oneCommandOptions()`), so it ends instead of reconnecting |
+| The next editor command on the same provider | its own answer, on the reconnected connection |
+
+*"Please report this."* is ioredis's own ending for every error that takes that path.
+The editor connection reconnects because it keeps ioredis's default `retryStrategy` (no option in `redisOptions()` changes it).
+
+A nested reply can also fail after the parser has read it.
+Once Node has optimized the parser, it reads deeper nesting than it does in a fresh process, and the stack can then overflow in Studio's own decoding of the parsed reply.
+The command then fails with `QueryError` (400), *"Redis error: Maximum call stack size exceeded"* without *"Please report this."*, nothing is logged, and the connection stays open and answers the next command.
+
+**A TLS stream that fails twice.**
+When a TLS socket receives a record it cannot decrypt, Node emits an `error` without destroying the socket, and a reset or a write that follows emits a second one.
+ioredis listened for the socket's first error only, so the second one had no listener.
+Patched, the client listens for the socket's whole life: each error is logged as `[Redis] <message>`, for example *"... decryption failed or bad record mac ..."* and then *"read ECONNRESET"* or *"write EPROTO"*, the connection closes and reconnects, and a command sent after the error is answered after the reconnect.
+During `connect()` the first error is the one named, as in [§4.4](#44-why-a-connect-failed-1356).
+
+[`redis-driver.test.ts`](../../tests/integration/db/redis-driver.test.ts) holds both on Bun and on Node, and [`redis-nested-reply-live.ts`](../../tests/live/redis-nested-reply-live.ts) holds a nested reply from a real server ([§11.2](#112-coverage)).
+An application that embeds `@libredb/studio` installs ioredis itself, unpatched, unless it applies the same patch.
 
 ### Connection string
 
@@ -1948,6 +1982,7 @@ The provider raises the shared error classes from
 | A quoted argument that never closes ([§3.4a](#34a-comments-lines-and-how-one-command-is-picked-out-of-a-buffer)) | `QueryError` - *"Line N opens a quoted argument with ... that never closes ..."* |
 | A second command before the first blank line ([§3.4a](#34a-comments-lines-and-how-one-command-is-picked-out-of-a-buffer)) | `QueryError` - *"Line N holds a second command, which begins with ..."* |
 | Redis-side command failure | `QueryError` — *"Redis error: …"* |
+| A reply the parser cannot hold (nesting deeper than the stack, an array header past a JS array's length) | `QueryError` - *"Redis error: Maximum call stack size exceeded. Please report this."* or the runtime's array-length message, and the connection reconnects; *"Redis error: Maximum call stack size exceeded"* without the ending when the overflow is in Studio's decoding, and the connection stays open; while connecting, `ConnectionError` or the driver's own error ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
 
 All `QueryError`s carry the `QUERY_ERROR` API code and surface to the client as `400 Bad Request`.
 
@@ -1992,6 +2027,12 @@ server's own `NOPERM` sentence out of `getHealth()`. The mock's `connect()` can 
 `error` events of [§4.4](#44-why-a-connect-failed-1356) before it rejects, which pins the typed error and
 the message each one becomes.
 
+The mock cannot see the driver's own socket handling, so [`tests/integration/db/redis-driver.test.ts`](../../tests/integration/db/redis-driver.test.ts) runs the provider over the real, patched ioredis ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)).
+It runs [`redis-driver-harness.ts`](../../tests/integration/db/redis-driver-harness.ts) in a Bun child and, bundled with `bun build --target=node`, in a Node child, against a local peer that answers an oversized array header or a reply nested 200000 levels deep, or, over TLS, writes a record the client cannot decrypt and then resets or lets the client write.
+Each case checks what the caller got, that the next command answers, and that no error escaped a call, and under Node the TLS cases check that the second socket error was logged.
+CI runs it in the suite on Node 24 and again on the Node release the image ships.
+[`tests/live/redis-nested-reply-live.ts`](../../tests/live/redis-nested-reply-live.ts) reads a deeply nested reply from a real redis 8.10.2 under Bun and Node, in the Functional Smoke job.
+
 ### 11.3 Run it
 
 ```bash
@@ -2004,8 +2045,8 @@ bun run test
 
 ### 11.4 Optional: verifying against a live Redis
 
-The committed tests are mock-based by design. To smoke-test against a real server during
-development:
+The committed tests are mock-based by design, apart from the driver checks of [§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice).
+To smoke-test against a real server during development:
 
 ```bash
 docker run --rm -p 6379:6379 redis:7-alpine
