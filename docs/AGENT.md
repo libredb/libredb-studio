@@ -3025,13 +3025,13 @@ No shipped overlay overrides a Shared member.
 | Statement-language family | `languageClientPack`, `languageServerPack`, `agentLanguagePack` | one family's client facet, server facet or whole pack; an id the server does not know is a named error |
 | Engine | `engineFamily` | the statement-language family a type speaks, or null |
 | Engine | `engineClientPack` | the family's client facet with the engine's client overlay applied |
-| Engine | `engineServerOverlay` | the engine's server overlay as the registry holds it, or an empty one |
-| Engine | `engineServerDialect` | the engine's server dialect, every member `"unsupported"` for a type with none |
+| Engine | `engineServerOverlay` | the engine's server overlay as the registry holds it, or an empty one for a type id with none; a value that is not a type id is refused with `UnknownProviderError` |
+| Engine | `engineServerDialect` | the engine's server dialect, every member `"unsupported"` for a type id with none; a value that is not a type id is refused with `UnknownProviderError` |
 | Every engine | `everyEngineServerDialect` | every registered engine's server dialect, for a rule derived across engines such as the restated-prefix strip |
 | Engine | `agentEnginePack` | the engine's whole pack, which is the family pack itself while both overlays are empty |
 | Engine | `enginesSupporting` | the engines whose client dialect supports every member asked |
 | Run | `statementFamilyOf` | the family a run reads: its persisted `statementLanguage`, or `DEFAULT_STATEMENT_LANGUAGE` when the record holds none |
-| Run | `runServerPack` | the server facet a run reads: its family's, with the connection type's overlay applied only when that type speaks the family |
+| Run | `runServerPack` | the server facet a run reads: its family's, with the connection type's overlay applied only when that type speaks the family; a connection type that is not a type id is refused with `UnknownProviderError` before the run's language is read |
 
 A run's statement language is persisted, and the connection type only selects the overlay.
 `persistedRunFacts` leaves `statementLanguage` off the record for a SQL engine, for a ledger older than statement languages and for an engine with no statement language, and `statementFamilyOf` reads each of them as `DEFAULT_STATEMENT_LANGUAGE`, which is `sql`.

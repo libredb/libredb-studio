@@ -9,6 +9,7 @@ import {
   ABSENT_TYPE_SENTENCE,
   assertDatabaseType,
   isDatabaseType,
+  MALFORMED_TYPE_SENTENCE,
   quoteTypeId,
   typeIdRefusal,
   unknownTypeSentence,
@@ -44,13 +45,27 @@ describe("isDatabaseType and typeIdRefusal", () => {
 
   // Each value in a one-element row: test.each spreads an array row into arguments, which would turn `[]` and
   // `["postgres"]` into something else.
-  test.each([[undefined], [null], [""], [5], [true], [{}], [[]], [["postgres"]], [{ id: "postgres" }]] as const)(
-    "a missing, empty or non-string type is absent: %p",
+  test.each([[undefined], [null], [""]] as const)("a missing, empty or null type is absent: %p", (value: unknown) => {
+    expect(isDatabaseType(value)).toBe(false);
+    expect(typeIdRefusal(value)).toEqual({ reason: "absent", sentence: ABSENT_TYPE_SENTENCE });
+  });
+
+  test.each([[5], [true], [{}], [[]], [["postgres"]], [{ id: "postgres" }]] as const)(
+    "a type that is not text is malformed: %p",
     (value: unknown) => {
       expect(isDatabaseType(value)).toBe(false);
-      expect(typeIdRefusal(value)).toEqual({ reason: "absent", sentence: ABSENT_TYPE_SENTENCE });
+      expect(typeIdRefusal(value)).toEqual({ reason: "malformed", sentence: MALFORMED_TYPE_SENTENCE });
     },
   );
+
+  test("the malformed sentence repeats no part of the value", () => {
+    const refusal = typeIdRefusal({ secret: "CANARY-7f3a" });
+    expect(refusal?.reason).toBe("malformed");
+    expect(refusal?.sentence).not.toContain("CANARY");
+    expect(MALFORMED_TYPE_SENTENCE).toBe(
+      "This connection's type is not text, so it is not a type id, and no provider in this LibreDB Studio can open it.",
+    );
+  });
 
   test("the unknown sentence quotes the type id as given", () => {
     expect(unknownTypeSentence("acmefoo")).toBe(
@@ -124,6 +139,21 @@ describe("assertDatabaseType", () => {
       expect((error as UnknownProviderError).typeId).toBeUndefined();
       expect((error as UnknownProviderError).message).toBe(ABSENT_TYPE_SENTENCE);
     }
+  });
+
+  test("assertDatabaseType throws UnknownProviderError carrying a malformed refusal", () => {
+    let thrown: unknown;
+    try {
+      assertDatabaseType(5);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(UnknownProviderError);
+    const error = thrown as UnknownProviderError;
+    expect(error.reason).toBe("malformed");
+    expect(error.typeId).toBeUndefined();
+    expect(error.message).toBe(MALFORMED_TYPE_SENTENCE);
+    expect(error.code).toBe("PROVIDER_UNKNOWN");
   });
 
   test("a type id returns", () => {

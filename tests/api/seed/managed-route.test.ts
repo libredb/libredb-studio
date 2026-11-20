@@ -592,6 +592,100 @@ describe("GET /api/connections/managed", () => {
 });
 
 /*
+  A seed entry whose type names no provider this Studio has (FND-1) refuses only itself: the file's other entries are
+  listed as before, and the entry is listed after them as a managed connection of the type it names, with only the
+  fields Studio reads from it, for the roles it names. The browser reads its availability from the type.
+*/
+describe("a seed entry whose type names no provider (FND-1)", () => {
+  const origPath = process.env.SEED_CONFIG_PATH;
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), "libredb-seed-unknown-type-"));
+    (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "admin", username: "admin@test.com" }));
+  });
+
+  afterEach(() => {
+    process.env.SEED_CONFIG_PATH = origPath;
+    resetCache();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeSeed(connections: object[]): void {
+    const file = path.join(dir, "seed-connections.json");
+    writeFileSync(file, JSON.stringify({ version: "1", connections }));
+    process.env.SEED_CONFIG_PATH = file;
+    resetCache();
+  }
+
+  const acme = {
+    id: "acme",
+    name: "Acme Store",
+    type: "acmefoo",
+    host: "acme.example",
+    password: "CANARY-7f3a",
+    roles: ["*"],
+    mcp: true,
+  };
+  const pg = { id: "pg", name: "PG", type: "postgres", host: "pg.internal", roles: ["*"] };
+
+  it("lists a seed entry whose type names no provider as an unavailable managed connection, with only the fields Studio reads, beside the file's other entries", async () => {
+    writeSeed([acme, pg]);
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("CANARY");
+    expect(text).not.toContain("acme.example");
+    const data = JSON.parse(text);
+    expect(data.connections.map((conn: { id: string }) => conn.id)).toEqual(["seed:pg", "seed:acme"]);
+    expect(data.connections[1]).toEqual({
+      id: "seed:acme",
+      name: "Acme Store",
+      type: "acmefoo",
+      managed: true,
+      roles: ["*"],
+      seedId: "acme",
+      createdAt: expect.any(String),
+      mcp: true,
+    });
+  });
+
+  it("lists it managed when the file says managed: false", async () => {
+    writeSeed([{ ...acme, managed: false }, pg]);
+
+    const data = await (await GET()).json();
+
+    expect(data.connections.find((conn: { id: string }) => conn.id === "seed:acme")?.managed).toBe(true);
+  });
+
+  it("lists it only for the roles it names", async () => {
+    writeSeed([{ ...acme, roles: ["admin"] }, pg]);
+    (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "user", username: "user@test.com" }));
+
+    const data = await (await GET()).json();
+
+    expect(data.connections.map((conn: { id: string }) => conn.id)).toEqual(["seed:pg"]);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["not text", 5],
+  ])("still fails the whole file for a type that is %s", async (_label, type) => {
+    writeSeed([{ ...acme, type }, pg]);
+
+    const res = await GET();
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({
+      error: "Failed to load managed connections",
+      reason: SEED_CONFIG_UNREADABLE_REASON,
+    });
+  });
+});
+
+/*
   Governance mode (docs/GOVERNANCE.md): the list is the session's grants in the governance snapshot, for its identity
   provider subject and whatever its role, each record carrying the credential of its grant level on the server only.
   The browser gets no credential and neither server-only marker, and asks again every 10 seconds, so a grant made or

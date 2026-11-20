@@ -88,6 +88,21 @@ const ROWS: readonly Row[] = [
     log: { level: "warn", message: "Unknown provider", context: { reason: "absent" } },
   },
   {
+    name: "an UnknownProviderError of a type that is not text answers 400 PROVIDER_UNKNOWN and logs only its reason",
+    error: new UnknownProviderError({
+      reason: "malformed",
+      sentence:
+        "This connection's type is not text, so it is not a type id, and no provider in this LibreDB Studio can open it.",
+    }),
+    body: {
+      error:
+        "This connection's type is not text, so it is not a type id, and no provider in this LibreDB Studio can open it.",
+      code: ApiErrorCode.PROVIDER_UNKNOWN,
+      statusCode: 400,
+    },
+    log: { level: "warn", message: "Unknown provider", context: { reason: "malformed" } },
+  },
+  {
     name: "AuthenticationError with a fix statement",
     error: new AuthenticationError("refused", "postgres", {
       fixStatement: "ALTER USER ADD KEY PAIR k PUBLIC_KEY = 'b'",

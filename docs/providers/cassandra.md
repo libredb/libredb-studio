@@ -119,7 +119,7 @@ can correct it.
 | `src/lib/db/providers/sql/cassandra/sql-grammar.ts` | `CASSANDRA_GRAMMAR`: all four facts probed ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | `src/lib/db/providers/sql/cassandra/sql-writing.ts` | `literalStandard` literal escaping: doubling, backslash is data (measured) |
 | `src/lib/db/compatibility.ts` | `SHIPPED.cassandra` |
-| `src/lib/seed/types.ts` | The seed enum and `localDataCenter` |
+| `src/lib/seed/types.ts` | `localDataCenter` |
 | `next.config.ts`, `tsup.config.ts` | `cassandra-driver` external ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)) |
 | `database-compose.yml` | `cassandra:5.0.9`, port 9042, `nodetool status` healthcheck |
 

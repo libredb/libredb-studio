@@ -20,7 +20,9 @@ import {
   MONGODB_COMMUNITY,
   PGO_POSTGRES_CLUSTER,
 } from "@/lib/seed/kubernetes-discovery-contract";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import {
+  KUBERNETES_DISCOVERY_KINDS,
   KUBERNETES_DISCOVERY_PROBLEMS,
   parseKubernetesDiscoveryExport,
   type KubernetesDiscoveredDatabase,
@@ -1147,5 +1149,23 @@ describe("the golden fixture", () => {
       return result.secret.name;
     });
     expect(new Set(secrets).size).toBe(3);
+  });
+});
+
+/**
+ * The export names a kind by its slug, and the contract table maps each slug to the connection it becomes, of the type
+ * the row names (FND-1): a kind with no row, or a row whose type is no type id, would be a connection no provider opens.
+ */
+describe("every kind the export admits", () => {
+  it("has exactly one contract row, and every row is a kind the export admits", () => {
+    expect<string[]>([...KUBERNETES_DISCOVERY_KINDS].sort()).toEqual(KUBERNETES_CONTRACT.map((row) => row.slug).sort());
+  });
+
+  it("maps to a row whose type is a type id", () => {
+    for (const row of KUBERNETES_CONTRACT)
+      expect({ slug: row.slug, refusal: typeIdRefusal(row.type) }).toEqual({
+        slug: row.slug,
+        refusal: null,
+      });
   });
 });

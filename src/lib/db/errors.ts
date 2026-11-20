@@ -68,16 +68,17 @@ export class DatabaseConfigError extends DatabaseError {
 
 /**
  * Why a connection's `type` is not a type id, as `typeIdRefusal` in `./type-id` answers it: `absent` when the value is
- * missing, empty or not a string, `unknown` when it is a string that names no provider, which `typeId` then carries
- * verbatim. `sentence` is the user-facing refusal, the same on every surface. Declared here as a type so this module
- * gains no runtime import.
+ * missing, `null` or empty, `malformed` when it is present and not a string, whose value is never repeated, `unknown`
+ * when it is a string that names no provider, which `typeId` then carries verbatim. `sentence` is the user-facing
+ * refusal, the same on every surface. Declared here as a type so this module gains no runtime import.
  */
 export type TypeIdRefusal =
   | { readonly reason: "absent"; readonly sentence: string }
+  | { readonly reason: "malformed"; readonly sentence: string }
   | { readonly reason: "unknown"; readonly typeId: string; readonly sentence: string };
 
 /**
- * A connection whose `type` is absent or names no provider this Studio has (FND-1). Raised before any provider is
+ * A connection whose `type` is absent, not text, or names no provider this Studio has (FND-1). Raised before any provider is
  * built, any SSH tunnel opened or any per-engine table read, and answered 400 `PROVIDER_UNKNOWN` with the refusal's
  * sentence. A `DatabaseConfigError`, so every existing classification of a configuration error still holds; its
  * `provider` is undefined because the value is not a `DatabaseType`.

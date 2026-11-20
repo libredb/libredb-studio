@@ -1,13 +1,13 @@
 import * as fs from "fs";
 import { governanceEnabled } from "@/lib/governance/config";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
-import { filterByRoles, projectSeedConnection } from "./connection-filter";
+import { filterByRoles, filterUnavailableByRoles, projectSeedConnection } from "./connection-filter";
 import { getDiscoveredConnections } from "./discovery-loader";
 import { getKubernetesDiscoveredConnections } from "./kubernetes-discovery-loader";
 import { isSampleEnabled, resolveSamplePath, buildSampleConnection } from "./libredb-sample";
 import { loadOperatorSources } from "./operator-loader";
 import { KUBERNETES_REVIEWED_ROLE } from "./roles";
-import type { OperatorEntry } from "./sources/types";
+import type { OperatorEntry, OperatorUnavailableEntry } from "./sources/types";
 import {
   isSqliteSampleEnabled,
   resolveSqliteSamplePath,
@@ -47,13 +47,25 @@ function projectOperatorEntries(entries: readonly OperatorEntry[], roles: string
 }
 
 /**
+ * The operator's entries whose type names no provider this Studio has (FND-1) that these roles may see, in source
+ * order, each as `projectUnavailableSeed` lists it: the fields Studio reads, managed, and no marker, since no route
+ * opens it.
+ */
+function projectUnavailableEntries(entries: readonly OperatorUnavailableEntry[], roles: string[]): ManagedConnection[] {
+  return filterUnavailableByRoles(
+    entries.map(({ entry }) => entry),
+    roles,
+  );
+}
+
+/**
  * What getManagedConnections lists, in its order, with the rows only the Kubernetes access review may list set apart in
  * their place.
  */
 export interface SeedListing {
   /**
-   * The operator entries, then the CapRover-discovered rows, then, with the review off, the Kubernetes-discovered rows
-   * the roles may see.
+   * The operator entries, then the operator entries whose type names no provider (FND-1), then the CapRover-discovered
+   * rows, then, with the review off, the Kubernetes-discovered rows the roles may see.
    */
   readonly before: ManagedConnection[];
   /**
@@ -67,8 +79,9 @@ export interface SeedListing {
 
 /**
  * The seed connections these roles may see, in getManagedConnections' order, with the rows only the Kubernetes access
- * review may list set apart in `pendingReview`, their place in that order: the operator entries, then the discovered
- * connections of CapRover and of Kubernetes, then the samples. Outside this module only src/lib/governance/visible.ts
+ * review may list set apart in `pendingReview`, their place in that order: the operator entries, then the operator
+ * entries whose type names no provider this Studio has (FND-1), listed so they can be shown as unavailable and opened by
+ * no route, then the discovered connections of CapRover and of Kubernetes, then the samples. Outside this module only src/lib/governance/visible.ts
  * reads it, and it hands `pendingReview` to the review and nowhere else; getManagedConnections, below, reads only
  * `before` and `after`.
  *
@@ -81,6 +94,7 @@ export async function getSeedListing(roles: string[]): Promise<SeedListing> {
   if (governanceEnabled()) return { before: [], pendingReview: [], after: [] };
   const operator = await loadOperatorSources();
   const fromOperators = projectOperatorEntries(operator.entries, roles);
+  const unavailable = projectUnavailableEntries(operator.unavailable, roles);
 
   /*
     Discovered connections (CapRover auto-connect spec 9.5 and 9.7) come after the operator entries and before the
@@ -130,7 +144,9 @@ export async function getSeedListing(roles: string[]): Promise<SeedListing> {
     )
     .filter((conn) => !operator.declaredIds.has(conn.seedId));
 
-  const before = reviewed ? [...fromOperators, ...discovered] : [...fromOperators, ...discovered, ...kubernetes];
+  const before = reviewed
+    ? [...fromOperators, ...unavailable, ...discovered]
+    : [...fromOperators, ...unavailable, ...discovered, ...kubernetes];
   const after: ManagedConnection[] = [];
 
   /*
@@ -186,12 +202,17 @@ export function getPendingSeeds(): string[] {
 }
 
 /**
- * The operator entries only: no discovered connection and no sample, so a 403 never confirms a discovered id. Under
- * governance none at all, because no source is read (see getManagedConnections).
+ * The operator entries only, those whose type names no provider included, so a caller whose roles such an entry
+ * excludes gets the 403 any seed gets: no discovered connection and no sample, so a 403 never confirms a discovered id.
+ * Under governance none at all, because no source is read (see getManagedConnections).
  */
 export async function getSeedConnectionByIdUnfiltered(seedId: string): Promise<ManagedConnection | null> {
   if (governanceEnabled()) return null;
   const operator = await loadOperatorSources();
-  const all = projectOperatorEntries(operator.entries, ["*", "admin", "user"]);
+  const roles = ["*", "admin", "user"];
+  const all = [
+    ...projectOperatorEntries(operator.entries, roles),
+    ...projectUnavailableEntries(operator.unavailable, roles),
+  ];
   return all.find((c) => c.seedId === seedId) ?? null;
 }

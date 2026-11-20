@@ -20,7 +20,9 @@ import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
 import { agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 
@@ -429,6 +431,27 @@ describe("the MongoDB variants (issue #1614)", () => {
 
 describe("workflowAvailability", () => {
   const statementWorkflows = ["investigation", "query-optimization", "database-assessment", "data-analysis"] as const;
+
+  // A connection whose type names no provider (FND-1) reaches no table read: an unknown name, an inherited key, a
+  // missing type and one that is not text are each refused with the reason `typeIdRefusal` gives them, in both modes.
+  test("workflowAvailability refuses a type that is not a type id by name, in every mode and workflow", () => {
+    for (const type of ["acmefoo", undefined, "constructor", 5] as unknown[]) {
+      const refusal = typeIdRefusal(type);
+      for (const mode of ["agent", "planning"] as const) {
+        for (const workflow of [...statementWorkflows, "operations"] as const) {
+          let thrown: unknown;
+          try {
+            workflowAvailability(mode, workflow, type as DatabaseType);
+          } catch (error) {
+            thrown = error;
+          }
+          expect(thrown).toBeInstanceOf(UnknownProviderError);
+          expect((thrown as UnknownProviderError).reason).toBe(refusal?.reason as UnknownProviderError["reason"]);
+          expect((thrown as UnknownProviderError).message).toBe(refusal?.sentence as string);
+        }
+      }
+    }
+  });
 
   test.each(["postgres", "mssql", "duckdb"] as const)("%s opens every workflow in both modes", (type) => {
     for (const workflow of [...statementWorkflows, "operations"] as const) {

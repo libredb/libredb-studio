@@ -58,6 +58,7 @@ const SEED_SOURCES = {
         connected: [{ id: "reporting", name: "Reporting", type: "postgres" }],
         skipped: [],
         notes: [],
+        unavailable: [],
       },
     ],
   },

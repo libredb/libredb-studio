@@ -607,6 +607,9 @@ export function useConnectionManager(storageReady = false) {
 
       // Add managed:true connections (always from server)
       for (const mc of managedConns) {
+        // A seed whose type names no provider is listed managed whatever the file says (FND-1), so a dismissal the
+        // user recorded by deleting their copy of it is kept while it is listed so.
+        if (mc.seedId && dismissed.has(mc.seedId) && !isDatabaseType(mc.type)) continue;
         if (mc.managed) {
           merged.push({ ...mc, createdAt: new Date(mc.createdAt) });
         } else {
@@ -789,12 +792,20 @@ export function useConnectionManager(storageReady = false) {
       Listed means listed for the user: the policy's view of the new list, the view this hook
       returns, so a connection ALLOW_CUSTOM_CONNECTIONS hides is never kept, chosen or made
       active. The hidden ones stay in the list state, as they do after the first load.
+
+      The active object is kept only while its refreshed record is available. A refresh that lists
+      the active id with a type that names no provider (FND-1: the operator changed the type, or a
+      Studio without that provider now serves the list) lists the refreshed record, moves to the
+      first available connection, and says why in the refusal's own sentence rather than that the
+      connection was removed.
     */
     const applyManagedRefresh = (next: DatabaseConnection[]) => {
       const active = activeConnectionRef.current;
       const selectable = availableConnections(connectionsUnderPolicy(next, currentPolicy));
+      const refreshed = active === null ? undefined : next.find((c) => c.id === active.id);
+      const refusal = refreshed === undefined ? null : typeIdRefusal(refreshed.type);
       setConnections(
-        active !== null && next.some((c) => c.id === active.id)
+        active !== null && refreshed !== undefined && refusal === null
           ? next.map((c) => (c.id === active.id ? active : c))
           : next,
       );
@@ -806,7 +817,8 @@ export function useConnectionManager(storageReady = false) {
       }
       if (selectable.some((c) => c.id === active.id)) return;
       setActiveConnection(selectable[0] ?? null);
-      toast({ title: "Connection removed", description: `${active.name} is no longer available.` });
+      if (refreshed !== undefined && refusal !== null) refuseUnavailable(refreshed, refusal.sentence);
+      else toast({ title: "Connection removed", description: `${active.name} is no longer available.` });
     };
 
     const refreshManaged = async () => {

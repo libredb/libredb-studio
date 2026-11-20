@@ -6,6 +6,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { MCP_EXPOSABLE, MCP_METADATA_READ_CHANGES_STATE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 import { MCP_READ_ONLY_ANNOTATIONS } from "@/lib/mcp/output";
 import { metadataReadAnnotations } from "@/lib/mcp/tools/annotations";
 import { getDBConfig } from "@/lib/db-ui-config";
@@ -79,6 +81,17 @@ describe("metadataReadAnnotations", () => {
         libredb: false,
       }),
     ).toBe(MCP_READ_ONLY_ANNOTATIONS);
+  });
+
+  // A reach is built from listed connections MCP can serve, which leaves out a type that names no provider (FND-1); one
+  // that holds such a type anyway is refused by name rather than read as a row of the table, inherited keys included.
+  test("refuses a reach that holds a type that is no type id", () => {
+    for (const type of ["acmefoo", "constructor"]) {
+      expect(() => metadataReadAnnotations(new Set([type]) as ReadonlySet<DatabaseType>)).toThrow(UnknownProviderError);
+      expect(() => metadataReadAnnotations(new Set(["postgres", type]) as ReadonlySet<DatabaseType>)).toThrow(
+        unknownTypeSentence(type),
+      );
+    }
   });
 
   test("sets no idempotentHint in either answer", () => {

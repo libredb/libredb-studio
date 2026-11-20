@@ -19,6 +19,7 @@ import {
 } from "@/lib/seed/credential-resolver";
 import { DEFAULT_SEED_CONFIG_PATH } from "@/lib/seed/sources/file";
 import { OperatorSourceError } from "@/lib/seed/sources/types";
+import { quoteTypeId, unknownTypeSentence } from "@/lib/db/type-id";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/seed-connections");
 const LOADED = "Seed config loaded";
@@ -190,6 +191,7 @@ describe("operator-loader with the file source", () => {
         ],
         skipped: [skip],
         notes: [],
+        unavailable: [],
       },
     ]);
     const logged = callsOf(error, SKIPPED);
@@ -199,6 +201,78 @@ describe("operator-loader with the file source", () => {
     expect(JSON.stringify([debug, info, warn, error].flatMap((logger) => logger.mock.calls))).not.toContain(
       "good-pass",
     );
+  });
+
+  it("carries an entry whose type names no provider apart, declares its id, logs it once per fill and reports it", async () => {
+    const acme = {
+      id: "acme",
+      name: "Acme Store",
+      type: "acmefoo",
+      host: "acme.example",
+      password: "CANARY-7f3a",
+      roles: ["*"],
+      mcp: true,
+    };
+    const file = writeSeed([acme, pg("pg", "pg-pass")]);
+    process.env.SEED_CONFIG_PATH = file;
+
+    const load = await loadOperatorSources();
+
+    expect(load.entries.map((entry) => entry.connection.id)).toEqual(["pg"]);
+    expect(load.unavailable).toEqual([
+      { entry: { id: "acme", name: "Acme Store", type: "acmefoo", roles: ["*"], mcp: true }, origin: file },
+    ]);
+    expect(load.declaredIds).toEqual(new Set(["acme", "pg"]));
+    expect(load.reports).toEqual([
+      {
+        source: "SEED_CONFIG_PATH",
+        location: file,
+        state: "ok",
+        checkedAt: expect.any(String),
+        error: null,
+        connected: [{ id: "pg", name: "PG pg", type: "postgres" }],
+        skipped: [],
+        notes: [],
+        unavailable: [
+          { id: "acme", name: "Acme Store", type: "acmefoo", origin: file, reason: unknownTypeSentence("acmefoo") },
+        ],
+      },
+    ]);
+    const UNAVAILABLE = "Seed connection listed as unavailable: no provider for its type";
+    expect(callsOf(warn, UNAVAILABLE)).toEqual([
+      [
+        UNAVAILABLE,
+        { route: "seed/operator-loader", connectionId: "acme", origin: file, type: quoteTypeId("acmefoo") },
+      ],
+    ]);
+    expect(JSON.stringify([debug, info, warn, error].flatMap((logger) => logger.mock.calls))).not.toContain("CANARY");
+
+    // Once per fill, not once per call: a warm cache logs nothing.
+    await loadOperatorSources();
+    expect(callsOf(warn, UNAVAILABLE)).toHaveLength(1);
+    process.env.SEED_CACHE_TTL_MS = "0";
+    await loadOperatorSources();
+    expect(callsOf(warn, UNAVAILABLE)).toHaveLength(2);
+  });
+
+  it("reports a file whose every entry names no provider as loaded", async () => {
+    process.env.SEED_CONFIG_PATH = writeSeed([{ id: "acme", name: "Acme", type: "acmefoo", roles: ["*"] }]);
+
+    const load = await loadOperatorSources();
+
+    expect(load.entries).toEqual([]);
+    expect(load.reports.map((report) => [report.state, report.connected, report.unavailable.length])).toEqual([
+      ["ok", [], 1],
+    ]);
+  });
+
+  it("refuses an entry whose type names no provider and another source's entry with one id", async () => {
+    process.env.SEED_CONFIG_PATH = writeSeed([
+      { id: "acme", name: "Acme", type: "acmefoo", roles: ["*"] },
+      { id: "acme", name: "Acme again", type: "postgres", host: "db", roles: ["*"] },
+    ]);
+    const failure = await loadOperatorSources().catch((thrown: unknown) => thrown);
+    expect((failure as OperatorSourceError).code).toBe("invalid");
   });
 
   it("logs a skipped entry once per fill, not once per call", async () => {
@@ -259,6 +333,7 @@ describe("operator-loader with the file source", () => {
           connected: [],
           skipped: [],
           notes: [],
+          unavailable: [],
         },
       ]);
 

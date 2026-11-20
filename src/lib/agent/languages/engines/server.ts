@@ -6,10 +6,13 @@
  * member `ENGINE_OVERRIDABLE_SERVER_MEMBERS` names, which `runServerPack` lays over the family pack. The type allows no
  * other member, since every other consumer reads the family pack and an override of it would reach no reader.
  *
- * `engineServerDialect` is total over any type id: an engine with no statement language, an engine whose family has
- * no dialect, and a name that is no key at all (`toString`) each answer `NO_SERVER_DIALECT`, every member
- * `"unsupported"`. That is what grounding and statistics need, since they run on every engine in plan mode.
+ * `engineServerDialect` is total over the type ids: an engine with no statement language and an engine whose family has
+ * no dialect each answer `NO_SERVER_DIALECT`, every member `"unsupported"`. That is what grounding and statistics need,
+ * since they run on every engine in plan mode. A value that is not a type id, an inherited name such as `toString`
+ * included, is refused with `UnknownProviderError` by `engineServerOverlay`, `engineServerDialect` and `runServerPack`
+ * (FND-1).
  */
+import { assertDatabaseType } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { INFLUXDB_SERVER_OVERLAY } from "../influxql/engines/influxdb";
 import { KUBERNETES_SERVER_OVERLAY } from "../kubectl/engines/kubernetes";
@@ -124,10 +127,13 @@ type EngineServerOverlay = FacetOverrides<AgentEngineOverridableServer> & {
 const NO_SERVER_OVERLAY: EngineServerOverlay = Object.freeze({});
 
 /**
- * The server overlay of `type` as the registry holds it, whole, or an empty one for a type with no overlay. Read by
+ * The server overlay of `type` as the registry holds it, whole, or an empty one for a type id with no overlay. Read by
  * `agentEnginePack` in `engines/index.ts` and by `runServerPack`.
+ *
+ * @throws {UnknownProviderError} When `type` is not a type id (FND-1).
  */
 export function engineServerOverlay(type: DatabaseType): EngineServerOverlay {
+  assertDatabaseType(type);
   return Object.hasOwn(SERVER_OVERLAYS, type) ? SERVER_OVERLAYS[type as AgentEngineType] : NO_SERVER_OVERLAY;
 }
 
@@ -157,9 +163,11 @@ const ENGINE_SERVER_FACETS = new Map<DatabaseType, EngineServerFacet>();
  * The server facet one run reads: the family its persisted `language` names (`statementFamilyOf`), with the overlay of
  * `type` applied only when `type` speaks that family. An engine with no family, or a connection re-typed after the
  * run opened, reads the family pack itself. A language this server does not know is the named error of
- * `languageServerPack`. `agentEnginePack` reads its server facet here too, so both hand out the same object.
+ * `languageServerPack`. `agentEnginePack` reads its server facet here too, so both hand out the same object. A `type`
+ * that is not a type id is refused with `UnknownProviderError` before the language is read (FND-1).
  */
 export function runServerPack(language: AgentStatementLanguageId | undefined, type: DatabaseType): EngineServerFacet {
+  assertDatabaseType(type);
   const family = statementFamilyOf(language);
   const base = languageServerPack(family);
   if (engineFamily(type) !== family) return base;

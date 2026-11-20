@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll, setSystemTime } from "bun:test";
-import { filterByRoles, mergeDefaults, projectSeedConnection, rolesMatch } from "@/lib/seed/connection-filter";
+import {
+  filterByRoles,
+  filterUnavailableByRoles,
+  mergeDefaults,
+  projectSeedConnection,
+  projectUnavailableSeed,
+  rolesMatch,
+} from "@/lib/seed/connection-filter";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
-import type { SeedConnection, SeedDefaults } from "@/lib/seed/types";
+import type { SeedConnection, SeedDefaults, UnavailableSeedEntry } from "@/lib/seed/types";
 
 const baseConn: SeedConnection = {
   id: "test",
@@ -516,5 +523,57 @@ describe("projectSeedConnection: whom the operator offers a seed to", () => {
     expect("sharedWithNonAdminRoles" in projectSeedConnection({ ...baseConn, roles: ["admin"] }, ["admin"])).toBe(
       false,
     );
+  });
+});
+
+/**
+ * A seed entry whose type names no provider this Studio has (FND-1) is listed so the operator and its users see it, as
+ * the type it names and the envelope alone: no engine field, no server-only marker, and managed whatever the file says,
+ * so the browser never stores a copy of it.
+ */
+describe("projectUnavailableSeed and filterUnavailableByRoles", () => {
+  const acme: UnavailableSeedEntry = {
+    id: "acme",
+    name: "Acme Store",
+    type: "acmefoo",
+    roles: ["admin", "user", "team-a"],
+    environment: "production",
+    group: "Shop",
+    color: "#112233",
+    mcp: true,
+  };
+
+  beforeAll(() => {
+    setSystemTime(new Date("2026-11-20T10:00:00.000Z"));
+  });
+
+  afterAll(() => {
+    setSystemTime();
+  });
+
+  it("projects an unavailable seed entry with only the fields Studio reads, listed managed, with the caller's roles", () => {
+    expect(projectUnavailableSeed(acme, ["user"])).toEqual({
+      id: "seed:acme",
+      name: "Acme Store",
+      type: "acmefoo" as never,
+      environment: "production",
+      group: "Shop",
+      color: "#112233",
+      mcp: true,
+      createdAt: new Date("2026-11-20T10:00:00.000Z"),
+      managed: true,
+      roles: ["user"],
+      seedId: "acme",
+    });
+    expect(projectUnavailableSeed({ ...acme, roles: ["*", "admin"] }, ["user"]).roles).toEqual(["*"]);
+  });
+
+  it("keeps the entries the caller's roles admit, each projected", () => {
+    const adminOnly: UnavailableSeedEntry = { id: "ops", name: "Ops", type: "zetadb", roles: ["admin"] };
+    expect(filterUnavailableByRoles([acme, adminOnly], ["user"]).map((conn) => conn.id)).toEqual(["seed:acme"]);
+    expect(filterUnavailableByRoles([acme, adminOnly], ["admin"]).map((conn) => conn.id)).toEqual([
+      "seed:acme",
+      "seed:ops",
+    ]);
   });
 });

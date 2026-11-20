@@ -484,7 +484,7 @@ For the full migration lifecycle and the underlying merge semantics, see [Migrat
 
 ## Connections whose type this Studio has no provider for
 
-A stored connection can carry a `type` that names no provider this Studio has, or no `type` at all.
+A stored connection can carry a `type` that names no provider this Studio has, no `type` at all, or a type that is not text.
 It happens when a newer Studio that shares the same server storage saved a connection of an engine this one does not ship, or when a record was written by hand or by another tool.
 
 Studio keeps such a record in the browser copy and in server storage alike, and never rewrites its `type` or any other field it was saved with.
@@ -500,6 +500,8 @@ It cannot be edited or duplicated, because the connection dialog has no form for
 A Studio that has the provider lists and opens the same record as usual.
 
 The API answers a request that sends such a connection with `400 PROVIDER_UNKNOWN` and the same sentence, before any provider is built or any SSH tunnel opened (see [API_DOCS.md](./API_DOCS.md#post-apidbquery)).
+
+An operator's seed entry whose type names no provider is listed and shown the same way, with the lock a managed connection gets and no Delete, as [SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for) describes.
 
 ---
 

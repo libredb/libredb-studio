@@ -7,6 +7,7 @@ import {
   entriesFromConfig,
   parseSeedConfigText,
   seedConfigFormatOf,
+  unavailableFromConfig,
 } from "@/lib/seed/sources/config-text";
 import { OperatorSourceError } from "@/lib/seed/sources/types";
 
@@ -191,14 +192,16 @@ describe("parseSeedConfigText", () => {
   });
 
   it("names the fields of a refused connection and none of their values", () => {
-    const values = ["Canary_Id_Value", "canary-type-value", "9876543210", "canary-color-value", "canary-role-value"];
+    // The type is a number: a type that is text and names no provider is an entry of its own (FND-1), whose other fields
+    // are not read, so it would not show the password refused.
+    const values = ["Canary_Id_Value", "1234567890", "9876543210", "canary-color-value", "canary-role-value"];
     const text = JSON.stringify({
       version: "1",
       connections: [
         {
           id: values[0],
           name: "Refused",
-          type: values[1],
+          type: Number(values[1]),
           password: Number(values[2]),
           color: values[3],
           roles: [values[4]],
@@ -264,6 +267,31 @@ describe("parseSeedConfigText", () => {
       expect(error.code).toBe("invalid");
       expect(error.message).toContain('connection "analytics" declares custom role "team-data"');
       expect(error.message).toContain("/seed/custom.json");
+    });
+
+    it("holds a custom role on an entry whose type names no provider to the rules of every role", () => {
+      delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+      process.env.OIDC_ROLE_PREFIX = "team-";
+
+      const text = JSON.stringify({
+        version: "1",
+        connections: [connection("pg"), connection("acme", { type: "acmefoo", roles: ["team-data"] })],
+      });
+      const error = sourceErrorOf(() => parseSeedConfigText(text, "/seed/custom.json", "json"));
+      expect(error.code).toBe("invalid");
+      expect(error.message).toContain('connection "acme" declares custom role "team-data"');
+
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
+      const admitted = parseSeedConfigText(text, "/seed/custom.json", "json");
+      expect(admitted.unavailable.map((entry) => entry.roles)).toEqual([["team-data"]]);
+
+      const reserved = JSON.stringify({
+        version: "1",
+        connections: [connection("acme", { type: "acmefoo", roles: ["Admin"] })],
+      });
+      expect(sourceErrorOf(() => parseSeedConfigText(reserved, "/seed/custom.json", "json")).message).toContain(
+        'connection "acme" declares reserved role "Admin"',
+      );
     });
 
     it("refuses a custom role when OIDC_ROLE_PREFIX is not set", () => {
@@ -393,5 +421,43 @@ describe("entriesFromConfig", () => {
     const config = parseSeedConfigText(fixtureText("valid-config.yaml"), "/seed/valid.yaml", "yaml");
 
     expect(entriesFromConfig(config, "/seed/valid.yaml", false)[0]?.connection.password).toBe("${TEST_PG_PASSWORD}");
+  });
+});
+
+describe("unavailableFromConfig", () => {
+  it("hands back each entry whose type names no provider with its origin, its environment defaulted as a connection's", () => {
+    const text = JSON.stringify({
+      version: "1",
+      defaults: { managed: false, environment: "staging" },
+      connections: [
+        connection("pg"),
+        connection("acme", { type: "acmefoo", password: "CANARY-7f3a" }),
+        connection("zeta", { type: "zetadb", environment: "production" }),
+      ],
+    });
+    const config = parseSeedConfigText(text, "/seed/one.json", "json");
+
+    expect(entriesFromConfig(config, "/seed/one.json", false).map((entry) => entry.connection.id)).toEqual(["pg"]);
+    expect(unavailableFromConfig(config, "/seed/one.json")).toEqual([
+      {
+        entry: { id: "acme", name: "Connection acme", type: "acmefoo", roles: ["admin"], environment: "staging" },
+        origin: "/seed/one.json",
+      },
+      {
+        entry: { id: "zeta", name: "Connection zeta", type: "zetadb", roles: ["admin"], environment: "production" },
+        origin: "/seed/one.json",
+      },
+    ]);
+  });
+
+  it("leaves the environment unset with no default", () => {
+    const config = parseSeedConfigText(
+      JSON.stringify({ version: "1", connections: [connection("acme", { type: "acmefoo" })] }),
+      "/seed/two.json",
+      "json",
+    );
+    expect(unavailableFromConfig(config, "/seed/two.json")).toEqual([
+      { entry: { id: "acme", name: "Connection acme", type: "acmefoo", roles: ["admin"] }, origin: "/seed/two.json" },
+    ]);
   });
 });

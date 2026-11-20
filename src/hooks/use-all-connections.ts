@@ -8,6 +8,7 @@ import { connectionsUnderPolicy, readConnectionPolicy, type ConnectionPolicy } f
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { startManagedListRefresh } from "@/lib/connection-refresh";
 import { reconcileConnections } from "@/lib/connection-reconcile";
+import { isDatabaseType } from "@/lib/db/type-id";
 
 /**
  * Returns all connections: user connections from localStorage + managed seed connections from server.
@@ -59,7 +60,10 @@ export function useAllConnections() {
             // Managed connections first. An empty answer is an answer too: the server withdrew
             // every managed entry, so what remains is the user's own list.
             for (const mc of managedConns) {
-              if (mc.managed === false && mc.seedId && dismissed.has(mc.seedId)) continue;
+              // A seed whose type names no provider is listed managed whatever the file says (FND-1), so a
+              // dismissal the user recorded by deleting their copy of it is kept while it is listed so.
+              const dismissible = mc.managed === false || !isDatabaseType(mc.type);
+              if (dismissible && mc.seedId && dismissed.has(mc.seedId)) continue;
               merged.push({ ...mc, createdAt: new Date(mc.createdAt) });
               addedIds.add(mc.id);
               if (mc.seedId) addedIds.add(`seed:${mc.seedId}`);

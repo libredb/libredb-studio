@@ -65,6 +65,28 @@ No file at the default path means no seed connections and no error.
 In [governance mode](#governance-mode) no seed file is read, not even at the default path.
 A file named explicitly in `SEED_CONFIG_PATH` that does not exist also leaves Studio running without seed connections, and the [Seed sources card](#diagnostics) reports it as "Not found" with the path.
 Any other read error, a parse error or a schema error fails the whole list (see [Error Handling](#error-handling)).
+The one schema error that refuses only its own entry is a type that has the shape of a type id and names no provider this Studio has: it is listed as unavailable and the rest of the file loads (see [A connection whose type this Studio has no provider for](#a-connection-whose-type-this-studio-has-no-provider-for)).
+
+### A connection whose type this Studio has no provider for
+
+A seed entry can name a type this Studio has no provider for: an engine a newer Studio ships, or one not installed here.
+This applies to a type that is text, is not exactly a type id, and has the shape a type id can take: at most 64 ASCII letters, digits, `.`, `_`, `-` and spaces.
+A type that is missing, empty or not text names no provider anywhere and still fails the whole file, as any invalid field does.
+So does text of any other shape, a connection URL put in `type` by mistake say, because the type of an unavailable entry is repeated as written wherever the entry is listed; the error names `connections.<n>.type` and never quotes the value.
+
+Only the fields Studio reads from such an entry are checked, each as for any other entry: `id`, `name`, `roles`, `environment`, `group`, `color` and `mcp`.
+Every other field, `host`, `password`, `managed` and every engine field included, is neither checked nor resolved nor listed, because Studio cannot validate a field for an engine it does not have and must not hand an unvalidated credential to a browser.
+Once a provider for the type is installed, the entry is checked whole with the file at the next read, as usual, so a field that type refuses then fails the file.
+A repeated id, a custom role and the role rules apply to it as to any entry.
+
+The entry is listed by `GET /api/connections/managed` for the roles it names, after the file's other connections and before discovered connections, with its type as written, `managed: true` whatever the file says, and none of the fields above.
+The studio shows it Unavailable with the reason, as [STORAGE.md](./STORAGE.md#connections-whose-type-this-studio-has-no-provider-for) describes for a stored connection, and with the lock a managed connection gets.
+No route opens it: every request that names its `seed:` id is answered `400 PROVIDER_UNKNOWN` with the sentence that quotes its type, such as `No provider for the connection type "acmefoo" is installed in this LibreDB Studio.`, after the role check, so a caller its roles exclude gets the same answer as for any seed: 403, or 404 with the Kubernetes access review on.
+With `mcp: true`, MCP lists it with `unavailable` set to that sentence, and every MCP tool refuses it with that sentence ([MCP.md](./MCP.md)).
+Each read of the file logs it once at warn, `Seed connection listed as unavailable: no provider for its type`, with its id, the file and the quoted type, and the [Seed sources card](#diagnostics) lists it with the reason.
+A discovered connection whose id it declares is dropped, as for any operator entry.
+
+Release 1.3.0 refused the whole file for such an entry.
 
 ### Literal values
 
@@ -165,9 +187,9 @@ No `user` field and no `readOnly`: Spark Connect takes a bearer token, and Spark
 ### Diagnostics
 
 The admin Overview page (`/admin/overview`) shows a Seed sources card, fed by `GET /api/admin/seed-sources` (admin only, [`docs/API_DOCS.md`](./API_DOCS.md#get-apiadminseed-sources)).
-For each operator source it shows the state (Loaded, Empty, Not found or Failed), the file path, the error with its code, the connections it listed, the connections it skipped with their reasons, and the names it ignored.
+For each operator source it shows the state (Loaded, Empty, Not found or Failed), the file path, the error with its code, the connections it listed, the connections it lists as unavailable because their type names no provider, each with the reason, the connections it skipped with their reasons, and the names it ignored.
 A connection skipped for an undefined `${ENV_VAR}` is listed with the variable in its reason, and the endpoint's record of the skip also names the field.
-Every message names files, variables, fields and ids only, never a value, and never quotes a seed file.
+Every message names files, variables, fields and ids only, never a value, and never quotes a seed file, with one exception: an entry listed as unavailable is shown with its type as written, in its type and in the reason sentence.
 The card hides itself when every source is empty with nothing skipped or ignored, which is an install with no seed file, and it refreshes once a minute.
 `GET /api/connections/managed` carries no status, because every role can read it.
 
@@ -373,7 +395,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `mtconnect`, `modbus`, `netconf`, `snmp`, `sparkplug`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
+| `connections[].type` | Yes | - | Database type, where a type this Studio has no provider for lists the entry as unavailable ([A connection whose type this Studio has no provider for](#a-connection-whose-type-this-studio-has-no-provider-for)): `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `mtconnect`, `modbus`, `netconf`, `snmp`, `sparkplug`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**. S3: the optional pinned bucket. PostgreSQL: empty reaches the whole server, every database the role can CONNECT to) |
@@ -823,6 +845,7 @@ with connection.roles projected to only include roles the caller holds
 
 ### `managed: false`
 
+- An entry whose type names no provider this Studio has is listed managed whatever this field says, and never copied ([A connection whose type this Studio has no provider for](#a-connection-whose-type-this-studio-has-no-provider-for)); a user who deleted their copy of it does not see it again while its type names no provider
 - On first load, the connection is **copied to the user's local storage** with credentials
 - User **can edit or delete** their copy
 - Once copied, the connection belongs to the user — admin changes to the seed config won't affect existing copies
@@ -1641,6 +1664,8 @@ In OIDC sign-in mode the ServiceAccount review refuses to run on OpenShift: befo
 | Config file unreadable (for example the path is a directory) | Endpoint returns a generic 500 with `reason: "seed-config-unreadable"`; the Seed sources card shows Failed with code `unreadable`. |
 | `Failed to parse seed config at <path>: TAG_RESOLVE_FAILED at line L, column C` | A value YAML reads as a tag: it starts with `!`, or carries a tag such as `!!int` on text. Quote the value. Studio refuses the file as `unparseable` instead of loading the value as empty or as other text, and never prints the line; earlier versions loaded such a file with the value changed. |
 | `connectionString` on a type whose provider does not read it | The whole file fails like any invalid config, and the error names the connection and the type ([The connection string refusal](#the-connection-string-refusal)). |
+| A connection whose type is text shaped as a type id and names no provider this Studio has | That connection is listed as unavailable, with the reason, and every route that names it answers `400 PROVIDER_UNKNOWN`. The other connections load. ([A connection whose type this Studio has no provider for](#a-connection-whose-type-this-studio-has-no-provider-for)) |
+| A connection whose type is missing, empty or not text, or text not shaped as a type id | The whole file fails like any invalid config, and the error names `connections.<n>.type` and lists every type id, without quoting the value. |
 | Two connections with the same id in the seed file | The whole file fails like any invalid config, and the error names the repeated id, for example `connections.1.id: Connection id "pg" is declared more than once`. |
 | Two operator sources declaring the same id | The whole list fails, and the error names the id and both origins. |
 | Invalid YAML/JSON | `GET /api/connections/managed` returns a generic 500 with `reason: "seed-config-unreadable"` and logs the details server-side. `GET /api/admin/seed-sources` returns the parse message to an admin, and the Seed sources card shows it with code `unparseable`; a YAML error names its code and, where the parser has one, its line and column, and a JSON error says the file is not valid JSON; neither quotes a value. |
@@ -1676,7 +1701,12 @@ In OIDC sign-in mode the ServiceAccount review refuses to run on OpenShift: befo
 
 **Design principle:** a problem in the seed configuration fails the whole operator list, so a file read in part never lists a subset that looks complete.
 A parse error, a schema error in any one connection, or two operator connections with one id make `GET /api/connections/managed` answer 500, and the Seed sources card shows the error.
-The one exception is an undefined `${ENV_VAR}`: it skips only the connection that names it, and the card lists the skip.
+The checks across the file, a repeated id and a `readOnly` or agent credential on an unmanaged connection, run once every connection's own fields are valid, so a field error in one connection can hide such a refusal of another until it is fixed.
+A connection refused only by its engine's rules, a `readOnly` its engine does not enforce say, does not hide them.
+There are two exceptions.
+An undefined `${ENV_VAR}` skips only the connection that names it, and the card lists the skip.
+A connection whose type has the shape of a type id and names no provider this Studio has is listed as unavailable and opened by no route, and the card lists it with the reason ([the shape](#a-connection-whose-type-this-studio-has-no-provider-for)).
+A type that is absent, not text, or text of any other shape fails the whole list.
 Discovered connections are validated one by one, and a bad one never fails the list.
 
 ---
@@ -1771,6 +1801,12 @@ The sample files are only created if they don't already exist — the seeding is
 3. Verify the YAML is valid: `cat seed-connections.yaml | python3 -c "import yaml,sys; yaml.safe_load(sys.stdin)"`
 4. Check if `${ENV_VAR}` values are set: connections with unresolvable vars are skipped
 5. `${vault:...}` references do not stop a connection appearing, but opening it fails with the Vault error. Check `VAULT_ADDR`, that the path is the KV v2 shape (`<mount>/data/<name>`) and that the token has a read policy on it. See [Secret Rotation](#secret-rotation) for how long a cached value can outlive a change in Vault.
+
+### A connection shows Unavailable
+
+Its type names no provider this Studio has: the seed file names an engine of a newer Studio, or one not installed here, or the type is misspelled.
+Hover the marker, or read the Seed sources card on the admin Overview, for the type it names.
+Correct the type, or run a Studio that has the provider; until then no route opens the connection, and the file's other connections work as usual.
 
 ### "Access denied" error when querying
 

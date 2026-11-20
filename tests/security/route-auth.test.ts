@@ -480,8 +480,7 @@ describe("routes that reach a provider require a session", () => {
       "reads the CapRover discovery export file and builds its status; its only network use is a bare node:net reachability probe for built-image candidates, never a database or LLM provider",
     "@/lib/seed/kubernetes-discovery-loader":
       "reads the Kubernetes discovery export file the kubelet projects from the exporter's Secret and builds its status; opens nothing, never a database or LLM provider",
-    "@/lib/seed/operator-loader":
-      "reads the operator seed sources (seed files on disk and the process environment), resolves ${ENV} references and keeps the result and its status in process memory; never a database or LLM provider",
+    "@/lib/seed/operator-loader": `reads the operator seed sources (seed files on disk and the process environment), resolves \${ENV} references and keeps the result and its status in process memory, and it ${PROVIDER_NAMING_HELPER} (@/lib/db/type-id) for quoteTypeId and unknownTypeSentence alone, string helpers that open nothing; never a database or LLM provider`,
     "@/lib/storage/connection-secrets":
       "the credential field classification; withoutSecretFields copies a connection record without its secrets and opens nothing",
     "@/lib/storage/factory": "the app's own storage backend (STORAGE_PROVIDER), not a user database",

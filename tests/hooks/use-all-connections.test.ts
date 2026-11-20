@@ -242,6 +242,33 @@ describe("useAllConnections", () => {
     expect(result.current.connections[0].id).toBe("managed-seed");
   });
 
+  // An entry whose type names no provider is listed managed whatever the file says (FND-1), so the dismissal a user
+  // recorded by deleting their copy of it is kept while it is listed so: it would otherwise come back as an
+  // Unavailable row the user cannot delete.
+  test("skips a dismissed seed listed managed because its type names no provider", async () => {
+    storage.saveConnection(makeConnection({ id: "seeded-conn", seedId: "seed-1" }));
+    storage.deleteConnection("seeded-conn");
+
+    mockGlobalFetch({
+      "/api/connections/managed": {
+        json: {
+          connections: [
+            makeManagedConnection({ id: "seed:seed-1", managed: true, seedId: "seed-1", type: "acmefoo" as never }),
+            makeManagedConnection({ id: "seed:seed-2", managed: true, seedId: "seed-2", type: "acmefoo" as never }),
+          ],
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useAllConnections());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.connections.map((c) => c.id)).toEqual(["seed:seed-2"]);
+  });
+
   // ── Cancellation on unmount ─────────────────────────────────────────────
 
   test("does not update state when unmounted before fetch resolves", async () => {

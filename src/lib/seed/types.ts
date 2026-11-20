@@ -4,8 +4,10 @@ import {
   MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
   READ_ROOTS_REQUIRED,
+  SHIPPED_DATABASE_TYPES,
   WRITE_REACH,
 } from "@/lib/db/compatibility";
+import { isDatabaseType } from "@/lib/db/type-id";
 import type { WriteReach } from "@/lib/db/write-reach";
 import type { DatabaseConnection, DatabaseType, WithLiteralSeedFile } from "@/lib/types";
 import { publishedDefaultPairWarning, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
@@ -260,54 +262,9 @@ export function refuseMcpWithoutReadRoots(required: Readonly<Record<DatabaseType
 /** A provider sentence as a load refusal: the "Nothing was sent." ending is a connect's, not a file's. */
 const atLoad = (sentence: string): string => sentence.replace(/ Nothing was sent\.$/, "");
 
-// Kept in step with DatabaseType in src/lib/types.ts BY HAND: a zod enum is a value,
-// so a type-id missing here is not a compile error - it is a seed file the server
-// rejects with "invalid enum value" for a connection type the product supports.
-const SeedDatabaseType = z.enum([
-  "postgres",
-  "mysql",
-  "sqlite",
-  "mongodb",
-  "redis",
-  "oracle",
-  "db2",
-  "mssql",
-  "libredb",
-  "couchbase",
-  "clickhouse",
-  "druid",
-  "elasticsearch",
-  "opensearch",
-  "trino",
-  "cassandra",
-  "libsql",
-  "duckdb",
-  "prometheus",
-  "kafka",
-  "etcd",
-  "neo4j",
-  "milvus",
-  "qdrant",
-  "weaviate",
-  "influxdb",
-  "influxdb3",
-  "oxia",
-  "databend",
-  "bigquery",
-  "snowflake",
-  "spark",
-  "s3",
-  "kubernetes",
-  "mqtt",
-  "firestore",
-  "rabbitmq",
-  "opcua",
-  "mtconnect",
-  "modbus",
-  "netconf",
-  "snmp",
-  "sparkplug",
-]);
+// The type ids are SHIPPED_DATABASE_TYPES, the one list, which the compiler holds to DatabaseType through an exhaustive
+// Record (src/lib/db/compatibility.ts), so a type id the product ships is never refused here for want of a hand edit.
+const SeedDatabaseType = z.enum(SHIPPED_DATABASE_TYPES);
 
 const AGENT_CREDENTIAL_IN_DEFAULTS =
   "agentUser and agentPassword are set per connection and never in defaults: add the agent credential to each seed connection whose agent and MCP calls should run under it";
@@ -602,11 +559,84 @@ function unmanagedAgentCredentialMessage(fromDefaults: boolean): string {
   return `An agent credential needs a managed connection, and this one has ${managed}: an unmanaged seed is copied into the browser of every user its roles admit, with its credentials, and Duplicate turns that copy into a connection of the user's own. Set managed: true on this connection, or remove the agent credential.`;
 }
 
+/**
+ * The text an unavailable entry's `type` may be: at most 64 ASCII letters, digits, `.`, `_`, `-` and spaces, the shape a
+ * provider's type id can take. The type of an unavailable entry is repeated as written wherever the entry is listed (the
+ * managed list, MCP, the refusal of a request that names it, the admin card, the log), so any other text, a misplaced
+ * connection URL with its password say, is not kept: it fails the file at `connections.<n>.type` with the enum's
+ * message, which repeats no value.
+ */
+const UNAVAILABLE_TYPE_SHAPE = /^[A-Za-z0-9._ -]{1,64}$/;
+
+/** Whether `type` is text that names no provider and has the shape `UNAVAILABLE_TYPE_SHAPE` allows. */
+const isUnavailableType = (type: unknown): type is string =>
+  typeof type === "string" && !isDatabaseType(type) && UNAVAILABLE_TYPE_SHAPE.test(type);
+
+/**
+ * A seed entry whose `type` is text that names no provider this Studio has (FND-1): an engine of a newer Studio, or one
+ * not installed here, its type shaped as `UNAVAILABLE_TYPE_SHAPE` allows. Only the fields Studio reads from such an
+ * entry are declared, each with the schema `SeedConnectionSchema` gives it, so they are checked as a known entry's are;
+ * every other key, a credential, an address or `managed` included, is stripped unread, because Studio cannot validate
+ * an engine field for an engine it does not have and must not hand an unvalidated credential to a browser. The entry is
+ * checked whole, with the file, once its type names a provider. Built from `.shape` because `.pick()` refuses an object
+ * with refinements.
+ */
+export const UnavailableSeedEntrySchema = z.object({
+  id: SeedConnectionSchema.shape.id,
+  name: SeedConnectionSchema.shape.name,
+  type: z.string().regex(UNAVAILABLE_TYPE_SHAPE),
+  roles: SeedConnectionSchema.shape.roles,
+  environment: SeedConnectionSchema.shape.environment,
+  group: SeedConnectionSchema.shape.group,
+  color: SeedConnectionSchema.shape.color,
+  mcp: SeedConnectionSchema.shape.mcp,
+});
+
+export type UnavailableSeedEntry = z.infer<typeof UnavailableSeedEntrySchema>;
+
+type SeedEntry = z.infer<typeof SeedConnectionSchema> | UnavailableSeedEntry;
+
+/** Whether a parsed entry is a connection, rather than an entry whose type names no provider. */
+const isSeedConnection = (entry: SeedEntry): entry is z.infer<typeof SeedConnectionSchema> =>
+  isDatabaseType(entry.type);
+
+/** `SeedConnectionSchema`'s fields without its object-level refinements: what a refused entry still parses to. */
+const SeedConnectionFieldsSchema = z.object(SeedConnectionSchema.shape);
+
+/**
+ * One entry of `connections`, parsed by the schema its type chooses before any other field is read: a type that is
+ * text, names no provider and has the shape `UNAVAILABLE_TYPE_SHAPE` allows by `UnavailableSeedEntrySchema`, every
+ * other entry by `SeedConnectionSchema`, so a missing, empty, non-text or otherwise shaped type still fails the file
+ * with the enum's message. The chosen schema's issues are forwarded as they are, so each keeps its code, message and
+ * path under `connections.<n>`. A union would report a known entry's own issue as the union's instead.
+ *
+ * Zod runs the file's own refinements below only while no issue before them is marked to stop the parse, and an issue
+ * forwarded from a transform stops it unless it says `continue: true`. In an array of `SeedConnectionSchema`, the
+ * file's refinements still ran beside an entry refused only by that schema's object-level refinements (an engine that
+ * does not offer readOnly, say), so the file reported both. That case is kept: when the entry's fields parse, its
+ * issues are forwarded with `continue: true` and its fields are what the file's refinements read. Any other refusal
+ * stops the parse there, as a field of the wrong type always did.
+ */
+const SeedEntrySchema = z.unknown().transform((value, ctx): SeedEntry => {
+  const type = typeof value === "object" && value !== null ? (value as { readonly type?: unknown }).type : undefined;
+  if (isUnavailableType(type)) {
+    const unavailable = UnavailableSeedEntrySchema.safeParse(value);
+    if (unavailable.success) return unavailable.data;
+    for (const issue of unavailable.error.issues) ctx.addIssue({ ...issue });
+    return z.NEVER;
+  }
+  const connection = SeedConnectionSchema.safeParse(value);
+  if (connection.success) return connection.data;
+  const fields = SeedConnectionFieldsSchema.safeParse(value);
+  for (const issue of connection.error.issues) ctx.addIssue({ ...issue, continue: fields.success });
+  return fields.success ? fields.data : z.NEVER;
+});
+
 export const SeedConfigSchema = z
   .object({
     version: z.literal("1"),
     defaults: SeedDefaultsSchema.optional(),
-    connections: z.array(SeedConnectionSchema).min(1, "At least one connection is required"),
+    connections: z.array(SeedEntrySchema).min(1, "At least one connection is required"),
   })
   // One issue per repeated id, at the path of its first repeat, so the error names the id. A seed id is a name, not
   // a value, so naming it is allowed.
@@ -632,7 +662,7 @@ export const SeedConfigSchema = z
   // the precedence mergeDefaults and filterByRoles apply.
   .superRefine((cfg, ctx) => {
     cfg.connections.forEach((conn, index) => {
-      if (conn.readOnly !== true) return;
+      if (!isSeedConnection(conn) || conn.readOnly !== true) return;
       if ((conn.managed ?? cfg.defaults?.managed ?? true) === true) return;
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -644,6 +674,7 @@ export const SeedConfigSchema = z
   // Here for the reason the read-only refusal above is: the effective managed value needs `defaults`.
   .superRefine((cfg, ctx) => {
     cfg.connections.forEach((conn, index) => {
+      if (!isSeedConnection(conn)) return;
       const field = AGENT_FIELDS.find((name) => conn[name] !== undefined);
       if (field === undefined) return;
       if ((conn.managed ?? cfg.defaults?.managed ?? true) === true) return;
@@ -653,7 +684,15 @@ export const SeedConfigSchema = z
         path: ["connections", index, field],
       });
     });
-  });
+  })
+  // The parsed entries, split: `connections` holds every entry whose type is a type id, in file order, and
+  // `unavailable` every entry whose type names no provider (FND-1), in file order, so no consumer of `connections`
+  // meets an entry it cannot open.
+  .transform(({ connections, ...config }) => ({
+    ...config,
+    connections: connections.filter(isSeedConnection),
+    unavailable: connections.filter((entry): entry is UnavailableSeedEntry => !isSeedConnection(entry)),
+  }));
 
 export type SeedConnection = z.infer<typeof SeedConnectionSchema>;
 export type SeedDefaults = z.infer<typeof SeedDefaultsSchema>;

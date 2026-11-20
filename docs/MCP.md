@@ -21,6 +21,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
     Each connection's `read_tool` names the statement tool below that runs a statement on it, and is `null` where `inspect_schema` is the only read or where the connection carries `unavailable`.
     `unavailable` is a sentence that says why no tool can read the connection and what an operator changes, and `inspect_schema` and every statement tool refuse that connection with it as soon as the connection resolves, before anything is acquired.
     A SQLite seed carries it for every token but an admin's, and for an admin's token too where the seed's `roles` name any role but admin ([Opting connections in](#opting-connections-in)).
+    A seed whose type names no provider this Studio has carries it too, with `engine` set to its type as written, and lists no `database`.
     A connection's `database` is left out on MQTT and Sparkplug B, where that setting is a stored value, the discovery topic filter or the group id, as the language's facet declares (`withholdsDatabase`).
   - `inspect_schema` lists one connection's tables with their columns and, on request, their indexes.
     It works on the same engines as `list_connections`: it lists every object kind the engine reads rows from, such as views beside tables, MongoDB collections, Redis keyspaces and search indexes, and `kind` names which one each entry is.
@@ -339,6 +340,9 @@ The built-in sample connections are never visible to an MCP client.
 A `${vault:...}` reference in an opted-in seed is read from Vault when a tool opens the connection, as the editor reads it, and never when `list_connections` lists it ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#vault-references)).
 A reference Vault cannot answer refuses the call with an error that names the connection and gives no cause; the cause goes to the server log.
 An empty `list_connections` answer means no connection is opted in for your token's role: an operator adds `mcp: true` to a seed connection.
+A seed entry whose type names no provider this Studio has, such as an engine of a newer Studio, keeps its opt-in ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)).
+`list_connections` lists it with `engine` as written, `read_tool: null` and `unavailable` set to the sentence that names its type, such as `No provider for the connection type "acmefoo" is installed in this LibreDB Studio.`
+`inspect_schema` and every statement tool refuse it with that sentence before anything is acquired, and no statement tool is listed for it.
 
 Where an engine's line under "Read-only is the database's own enforcement" above says it refuses a login that could do more than read, an opted-in seed for that engine needs a least-privilege principal.
 On PostgreSQL the seed's role must not be a superuser and must not hold `pg_read_server_files`, `pg_write_server_files` or `pg_execute_server_program`.

@@ -14,6 +14,7 @@ import type {
 
 const CARD_TITLE = "Seed sources";
 const CONNECTED_LABEL = "Connected";
+const UNAVAILABLE_LABEL = "Unavailable";
 const SKIPPED_LABEL = "Skipped";
 const IGNORED_LABEL = "Ignored";
 const FILE_NOT_FOUND_LABEL = "File not found";
@@ -83,6 +84,22 @@ function SourceRow({ report }: { report: OperatorSourceReport }) {
           </ul>
         </div>
       )}
+      {report.unavailable.length > 0 && (
+        <div className="space-y-1">
+          <span className="text-xs text-fg-muted">{`${UNAVAILABLE_LABEL} (${report.unavailable.length})`}</span>
+          <ul className="space-y-1">
+            {report.unavailable.map((entry) => (
+              <li
+                key={entry.id}
+                data-testid="seed-source-unavailable"
+                className="text-xs text-fg-secondary break-words"
+              >
+                {`${entry.id} (${entry.origin}): ${entry.reason}`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {report.skipped.length > 0 && (
         <div className="space-y-1">
           <span className="text-xs text-fg-muted">{`${SKIPPED_LABEL} (${report.skipped.length})`}</span>
@@ -123,8 +140,9 @@ function SourceRow({ report }: { report: OperatorSourceReport }) {
 
 /**
  * The operator seed sources' status (GET /api/admin/seed-sources, Spec A 5.3): for each enabled source its
- * state, path, error, connections, skips and ignored names, so an admin sees why a seed connection is
- * missing without the server logs. Mounted on the Overview page beside PlatformDiscoveryCard, not inside it,
+ * state, path, error, connections, the entries listed as unavailable because their type names no provider this
+ * Studio has (each with the refusal), skips and ignored names, so an admin sees why a seed connection is missing
+ * or cannot be opened without the server logs. Mounted on the Overview page beside PlatformDiscoveryCard, not inside it,
  * because that card hides itself whenever CapRover discovery is off. Renders nothing on a failed read and on
  * a zero-config install.
  */

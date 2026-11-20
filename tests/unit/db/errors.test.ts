@@ -134,6 +134,14 @@ describe("UnknownProviderError", () => {
     expect(err.message).toBe("no type");
   });
 
+  test("UnknownProviderError of a type that is not text has reason malformed and no typeId", () => {
+    const err = new UnknownProviderError({ reason: "malformed", sentence: "not text" });
+    expect(err.reason).toBe("malformed");
+    expect(err.typeId).toBeUndefined();
+    expect(err.message).toBe("not text");
+    expect(err.code).toBe(ApiErrorCode.PROVIDER_UNKNOWN);
+  });
+
   test("it is not retryable", () => {
     expect(isRetryableError(new UnknownProviderError({ reason: "unknown", typeId: "acmefoo", sentence }))).toBe(false);
   });

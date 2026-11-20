@@ -44,7 +44,7 @@ mock.module("@/lib/auth", () => ({
 }));
 
 const { clearRateLimitState } = await import("@/lib/api/rate-limit");
-const { ABSENT_TYPE_SENTENCE, unknownTypeSentence } = await import("@/lib/db/type-id");
+const { ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE, unknownTypeSentence } = await import("@/lib/db/type-id");
 
 const SENTENCE = "Valid connection configuration is required";
 const REFUSAL = { status: 400, body: { error: SENTENCE, code: "CONFIG_ERROR", statusCode: 400 } };
@@ -56,7 +56,7 @@ const RECORD = { id: "user-probe", host: "127.0.0.1", port: 1, user: "u", passwo
 const NO_PROVIDER: ReadonlyArray<readonly [string, Record<string, unknown>, string]> = [
   ["no type", { ...RECORD, name: "Probe" }, ABSENT_TYPE_SENTENCE],
   ["an empty type", { ...RECORD, name: "Probe", type: "" }, ABSENT_TYPE_SENTENCE],
-  ["a type that is a number", { ...RECORD, name: "Probe", type: 5 }, ABSENT_TYPE_SENTENCE],
+  ["a type that is a number", { ...RECORD, name: "Probe", type: 5 }, MALFORMED_TYPE_SENTENCE],
   ["a type that is null", { ...RECORD, name: "Probe", type: null }, ABSENT_TYPE_SENTENCE],
   ["an unknown type", { ...RECORD, name: "Probe", type: "acmefoo" }, unknownTypeSentence("acmefoo")],
   [
