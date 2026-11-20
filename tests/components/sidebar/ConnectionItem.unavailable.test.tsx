@@ -61,6 +61,13 @@ describe("a sidebar row for a connection whose type names no provider", () => {
     expect(within(row).queryByRole("button", { name: "Duplicate connection" })).toBeNull();
   });
 
+  test("a read-only record draws no read-only marker, which would be a claim about an engine Studio does not have", () => {
+    const { row } = renderItem({ ...unknown, readOnly: true });
+
+    expect(within(row).queryByTitle("Writes, value edits and maintenance are refused on this connection")).toBeNull();
+    expect(within(row).getByTitle(unknownTypeSentence("acmefoo")).textContent).toContain("Unavailable");
+  });
+
   test("a row with no type says it names none", () => {
     const { row } = renderItem(untyped);
 
