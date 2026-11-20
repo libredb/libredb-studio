@@ -61,8 +61,13 @@ describe("the golden seed file shared with Dokploy", () => {
     const result = SeedConfigSchema.safeParse(JSON.parse(RAW));
 
     expect(result.error?.issues).toBeUndefined();
+    // The parse adds `unavailable`, the entries whose type names no provider. Empty, because every type the renderer
+    // writes is one Studio has: a renderer type Studio lacks would be listed here rather than fail the file.
+    if (!result.success) throw result.error;
+    const { unavailable, ...parsed } = result.data;
+    expect(unavailable).toEqual([]);
     // Deep equality, key order aside: a key the schema did not declare would be missing from the parse.
-    expect(result.data).toStrictEqual(JSON.parse(RAW));
+    expect(parsed).toStrictEqual(JSON.parse(RAW));
   });
 });
 
