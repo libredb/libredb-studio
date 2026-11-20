@@ -8,7 +8,8 @@
  */
 
 import { describe, test, expect, afterEach, beforeAll, beforeEach, afterAll, spyOn } from "bun:test";
-import { spawnSync } from "node:child_process";
+import * as childProcess from "node:child_process";
+import { spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Database as BunDatabase, constants as sqliteConstants } from "bun:sqlite";
 import {
   chmodSync,
@@ -1589,6 +1590,125 @@ describe("SQLiteProvider", () => {
         });
         expect(held.filter((target) => target === notADatabase)).toEqual([]);
       }
+    });
+
+    describe("a statement larger than the pipe buffer, stopped while it is still being written", () => {
+      /** Far past the 64 KiB pipe buffer, so the write is still queued when the child is killed. */
+      const LARGE = `SELECT '${"x".repeat(8 * 1024 * 1024)}' AS v`;
+
+      /**
+       * Connect a provider on a fresh file and hand back its worker, plus a promise that
+       * settles once the worker's stdin has closed: the statement is written to that
+       * stream, and the part still queued fails with EPIPE when the child is killed.
+       */
+      async function connectLarge(name: string, queryTimeout?: number) {
+        provider = new SQLiteProvider(makeSQLiteConfig({ database: join(fileTmpDir, name) }), { queryTimeout });
+        await provider.connect();
+        const worker = (provider as unknown as { worker: SQLiteWorkerClient }).worker;
+        const stdin = (worker as unknown as { child: ChildProcessWithoutNullStreams }).child.stdin;
+        // Not `events.once`, which would reject on the very `error` event under test.
+        const closed = new Promise<void>((resolve) => stdin.once("close", () => resolve()));
+        return { worker, closed };
+      }
+
+      /** Record every uncaught exception and unhandled rejection until `stop()`. */
+      function watchUncaught(): { readonly seen: unknown[]; stop(): void } {
+        const seen: unknown[] = [];
+        const record = (error: unknown): void => {
+          seen.push(error);
+        };
+        process.on("uncaughtException", record);
+        process.on("unhandledRejection", record);
+        return {
+          seen,
+          stop() {
+            process.off("uncaughtException", record);
+            process.off("unhandledRejection", record);
+          },
+        };
+      }
+
+      async function whileRunning(worker: SQLiteWorkerClient, queryId: string): Promise<void> {
+        // oxlint-disable-next-line no-await-in-loop -- polls one turn of the event loop at a time.
+        while (!worker.isRunning(queryId)) await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      test.each([
+        ["the query timeout", "deadline.db", 1, async () => {}, "SQLite worker timed out after 1ms (query)"],
+        [
+          "a cancel",
+          "cancel.db",
+          undefined,
+          async (worker: SQLiteWorkerClient) => {
+            await whileRunning(worker, "large-q");
+            expect(await provider.cancelQuery("large-q")).toBe(true);
+          },
+          "SQLite worker was terminated",
+        ],
+        [
+          "a disconnect",
+          "disconnect.db",
+          undefined,
+          async (worker: SQLiteWorkerClient) => {
+            await whileRunning(worker, "large-q");
+            await provider.disconnect();
+          },
+          "SQLite worker was terminated",
+        ],
+      ] as const)(
+        "%s rejects it with the worker's named error, and the failed write is reported on the stream rather than thrown",
+        async (_trigger, name, queryTimeout, stop, message) => {
+          const watch = watchUncaught();
+          const debug = spyOn(logger, "debug");
+          try {
+            const { worker, closed } = await connectLarge(name, queryTimeout);
+            const outcome = provider.query(LARGE, undefined, "large-q").then(
+              () => null,
+              (error: unknown) => error,
+            );
+            await stop(worker);
+
+            const failure = (await outcome) as Error;
+            expect(failure).toBeInstanceOf(DatabaseError);
+            expect(failure.message).toContain(message);
+            await closed;
+            await new Promise((resolve) => setImmediate(resolve));
+            expect(watch.seen).toEqual([]);
+            // The write really was cut short, so the case above is not passing vacuously.
+            expect(debug).toHaveBeenCalledWith(
+              expect.stringMatching(/^\[sqlite-worker\] stdin failed after terminate\(\): .*EPIPE/),
+            );
+          } finally {
+            watch.stop();
+            debug.mockRestore();
+          }
+        },
+      );
+    });
+
+    test("a worker restart that cannot spawn rejects the statement, and a later statement starts a worker again", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: join(fileTmpDir, "restart-spawn.db") }));
+      await provider.connect();
+      (provider as unknown as { worker: SQLiteWorkerClient }).worker.terminate();
+      const realSpawn = childProcess.spawn;
+      const spawn = spyOn(childProcess, "spawn").mockImplementation(((
+        _command: string,
+        args: readonly string[],
+        options: childProcess.SpawnOptions,
+      ) => realSpawn("libredb-missing-sqlite-worker", args, options)) as unknown as typeof childProcess.spawn);
+      let failure: Error;
+      try {
+        failure = (await provider.query("SELECT 1 AS one").then(
+          () => null,
+          (error: unknown) => error,
+        )) as Error;
+      } finally {
+        spawn.mockRestore();
+      }
+
+      expect(failure).toBeInstanceOf(DatabaseError);
+      expect(failure.message).toMatch(/SQLite worker failed: .*libredb-missing-sqlite-worker/);
+      expect((await provider.query("SELECT 1 AS one")).rows).toEqual([{ one: 1 }]);
     });
   });
 
