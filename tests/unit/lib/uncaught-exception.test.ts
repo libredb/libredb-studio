@@ -3,8 +3,9 @@
  * one redacted line and exit with code 70, so whatever started it starts a fresh process
  * (docs/DISTRIBUTION.md#uncaught-errors-and-restarts).
  *
- * Every install here goes to a stand-in process from tests/helpers/uncaught-exception-stand-in.ts, whose exit only
- * records the code, so no listener that calls the real `process.exit` is ever attached to this test process. The
+ * Every install here goes to a stand-in process from tests/helpers/uncaught-exception-stand-in.ts, whose exit records
+ * the code and then throws `StandInExit`, so no listener that calls the real `process.exit` is ever attached to this
+ * test process. The
  * installation is remembered per process in a global, so each test forgets it afterwards, as a new process would.
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
@@ -17,6 +18,7 @@ import {
   uncaughtExceptionLine,
 } from "@/lib/uncaught-exception";
 import { StandInExit, type StandInProcess, standInProcess } from "../../helpers/uncaught-exception-stand-in";
+import { valueImportClosure } from "../../helpers/value-import-closure";
 
 let spies: ReturnType<typeof spyOn>[] = [];
 
@@ -141,12 +143,18 @@ describe("uncaughtExceptionLine()", () => {
     );
   });
 
-  test("converts a name or message that is not a string, so a Symbol name or a number message does not throw", () => {
+  test("converts a name or message that is not a string, so a Symbol name or a Symbol message does not throw", () => {
     const symbolName = Object.assign(new Error("x"), { name: Symbol("weird") });
     const numberMessage = Object.assign(new Error(), { message: 42 });
+    const symbolMessage = Object.assign(new Error(), { message: Symbol("m") });
+    const symbolInnerMessage = new AggregateError([Object.assign(new Error(), { message: Symbol("inner") })], "outer");
 
     expect(uncaughtExceptionLine(symbolName)).toBe("Uncaught exception, exiting with code 70: Symbol(weird): x");
     expect(uncaughtExceptionLine(numberMessage)).toBe("Uncaught exception, exiting with code 70: Error: 42");
+    expect(uncaughtExceptionLine(symbolMessage)).toBe("Uncaught exception, exiting with code 70: Error: Symbol(m)");
+    expect(uncaughtExceptionLine(symbolInnerMessage)).toBe(
+      "Uncaught exception, exiting with code 70: AggregateError: outer; Symbol(inner)",
+    );
   });
 
   test("logs the message as it is, an inner stack it quotes included", () => {
@@ -182,6 +190,22 @@ describe("uncaughtExceptionLine()", () => {
       " {route=uncaught-exception} Uncaught exception, exiting with code 70: Error: first second",
     );
     expect(printed()[0]).not.toContain("\n");
+  });
+});
+
+describe("the module's imports", () => {
+  test("stay few, since register() loads the module before every other boot step", () => {
+    const closure = valueImportClosure("src/lib/uncaught-exception.ts");
+
+    expect(closure.modules).toEqual([
+      "src/lib/logger.ts",
+      "src/lib/mcp/serializer.ts",
+      "src/lib/non-finite.ts",
+      "src/lib/query-events/queued.ts",
+      "src/lib/uncaught-exception.ts",
+    ]);
+    expect(closure.packages).toEqual(["node:util"]);
+    expect(closure.unresolved).toEqual([]);
   });
 });
 

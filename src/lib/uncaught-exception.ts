@@ -15,7 +15,10 @@
  *   `redactErrorMessage`; the error Next.js prints is not.
  * - The exit is synchronous: nothing else should run in a process whose state is unknown, so the shutdown hooks and
  *   pool closes of the SIGTERM path are not run either. The governance query events still queued are therefore lost,
- *   and the line counts them as `queryEventsLost`, read synchronously from `queryEventSinkState()`.
+ *   and the line counts them as `queryEventsLost`, read synchronously by `queuedQueryEventCount()`. That count includes
+ *   an insert under way, whose rows may have landed, so it is at most what was lost. It is read from
+ *   `src/lib/query-events/queued.ts`, which imports nothing, so this first boot step does not load the sink and its
+ *   governance and storage modules.
  * - The exit runs even when building or writing the line throws, so the process ends with the named code and not with
  *   Node.js's 7 for a listener that throws; that line is then missing, and Next.js's print of the error is not.
  * - Unhandled promise rejections are left alone: Next.js keeps them non-fatal on purpose, and whether Studio stops on
@@ -26,19 +29,19 @@
  *   `src/lib/shutdown.ts` keeps its hooks, so another `register()` call or another bundled copy of this module
  *   attaches nothing.
  * - Test seam: `installUncaughtExceptionExit()` takes the process it attaches to, so a test hands it a stand-in whose
- *   exit only records the code (tests/helpers/uncaught-exception-stand-in.ts), and `resetUncaughtExceptionExit()`
+ *   exit records the code and then throws `StandInExit` (tests/helpers/uncaught-exception-stand-in.ts), and `resetUncaughtExceptionExit()`
  *   forgets the installation. A test that runs `register()` installs on a stand-in first, so `register()`'s own install
  *   attaches nothing and the real `process.exit` is never bound in a test process.
  */
-import { inspect, types } from "node:util";
+import { inspect } from "node:util";
 import { logger } from "@/lib/logger";
 import { redactErrorMessage } from "@/lib/mcp/serializer";
-import { queryEventSinkState } from "@/lib/query-events/sink";
+import { queuedQueryEventCount } from "@/lib/query-events/queued";
 
 /** sysexits.h EX_SOFTWARE: the server stopped on an uncaught exception, and a fresh process is the recovery. */
 export const UNCAUGHT_EXCEPTION_EXIT_CODE = 70;
 
-/** The part of Node's `process` the exit uses, so a test hands it a stand-in whose exit only records the code. */
+/** The part of Node's `process` the exit uses, so a test hands it a stand-in whose exit records the code and throws. */
 export interface UncaughtExceptionProcess {
   on(event: "uncaughtException", listener: (error: unknown, origin: NodeJS.UncaughtExceptionOrigin) => void): unknown;
   exit(code: number): void;
@@ -50,7 +53,7 @@ type RegistryHolder = { [REGISTRY_KEY]?: true };
 
 /** An Error of this realm or of another one, such as an Error made by `node:vm`, which `instanceof` misses. */
 function isError(value: unknown): value is Error {
-  return value instanceof Error || types.isNativeError(value);
+  return value instanceof Error || Error.isError(value);
 }
 
 /** A value that is not an Error, on one line. */
@@ -88,7 +91,8 @@ function errorDetail(error: Error): string {
  *
  * A name or a message that is not a string is converted, so a Symbol name does not throw. A value whose conversion to a
  * string throws still makes it throw: a revoked Proxy, a `name` or `message` getter that throws, a name or message
- * that is a null-prototype object, a custom inspection that throws. The listener exits with the code anyway.
+ * that is a null-prototype object, a custom inspection that throws. The listener exits with the code anyway, when it
+ * runs: Next.js's own print of the error runs first and may throw on such a value, and Node.js then exits with 7.
  */
 export function uncaughtExceptionLine(
   error: unknown,
@@ -108,8 +112,9 @@ export function uncaughtExceptionLine(
 
 /**
  * Attaches the exit to `proc` once per process: it logs the line and exits with `UNCAUGHT_EXCEPTION_EXIT_CODE`.
- * The line carries `queryEventsLost` when governance query events were still queued, since the exit inserts none.
- * The exit runs even when building or writing the line throws, so the code is the named one in every case.
+ * The line carries `queryEventsLost` when governance query events were still queued, since the exit inserts none; an
+ * insert under way is counted too, so it is at most what was lost. The exit runs even when building or writing the
+ * line throws, so the code is the named one in every case that reaches this listener.
  */
 export function installUncaughtExceptionExit(proc: UncaughtExceptionProcess): void {
   const holder = globalThis as RegistryHolder;
@@ -117,7 +122,7 @@ export function installUncaughtExceptionExit(proc: UncaughtExceptionProcess): vo
   holder[REGISTRY_KEY] = true;
   proc.on("uncaughtException", (error, origin) => {
     try {
-      const { queued } = queryEventSinkState();
+      const queued = queuedQueryEventCount();
       // No error object: Next.js has printed the error with its stack already, and the logger would print it again.
       logger.error(uncaughtExceptionLine(error, origin), undefined, {
         route: "uncaught-exception",

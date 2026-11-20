@@ -23,7 +23,8 @@
  * `queryEventSinkState()` is the state the heartbeat reports in its `sink` column and the admin status shows, in the
  * manifest's `sink` shape. The queue, its counters and its timer live in a global under a registered symbol, one per
  * process, because the routes that record events and the heartbeat that reports them run in different bundles
- * (src/lib/governance/keyring.ts does the same).
+ * (src/lib/governance/keyring.ts does the same). The symbol is declared in `queued.ts`, which also counts the queue for
+ * the uncaught-exception exit without loading this module.
  */
 import { governanceEnabled } from "@/lib/governance/config";
 import { governanceInstanceId } from "@/lib/governance/instance";
@@ -31,6 +32,7 @@ import { logger } from "@/lib/logger";
 import { onShutdown } from "@/lib/shutdown";
 import { buildQueryEvent, queryEventPolicy } from "./build";
 import { type QueryEventBatchWrite, queryEventBackoffMs, writeQueryEventBatch } from "./postgres-sink";
+import { QUERY_EVENT_SINK_KEY as SINK_KEY } from "./queued";
 import type { QueryEventInput, QueryEventRow } from "./types";
 
 /** The most events the queue holds (docs/GOVERNANCE.md#query-events). */
@@ -82,8 +84,6 @@ interface Sink {
   /** Set by the shutdown flush, after which no flush is armed. */
   closing: boolean;
 }
-
-const SINK_KEY = Symbol.for("libredb-studio.query-event-sink");
 
 type SinkHolder = { [SINK_KEY]?: Sink };
 
