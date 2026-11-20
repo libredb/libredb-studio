@@ -34,10 +34,13 @@ describe("isDatabaseType and typeIdRefusal", () => {
     },
   );
 
-  test.each(["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"])("a prototype key is unknown: %p", (value) => {
-    expect(isDatabaseType(value)).toBe(false);
-    expect(typeIdRefusal(value)).toEqual({ reason: "unknown", typeId: value, sentence: unknownTypeSentence(value) });
-  });
+  test.each(["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"])(
+    "a prototype key is unknown: %p",
+    (value) => {
+      expect(isDatabaseType(value)).toBe(false);
+      expect(typeIdRefusal(value)).toEqual({ reason: "unknown", typeId: value, sentence: unknownTypeSentence(value) });
+    },
+  );
 
   // Each value in a one-element row: test.each spreads an array row into arguments, which would turn `[]` and
   // `["postgres"]` into something else.
@@ -53,7 +56,9 @@ describe("isDatabaseType and typeIdRefusal", () => {
     expect(unknownTypeSentence("acmefoo")).toBe(
       'No provider for the connection type "acmefoo" is installed in this LibreDB Studio.',
     );
-    expect(ABSENT_TYPE_SENTENCE).toBe("This connection names no type, so no provider in this LibreDB Studio can open it.");
+    expect(ABSENT_TYPE_SENTENCE).toBe(
+      "This connection names no type, so no provider in this LibreDB Studio can open it.",
+    );
   });
 
   test("the sentence escapes a control character", () => {

@@ -758,8 +758,9 @@ function FleetHealthSection({
             const colors = getStatusColor(item.status);
             // An item whose type names no provider (FND-1) draws the unavailable icon with no lookup; its `error` is the
             // server's refusal, which names the type.
-            const known = isDatabaseType(item.type);
-            const Icon = known ? getDBIcon(item.type) : UNAVAILABLE_CONNECTION_ICON;
+            const type = item.type;
+            const known = isDatabaseType(type);
+            const Icon = known ? getDBIcon(type) : UNAVAILABLE_CONNECTION_ICON;
             const maxLatency = 500;
             const latencyPct = Math.min((item.latencyMs / maxLatency) * 100, 100);
 
@@ -797,7 +798,7 @@ function FleetHealthSection({
                       </Badge>
                     )}
                     <div className="p-1 rounded bg-fill">
-                      <Icon className={known ? `w-3.5 h-3.5 ${getDBColor(item.type)}` : "w-3.5 h-3.5 text-fg-muted"} />
+                      <Icon className={known ? `w-3.5 h-3.5 ${getDBColor(type)}` : "w-3.5 h-3.5 text-fg-muted"} />
                     </div>
                   </div>
                 </div>

@@ -159,7 +159,11 @@ describe("resolve-connection", () => {
     ["a type that is null", { type: null }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
     ["a type that is an object", { type: { id: "postgres" } }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
     ["an unknown type", { type: "acmefoo" }, { reason: "unknown", message: unknownTypeSentence("acmefoo") }],
-    ["a case variant of a type id", { type: "Postgres" }, { reason: "unknown", message: unknownTypeSentence("Postgres") }],
+    [
+      "a case variant of a type id",
+      { type: "Postgres" },
+      { reason: "unknown", message: unknownTypeSentence("Postgres") },
+    ],
     ["a padded type id", { type: " postgres" }, { reason: "unknown", message: unknownTypeSentence(" postgres") }],
     ["a prototype key", { type: "constructor" }, { reason: "unknown", message: unknownTypeSentence("constructor") }],
   ])("refuses an inline connection with %s by naming its type", async (_label, fields, expected) => {
@@ -186,21 +190,26 @@ describe("resolve-connection", () => {
     ["a name that is a number", { type: "postgres", name: 5 }],
     ["a name that is null", { type: "postgres", name: null }],
     ["a name that is an object", { type: "postgres", name: { first: "orders" } }],
-  ] as ReadonlyArray<readonly [string, Record<string, unknown>]>)("refuses an inline connection with %s", async (_label, fields) => {
-    const inline = {
-      id: "user-conn",
-      name: "User DB",
-      host: "db.example.com",
-      createdAt: new Date(),
-      ...fields,
-    } as unknown as DatabaseConnection;
+  ] as ReadonlyArray<readonly [string, Record<string, unknown>]>)(
+    "refuses an inline connection with %s",
+    async (_label, fields) => {
+      const inline = {
+        id: "user-conn",
+        name: "User DB",
+        host: "db.example.com",
+        createdAt: new Date(),
+        ...fields,
+      } as unknown as DatabaseConnection;
 
-    await expect(resolveConnection({ connection: inline }, { role: "user", username: "test" })).rejects.toMatchObject({
-      name: "SeedConnectionError",
-      message: "Valid connection configuration is required",
-      statusCode: 400,
-    });
-  });
+      await expect(resolveConnection({ connection: inline }, { role: "user", username: "test" })).rejects.toMatchObject(
+        {
+          name: "SeedConnectionError",
+          message: "Valid connection configuration is required",
+          statusCode: 400,
+        },
+      );
+    },
+  );
 
   // A connection that is not an object names no type either.
   it.each([["postgres"], [5], [true], [[{ type: "postgres" }]]])(

@@ -130,13 +130,14 @@ describe("a connection whose type names no provider", () => {
     const provider = withCredentialEncryption(inner);
 
     await provider.setCollection("u", "connections", [unknown, untyped as unknown as DatabaseConnection]);
-    const written = (inner.setCollection.mock.calls[0] as unknown[])[2] as Record<string, unknown>[];
+    const setCollection = inner.setCollection as unknown as ReturnType<typeof mock>;
+    const written = (setCollection.mock.calls[0] as unknown[])[2] as Record<string, unknown>[];
     expect(written.map((record) => record.type)).toEqual(["acmefoo", undefined]);
     expect("type" in written[1]).toBe(false);
     expect(written[0].password).not.toBe("s3cret");
 
     const reader = withCredentialEncryption(stubProvider({ getCollection: mock(async () => written) as never }));
-    const opened = (await reader.getCollection("u", "connections")) as Record<string, unknown>[];
+    const opened = (await reader.getCollection("u", "connections")) as unknown;
     expect(JSON.parse(JSON.stringify(opened))).toEqual(JSON.parse(JSON.stringify([unknown, untyped])));
   });
 });

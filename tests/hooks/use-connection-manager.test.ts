@@ -1939,7 +1939,10 @@ describe("useConnectionManager", () => {
   // by name. The record in storage stays as it was saved.
   describe("a connection whose type names no provider", () => {
     const unknown = () =>
-      ({ ...makeConnection({ id: "unknown-1", name: "Acme Store" }), type: "acmefoo" }) as unknown as DatabaseConnection;
+      ({
+        ...makeConnection({ id: "unknown-1", name: "Acme Store" }),
+        type: "acmefoo",
+      }) as unknown as DatabaseConnection;
     const plain = () => makeConnection({ id: "plain-1", name: "Plain" });
     const storedUnknown = () => storage.getConnections().find((c) => c.id === "unknown-1");
 

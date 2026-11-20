@@ -59,7 +59,11 @@ const NO_PROVIDER: ReadonlyArray<readonly [string, Record<string, unknown>, stri
   ["a type that is a number", { ...RECORD, name: "Probe", type: 5 }, ABSENT_TYPE_SENTENCE],
   ["a type that is null", { ...RECORD, name: "Probe", type: null }, ABSENT_TYPE_SENTENCE],
   ["an unknown type", { ...RECORD, name: "Probe", type: "acmefoo" }, unknownTypeSentence("acmefoo")],
-  ["a prototype key as its type", { ...RECORD, name: "Probe", type: "constructor" }, unknownTypeSentence("constructor")],
+  [
+    "a prototype key as its type",
+    { ...RECORD, name: "Probe", type: "constructor" },
+    unknownTypeSentence("constructor"),
+  ],
 ];
 
 const providerUnknown = (sentence: string) => ({

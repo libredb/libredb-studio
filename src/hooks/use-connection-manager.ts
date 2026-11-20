@@ -495,7 +495,11 @@ export function useConnectionManager(storageReady = false) {
    */
   const refuseUnavailable = useCallback(
     (connection: DatabaseConnection, sentence: string) => {
-      toast({ title: "Connection unavailable", description: `${connection.name}: ${sentence}`, variant: "destructive" });
+      toast({
+        title: "Connection unavailable",
+        description: `${connection.name}: ${sentence}`,
+        variant: "destructive",
+      });
     },
     [toast],
   );
