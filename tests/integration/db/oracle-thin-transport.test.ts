@@ -4,13 +4,18 @@
  * tests/integration/db/oracle-provider.test.ts replaces `oracledb` with a mock, so the driver's own
  * socket handling (`oracledb/lib/thin/sqlnet/ntTcp.js`) is never in its path. Here nothing is mocked:
  * the real `OracleProvider` builds a real Thin pool, and the far side is a plain TCP server that
- * answers the way a broken TNS listener does.
+ * answers the way a refusing HTTPS proxy or a broken TNS listener does.
  *
- * A TNS packet header whose length field is below the 8-byte header size fails the connect with
- * NJS-500 naming the invalid length, the event loop keeps running, and the client closes the socket
- * (oracledb 26.0.0).
+ * Two transport failures are pinned, each as a named error on the call that dialled, with the socket
+ * closed by the client:
  *
- * docs/providers/oracle.md section 4.5 states it as a user sees it.
+ *  - A descriptor that names `HTTPS_PROXY` makes the driver send an HTTP CONNECT. A proxy that answers
+ *    anything but 200 fails the connect with NJS-504 and the status, and the socket the proxy answered
+ *    on is closed then, not left open with no error listener (`patches/oracledb@26.0.0.patch`).
+ *  - A TNS packet header whose length field is below the 8-byte header size fails the connect with
+ *    NJS-500 naming the invalid length, and the event loop keeps running (oracledb 26.0.0).
+ *
+ * docs/providers/oracle.md section 4.5 states both as a user sees them.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import net from "node:net";
@@ -72,8 +77,8 @@ async function startPeer(answer: (socket: net.Socket, first: Buffer) => void, on
     socket.on("error", closed);
     connections.push(connection);
     // The peer reads everything the client sends, because a socket that is not read never reports the
-    // client's FIN. The client sends its opening request, the TNS CONNECT packet, in one write, and only
-    // that one is answered.
+    // client's FIN. Both clients send their opening request in one write (the HTTP CONNECT head, or the
+    // TNS CONNECT packet), and only that one is answered.
     let answered = false;
     if (onAccept) {
       answered = true;
@@ -123,6 +128,36 @@ function closedWithin(connection: PeerConnection, ms: number): Promise<"closed" 
     new Promise<"open">((resolve) => setTimeout(() => resolve("open"), ms)),
   ]);
 }
+
+describe("Oracle Thin transport: a proxy that refuses the CONNECT", () => {
+  test.each([
+    ["403 Forbidden", "403"],
+    ["407 Proxy Authentication Required", "407"],
+  ])(
+    "a %s answer fails the connect with NJS-504 and the client closes the proxy socket",
+    async (statusLine, status) => {
+      // The answer keeps the connection open, as a proxy that allows keep-alive does: whether the
+      // socket is closed is then the client's doing alone.
+      const proxy = await startPeer((socket, first) => {
+        expect(first.toString("latin1")).toStartWith("CONNECT 127.0.0.2:2484 HTTP/1.1");
+        socket.write(`HTTP/1.1 ${statusLine}\r\nContent-Length: 0\r\n\r\n`);
+      });
+      const descriptor =
+        `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCPS)(HOST=127.0.0.2)(PORT=2484)` +
+        `(HTTPS_PROXY=127.0.0.1)(HTTPS_PROXY_PORT=${proxy.port}))(CONNECT_DATA=(SERVICE_NAME=FREEPDB1)))`;
+
+      const error = await connectError(oracleConnection({ connectionString: descriptor }));
+
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect(error.message).toContain("Failed to connect to Oracle: NJS-504:");
+      expect(error.message).toContain(`web proxy at host 127.0.0.1 port ${proxy.port} failed`);
+      expect(error.message).toEndWith(`\n${status}`);
+      expect(proxy.connections).toHaveLength(1);
+      // Closed by the time the call has answered, or within the same turn of the event loop.
+      expect(await closedWithin(proxy.connections[0], 1000)).toBe("closed");
+    },
+  );
+});
 
 describe("Oracle Thin transport: a TNS packet header shorter than the header itself", () => {
   /** An 8-byte TNS header whose 16-bit length field is `length`. */

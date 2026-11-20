@@ -12,7 +12,7 @@
 | **Status** | ✅ Implemented & shipped |
 | **Database type id** | `oracle` |
 | **Family** | SQL (relational) |
-| **Driver** | `oracledb` 26.0.0 in **Thin mode** (no Instant Client), see [§4.5](#45-a-packet-header-the-driver-cannot-read) |
+| **Driver** | `oracledb` 26.0.0 in **Thin mode** (no Instant Client), pinned and patched ([§4.5](#45-a-proxy-that-refuses-the-connect-and-a-packet-header-the-driver-cannot-read)) |
 | **Query language** | `sql` |
 | **Default port** | `1521` |
 | **Connection pooling** | Yes — `oracledb` pool (`poolMin`/`poolMax`/`poolTimeout`) |
@@ -500,13 +500,28 @@ or the container has to run as root long enough to create it, which is why the d
 the supported path. A first-class, separately-published Thick-mode image variant is a possible future
 addition.
 
-### 4.5 A packet header the driver cannot read
+### 4.5 A proxy that refuses the CONNECT, and a packet header the driver cannot read
 
-Studio installs `oracledb` 26.0.0.
-[`oracle-thin-transport.test.ts`](../../tests/integration/db/oracle-thin-transport.test.ts) holds the case below against the real driver, with an in-process peer that answers as a broken listener does.
+Studio installs `oracledb` 26.0.0, pinned to that exact version, with one patch ([`patches/oracledb@26.0.0.patch`](../../patches/oracledb@26.0.0.patch), listed in [TOOLCHAIN.md, "Patched dependencies"](../TOOLCHAIN.md#patched-dependencies)).
+Both cases below fail the connect with a named `ConnectionError`, and the socket is closed when the call answers.
+[`oracle-thin-transport.test.ts`](../../tests/integration/db/oracle-thin-transport.test.ts) holds both against the real driver, with in-process peers that answer as a refusing proxy and a broken listener do.
 
+**A proxy that refuses the CONNECT.**
+A TCPS descriptor can name an HTTPS proxy, `(ADDRESS=(PROTOCOL=TCPS)(HOST=...)(PORT=...)(HTTPS_PROXY=<host>)(HTTPS_PROXY_PORT=<port>))`, and a pasted descriptor reaches the driver unchanged ([§4.1](#41-configuration)).
+When the proxy answers the CONNECT with any status but 200 (403 from a proxy whose policy refuses the port, 407 from one that wants credentials), the connect fails with:
+
+```
+Failed to connect to Oracle: NJS-504: connection establishment through a web proxy at host <proxy> port <port> failed. (CONNECTION_ID=...)
+403
+```
+
+The last line is the status the proxy answered.
+The patch is the part that closes the socket: the unpatched driver kept no reference to the socket the proxy answered on and gave it no `error` listener, so it stayed open until the proxy closed it, and a reset from the proxy was thrown out of the socket's event handler instead of reaching any caller.
+Every release up to 26.0.0, the latest, has that flaw, so the patch stays until a release closes the socket itself.
+
+**A packet header the driver cannot read.**
 A TNS packet header is 8 bytes, and its first field is the packet's length.
-When a peer sends a header whose length is below 8, the connect fails with a named `ConnectionError`, and the socket is closed when the call answers:
+When a peer sends a header whose length is below 8, the connect fails with:
 
 ```
 Failed to connect to Oracle: NJS-500: connection to Oracle Database was closed or broken
@@ -523,6 +538,8 @@ Measured 2026-11-21 against Oracle Free 23.26.3 (`gvenzl/oracle-free:slim`), Thi
 Thick mode is covered in [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir).
 26.0.0 ships no prebuilt Thick-mode addon for macOS on Intel (its `build/Release` holds darwin-arm64, linux-x64, linux-arm64 and win32-x64), so Thick mode is not available there from the installed package; Thin mode is unaffected.
 The measurements elsewhere in this document that name 6.10.0 were taken on that version.
+
+An application that embeds the npm library installs `oracledb` itself, and the patch is not part of the published package, so it applies the same patch file with its own package manager.
 
 ### Connection string
 
@@ -2632,7 +2649,8 @@ A zoned column is written through `FROM_TZ(..., 'UTC')`, which keeps the instant
 | A privilege the user lacks, by `errorNum`: `ORA-01031` insufficient privileges, `ORA-01045` no `CREATE SESSION` | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | A refused credential, by `errorNum`: `ORA-01017` an invalid credential, `ORA-01005` a null password, `ORA-28000` a locked account, `ORA-28001` an expired one | `AuthenticationError`, answered `401 AUTH_ERROR`; a message with no `errorNum` is still read by its words (*ORA-01017*, *password*) |
 | `ORA-12541` / `ORA-12154` / `TNS:` | `ConnectionError` |
-| `NJS-500` with `Invalid packet length` (a TNS header the driver cannot read) | `ConnectionError` from `connect()`, see [§4.5](#45-a-packet-header-the-driver-cannot-read) |
+| `NJS-504` (an HTTPS proxy refused the CONNECT; the status follows on the last line) | `ConnectionError`, see [§4.5](#45-a-proxy-that-refuses-the-connect-and-a-packet-header-the-driver-cannot-read) |
+| `NJS-500` with `Invalid packet length` (a TNS header the driver cannot read) | `ConnectionError` from `connect()`, see [§4.5](#45-a-proxy-that-refuses-the-connect-and-a-packet-header-the-driver-cannot-read) |
 | `ORA-00942` (table or view does not exist) | `QueryError` |
 | `NJS-138` (server predates Oracle 12.1, Thin-mode incompatible) | `DatabaseConfigError`, **not retryable** — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir) |
 | `NJS-116` (account has only a 10G password verifier) | `DatabaseConfigError`, **not retryable**. Checked *before* the generic *password* branch, which would otherwise report it as an authentication failure. The message also names the DBA-side fix (a password reset writes a 12C verifier) |

@@ -1,0 +1,14 @@
+diff --git a/lib/thin/sqlnet/ntTcp.js b/lib/thin/sqlnet/ntTcp.js
+index 43e15605b783ea17816b21cb01e221dda88a895c..5b20c0609845fbba5c95305433ce10b46ddcede4 100644
+--- a/lib/thin/sqlnet/ntTcp.js
++++ b/lib/thin/sqlnet/ntTcp.js
+@@ -179,6 +179,9 @@ class NTTCP {
+             this.stream = socket;
+           } else {
+             proxyConnectErrCause = res.statusCode;
++            // The socket is handed over without an error listener and is not
++            // kept, so close it here; the caller gets NJS-504 with the status.
++            socket.destroy();
+           }
+           resolve();
+         });
