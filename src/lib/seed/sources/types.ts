@@ -3,7 +3,8 @@
  * and the environment URLs. Each source reads its own input and hands the operator loader validated entries;
  * the loader resolves them, refuses collisions, caches them and records each source's status for the admin view.
  * Every message, skip and note a source writes carries variable, parameter, field, file and id names only, never a
- * value, and the type an unavailable entry names, as written, which `UNAVAILABLE_TYPE_SHAPE` bounds to a type id's shape.
+ * value, and the type an unavailable entry names, as written, which `UNAVAILABLE_TYPE_SHAPE` in ../types.ts bounds to a
+ * type id's shape.
  */
 import type { DatabaseType } from "@/lib/types";
 import type { SeedConnection, UnavailableSeedEntry } from "../types";

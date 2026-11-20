@@ -566,7 +566,7 @@ function unmanagedAgentCredentialMessage(fromDefaults: boolean): string {
  * connection URL with its password say, is not kept: it fails the file at `connections.<n>.type` with the enum's
  * message, which repeats no value.
  */
-export const UNAVAILABLE_TYPE_SHAPE = /^[A-Za-z0-9._ -]{1,64}$/;
+const UNAVAILABLE_TYPE_SHAPE = /^[A-Za-z0-9._ -]{1,64}$/;
 
 /** Whether `type` is text that names no provider and has the shape `UNAVAILABLE_TYPE_SHAPE` allows. */
 const isUnavailableType = (type: unknown): type is string =>
@@ -575,11 +575,11 @@ const isUnavailableType = (type: unknown): type is string =>
 /**
  * A seed entry whose `type` is text that names no provider this Studio has (FND-1): an engine of a newer Studio, or one
  * not installed here, its type shaped as `UNAVAILABLE_TYPE_SHAPE` allows. Only the fields Studio reads from such an
- * entry are declared, each with the schema
- * `SeedConnectionSchema` gives it, so they are checked as a known entry's are; every other key, a credential, an
- * address or `managed` included, is stripped unread, because Studio cannot validate an engine field for an engine it
- * does not have and must not hand an unvalidated credential to a browser. The entry is checked whole, with the file,
- * once its type names a provider. Built from `.shape` because `.pick()` refuses an object with refinements.
+ * entry are declared, each with the schema `SeedConnectionSchema` gives it, so they are checked as a known entry's are;
+ * every other key, a credential, an address or `managed` included, is stripped unread, because Studio cannot validate
+ * an engine field for an engine it does not have and must not hand an unvalidated credential to a browser. The entry is
+ * checked whole, with the file, once its type names a provider. Built from `.shape` because `.pick()` refuses an object
+ * with refinements.
  */
 export const UnavailableSeedEntrySchema = z.object({
   id: SeedConnectionSchema.shape.id,
@@ -604,12 +604,11 @@ const isSeedConnection = (entry: SeedEntry): entry is z.infer<typeof SeedConnect
 const SeedConnectionFieldsSchema = z.object(SeedConnectionSchema.shape);
 
 /**
- * One entry of `connections`, parsed by the schema its type chooses before any other field is read: a type that is text,
- * names no provider and has the shape `UNAVAILABLE_TYPE_SHAPE` allows by `UnavailableSeedEntrySchema`, every other entry
- * by `SeedConnectionSchema`, so a missing, empty, non-text or otherwise shaped type still fails the file with the enum's
- * message. The chosen schema's issues are forwarded as they
- * are, so each keeps its code, message and path under `connections.<n>`. A union would report a known entry's own
- * issue as the union's instead.
+ * One entry of `connections`, parsed by the schema its type chooses before any other field is read: a type that is
+ * text, names no provider and has the shape `UNAVAILABLE_TYPE_SHAPE` allows by `UnavailableSeedEntrySchema`, every
+ * other entry by `SeedConnectionSchema`, so a missing, empty, non-text or otherwise shaped type still fails the file
+ * with the enum's message. The chosen schema's issues are forwarded as they are, so each keeps its code, message and
+ * path under `connections.<n>`. A union would report a known entry's own issue as the union's instead.
  *
  * Zod runs the file's own refinements below only while no issue before them is marked to stop the parse, and an issue
  * forwarded from a transform stops it unless it says `continue: true`. In an array of `SeedConnectionSchema`, the
