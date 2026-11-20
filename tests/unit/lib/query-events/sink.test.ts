@@ -15,6 +15,7 @@ import type { GovernanceListenerStatus } from "@/lib/governance/listener";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/governance/keyring-file";
 import { type FakeClient, FakePool, fakePg, pgError, settle } from "../../../helpers/governance/pg-fake";
 import { queryEventInput, startInTheFuture } from "../../../helpers/governance/query-event-input";
+import { StandInExit, standInProcess } from "../../../helpers/uncaught-exception-stand-in";
 
 const realPg = await import("pg");
 mock.module("pg", () => ({ Pool: FakePool, Client: realPg.Client, types: realPg.types }));
@@ -35,6 +36,9 @@ const { closeGovernancePool } = await import("@/lib/governance/db");
 const { resetGovernanceKeyring } = await import("@/lib/governance/keyring");
 const { resetShutdownHooks, runShutdownHooks } = await import("@/lib/shutdown");
 const { logger } = await import("@/lib/logger");
+const { installUncaughtExceptionExit, resetUncaughtExceptionExit, uncaughtExceptionLine } = await import(
+  "@/lib/uncaught-exception"
+);
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -363,5 +367,29 @@ describe("the sink state", () => {
     expect(sentSink()).toEqual(expected);
     expect(SINK_SHAPE.safeParse(sentSink()).success).toBe(true);
     expect(Object.keys(sentSink() as object)).toEqual(Object.keys(MANIFEST.heartbeat.sink.schema.properties as object));
+  });
+});
+
+describe("an uncaught exception", () => {
+  test("the exit counts the events still queued as lost, since it inserts nothing on its way out", async () => {
+    jest.useFakeTimers();
+    recordQueryEvent(queryEventInput({ correlationId: "a" }));
+    recordQueryEvent(queryEventInput({ correlationId: "b" }));
+    const proc = standInProcess();
+    installUncaughtExceptionExit(proc);
+    const error = new TypeError("boom");
+    try {
+      expect(() => proc.registrations[0]?.listener(error, "uncaughtException")).toThrow(StandInExit);
+    } finally {
+      resetUncaughtExceptionExit();
+    }
+
+    expect(proc.exits).toEqual([70]);
+    expect(spies.error).toHaveBeenCalledTimes(1);
+    expect(spies.error).toHaveBeenCalledWith(uncaughtExceptionLine(error), undefined, {
+      route: "uncaught-exception",
+      queryEventsLost: 2,
+    });
+    expect(FakePool.made).toEqual([]);
   });
 });
