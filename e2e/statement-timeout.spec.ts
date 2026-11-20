@@ -186,6 +186,9 @@ test.describe("Functional smoke: a statement that reaches its query timeout", ()
     const answer = await answered;
     expect(executions()).toBe(1);
     expect(answer.status()).toBe(504);
-    await expect(page.getByText("Query timed out").first()).toBeVisible({ timeout: 10_000 });
+    // The engine's own sentence, not a shared one: PostgreSQL reports a spent statement_timeout this way.
+    await expect(page.getByText("canceling statement due to statement timeout").first()).toBeVisible({
+      timeout: 10_000,
+    });
   });
 });

@@ -1302,9 +1302,11 @@ describe("registerHandlers", () => {
       [
         new TimeoutError("Query timeout after 60000ms", "postgres", 60000),
         504,
-        TIMEOUT_SENTENCE,
+        "Query timeout after 60000ms",
         { code: "TIMEOUT_ERROR", retryable: true },
       ],
+      // A timeout that carries no sentence of its own gets the shared one.
+      [new TimeoutError("", "postgres", 60000), 504, TIMEOUT_SENTENCE, { code: "TIMEOUT_ERROR", retryable: true }],
       [
         new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres"),
         503,
