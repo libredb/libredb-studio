@@ -22,6 +22,8 @@ process.env.BOTH_PG_PASS = "both-secret";
 import * as seedIndex from "@/lib/seed";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import * as vaultClient from "@/lib/seed/vault-client";
 import { logger } from "@/lib/logger";
@@ -146,21 +148,45 @@ describe("resolve-connection", () => {
   });
 
   /*
-   * An inline record whose `type` is missing, empty or not a string names no provider, and one whose `name` is present
-   * and not a string, `null` included, names no connection a person could type. The factory logs both with a string
-   * method, so a route that handed such a record on answered 500 with the runtime's TypeError, or built a provider
-   * under an empty name for a `null` one. Refused here, before any route reaches the factory.
+   * An inline record whose `type` is missing, empty or not a string names no provider, and one whose `type` is a string
+   * that is not exactly a type id names none either (FND-1): both are refused by naming the type, with the one
+   * refusal the factory raises, before any route reads a per-engine table or builds a provider.
    */
   it.each([
-    ["no type", {}],
-    ["an empty type", { type: "" }],
-    ["a type that is a number", { type: 5 }],
-    ["a type that is null", { type: null }],
-    ["a type that is an object", { type: { id: "postgres" } }],
+    ["no type", {}, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
+    ["an empty type", { type: "" }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
+    ["a type that is a number", { type: 5 }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
+    ["a type that is null", { type: null }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
+    ["a type that is an object", { type: { id: "postgres" } }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
+    ["an unknown type", { type: "acmefoo" }, { reason: "unknown", message: unknownTypeSentence("acmefoo") }],
+    ["a case variant of a type id", { type: "Postgres" }, { reason: "unknown", message: unknownTypeSentence("Postgres") }],
+    ["a padded type id", { type: " postgres" }, { reason: "unknown", message: unknownTypeSentence(" postgres") }],
+    ["a prototype key", { type: "constructor" }, { reason: "unknown", message: unknownTypeSentence("constructor") }],
+  ])("refuses an inline connection with %s by naming its type", async (_label, fields, expected) => {
+    const inline = {
+      id: "user-conn",
+      name: "User DB",
+      host: "db.example.com",
+      createdAt: new Date(),
+      ...fields,
+    } as unknown as DatabaseConnection;
+
+    const refused = resolveConnection({ connection: inline }, { role: "user", username: "test" });
+    await expect(refused).rejects.toBeInstanceOf(UnknownProviderError);
+    await expect(refused).rejects.toMatchObject({ ...expected, code: "PROVIDER_UNKNOWN" });
+  });
+
+  /*
+   * One whose `name` is present and not a string, `null` included, names no connection a person could type. The
+   * factory logs it with a string method, so a route that handed such a record on answered 500 with the runtime's
+   * TypeError, or built a provider under an empty name for a `null` one. Refused here, before any route reaches the
+   * factory.
+   */
+  it.each([
     ["a name that is a number", { type: "postgres", name: 5 }],
     ["a name that is null", { type: "postgres", name: null }],
     ["a name that is an object", { type: "postgres", name: { first: "orders" } }],
-  ])("refuses an inline connection with %s", async (_label, fields) => {
+  ] as ReadonlyArray<readonly [string, Record<string, unknown>]>)("refuses an inline connection with %s", async (_label, fields) => {
     const inline = {
       id: "user-conn",
       name: "User DB",

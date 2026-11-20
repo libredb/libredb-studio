@@ -59,6 +59,7 @@ const { getServerAuditBuffer } = await import("@/lib/audit");
 const { logger } = await import("@/lib/logger");
 const { recordGovernanceSnapshot, resetGovernanceState } = await import("@/lib/governance/state");
 const seedIndex = await import("@/lib/seed");
+const { ABSENT_TYPE_SENTENCE } = await import("@/lib/db/type-id");
 
 const ISSUER = "https://idp.example.com/realms/libredb";
 const ALICE: auth.UserPayload = {
@@ -557,17 +558,18 @@ describe("POST /api/db/statement/analyze without governance", () => {
     expect(createDatabaseProvider).not.toHaveBeenCalled();
   });
 
-  // As every route that resolves a caller's connection answers it: a record with no type names no provider to read.
+  // As every route that resolves a caller's connection answers it: a record with no type names no provider to read,
+  // and is refused by naming that (FND-1).
   test.each([
     ["no type", {}],
     ["an empty type", { type: "" }],
     ["a type that is not a string", { type: 5 }],
-  ])("an inline connection with %s answers 400 CONFIG_ERROR, and builds nothing", async (_label, type) => {
+  ])("an inline connection with %s answers 400 PROVIDER_UNKNOWN, and builds nothing", async (_label, type) => {
     const connection = { id: "inline-x", name: "Inline", host: "127.0.0.1", port: 1, ...type };
 
     expect(await analyze({ connection, text: TWO, ...at(19) })).toEqual({
       status: 400,
-      body: { error: "Valid connection configuration is required", code: "CONFIG_ERROR", statusCode: 400 },
+      body: { error: ABSENT_TYPE_SENTENCE, code: "PROVIDER_UNKNOWN", statusCode: 400 },
       retryAfter: null,
     });
     expect(createDatabaseProvider).not.toHaveBeenCalled();
