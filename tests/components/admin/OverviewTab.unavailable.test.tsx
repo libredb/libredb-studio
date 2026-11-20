@@ -80,6 +80,15 @@ describe("the admin overview fleet card", () => {
       );
       expect(card?.textContent).toContain(sentence);
       expect(card?.querySelector("svg.lucide-unplug")).not.toBeNull();
+      // Nothing was dialled, so nothing timed out: the latency slot is the Unavailable marker, whose tooltip is the
+      // refusal, and the error line keeps the whole sentence in its own tooltip when it is cut short.
+      expect(card?.textContent).not.toContain("timeout");
+      const marker = Array.from(card?.querySelectorAll("span") ?? []).find(
+        (span) => span.textContent === "Unavailable",
+      );
+      expect(marker?.getAttribute("title")).toBe(sentence);
+      const errorLine = Array.from(card?.querySelectorAll("div") ?? []).find((div) => div.textContent === sentence);
+      expect(errorLine?.getAttribute("title")).toBe(sentence);
     });
   });
 });

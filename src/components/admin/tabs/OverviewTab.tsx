@@ -756,8 +756,9 @@ function FleetHealthSection({
         >
           {fleetHealth.map((item) => {
             const colors = getStatusColor(item.status);
-            // An item whose type names no provider (FND-1) draws the unavailable icon with no lookup; its `error` is the
-            // server's refusal, which names the type.
+            // An item whose type names no provider (FND-1) draws the unavailable icon with no lookup, and the Unavailable
+            // marker in the latency slot, since nothing was dialled; its `error` is the server's refusal, which names
+            // the type, and is the marker's tooltip.
             const type = item.type;
             const known = isDatabaseType(type);
             const Icon = known ? getDBIcon(type) : UNAVAILABLE_CONNECTION_ICON;
@@ -817,13 +818,19 @@ function FleetHealthSection({
                 </div>
 
                 <div className="flex items-center gap-3 text-xs text-fg-muted">
-                  <span className="font-mono text-fg-tertiary">
-                    {item.status === "error"
-                      ? "timeout"
-                      : item.status === "not-checked"
-                        ? "not checked"
-                        : `${item.latencyMs}ms`}
-                  </span>
+                  {known ? (
+                    <span className="font-mono text-fg-tertiary">
+                      {item.status === "error"
+                        ? "timeout"
+                        : item.status === "not-checked"
+                          ? "not checked"
+                          : `${item.latencyMs}ms`}
+                    </span>
+                  ) : (
+                    <span className="font-medium text-fg-muted" title={item.error}>
+                      Unavailable
+                    </span>
+                  )}
                   {item.databaseSize && (
                     <>
                       <span className="text-fg-faint">&middot;</span>
@@ -838,7 +845,11 @@ function FleetHealthSection({
                   )}
                 </div>
 
-                {item.error && <div className="text-danger text-xs truncate mt-1.5">{item.error}</div>}
+                {item.error && (
+                  <div className="text-danger text-xs truncate mt-1.5" title={item.error}>
+                    {item.error}
+                  </div>
+                )}
                 {item.status === "not-checked" && (
                   <div className="text-fg-muted text-xs mt-1.5">
                     Not checked: this connection resumes billed compute, so Studio does not poll it.
