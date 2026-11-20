@@ -8,7 +8,7 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
@@ -1046,6 +1046,34 @@ function streamingListener(total: number) {
   return { outcome, listener };
 }
 
+/**
+ * A raw listener that answers every request with `101 Switching Protocols` and an Upgrade header, then closes the socket
+ * (`fin`) or keeps it open (`open`). close() destroys any socket still open, so the listener can stop.
+ */
+async function startSwitchingServer(how: "fin" | "open") {
+  const sockets = new Set<Socket>();
+  const server = createNetServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.once("data", () => {
+      socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+      if (how === "fin") socket.end();
+    });
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+  };
+}
+
 /** Declares 1000 bytes, writes 100, then closes (`fin`) or resets (`reset`) the socket. */
 function cutListener(how: "fin" | "reset" | "chunked-fin") {
   return (req: IncomingMessage, res: ServerResponse) => {
@@ -1118,6 +1146,24 @@ describe("nodeRequestJson answer bounds", () => {
       expect(error).toBeInstanceOf(CouchbaseError);
       expect(error.message).toStartWith("Couchbase request failed: ");
       expect(error.message).toContain("ECONNRESET");
+      expect(error.code).toBe(0);
+      expect(error.retriable).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test.each([
+    ["closes the socket", "fin"],
+    ["keeps the socket open", "open"],
+  ] as const)("rejects with a named network failure when the server switches protocols and %s", async (_label, how) => {
+    const server = await startSwitchingServer(how);
+
+    try {
+      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+
+      expect(error).toBeInstanceOf(CouchbaseError);
+      expect(error.message).toBe("Couchbase request failed: the server switched protocols instead of answering");
       expect(error.code).toBe(0);
       expect(error.retriable).toBe(true);
     } finally {

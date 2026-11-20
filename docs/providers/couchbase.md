@@ -544,12 +544,21 @@ Every answer outside the agent path is read under a cap of 16 MiB (16,777,216 by
 The body is counted as it arrives, on the plaintext path and the TLS path alike, and the first chunk past the cap closes the socket, so the rest of the answer is never read.
 A statement whose answer passes the cap fails as a `QueryError` reading `Couchbase answered with more than 16 MiB, so the answer was not read further`.
 Narrow such a statement with `LIMIT`, a `WHERE` clause or fewer fields.
-A management read past the cap fails the same way, so Test Connection reads `Failed to connect to Couchbase: Couchbase answered with more than 16 MiB, so the answer was not read further`, and a monitoring read comes back empty like any other failed monitoring read ([§3.9](#39-monitoring-degrades-to-empty-never-throws)).
+A management read past the cap fails the same way.
+The cluster read (`/pools/default`) past the cap fails Test Connection, which reads `Failed to connect to Couchbase: Couchbase answered with more than 16 MiB, so the answer was not read further`.
+The bucket read (`/pools/default/buckets/<bucket>`) keeps its rule of refusing only a 404 ([§2.4](#24-registration--lifecycle)), so a bucket read past the cap, or cut short, does not fail Test Connection.
+A monitoring read past the cap comes back empty like any other failed monitoring read ([§3.9](#39-monitoring-degrades-to-empty-never-throws)).
 The agent path has its own bound, from the agent's byte budget ([§15.3](#153-the-statement-path)).
 
-An answer whose connection closes or resets before the answer is complete fails as a `ConnectionError` and is not sent again.
+An answer that declares its length or is chunked, and whose connection closes or resets before the answer is complete, fails as a `ConnectionError` and is not sent again.
+The sentence after `Couchbase request failed: ` depends on the path and the answer's framing; these are examples.
 On a TLS connection a close reads `Couchbase request failed: the server ended the answer before it was complete`, and a reset reads `Couchbase request failed: connection to <host>:<port> was reset (ECONNRESET)`.
-On a plaintext connection both read as the runtime's `fetch` names them, `Couchbase request failed: connection to <host>:<port> was reset (UND_ERR_SOCKET)` for a close and `(ECONNRESET)` for a reset.
+On a plaintext connection the runtime's `fetch` names the failure: for a keep-alive answer a close reads `Couchbase request failed: connection to <host>:<port> was reset (UND_ERR_SOCKET)` and a reset ends in `(ECONNRESET)`, a `Connection: close` answer cut short ends in `(UND_ERR_RES_CONTENT_LENGTH_MISMATCH)`, and a chunked answer cut before its last chunk ends in `(Invalid EOF state)`.
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` set, a plaintext answer cut short reads `... was reset (ECONNRESET)`.
+An answer with neither a length nor chunking ends where its connection closes, so a cut there cannot be told from the end; a body that is then not JSON reads as an empty result (`docs/BACKLOG.md` D467).
+
+A `101 Switching Protocols` answer fails as a `ConnectionError` reading `Couchbase request failed: the server switched protocols instead of answering`, on the TLS path, and its socket is closed.
+On the plaintext path the runtime's `fetch` fails it as a closed connection, ending in `(UND_ERR_SOCKET)`; with `DB_HTTP_BLOCK_PRIVATE_HOSTS` set, the guarded adapter does not yet refuse it (`docs/BACKLOG.md` D468).
 
 ### Connection string
 
@@ -1383,8 +1392,8 @@ provider maps that one numeric space onto the shared classes from
 | `13014` | Missing or invalid credentials | `AuthenticationError` |
 | `401` / `403` | HTTP unauthorized / forbidden | `AuthenticationError` |
 | `503` | Query service unavailable (node warming up) | `ConnectionError` |
-| `0` with `retriable` | Network fault (DNS, refused, reset, an answer cut short: [§4.5](#45-answer-bounds)) | `ConnectionError` |
-| `0` without `retriable` | An answer past the 16 MiB cap ([§4.5](#45-answer-bounds)) | `QueryError` |
+| `0` with `retriable` | Network fault (DNS, refused, reset, an answer cut short or a switched protocol: [§4.5](#45-answer-bounds)) | `ConnectionError` |
+| `0` without `retriable` | An answer past the 16 MiB cap ([§4.5](#45-answer-bounds)), or a statement failure that carries no code | `QueryError` |
 | anything else (e.g. `3000` syntax) | Statement the cluster rejected | `QueryError` carrying the cluster's message |
 
 | Situation | Error |
@@ -1426,7 +1435,7 @@ process-wide contamination risk:
 Validation, connect/disconnect, capabilities, labels, `prepareQuery`, query execution and result
 shaping, the full error map, endpoint discovery (including `alternateAddresses` and the fallback
 port), SRV resolution and its fallback, TLS material, the answer cap and an answer cut short on both paths (a local TLS
-cluster in the provider suite), `request_plus` **and** the `not_bounded`
+cluster in the provider suite), a `101` answer on the TLS path, `request_plus` **and** the `not_bounded`
 override, collection listing, INFER flavour union, index mapping, every monitoring method and its
 degraded path, all three maintenance operations, the explain strategy, the whole object surface, and the source
 read with both of its refusal branches and both of its derivation pins ([§6b](#6b-object-source-789)).

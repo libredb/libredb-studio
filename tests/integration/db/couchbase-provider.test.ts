@@ -861,10 +861,11 @@ describe("CouchbaseProvider answer bounds", () => {
 
   /**
    * A TLS cluster on one port, the query service included, signed by the test CA: every path answers its fixture
-   * except `path`, which answers past the cap (`too-large`), or declares 1000 bytes, sends a few and then closes the
-   * socket (`fin`). A reset is pinned in the transport's own tests: Bun cannot reset a TLS socket.
+   * except `path`, which answers past the cap (`too-large`), declares 1000 bytes, sends a few and then closes the
+   * socket (`fin`), or answers `101 Switching Protocols` and closes the socket (`switch`). A reset is pinned in the
+   * transport's own tests: Bun cannot reset a TLS socket.
    */
-  async function tlsCluster(path: string, how: "too-large" | "fin"): Promise<number> {
+  async function tlsCluster(path: string, how: "too-large" | "fin" | "switch"): Promise<number> {
     let port = 0;
     const server = createHttpsServer({ cert: TLS.server.cert, key: TLS.server.key }, (req, res) => {
       req.resume();
@@ -872,6 +873,11 @@ describe("CouchbaseProvider answer bounds", () => {
       if (target === path && how === "too-large") {
         res.writeHead(200, { "content-type": "application/json" });
         writePastTheCap(res);
+        return;
+      }
+      if (target === path && how === "switch") {
+        const raw = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+        req.socket.write(raw, () => req.socket.end());
         return;
       }
       if (target === path) {
@@ -939,6 +945,19 @@ describe("CouchbaseProvider answer bounds", () => {
 
     expect(error).toBeInstanceOf(ConnectionError);
     expect((error as Error).message).toBe(`Failed to connect to Couchbase: ${ENDED_EARLY}`);
+  });
+
+  test("a TLS query answered with a switch of protocols fails as a ConnectionError", async () => {
+    const provider = tlsProvider(await tlsCluster("/query/service", "switch"));
+    await provider.connect();
+
+    const error = await provider.query("SELECT 1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(
+      "Couchbase request failed: the server switched protocols instead of answering",
+    );
+    await provider.disconnect();
   });
 
   test("a plaintext query answer past the cap fails as a QueryError naming the cap", async () => {

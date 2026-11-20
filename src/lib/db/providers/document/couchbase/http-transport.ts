@@ -306,6 +306,11 @@ function answerEndedEarlyError(): CouchbaseError {
   return new CouchbaseError("Couchbase request failed: the server ended the answer before it was complete", 0, true);
 }
 
+/** A network fault like any other: the server answered with another protocol, which this transport does not read. */
+function switchedProtocolsError(): CouchbaseError {
+  return new CouchbaseError("Couchbase request failed: the server switched protocols instead of answering", 0, true);
+}
+
 function throwIfFailed(response: JsonResponse): void {
   const failure = payloadError(response.payload);
   if (failure) throw failure;
@@ -363,8 +368,9 @@ async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonRespon
  *
  * The body is counted as it arrives: past COUCHBASE_RESPONSE_CAP_BYTES the request is destroyed, which closes the
  * socket, and the call fails by name. An answer whose connection closes or resets before it is complete fails as a
- * network fault: node:http then emits no "end", only "close" on a message that is not complete. The body is decoded and
- * parsed in a promise continuation, so nothing in that step can throw out of an event handler.
+ * network fault: node:http then emits no "end", only "close" on a message that is not complete. A 101 answer that
+ * switches protocols fails as a network fault too, and its socket is destroyed. The body is decoded and parsed in a
+ * promise continuation, so nothing in that step can throw out of an event handler.
  */
 export function nodeRequestJson(url: string, init: JsonRequestInit, tls: CouchbaseTlsMaterial): Promise<JsonResponse> {
   const target = new URL(url);
@@ -411,6 +417,12 @@ export function nodeRequestJson(url: string, init: JsonRequestInit, tls: Couchba
     clientRequest.on("error", (error: Error) =>
       reject(error instanceof DatabaseConfigError ? error : networkError(error, target.href)),
     );
+    // node:http hands a 101 with Connection: upgrade and an Upgrade header to this event, never to onResponse, and
+    // without a listener the request never settles. The switched socket is no longer the request's, so it is destroyed here.
+    clientRequest.on("upgrade", (_answer: import("node:http").IncomingMessage, socket: import("node:net").Socket) => {
+      socket.destroy();
+      reject(switchedProtocolsError());
+    });
     if (init.body !== undefined) clientRequest.write(init.body);
     clientRequest.end();
   });
