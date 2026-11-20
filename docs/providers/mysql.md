@@ -2631,6 +2631,14 @@ result — the value `1` — measured, so a query that resolved while its kill i
 rather than served, because a partial result with no error is the one shape this boundary must not
 hand to a model as an answer.
 
+The KILL is sent from the main pool the read started on, and only while the provider still holds it.
+`disconnect()` ends the read-only pool first, while the main pool is still held: mysql2's `end()` settles only once the statement still running on the pool has ended, so a deadline met while `disconnect()` waits still sends its KILL, and the read is refused as killed server-side.
+The main pool is then let go before its own `end()` is awaited, because a closing pool refuses every new statement.
+A deadline that finds no main pool to send from, or finds another connection's pool after a reconnect, sends no KILL, and that is logged as `KILL QUERY <threadId> for a read-only statement was not sent: the connection was closed`.
+The read is then refused as "The connection was closed while the read-only statement ran, so it was not killed at its deadline of N ms and was not answered" rather than as killed server-side, and an error the statement ended with is carried in the refusal's detail.
+A row or byte budget crossed with no main pool left is refused as that budget, with the same KILL not sent and logged.
+Measured on MySQL 26.10.0 under Node 24 with a 1500 ms budget and a disconnect 300 ms into the read: `SELECT SLEEP(5)`, the same statement carrying `/*+ MAX_EXECUTION_TIME(9000) */`, and a reconnect right after the disconnect were each killed at the deadline, with the read refused and `disconnect()` settled at about 1.53 s.
+
 **Nothing a call set survives it.**
 The session variables leak through mysql2's own `release()` — measured, the next borrower of the same pooled connection read the `sql_select_limit` and deadline the previous call had set — and so do the states no transaction contains: user variables, `GET_LOCK()` locks (which need no privilege), `HANDLER` state and temporary tables.
 So the connection is **closed** at the end of every call, served or refused, and never returned to the pool: the server rolls the read-only transaction back and drops every one of those with the session.
@@ -2796,7 +2804,7 @@ everything after it, and each session's ORDERED event log is what the tests asse
 property that makes the transaction real rather than recorded. The refusal paths pinned beside it:
 a row past the budget (including a statement whose own `LIMIT 100000000` outranks
 `sql_select_limit` — refused on the row that crosses, killed, connection dropped), a byte past the
-byte budget, a deadline kill answered as the deadline (1317, 3024 and 1969 alike), a kill that lands while the query resolves, a named lock that dies with the closed connection, a write the server refuses with the connection still closed, the principal and engine verified once at the first read rather than at open, a write-capable account that still opens, a column-level SELECT admitted, and a `flags=MULTI_STATEMENTS` connection string held to one statement.
+byte budget, a deadline kill answered as the deadline (1317, 3024 and 1969 alike), a kill that lands while the query resolves, a deadline met while `disconnect()` waits on the read-only pool (still killed), a deadline or a row budget met after the main pool was let go or replaced by a reconnect (no KILL sent, the closed connection named, the statement's own error carried in the detail), a named lock that dies with the closed connection, a write the server refuses with the connection still closed, the principal and engine verified once at the first read rather than at open, a write-capable account that still opens, a column-level SELECT admitted, and a `flags=MULTI_STATEMENTS` connection string held to one statement.
 The model cannot say what the servers do, which is why
 [`tests/live/mysql-agent-profile.ts`](../../tests/live/mysql-agent-profile.ts) exists (§13.4).
 
