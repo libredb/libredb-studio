@@ -1,0 +1,14 @@
+{
+  "version": "1",
+  "defaults": { "managed": true },
+  "connections": [
+    {
+      "id": "acme-store",
+      "name": "Acme Store",
+      "type": "acmefoo",
+      "host": "acme.example",
+      "roles": ["*"]
+    },
+    { "id": "e2e-sqlite", "name": "E2E SQLite", "type": "sqlite", "database": ":memory:", "roles": ["admin"] }
+  ]
+}

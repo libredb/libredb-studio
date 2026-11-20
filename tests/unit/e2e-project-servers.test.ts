@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import config from "../../playwright.config";
 
 // Every spec signs in as the same shared account, and the server keeps one "query" rate-limit
@@ -127,6 +128,41 @@ describe("the Firestore browse spec runs against a server of its own that sends 
     expect(server?.env?.STORAGE_SQLITE_PATH).toBe("./data-e2e-firestore/libredb-storage.db");
     const source = readFileSync(path.join(import.meta.dir, "../../e2e", "firestore-provider.spec.ts"), "utf8");
     expect(source.split("\n").filter((line) => /\bexpect\b/.test(line) && /Too many requests/.test(line))).toEqual([]);
+  });
+});
+
+// e2e/unknown-provider-seed.spec.ts reads a seed file that holds an entry whose type names no provider (FND-1). The
+// seed file is the server's own, so a spec on the same server would list its entries and could pick one as its default.
+describe("the unknown-provider seed spec runs against a server of its own with its own seed file", () => {
+  const SEED_SERVER = `http://localhost:${Number(process.env.E2E_UNKNOWN_SEED_PORT ?? 3015)}`;
+  const FIXTURE = "./e2e/fixtures/unknown-provider-seed-connections.json";
+  const projects = config.projects ?? [];
+  const servers = Array.isArray(config.webServer) ? config.webServer : [];
+
+  test("it is left out of the shared chromium project and runs only on its server", () => {
+    const shared = projects.find((project) => project.name === "chromium");
+    expect(matches(shared?.testIgnore, "unknown-provider-seed.spec.ts")).toBe(true);
+    const owners = projects.filter((project) => matches(project.testMatch, "unknown-provider-seed.spec.ts"));
+    expect(owners.map((project) => [project.name, project.use?.baseURL])).toEqual([
+      ["chromium-unknown-provider-seed", SEED_SERVER],
+    ]);
+  });
+
+  test("no other spec runs on that server", () => {
+    const others = projects.filter(
+      (project) => project.use?.baseURL === SEED_SERVER && project.name !== "chromium-unknown-provider-seed",
+    );
+    expect(others).toEqual([]);
+  });
+
+  test("its SEED_CONFIG_PATH names the fixture, which holds one entry the type check refuses and one it does not", () => {
+    const server = servers.find((candidate) => candidate.url === SEED_SERVER);
+    expect(server?.env?.SEED_CONFIG_PATH).toBe(FIXTURE);
+    expect(server?.env?.STORAGE_SQLITE_PATH).toBe("./data-e2e-unknown-seed/libredb-storage.db");
+    const fixture = JSON.parse(readFileSync(path.join(import.meta.dir, "../..", FIXTURE), "utf8")) as {
+      connections: { type: unknown }[];
+    };
+    expect(fixture.connections.map((entry) => typeIdRefusal(entry.type)?.reason ?? null)).toEqual(["unknown", null]);
   });
 });
 
