@@ -81,8 +81,12 @@ interface ConsumerLike {
 interface ConnectionLike {
   connect(host: string, port: number): Promise<void>;
   close(): Promise<void>;
-  /** A connection reports its failure as an error event (dist/network/connection.js), which is thrown when no listener hears it. */
-  on(event: "error", listener: (error: unknown) => void): void;
+  /**
+   * A connection reports its failure as an error event (dist/network/connection.js), which is thrown
+   * when no listener hears it, and a close of its open socket as a close event, which a graceful close
+   * is reported by alone.
+   */
+  on(event: "error" | "close", listener: (error?: unknown) => void): void;
 }
 /** One connection per broker address, opened on first use and dropped once closed (dist/network/connection-pool.js). */
 interface ConnectionPoolLike {
@@ -1006,11 +1010,15 @@ async function describeConsumerProtocol(
   try {
     // The connection reports a failure as an error event, which is thrown out of its socket handler
     // when no listener hears it, so one listens from the connection's creation for its whole life, and
-    // the description fails with the first failure it reports (coordinatorFailure). The request in
-    // flight would reject only later, with a bare "Connection closed". A failure reported after the
-    // answer arrived finds the description settled, and the connection is closed next.
+    // the description fails with the first failure it reports (coordinatorFailure). A graceful close
+    // of its open socket raises no error event, only a close event, so that one is heard too
+    // (coordinatorLost). The request in flight would reject only later, with a bare "Connection
+    // closed", and a SASL exchange in progress with an error that reads as a refused credential. A
+    // failure or a close reported after the answer arrived finds the description settled, and the
+    // connection is closed next.
     ({ response, refused } = await new Promise<Awaited<ReturnType<typeof exchange>>>((resolve, reject) => {
       connection.on("error", (error) => reject(coordinatorFailure(error, coordinator, listing.groupId)));
+      connection.on("close", () => reject(coordinatorLost(coordinator, listing.groupId)));
       exchange().then(resolve, reject);
     }));
   } finally {
@@ -1045,11 +1053,11 @@ async function describeConsumerProtocol(
  * A failure the coordinator's connection reported, as the description fails with it. The client
  * reports a failure to connect, authenticate included, as "Connection to <host>:<port> failed." or
  * "... timed out.", the same error connect() rejects with, which is read as any connection failure is.
- * Every other report is its socket failing once open, during the SASL exchange or after it: reset,
- * closed under the request, or sent an answer to no request it had made, which the client closes the
- * connection on (`#onError` in dist/network/connection.js). That one is named by the coordinator's
- * address, as the broker named it, and by the runtime's error code, or else by the client's code under
- * its "Connection error", never by the client's text.
+ * Every other report is its socket failing once open, during the SASL exchange or after it: reset, or
+ * sent an answer to no request it had made, which the client closes the connection on (`#onError` in
+ * dist/network/connection.js). That one is named by the coordinator's address, as the broker named it,
+ * and by the runtime's error code, or else by the client's code under its "Connection error", never by
+ * the client's text.
  */
 function coordinatorFailure(error: unknown, coordinator: { host: string; port: number }, groupId: string): unknown {
   const chain = [...walk(error)];
@@ -1059,7 +1067,24 @@ function coordinatorFailure(error: unknown, coordinator: { host: string; port: n
   const reason =
     nodeCode ??
     String(codes.find((code) => typeof code === "string" && code !== "PLT_KFK_NETWORK") ?? "PLT_KFK_NETWORK");
-  const { host, port } = coordinator;
+  return coordinatorConnectionFailed(coordinator, groupId, reason, nodeCode);
+}
+
+/**
+ * The coordinator's open connection closed before the answer arrived, which the client reports by a
+ * close event alone (`#onClose` in dist/network/connection.js): a lost connection, as at the bootstrap,
+ * named by the coordinator's address.
+ */
+function coordinatorLost(coordinator: { host: string; port: number }, groupId: string): KafkaError {
+  return coordinatorConnectionFailed(coordinator, groupId, "connection-lost", "connection-lost");
+}
+
+function coordinatorConnectionFailed(
+  { host, port }: { host: string; port: number },
+  groupId: string,
+  reason: string,
+  nodeCode: string | undefined,
+): KafkaError {
   return new KafkaError(
     "advertised-unreachable",
     `The connection to ${host}:${port}, the coordinator the broker named for group ${JSON.stringify(groupId)}, failed once it was open (${reason})`,

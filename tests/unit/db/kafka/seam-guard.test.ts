@@ -122,7 +122,7 @@ const SEED_TAKERS: string[] = [];
 /**
  * Members the adapter may call on the library's objects (spec 3.6 K4). `on` and `connections` send
  * nothing: through them the adapter keeps an error listener on every connection it opens, its clients'
- * pools included.
+ * pools included, and a close listener on a consumer-protocol group description's own connection.
  */
 const ALLOWED = new Set([
   "metadata",
@@ -192,7 +192,7 @@ const DECLARED_SHAPES: Readonly<Record<string, Readonly<Record<string, string>>>
   ConnectionLike: {
     close: "close(): Promise<void>;",
     connect: "connect(host: string, port: number): Promise<void>;",
-    on: 'on(event: "error", listener: (error: unknown) => void): void;',
+    on: 'on(event: "error" | "close", listener: (error?: unknown) => void): void;',
   },
   ConnectionPoolLike: {
     close: "close(): Promise<void>;",
@@ -1865,12 +1865,12 @@ describe("Kafka seam guard", () => {
     ],
     [
       "a shape that inherits members",
-      'interface ConnectionLike extends Writer { connect(host: string, port: number): Promise<void>; close(): Promise<void>; on(event: "error", listener: (error: unknown) => void): void; }',
+      'interface ConnectionLike extends Writer { connect(host: string, port: number): Promise<void>; close(): Promise<void>; on(event: "error" | "close", listener: (error?: unknown) => void): void; }',
       [`${ADAPTER} declares ConnectionLike extends Writer`],
     ],
     [
       "a shape with an index signature",
-      'interface ConnectionLike { [member: string]: unknown; connect(host: string, port: number): Promise<void>; close(): Promise<void>; on(event: "error", listener: (error: unknown) => void): void; }',
+      'interface ConnectionLike { [member: string]: unknown; connect(host: string, port: number): Promise<void>; close(): Promise<void>; on(event: "error" | "close", listener: (error?: unknown) => void): void; }',
       [`${ADAPTER} declares ConnectionLike as [member: string]: unknown;, close, connect, on`],
     ],
     [

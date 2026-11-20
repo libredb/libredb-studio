@@ -2409,6 +2409,29 @@ describe("failures (spec 5.6)", () => {
     });
     expect(closesOf(recorded.calls)).toEqual(["connection.close"]);
   });
+
+  test("a consumer-protocol group whose coordinator closes the connection under the request is a ConnectionError naming the coordinator, never an authentication failure", async () => {
+    // As the client reports a graceful close: a close event on the connection and no error event, then
+    // the request in flight rejected with a bare "Connection closed".
+    const closed = Object.assign(new Error("Connection closed"), { code: "PLT_KFK_NETWORK" });
+    const { provider, recorded } = await connected({
+      "admin.findCoordinator": () => [{ key: "lag-kip848", nodeId: 2, host: "broker-2.example", port: 9093 }],
+      consumerGroupDescribeV0: () => {
+        for (const [emitter, event, listener] of recorded.listeners)
+          if (emitter === "connection" && event === "close") listener();
+        throw closed;
+      },
+    });
+    const error = await provider.readObjectSource(["lag-kip848"], "consumer_group").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error).toMatchObject({
+      message:
+        'The connection to broker-2.example:9093, the coordinator the broker named for group "lag-kip848", failed once it was open (connection-lost)',
+      host: "broker-2.example",
+      port: 9093,
+    });
+    expect(closesOf(recorded.calls)).toEqual(["connection.close"]);
+  });
 });
 
 describe("delegation (spec 3.5)", () => {

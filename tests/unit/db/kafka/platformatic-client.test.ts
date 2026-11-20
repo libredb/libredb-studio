@@ -1933,13 +1933,13 @@ describe("createPlatformaticClient", () => {
     expect(await description).toMatchObject({ groupId: "lag-kip848", groupType: "consumer" });
   });
 
-  test("the API 69 connection is heard from before it connects, and an error it reports after the answer leaves the description as answered", async () => {
-    let heardAtConnect = 0;
-    const recorded = fakeLib({ "connection.connect": () => void (heardAtConnect = heard().length) });
-    const heard = () => recorded.listeners.filter(([emitter, event]) => emitter === "connection" && event === "error");
+  test("the API 69 connection is heard from before it connects, and an error or a close it reports after the answer leaves the description as answered", async () => {
+    let heardAtConnect: string[] = [];
+    const recorded = fakeLib({ "connection.connect": () => void (heardAtConnect = heard().map(([, event]) => event)) });
+    const heard = () => recorded.listeners.filter(([emitter]) => emitter === "connection");
     const listing = { groupId: "lag-kip848", state: "Empty", groupType: "consumer" as const, protocolType: "consumer" };
     const description = await createPlatformaticClient(OPTIONS, recorded.lib).describeGroup(listing);
-    expect(heardAtConnect).toBe(1);
+    expect(heardAtConnect).toEqual(["error", "close"]);
     for (const [, , listener] of heard())
       listener(Object.assign(new Error("Connection error"), { code: "PLT_KFK_NETWORK" }));
     expect(description).toMatchObject({ groupId: "lag-kip848", groupType: "consumer", protocolOrAssignor: "uniform" });
@@ -3360,9 +3360,10 @@ describe("the installed client against a local broker (spec 3.6 K8)", () => {
 
   /**
    * A listener that reads each connection's first request frame and then fails the connection as
-   * `fail` says: "stray" answers with a correlation id no request carries, "reset" resets it.
+   * `fail` says: "stray" answers with a correlation id no request carries, "reset" resets it, "fin"
+   * closes it gracefully.
    */
-  async function failingListener(fail: "stray" | "reset") {
+  async function failingListener(fail: "stray" | "reset" | "fin") {
     const received: number[] = [];
     const server = createServer((socket) => {
       socket.on("error", () => undefined);
@@ -3374,6 +3375,7 @@ describe("the installed client against a local broker (spec 3.6 K8)", () => {
         buffered = Buffer.alloc(0);
         received.push(apiKey);
         if (fail === "stray") socket.write(Buffer.concat([int32(4), int32(correlationId + 1000)]));
+        else if (fail === "fin") socket.end();
         else socket.resetAndDestroy();
       });
     });
@@ -3412,6 +3414,15 @@ describe("the installed client against a local broker (spec 3.6 K8)", () => {
       { sasl: SASL },
       [18],
     ],
+    // A graceful close raises no error on the connection, only its close.
+    ["closes the connection under the request", "fin" as const, { nodeCode: "connection-lost" }, {}, [69]],
+    [
+      "closes the connection during its SASL exchange",
+      "fin" as const,
+      { nodeCode: "connection-lost" },
+      { sasl: SASL },
+      [18],
+    ],
   ])(
     "a group coordinator that %s fails the description with a named error that names it, and nothing is thrown out of the connection",
     async (_, fail, nodeCode, sasl, received) => {
@@ -3430,7 +3441,7 @@ describe("the installed client against a local broker (spec 3.6 K8)", () => {
       expect(uncaught).toEqual([]);
       expect("error" in settled && settled.error).toBeInstanceOf(KafkaError);
       const error = (settled as { error: KafkaError }).error;
-      const reason = fail === "stray" ? "PLT_KFK_UNEXPECTED_CORRELATION_ID" : "ECONNRESET";
+      const reason = "nodeCode" in nodeCode ? nodeCode.nodeCode : "PLT_KFK_UNEXPECTED_CORRELATION_ID";
       expect([error.category, error.message, error.detail]).toEqual([
         "advertised-unreachable",
         `The connection to 127.0.0.1:${coordinator.port}, the coordinator the broker named for group "g", failed once it was open (${reason})`,
@@ -3455,7 +3466,11 @@ describe("the installed client against a local broker (spec 3.6 K8)", () => {
     await client.close();
     expect(uncaught).toEqual([]);
     expect(settled).toMatchObject({
-      error: { category: "advertised-unreachable", detail: { host: "127.0.0.1", port, nodeCode: "ECONNREFUSED" } },
+      error: {
+        category: "advertised-unreachable",
+        message: `The broker advertised 127.0.0.1:${port}, which this server cannot reach; the cluster's advertised listeners must be reachable from where Studio runs`,
+        detail: { host: "127.0.0.1", port, nodeCode: "ECONNREFUSED" },
+      },
     });
   });
 
