@@ -199,6 +199,45 @@ container change should propagate - and treat any exposure, IPv4 or IPv6, as an 
 `LIBREDB_BIND=::` (or `LIBREDB_BIND=::1` for IPv6 loopback) for the wrapper channels, `HOSTNAME`
 for the rest. There is no probe and no auto-selection in those channels.
 
+## Uncaught errors and restarts
+
+An exception that no code catches stops the server.
+Such an exception comes from work outside a request's own handling, such as a timer, a socket or a driver callback; one thrown while a request is handled is still answered with a 500.
+Next.js prints the error as thrown, with its stack, and Studio then logs one line and exits with code 70, so whatever started the server can start a fresh process instead of one that goes on in an unknown state.
+Requests in flight on that process end without an answer.
+
+The line names the exit code, the error's class and its message, with credentials in the message redacted:
+
+```text
+[ERROR] [2026-11-20T16:34:36.188Z] {route=uncaught-exception} Uncaught exception, exiting with code 70: TypeError: connect failed for postgres://[REDACTED]@db.example:5432/app
+```
+
+Only Studio's line is redacted: the error Next.js prints before it is the error as thrown.
+
+Code 70 is `UNCAUGHT_EXCEPTION_EXIT_CODE` in [`src/lib/uncaught-exception.ts`](../src/lib/uncaught-exception.ts), the `EX_SOFTWARE` value of `sysexits.h`, "internal software error".
+No launcher gives it another meaning: 0 is a clean stop on SIGTERM or SIGINT, and 1 is a boot check that refused the configuration or a launcher's own failure.
+
+A promise rejection that nothing handles does not stop the server: Next.js logs it and keeps serving.
+That is Next.js's own choice: a server component may start a request early and drop its promise when the answer turns out not to be needed, and the rejection of such a promise is no fault.
+Whether Studio stops on an unhandled rejection too is open until such rejections have been counted in real sessions.
+
+How each channel brings the server back after code 70:
+
+| Channel | What restarts it | Where the line and the code are |
+|---|---|---|
+| Helm chart, OpenShift operator | The kubelet restarts the container, waiting longer each time while it keeps exiting (`CrashLoopBackOff`) | `kubectl logs <pod> --previous`; the pod's `lastState.terminated.exitCode` |
+| [`docker-compose.example.yml`](../docker-compose.example.yml) | Its `restart: unless-stopped` | `docker logs libredb-studio`; `docker inspect -f '{{.State.ExitCode}}' libredb-studio` |
+| `docker run` | Nothing, unless the container was started with a restart policy such as `--restart unless-stopped` | as above |
+| npx | Nothing: the launcher exits with 70 | the terminal |
+| .deb / .rpm and AUR (systemd) | The unit's `Restart=on-failure`, after 5 s | `journalctl -u libredb-studio` |
+| Snap | The daemon's `restart-condition: on-failure` | `sudo snap logs libredb-studio` |
+| Homebrew service | Nothing: the service is declared with `keep_alive false`, and it keeps no output | run `libredb-studio` in a terminal to see the line |
+| Windows (winget, Chocolatey, Scoop, portable zip) | Nothing: `libredb-studio.exe` exits with 70 | the console |
+| Desktop app | The shell, after 1, 5 and 15 s, three times in one app session, then it shows the server's last lines | the failure page, and the `[server]` lines on the shell's stderr |
+
+Platforms not listed here apply their own policy to a container that exits with a non-zero code.
+The VS Code extension does not run this server: its backend child runs no Next.js, keeps Node.js's own handling of an uncaught exception, and is restarted by the extension ([VSCODE_EXTENSION.md](VSCODE_EXTENSION.md)).
+
 ## Release artifact naming
 
 Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Each release ships:

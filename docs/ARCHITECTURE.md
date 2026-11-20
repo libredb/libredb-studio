@@ -322,7 +322,12 @@ Studio ships both as a standalone app and as the `@libredb/studio` npm package c
 
 ### 4.7. Standalone Boot Flow (`src/instrumentation.ts`)
 
-Next.js runs `register()` once per server worker, **only** when Studio boots its own server (never when `@libredb/studio` is imported by libredb-platform) and only on the Node.js runtime. On standalone boot it:
+Next.js runs `register()` once per server worker, **only** when Studio boots its own server (never when `@libredb/studio` is imported by libredb-platform) and only on the Node.js runtime.
+Before any of the steps below it installs the uncaught-exception exit (`src/lib/uncaught-exception.ts`), once per process however often `register()` runs.
+An exception that nothing catches is then printed by Next.js, logged by Studio in one redacted line, and ends the process with exit code 70, so an orchestrator starts a fresh one ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)).
+It applies under `next dev` too: Next.js's dev command restarts its server only for its own exit code 77, so `bun dev` ends with code 70 and is started again by hand.
+Unhandled promise rejections stay non-fatal, as Next.js keeps them.
+On standalone boot it:
 
 1. **Bootstraps missing auth env** (`src/lib/auth-bootstrap.ts`, #109). When `JWT_SECRET` / `ADMIN_PASSWORD` are absent they are generated once, persisted to `<data dir>/auth-bootstrap.json` (mode `0600`), and injected into `process.env` before any secret reader runs; the admin password is printed once. Explicitly set env vars always win. Disable with `AUTH_BOOTSTRAP=off|false|0` (case-insensitive); an unrecognized value warns and stays on. In OIDC mode only the JWT secret is generated.
 2. **Runs the auth-config preflight** (`src/lib/config/auth-preflight.ts`, #227). A `JWT_SECRET` that is set but shorter than 32 characters prints an operator-facing banner (length only, never the value) and exits with code 1. It runs *after* bootstrap so a generated secret is validated too. This is the one step that intentionally stops boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling the failure there would restart the pod forever and hide the login screen's actionable 503; refusing to start costs nothing because a too-short secret can sign no session at all.
