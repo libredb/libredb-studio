@@ -203,22 +203,27 @@ for the rest. There is no probe and no auto-selection in those channels.
 
 An exception that no code catches stops the server.
 Such an exception comes from work outside a request's own handling, such as a timer, a socket or a driver callback; one thrown while a request is handled is still answered with a 500.
-Next.js prints the error as thrown, with its stack, and Studio then logs one line and exits with code 70, so whatever started the server can start a fresh process instead of one that goes on in an unknown state.
+Studio logs one line and exits with code 70, so whatever started the server can start a fresh process instead of one that goes on in an unknown state.
+Before that line, Next.js 16.4 prints the error as thrown, with its stack.
+That order comes from where Next.js 16.4 registers its own handler, which Next.js does not document, so a later release may leave the stack out, while Studio's line and the exit code stay.
 Requests in flight on that process end without an answer.
 
-The line names the exit code, the error's class and its message, with credentials in the message redacted:
+The line names the exit code, the error's class with its `code` when that is a string, and its message with those of an `AggregateError`'s inner errors, with credentials redacted:
 
 ```text
 [ERROR] [2026-11-20T16:34:36.188Z] {route=uncaught-exception} Uncaught exception, exiting with code 70: TypeError: connect failed for postgres://[REDACTED]@db.example:5432/app
 ```
 
 Only Studio's line is redacted: the error Next.js prints before it is the error as thrown.
+The line carries no stack of its own, but a message that quotes one, as Node.js's `ERR_UNHANDLED_ERROR` does for an `error` event whose payload holds an Error, is logged as it is.
+Under governance, the query events still queued are not inserted on this exit, unlike at a shutdown on SIGTERM, and the line counts them, for example `{route=uncaught-exception, queryEventsLost=12}` ([GOVERNANCE.md](GOVERNANCE.md#query-events)).
 
 Code 70 is `UNCAUGHT_EXCEPTION_EXIT_CODE` in [`src/lib/uncaught-exception.ts`](../src/lib/uncaught-exception.ts), the `EX_SOFTWARE` value of `sysexits.h`, "internal software error".
-No launcher gives it another meaning: 0 is a clean stop on SIGTERM or SIGINT, and 1 is a boot check that refused the configuration or a launcher's own failure.
+No launcher gives it another meaning: 0 is a clean stop on SIGTERM or SIGINT, and 1 is a boot check that refused the configuration, a launcher's own failure, an exception that nothing caught before the server had started, which Node.js ends with its own 1, or, under npx, a server that a signal ended, such as the out-of-memory killer's SIGKILL.
 
 A promise rejection that nothing handles does not stop the server: Next.js logs it and keeps serving.
 That is Next.js's own choice: a server component may start a request early and drop its promise when the answer turns out not to be needed, and the rejection of such a promise is no fault.
+Node.js started with `--unhandled-rejections=strict`, for example through `NODE_OPTIONS`, is the one case where it does: Node.js then raises every unhandled rejection as an uncaught exception before Next.js sees it, so the server exits with 70 for it too, and the line begins `Unhandled rejection raised as an uncaught exception`.
 Whether Studio stops on an unhandled rejection too is open until such rejections have been counted in real sessions.
 
 How each channel brings the server back after code 70:
@@ -226,12 +231,12 @@ How each channel brings the server back after code 70:
 | Channel | What restarts it | Where the line and the code are |
 |---|---|---|
 | Helm chart, OpenShift operator | The kubelet restarts the container, waiting longer each time while it keeps exiting (`CrashLoopBackOff`) | `kubectl logs <pod> --previous`; the pod's `lastState.terminated.exitCode` |
-| [`docker-compose.example.yml`](../docker-compose.example.yml) | Its `restart: unless-stopped` | `docker logs libredb-studio`; `docker inspect -f '{{.State.ExitCode}}' libredb-studio` |
-| `docker run` | Nothing, unless the container was started with a restart policy such as `--restart unless-stopped` | as above |
+| [`docker-compose.example.yml`](../docker-compose.example.yml) | Its `restart: unless-stopped` | `docker logs libredb-studio`; once restarted the container shows exit code 0, so `docker events --since 1h --until 0s --filter container=libredb-studio --filter event=die` shows `exitCode=70`, and `docker inspect -f '{{.RestartCount}}' libredb-studio` counts the restarts |
+| `docker run` | Nothing, unless the container was started with a restart policy such as `--restart unless-stopped` | `docker logs <container>`; with a restart policy as above, and with none `docker inspect -f '{{.State.ExitCode}}' <container>` |
 | npx | Nothing: the launcher exits with 70 | the terminal |
 | .deb / .rpm and AUR (systemd) | The unit's `Restart=on-failure`, after 5 s | `journalctl -u libredb-studio` |
-| Snap | The daemon's `restart-condition: on-failure` | `sudo snap logs libredb-studio` |
-| Homebrew service | Nothing: the service is declared with `keep_alive false`, and it keeps no output | run `libredb-studio` in a terminal to see the line |
+| Snap | The daemon's `restart-condition: on-failure` | `sudo snap logs -n=all libredb-studio`, since the restarted process prints its own startup lines at once; `journalctl -u snap.libredb-studio.libredb-studio.service` also shows systemd's `status=70/SOFTWARE` |
+| Homebrew service | Nothing: the service is declared with `keep_alive false` | on macOS the service keeps no output, so run `libredb-studio` in a terminal to see the line; on Linux the user journal keeps it, `journalctl --user -u sh.brew.libredb-studio` (`homebrew.libredb-studio` on older Homebrew) |
 | Windows (winget, Chocolatey, Scoop, portable zip) | Nothing: `libredb-studio.exe` exits with 70 | the console |
 | Desktop app | The shell, after 1, 5 and 15 s, three times in one app session, then it shows the server's last lines | the failure page, and the `[server]` lines on the shell's stderr |
 

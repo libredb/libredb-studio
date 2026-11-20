@@ -324,9 +324,9 @@ Studio ships both as a standalone app and as the `@libredb/studio` npm package c
 
 Next.js runs `register()` once per server worker, **only** when Studio boots its own server (never when `@libredb/studio` is imported by libredb-platform) and only on the Node.js runtime.
 Before any of the steps below it installs the uncaught-exception exit (`src/lib/uncaught-exception.ts`), once per process however often `register()` runs.
-An exception that nothing catches is then printed by Next.js, logged by Studio in one redacted line, and ends the process with exit code 70, so an orchestrator starts a fresh one ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)).
+An exception that nothing catches is then logged by Studio in one redacted line, after Next.js 16.4's own print of it with its stack, and ends the process with exit code 70, so an orchestrator starts a fresh one ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)).
 It applies under `next dev` too: Next.js's dev command restarts its server only for its own exit code 77, so `bun dev` ends with code 70 and is started again by hand.
-Unhandled promise rejections stay non-fatal, as Next.js keeps them.
+Unhandled promise rejections stay non-fatal, as Next.js keeps them, unless Node.js runs with `--unhandled-rejections=strict`, which raises each one as an uncaught exception that then ends the process too.
 On standalone boot it:
 
 1. **Bootstraps missing auth env** (`src/lib/auth-bootstrap.ts`, #109). When `JWT_SECRET` / `ADMIN_PASSWORD` are absent they are generated once, persisted to `<data dir>/auth-bootstrap.json` (mode `0600`), and injected into `process.env` before any secret reader runs; the admin password is printed once. Explicitly set env vars always win. Disable with `AUTH_BOOTSTRAP=off|false|0` (case-insensitive); an unrecognized value warns and stays on. In OIDC mode only the JWT secret is generated.

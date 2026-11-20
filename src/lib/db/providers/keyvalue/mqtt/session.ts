@@ -512,7 +512,8 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
      *
      * THIS KILLED THE SERVER PROCESS. Every call below runs inside a `node:net` or `node:tls` listener, and
      * a throw escaping one of those is an uncaught exception: under Node, which is what production runs
-     * (`next start`, and the image's `node server.js`), the process exits 1. The tests run under bun, which
+     * (`next start`, and the image's `node server.js`), the process exits, with code 70 since the
+     * uncaught-exception exit (src/lib/uncaught-exception.ts). The tests run under bun, which
      * turns the same throw into a socket `error` event and a clean rejection, so no test in this suite could
      * see it, and a 100% line-coverage gate says nothing about it. Measured both ways on the same bundle:
      * bun rejected, Node died.

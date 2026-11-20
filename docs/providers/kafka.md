@@ -175,8 +175,8 @@ The client handles some answers inside its socket handler, where an exception is
 The adapter keeps every input known to throw there away from the client: it refuses an internal topic ([§6.1](#kinds-folders-and-identity)) and a SASL user that is not a string ([§4.2](#42-authentication-and-never-in-the-clear-k3)) before the call, and a read's answer never reaches the client's READ_COMMITTED filter ([§3.4](#34-one-client-per-connection-and-no-fetch-session)).
 A malformed answer, which a hostile broker can send ([§4.4](#44-the-broker-chooses-where-studio-connects-next)), can still throw there on the client's other calls.
 `describeGroups` is no longer one of them: since `@platformatic/kafka` 2.13.0 it resolves a classic group whose member's subscription or assignment it cannot decode with the group's `error` set and only the members before that one, and the provider refuses that group its whole description instead ([§6.1](#consumer-groups-and-lag)).
-In the standalone server, whose Next.js router server registers an `uncaughtException` handler, the exception is logged and that one call never settles until its timeout.
-A host that embeds the package's provider factory, `createDatabaseProvider` or `getOrCreateProvider` from `src/exports/providers.ts`, in a Node process that installs no `uncaughtException` handler, ends the process instead.
+In the standalone server the exception ends the process with exit code 70 ([DISTRIBUTION.md](../DISTRIBUTION.md#uncaught-errors-and-restarts)), and whatever started the server starts a fresh one, so every user loses the requests in flight and the state held in memory.
+A host that embeds the package's provider factory, `createDatabaseProvider` or `getOrCreateProvider` from `src/exports/providers.ts`, in a Node process that installs no `uncaughtException` handler, ends that process too, with Node.js's own exit code 1.
 Such a host should install a handler before it connects a Kafka provider to a broker it does not trust.
 
 A connection that fails reaches no socket handler unheard: the client reports a connection's failure as an `error` event, which is thrown out of the socket handler when no listener hears it, so every connection the provider opens keeps an `error` listener for its whole life.
@@ -801,7 +801,7 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **The client decompresses a whole answer before any bound applies** ([§5.4](#54-bounds)).
 - **The broker chooses how much work a SCRAM exchange takes** ([§4.2](#42-authentication-and-never-in-the-clear-k3)).
 - **The broker chooses how often a connection authenticates again** ([§4.2](#42-authentication-and-never-in-the-clear-k3)).
-- **A malformed answer can end a host process with no `uncaughtException` handler** ([§3.5](#35-a-host-that-embeds-the-provider-factory)).
+- **A malformed answer can end the standalone server, and a host process with no `uncaughtException` handler** ([§3.5](#35-a-host-that-embeds-the-provider-factory)).
 - **A read the budget stops answers older rows than the newest that would fit** ([§5.4](#54-bounds)).
 - **Past `KAFKA_TOPIC_LIST_CAP` topics, plan mode grounds topics only** (`docs/BACKLOG.md` B89).
 - **A principal with no Describe ACL sees an empty cluster**, with no error to tell it apart ([§6.1](#listing-counting-and-scale)).
