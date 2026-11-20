@@ -3276,17 +3276,23 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   public async disconnect(): Promise<void> {
-    if (this.pool) {
-      await this.pool.end();
-      this.pool = null;
-      this.setConnected(false);
-    }
     // The read-only pool is separate (see `roPool`), so it is ended separately, and the
-    // verification goes with it: a reconnect proves the principal again.
-    this.readOnlyVerification = null;
+    // verification goes with it: a reconnect proves the principal again. It is ended
+    // FIRST: mysql2's `end()` settles only once a statement still running on the pool has
+    // ended, and the deadline of a read-only statement sends its KILL through the main
+    // pool (see `killReadOnlyStatement`), which is still held while this waits.
     if (this.roPool) {
       await this.roPool.end().catch(() => {});
       this.roPool = null;
+    }
+    this.readOnlyVerification = null;
+    // The main pool is let go BEFORE its end is awaited: a closing pool refuses every new
+    // statement, so a KILL must not be sent from it while `end()` waits on a statement.
+    const pool = this.pool;
+    if (pool) {
+      this.pool = null;
+      this.setConnected(false);
+      await pool.end();
     }
   }
 
@@ -3588,6 +3594,10 @@ export class MySQLProvider extends SQLBaseProvider {
       );
     }
 
+    // The pool a KILL for this read is sent from, held from the read's start: the read can
+    // outlive a `disconnect()` or a reconnect, and a KILL must not reach for a pool that
+    // is gone or is another connection's.
+    const killPool = this.pool!;
     const roPool = await this.verifiedReadOnlyPool();
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
@@ -3611,7 +3621,7 @@ export class MySQLProvider extends SQLBaseProvider {
           // as the least-privilege account on both engines). Prefixing before the
           // deadline keeps the plan under the same budget the execution would be.
           const statement = mode === "estimate-plan" ? `EXPLAIN FORMAT=JSON ${sql}` : sql;
-          const { rows, fields } = await this.runWithAgentDeadline(conn, statement, budget);
+          const { rows, fields } = await this.runWithAgentDeadline(killPool, conn, statement, budget);
           return { rows: rows as unknown[], fields };
         } catch (error) {
           throw error instanceof QueryError ? error : mapDatabaseError(error, "mysql", sql);
@@ -3691,30 +3701,48 @@ export class MySQLProvider extends SQLBaseProvider {
    * The statement itself is read as a STREAM (`streamReadOnlyStatement`), because the
    * row budget has to land on a result that is still arriving, and the deadline is
    * armed around that stream rather than around a buffered read.
+   *
+   * A deadline that fires after the connection was closed sends no KILL (see
+   * `killReadOnlyStatement`), so the statement runs on until the session's own deadline
+   * variable or its own end stops it, and whatever it settles with is refused as the
+   * closed connection, by name: "killed server-side" would say a KILL did what none did.
+   * An error it settles with is carried in the refusal's detail rather than dropped.
    */
   private async runWithAgentDeadline(
+    killPool: Pool,
     conn: PoolConnection,
     sql: string,
     budget: ReadOnlyStatementBudget,
   ): Promise<ReadOnlyStreamedAnswer> {
     let killIssued = false;
+    let closedUnder = false;
     const deadline = setTimeout(() => {
       killIssued = true;
-      this.killReadOnlyStatement(conn.threadId);
+      closedUnder = !this.killReadOnlyStatement(killPool, conn.threadId);
     }, budget.statementTimeoutMs);
-    const exceeded = () =>
-      new QueryError(
-        `Read-only execution exceeded the statement deadline of ${budget.statementTimeoutMs}ms and was killed server-side`,
-        "mysql",
-        sql,
-      );
+    const exceeded = (ended?: unknown) =>
+      closedUnder
+        ? new QueryError(
+            `The connection was closed while the read-only statement ran, so it was not killed at its deadline of ${budget.statementTimeoutMs}ms and was not answered`,
+            "mysql",
+            sql,
+            undefined,
+            ended === undefined
+              ? undefined
+              : `The statement ended with: ${ended instanceof Error ? ended.message : String(ended)}`,
+          )
+        : new QueryError(
+            `Read-only execution exceeded the statement deadline of ${budget.statementTimeoutMs}ms and was killed server-side`,
+            "mysql",
+            sql,
+          );
+    let answer: ReadOnlyStreamedAnswer;
     try {
-      const answer = await this.streamReadOnlyStatement(conn, sql, budget);
-      if (killIssued) throw exceeded();
-      return answer;
+      answer = await this.streamReadOnlyStatement(killPool, conn, sql, budget);
     } catch (error) {
+      if (closedUnder) throw exceeded(error);
       // A killed statement REJECTS with 1317 (measured on both engines; only SLEEP()
-      // resolves instead, handled above), and the session variables stop one with 3024
+      // resolves instead, handled below), and the session variables stop one with 3024
       // (MySQL) or 1969 (MariaDB). Each is this deadline, and the model is told so: a
       // generic "Query was cancelled" gives it no reason to make the next one cheaper.
       // A 1317 this call did not cause is someone else's KILL and stays what it is.
@@ -3730,6 +3758,9 @@ export class MySQLProvider extends SQLBaseProvider {
     } finally {
       clearTimeout(deadline);
     }
+    // A statement that answered after its deadline fired is refused, never served.
+    if (killIssued) throw exceeded();
+    return answer;
   }
 
   /**
@@ -3757,6 +3788,7 @@ export class MySQLProvider extends SQLBaseProvider {
    * `runReadingUtf8mb3AsUtf8`); array rows, the same shape `query()` reads.
    */
   private async streamReadOnlyStatement(
+    killPool: Pool,
     conn: PoolConnection,
     sql: string,
     budget: ReadOnlyStatementBudget,
@@ -3775,13 +3807,13 @@ export class MySQLProvider extends SQLBaseProvider {
     for await (const row of command.stream()) {
       rows.push(row);
       if (rows.length > budget.maxResultRows) {
-        this.killReadOnlyStatement(conn.threadId);
+        this.killReadOnlyStatement(killPool, conn.threadId);
         conn.destroy();
         throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "mysql", sql);
       }
       bytes += measureRowBytes(row);
       if (bytes > budget.maxResultBytes) {
-        this.killReadOnlyStatement(conn.threadId);
+        this.killReadOnlyStatement(killPool, conn.threadId);
         conn.destroy();
         throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "mysql", sql);
       }
@@ -3835,14 +3867,29 @@ export class MySQLProvider extends SQLBaseProvider {
    * already decided the call's outcome - the deadline refusal, or the budget refusal on
    * a connection it destroys - and the session's own deadline variable is the layer
    * that still stops the statement if the KILL could not be sent.
+   *
+   * The KILL goes through `killPool`, the main pool the read started on, and only while
+   * the provider still holds it. `disconnect()` ends the read-only pool first, so a
+   * deadline that fires while that waits still has its session; a deadline that fires
+   * after the main pool was let go finds no pool to send it from: the KILL is then not
+   * sent, that is logged, and the answer is false, which the deadline turns into its
+   * closed-connection refusal. The pool is checked by identity, so a reconnect's new
+   * pool is not mistaken for this read's.
    */
-  private killReadOnlyStatement(threadId: number): void {
-    void runStatement(this.pool!, `KILL QUERY ${threadId}`).catch((error: unknown) => {
+  private killReadOnlyStatement(killPool: Pool, threadId: number): boolean {
+    if (this.pool !== killPool) {
+      logger.warn(`[MySQL] KILL QUERY ${threadId} for a read-only statement was not sent: the connection was closed`, {
+        provider: "mysql",
+      });
+      return false;
+    }
+    void runStatement(killPool, `KILL QUERY ${threadId}`).catch((error: unknown) => {
       logger.warn(`[MySQL] KILL QUERY ${threadId} for a read-only statement failed`, {
         provider: "mysql",
         error: error instanceof Error ? error.message : String(error),
       });
     });
+    return true;
   }
 
   /**

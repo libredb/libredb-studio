@@ -160,6 +160,7 @@ const NAMED_CITATIONS = [
       "getLabels",
       "validate",
       "connect",
+      "disconnect",
       "buildPoolConfig",
       "buildSSLConfig",
       "query",
