@@ -4743,7 +4743,7 @@ describe("withOneShotTunnel", () => {
     expect(await closeOf(0)).toHaveBeenCalledTimes(1);
   });
 
-  test("propagates the callback failure even when closing the tunnel throws", async () => {
+  test("propagates the callback failure even when closing the tunnel throws, and logs the failed close", async () => {
     mockCreateSSHTunnel.mockImplementationOnce(async (_id, _sshConfig, remoteHost, remotePort) => ({
       localHost: "127.0.0.1",
       localPort: 54321,
@@ -4753,12 +4753,20 @@ describe("withOneShotTunnel", () => {
         throw new Error("close failed");
       }),
     }));
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        withOneShotTunnel(tunnelled(), async () => {
+          throw new Error("connect refused");
+        }),
+      ).rejects.toThrow("connect refused");
 
-    await expect(
-      withOneShotTunnel(tunnelled(), async () => {
-        throw new Error("connect refused");
-      }),
-    ).rejects.toThrow("connect refused");
+      expect(warn.mock.calls).toEqual([
+        ["[DB] Error closing a one-shot SSH tunnel", { connectionId: "one-shot-conn", error: "Error: close failed" }],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("opens no tunnel when the connection has none configured", async () => {
@@ -5138,6 +5146,129 @@ describe("a connection whose type names no provider (FND-1)", () => {
     expect(provider.isConnected()).toBe(true);
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
     expect(getProviderCacheStats().connections).toEqual(["fnd1-postgres"]);
+  });
+});
+
+/**
+ * A tunnelled connection whose provider refuses to be built.
+ *
+ * Both cached entry points dial the tunnel before they build the provider, so a refusal raised while the provider is
+ * built (a constructor's `validate()`) came after the tunnel. It was raised outside the code that closes a freshly
+ * dialled tunnel, so the SSH client and its loopback listener stayed open, pooled under a connection id no cache entry
+ * held. The idle sweep never reached them; only a disconnect of the connection (`removeProvider`) or the eviction of
+ * another entry of the same id closed them, and a `seed:` connection's disconnect removes nothing without governance.
+ * MySQL without a database and Apache Cassandra without a local data centre are two such refusals; each entry point is
+ * tested with both.
+ */
+describe("a tunnelled connection its provider refuses to build", () => {
+  const bastion: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+    password: "pw",
+  };
+
+  const refusedRecords = [
+    {
+      label: "MySQL without a database",
+      connection: makeConnection("mysql", { id: "refused-mysql", port: 3306, database: undefined, sshTunnel: bastion }),
+      sentence: "Database name is required for MySQL",
+    },
+    {
+      label: "Apache Cassandra without a local data centre",
+      connection: makeConnection("cassandra", { id: "refused-cassandra", port: 9042, sshTunnel: bastion }),
+      sentence:
+        "Apache Cassandra requires a local data centre (localDataCenter): the driver refuses to connect without one. A stock single-node install reports datacenter1.",
+    },
+  ];
+
+  const rejection = async (run: () => Promise<unknown>): Promise<unknown> => {
+    try {
+      await run();
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  };
+
+  /** The tunnel the factory was handed by its one `createSSHTunnel` call. */
+  const dialledTunnel = async () => {
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+    return (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> };
+  };
+
+  for (const { label, connection, sentence } of refusedRecords) {
+    test(`getOrCreateProvider closes the tunnel it dialled and raises the refusal unchanged: ${label}`, async () => {
+      const error = await rejection(() => getOrCreateProvider(connection));
+
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(sentence);
+      expect((await dialledTunnel()).close).toHaveBeenCalledTimes(1);
+      expect(getProviderCacheStats().size).toBe(0);
+    });
+
+    test(`acquireExecutionProfileProvider closes the tunnel it dialled and raises the refusal unchanged: ${label}`, async () => {
+      const error = await rejection(() => acquireExecutionProfileProvider(connection, "agent-operations"));
+
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(sentence);
+      expect((await dialledTunnel()).close).toHaveBeenCalledTimes(1);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    });
+  }
+
+  test("a tunnel another provider already holds stays open after the refusal, on both entry points", async () => {
+    const [{ connection, sentence }] = refusedRecords;
+    mockHasTunnel.mockReturnValueOnce(true);
+    const editor = await rejection(() => getOrCreateProvider(connection));
+    mockHasTunnel.mockReturnValueOnce(true);
+    const profiled = await rejection(() => acquireExecutionProfileProvider(connection, "agent-operations"));
+
+    expect((editor as Error).message).toBe(sentence);
+    expect((profiled as Error).message).toBe(sentence);
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(2);
+    const tunnels = (await Promise.all(mockCreateSSHTunnel.mock.results.map((result) => result.value))) as {
+      close: ReturnType<typeof mock>;
+    }[];
+    for (const tunnel of tunnels) expect(tunnel.close).not.toHaveBeenCalled();
+  });
+
+  test("a tunnel that fails to close is logged, and the refusal is still what the caller gets", async () => {
+    const [{ connection, sentence }] = refusedRecords;
+    const failingTunnel = async (_id: string, _ssh: unknown, remoteHost: string, remotePort: number) => ({
+      localHost: "127.0.0.1",
+      localPort: 54321,
+      remoteHost,
+      remotePort,
+      close: mock(async () => {
+        throw new Error("tunnel close failed");
+      }),
+    });
+    mockCreateSSHTunnel.mockImplementationOnce(failingTunnel).mockImplementationOnce(failingTunnel);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const editor = await rejection(() => getOrCreateProvider(connection));
+      const profiled = await rejection(() => acquireExecutionProfileProvider(connection, "agent-operations"));
+
+      expect(editor).toBeInstanceOf(DatabaseConfigError);
+      expect((editor as Error).message).toBe(sentence);
+      expect(profiled).toBeInstanceOf(DatabaseConfigError);
+      expect((profiled as Error).message).toBe(sentence);
+      expect(warn.mock.calls).toEqual([
+        [
+          "[DB] Error closing the SSH tunnel of a provider that did not open",
+          { connectionId: "refused-mysql", error: "Error: tunnel close failed" },
+        ],
+        [
+          "[DB] Error closing the SSH tunnel of a provider that did not open",
+          { connectionId: "refused-mysql", error: "Error: tunnel close failed" },
+        ],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

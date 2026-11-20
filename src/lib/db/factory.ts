@@ -131,12 +131,13 @@ function assertConnectionIdPresent(connection: DatabaseConnection): void {
  * WHERE IT RUNS. Right after the type check (`assertDatabaseType`, FND-1), which is the first statement of
  * `createDatabaseProvider` and `withOneShotTunnel`, and of
  * `getOrCreateProvider` and `acquireExecutionProfileProvider`, ahead of their cache lookup and of
- * `createSSHTunnel`: those two open the tunnel before they call `createDatabaseProvider`, outside the
- * try that closes a fresh one, so a refusal raised only inside the factory would dial the bastion and
- * leave the pooled tunnel open. Ahead of the lookup too, because a mode that is not a boolean keys as
- * `read-write` (`providerCacheKey`), so the lookup would hand it the connection's cached read-write
- * provider without refusing it. `assertProviderEnabled` stands beside it in all four places for the same
- * reason: a type `LIBREDB_ENABLED_PROVIDERS` leaves out must never reach a cache lookup or dial a bastion.
+ * `createSSHTunnel`: those two open the tunnel before they call `createDatabaseProvider`, so a refusal
+ * raised only inside the factory would dial the bastion for a connection it then refuses, and the fresh
+ * tunnel would only be closed again afterwards (`closeTunnelOfUnopenedProvider`). Ahead of the lookup
+ * too, because a mode that is not a boolean keys as `read-write` (`providerCacheKey`), so the lookup
+ * would hand it the connection's cached read-write provider without refusing it. `assertProviderEnabled`
+ * stands beside it in all four places for the same reason: a type `LIBREDB_ENABLED_PROVIDERS` leaves out
+ * must never reach a cache lookup or dial a bastion.
  * Exported for the tests; the published factory's three entry points raise it (`src/exports/providers.ts`).
  */
 export function assertReadOnlyHonoured(connection: DatabaseConnection): void {
@@ -630,6 +631,28 @@ function tunnelledConnection(base: DatabaseConnection, tunnel: TunnelInfo): Data
   };
 }
 
+/**
+ * Close a tunnel that `getOrCreateProvider` or `acquireExecutionProfileProvider` dialled for a provider that did not
+ * open: one its constructor refused (MySQL without a database, Apache Cassandra without a local data centre), one its
+ * connect failed, or one the acquisition refused before connecting. Only a forward this call opened is passed here; a
+ * pooled one another provider holds stays open.
+ *
+ * Nothing else closes it soon. No cache entry holds the provider, so the idle sweep never reaches it; only a disconnect
+ * of the connection (`removeProvider`, which closes every forward of an id nothing serves) or the eviction of another
+ * entry of the same id would, and a `seed:` connection's disconnect removes nothing without governance. A failure to
+ * close is logged and does not replace the caller's error, which is the one that says why the provider did not open.
+ */
+async function closeTunnelOfUnopenedProvider(tunnel: TunnelInfo, connectionId: string): Promise<void> {
+  try {
+    await tunnel.close();
+  } catch (error) {
+    logger.warn(`[DB] Error closing the SSH tunnel of a provider that did not open`, {
+      connectionId,
+      error: String(error),
+    });
+  }
+}
+
 // ============================================================================
 // One-shot tunnel scope (#457)
 // ============================================================================
@@ -680,9 +703,11 @@ export async function withOneShotTunnel<T>(
   try {
     return await run(tunnelledConnection(connection, tunnel));
   } finally {
-    // Swallowed on purpose: a failing teardown must not replace the caller's error,
+    // Logged, not rethrown: a failing teardown must not replace the caller's error,
     // which is the one that says why the database connection did not work.
-    await tunnel.close().catch(() => {});
+    await tunnel.close().catch((error: unknown) => {
+      logger.warn(`[DB] Error closing a one-shot SSH tunnel`, { connectionId: connection.id, error: String(error) });
+    });
   }
 }
 
@@ -1280,16 +1305,18 @@ export async function getOrCreateProvider(
   // DuckDB and SQLite ignores the posture: DuckDB closes file access under a denied posture, and SQLite
   // refuses to open under one. An owner opens the pool of that user's share
   // (docs/GOVERNANCE.md#per-user-providers).
-  const provider = await createDatabaseProvider(effectiveConnection, options, {
-    allowExternalFileAccess,
-    ...ownerContext(owner, execution),
-  });
+  // The build is inside the try with the connect: a provider constructor that refuses the record comes
+  // after the tunnel, and a freshly dialled tunnel is closed for that refusal as for a failed connect.
+  let provider: DatabaseProvider;
   try {
+    provider = await createDatabaseProvider(effectiveConnection, options, {
+      allowExternalFileAccess,
+      ...ownerContext(owner, execution),
+    });
     await connectPhase(() => provider.connect());
   } catch (error) {
-    // Clean up a freshly created SSH tunnel if provider connect fails to prevent FD leak
     if (tunnel && !tunnelPreexisted) {
-      await tunnel.close().catch(() => {});
+      await closeTunnelOfUnopenedProvider(tunnel, connection.id);
     }
     throw error;
   }
@@ -1682,13 +1709,21 @@ export async function acquireExecutionProfileProvider(
   }
 
   const closeFreshTunnel = async () => {
-    if (tunnel && !tunnelPreexisted) await tunnel.close().catch(() => {});
+    if (tunnel && !tunnelPreexisted) await closeTunnelOfUnopenedProvider(tunnel, connection.id);
   };
 
-  const provider = await createDatabaseProvider(effectiveConnection, options, {
-    ...execution,
-    ...ownerContext(owner, requester),
-  });
+  // A provider constructor that refuses the record comes after the tunnel, so the build closes a freshly
+  // dialled tunnel on that refusal as every later step below does on its own.
+  let provider: DatabaseProvider;
+  try {
+    provider = await createDatabaseProvider(effectiveConnection, options, {
+      ...execution,
+      ...ownerContext(owner, requester),
+    });
+  } catch (error) {
+    await closeFreshTunnel();
+    throw error;
+  }
   if (credential !== null) {
     try {
       assertAgentCredentialForm(connection, provider, credential.password);
