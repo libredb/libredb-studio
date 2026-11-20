@@ -2,9 +2,14 @@
  * The one check of a connection's `type` against the `DatabaseType` union (FND-1).
  *
  * A record read from storage or from a request may carry any value in `type`: a connection saved by a newer Studio that
- * shares the same server storage, a hand-edited record, or one with no type at all. Every surface that reads a
- * per-engine table asks this module first, and a value that is not exactly a type id is refused by name, never
- * normalised (no trimming, no lowercasing) and never answered with another engine's defaults.
+ * shares the same server storage, a hand-edited record, or one with no type at all. A value that is not exactly a type
+ * id is refused by name, never normalised (no trimming, no lowercasing).
+ *
+ * The provider factory, `resolveConnection`, the `db-ui-config` lookups, the Studio connection lists and the connection
+ * hook ask this module first. Not every per-engine read does yet: the contract registries still answer an unknown type
+ * with their `UNKNOWN_TYPE_*` rows, and the capability tables (`WRITE_REACH`, the `CONNECTION_FORM` helpers such as
+ * `offersSslPanel`, and their neighbours) are still read by bare index, so a new per-engine lookup is not covered by
+ * this module unless it calls it.
  *
  * The set is `SHIPPED_DATABASE_TYPES`, which the compiler holds to the union through an exhaustive Record, so this
  * module has no list of its own. Membership is a `Set` lookup, so a prototype key such as `"constructor"` is unknown

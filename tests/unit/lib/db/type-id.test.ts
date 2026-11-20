@@ -1,6 +1,6 @@
 /**
  * The one check of a connection's `type` against the `DatabaseType` union (FND-1). A stored or submitted record may
- * carry any value there, so every surface that reads a per-engine table asks this module first and refuses by name.
+ * carry any value there, so a surface that reads a per-engine table asks this module first and refuses by name.
  */
 import { describe, expect, test } from "bun:test";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";

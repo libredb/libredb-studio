@@ -395,8 +395,8 @@ export interface DatabaseConnection {
   name: string;
   /**
    * The connection's type id. A record read from storage or from a request may carry any value here: one saved by a
-   * newer Studio that shares the same storage, or one with no type at all. Such a value is checked with `typeIdRefusal`
-   * or `isDatabaseType` (`src/lib/db/type-id.ts`) before any per-engine table is read (FND-1).
+   * newer Studio that shares the same storage, or one with no type at all. Studio checks the value and refuses one
+   * that names no provider it has, by name, rather than treating the record as another engine.
    */
   type: DatabaseType;
   host?: string;

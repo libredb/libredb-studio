@@ -70,9 +70,10 @@ export const ConnectionItem = React.memo(function ConnectionItem({
 }: ConnectionItemProps) {
   // A stored connection whose type names no provider (FND-1) is drawn with no per-engine lookup: the unavailable icon,
   // a marker that carries the refusal's sentence, and no Edit or Duplicate, since the dialog cannot draw an engine this
-  // Studio does not have and a duplicate would copy an unusable record. A click still reaches onSelect, which refuses
-  // it by name. The row is not marked aria-disabled: a disabled row reads its Delete button as disabled too, and the
-  // marker's screen-reader text already says why it cannot be opened.
+  // Studio does not have and a duplicate would copy an unusable record. A click still reaches onSelect: in Studio that
+  // is the connection hook's selectConnection, which refuses it by name; the StudioWorkspace adapter does not refuse it
+  // yet. The row is not marked aria-disabled: a disabled row reads its Delete button as disabled too, and the marker's
+  // screen-reader text already says why it cannot be opened.
   const refusal = typeIdRefusal(conn.type);
   const unavailable = refusal !== null;
   return (
