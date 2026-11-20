@@ -3569,6 +3569,8 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       ConnectionError: "propagates",
       PoolExhaustedError: "propagates",
       DatabaseConfigError: "propagates",
+      // A DatabaseConfigError: the connection's type names no provider, which no statement can change (FND-1).
+      UnknownProviderError: "propagates",
     };
 
     type ErrorConstructor = new (message: string, provider?: string) => Error;
