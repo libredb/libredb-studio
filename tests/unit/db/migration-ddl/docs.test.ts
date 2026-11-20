@@ -149,7 +149,6 @@ describe("the check fails a planted document by name", () => {
       `db2: does not quote "${MIGRATION_DDL.db2.reasons[0]}"`,
       "db2: does not name standardAddColumn",
       "db2: does not name standardAddForeignKey",
-      "db2: does not name standardColumnDef",
       "db2: does not name standardCreateIndex",
       "db2: does not name standardCreateTableForeignKey",
       "db2: does not name standardDropColumn",

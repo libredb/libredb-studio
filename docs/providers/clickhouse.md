@@ -1056,6 +1056,8 @@ The agent reads it through `runServerPack` and `agentEnginePack`, and the dialec
 | `statistics` | Dialect-bound | `"unsupported"` |
 | `catalogCapture` | Dialect-bound | `"unsupported"` |
 
+Its `catalogRead` declares `systemSchemas` (`system`, `INFORMATION_SCHEMA`, `information_schema`), the schemas every composer leaves out by name, so `inspect_schema` narrowed to one of them answers `CATALOG_SYSTEM_SCHEMA` before anything is sent, and an empty column read answers `CATALOG_MATCHED_NO_USER_OBJECT`: both say the tool lists user objects only and that a system view is read with `run_read_query`, never that the object does not exist.
+
 This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
 The catalog read takes `system.columns` and `system.tables`, which the server filters to what the user may see; the index kind is each table's primary and sorting key, since `system.data_skipping_indices` answers the least-privilege user `497`, and the relation kind is always empty, since ClickHouse keeps no foreign key.
 Each kind was run as the least-privilege user under `readonly = 1`.

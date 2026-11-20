@@ -75,6 +75,7 @@
  * the timer `watchTransactionTimeout` arms at claim, the route's reconcile, or the lapsed lease.
  */
 import { randomUUID } from "node:crypto";
+import type { ExplainMode } from "@/lib/explain";
 import { queryEventStart } from "@/lib/query-events/build";
 import { recordQueryEvent } from "@/lib/query-events/sink";
 import type {
@@ -149,6 +150,8 @@ export interface TransactionEventDetail {
   readonly status: QueryEventStatus;
   readonly started: QueryEventStart;
   readonly rowCount?: number;
+  /** The plan mode a plan request asked for (D16), absent for every other statement. */
+  readonly explain?: ExplainMode;
   readonly errorCode?: string;
   readonly errorMessage?: string;
 }

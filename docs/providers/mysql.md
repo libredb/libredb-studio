@@ -965,6 +965,7 @@ Block comments are flat: the MySQL reference manual (11.7 Comments, checked 2026
 A backslash does not always escape, because `NO_BACKSLASH_ESCAPES` in `sql_mode` turns the escape off per session.
 `[...]` and compound statements (`CREATE PROCEDURE ... BEGIN ... END`, cut with `DELIMITER` by MySQL's own client) are not established and stay at the fail-safe default; the second gap is BACKLOG S7.
 The update-target reader takes `--` as a comment only before a space or a control character, as MySQL and MariaDB do; its measurement on MariaDB 11.8.9 sits beside its regex in `src/lib/sql/update-target.ts`.
+`dollarQuotes` is false: MySQL and MariaDB have no dollar-quoted literal, so every `$` is code. `$` is a name character (`c$a$` and `$ab` are names), and `SELECT $$a$$` and `SELECT $a$x$a$` are ERROR 1064 (measured 2026-11-20 on 8.4.13). Read as an opener, the `$a$` of `c$a$` never closed, so a plain `SELECT c$a$ FROM t` or `CREATE TABLE ... (c$a$ INT)` asked as "Part of this statement could not be read" (R2), and the `$a$` inside `col$a$x` hid a `;` and a `DELETE` up to the next such name.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with a backtick as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
 A double quote is a string unless `ANSI_QUOTES` is set, so it is masked like any literal.
@@ -972,15 +973,28 @@ A double quote is a string unless `ANSI_QUOTES` is set, so it is masked like any
 ## 6. Transactions
 
 Identical lifecycle to PostgreSQL, on a **dedicated connection checked out from the pool and held
-for the transaction's duration** (so every statement runs on the same connection; it is not returned
-to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
+for the transaction's duration** (so every statement runs on the same connection). Surfaced via
+`POST /api/db/transaction`.
+
+**When the transaction ends, its connection is closed, never returned to the pool** (RG-DIGER1-6).
+MySQL rolls back rows, not the session. Measured on MySQL 8.4.13 on 2026-11-20 with a one-connection
+pool: after `BEGIN`, `CREATE TEMPORARY TABLE fx_tmp`, `SET @fx_leak = 42`, `GET_LOCK('fx_lock', 1)` and
+`ROLLBACK`, the next ordinary query borrowed the same connection and still read the table, the
+variable (`42`) and the lock; after the change it answers `Table 'rg.fx_tmp' doesn't exist`, `NULL`
+and a free lock, after a `COMMIT` as well. COMMIT, ROLLBACK, the timeout's auto-rollback and a
+session the server ended all close it (`destroy()`), and the pool opens a fresh connection on the
+next borrow, so the cost is one connect per ended transaction. Not `COM_RESET_CONNECTION`, for the
+reason the read-only profile gives ([§12.3](#123-the-row-bound-is-enforced-while-the-rows-arrive-the-deadline-is-re-enforced-by-the-provider-and-the-connection-is-closed-after-every-call)): on MySQL it also reset the
+session's character set to the server default. Closing a socket is the client's own act, so it holds
+the same way on MariaDB, TiDB and every other server this provider reaches. A `BEGIN` that opened
+nothing still hands its connection back, since nothing ran on it.
 
 | Method | Behaviour |
 |--------|-----------|
 | `beginTransaction(options?)` | `pool.getConnection()` + `BEGIN` (`START TRANSACTION` if `BEGIN` is refused as a parse error), arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active, refuses a `BEGIN` the server reports as having opened nothing, and answers `{ stateReported }`; with `requireReportedState` (SANDBOX) it also refuses a server that reports no state at all ([§6.0](#60-what-the-server-says-about-the-transaction)). |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. Ends the session when the server says the statement ended the transaction ([§6.0](#60-what-the-server-says-about-the-transaction)). One statement per call: the route splits a selection of several and calls this once per statement, in order, stopping at the first failure (#1390). Measured on MySQL 26.7.0 before that: two `UPDATE` lines run inside BEGIN or SANDBOX answered "You have an error in your SQL syntax ... at line 2". |
-| `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
-| `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
+| `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, closes the connection. Throws if none active. |
+| `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks, then closes the connection. |
 | `isInTransaction()` | Current state. |
 
 ### 6.0 What the server says about the transaction
@@ -1013,7 +1027,7 @@ so the provider reads them where a header exists, and three things follow:
   judged by the call's own header, the last element of its answer). A best-effort `ROLLBACK` is sent
   first (answered with a plain OK where the transaction is really gone), so a server that cleared
   the flag with a transaction still open could not hand that transaction to the pool. The
-  connection is released and `POST /api/db/transaction` answers `inTransaction: false`, which the
+  connection is closed and `POST /api/db/transaction` answers `inTransaction: false`, which the
   editor reports as "Not Rolled Back" (SANDBOX) or "Transaction Ended", without claiming whether
   the work was kept: a typed `ROLLBACK` clears the flag exactly as a commit does. A read answers
   rows and no header, so it is never judged, and a read never ends a transaction.
@@ -1087,7 +1101,7 @@ What follows from status `0` at BEGIN:
   session and roll the INSERT back. The cost is that a statement that does end the transaction
   there is not noticed either.
 - **SANDBOX is refused.** It asks with `requireReportedState`, and on such a server the provider
-  rolls back what the BEGIN opened, releases the connection and throws `TRANSACTION_STATE_UNREPORTED`
+  rolls back what the BEGIN opened, closes the connection and throws `TRANSACTION_STATE_UNREPORTED`
   ([`errors.ts`](../../src/lib/db/errors.ts)); the route answers 400 with that sentence and the
   editor shows "Sandbox Unavailable ... Nothing was run.". SANDBOX promises a rollback, and nothing
   the server answers there could show one happened.
@@ -1123,6 +1137,29 @@ Doing it needs a per-server capability probe of the kind `objectKinds` and the E
 
 Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and `POST /api/db/multi-query` shape-checks for it.
 The cost while it stands: an abandoned transaction keeps its InnoDB row locks until the connection is reused by a caller that ends it, or the pool closes.
+
+### 6.2 Session state a statement sets never goes back to the pool (Q5)
+
+A statement run through `query()` can change the SESSION it ran on, not only data, and that change outlived the call: the connection went back into the pool as it was, and whoever borrowed it next inherited it.
+Measured on MySQL 8.4.13 on 2026-11-20 through `POST /api/db/multi-query`: after the script `SET @rg2_v = 42; SET SESSION innodb_lock_wait_timeout = 7; SELECT ...`, three of six later, unrelated runs on the same stored connection read `v = 42` and `innodb_lock_wait_timeout = 7`, whichever the pool handed that session (the same pattern on 1.3.0).
+
+So `query()` reads each statement against `MYSQL_SESSION_STATE` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts), through [`session-state.ts`](../../src/lib/db/providers/sql/session-state.ts)) and does not pool the connection of one that can change the session:
+
+| Session-changing | How it is recognised |
+|---|---|
+| `SET` (a user variable, `SET SESSION`, `SET NAMES`, `SET autocommit`, `SET ROLE`), `USE`, `LOCK TABLES`, `PREPARE`, `HANDLER` | the statement's leading keyword, past whitespace and comments |
+| a temporary table, a user variable assigned inside a read (`:=`, `INTO @v`), a named lock (`GET_LOCK(`) | the text anywhere in the statement |
+
+- **Under a call scope** (both editor routes mint one per request), the connection is kept for the rest of the scope, so a script's next statement reads what it set (`SET @v = 42; SELECT @v` answers 42 every time, where it used to depend on which connection the pool handed out), and `endQueryScope(scope)` closes it once the request is done. Both routes call it after `endOpenQueryTransaction` and whether or not that raised.
+- **Without a scope** the connection is closed at once.
+- **Any other statement** goes back to the pool as before, so the cost is one reconnect after a session-changing statement and nothing otherwise.
+
+Closed, not reset: COM_RESET_CONNECTION also puts the session's character set back to the server default (see `queryReadOnly()`), which is why `releaseHeldConnection()` closes the transaction's connection too.
+A statement is judged whether it succeeded or not, since a failed one can still have changed the session first.
+The reading errs towards closing: a marker inside a string literal also counts, and costs a reconnect.
+What it cannot see is session state set by code the server runs on the statement's behalf, a `CALL`ed procedure that runs `SET @x`, for instance; such a connection still goes back to the pool.
+A `BEGIN` on its own is not in the table: the transaction a statement leaves open is §6.1's question, which this does not change.
+Re-measured after the change on MySQL 8.4.13 on 2026-11-20, provider-level: the script still read `v = 42, w = 7`, eight later runs all read `v = NULL, w = 50`, a scope's `CREATE TEMPORARY TABLE` and `GET_LOCK('fx_lock', 0)` were gone once the scope ended (`IS_FREE_LOCK` 1, the table "doesn't exist"), and a scope's `USE information_schema` left later runs on `rg`.
 
 ---
 
@@ -1553,6 +1590,13 @@ MySQL's own parenthesised expression defaults read back from the catalog charset
 `defaultValue` carries it as reported.
 The DDL read below carries `(concat(_latin1'x',_latin1'y'))` as `defaultExpression`, which the server accepts back.
 MariaDB's equivalent reads back as `concat('x','y')`, so the two servers still show the same column differently, and that is the engines' shape rather than a gap here.
+
+#### `autoIncrement`: the column the server numbers itself (R5)
+
+Both column reads set `ColumnSchema.autoIncrement` from `EXTRA`: `true` where it names the word `auto_increment`, which MySQL 8.4.13 writes alone or as `auto_increment INVISIBLE` for an invisible key, and `false` for every other value, the empty one included.
+MariaDB documents the same word, and the same rule reads it.
+The Test Data Generator leaves a `true` column out of its INSERT and generates a `false` one; before this it guessed from the name, so `id INT PRIMARY KEY` with no `AUTO_INCREMENT` was left out and refused with `Field 'id' doesn't have a default value` (measured on MySQL 8.4.13, 2026-11-20).
+The schema-diff migration writes a `true` column with `AUTO_INCREMENT` (R8).
 
 #### Default SQL from `SHOW CREATE TABLE` (#1031)
 
@@ -2686,6 +2730,8 @@ The agent reads it through `runServerPack` and `agentEnginePack`, and the dialec
 | `statistics` | Dialect-bound | `"unsupported"` |
 | `catalogCapture` | Dialect-bound | `"unsupported"` |
 
+Its `catalogRead` declares `systemSchemas` (`information_schema`, `performance_schema`, `mysql`, `sys`), the schemas every composer leaves out by name, so `inspect_schema` narrowed to one of them answers `CATALOG_SYSTEM_SCHEMA` before anything is sent, and an empty column read answers `CATALOG_MATCHED_NO_USER_OBJECT`: both say the tool lists user objects only and that a system view is read with `run_read_query`, never that the object does not exist.
+
 Its `planEstimate` prefix, `EXPLAIN FORMAT=JSON`, is in the restated-prefix strip like every engine's declared prefix, so a model that writes `EXPLAIN FORMAT=JSON` itself, in any case, gets a plan request that carries it once.
 
 This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
@@ -2956,7 +3002,8 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 [`MYSQL_MIGRATION_DDL`](../../src/lib/db/providers/sql/mysql-migration-ddl.ts) is what the schema-diff migration generator writes for `mysql`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
 MySQL drops an index with `ON <table>` and a foreign key with `DROP FOREIGN KEY`, and restates the whole column in `MODIFY COLUMN`.
 Everything else is the shared statement, wrapped in `BEGIN;` and `COMMIT;`.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `BEGIN_COMMIT`, `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
+A column the provider reads as `auto_increment` (`autoIncrement`) is written with `AUTO_INCREMENT` through the shared `autoNumberedColumnDef`; measured on MySQL 8.4.13, it was re-created as a plain `id int NOT NULL` before (R8).
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `BEGIN_COMMIT`, `standardAddColumn`, `standardAddForeignKey`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
 
 It prints no refusal reason.
 

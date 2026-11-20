@@ -581,6 +581,7 @@ Its grammar is `MSSQL_GRAMMAR`, the one reading the statement splitter, the row 
 Block comments nest, per "Slash Star (Block Comment) (Transact-SQL)" on learn.microsoft.com (checked 2026-08-05), the row the report on #300 got wrong.
 `//` is code, probed 2026-08-25 on 2022 through sqlcmd: `SELECT 1 AS a // note` is Msg 102, "Incorrect syntax near '/'".
 The batch is the unit, cut at `GO` lines: measured on 2025 RTM-CU9, `DECLARE @x INT = 5; SELECT @x * 2` sent as two requests is `Must declare the scalar variable "@x"`, and as one batch answers 10, and a `MERGE` keeps its `;` because the server refuses one without it (Msg 10713).
+`dollarQuotes` is false: T-SQL has no dollar-quoted literal, so every `$` is code. `$` is a name character after the first (`col$a$x` is a column) and opens a pseudo column or function at the start (`$action`, `$PARTITION`), and `SELECT $$a$$` is "Incorrect syntax near '$a$$'" (measured 2026-11-20). Read as an opener, the `$a$` inside `col$a$x` hid a `;` and a `DELETE` up to the next such name, so the gate never saw the `DELETE`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with `[` as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
 A double quote is a string while `QUOTED_IDENTIFIER` is off, so it is masked like any literal.
@@ -943,6 +944,12 @@ it. Measured on the fixture: `app.orders` reports `customers`, and `reporting.da
 **Zero column rows is a failed read, not an empty detail.** A table and a view each hold at least
 one column on SQL Server (`CREATE TABLE t ()` is a syntax error), so no rows means the object is not
 there, and `describeObject` raises rather than rendering a dropped table as a table with no columns.
+
+#### `autoIncrement`: the IDENTITY column (R5)
+
+Both column reads select `sys.columns.is_identity`, a `bit` the driver answers as a boolean, and set `ColumnSchema.autoIncrement` from it.
+The Test Data Generator leaves an identity column out of its INSERT and generates every other one, unless it has a default; before this it guessed from the name, so `id int PRIMARY KEY` with no `IDENTITY` was left out and refused with `Cannot insert the value NULL into column 'id'` (measured on SQL Server 2022, 2026-11-20).
+A column a sequence feeds through `DEFAULT NEXT VALUE FOR` is not an identity; it carries its default, and the generator leaves it to the server for that reason.
 
 #### Object source (#789)
 
@@ -1850,6 +1857,8 @@ The agent reads it through `runServerPack` and `agentEnginePack`, and the dialec
 | `statistics` | Dialect-bound | Supplied |
 | `catalogCapture` | Dialect-bound | `"unsupported"` |
 
+Its `catalogRead` declares `systemSchemas` (`sys`, `INFORMATION_SCHEMA`), the schemas every composer leaves out by name, so `inspect_schema` narrowed to one of them answers `CATALOG_SYSTEM_SCHEMA` before anything is sent, and an empty column read answers `CATALOG_MATCHED_NO_USER_OBJECT`: both say the tool lists user objects only and that a system view is read with `run_read_query`, never that the object does not exist.
+
 This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 
@@ -2058,7 +2067,9 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 [`MSSQL_MIGRATION_DDL`](../../src/lib/db/providers/sql/mssql-migration-ddl.ts) is what the schema-diff migration generator writes for `mssql`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
 SQL Server wraps the migration in `BEGIN TRANSACTION;` and `COMMIT;`, adds a column with a bare `ADD`, and drops an index with `ON <table>`.
 A modified column restates its type and nullability in one `ALTER COLUMN`, falling back to `NVARCHAR(MAX)`, and a changed default is a separate `ADD DEFAULT ... FOR <column>`.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropTable` and `standardPrimaryKey`.
+A column is written with its `declaredType`, which the object detail builds from `sys.columns` (`max_length`, `precision`, `scale`) in [`mssql-declared-type.ts`](../../src/lib/db/providers/sql/mssql-declared-type.ts): `varchar(50)`, `nvarchar(50)` (the byte length halved), `varchar(max)`, `decimal(12,2)`, `datetime2(7)`. Measured on SQL Server 2022 before it (R6): the bare `varchar`, `decimal` and `nvarchar` the migration wrote created `varchar(1)`, `decimal(18,0)` and `nvarchar(1)`, and every copied value was cut to fit.
+An `IDENTITY` column (`autoIncrement`) is written with `IDENTITY(1,1)` through the shared `autoNumberedColumnDef`; the seed and increment are not read, so a table that used others gets SQL Server's defaults (R8).
+The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropTable` and `standardPrimaryKey`.
 
 It prints no refusal reason.
 

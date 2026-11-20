@@ -173,6 +173,8 @@ const mockConnection = {
   query: (sql: MockStatement, params?: unknown[]) => answerStatement("query", sql, params),
   execute: (sql: MockStatement, params?: unknown[]) => answerStatement("execute", sql, params),
   release: () => {},
+  // mysql2's PoolConnection.destroy(): closes the socket and drops the connection from its pool.
+  destroy: () => {},
   beginTransaction: async () => {},
   commit: async () => {},
   rollback: async () => {},
@@ -1982,6 +1984,38 @@ describe("MySQLProvider", () => {
     });
 
     /**
+     * RG-DIGER1-6, measured on MySQL 8.4.13 on 2026-11-20 with a one-connection pool: after
+     * BEGIN, `CREATE TEMPORARY TABLE fx_tmp`, `SET @fx_leak = 42`, `GET_LOCK('fx_lock', 1)` and
+     * ROLLBACK, the next ordinary query still read the table, the variable and the lock. MySQL
+     * does not roll back session state, so the connection that held the transaction is closed
+     * rather than returned to the pool, however the transaction ends.
+     */
+    for (const [label, end] of [
+      ["COMMIT", (p: InstanceType<typeof MySQLProvider>) => p.commitTransaction()],
+      ["ROLLBACK", (p: InstanceType<typeof MySQLProvider>) => p.rollbackTransaction()],
+      ["the timeout's auto-rollback", (p: InstanceType<typeof MySQLProvider>) => p.expireTransaction()],
+    ] as const) {
+      test(`${label} closes the transaction's connection instead of returning its session to the pool`, async () => {
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        await provider.beginTransaction();
+        const release = spyOn(mockConnection, "release");
+        const destroy = spyOn(mockConnection, "destroy");
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          await end(provider);
+          expect(provider.isInTransaction()).toBe(false);
+          expect(destroy).toHaveBeenCalledTimes(1);
+          expect(release).not.toHaveBeenCalled();
+        } finally {
+          release.mockRestore();
+          destroy.mockRestore();
+          warn.mockRestore();
+        }
+      });
+    }
+
+    /**
      * The OK-packet status flags measured on MySQL 26.7.0 on 2026-10-04 through mysql2:
      * 16387 after `BEGIN` (and `START TRANSACTION`), 3 after an `INSERT` inside it, 16386
      * after a `CREATE TABLE` inside it. Bit 0 is `SERVER_STATUS_IN_TRANS`, and the CREATE
@@ -2066,7 +2100,7 @@ describe("MySQLProvider", () => {
       mockExecuteFn = answering({ BEGIN: 0 });
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
-      const release = spyOn(mockConnection, "release");
+      const release = spyOn(mockConnection, "destroy");
       try {
         protocolCalls.length = 0;
         await expect(provider.beginTransaction({ requireReportedState: true })).rejects.toThrow(
@@ -2158,7 +2192,7 @@ describe("MySQLProvider", () => {
       await provider.queryInTransaction("SELECT 1");
       expect(provider.isInTransaction()).toBe(true);
 
-      const release = spyOn(mockConnection, "release");
+      const release = spyOn(mockConnection, "destroy");
       try {
         protocolCalls.length = 0;
         await provider.queryInTransaction("CREATE TABLE t2 (id INT)");
@@ -2173,14 +2207,14 @@ describe("MySQLProvider", () => {
       }
     });
 
-    test("a ROLLBACK that fails on an ended session still releases the connection", async () => {
+    test("a ROLLBACK that fails on an ended session still closes the connection", async () => {
       const statuses = answering({ BEGIN: 16387, CREATE: 16386 });
       mockExecuteFn = (sql: string, params?: unknown[]) =>
         sql === "ROLLBACK" ? Promise.reject(new Error("Connection lost")) : statuses(sql, params);
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
       await provider.beginTransaction();
-      const release = spyOn(mockConnection, "release");
+      const release = spyOn(mockConnection, "destroy");
       try {
         await provider.queryInTransaction("CREATE TABLE t2 (id INT)");
         expect(provider.isInTransaction()).toBe(false);
@@ -2190,7 +2224,7 @@ describe("MySQLProvider", () => {
       }
     });
 
-    test("a ROLLBACK queued behind a statement that ended the session does not release the connection twice", async () => {
+    test("a ROLLBACK queued behind a statement that ended the session does not close the connection twice", async () => {
       const statuses = answering({ BEGIN: 16387, CREATE: 16386 });
       let finish: () => void = () => {};
       mockExecuteFn = async (sql: string, params?: unknown[]) => {
@@ -2209,7 +2243,7 @@ describe("MySQLProvider", () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
       await provider.beginTransaction();
-      const release = spyOn(mockConnection, "release");
+      const release = spyOn(mockConnection, "destroy");
       try {
         const running = provider.queryInTransaction("CREATE TABLE t2 (id INT)");
         const rolledBack = provider.rollbackTransaction();
@@ -5092,6 +5126,7 @@ function measuredDefaultColumns(mariadb: boolean): ColumnSchema[] {
       isPrimary: false,
       defaultValue: column.expected,
       defaultExpression: mariadb && column.expected !== undefined ? column.maria : undefined,
+      autoIncrement: false,
     })),
     {
       name: EXPRESSION_DEFAULT.name,
@@ -5100,6 +5135,7 @@ function measuredDefaultColumns(mariadb: boolean): ColumnSchema[] {
       isPrimary: false,
       defaultValue: expression.expected,
       defaultExpression: mariadb ? expression.raw : undefined,
+      autoIncrement: false,
     },
   ];
 }
@@ -6833,6 +6869,7 @@ describe("MySQL object listing and detail", () => {
       nullable: true,
       isPrimary: false,
       defaultValue: undefined,
+      autoIncrement: false,
     }));
 
   test("a column's type is the type AS DECLARED, with the family beside it (#1033)", async () => {
@@ -8480,6 +8517,163 @@ describe("endOpenQueryTransaction()", () => {
 });
 
 // ============================================================================
+// A session-changing statement's connection is never pooled (Q5)
+// ============================================================================
+//
+// Measured on MySQL 8.4.13 on 2026-11-20: a script's `SET @v = 42; SET SESSION
+// innodb_lock_wait_timeout = 7` was read back by three of six later runs, whichever the pool
+// handed that session. Each borrow here is its own connection object, so "the same session"
+// is an identity the assertions can read rather than the fixture's single shared connection.
+describe("query() and endQueryScope(): session state stays with its own scope (Q5)", () => {
+  let provider: InstanceType<typeof MySQLProvider>;
+
+  interface Borrowed {
+    readonly id: number;
+    readonly statements: string[];
+    released: number;
+    destroyed: number;
+  }
+
+  /** Every connection `query()` borrowed, in order, each recording what ran on it and how it left. */
+  let borrowed: Borrowed[];
+
+  async function connected(): Promise<void> {
+    mockExecuteFn = defaultMockExecute;
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    borrowed = [];
+    spyOn(mockPool, "getConnection").mockImplementation(async () => {
+      const record: Borrowed = { id: borrowed.length + 1, statements: [], released: 0, destroyed: 0 };
+      borrowed.push(record);
+      const sqlOf = (statement: MockStatement) => (typeof statement === "string" ? statement : statement.sql);
+      return {
+        ...mockConnection,
+        threadId: 100 + record.id,
+        query: (statement: MockStatement, params?: unknown[]) => {
+          record.statements.push(sqlOf(statement));
+          return answerStatement("query", statement, params);
+        },
+        execute: (statement: MockStatement, params?: unknown[]) => {
+          record.statements.push(sqlOf(statement));
+          return answerStatement("execute", statement, params);
+        },
+        release: () => {
+          record.released += 1;
+        },
+        destroy: () => {
+          record.destroyed += 1;
+        },
+      } as unknown as typeof mockConnection;
+    });
+  }
+
+  afterEach(async () => {
+    (mockPool.getConnection as unknown as { mockRestore?: () => void }).mockRestore?.();
+    await provider?.disconnect().catch(() => {});
+  });
+
+  test("a SET keeps its connection for the rest of the scope, and endQueryScope closes it instead of pooling it", async () => {
+    await connected();
+
+    await provider.query("SET @v = 42", undefined, undefined, "scope-a");
+    await provider.query("SELECT @v AS v", undefined, undefined, "scope-a");
+
+    expect(borrowed).toHaveLength(1);
+    expect(borrowed[0].statements).toEqual(["SET @v = 42", "SELECT @v AS v"]);
+    expect(borrowed[0].released).toBe(0);
+    expect(borrowed[0].destroyed).toBe(0);
+
+    await provider.endQueryScope("scope-a");
+    expect(borrowed[0].destroyed).toBe(1);
+    expect(borrowed[0].released).toBe(0);
+
+    // Spent: a second end, and an end of a scope that kept nothing, are no-ops.
+    await provider.endQueryScope("scope-a");
+    await provider.endQueryScope("never-used");
+    expect(borrowed[0].destroyed).toBe(1);
+  });
+
+  test("a statement that changes nothing goes back to the pool, scoped or not", async () => {
+    await connected();
+
+    await provider.query("SELECT 1", undefined, undefined, "scope-b");
+    await provider.query("UPDATE t SET a = 1");
+
+    expect(borrowed.map((b) => [b.released, b.destroyed])).toEqual([
+      [1, 0],
+      [1, 0],
+    ]);
+  });
+
+  test("without a scope a session-changing statement's connection is closed at once", async () => {
+    await connected();
+
+    await provider.query("SET SESSION innodb_lock_wait_timeout = 7");
+
+    expect(borrowed[0].destroyed).toBe(1);
+    expect(borrowed[0].released).toBe(0);
+  });
+
+  test("a SET that FAILED still keeps its connection out of the pool", async () => {
+    await connected();
+    mockExecuteFn = () => Promise.reject(Object.assign(new Error("Unknown system variable 'fx'"), { errno: 1193 }));
+
+    await expect(provider.query("SET SESSION fx = 1", undefined, undefined, "scope-c")).rejects.toThrow();
+    await provider.endQueryScope("scope-c");
+
+    expect(borrowed[0].released).toBe(0);
+    expect(borrowed[0].destroyed).toBe(1);
+  });
+
+  test("two scopes never share the session one of them kept", async () => {
+    await connected();
+
+    await provider.query("SET @v = 1", undefined, undefined, "scope-d");
+    await provider.query("SELECT @v", undefined, undefined, "scope-e");
+
+    expect(borrowed).toHaveLength(2);
+    expect(borrowed[1].statements).toEqual(["SELECT @v"]);
+    expect(borrowed[1].released).toBe(1);
+  });
+
+  test("disconnect forgets every kept session, so a later end closes nothing twice", async () => {
+    await connected();
+    await provider.query("SET @v = 1", undefined, undefined, "scope-f");
+
+    await provider.disconnect();
+    await provider.endQueryScope("scope-f");
+
+    expect(borrowed[0].destroyed).toBe(0);
+  });
+
+  /** The MySQL vocabulary, one row per entry of `MYSQL_SESSION_STATE`, and the reads that must stay pooled. */
+  for (const [sql, kept] of [
+    ["SET @v = 42", true],
+    ["set session innodb_lock_wait_timeout = 7", true],
+    ["SET NAMES latin1", true],
+    ["/* why */ SET autocommit = 0", true],
+    ["USE information_schema", true],
+    ["LOCK TABLES t READ", true],
+    ["PREPARE s FROM 'SELECT 1'", true],
+    ["HANDLER t OPEN", true],
+    ["CREATE TEMPORARY TABLE fx_tmp (a INT)", true],
+    ["SELECT @n := COUNT(*) FROM t", true],
+    ["SELECT COUNT(*) INTO @n FROM t", true],
+    ["DO GET_LOCK('fx', 0)", true],
+    ["SELECT @v", false],
+    ["UPDATE t SET a = 1", false],
+    ["INSERT INTO t VALUES (1)", false],
+    ["CREATE TABLE fx_t (a INT)", false],
+  ] as const) {
+    test(`${kept ? "keeps" : "pools"} the session of: ${sql}`, async () => {
+      await connected();
+      await provider.query(sql, undefined, undefined, "scope-v");
+      expect(borrowed[0].released).toBe(kept ? 0 : 1);
+    });
+  }
+});
+
+// ============================================================================
 // queryReadOnly(): the agent read-only execution profile on MySQL and MariaDB (#1612)
 // ============================================================================
 //
@@ -9203,5 +9397,85 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       expect(second.sets[1]).toBe("SET SESSION max_execution_time = 1700");
       expect(second.sets[2]).toBe("SET SESSION group_concat_max_len = 4194304");
     });
+  });
+});
+
+/**
+ * Whether the engine numbers a column itself (R5, the MySQL side of D27). The Test Data
+ * Generator leaves such a column out of its INSERT and generates every other one, so a
+ * provider that does not say leaves it guessing from the name, and `id INT PRIMARY KEY` with
+ * no AUTO_INCREMENT was left out and refused with `Field 'id' doesn't have a default value`.
+ *
+ * The EXTRA values are verbatim from MySQL 8.4.13 on 2026-11-20: `auto_increment` alone, and
+ * `auto_increment INVISIBLE` for an invisible key, which is why the match is on the word.
+ */
+describe("MySQL autoIncrement from EXTRA (R5)", () => {
+  const ROWS = [
+    { column_name: "id", extra: "auto_increment" },
+    { column_name: "hidden_id", extra: "auto_increment INVISIBLE" },
+    { column_name: "plain_id", extra: "" },
+    { column_name: "gen", extra: "VIRTUAL GENERATED" },
+    { column_name: "unsaid", extra: null },
+  ].map((row) =>
+    Object.assign({}, row, {
+      column_type: "int",
+      data_type: "int",
+      is_nullable: "NO",
+      column_default: null,
+      column_key: row.column_name === "id" ? "PRI" : "",
+    }),
+  );
+
+  async function described(bulk: boolean) {
+    const provider = await connectedTo(false);
+    const base = objectSurfaceFixture({ mariadb: false });
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (sql.includes("information_schema.COLUMNS") && sql.includes("ORDINAL_POSITION")) {
+        if (!sql.includes("object_name")) return [ROWS, []];
+        return [ROWS.map((row) => Object.assign({ object_name: "orders" }, row)), []];
+      }
+      return base(sql, params);
+    };
+    const detail = bulk
+      ? (await provider.describeObjects(["app"], "table")).details.find((entry) => entry.path[1] === "orders")
+      : await provider.describeObject(["app", "orders"], "table");
+    await provider.disconnect();
+    return new Map((detail?.columns ?? []).map((column) => [column.name, column]));
+  }
+
+  for (const bulk of [false, true]) {
+    test(`${bulk ? "the bulk" : "the single"} read says which columns the engine numbers`, async () => {
+      const columns = await described(bulk);
+
+      expect(columns.get("id")?.autoIncrement).toBe(true);
+      expect(columns.get("hidden_id")?.autoIncrement).toBe(true);
+      expect(columns.get("plain_id")?.autoIncrement).toBe(false);
+      expect(columns.get("gen")?.autoIncrement).toBe(false);
+      // A row with no EXTRA says nothing, and the reader keeps its own guess.
+      expect(Object.hasOwn(columns.get("unsaid") ?? {}, "autoIncrement")).toBe(false);
+    });
+  }
+});
+
+// R1, R2: `$` is never a dollar quote on this engine, measured on the engine itself and written in its doc, so a `$tag$`
+// inside a name hides no `;` and no write, and a plain read naming one is readable.
+describe("MySQL SQL grammar: dollarQuotes", () => {
+  test("`$` is code, so a name like `c$a$` is readable and a DELETE between two `$tag$` names asks", async () => {
+    const { resolveSqlGrammar } = await import("@/lib/sql/grammar");
+    const { splitCursorTargets } = await import("@/lib/sql/statement-splitter");
+    const { hasUnreadableRun, isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+    const doc = await Bun.file(`${import.meta.dir}/../../../docs/providers/mysql.md`).text();
+    const text = "SELECT col$a$x FROM t;\nDELETE FROM t;\nSELECT y$a$z FROM t";
+
+    expect(resolveSqlGrammar("mysql").dollarQuotes).toBe(false);
+    expect(splitCursorTargets(text, resolveSqlGrammar("mysql")).map((target) => target.sql)).toEqual([
+      "SELECT col$a$x FROM t",
+      "DELETE FROM t",
+      "SELECT y$a$z FROM t",
+    ]);
+    expect(isDangerousQuery(text, "mysql")).toBe(true);
+    expect(hasUnreadableRun("SELECT c$a$ FROM t", "mysql")).toBe(false);
+    expect(hasUnreadableRun("CREATE TABLE fx (c$a$ INT)", "mysql")).toBe(false);
+    expect(doc).toContain("`dollarQuotes` is false: MySQL and MariaDB have no dollar-quoted literal");
   });
 });

@@ -141,8 +141,13 @@ export async function runEditorQuery(provider: DatabaseProvider, run: EditorQuer
     throw noteAppendedBound(error, statement, probe.query);
   } finally {
     release();
-    if (endsOpenQueryTransactions(provider)) {
-      openTransaction = await provider.endOpenQueryTransaction(scope);
+    try {
+      if (endsOpenQueryTransactions(provider)) {
+        openTransaction = await provider.endOpenQueryTransaction(scope);
+      }
+    } finally {
+      // The session a session-changing statement left kept for this scope is closed, never pooled (Q5).
+      await provider.endQueryScope?.(scope);
     }
   }
 

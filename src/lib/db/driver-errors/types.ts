@@ -52,6 +52,11 @@ export interface DriverErrorClassifier {
   readonly statementFault?: (fields: DriverErrorFields) => boolean | undefined;
   /** Whether the message is the engine's own report of a time budget that elapsed, kept as the engine wrote it. */
   readonly timeout?: (message: string) => boolean;
+  /**
+   * Whether the code fields say the error is no time budget that elapsed, whatever its words: neither a row's
+   * `timeout` nor the generic timeout words are then read, and the engine's text reaches the reader unchanged.
+   */
+  readonly notTimeout?: (message: string, fields: DriverErrorFields) => boolean;
   /** Whether the error is the driver's report of a cancelled statement. */
   readonly cancelled?: (message: string, fields: DriverErrorFields) => boolean;
   /** A classification read from the message after the generic timeout words, or undefined for none. */

@@ -6,6 +6,8 @@ export type ExplainMode = "estimate" | "analyze";
 export type ExplainPlanNode = {
   Plan?: ExplainPlanNode;
   "Node Type"?: string;
+  /** PostgreSQL's join type ("Inner", "Left", "Full", "Right", "Semi", "Anti", "Right Semi", "Right Anti"). */
+  "Join Type"?: string;
   Strategy?: string;
   "Actual Rows"?: number;
   "Plan Rows"?: number;

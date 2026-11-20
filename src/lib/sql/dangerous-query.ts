@@ -446,14 +446,14 @@ function endOfParenthesised(text: string, open: number, grammar: SqlGrammar): nu
 }
 
 /**
- * Whether one option value turns ANALYZE off.
+ * Whether one option value turns a boolean option off: EXPLAIN's ANALYZE, or a `confirmOptionForms` option.
  *
  * Off is only a boolean false (`false`, `off`, `no`, `0` and their accepted prefixes) or an integer literal of
  * value 0, including the signed forms `+0` and `-0`. No value is on, and so is anything else: a nonzero literal
  * (`0x1`, `0b1`, `0o1`, `0_1`), a float, a word that only starts like a boolean, and a literal the scanner rejects.
  * Reading the leading `0` of `0x1` as the whole value is how that `DELETE` used to run with no dialog (#1863).
  */
-function analyzeValueIsOff(text: string, value: ExplainOptionToken, limit: number, grammar: SqlGrammar): boolean {
+function optionValueIsOff(text: string, value: ExplainOptionToken, limit: number, grammar: SqlGrammar): boolean {
   if (value.kind === "word" || value.kind === "string") return postgresBooleanIsFalse(value.text);
   if (value.kind === "number") return value.zero === true;
   if (value.text !== "+" && value.text !== "-") return false;
@@ -462,12 +462,18 @@ function analyzeValueIsOff(text: string, value: ExplainOptionToken, limit: numbe
 }
 
 /**
- * Whether a parenthesised option list enables ANALYZE.
+ * Whether a parenthesised option list enables an option `named` accepts: ANALYZE, for EXPLAIN.
  *
- * An option with no value is on. Any enabled `ANALYZE` executes, even when another is off, which asks rather than
- * missing a `DELETE`.
+ * An option with no value is on. Any enabled one counts, even when another is off, which asks rather than missing a
+ * `DELETE`.
  */
-function explainOptionsExecute(text: string, open: number, close: number, grammar: SqlGrammar): boolean {
+function optionListEnables(
+  text: string,
+  open: number,
+  close: number,
+  grammar: SqlGrammar,
+  named: (option: string) => boolean,
+): boolean {
   const limit = close - 1;
   let execute = false;
   let i = open + 1;
@@ -478,8 +484,8 @@ function explainOptionsExecute(text: string, open: number, close: number, gramma
     if (name.kind !== "word") continue;
     const value = readExplainOptionToken(text, i, limit, grammar);
     if (value !== null && value.kind !== "comma") i = value.end;
-    if (!ANALYZE_OPTIONS.has(name.text)) continue;
-    if (value === null || value.kind === "comma" || !analyzeValueIsOff(text, value, limit, grammar)) execute = true;
+    if (!named(name.text)) continue;
+    if (value === null || value.kind === "comma" || !optionValueIsOff(text, value, limit, grammar)) execute = true;
   }
   return execute;
 }
@@ -496,7 +502,9 @@ function stripExplainOptions(text: string, from: number, grammar: SqlGrammar): s
   if (text[start] === "(") {
     const close = endOfParenthesised(text, start, grammar);
     if (close < 0) return null;
-    return explainOptionsExecute(text, start, close, grammar) ? text.slice(close) : null;
+    return optionListEnables(text, start, close, grammar, (option) => ANALYZE_OPTIONS.has(option))
+      ? text.slice(close)
+      : null;
   }
 
   let at = start;
@@ -509,6 +517,25 @@ function stripExplainOptions(text: string, from: number, grammar: SqlGrammar): s
     at = word.end;
   }
   return analyze ? text.slice(at) : null;
+}
+
+/**
+ * Whether a `confirmOptionForms` form operates the statement: its keyword is the operative one, and the parenthesised
+ * option list right after it, past white space and comments, enables its option. A list that never closes enables
+ * nothing here; the statement is then one the server refuses.
+ */
+function optionFormAsks(text: string, keyword: string, end: number, grammar: SqlGrammar): boolean {
+  const forms = grammar.confirmOptionForms;
+  if (forms === undefined) return false;
+  const open = pastHiddenText(text, end, grammar);
+  if (text[open] !== "(") return false;
+  const close = endOfParenthesised(text, open, grammar);
+  if (close < 0) return false;
+  return forms.some(
+    (form) =>
+      form.keyword.toUpperCase() === keyword &&
+      optionListEnables(text, open, close, grammar, (option) => option === form.option.toUpperCase()),
+  );
 }
 
 /**
@@ -602,6 +629,8 @@ export function writesUnderGrammar(statement: string, grammar: SqlGrammar): bool
   if (reading !== null && formOperates(operatingForms(grammar), reading.keyword, text, reading.end, grammar)) {
     return true;
   }
+  // An option the dialect names, enabled in the option list after the keyword (`VACUUM (FULL) t`).
+  if (reading !== null && optionFormAsks(text, reading.keyword, reading.end, grammar)) return true;
   // A session key the dialect names: SET or RESET of it changes how every later statement of the session reads.
   if (reading !== null && configKeyAsks(text, reading, grammar)) return true;
   // Every question left is about words anywhere in the code, so its code words are read once for all of them.

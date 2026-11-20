@@ -1,11 +1,13 @@
 import { describe, test, expect } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import {
+  AGENT_READ_KEYWORDS,
   admitComposedStatement,
   agentPlanExecutionSqlInput,
   agentQueryReadSqlInput,
   agentReadSqlInput,
   inspectAgentStatement,
+  readAgentStatementRefusal,
 } from "@/lib/db/operations/statement-guard";
 
 /**
@@ -275,6 +277,29 @@ describe("agent SQL input schemas", () => {
       expect(parsed.error.issues[0]?.message).toContain("MULTIPLE_STATEMENTS");
       expect(parsed.error.issues[0]?.path).toEqual(["sql"]);
     }
+  });
+
+  test("the code an issue message carries reads back, and nothing else does (G-S1)", () => {
+    const parsed = agentReadSqlInput.safeParse({ sql: "SHOW server_version" });
+    if (parsed.success) throw new Error("expected the guard to refuse SHOW");
+    expect(readAgentStatementRefusal(parsed.error.issues[0]?.message ?? "")).toBe("NON_READ_STATEMENT");
+
+    const composed = agentQueryReadSqlInput.safeParse({ sql: "SELECT 1", composed: "forged" });
+    if (composed.success) throw new Error("expected a forged admission to be refused");
+    expect(readAgentStatementRefusal(composed.error.issues[0]?.message ?? "")).toBe("COMPOSED_ADMISSION_MISMATCH");
+
+    // A message the guard did not write, and one that borrows its prefix with a code outside the closed set.
+    expect(readAgentStatementRefusal("Too small: expected string to have >=1 characters")).toBeNull();
+    expect(readAgentStatementRefusal("agent statement refused: DROP TABLE users")).toBeNull();
+    expect(readAgentStatementRefusal("agent statement refused: constructor")).toBeNull();
+  });
+
+  test("the read keywords a denial names are the guard's own allowlist", () => {
+    expect(AGENT_READ_KEYWORDS).toEqual(["SELECT", "VALUES", "TABLE", "EXPLAIN"]);
+    for (const keyword of AGENT_READ_KEYWORDS) {
+      expect(inspectAgentStatement(`${keyword} x`)).not.toBe("NON_READ_STATEMENT");
+    }
+    expect(Object.isFrozen(AGENT_READ_KEYWORDS)).toBe(true);
   });
 
   test("only the plan-execution schema admits EXPLAIN ANALYZE", () => {

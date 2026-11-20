@@ -5793,3 +5793,77 @@ describe("a BLOB survives the wire, the export and a replay", () => {
     await provider.disconnect();
   });
 });
+
+// R1: `$` is never a dollar quote on this engine, measured on the engine itself and written in its doc, so a `$tag$`
+// inside a name hides no `;` and no write, and a plain read naming one is readable.
+describe("SQLite SQL grammar: dollarQuotes", () => {
+  test("a `$tag$` inside a name opens no dollar quote, so the DELETE between two such names asks", async () => {
+    const { resolveSqlGrammar } = await import("@/lib/sql/grammar");
+    const { splitCursorTargets } = await import("@/lib/sql/statement-splitter");
+    const { hasUnreadableRun, isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+    const doc = await Bun.file(`${import.meta.dir}/../../../docs/providers/sqlite.md`).text();
+    const text = "SELECT col$a$x FROM t;\nDELETE FROM t;\nSELECT y$a$z FROM t";
+
+    expect(resolveSqlGrammar("sqlite").dollarQuotes).toBe(false);
+    expect(splitCursorTargets(text, resolveSqlGrammar("sqlite")).map((target) => target.sql)).toEqual([
+      "SELECT col$a$x FROM t",
+      "DELETE FROM t",
+      "SELECT y$a$z FROM t",
+    ]);
+    expect(isDangerousQuery(text, "sqlite")).toBe(true);
+    expect(hasUnreadableRun("SELECT c$a$ FROM t", "sqlite")).toBe(false);
+    expect(doc).toContain("`dollarQuotes` is false: SQLite has no dollar-quoted literal");
+  });
+});
+
+/**
+ * Whether the engine numbers a column itself (R5, the SQLite side of D27). SQLite numbers exactly one kind of
+ * column: the rowid alias, a rowid table's sole primary-key column declared `INTEGER` (with or without
+ * AUTOINCREMENT). `INT PRIMARY KEY`, `BIGINT PRIMARY KEY`, a composite key and any key of a WITHOUT ROWID table
+ * are ordinary columns, so the Test Data Generator has to generate them, and guessing from the name left them out.
+ */
+describe("SQLiteProvider autoIncrement (R5)", () => {
+  const DDL = [
+    "CREATE TABLE rg_alias (id INTEGER PRIMARY KEY, name TEXT)",
+    "CREATE TABLE rg_autoinc (id integer primary key autoincrement, name TEXT)",
+    "CREATE TABLE rg_int (id INT PRIMARY KEY, name TEXT)",
+    "CREATE TABLE rg_bigint (id BIGINT PRIMARY KEY, name TEXT)",
+    "CREATE TABLE rg_pair (a INTEGER, b INTEGER, PRIMARY KEY (a, b))",
+    "CREATE TABLE rg_norowid (id INTEGER PRIMARY KEY, name TEXT) WITHOUT ROWID",
+    "CREATE VIEW rg_view AS SELECT id FROM rg_alias",
+  ];
+  const EXPECTED: Record<string, Record<string, boolean>> = {
+    rg_alias: { id: true, name: false },
+    rg_autoinc: { id: true, name: false },
+    rg_int: { id: false, name: false },
+    rg_bigint: { id: false, name: false },
+    rg_pair: { a: false, b: false },
+    rg_norowid: { id: false, name: false },
+    rg_view: { id: false },
+  };
+  const flags = (columns: readonly { name: string; autoIncrement?: boolean }[]) =>
+    Object.fromEntries(columns.map((column) => [column.name, column.autoIncrement]));
+
+  test("the single and the bulk read mark the rowid alias, and nothing else", async () => {
+    const provider = new SQLiteProvider(makeSQLiteConfig());
+    await provider.connect();
+    try {
+      // In order: a later statement reads a table an earlier one created.
+      await DDL.reduce(
+        (done, statement) => done.then(() => provider.query(statement)),
+        Promise.resolve<unknown>(undefined),
+      );
+
+      const singles = await Promise.all(
+        Object.keys(EXPECTED).map((name) => provider.describeObject([name], name === "rg_view" ? "view" : "table")),
+      );
+      for (const detail of singles) expect(flags(detail.columns)).toEqual(EXPECTED[detail.path[0]]);
+      const tables = await provider.describeObjects([], "table");
+      for (const detail of tables.details) expect(flags(detail.columns)).toEqual(EXPECTED[detail.path[0]]);
+      const views = await provider.describeObjects([], "view");
+      expect(flags(views.details[0].columns)).toEqual(EXPECTED.rg_view);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+});

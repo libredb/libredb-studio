@@ -400,7 +400,7 @@ A name is written as a JSON string literal, with control, line-separator and bid
 | Anything else | `QueryError` | Studio could not read the broker's answer for {route}. |
 
 The shared egress refusals of `DB_HTTP_BLOCK_PRIVATE_HOSTS` apply to both endpoints and pass through unchanged.
-The web server replaces every `TimeoutError`'s sentence with its shared timeout sentence, so the timeout sentences above are not yet shown through the query route.
+The web server answers a `TimeoutError` with HTTP 504 and the sentence it carries, so the timeout sentences above reach the query route unchanged.
 
 ## 12. Standards and deviations
 

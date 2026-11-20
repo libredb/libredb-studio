@@ -1077,6 +1077,7 @@ Block comments are flat: the tokenizer stops at the first `*/`, and the PL/SQL L
 A PL/SQL unit is one statement, ended by SQL*Plus's `/` line: measured on 26ai Free 23.26.3, a procedure cut at its inner `;` was stored INVALID with PLS-00103, and the unit is refused without the `;` after its `END`, so the splitter keeps that one.
 `[...]` is not established and stays at the fail-safe default.
 The update-target reader takes `MINUS` as a set operator here alone, since it is an ordinary column name on every other engine.
+`dollarQuotes` is false: Oracle has no dollar-quoted literal, so every `$` is code. `$` is a name character after the first (`col$a$x` is a column), `SELECT $$a$$ FROM dual` is ORA-00911, and `$$PLSQL_UNIT` is an inquiry directive (measured 2026-11-20 on XE 21 through node-oracledb). Read as an opener, the `$a$` inside `col$a$x` ran to the `$a$` of the next such name, so `SELECT col$a$x FROM t; DELETE FROM t; SELECT y$a$z FROM t` was read as one statement and the confirmation gate never saw its `DELETE` (R1).
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with `"` as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
 
@@ -1661,6 +1662,14 @@ Two of the four statements differ from the deleted flat reading's counterparts o
 `ForeignKeySchema.referencedTable` is one string, so it is spelled bare within the same owner and
 `OWNER.TABLE` outside it. Qualifying the cross-owner case is not cosmetic, since a bare name there
 addresses a table in the wrong schema. Turning that string into a path is Phase 2's.
+
+#### `autoIncrement`: the identity column, read from its default (R5)
+
+`ColumnSchema.autoIncrement` is `true` for an identity column and `false` for every other one.
+It is read from `DATA_DEFAULT` and not from `IDENTITY_COLUMN`, which 11g's `ALL_TAB_COLUMNS` does not have: an identity column defaults to its own system sequence, `"SYSTEM"."ISEQ$$_75900".nextval`, for `GENERATED ALWAYS` and `BY DEFAULT ON NULL` alike (measured on 21c XE, 2026-11-20), so the rule matches the `ISEQ$$_` name.
+`DEFAULT S.NEXTVAL` reads back as `"SYSTEM"."S"."NEXTVAL"` and stays a plain default: the Test Data Generator leaves a column with a default to the server anyway, and the schema-diff migration copies it as written rather than turning it into an identity (R8).
+Before this the generator guessed from the name, so `ID NUMBER PRIMARY KEY` was left out of its INSERT and refused with `ORA-01400: cannot insert NULL`.
+On 11g a key a trigger numbers from a sequence has no default, so it reads `false` and the generator writes a value the trigger may replace.
 
 #### `describeObjects()` describes a whole folder in five statements (#789)
 
@@ -2516,7 +2525,8 @@ is what lets the Operations tab render those words and send an operation Oracle 
 | `supportsExternalQueryLimiting` | `true` (from base) |
 | `createTable` | declared, see [Create Table form](#create-table-form) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core Oracle DML; an edit of a `DATE`, `TIMESTAMP`, or `TIMESTAMP WITH [LOCAL] TIME ZONE` cell still in the provider's text form binds `:n` through `TO_DATE`, `TO_TIMESTAMP`, or `FROM_TZ(TO_TIMESTAMP(:n, …), 'UTC')` ([§5.5](#the-sql-export-writes-an-oracle-date-literal-not-an-iso-string)) |
-| `supportsTestDataGeneration` | `true` - the row menus offer Generate Test Data on tables, which writes one multi-row `INSERT INTO ... VALUES`. A `DATE` value is written as `TO_DATE('2026-01-27', 'YYYY-MM-DD')` and a `TIMESTAMP` value as `TO_TIMESTAMP('2026-01-27 14:30:00', 'YYYY-MM-DD HH24:MI:SS')`, the form the SQL export writes, because the quoted ISO text is read through `NLS_DATE_FORMAT` and refused with `ORA-01861`; a `NUMBER` column is generated as an integer and written unquoted (#1400) |
+| `supportsTestDataGeneration` | `true` - the row menus offer Generate Test Data on tables, which writes one `INSERT INTO ... VALUES` per row (see `supportsMultiRowInsert`). A `DATE` value is written as `TO_DATE('2026-01-27', 'YYYY-MM-DD')` and a `TIMESTAMP` value as `TO_TIMESTAMP('2026-01-27 14:30:00', 'YYYY-MM-DD HH24:MI:SS')`, the form the SQL export writes, because the quoted ISO text is read through `NLS_DATE_FORMAT` and refused with `ORA-01861`; a `NUMBER` column is generated as an integer and written unquoted (#1400) |
+| `supportsMultiRowInsert` | `false` - a VALUES list of several rows is 23ai and later. Oracle 21c XE answers `INSERT INTO t (a, b) VALUES (..), (..)` with `ORA-00933: SQL command not properly ended` and inserts nothing (measured 2026-11-20, also in SQL*Plus), and the declaration is read before any server is, so the Test Data Generator and the CSV/JSON import write one `INSERT` per row on every version. The generator's text then runs as a script, one statement per row: measured on 21c XE, three rows into an identity table insert three rows numbered 1 to 3. A script is not one statement, so a row that fails leaves the rows before it in place |
 | `supportsResultPagination` | `true` — `OFFSET m ROWS FETCH NEXT n ROWS ONLY` from this provider's own `prepareQuery` override; page one is `FETCH FIRST n ROWS ONLY` (#816) |
 | `supportsTransactions` | `true` — Oracle is always in a transaction and the held connection commits or rolls back, so the trio and the SANDBOX toggle are offered (#464) |
 | `implicitCommitStatements` | `ALTER`, `ANALYZE`, `ASSOCIATE`, `AUDIT`, `COMMENT`, `CREATE`, `DISASSOCIATE`, `DROP`, `FLASHBACK`, `GRANT`, `NOAUDIT`, `PURGE`, `RENAME`, `REVOKE`, `TRUNCATE`: Oracle's DDL, which "implicitly commits the current transaction before and after every DDL statement" (SQL Language Reference, "Types of SQL Statements"). Plus `BEGIN`, `DECLARE` and `CALL`: a PL/SQL block or a procedure can commit through `EXECUTE IMMEDIATE` or its own `COMMIT`. SANDBOX refuses all of these before sending, because a `ROLLBACK` after one answers success and can undo nothing, and this provider reads no transaction state back from the server to notice afterwards, so the declaration is the only guard here. `COMMIT`, `ROLLBACK` and `ABORT` are refused on every engine |
@@ -2886,6 +2896,7 @@ the object tree's own routes under `POST /api/db/objects/*`
 Oracle DDL commits implicitly and `BEGIN` opens a PL/SQL block, not a transaction, so `transactionWrapper` is `null`.
 Oracle has no `IF EXISTS` on `DROP CONSTRAINT` or `DROP INDEX`, so a dropped foreign key, index or table is written bare.
 A column definition puts `DEFAULT` before `NOT NULL`, falls back to `VARCHAR2(255)`, and is added with `ADD (...)`.
+An identity column (`autoIncrement`) is written `GENERATED BY DEFAULT AS IDENTITY` through the shared `autoNumberedColumnDef`, in place of the `ISEQ$$_...nextval` default the catalog reports for it, which names a sequence the target does not have (R8).
 A modified column writes its nullability only when it changes, because restating ` NULL` on a nullable column is ORA-01451 and the column keeps its old type (#1240).
 The live regression probe is `tests/live/schema-diff-dialects.ts`.
 The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn` and `standardPrimaryKey`.

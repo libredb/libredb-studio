@@ -963,6 +963,147 @@ describe("useQueryExecution", () => {
     expect(tabs[0].resultQuery).toBe("SELECT * FROM users");
   });
 
+  /**
+   * D16: a failed Explain is no plan of this statement. The Explain tab is brought forward for it, so the plan of the
+   * statement before it left on the tab read as this one's (measured on PostgreSQL 19 and 18: a `relation does not
+   * exist` toast over the previous statement's Index Scan plan).
+   */
+  test("an EXPLAIN that fails clears the plan of the statement before it", async () => {
+    const tab = createTab({ explainPlan: { format: "postgres-json", raw: [{ Plan: { "Node Type": "Index Scan" } }] } });
+    const { tabs, setTabs } = mutableTabs([tab]);
+    mockGlobalFetch({
+      "/api/db/query": { ok: false, status: 400, json: { error: 'relation "t_d.tx_only" does not exist' } },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tab, setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM t_d.tx_only", undefined, true);
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith("Query Error", {
+      description: 'relation "t_d.tx_only" does not exist',
+    });
+    expect(tabs[0].explainPlan).toBeUndefined();
+    expect(result.current.bottomPanelMode).toBe("explain");
+  });
+
+  /**
+   * The same path on MySQL, measured live on MySQL 8.4.13 on 2026-11-20: an Explain of a missing table answers HTTP 400
+   * "Table 'rg.fx_nope' doesn't exist" and the "Query Error" toast carries that text for about four seconds (sonner's
+   * default), after which the tab says "No execution plan". The toast is raised by the one catch every engine shares, so
+   * an Explain failure is reported the same way whatever the connection type and plan format.
+   */
+  test("an EXPLAIN that fails on MySQL raises the engine's own text through the same toast", async () => {
+    const tab = createTab({ explainPlan: { format: "mysql-json", raw: { query_block: { select_id: 1 } } } });
+    const { tabs, setTabs } = mutableTabs([tab]);
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: false,
+        status: 400,
+        json: { error: "Table 'rg.fx_nope' doesn't exist", code: "QUERY_ERROR", statusCode: 400 },
+      },
+    });
+    const params = createDefaultParams({
+      tabs,
+      currentTab: tab,
+      setTabs,
+      activeConnection: { ...mockConnection, type: "mysql" as const },
+      metadata: {
+        ...mockMetadata,
+        capabilities: { ...mockMetadata.capabilities, explainFormat: "mysql-json" as const },
+      },
+    });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM rg.fx_nope", undefined, true);
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith("Query Error", { description: "Table 'rg.fx_nope' doesn't exist" });
+    expect(tabs[0].explainPlan).toBeUndefined();
+    expect(result.current.bottomPanelMode).toBe("explain");
+  });
+
+  /** A failed RUN is not a failed plan: the plan tab is not the run's to clear. */
+  test("a run that fails leaves the tab's plan alone", async () => {
+    const plan = { format: "postgres-json" as const, raw: [{ Plan: { "Node Type": "Index Scan" } }] };
+    const tab = createTab({ explainPlan: plan });
+    const { tabs, setTabs } = mutableTabs([tab]);
+    mockGlobalFetch({ "/api/db/query": { ok: false, status: 400, json: { error: "syntax error" } } });
+    const params = createDefaultParams({ tabs, currentTab: tab, setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELEC 1");
+    });
+
+    expect(tabs[0].explainPlan).toEqual(plan);
+  });
+
+  /**
+   * D16: with BEGIN on, the Explain button ran on a pooled session of its own, outside the transaction, so a table the
+   * transaction created was `relation does not exist` (HTTP 400) to it, while a typed EXPLAIN in the same transaction
+   * planned it. The plan is asked of the transaction's own session, on the route that holds it.
+   */
+  test("an Explain while a transaction is open is asked of the transaction", async () => {
+    const planRow = { rows: [{ "QUERY PLAN": [{ Plan: { "Node Type": "Seq Scan" } }] }], fields: ["QUERY PLAN"] };
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    const fetchMock = mockGlobalFetch({
+      "/api/db/transaction": { ok: true, json: { ...planRow, explainFormat: "postgres-json", inTransaction: true } },
+      "/api/db/query": { ok: true, json: planRow },
+    });
+    const onTransactionEnded = mock(() => {});
+    const params = createDefaultParams({
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+      transactionActive: true,
+      onTransactionEnded,
+    });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM t_d.tx_only", undefined, true);
+    });
+
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.includes("/api/db/query"))).toBe(false);
+    const txnCall = fetchMock.mock.calls.find((call) => String(call[0]).includes("/api/db/transaction"));
+    const body = JSON.parse(txnCall![1]!.body as string);
+    expect(body).toMatchObject({ action: "query", sql: "SELECT * FROM t_d.tx_only", explain: { mode: "analyze" } });
+    expect(body.options).toEqual({});
+    expect(tabs[0].explainPlan).toEqual({
+      format: "postgres-json",
+      raw: planRow.rows[0]["QUERY PLAN"],
+    });
+    // A plan is no result: the grid keeps what it had, and the transaction is still open.
+    expect(tabs[0].result).toBeNull();
+    expect(onTransactionEnded).not.toHaveBeenCalled();
+  });
+
+  /**
+   * And no plan is asked for in the background of a run in a transaction: the pooled session it went to cannot see
+   * what the transaction did (a 400 for a table it created), and the transaction's own session is not asked a second,
+   * unrequested statement, which on PostgreSQL would abort the whole transaction if it failed.
+   */
+  test("a run while a transaction is open asks for no background plan", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/transaction": { ok: true, json: { ...mockQueryResult, inTransaction: true } },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams({ transactionActive: true });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM t_d.tx_only");
+    });
+
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.filter((url) => url.includes("/api/db/transaction"))).toHaveLength(1);
+    expect(urls.some((url) => url.includes("/api/db/query"))).toBe(false);
+  });
+
   /** A thrown request, not a refused one, is the same failure to the reader. */
   test("a request that throws replaces the previous result too", async () => {
     const tab = createTab({

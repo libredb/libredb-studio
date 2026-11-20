@@ -288,11 +288,19 @@ const LIST_TRIGGERS_SQL = `
 // declares, so only that value is excluded. `getSchema()` still reads `table_info` and
 // still loses generated columns; that is the flat surface's defect, recorded in
 // docs/BACKLOG.md.
+//
+// `rowid_table` says whether the object is an ordinary rowid table, which decides whether its
+// `INTEGER PRIMARY KEY` is the rowid alias the engine numbers itself (R5). It joins
+// `pragma_table_list` on the xinfo function's own hidden `arg` and `schema` columns, so the
+// statement binds nothing more.
+const ROWID_TABLE_JOIN = `LEFT JOIN pragma_table_list AS t ON t.schema = x.schema AND t.name = x.arg`;
 const OBJECT_COLUMNS_SQL = `
-      SELECT name, type, "notnull", dflt_value, pk
-        FROM pragma_table_xinfo(?, ?)
-       WHERE hidden <> 1
-       ORDER BY cid
+      SELECT x.name AS name, x.type AS type, x."notnull" AS "notnull", x.dflt_value AS dflt_value, x.pk AS pk,
+             (t.type = 'table' AND t.wr = 0) AS rowid_table
+        FROM pragma_table_xinfo(?, ?) AS x
+        ${ROWID_TABLE_JOIN}
+       WHERE x.hidden <> 1
+       ORDER BY x.cid
     `;
 
 // `ORDER BY name`, which `pragma_index_list` does NOT do on its own: measured, it answers
@@ -425,6 +433,20 @@ interface ObjectColumnRow {
   notnull: number;
   dflt_value: string | null;
   pk: number;
+  /** 1 for an ordinary rowid table, 0 for a view, a virtual or a WITHOUT ROWID table (R5). */
+  rowid_table?: number | null;
+}
+
+/**
+ * Whether SQLite numbers this column itself (R5): the rowid alias, which is a rowid table's
+ * one primary-key column declared exactly `INTEGER`, AUTOINCREMENT or not. `INT` and `BIGINT`
+ * keys are ordinary columns. Absent where the row did not say what kind of table it is.
+ */
+function rowidAlias(row: ObjectColumnRow, keyColumns: number): { autoIncrement?: boolean } {
+  if (typeof row.rowid_table !== "number") return {};
+  return {
+    autoIncrement: row.rowid_table === 1 && row.pk === 1 && keyColumns === 1 && row.type?.toUpperCase() === "INTEGER",
+  };
 }
 
 /** One index on an object, as `pragma_index_list` publishes it. */
@@ -614,9 +636,11 @@ function bulkDetailStatements(types: readonly string[], bounded: boolean): BulkD
       SELECT d.object_name AS object_name FROM described AS d`,
     columns: `${described}
       SELECT d.object_name AS object_name, x.name AS name, x.type AS type,
-             x."notnull" AS "notnull", x.dflt_value AS dflt_value, x.pk AS pk
+             x."notnull" AS "notnull", x.dflt_value AS dflt_value, x.pk AS pk,
+             (t.type = 'table' AND t.wr = 0) AS rowid_table
         FROM described AS d
         JOIN pragma_table_xinfo(d.object_name, ?) AS x
+        ${ROWID_TABLE_JOIN}
        WHERE x.hidden <> 1
        ORDER BY d.object_name, x.cid`,
     indexes: `${described}
@@ -856,6 +880,8 @@ function objectDetailFromRows(path: readonly string[], rows: ObjectDetailRows): 
     else existing.push(row.name);
   }
 
+  const primaryKeyColumns = rows.columns.filter((row) => row.pk > 0).length;
+
   return {
     path: [...path],
     columns: rows.columns.map((row) => ({
@@ -871,6 +897,7 @@ function objectDetailFromRows(path: readonly string[], rows: ObjectDetailRows): 
       isPrimary: row.pk > 0,
       defaultValue: readCatalogDefault(row.dflt_value),
       defaultExpression: row.dflt_value ?? undefined,
+      ...rowidAlias(row, primaryKeyColumns),
     })),
     indexes: rows.indexes.map((row) => ({
       name: row.name,

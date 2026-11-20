@@ -43,6 +43,10 @@ export const SQLITE_GRAMMAR: SqlGrammar = {
   // agrees - `case CC_SLASH` opens a run only on `/*`.
   doubleSlashComment: false,
   backslashAlwaysEscapes: false,
+  // No dollar-quoted literal: the tokenizer reads `$` as a name character (`col$a$x` is a column) and as the prefix of
+  // a bind parameter (`SELECT $$a$$` binds a parameter named `$$a$$`, measured 2026-11-20 through bun:sqlite). Read as
+  // an opener, the `$a$` inside `col$a$x` hid a `;` and a DELETE up to the next such name.
+  dollarQuotes: false,
   // `CREATE TRIGGER … BEGIN … END` is the one statement with a body. Measured through
   // node:sqlite 3.50.4 before the fact existed: the trigger cut at its inner `;` was
   // `incomplete input`.

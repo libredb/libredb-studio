@@ -729,11 +729,11 @@ export interface ColumnSchema {
    * PostgreSQL is why it exists. `format_type(atttypid, NULL)` is the unqualified
    * base name (`character varying`, `numeric`, `vector`) and that is what `type`
    * stays, because a reader that matches a column against a spelling it knows —
-   * autocomplete, migration DDL, the agent's schema capture, the diagram's numeric
+   * autocomplete, the agent's schema capture, the diagram's numeric
    * test — is matching the base name. `format_type(atttypid, atttypmod)` is what a
    * person needs in order to write the column: `character varying(50)`,
-   * `numeric(12,2)`, `vector(1536)`. The column tooltip and the object detail show
-   * this field. A column with no modifier (`text`, `integer`, `text[]`) is given
+   * `numeric(12,2)`, `vector(1536)`. The column tooltip, the object detail and the
+   * schema-diff migration DDL (D05) read this field. A column with no modifier (`text`, `integer`, `text[]`) is given
    * the same string in both fields.
    *
    * Optional because an engine that already puts the modifier in `type` has nothing
@@ -793,6 +793,41 @@ export interface ColumnSchema {
    */
   defaultExpression?: string;
   /**
+   * Whether the engine numbers this column itself when an INSERT leaves it out, as the provider
+   * read it from the catalog: `true` for an identity column or one fed by a sequence, `false`
+   * where the provider looked and found neither. The object detail of PostgreSQL, MySQL and
+   * MariaDB (EXTRA `auto_increment`), SQL Server (`is_identity`), Oracle (an identity column's
+   * `ISEQ$$_` default), Db2 (`SYSCAT.COLUMNS.IDENTITY`), DuckDB (`nextval(`) and
+   * SQLite (the rowid alias) fill it (R5).
+   *
+   * Absent means the provider does not say, which is every other engine, and a
+   * reader then keeps guessing from the column's name. The guess is why the field exists: the
+   * Test Data Generator took every column called `id` or ending in `_id` for an auto-increment
+   * key and left it out of the INSERT, so `id int PRIMARY KEY` with no default failed with
+   * `null value in column "id" ... violates not-null constraint` (D27, PostgreSQL 19.0 and
+   * 18.7). An identity column has no default to read instead: PostgreSQL keeps no `pg_attrdef`
+   * row for it, so `defaultValue` cannot tell it from a column the engine never fills.
+   */
+  autoIncrement?: boolean;
+  /**
+   * Whether the engine computes this column from the others: `"stored"` or `"virtual"`, as the provider read it, and
+   * {@link defaultValue} then holds the generation expression rather than an insert default.
+   *
+   * Absent means the provider does not say, which is every engine but PostgreSQL today. PostgreSQL keeps a
+   * generated column's expression where it keeps a default (`pg_attrdef`), so without this field the schema-diff
+   * migration wrote `vt integer DEFAULT (a * 3)`, which PostgreSQL 19.0 refuses with `cannot use column reference
+   * in DEFAULT expression` (R9).
+   */
+  generated?: "stored" | "virtual";
+  /**
+   * The sequence this column's default draws from, as the provider read its options, for a migration that recreates
+   * it as it was rather than as `CREATE SEQUENCE name` with every option at its default.
+   *
+   * Absent means the provider does not say, which is every engine but PostgreSQL today, and there only for a
+   * default that calls one sequence (`pg_sequence`, PostgreSQL 10 and later).
+   */
+  sequence?: ColumnSequence;
+  /**
    * How the engine knows this column: `"sampled"` where the provider inferred it from rows it read rather than
    * from a declaration the engine holds, so another row may carry a key this list lacks and a listed one may be
    * absent from most rows.
@@ -815,6 +850,23 @@ export interface ColumnSchema {
    * Absent means projectable (`true`), which is the case for ordinary columns across all engines.
    */
   projectable?: boolean;
+}
+
+/**
+ * A sequence's options as the engine's catalog holds them, each number as its decimal text so a 64-bit bound survives
+ * JSON: PostgreSQL's `pg_sequence` row for the sequence a column default calls.
+ */
+export interface ColumnSequence {
+  /** The sequence's own type: `smallint`, `integer` or `bigint`. */
+  dataType: string;
+  start: string;
+  increment: string;
+  min: string;
+  max: string;
+  cache: string;
+  cycle: boolean;
+  /** Whether the sequence belongs to this column (`OWNED BY`), so dropping the column or its table drops it too. */
+  ownedByColumn: boolean;
 }
 
 export interface IndexSchema {

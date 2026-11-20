@@ -353,8 +353,15 @@ export async function POST(req: NextRequest) {
       }
     } finally {
       release();
-      if (endsOpenQueryTransactions(provider)) {
-        openTransaction = await provider.endOpenQueryTransaction(scope);
+      try {
+        if (endsOpenQueryTransactions(provider)) {
+          openTransaction = await provider.endOpenQueryTransaction(scope);
+        }
+      } finally {
+        // A statement that changed the session kept its connection for the rest of this script, so a
+        // `SET @v = 42; SELECT @v` reads its own variable, and that connection is closed here rather
+        // than pooled, so the next request on this stored connection does not (Q5).
+        await provider.endQueryScope?.(scope);
       }
     }
 

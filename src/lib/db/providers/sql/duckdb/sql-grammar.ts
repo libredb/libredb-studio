@@ -29,6 +29,10 @@ const DUCKDB_GRAMMAR: SqlGrammar = {
   // `SELECT 1 AS a // note` is `Parser Error: syntax error at or near "//"`.
   doubleSlashComment: false,
   backslashAlwaysEscapes: false,
+  // `$` continues a name, and both dollar-quoted forms exist: `col$a$x` is a column, `SELECT $$a;b$$` and
+  // `SELECT $t$a;b$t$` answer `a;b` (measured 2026-11-20 on @duckdb/node-api 1.5.5). Without it the `$a$` inside
+  // `col$a$x` opened a literal and hid a `;` and a DELETE, the F09 shape PostgreSQL's row already declares.
+  dollarInNames: true,
   script: DEFAULT_SQL_GRAMMAR.script,
   trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };

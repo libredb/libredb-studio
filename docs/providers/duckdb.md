@@ -807,6 +807,7 @@ Every fact was measured on v1.5.5 through `@duckdb/node-api` 1.5.5-r.4, and the 
 Block comments nest: `/* a /* b */ still */ SELECT 1` runs.
 `SELECT q'[x]' AS a` is `Catalog Error: Type with name q does not exist!`, and `SELECT 1 AS a // note` is `Parser Error: syntax error at or near "//"`.
 The update-target reader takes `PIVOT`, `UNPIVOT`, `UNNEST`, `SUMMARIZE`, `DESCRIBE` and `SHOW` as words that open a query here alone: on DuckDB 1.5.5 `(PIVOT orders ON k USING max(note))` is a scalar subquery that answers with another table's value, and asking about them on every engine cost PostgreSQL a refusal for `coalesce(show, '')`.
+`dollarInNames` is set: `$` continues a name, so `col$a$x` is one name and the `$a$` inside it opens no dollar quote, while both dollar-quoted forms stay literals (`SELECT $$a;b$$` and `SELECT $t$a;b$t$` answer `a;b`), measured 2026-11-20 on @duckdb/node-api 1.5.5. Read as an opener, the `$a$` inside `col$a$x` ran to the `$a$` of the next such name and hid a `;` and a `DELETE`, the F09 shape PostgreSQL's row declares the same fact for.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
@@ -1090,6 +1091,12 @@ generator writes after the word `DEFAULT`; without it, a decoded `abc` would be 
 column with no default carries neither field. `readCatalogDefault()` is local to this
 provider, the way per-provider normalization is everywhere else in this tree; the escape
 knowledge it relies on is the shared part.
+
+#### `autoIncrement`: a column a sequence feeds (R5)
+
+DuckDB has no identity column and no `AUTOINCREMENT`; a key is numbered by `DEFAULT nextval('seq')`, which the catalog reads back as `nextval('seq')`.
+`ColumnSchema.autoIncrement` is `true` for a column whose default starts with `nextval(` and `false` for every other.
+The Test Data Generator leaves such a column out of its INSERT and generates a plain `INTEGER PRIMARY KEY`; before this it guessed from the name and left it out, and DuckDB refused the INSERT with `NOT NULL constraint failed` (measured 2026-11-20).
 
 #### No row count on a listed object, deliberately
 

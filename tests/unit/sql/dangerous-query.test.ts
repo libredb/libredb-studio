@@ -204,3 +204,37 @@ describe("isDangerousQuery's cost grows with its text and no faster", () => {
     ROUNDS_TIMEOUT_MS,
   );
 });
+
+// Where the engine has no dollar-quoted string (`dollarQuotes: false`), a `$tag$` inside a name hides nothing: the
+// DELETE between `col$a$x` and `y$a$z` asks (R1, measured on Oracle XE 21 as `dangerous: false` before), and a plain
+// read naming `c$a$` is readable (R2, measured on MySQL 8.4 as "Part of this statement could not be read" before).
+describe("isDangerousQuery and hasUnreadableRun: no dollar quote where the engine has none", () => {
+  test.each<DatabaseType>(["oracle", "mysql", "mssql", "db2", "sqlite", "libsql", "duckdb"])("%s", (type) => {
+    expect(isDangerousQuery("SELECT col$a$x FROM rg_t; DELETE FROM rg_t; SELECT y$a$z FROM rg_t", type)).toBe(true);
+    expect(isDangerousQuery("SELECT c$a$ FROM t", type)).toBe(false);
+    expect(hasUnreadableRun("SELECT c$a$ FROM t", type)).toBe(false);
+    expect(hasUnreadableRun("CREATE TABLE fx (c$a$ INT)", type)).toBe(false);
+  });
+});
+
+// Db2 runs a compound statement whole now (`sql-pl`), so the gate reads into it: a block that deletes asks, and one
+// that only inserts does not, as before (R3).
+describe("isDangerousQuery: Db2 compound statements", () => {
+  test.each([
+    "BEGIN DECLARE v INTEGER DEFAULT 0; SET v = 7; DELETE FROM RG_B.RG_PLAIN WHERE ID = v; END",
+    "BEGIN ATOMIC UPDATE RG_B.RG_PLAIN SET NAME = 'x'; END",
+    "BEGIN NOT ATOMIC IF 1 = 1 THEN DROP TABLE RG_B.RG_PLAIN; END IF; END",
+    "SELECT 1 FROM SYSIBM.SYSDUMMY1; BEGIN DELETE FROM RG_B.RG_PLAIN; END",
+  ])("%j asks", (sql) => {
+    expect(isDangerousQuery(sql, "db2")).toBe(true);
+  });
+
+  test("a block that only inserts does not ask", () => {
+    expect(
+      isDangerousQuery(
+        "BEGIN DECLARE v INTEGER DEFAULT 0; SET v = 7; INSERT INTO RG_B.RG_PLAIN (ID) VALUES (v); END",
+        "db2",
+      ),
+    ).toBe(false);
+  });
+});

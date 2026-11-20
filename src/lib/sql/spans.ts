@@ -377,8 +377,8 @@ function readAlternateQuoted(sql: string, index: number, tagLength: number): Sql
  * Whether the character before `index` continues a word, i.e. `index` is inside
  * one.
  *
- * Only the alternate-quote tag and the raw-string prefix need this: they are the
- * spans that open on an identifier character. Oracle's lexer reads a name greedily,
+ * The alternate-quote tag and the raw-string prefix need this because they are
+ * the spans that open on an identifier character. Oracle's lexer reads a name greedily,
  * so `freq'x'` there is a name followed by an ordinary string, and without the
  * check the two kinds of reader in this folder would disagree about such text as
  * well - the ones that read whole words step over the name and never ask here,
@@ -393,10 +393,23 @@ function readAlternateQuoted(sql: string, index: number, tagLength: number): Sql
  * takes the longest token, so an `r` inside a name belongs to the name and the
  * quote after it opens an ordinary escaping literal.
  *
+ * The dollar quote asks too where the dialect says `$` continues a name
+ * (`dollarInNames`), though it opens on `$` rather than on a letter: PostgreSQL's
+ * lexer (`scan.l`, `ident_cont`) takes `$` as an identifier character after the
+ * first one, so `col$a$x` is one name and `$a$` inside it opens nothing. Without the
+ * check, `SELECT col$a$x FROM t; DELETE FROM v; SELECT y$a$z FROM t` read as one
+ * statement whose middle was a "literal", so the splitter sent all three together
+ * and the confirmation gate never saw the DELETE (F09). The check is the previous
+ * character alone, which keeps it linear, and it errs one way: a `$` right after a
+ * number, a positional parameter or a closed dollar string (`1$$x$$`, `$1$$x$$`,
+ * `$$a$$$$b$$`) opens a dollar quote for the server and reads as code here. Those
+ * spellings have no space PostgreSQL would need, and code is the side where a write
+ * is still seen.
+ *
  * `wholeCodePoint` reads the code point before `index` instead of one UTF-16
  * unit, so a letter outside the Basic Multilingual Plane counts as the letter it
- * is; the raw-string prefix passes it, and the alternate-quote tag keeps the
- * one-unit read.
+ * is; the raw-string prefix passes it, and the alternate-quote tag and the dollar
+ * quote keep the one-unit read, as the word readers here do.
  */
 function continuesWord(sql: string, index: number, wholeCodePoint = false): boolean {
   const before = wholeCodePoint ? codePointBefore(sql, index) : sql[index - 1];
@@ -679,7 +692,9 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
     return grammar.bracket === "subscript" ? readSubscripted(sql, index, grammar) : readBracketed(sql, index);
   }
 
-  if (ch === "$") {
+  // Where `$` continues a name (`dollarInNames`), a `$` inside one (`col$a$x`, `x$$`) is part of it, never an opener.
+  // Where the dialect has no dollar quote at all (`dollarQuotes: false`), no `$` is one.
+  if (ch === "$" && grammar.dollarQuotes !== false && !(grammar.dollarInNames === true && continuesWord(sql, index))) {
     const tagLength = measureDollarTag(sql, index);
     if (tagLength === 0) return null;
     // A dialect whose only dollar-quoted form is the untagged `$$` reads a tagged opener as code.

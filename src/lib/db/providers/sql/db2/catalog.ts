@@ -210,12 +210,13 @@ export function objectStatus(row: Record<string, unknown>): { status?: string } 
 
 /**
  * The column read. The default is read up to 254 bytes, the most IBM allows a default constant,
- * with its full length beside it so a longer one is never shown cut.
+ * with its full length beside it so a longer one is never shown cut. `IDENTITY` is `Y` for a column
+ * GENERATED ALWAYS or BY DEFAULT AS IDENTITY, which the server numbers itself (R5, measured on 12.1).
  */
 const COLUMN_SELECT = `HEX(COLNAME) AS COLUMN_NAME_HEX, HEX(TYPENAME) AS TYPENAME_HEX, LENGTH, SCALE, CODEPAGE,
        RTRIM(TYPESTRINGUNITS) AS TYPESTRINGUNITS, STRINGUNITSLENGTH, RTRIM(NULLS) AS NULLS,
        HEX(VARCHAR(SUBSTRING("DEFAULT", 1, 254, OCTETS), 254)) AS DEFAULT_BYTES, LENGTH("DEFAULT") AS DEFAULT_LENGTH,
-       KEYSEQ`;
+       KEYSEQ, RTRIM(IDENTITY) AS IS_IDENTITY`;
 
 /** The byte bound of a default the column read can show whole. */
 export const DEFAULT_BYTE_LIMIT = 254;
@@ -510,6 +511,8 @@ export function objectDetailFromRows(
       nullable: row.NULLS === "Y",
       isPrimary: typeof row.KEYSEQ === "number" && row.KEYSEQ > 0,
       ...(defaultValue === undefined ? {} : { defaultValue }),
+      // Only the SYSCAT source reads IDENTITY; the value-free one has no such column, and says nothing (R5).
+      ...(typeof row.IS_IDENTITY === "string" ? { autoIncrement: row.IS_IDENTITY === "Y" } : {}),
     };
   });
 

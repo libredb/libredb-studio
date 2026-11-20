@@ -46,6 +46,7 @@ import type { LLMProviderType } from "@/lib/llm/types";
 
 import type { ExecutionProfileDenyCode } from "@/lib/db/errors";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
+import type { AgentStatementRefusalCode } from "@/lib/db/operations/statement-guard";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, ColumnSchema, DatabaseType, ForeignKeySchema, IndexSchema } from "@/lib/types";
 import type { ObjectRole } from "@/lib/db/types";
@@ -851,7 +852,12 @@ export type AgentReadingDenyCode = "KIND_UNSUPPORTED_BY_PROVIDER" | "READING_OVE
  * of folding a fabricated zero into a total it then presents as measured.
  */
 export type AgentToolRefusal =
-  | { readonly class: "policy-denied"; readonly reasonCode: PolicyDenyCode }
+  | {
+      readonly class: "policy-denied";
+      readonly reasonCode: PolicyDenyCode;
+      /** The statement guard's own code, where the guard is what refused the input (`PolicyDenyDecision`). */
+      readonly guardViolation?: AgentStatementRefusalCode;
+    }
   | { readonly class: "approval-required"; readonly operationId: string }
   | {
       readonly class: "database-error";

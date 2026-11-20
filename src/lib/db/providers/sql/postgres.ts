@@ -4,6 +4,7 @@
  */
 
 import { randomBytes, randomUUID } from "node:crypto";
+import type { EventEmitter } from "node:events";
 import {
   Client,
   type ClientBase,
@@ -90,10 +91,11 @@ import {
 } from "../../errors";
 import { mapDatabaseError } from "../../map-database-error";
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import type { QueryResultSet } from "@/lib/types";
+import type { ColumnSequence, QueryResultSet } from "@/lib/types";
 import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
 import { sendPgCancelRequest, type PgCancelTarget } from "./pg-wire-cancel";
 import { POSTGRES_CREATE_TABLE } from "./postgres-create-table";
+import { keepCopyOutput, takeCopyOutput, withCopyOutput } from "./pg-copy-out";
 import { type PgFieldMetadata, postgresColumnTypes } from "./column-types";
 import { uniqueFieldNames } from "../../utils/result-fields";
 import { keyRowsByPosition } from "../../utils/positional-rows";
@@ -102,6 +104,27 @@ import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CatalogSessions } from "../../utils/catalog-sessions";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 import { logger } from "@/lib/logger";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { changesSessionState, type SessionStateVocabulary } from "./session-state";
+
+/**
+ * The statements whose session `query()` closes instead of pooling (Q5, `session-state.ts`).
+ *
+ * Leading: `SET` (`SET LOCAL` too, harmless), `RESET`, `LISTEN`, `PREPARE`, `LOAD` and
+ * `DECLARE` (a `WITH HOLD` cursor outlives its transaction). Anywhere: a temporary table,
+ * `set_config(` and a session-level advisory lock (the `_xact_` forms end with the transaction
+ * and are not matched). Measured on PostgreSQL 19 and 18 on 2026-11-20: `SET statement_timeout
+ * = '7s'` and `set_config('x.v', '42', false)` run from a script were read back by about half
+ * of the later runs on the same stored connection.
+ */
+const POSTGRES_SESSION_STATE: SessionStateVocabulary = {
+  leading: new Set(["SET", "RESET", "LISTEN", "PREPARE", "LOAD", "DECLARE"]),
+  markers: [
+    /\bCREATE\s+(?:(?:GLOBAL|LOCAL)\s+)?TEMP(?:ORARY)?\b/i,
+    /\bset_config\s*\(/i,
+    /\bpg_(?:try_)?advisory_lock(?:_shared)?\s*\(/i,
+  ],
+};
 
 /**
  * PostgreSQL's identity for the shared container-path renderer.
@@ -299,6 +322,8 @@ class NoticeKeepingClient extends Client {
         code: (error as { code?: string }).code,
       });
     });
+    // `pg` drops a COPY TO STDOUT's rows, so they are kept off the wire here (A06).
+    keepCopyOutput(this, (this as unknown as { connection: EventEmitter }).connection);
   }
 }
 
@@ -310,6 +335,20 @@ class NoticeKeepingClient extends Client {
  */
 function transactionLostSentence(cause: Error): string {
   return `The transaction was lost: its database session ended (${cause.message}). The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again. Begin a new transaction to continue.`;
+}
+
+/**
+ * A statement's answer with what it sent of a COPY TO STDOUT shown as its rows, and its notices
+ * as warnings followed by what the COPY output could not show.
+ */
+function answeredWithCopyOutput(
+  res: PgArrayAnswer | PgArrayAnswer[],
+  notices: NoticeBatch,
+  client: ClientBase,
+): { answer: PgArrayAnswer | PgArrayAnswer[]; warnings?: QueryWarning[] } {
+  const copied = withCopyOutput(res, takeCopyOutput(client));
+  const warnings = [...(noticesAsWarnings(notices).warnings ?? []), ...copied.warnings];
+  return { answer: copied.answer, ...(warnings.length > 0 && { warnings }) };
 }
 
 /** Everything `client` has received and not yet handed out, emptied as it is read. */
@@ -474,6 +513,12 @@ interface SchemaRow {
     declaredType?: string | null;
     nullable: boolean;
     defaultValue?: string | null;
+    /** `attidentity <> ''`; null where the fork has no `attidentity` (`withoutIdentityCatalog`). */
+    identity?: boolean | null;
+    /** `attgenerated`: 's', 'v' or ''; null where the fork has no `attgenerated` (`withoutGeneratedCatalog`). */
+    generated?: string | null;
+    /** The `pg_sequence` options of the sequence the default calls; null where it calls none or the fork has no catalog. */
+    sequence?: ColumnSequence | null;
   }>;
   indexes?: Array<{ name: string; columns: string[]; unique: boolean }>;
   foreign_keys?: Array<{
@@ -849,6 +894,79 @@ function isMissingConstraintCatalogError(error: unknown): boolean {
   return message.includes("pg_constraint") && !message.includes("permission denied");
 }
 
+// Whether the engine numbers a column itself: an identity column (`attidentity` 'a' or 'd').
+// A serial is read from its `nextval(` default instead, because it has no identity mark (D27).
+// PostgreSQL 10 added the column; a fork whose pg_attribute lacks it gets NULL, which the
+// mapping reads as "this read cannot say" rather than as "not an identity".
+const IDENTITY_TEST = "a.attidentity <> ''";
+
+function isMissingIdentityCatalogError(error: unknown): boolean {
+  return error instanceof Error && error.message.toLowerCase().includes("attidentity");
+}
+
+function withoutIdentityCatalog(sql: string): string {
+  return sql.replaceAll(IDENTITY_TEST, "NULL::boolean");
+}
+
+// Whether the column is computed from the others: `attgenerated` is 's' (stored) or 'v' (virtual, PostgreSQL 18), and
+// '' otherwise. Its expression is in `pg_attrdef`, where a default is, so without this mark the schema-diff migration
+// wrote it as `DEFAULT (a * 3)` (R9). PostgreSQL 12 added the column; a fork whose pg_attribute lacks it gets NULL,
+// which the mapping reads as "this read cannot say".
+const GENERATED_TEST = "a.attgenerated::text";
+
+function isMissingGeneratedCatalogError(error: unknown): boolean {
+  return error instanceof Error && error.message.toLowerCase().includes("attgenerated");
+}
+
+function withoutGeneratedCatalog(sql: string): string {
+  return sql.replaceAll(GENERATED_TEST, "NULL::text");
+}
+
+// The options of the sequence a column's default calls, and whether the column owns it, so the schema-diff migration
+// recreates the sequence as it was rather than as `CREATE SEQUENCE name` (Q2). The default's own dependency row names
+// the sequence: a serial's and a hand-written `nextval('s')` alike. A CTE joined in rather than a subquery in the
+// column object, because RisingWave refuses a subquery inside an aggregate call. `pg_sequence` is PostgreSQL 10's;
+// Materialize v26.51.1 answers "unknown catalog item 'pg_catalog.pg_sequence'", and the read then says nothing.
+const SEQUENCE_CATALOG_READ = `
+          SELECT DISTINCT ON (sd.objid)
+            sd.objid AS attrdef_oid,
+            jsonb_build_object(
+              'dataType', format_type(sq.seqtypid, NULL), 'start', sq.seqstart::text,
+              'increment', sq.seqincrement::text, 'min', sq.seqmin::text, 'max', sq.seqmax::text,
+              'cache', sq.seqcache::text, 'cycle', sq.seqcycle,
+              'ownedByColumn', EXISTS (
+                SELECT 1 FROM pg_catalog.pg_depend so
+                WHERE so.classid = 'pg_catalog.pg_class'::regclass AND so.objid = sq.seqrelid
+                AND so.refclassid = 'pg_catalog.pg_class'::regclass AND so.refobjid = sad.adrelid
+                AND so.refobjsubid = sad.adnum AND so.deptype = 'a')
+            ) AS sequence
+          FROM pg_catalog.pg_depend sd
+          JOIN pg_catalog.pg_sequence sq ON sq.seqrelid = sd.refobjid
+          JOIN pg_catalog.pg_attrdef sad ON sad.oid = sd.objid
+          WHERE sd.classid = 'pg_catalog.pg_attrdef'::regclass AND sd.refclassid = 'pg_catalog.pg_class'::regclass
+          ORDER BY sd.objid, sq.seqrelid`;
+
+const CTE_COLUMN_SEQUENCES = `
+        column_sequences AS (${SEQUENCE_CATALOG_READ}
+        )`;
+
+function isMissingSequenceCatalogError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("pg_sequence") || message.includes("pg_depend");
+}
+
+function withoutSequenceCatalog(sql: string): string {
+  return sql.replaceAll(SEQUENCE_CATALOG_READ, "\n          SELECT NULL::oid AS attrdef_oid, NULL::jsonb AS sequence");
+}
+
+/** `ColumnSchema.generated` from `attgenerated`; nothing for an ordinary column or a read that could not say. */
+function generatedOf(mark: string | null | undefined): { generated?: "stored" | "virtual" } {
+  if (mark === "s") return { generated: "stored" };
+  if (mark === "v") return { generated: "virtual" };
+  return {};
+}
+
 // Materialize and RisingWave reserve MATERIALIZED as a keyword (it's part of
 // their own CREATE MATERIALIZED VIEW grammar), so they reject the CTE modifier
 // above with a syntax error - even though the information_schema/pg_catalog
@@ -1032,6 +1150,20 @@ const COUNTS_ROUTINE_ARM = `
           WHERE n.nspname = $1
           AND ${extensionMemberExclusion("p.oid", "pg_proc")}`;
 
+// The routine arm for a server that refused the one above (R11). A server without
+// `prokind` has no procedures: PostgreSQL added CREATE PROCEDURE and the column together in
+// 11, and Materialize, the measured case, has neither. So each of its routines is counted as
+// a function and the Procedures folder keeps its seeded zero. Measured on Materialize
+// 26.51.1 on 2026-11-20: its pg_proc has oid, proname, proowner, prorettype, pronamespace and
+// proargdefaults, this arm answers, and a user schema holds no routine (CREATE FUNCTION is not
+// a Materialize statement), so both folders read 0 where they showed the refusal before.
+const COUNTS_ROUTINE_ARM_WITHOUT_PROKIND = `
+          SELECT 'function'
+          FROM pg_catalog.pg_proc p
+          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = $1
+          AND ${extensionMemberExclusion("p.oid", "pg_proc")}`;
+
 // `tgisinternal` excludes the triggers PostgreSQL creates for a foreign key or a
 // deferred unique constraint. A user never wrote them and cannot drop them on their own,
 // so counting them would report a number nobody could reconcile with their own DDL. A
@@ -1058,11 +1190,14 @@ function countsSql(arms: readonly string[]): string {
 }
 
 const COUNTS_SQL = countsSql([COUNTS_RELATION_ARM, COUNTS_ROUTINE_ARM, COUNTS_TRIGGER_ARM]);
-const COUNTS_SQL_WITHOUT_ROUTINES = countsSql([COUNTS_RELATION_ARM, COUNTS_TRIGGER_ARM]);
+const COUNTS_SQL_WITHOUT_PROKIND = countsSql([
+  COUNTS_RELATION_ARM,
+  COUNTS_ROUTINE_ARM_WITHOUT_PROKIND,
+  COUNTS_TRIGGER_ARM,
+]);
 
-// A server that has no `pg_proc.prokind` cannot tell a function from a procedure, so the
-// two routine folders are unknowable there - but the relations and the triggers still
-// are. Keyed on the column name and NOT on the SQLSTATE, like every other fallback in
+// A server that has no `pg_proc.prokind` refuses the routine arm, and the statement is run
+// again with `COUNTS_ROUTINE_ARM_WITHOUT_PROKIND` in its place. Keyed on the column name and NOT on the SQLSTATE, like every other fallback in
 // this file: PostgreSQL answers 42703, while Materialize v26.44.1 answers XX000 (its
 // generic internal error) with the same `column "p.prokind" does not exist`, so a 42703
 // key cost the whole tree there and an XX000 key would read every internal error as a
@@ -1175,6 +1310,31 @@ const LIST_ROUTINES_SQL = `
         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = $1 AND p.prokind = $2
         AND ${extensionMemberExclusion("p.oid", "pg_proc")}`;
+
+// The routine listing for a server that refused the one above (Q3), by the counting rule
+// `COUNTS_ROUTINE_ARM_WITHOUT_PROKIND` states: without `prokind` every routine is a function
+// and none is a procedure. The kind stays bound, so the same two parameters reach the server
+// and only the function kind matches. Measured on Materialize 26.51.1 on 2026-11-20: opening
+// either routine folder answered 400 with `column "p.prokind" does not exist` while the
+// folder counted 0; with this predicate pg_catalog lists 488 functions and no procedure.
+function withoutProkindTest(sql: string): string {
+  return sql.replace("p.prokind = $2", "$2::text = 'f'");
+}
+
+// The routine listing for a server whose pg_proc has no `proargtypes` (Q3), from which the
+// identity expression builds the argument list. Measured on Materialize 26.51.1 on 2026-11-20:
+// its pg_proc has oid, proname, pronamespace, proowner, proargdefaults and prorettype only, so
+// once the prokind repair had run, the listing failed on `column "p.proargtypes" does not
+// exist`. With no argument types a routine is addressed by its name. Two overloads then share
+// an address, which on Materialize only its builtins can be (it has no CREATE FUNCTION), and
+// those live in the system schemas the tree does not list.
+function withoutArgumentTypes(sql: string): string {
+  return sql.replace(`${ROUTINE_IDENTITY_EXPR} AS identity`, "p.proname AS identity");
+}
+
+function isMissingArgumentTypesError(error: unknown): boolean {
+  return error instanceof Error && error.message.toLowerCase().includes("proargtypes");
+}
 
 // A trigger name is unique per TABLE, not per schema - two tables in one schema may each
 // carry a trigger called `stamp_updated_at` - so the table is a path segment and not
@@ -1719,11 +1879,12 @@ function routineEditAffordance(row: SourceRow, schema: string, name: string): Ob
 // that reading is gone. `getSchema` is no longer on the provider (`src/lib/db/types.ts`),
 // `SCHEMA_FULL_SQL` and `CTE_COLUMNS_INFO` are gone with it, and nothing in this file reads
 // `information_schema.columns`. The parity those two surfaces were held to does not hold,
-// because one of them is not live. `type` stays the base name anyway: the diagram, the
-// completions and the migration DDL read it, and a modifier inside it would change what
-// they show and what they match. The agent's grounding capture reads
+// because one of them is not live. `type` stays the base name anyway: the diagram and the
+// completions read it, and a modifier inside it would change what they show and what they
+// match. The agent's grounding capture reads
 // `information_schema.columns.data_type`, the same base name, and is unchanged.
-// `declaredType` is what the column tooltip and this object detail show. A column with no
+// `declaredType` is what the column tooltip, this object detail and the schema-diff
+// migration DDL (D05) read. A column with no
 // modifier (`text`, `integer`, `text[]`) is given the same string in both fields, so it
 // renders as it did.
 //
@@ -1745,6 +1906,9 @@ const CTE_OBJECT_COLUMNS = `
                 'name', a.attname,
                 'type', format_type(a.atttypid, NULL),
                 'declaredType', format_type(a.atttypid, a.atttypmod),
+                'identity', ${IDENTITY_TEST},
+                'generated', ${GENERATED_TEST},
+                'sequence', cs.sequence,
                 'nullable', NOT a.attnotnull,
                 'defaultValue', CASE WHEN ad.adbin IS NOT NULL THEN pg_get_expr(ad.adbin, ad.adrelid) END
               ) ORDER BY a.attnum
@@ -1753,6 +1917,7 @@ const CTE_OBJECT_COLUMNS = `
           JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
           LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+          LEFT JOIN column_sequences cs ON cs.attrdef_oid = ad.oid
           WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
         )`;
 
@@ -1773,7 +1938,7 @@ const CTE_OBJECT_COLUMNS = `
 // the object has no columns at all. That is what makes a sequence, a routine and a
 // trigger answer `{ columns: [], indexes: [], foreignKeys: [] }` instead of no row.
 const OBJECT_DETAIL_SQL = withoutMaterializedHint(`
-        WITH ${CTE_OBJECT_COLUMNS},${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO},${CTE_EXCLUDE_INFO}
+        WITH ${CTE_COLUMN_SEQUENCES},${CTE_OBJECT_COLUMNS},${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO},${CTE_EXCLUDE_INFO}
         SELECT
           COALESCE(oc.columns, '[]'::jsonb) as columns,
           COALESCE(pk.pk_columns, ARRAY[]::text[]) as pk_columns,
@@ -1844,7 +2009,7 @@ function bulkDetailSql(relkinds: string, bound?: number): string {
           WHERE n.nspname = $1 AND c.relkind IN (${relkinds})
           AND ${extensionMemberExclusion("c.oid", "pg_class")}
           ORDER BY c.relname${limit}
-        ),
+        ),${CTE_COLUMN_SEQUENCES},
         described_columns AS (
           SELECT
             d.relname,
@@ -1853,6 +2018,9 @@ function bulkDetailSql(relkinds: string, bound?: number): string {
                 'name', a.attname,
                 'type', format_type(a.atttypid, NULL),
                 'declaredType', format_type(a.atttypid, a.atttypmod),
+                'identity', ${IDENTITY_TEST},
+                'generated', ${GENERATED_TEST},
+                'sequence', cs.sequence,
                 'nullable', NOT a.attnotnull,
                 'defaultValue', CASE WHEN ad.adbin IS NOT NULL THEN pg_get_expr(ad.adbin, ad.adrelid) END
               ) ORDER BY a.attnum
@@ -1860,6 +2028,7 @@ function bulkDetailSql(relkinds: string, bound?: number): string {
           FROM described d
           JOIN pg_catalog.pg_attribute a ON a.attrelid = d.oid
           LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+          LEFT JOIN column_sequences cs ON cs.attrdef_oid = ad.oid
           WHERE a.attnum > 0 AND NOT a.attisdropped
           GROUP BY d.relname
         ),${CTE_PK_INFO},${CTE_FK_INFO},${CTE_INDEX_INFO},${CTE_EXCLUDE_INFO}
@@ -2057,6 +2226,15 @@ function objectDetailFromRow(path: readonly string[], row: ObjectDetailRow): Obj
       nullable: col.nullable,
       isPrimary: pkColumns.includes(col.name),
       defaultValue: col.defaultValue ?? undefined,
+      // An identity column, or one a sequence feeds through its default (D27). Absent where the
+      // read could not see `attidentity`, so a reader falls back to its own guess.
+      ...(typeof col.identity === "boolean"
+        ? { autoIncrement: col.identity || /^nextval\(/i.test(col.defaultValue ?? "") }
+        : {}),
+      // A computed column, whose `defaultValue` above is then its generation expression (R9).
+      ...generatedOf(col.generated),
+      // The sequence its default calls, with the options a migration recreates it with (Q2).
+      ...(col.sequence ? { sequence: col.sequence } : {}),
     })),
     indexes: (row.indexes || []).map((idx) => ({
       name: idx.name,
@@ -2293,9 +2471,30 @@ function postgresSessionActivity(state: string, waitEventType: string | null | u
   return "other";
 }
 
-const ACTIVE_SESSIONS_SQL = `
+/**
+ * Whether another session holds the lock this one waits for (D11b).
+ *
+ * `pg_blocking_pids()` takes the lock manager's shared state for a moment on every call, so it is
+ * asked only for a session that is waiting on a heavyweight lock, which is the only wait it can
+ * answer for; every other session is not blocked by anyone. Measured 2026-11-20 on PostgreSQL 19.0
+ * and 18.7: a session queued behind another's row lock answered `{holder}`, and the holder `{}`.
+ */
+const SESSION_BLOCKED_COLUMN = `
+          CASE
+            WHEN wait_event_type = 'Lock' THEN cardinality(pg_blocking_pids(pid)) > 0
+            ELSE false
+          END AS blocked,`;
+
+/**
+ * The session list, with the blocked column or without it. A wire-compatible relative may have
+ * `pg_stat_activity` and not `pg_blocking_pids()`, and one missing function fails the whole
+ * statement, so the list is asked again without the column rather than lost; `blocked` is then
+ * left out of each session, which is "not known", not "not blocked".
+ */
+function activeSessionsSql(blockedColumn: string): string {
+  return `
         SELECT
-          pid,
+          pid,${blockedColumn}
           usename as user,
           datname as database,
           application_name,
@@ -2328,6 +2527,119 @@ const ACTIVE_SESSIONS_SQL = `
           query_start DESC NULLS LAST
         LIMIT $2
       `;
+}
+
+const ACTIVE_SESSIONS_SQL = activeSessionsSql(SESSION_BLOCKED_COLUMN);
+const ACTIVE_SESSIONS_WITHOUT_BLOCKING_SQL = activeSessionsSql("");
+
+/**
+ * A row of `SHOW PROCESSLIST`, the session list of a relative whose `pg_stat_activity` cannot
+ * answer the two forms above (R10). Measured on RisingWave 3.1.1 on 2026-11-20: its view has
+ * `pid`, `usename`, `datname` and `application_name` but no `state`, `query_start` or
+ * `wait_event_type` ("Failed to bind expression: query_start"), and it holds no row even with
+ * sessions open, so a narrower read of it would list nothing either. `Id` is `<worker>:<pid>`,
+ * `Time` is the running statement's age (`993ms`) and empty with `Info` on an idle session.
+ */
+interface ProcesslistRow {
+  readonly Id?: string;
+  readonly User?: string;
+  readonly Host?: string;
+  readonly Database?: string;
+  readonly Time?: string;
+  readonly Info?: string;
+}
+
+/**
+ * The processlist rows of `database` as sessions, the running ones first, without the reading
+ * session itself (its pid is `ownPid`). None is terminable: RisingWave answers
+ * `pg_terminate_backend()` with `false` and the session keeps running, measured on 3.1.1.
+ */
+function processlistSessions(
+  rows: readonly ProcesslistRow[],
+  database: string | undefined,
+  ownPid: string,
+  limit: number,
+): ActiveSessionDetails[] {
+  const sessions = rows
+    .filter((row) => row.Database === database && String(row.Id).split(":").pop() !== ownPid)
+    .map((row): ActiveSessionDetails => {
+      const query = row.Info ?? "";
+      const state = query === "" ? "idle" : "active";
+      const ms = /^(\d+)ms$/.exec(row.Time ?? "");
+      return {
+        pid: String(row.Id),
+        user: row.User || "unknown",
+        database: row.Database ?? "",
+        clientAddr: row.Host || undefined,
+        state,
+        activity: state,
+        query,
+        duration: row.Time || "N/A",
+        durationMs: ms ? Number(ms[1]) : 0,
+        terminable: false,
+      };
+    });
+  return [...sessions.filter((s) => s.state === "active"), ...sessions.filter((s) => s.state !== "active")].slice(
+    0,
+    limit,
+  );
+}
+
+/**
+ * The session list of a relative whose `pg_stat_activity` answers with no row while sessions are
+ * open (Q4). Measured on CockroachDB 26.4.1 on 2026-11-20: with two sessions open both forms above
+ * answered no row, and `crdb_internal.cluster_sessions` listed every session of the cluster with a
+ * hex `session_id`, its own `pg_backend_pid`, `status` (`ACTIVE`, `IDLE`) and the running
+ * statement in `active_queries`. It carries no database column, so the list is the cluster's, and
+ * Studio's own pooled connections and the reading session are left out as the first form does.
+ */
+const CLUSTER_SESSIONS_SQL = `
+        SELECT
+          session_id AS pid,
+          user_name AS user,
+          application_name,
+          client_address AS client_addr,
+          status AS state,
+          COALESCE(active_queries, '') AS query,
+          active_query_start AS query_start,
+          CASE
+            WHEN active_query_start IS NOT NULL THEN
+              EXTRACT(EPOCH FROM (clock_timestamp() - active_query_start)) * 1000
+            ELSE 0
+          END AS duration_ms
+        FROM crdb_internal.cluster_sessions
+        WHERE pg_backend_pid IS DISTINCT FROM pg_backend_pid()
+          AND application_name IS DISTINCT FROM '${STUDIO_APPLICATION_NAME}'
+        ORDER BY
+          CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END,
+          active_query_start DESC NULLS LAST,
+          session_start DESC
+        LIMIT $1
+      `;
+
+/**
+ * One `CLUSTER_SESSIONS_SQL` row as a session. None is terminable: CockroachDB has no
+ * `pg_terminate_backend()` ("unknown function", measured on 26.4.1), and its session id is not a
+ * backend pid.
+ */
+function clusterSession(row: Record<string, unknown>): ActiveSessionDetails {
+  const state = String(row.state).toLowerCase();
+  const durationMs = Number(row.duration_ms) || 0;
+  return {
+    pid: String(row.pid),
+    user: (row.user as string) || "unknown",
+    database: "",
+    applicationName: (row.application_name as string) || undefined,
+    clientAddr: (row.client_addr as string) || undefined,
+    state,
+    activity: postgresSessionActivity(state, undefined),
+    query: String(row.query),
+    queryStart: row.query_start ? new Date(row.query_start as string) : undefined,
+    duration: row.query_start ? `${durationMs / 1000}s` : "N/A",
+    durationMs,
+    terminable: false,
+  };
+}
 
 // The three size builtins the table statistics read, each taking `relid` - the table's own
 // oid, which pg_stat_user_tables already carries.
@@ -3261,6 +3573,10 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async disconnect(): Promise<void> {
     await this.catalogSessions.closeAll();
+    // A kept client is checked out, and `pool.end()` waits for every checked-out client to come
+    // back, so the kept ones are closed first (Q5).
+    for (const client of this.scopeSessions.values()) client.release(true);
+    this.scopeSessions.clear();
     if (this.pool) {
       await this.pool.end();
       this.pool = null;
@@ -3289,7 +3605,10 @@ export class PostgresProvider extends SQLBaseProvider {
     // Most borrows (the object browser, monitoring) never read their notices, so a client
     // returned to the pool drops what it holds rather than keeping it for the life of the
     // process. A statement that reports them took them before its own release.
-    pool.on("release", (_error, client) => takeNotices(client));
+    pool.on("release", (_error, client) => {
+      takeNotices(client);
+      takeCopyOutput(client);
+    });
     // The implicit-flush setting is the session's own (#1399), so each session the pool opens after the
     // probe is turned on as it arrives. `pg` runs a client's statements in the order they were handed to
     // it, and this one is handed over before the pool gives the client to whoever asked for it. Never
@@ -3492,6 +3811,39 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   private runningQueries = new Map<string, { pid: number; client: PoolClient }>();
 
+  /**
+   * Per call scope, the client a session-changing statement of that scope ran on (Q5). The
+   * scope's later statements run on it too, so a script reads what it set, and `endQueryScope`
+   * closes it rather than pooling it, so nobody else does. A transaction left open on it is
+   * still recorded for `endOpenQueryTransaction(scope)`, which the callers run first.
+   */
+  private scopeSessions = new Map<string, PoolClient>();
+
+  /**
+   * Hand a `query()` client back: to the pool when the statement cannot have changed the
+   * session, and otherwise never (Q5). Under a scope it is kept for the scope's later
+   * statements and closed by `endQueryScope`; without one it is closed now (`release(true)`).
+   * Judged whether the statement succeeded or not. Closed rather than `DISCARD ALL`, which
+   * would cost a round trip and still refuses to run inside a transaction block.
+   */
+  private settleQueryClient(client: PoolClient, sql: string, scope: string | undefined): void {
+    if (!changesSessionState(sql, POSTGRES_SESSION_STATE, resolveSqlGrammar(this.type))) {
+      client.release();
+    } else if (scope === undefined) {
+      client.release(true);
+    } else {
+      this.scopeSessions.set(scope, client);
+    }
+  }
+
+  /** Close the client this scope kept, if it kept one (Q5); `DatabaseProvider.endQueryScope`. */
+  public async endQueryScope(scope: string): Promise<void> {
+    const client = this.scopeSessions.get(scope);
+    if (client === undefined) return;
+    this.scopeSessions.delete(scope);
+    client.release(true);
+  }
+
   public async query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult> {
     this.ensureConnected();
     this.refuseWithoutCatalog();
@@ -3499,7 +3851,8 @@ export class PostgresProvider extends SQLBaseProvider {
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
-          const client = await this.pool!.connect();
+          const kept = scope === undefined ? undefined : this.scopeSessions.get(scope);
+          const client = kept ?? (await this.pool!.connect());
           try {
             // Track PID for cancellation support
             if (queryId) {
@@ -3509,8 +3862,13 @@ export class PostgresProvider extends SQLBaseProvider {
             // Dropped first: a client fresh from the pool still holds its startup greeting, and
             // the PID read above is not the user's statement.
             takeNotices(client);
+            takeCopyOutput(client);
             const res = await client.query<unknown[]>(arrayRowsOf(sql), params);
-            return { res: res as unknown as PgArrayAnswer | PgArrayAnswer[], notices: takeNotices(client) };
+            return answeredWithCopyOutput(
+              res as unknown as PgArrayAnswer | PgArrayAnswer[],
+              takeNotices(client),
+              client,
+            );
           } finally {
             if (queryId) this.runningQueries.delete(queryId);
             // Read while this call still HOLDS the client, and before the release that
@@ -3519,7 +3877,7 @@ export class PostgresProvider extends SQLBaseProvider {
             // exactly the case D71 is about — is the one that most needs recording, so
             // this sits in the finally and not on the success path.
             this.recordOpenTransaction(scope, client);
-            client.release();
+            if (kept === undefined) this.settleQueryClient(client, sql, scope);
           }
         } catch (error) {
           if (queryId) this.runningQueries.delete(queryId);
@@ -3528,9 +3886,9 @@ export class PostgresProvider extends SQLBaseProvider {
       });
 
       return {
-        ...pgQueryResult(result.res, sql, this.userDefinedTypes),
+        ...pgQueryResult(result.answer, sql, this.userDefinedTypes),
         executionTime,
-        ...noticesAsWarnings(result.notices),
+        ...(result.warnings && { warnings: result.warnings }),
       };
     });
   }
@@ -3709,7 +4067,8 @@ export class PostgresProvider extends SQLBaseProvider {
       } catch {
         /* ignore */
       } finally {
-        this.txClient.release();
+        // Destroyed, not returned: see `releaseHeldClient()`.
+        this.txClient.release(true);
         this.txClient = null;
         this.txActive = false;
         this.clearTxTimeout();
@@ -3793,14 +4152,22 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
-   * Hand `client` back and forget the session, but only while it is still THE session's
+   * Destroy `client` and forget the session, but only while it is still THE session's
    * client. A COMMIT or ROLLBACK queued behind an in-flight `queryInTransaction()` can find
    * that statement's `endHeldTransaction()` already released it, and releasing a client twice
    * (or `null`) is a crash rather than a no-op.
+   *
+   * DESTROYED, never returned to the pool (RG-DIGER1-6). The transaction is one person's
+   * session, and what it leaves on the session outlives it: measured on PostgreSQL 19.0 on
+   * 2026-11-20, an advisory lock taken inside it survived the ROLLBACK, and after a COMMIT
+   * its TEMP table and a `SET SESSION` survived too, all read by the next ordinary query on
+   * the same pooled client. Not DISCARD ALL: it would also undo what the pool's `connect`
+   * handler sets on every session (`rw_implicit_flush` on RisingWave), and a relative may
+   * not have it. The pool opens a fresh client on the next borrow.
    */
   private releaseHeldClient(client: PoolClient): void {
     if (this.txClient !== client) return;
-    client.release();
+    client.release(true);
     this.txClient = null;
     this.txActive = false;
   }
@@ -3983,8 +4350,9 @@ export class PostgresProvider extends SQLBaseProvider {
           // The held client is one session for the whole transaction, so what an earlier
           // statement left behind is dropped before this one runs.
           takeNotices(held);
+          takeCopyOutput(held);
           const res = await held.query<unknown[]>(arrayRowsOf(sql), params);
-          return { res: res as unknown as PgArrayAnswer | PgArrayAnswer[], notices: takeNotices(held) };
+          return answeredWithCopyOutput(res as unknown as PgArrayAnswer | PgArrayAnswer[], takeNotices(held), held);
         } catch (error) {
           throw mapDatabaseError(error, "postgres", sql);
         } finally {
@@ -3999,9 +4367,9 @@ export class PostgresProvider extends SQLBaseProvider {
       });
 
       return {
-        ...pgQueryResult(result.res, sql, this.userDefinedTypes),
+        ...pgQueryResult(result.answer, sql, this.userDefinedTypes),
         executionTime,
-        ...noticesAsWarnings(result.notices),
+        ...(result.warnings && { warnings: result.warnings }),
       };
     });
   }
@@ -4037,6 +4405,9 @@ export class PostgresProvider extends SQLBaseProvider {
       { matches: isMissingToRegclassError, apply: withoutToRegclass },
       { matches: isMissingConstraintCatalogError, apply: withoutConstraintCatalog },
       { matches: isMissingConstraintDefinitionError, apply: withoutExclusionConstraintCatalog },
+      { matches: isMissingIdentityCatalogError, apply: withoutIdentityCatalog },
+      { matches: isMissingGeneratedCatalogError, apply: withoutGeneratedCatalog },
+      { matches: isMissingSequenceCatalogError, apply: withoutSequenceCatalog },
     ];
     let currentSql = sql;
     for (;;) {
@@ -4155,10 +4526,10 @@ export class PostgresProvider extends SQLBaseProvider {
    * nobody measured.
    *
    * The routine retry is the one partial outcome. `pg_proc.prokind` arrived in PostgreSQL
-   * 11 and the wire-compatible forks do not all have it, so a server can answer for its
-   * relations and its triggers while being unable to tell a function from a procedure.
-   * Losing the two routine folders is the right cost there; losing the whole container to
-   * one missing column is not.
+   * 11, together with procedures, and the wire-compatible forks do not all have it. A server
+   * without it is asked again with every routine counted as a function and no procedure
+   * (R11); if that is refused too, the routine pair carries the first refusal and every
+   * other folder the second, so one missing column never costs the whole container.
    *
    * The retry is keyed on the refusal naming `prokind` (`isMissingProkindError()`), under
    * any SQLSTATE, and every other refusal costs every folder on the first read: a statement
@@ -4189,7 +4560,7 @@ export class PostgresProvider extends SQLBaseProvider {
         const routines = declared.filter((kind) => kind.role === "routine");
         const rest = declared.filter((kind) => kind.role !== "routine");
         try {
-          applyKindCounts(counts, (await this.queryCounts(client, COUNTS_SQL_WITHOUT_ROUTINES, schema)).rows);
+          applyKindCounts(counts, (await this.queryCounts(client, COUNTS_SQL_WITHOUT_PROKIND, schema)).rows);
         } catch (retryError) {
           Object.assign(
             counts,
@@ -4197,15 +4568,12 @@ export class PostgresProvider extends SQLBaseProvider {
               rest.map((kind) => kind.id),
               retryError,
             ),
+            unavailableCounts(
+              routines.map((kind) => kind.id),
+              error,
+            ),
           );
         }
-        Object.assign(
-          counts,
-          unavailableCounts(
-            routines.map((kind) => kind.id),
-            error,
-          ),
-        );
       }
       return counts;
     } finally {
@@ -4221,7 +4589,9 @@ export class PostgresProvider extends SQLBaseProvider {
    * RisingWave does not have. They are independent, an engine can refuse both, and each
    * repair is applied to whatever statement is current rather than to the original, so
    * the order the refusals arrive in does not matter. The extension ownership test is the
-   * third repair, for an engine without `pg_depend` or `pg_extension` (#1429).
+   * third repair, for an engine without `pg_depend` or `pg_extension` (#1429), and the
+   * routine kind test and the routine argument types the fourth and fifth, for an engine
+   * whose pg_proc has neither `prokind` nor `proargtypes` (Q3).
    *
    * Every failure leaves by the same door quoting the statement the server actually
    * received, which after a repair is the rewritten one: quoting the original would
@@ -4232,6 +4602,8 @@ export class PostgresProvider extends SQLBaseProvider {
       { matches: isMissingTotalRelationSizeError, apply: withoutSizeColumn },
       { matches: isMissingRowCountColumnError, apply: withoutRowCountColumn },
       { matches: isMissingExtensionCatalogError, apply: withoutExtensionOwnershipTest },
+      { matches: isMissingProkindError, apply: withoutProkindTest },
+      { matches: isMissingArgumentTypesError, apply: withoutArgumentTypes },
     ];
     let currentSql = statement.sql;
     for (;;) {
@@ -5939,29 +6311,54 @@ export class PostgresProvider extends SQLBaseProvider {
 
     const client = await this.pool!.connect();
     try {
-      // No pg_stat_activity at all (Materialize, RisingWave): no sessions to show,
-      // not a failure - matches getSlowQueries()'s exhausted-fallback behavior.
+      // No pg_stat_activity at all (Materialize): no sessions to show, not a failure -
+      // matches getSlowQueries()'s exhausted-fallback behavior.
       try {
-        const res = await client.query(ACTIVE_SESSIONS_SQL, [this.monitoredDatabase(), limit]);
+        const params = [this.monitoredDatabase(), limit];
+        const res = await client
+          .query(ACTIVE_SESSIONS_SQL, params)
+          .catch(() => client.query(ACTIVE_SESSIONS_WITHOUT_BLOCKING_SQL, params));
 
-        return res.rows.map((r) => ({
-          pid: r.pid,
-          user: r.user || "unknown",
-          database: r.database || "",
-          applicationName: r.application_name || undefined,
-          clientAddr: r.client_addr || undefined,
-          state: r.state,
-          activity: postgresSessionActivity(String(r.state), r.wait_event_type),
-          query: r.query || "",
-          queryStart: r.query_start ? new Date(r.query_start) : undefined,
-          duration: r.duration,
-          durationMs: parseFloat(r.duration_ms || "0"),
-          waitEventType: r.wait_event_type || undefined,
-          waitEvent: r.wait_event || undefined,
-          blocked: false, // Could be enhanced with pg_locks query
-        }));
+        // No row at all, which CockroachDB answers with sessions open (Q4): its sessions are in
+        // crdb_internal.cluster_sessions. On PostgreSQL an empty view means nobody else is
+        // connected, that catalog does not exist, and the answer stays the empty list.
+        if (res.rows.length === 0) {
+          try {
+            return (await client.query(CLUSTER_SESSIONS_SQL, [limit])).rows.map(clusterSession);
+          } catch {
+            return [];
+          }
+        }
+
+        return res.rows.map((r) => {
+          const session: ActiveSessionDetails = {
+            pid: r.pid,
+            user: r.user || "unknown",
+            database: r.database || "",
+            applicationName: r.application_name || undefined,
+            clientAddr: r.client_addr || undefined,
+            state: r.state,
+            activity: postgresSessionActivity(String(r.state), r.wait_event_type),
+            query: r.query || "",
+            queryStart: r.query_start ? new Date(r.query_start) : undefined,
+            duration: r.duration,
+            durationMs: parseFloat(r.duration_ms || "0"),
+            waitEventType: r.wait_event_type || undefined,
+            waitEvent: r.wait_event || undefined,
+          };
+          if (typeof r.blocked === "boolean") session.blocked = r.blocked;
+          return session;
+        });
       } catch {
-        return [];
+        // A relative whose view cannot answer either form (RisingWave, R10) lists its sessions
+        // in SHOW PROCESSLIST; one that has neither has no sessions to show.
+        try {
+          const own = await client.query("SELECT pg_backend_pid() AS pid");
+          const listed = await client.query("SHOW PROCESSLIST");
+          return processlistSessions(listed.rows, this.monitoredDatabase(), String(own.rows[0]?.pid), limit);
+        } catch {
+          return [];
+        }
       }
     } finally {
       client.release();

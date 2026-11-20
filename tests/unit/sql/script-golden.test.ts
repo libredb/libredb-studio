@@ -48,21 +48,27 @@ interface Reading {
 //   is part of the name, so the quote after it closes the name.
 // - raw-strings: as every-code-semicolon, and `r'...'` is a literal that takes no escapes, so the quote after a
 //   backslash closes it.
+// - begin-atomic-routines: as every-code-semicolon, and a `CREATE [OR REPLACE] FUNCTION | PROCEDURE` whose code holds a
+//   `BEGIN ... END` (PostgreSQL's `BEGIN ATOMIC` body) is one statement, as psql's scanner reads it.
 // - plain-backslash: as every-code-semicolon, and a backslash is an ordinary character inside both `'...'` and `"..."`,
 //   so the quote after it closes the literal or the name.
+// - <class>-no-dollar: as <class>, and the engine has no dollar-quoted string (`dollarQuotes: false`), so every `$` is
+//   code and the `;` inside `$$...$$` and `$t$...$t$` ends a statement.
+// - sql-pl-compound: as every-code-semicolon-no-dollar, and a compound statement (`BEGIN ... END` first, or the body of
+//   a `CREATE [OR REPLACE] PROCEDURE | FUNCTION | TRIGGER`) is one statement, as Db2 runs it.
 const ROW_CLASS: Readonly<Record<string, string>> = {
   "(no dialect)": "every-code-semicolon",
-  postgres: "every-code-semicolon",
+  postgres: "begin-atomic-routines",
   bigquery: "every-code-semicolon",
   snowflake: "pair-dollar-plain-quote",
   spark: "raw-strings",
-  mysql: "every-code-semicolon",
-  sqlite: "trigger-body-whole",
-  libsql: "trigger-body-whole",
+  mysql: "every-code-semicolon-no-dollar",
+  sqlite: "trigger-body-whole-no-dollar",
+  libsql: "trigger-body-whole-no-dollar",
   duckdb: "every-code-semicolon",
-  oracle: "pl-sql-units",
-  db2: "every-code-semicolon",
-  mssql: "go-batches",
+  oracle: "pl-sql-units-no-dollar",
+  db2: "sql-pl-compound",
+  mssql: "go-batches-no-dollar",
   clickhouse: "every-code-semicolon",
   druid: "pair-dollar-plain-quote",
   trino: "every-code-semicolon",
@@ -1435,6 +1441,217 @@ const EXPECTED: Readonly<Record<string, readonly Reading[]>> = {
   ],
 };
 
+/** The begin-atomic-routines table: every-code-semicolon's, but for the two routines whose code holds BEGIN ... END. */
+const BEGIN_ATOMIC_ROUTINES: Readonly<Record<number, Reading>> = {
+  7: {
+    statements: [
+      {
+        sql: "CREATE OR REPLACE PROCEDURE p() RETURNS INT LANGUAGE SQL AS BEGIN RETURN 1; END",
+        start: 0,
+        end: 79,
+        startLine: 0,
+      },
+      { sql: "SELECT 2", start: 81, end: 89, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  16: {
+    statements: [
+      { sql: "CREATE FUNCTION f(p_end NUMBER) RETURN NUMBER IS BEGIN RETURN 1; END", start: 0, end: 68, startLine: 0 },
+      { sql: "SELECT 2", start: 70, end: 78, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+};
+// The readings that move where `$` is code (`dollarQuotes: false`), and those that move where a SQL PL compound
+// statement is one statement (R1, R3).
+const NO_DOLLAR: Readonly<Record<number, Reading>> = {
+  5: {
+    statements: [
+      {
+        sql: "CREATE OR REPLACE PROCEDURE p() RETURNS INT LANGUAGE SQL AS $$ BEGIN RETURN 1",
+        start: 0,
+        end: 77,
+        startLine: 0,
+      },
+      { sql: "END", start: 79, end: 82, startLine: 0 },
+      { sql: "$$", start: 84, end: 86, startLine: 0 },
+      { sql: "SELECT 2", start: 88, end: 96, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  8: {
+    statements: [
+      { sql: "EXECUTE IMMEDIATE $$BEGIN RETURN 1", start: 0, end: 34, startLine: 0 },
+      { sql: "END", start: 36, end: 39, startLine: 0 },
+      { sql: "$$", start: 40, end: 42, startLine: 0 },
+      { sql: "SELECT 2", start: 44, end: 52, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  9: {
+    statements: [
+      { sql: "SELECT $t$x", start: 0, end: 11, startLine: 0 },
+      { sql: "y$t$", start: 12, end: 16, startLine: 0 },
+      { sql: "SELECT 2", start: 18, end: 26, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  10: {
+    statements: [
+      { sql: "SELECT $$x", start: 0, end: 10, startLine: 0 },
+      { sql: "y$$", start: 11, end: 14, startLine: 0 },
+      { sql: "SELECT 2", start: 16, end: 24, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+};
+const PL_SQL_NO_DOLLAR_ROUTINE: Reading = {
+  statements: [
+    {
+      sql: "CREATE OR REPLACE PROCEDURE p() RETURNS INT LANGUAGE SQL AS $$ BEGIN RETURN 1; END;",
+      start: 0,
+      end: 83,
+      startLine: 0,
+    },
+    { sql: "$$", start: 84, end: 86, startLine: 0 },
+    { sql: "SELECT 2", start: 88, end: 96, startLine: 1 },
+  ],
+  multi: true,
+  unterminated: false,
+};
+const SQL_PL_COMPOUND: Readonly<Record<number, Reading>> = {
+  0: {
+    statements: [{ sql: "BEGIN;\nSELECT 1;\nCOMMIT;", start: 0, end: 24, startLine: 0 }],
+    multi: false,
+    unterminated: false,
+  },
+  1: {
+    statements: [{ sql: "BEGIN TRANSACTION;\nSELECT 1;\nCOMMIT;", start: 0, end: 36, startLine: 0 }],
+    multi: false,
+    unterminated: false,
+  },
+  2: {
+    statements: [
+      { sql: "BEGIN RETURN 1; END", start: 0, end: 19, startLine: 0 },
+      { sql: "SELECT 2", start: 21, end: 29, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  3: {
+    statements: [
+      { sql: "DECLARE x INT", start: 0, end: 13, startLine: 0 },
+      { sql: "BEGIN x := 1; RETURN x; END", start: 15, end: 42, startLine: 0 },
+      { sql: "SELECT 2", start: 44, end: 52, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  4: {
+    statements: [
+      { sql: "BEGIN\n FOR i IN 1 TO 3 DO\n SELECT 1;\n END FOR;\n RETURN 1;\nEND", start: 0, end: 61, startLine: 0 },
+      { sql: "SELECT 2", start: 63, end: 71, startLine: 6 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  5: {
+    statements: [
+      {
+        sql: "CREATE OR REPLACE PROCEDURE p() RETURNS INT LANGUAGE SQL AS $$ BEGIN RETURN 1; END",
+        start: 0,
+        end: 82,
+        startLine: 0,
+      },
+      { sql: "$$", start: 84, end: 86, startLine: 0 },
+      { sql: "SELECT 2", start: 88, end: 96, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  7: {
+    statements: [
+      {
+        sql: "CREATE OR REPLACE PROCEDURE p() RETURNS INT LANGUAGE SQL AS BEGIN RETURN 1; END",
+        start: 0,
+        end: 79,
+        startLine: 0,
+      },
+      { sql: "SELECT 2", start: 81, end: 89, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  12: {
+    statements: [
+      { sql: "DECLARE\n  x NUMBER", start: 0, end: 18, startLine: 0 },
+      { sql: "BEGIN\n  x := 1;\nEND", start: 20, end: 39, startLine: 2 },
+      { sql: "SELECT 1 FROM dual", start: 41, end: 59, startLine: 5 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  15: {
+    statements: [
+      { sql: "BEGIN\n  x := (CASE WHEN a THEN 1 END);\nEND", start: 0, end: 42, startLine: 0 },
+      { sql: "SELECT 1 FROM dual", start: 44, end: 62, startLine: 3 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  16: {
+    statements: [
+      { sql: "CREATE FUNCTION f(p_end NUMBER) RETURN NUMBER IS BEGIN RETURN 1; END", start: 0, end: 68, startLine: 0 },
+      { sql: "SELECT 2", start: 70, end: 78, startLine: 1 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  17: {
+    statements: [
+      {
+        sql: "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  UPDATE t SET a = 1;\n  DELETE FROM u;\nEND",
+        start: 0,
+        end: 84,
+        startLine: 0,
+      },
+      { sql: "SELECT 1", start: 86, end: 94, startLine: 4 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+  19: {
+    statements: [
+      { sql: "BEGIN\n  NULL;\nEND", start: 0, end: 17, startLine: 0 },
+      { sql: "/\nSELECT 1 FROM dual", start: 19, end: 39, startLine: 3 },
+    ],
+    multi: true,
+    unterminated: false,
+  },
+};
+/** A class's table with some of its readings replaced. */
+function withReadings(name: string, readings: Readonly<Record<number, Reading>>): readonly Reading[] {
+  return EXPECTED[name].map((reading, index) => readings[index] ?? reading);
+}
+const TABLES: Readonly<Record<string, readonly Reading[]>> = {
+  ...EXPECTED,
+  "every-code-semicolon-no-dollar": withReadings("every-code-semicolon", NO_DOLLAR),
+  "trigger-body-whole-no-dollar": withReadings("trigger-body-whole", NO_DOLLAR),
+  "pl-sql-units-no-dollar": withReadings("pl-sql-units", { ...NO_DOLLAR, 5: PL_SQL_NO_DOLLAR_ROUTINE }),
+  "go-batches-no-dollar": withReadings("go-batches", NO_DOLLAR),
+  "sql-pl-compound": withReadings("every-code-semicolon", { ...NO_DOLLAR, ...SQL_PL_COMPOUND }),
+  "begin-atomic-routines": EXPECTED["every-code-semicolon"].map(
+    (reading, index) => BEGIN_ATOMIC_ROUTINES[index] ?? reading,
+  ),
+};
+
 const NO_DIALECT = "(no dialect)";
 const SQL_TYPES = [...EXTERNAL_DATABASE_TYPES, "libredb" as DatabaseType].filter((type) => readsSqlText(type));
 
@@ -1455,13 +1672,13 @@ function read(text: string, type: DatabaseType | undefined): Reading {
 describe("script golden readings", () => {
   test("every row that reads SQL text has a class, and every class a table for every text", () => {
     expect(Object.keys(ROW_CLASS).sort()).toEqual([NO_DIALECT, ...SQL_TYPES].sort());
-    for (const name of new Set(Object.values(ROW_CLASS))) expect(EXPECTED[name]).toHaveLength(CORPUS.length);
+    for (const name of new Set(Object.values(ROW_CLASS))) expect(TABLES[name]).toHaveLength(CORPUS.length);
   });
 
   describe.each(Object.entries(ROW_CLASS))("%s (%s)", (row, name) => {
     const type = row === NO_DIALECT ? undefined : (row as DatabaseType);
     test.each(CORPUS.map((text, index) => [index, text] as const))("text %d: %j", (index, text) => {
-      expect(read(text, type)).toEqual(EXPECTED[name][index]);
+      expect(read(text, type)).toEqual(TABLES[name][index]);
     });
   });
 });

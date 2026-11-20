@@ -10,6 +10,11 @@ const MSSQL_GRAMMAR: SqlGrammar = {
   // "Incorrect syntax near '/'".
   doubleSlashComment: false,
   backslashAlwaysEscapes: false,
+  // No dollar-quoted literal: `$` is a name character after the first (`col$a$x` is a column) and opens a pseudo
+  // column or function (`$action`, `$PARTITION`) at the start; `SELECT $$a$$` is "Incorrect syntax near '$a$$'"
+  // (measured 2026-11-20 on the local SQL Server container). Read as an opener, the `$a$` inside `col$a$x` hid a `;`
+  // and a DELETE up to the next such name.
+  dollarQuotes: false,
   // The batch is the unit, cut at `GO` lines, and `blocks` stays `none` because a batch
   // already holds every body it contains: `CREATE PROCEDURE` runs to the end of its batch.
   // Measured on 2025 RTM-CU9: `DECLARE @x INT = 5; SELECT @x * 2` sent as two requests is

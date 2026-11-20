@@ -57,6 +57,19 @@ export interface TableDdlWritten {
   readonly dropColumn: (col: ColumnDiff, column: string, table: string) => string;
   readonly modifyColumn: (col: ColumnDiff, column: string, table: string) => readonly string[];
   readonly dropTable: (table: string) => string;
+  /**
+   * The statements the added columns of one table need before any table is created or altered: its schema, the
+   * sequences their defaults draw from (R9). `container` is the table's quoted container path, `undefined` for a
+   * table with none. Optional: an engine that declares none writes nothing, as every engine but PostgreSQL does.
+   * The generator writes each distinct statement once.
+   */
+  readonly prerequisites?: (container: string | undefined, columns: readonly ColumnDiff[]) => readonly string[];
+  /**
+   * The statements that tie a prerequisite back to the added columns of one table, written after every table is
+   * created and altered: the sequence a column owns (`OWNED BY`), which cannot name a column that does not exist yet.
+   * `table` is the quoted table, and each column comes with its quoted name. Optional, like `prerequisites`.
+   */
+  readonly ownership?: (table: string, columns: readonly (readonly [ColumnDiff, string])[]) => readonly string[];
   /** Every refusal sentence the module can print, verbatim (spec 5.5 "each refusal's reason"); [] when none. */
   readonly reasons: readonly string[];
 }

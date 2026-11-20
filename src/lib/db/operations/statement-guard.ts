@@ -98,6 +98,9 @@ export type AgentStatementViolation =
  */
 const READ_STATEMENTS: ReadonlySet<string> = new Set(["SELECT", "VALUES", "TABLE", "EXPLAIN"]);
 
+/** The keywords a bounded read may be led by, in order: what a `NON_READ_STATEMENT` denial names to the model. */
+export const AGENT_READ_KEYWORDS: readonly string[] = Object.freeze([...READ_STATEMENTS]);
+
 /**
  * Words no bounded read may contain in its own code, whatever it leads with.
  *
@@ -396,6 +399,35 @@ function admitsByIdentity(sql: string): boolean {
   return !hasComment(sql) && findSideEffectWord(sql, false) === null;
 }
 
+/** What a refused agent statement's input issue carries: a violation, or the composed admission that did not match. */
+export type AgentStatementRefusalCode = AgentStatementViolation | "COMPOSED_ADMISSION_MISMATCH";
+
+/** The prefix of every issue message `agentSqlInput` writes, which `readAgentStatementRefusal` reads back. */
+const REFUSAL_PREFIX = "agent statement refused: ";
+
+/** Total over the codes, so a new violation fails to compile here rather than reading back as no code at all. */
+const REFUSAL_CODES: Readonly<Record<AgentStatementRefusalCode, true>> = Object.freeze({
+  UNDETERMINABLE_TEXT: true,
+  DIALECT_AMBIGUOUS_TEXT: true,
+  MULTIPLE_STATEMENTS: true,
+  NO_STATEMENT: true,
+  NON_READ_STATEMENT: true,
+  SIDE_EFFECT_KEYWORD: true,
+  COMPOSED_ADMISSION_MISMATCH: true,
+});
+
+/**
+ * The guard's code in one input issue message, or null for any other message. Read by the policy (`policy.ts`), so
+ * a denial for an input this guard refused carries WHICH refusal it was (G-S1, 2026-11-20): the model used to hear
+ * `INPUT_VALIDATION_FAILED` alone for a `SHOW`, and the reason the guard had already written was dropped. Only a code
+ * from the closed set comes back, so no text a caller wrote can travel this way.
+ */
+export function readAgentStatementRefusal(message: string): AgentStatementRefusalCode | null {
+  if (!message.startsWith(REFUSAL_PREFIX)) return null;
+  const code = message.slice(REFUSAL_PREFIX.length);
+  return Object.hasOwn(REFUSAL_CODES, code) ? (code as AgentStatementRefusalCode) : null;
+}
+
 /**
  * Exactly one SQL statement string, shaped like a bounded read. Unknown keys
  * are rejected (fail closed), and the violation travels as the issue message so
@@ -413,7 +445,7 @@ function agentSqlInput(options: AgentStatementOptions, composed = false) {
     if ("composed" in value && !admitted) {
       ctx.addIssue({
         code: "custom",
-        message: "agent statement refused: COMPOSED_ADMISSION_MISMATCH",
+        message: `${REFUSAL_PREFIX}COMPOSED_ADMISSION_MISMATCH`,
         path: ["composed"],
       });
       return;
@@ -421,7 +453,7 @@ function agentSqlInput(options: AgentStatementOptions, composed = false) {
     const violation = inspectAgentStatement(value.sql, options);
     if (violation === null) return;
     if (violation === "NON_READ_STATEMENT" && admitted && admitsByIdentity(value.sql)) return;
-    ctx.addIssue({ code: "custom", message: `agent statement refused: ${violation}`, path: ["sql"] });
+    ctx.addIssue({ code: "custom", message: `${REFUSAL_PREFIX}${violation}`, path: ["sql"] });
   });
 }
 

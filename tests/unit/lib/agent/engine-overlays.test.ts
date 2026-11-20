@@ -526,6 +526,39 @@ describe("engineServerDialect", () => {
     }
   });
 
+  /*
+    G-S2 (PostgreSQL 19, 2026-11-20): an engine that names its own schemas declares them, so `inspect_schema` can say
+    that a selector naming one is outside the tool rather than that the object does not exist. Each name is held to the
+    column read it is excluded from, so the declaration and the exclusion cannot drift apart. Druid and InfluxDB 3
+    exclude their own schemas too and declare nothing on purpose: their fences refuse a read of them, and the sentence
+    offers that read. Only PostgreSQL names the SELECT form of a refused command.
+  */
+  test("the engines that exclude their own schemas by name declare them, each one excluded by the column read", () => {
+    const declaring = SQL_ENGINES.flatMap((type) => {
+      const catalogRead = engineServerDialect(type).catalogRead;
+      return catalogRead === "unsupported" || catalogRead.systemSchemas === undefined
+        ? []
+        : [[type, catalogRead.compose.columns({}), catalogRead.systemSchemas] as const];
+    });
+    expect(declaring.map(([type]) => type)).toEqual(["postgres", "mysql", "mssql", "clickhouse", "trino"]);
+    for (const [type, sql, schemas] of declaring) {
+      expect(schemas.length).toBeGreaterThan(0);
+      expect(Object.isFrozen(schemas)).toBe(true);
+      for (const schema of schemas) {
+        if (!sql.includes(`'${schema}'`)) throw new Error(`${type}: ${schema} is declared and not excluded`);
+      }
+    }
+    const postgres = declaring.find(([type]) => type === "postgres")?.[2];
+    expect(postgres).toContain("pg_catalog");
+    expect(postgres).toContain("information_schema");
+
+    const advising = SQL_ENGINES.filter((type) => {
+      const catalogRead = engineServerDialect(type).catalogRead;
+      return catalogRead !== "unsupported" && catalogRead.nonReadAdvice !== undefined;
+    });
+    expect(advising).toEqual(["postgres"]);
+  });
+
   test("only SQLite and libSQL fold the declared schema, only PostgreSQL retries a failed catalog read, and only the two search engines map their catalog rows and read their catalog with a command", () => {
     const supplied = (member: "declaredSchema" | "retry" | "mapRows" | "commandShaped") =>
       SQL_ENGINES.filter((type) => {

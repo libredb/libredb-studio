@@ -689,6 +689,18 @@ Three refusals, each a 400 that runs nothing:
 - `Only SELECT statements can be explained` when the dialect's strategy declines the statement. The
   original `sql` is never run as a fallback.
 
+**A plan inside a transaction.** The `query` action of `POST /api/db/transaction` takes the same `explain`
+field, read the same way, with the same three refusals and the same `explainFormat` in its answer, plus
+`inTransaction`. The EXPLAIN is built by the same strategy and runs on the session the transaction holds, so
+it sees what the transaction did: a table it created, rows it changed. No row bound is added and a text of
+several statements is refused rather than run one by one. An `analyze` of what the strategy accepts runs the
+statement inside the transaction, so its `ROLLBACK` undoes it, and a plan the database refuses fails the
+transaction the way any failed statement in it does (PostgreSQL then refuses everything but `ROLLBACK`). The
+editor's **Explain** button sends its ask here while BEGIN is on, and asks for no background plan beside a
+run in an open transaction. Before this (D16, measured on PostgreSQL 19 and 18) the button planned on a
+pooled session outside the transaction, and a table the transaction had created answered 400 `relation ...
+does not exist`.
+
 **Response (400 Bad Request):**
 ```json
 {
@@ -700,7 +712,7 @@ Three refusals, each a 400 that runs nothing:
 **Response (504 Gateway Timeout):**
 ```json
 {
-  "error": "Query timed out. Please try a simpler query or increase timeout.",
+  "error": "canceling statement due to statement timeout",
   "code": "TIMEOUT_ERROR",
   "statusCode": 504,
   "retryable": true
@@ -708,6 +720,8 @@ Three refusals, each a 400 that runs nothing:
 ```
 
 A statement that reaches its query timeout is answered with HTTP 504, never 408.
+`error` is the timeout's own text: the engine's report, as PostgreSQL's above or MySQL's `Lock wait timeout exceeded; try restarting transaction` (prefixed `Query timeout: ` where the shared mapping classifies it by its words), or the provider's sentence for Studio's own deadline, which says what became of the statement and of an open transaction.
+Only a timeout that carries no text is answered "Query timed out. Please try a simpler query or increase timeout."
 Chromium sends a POST answered 408 on a reused keep-alive connection again without telling the page, so a 408 ran one editor run of a statement that timed out up to six times on the database.
 `retryable` is a hint for the person reading the error: no Studio client sends the request again on it.
 
@@ -1788,7 +1802,9 @@ as the contract.
 `query-safety` bounds its wait for the model: a provider request that has not finished after 30 seconds
 (`QUERY_SAFETY_ROUTE_TIMEOUT_MS` in `src/lib/llm/query-safety.ts`) is aborted, and a request that had not
 started streaming answers `504 { "error": "The AI safety analysis did not finish in time.", "code": "TIMEOUT_ERROR" }`;
-one that had started ends there. A caller that disconnects aborts the provider request as well. The bound is
+one that had started ends there. A caller that disconnects aborts the provider request as well, and a request it
+drops before streaming starts answers `499 { "code": "QUERY_CANCELLED" }` and is logged as a cancel, not as an
+LLM stream error. The bound is
 fixed, not configurable: the Query Safety dialog, the only caller in this repo, stops waiting after 15 seconds
 (`QUERY_SAFETY_ANALYSIS_TIMEOUT_MS`), aborts its request and lets the statement run without the analysis.
 
@@ -2574,6 +2590,8 @@ interface ColumnSchema {
   defaultValue?: string;   // Default value
   defaultExpression?: string; // The SQL that produces it, where the provider has it. MySQL
                            // only with includeDefaultSql, since its catalog spells a value (#1031)
+  autoIncrement?: boolean; // The engine numbers it (identity, sequence default); PostgreSQL only,
+                           // absent where the provider does not say (D27)
   provenance?: "sampled";  // Inferred from sampled rows rather than declared; never sent to MCP or a model
 }
 

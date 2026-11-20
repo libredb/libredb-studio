@@ -77,6 +77,7 @@ import { hasLoneCarriageReturnInLineComment, readSqlSpan } from "@/lib/sql/spans
 import { readSqlWord } from "@/lib/sql/words";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+import { mssqlDeclaredType } from "./mssql-declared-type";
 
 /**
  * SQL Server's identity for the shared container-path renderer.
@@ -809,7 +810,7 @@ function sourceTriggerSql(database: string, bySchema: boolean): string {
  */
 function objectColumnsSql(database: string): string {
   return `
-        SELECT c.name AS name, ty.name AS data_type, TYPE_NAME(c.system_type_id) AS base_type, c.is_nullable, dc.definition AS default_definition
+        SELECT c.name AS name, ty.name AS data_type, TYPE_NAME(c.system_type_id) AS base_type, c.max_length, c.precision, c.scale, c.is_nullable, dc.definition AS default_definition, c.is_identity
         FROM ${database}.sys.columns c
         JOIN ${database}.sys.objects o ON o.object_id = c.object_id
         JOIN ${database}.sys.schemas s ON s.schema_id = o.schema_id
@@ -946,7 +947,7 @@ function bulkDetailSql(
   const described = describedSql(database, types, bySchema, bounded);
   return {
     columns: `${described}
-        SELECT d.object_id, c.name AS name, ty.name AS data_type, TYPE_NAME(c.system_type_id) AS base_type, c.is_nullable, dc.definition AS default_definition
+        SELECT d.object_id, c.name AS name, ty.name AS data_type, TYPE_NAME(c.system_type_id) AS base_type, c.max_length, c.precision, c.scale, c.is_nullable, dc.definition AS default_definition, c.is_identity
         FROM described d
         JOIN ${database}.sys.columns c ON c.object_id = d.object_id
         JOIN ${database}.sys.types ty ON ty.user_type_id = c.user_type_id
@@ -1036,8 +1037,14 @@ interface ColumnRow {
    * reporting an absence it would have to invent.
    */
   base_type: string | null;
+  /** `sys.columns`' length in bytes (`-1` for `max`), precision and scale, which `mssqlDeclaredType` spells back (R6). */
+  max_length?: number | null;
+  precision?: number | null;
+  scale?: number | null;
   is_nullable: boolean;
   default_definition: string | null;
+  /** `sys.columns.is_identity`, a `bit` the driver answers as a boolean (R5). Optional: a row without it says nothing. */
+  is_identity?: boolean;
 }
 
 interface ForeignKeyRow {
@@ -1489,6 +1496,12 @@ interface DetailRows {
  * surfaces are live through Phase 1. SQL Server has no cross-DATABASE foreign key, so the
  * catalog never needs naming.
  */
+/** `ColumnSchema.declaredType` as a field to spread: absent for a row that selected no length. */
+function declaredTypeOf(row: ColumnRow): { declaredType?: string } {
+  const declaredType = mssqlDeclaredType(row);
+  return declaredType === undefined ? {} : { declaredType };
+}
+
 function objectDetailFromRows(path: readonly string[], schema: string, rows: DetailRows): ObjectDetail {
   const primaryKey = new Set(rows.primaryKey.map((row) => row.name));
   const columns: ColumnSchema[] = rows.columns.map((row) => ({
@@ -1497,9 +1510,14 @@ function objectDetailFromRows(path: readonly string[], schema: string, rows: Det
     // does this browser. What a reader DECIDES on is `baseType` - see `ColumnSchema`.
     type: row.data_type,
     ...(row.base_type === null || row.base_type === row.data_type ? {} : { baseType: row.base_type }),
+    // The declaration, length and precision included, which the schema-diff migration writes: `type` alone is
+    // `varchar(1)` and `decimal(18,0)` to SQL Server (R6).
+    ...declaredTypeOf(row),
     nullable: row.is_nullable,
     isPrimary: primaryKey.has(row.name),
     defaultValue: row.default_definition ?? undefined,
+    // An IDENTITY column, which the server numbers itself (R5). A row without the flag says nothing.
+    ...(typeof row.is_identity === "boolean" ? { autoIncrement: row.is_identity } : {}),
   }));
 
   // One entry per index, its columns in key_ordinal order, which is the order both

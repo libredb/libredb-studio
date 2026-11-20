@@ -34,7 +34,7 @@ export const SQL_STATEMENT_DEFINITIONS = Object.freeze({
   inspect_schema: Object.freeze({
     name: "inspect_schema",
     description:
-      "Read the database's own catalog, optionally narrowed to one schema or table. Pass kind to choose the inventory: columns (the default: tables and their columns), relations (foreign keys) or indexes. The statement is composed by the server; you supply only the selector. On a large database pass a schema or table selector: the result is subject to the same row budget as any read and is refused, not truncated, if it overflows.",
+      "Read the database's own catalog of user objects, optionally narrowed to one schema or table. The engine's system schemas and catalog or statistics views are not listed: read one of those directly with run_read_query. Pass kind to choose the inventory: columns (the default: tables and their columns), relations (foreign keys) or indexes. The statement is composed by the server; you supply only the selector. On a large database pass a schema or table selector: the result is subject to the same row budget as any read and is refused, not truncated, if it overflows.",
     inputSchema: catalogSelectorSchema,
     operationId: "sql.query.read",
   }),

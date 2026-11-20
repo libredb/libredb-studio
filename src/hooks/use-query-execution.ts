@@ -583,9 +583,14 @@ export function useQueryExecution({
       // `active` after the run's own backend went idle (#1311). Its own rather than the
       // run's, because a provider tracks one statement per id.
       // A strategy that declares backgroundPlan: false is never asked beside a run: its engine bills the plan.
+      // Nor is a plan asked for beside a run in an open transaction (D16): the pooled session `/api/db/query` uses
+      // cannot see what the transaction did (measured on PostgreSQL 19 and 18: a table it created was "relation does
+      // not exist", a silent 400), and the transaction's own session is not handed a statement nobody asked for, which
+      // on PostgreSQL would abort the whole transaction if it failed. The Explain button plans inside it.
       const sendsPlan =
         !isExplain &&
         !isLoadMore &&
+        !transactionActive &&
         oneStatement &&
         explainStrategy !== null &&
         explainStrategy.backgroundPlan !== false &&
@@ -674,7 +679,13 @@ export function useQueryExecution({
         // Use transaction endpoint if a transaction is active or in playground mode. It is sent the
         // text whole and splits a script itself, running each statement on the transaction's
         // connection (#1390), so the splitter above is not asked here.
-        const useTransaction = (transactionActive || isPlaygroundRun) && !isExplain;
+        //
+        // An Explain in an open transaction takes it too (D16): on `/api/db/query` it ran on a pooled session outside
+        // the transaction, which cannot see a table the transaction created. The route builds the EXPLAIN with the
+        // same strategy and screen `/api/db/query` applies and runs it on the transaction's session, so an ANALYZE of
+        // what the strategy accepts runs inside the transaction and is undone by its ROLLBACK. A SANDBOX run is never
+        // an Explain (`isPlaygroundRun`), so an Explain with SANDBOX on keeps its own route.
+        const useTransaction = transactionActive || isPlaygroundRun;
 
         // Start both queries in parallel (main query + background explain)
         const queryEndpoint = useTransaction
@@ -695,7 +706,12 @@ export function useQueryExecution({
             // without values must stay a request without a `params` key (#290).
             ...(params && { params }),
             ...(useTransaction
-              ? { action: "query", sql: queryToExecute, options: { limit, offset, unlimited } }
+              ? {
+                  action: "query",
+                  sql: queryToExecute,
+                  options: isExplain ? {} : { limit, offset, unlimited },
+                  ...(isExplain && { explain: { mode: "analyze" } }),
+                }
               : {
                   // The user's own statement, always: an explain run asks for a
                   // plan of it with `explain`, and the connected provider builds
@@ -1095,6 +1111,14 @@ export function useQueryExecution({
             currentOffset: 0,
             runError: errorMessage,
           }));
+        }
+        // A FAILED EXPLAIN IS NO PLAN OF THIS STATEMENT (D16). The Explain tab was brought forward for it, so the plan
+        // still on the tab, the statement before's, read as this one's under the error toast. It is cleared as a
+        // declined Explain clears it, and the new plan generation keeps off the tab a background plan that a run still
+        // in flight asked for.
+        if (isExplain) {
+          planGenerationRef.current.set(targetTabId, (planGenerationRef.current.get(targetTabId) ?? 0) + 1);
+          commitToTab((t) => ({ ...t, explainPlan: undefined }));
         }
         toast({ title, description: errorMessage, variant: "destructive" });
         executionOptions?.onFailure?.(errorMessage);

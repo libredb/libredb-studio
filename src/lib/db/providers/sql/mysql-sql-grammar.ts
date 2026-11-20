@@ -12,6 +12,11 @@ const MYSQL_GRAMMAR: SqlGrammar = {
   // False although MySQL escapes with a backslash by default: `NO_BACKSLASH_ESCAPES` in
   // `sql_mode` turns that off per session, so the escape is not a fact of the dialect.
   backslashAlwaysEscapes: false,
+  // No dollar-quoted literal in MySQL or MariaDB: `$` is a name character (`c$a$` and `$ab` are names), and
+  // `SELECT $$a$$` and `SELECT $a$x$a$` are ERROR 1064 (measured 2026-11-20 on 8.4.13). Read as an opener, the `$a$`
+  // of `c$a$` never closed, so a plain read asked as "could not be read" (R2), and the `$a$` inside `col$a$x` hid a
+  // `;` and a DELETE up to the next such name.
+  dollarQuotes: false,
   // NOT established. MySQL has compound statements (`CREATE PROCEDURE … BEGIN … END`), which
   // its own client cuts with `DELIMITER`, and no reading of them was measured here, so the
   // default stays and the gap is BACKLOG S7.

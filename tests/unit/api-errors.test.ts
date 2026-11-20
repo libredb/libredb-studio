@@ -112,7 +112,7 @@ describe("createErrorResponse", () => {
     const res = createErrorResponse(new TimeoutError("query took too long", "postgres", 30000), {
       route: "api/db/test-connection",
     });
-    expect((await res.json()).error).toBe("Query timed out. Please try a simpler query or increase timeout.");
+    expect((await res.json()).error).toBe("query took too long");
   });
 
   test("ConnectionError returns 503 with code CONNECTION_ERROR", async () => {

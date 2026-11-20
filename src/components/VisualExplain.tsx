@@ -258,6 +258,20 @@ const StatusBadge = ({ status }: { status: "good" | "warning" | "critical" }) =>
   );
 };
 
+/**
+ * A node's label as PostgreSQL's text plan writes it (explain.c): the JSON plan names the join method in "Node Type"
+ * and the join type in "Join Type", and the text plan joins them, so a Hash Join of type Anti reads "Hash Anti Join",
+ * a Nested Loop of type Left "Nested Loop Left Join" and a Merge Join of type Semi "Merge Semi Join". An inner join
+ * keeps its node type ("Hash Join", "Nested Loop"). Reading "Node Type" alone showed PostgreSQL 19's anti join for a
+ * `NOT IN` as a plain "Hash Join".
+ */
+function planNodeLabel(node: ExplainPlanNode): string {
+  const nodeType = node["Node Type"] || "Unknown";
+  const joinType = node["Join Type"];
+  if (!joinType || joinType === "Inner") return nodeType;
+  return `${nodeType.replace(/ Join$/, "")} ${joinType} Join`;
+}
+
 // Compact Plan Node
 // `scale` is the root's measure the bar is drawn against: its execution time for an
 // executed plan, its total cost for an estimate (see `wasExecuted`).
@@ -307,7 +321,7 @@ const PlanNode = ({ node, depth = 0, scale }: { node: ExplainPlanNode; depth?: n
         {/* Type & Table */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-fg truncate">{nodeType}</span>
+            <span className="text-xs font-medium text-fg truncate">{planNodeLabel(node)}</span>
             {node["Relation Name"] && (
               <span className="text-xs text-fg-muted font-mono truncate">{node["Relation Name"]}</span>
             )}

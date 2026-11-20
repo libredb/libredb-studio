@@ -2100,6 +2100,8 @@ The agent reads it through `runServerPack` and `agentEnginePack`, and the dialec
 | `statistics` | Dialect-bound | `"unsupported"` |
 | `catalogCapture` | Dialect-bound | `"unsupported"` |
 
+Its `catalogRead` declares `systemSchemas` (`information_schema`), the schemas every composer leaves out by name, so `inspect_schema` narrowed to one of them answers `CATALOG_SYSTEM_SCHEMA` before anything is sent, and an empty column read answers `CATALOG_MATCHED_NO_USER_OBJECT`: both say the tool lists user objects only and that a system view is read with `run_read_query`, never that the object does not exist.
+
 The overlay overrides no Shared member, so the engine resolves to the `sql` family pack itself for those.
 The column kind reads `information_schema.columns` of the connection's pinned catalog, which the server filters to the tables the access control lets the user see, leaving `information_schema` itself out, and answers `table_schema`, `table_name`, `column_name`, `data_type`, `is_nullable` and `ordinal_position`; a connection that pins no catalog is answered the server's own refusal.
 The relation kind answers the same projection the other engines answer with no rows, since Trino declares no key on any connector ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)).

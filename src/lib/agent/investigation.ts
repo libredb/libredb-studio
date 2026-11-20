@@ -1925,7 +1925,9 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string): string
 
   const { refusal } = event;
   if (refusal.class === "policy-denied") {
-    return `Step ${event.stepId} (${toolName}) was refused by the database operation layer: ${refusal.reasonCode}. That is a boundary decision, not a remark about the statement.`;
+    const guard =
+      refusal.guardViolation === undefined ? "" : ` (the statement guard's reason: ${refusal.guardViolation})`;
+    return `Step ${event.stepId} (${toolName}) was refused by the database operation layer: ${refusal.reasonCode}${guard}. That is a boundary decision, not a remark about the statement.`;
   }
   if (refusal.class === "approval-required") {
     return `Step ${event.stepId} (${toolName}) needs a human approval that this run does not have: operation ${refusal.operationId}.`;
