@@ -4,9 +4,10 @@
  * `pg` emits `error` on a client whose connection ends, and `pg-pool` takes its own listener off a client while the
  * client is checked out. So the provider's clients carry a listener of their own for their whole life
  * (`NoticeKeepingClient` in src/lib/db/providers/sql/postgres.ts). This script drives the real provider against a real
- * PostgreSQL and ends the session under it in the ways a server does: `pg_terminate_backend` from the session itself
- * and from a second session, and `idle_in_transaction_session_timeout`. For each case it checks the answer the caller
- * gets, and that the process saw no `uncaughtException` and no `unhandledRejection`.
+ * PostgreSQL whose server ends the session under it: a terminated backend, during a statement or between statements,
+ * and `idle_in_transaction_session_timeout`. For each case it checks the answer the caller gets, that the rows of a
+ * COMMIT the server ran stay committed, and that every failure reached the caller as an error rather than escaping
+ * the call.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
  * CI runs it in the "Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)" job of .github/workflows/ci.yml, under Bun and
@@ -20,7 +21,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { ConnectionError, NO_ACTIVE_TRANSACTION } from "@/lib/db/errors";
+import { NO_ACTIVE_TRANSACTION, TransactionLostError } from "@/lib/db/errors";
 import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -28,10 +29,11 @@ const PG_CONTAINER = `${process.env.LIBREDB_LIVE_PG_CONTAINER_PREFIX ?? "libredb
 const PG_ADMIN_PASSWORD = "held-session-password";
 const AGENT_USER = "agent_readonly";
 const AGENT_PASSWORD = "held-session-agent-password";
-const LOST = /^The transaction was lost: its database session ended \(.+\)\./;
+const LOST =
+  /^The transaction was lost: its database session ended \(.+\)\. The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again\. Begin a new transaction to continue\.$/;
 const NOT_ACTIVE = new RegExp(`^${NO_ACTIVE_TRANSACTION}$`);
 
-/** Every `uncaughtException` and `unhandledRejection` the process saw, in order. */
+/** Every error that escaped a call instead of reaching its caller, in order. */
 const processEvents: string[] = [];
 process.on("uncaughtException", (error) => processEvents.push(`uncaughtException: ${error.message}`));
 process.on("unhandledRejection", (reason) =>
@@ -66,7 +68,6 @@ async function startPostgres(): Promise<number> {
     "postgres:17",
   ]);
   const port = publishedPort(PG_CONTAINER);
-  // The agent role may end its own backend: pg_terminate_backend admits a session of the caller's own role.
   const seedSql =
     `CREATE ROLE ${AGENT_USER} WITH LOGIN PASSWORD '${AGENT_PASSWORD}';` +
     ` GRANT CONNECT ON DATABASE postgres TO ${AGENT_USER};`;
@@ -104,8 +105,8 @@ function expectRejected(label: string, outcome: { error?: Error }, pattern: RegE
 
 function expectLost(label: string, outcome: { error?: Error }): void {
   expectRejected(label, outcome, LOST);
-  if (!(outcome.error instanceof ConnectionError)) {
-    throw new Error(`${label}: expected a ConnectionError, got ${outcome.error?.constructor.name}`);
+  if (!(outcome.error instanceof TransactionLostError)) {
+    throw new Error(`${label}: expected a TransactionLostError, got ${outcome.error?.constructor.name}`);
   }
 }
 
@@ -114,13 +115,19 @@ async function expectOne(label: string, provider: PostgresProvider): Promise<voi
   if (Number((answer.rows[0] as { one: number }).one) !== 1) throw new Error(`${label}: SELECT 1 did not answer 1`);
 }
 
-/** Runs one case, then fails it if the process saw any uncaught exception or unhandled rejection meanwhile. */
+async function expectRows(label: string, provider: PostgresProvider, expected: number): Promise<void> {
+  const answer = await provider.query("SELECT count(*)::int AS n FROM held_session_rows");
+  const n = Number((answer.rows[0] as { n: number }).n);
+  if (n !== expected) throw new Error(`${label}: another session counts ${n} rows, expected ${expected}`);
+}
+
+/** Runs one case, then fails it if any error escaped a call meanwhile. */
 async function check(label: string, body: () => Promise<void>): Promise<void> {
   processEvents.length = 0;
   const outcome = await settled(body);
   // The socket's end arrives after the statement's own answer, so the case waits for it before it reads the record.
   await sleep(300);
-  const seen = processEvents.length > 0 ? ` (process events: ${processEvents.join(" | ")})` : "";
+  const seen = processEvents.length > 0 ? ` (escaped errors: ${processEvents.join(" | ")})` : "";
   if (outcome.error !== undefined)
     throw new Error(`${label}: ${outcome.error.message}${seen}`, { cause: outcome.error });
   if (seen !== "") throw new Error(`${label}:${seen}`);
@@ -131,7 +138,7 @@ async function heldTransactionCases(connection: DatabaseConnection): Promise<voi
   const provider = new PostgresProvider(connection);
   await provider.connect();
   try {
-    await check("a transaction whose statement ends its own session is reported lost", async () => {
+    await check("a transaction whose session ends during its statement is reported lost", async () => {
       await provider.beginTransaction();
       expectRejected(
         "the statement in flight",
@@ -145,7 +152,7 @@ async function heldTransactionCases(connection: DatabaseConnection): Promise<voi
       await expectOne("the next pooled statement", provider);
     });
 
-    await check("a transaction whose session another session terminates is reported lost at COMMIT", async () => {
+    await check("a transaction whose session is terminated between statements is reported lost at COMMIT", async () => {
       await provider.beginTransaction();
       const pid = Number((await provider.queryInTransaction("SELECT pg_backend_pid() AS pid")).rows[0].pid);
       await provider.query(`SELECT pg_terminate_backend(${pid})`);
@@ -166,20 +173,51 @@ async function heldTransactionCases(connection: DatabaseConnection): Promise<voi
     });
 
     await check(
-      "a statement that ends its own session, followed at once by another, fails both explicitly",
+      "a transaction whose COMMIT ran before its session ended is reported lost, and its row stays committed",
       async () => {
-        const first = settled(() => provider.query("SELECT pg_terminate_backend(pg_backend_pid())"));
-        expectRejected("the first statement", await first, /terminating connection due to administrator command/);
-        // At once, so the pool hands out the same client before its socket has closed.
+        await provider.query("CREATE TABLE IF NOT EXISTS held_session_rows (n int)");
+        await provider.query("TRUNCATE held_session_rows");
+        await provider.beginTransaction();
+        await provider.queryInTransaction("INSERT INTO held_session_rows VALUES (1)");
         expectRejected(
-          "the statement right after it",
-          await settled(() => provider.query("SELECT 1")),
-          /Connection terminated unexpectedly|not queryable/,
+          "the text whose COMMIT ran first",
+          await settled(() => provider.queryInTransaction("COMMIT; SELECT pg_terminate_backend(pg_backend_pid())")),
+          /terminating connection due to administrator command/,
         );
         await sleep(200);
-        await expectOne("a later statement", provider);
+        expectLost("the next statement", await settled(() => provider.queryInTransaction("SELECT 1")));
+        await expectRows("the committed row", provider, 1);
       },
     );
+
+    await check(
+      "a transaction whose text committed and began again is reported lost when its session ends, and its row stays",
+      async () => {
+        await provider.query("TRUNCATE held_session_rows");
+        await provider.beginTransaction();
+        await provider.queryInTransaction("INSERT INTO held_session_rows VALUES (1)");
+        const pid = Number((await provider.queryInTransaction("SELECT pg_backend_pid() AS pid")).rows[0].pid);
+        await provider.queryInTransaction("COMMIT; BEGIN");
+        if (!provider.isInTransaction()) throw new Error("the transaction the text began is not reported open");
+        await provider.query(`SELECT pg_terminate_backend(${pid})`);
+        await sleep(200);
+        expectLost("COMMIT", await settled(() => provider.commitTransaction()));
+        await expectRows("the committed row", provider, 1);
+      },
+    );
+
+    await check("a statement whose session ends, followed at once by another, fails both explicitly", async () => {
+      const first = settled(() => provider.query("SELECT pg_terminate_backend(pg_backend_pid())"));
+      expectRejected("the first statement", await first, /terminating connection due to administrator command/);
+      // At once, so the pool hands out the same client before its socket has closed.
+      expectRejected(
+        "the statement right after it",
+        await settled(() => provider.query("SELECT 1")),
+        /Connection terminated unexpectedly|not queryable/,
+      );
+      await sleep(200);
+      await expectOne("a later statement", provider);
+    });
   } finally {
     // `disconnect()` waits for every borrowed client, so a case that failed with its transaction still held would
     // keep the script from ending. The rollback hands that client back; its own outcome is not what is checked here.
@@ -200,7 +238,7 @@ async function agentReadOnlyCase(connection: DatabaseConnection): Promise<void> 
   await provider.connect();
   const budget = { statementTimeoutMs: 5000, maxResultRows: 100, maxResultBytes: 100_000 };
   try {
-    await check("an agent read-only statement that ends its own session fails with the session's error", async () => {
+    await check("an agent read-only statement whose session ends fails with the session's error", async () => {
       const queryReadOnly = provider.queryReadOnly.bind(provider);
       expectRejected(
         "the statement",

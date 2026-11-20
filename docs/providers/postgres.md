@@ -1465,7 +1465,7 @@ releases it in a `finally` block.
 #### Idle-client failures are handled, not fatal
 
 `pg` emits `error` on a client whose connection fails or ends: the server ended the session (a terminated backend, an idle-in-transaction timeout, a failover) or the network went away.
-An `error` event with no listener is an uncaught exception in the server process, so every client has to be heard for its whole life, checked out or idle.
+That event reaches a caller as a named error only through a listener, so every client has to be heard for its whole life, checked out or idle.
 
 Every client the provider's pools build is a `NoticeKeepingClient`, which attaches its own `error` listener at construction ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)).
 That is the part that covers a client while it is **checked out**: `pg-pool` takes its own listener off a client for as long as somebody holds it, which for the transaction client is the whole transaction, so a listener attached by each borrow would have to be repeated at every checkout and could be forgotten at one.
@@ -2163,25 +2163,31 @@ A server that already has the setting on is left alone.
 The read-only profile ([12](#12-agent-read-only-execution-profile-328)) asks nothing: it writes nothing, and a probe at connect would be a statement outside its `BEGIN READ ONLY` envelope.
 A session that refuses the `SET` is reported on the server console and stays in the pool, where its writes behave as they did before.
 
-
 ### 8.0.2 A session that ends while a statement or the transaction holds it
 
-The server can end a session at any time: `pg_terminate_backend` from the session itself or from another one, `idle_in_transaction_session_timeout`, a restart or failover, or a network reset.
+The server can end a session at any time: a terminated backend, `idle_in_transaction_session_timeout`, a restart or failover, or a network reset.
 Each of these is reported as a named error, and the provider never retries, reconnects the transaction or carries on as if nothing happened.
 
 - **The statement in flight fails with the server's own message**, for example `terminating connection due to administrator command`, as any failed statement does, on `query()`, `queryInTransaction()` and `queryReadOnly()` alike.
   The agent read-only path then meets a dead client at its `ROLLBACK` and hands the client back with that error, so the pool discards it.
-- **The next statement on that client fails too.**
-  A statement sent at once after one that ended its own session can be handed the same pooled client before its socket has closed, and answers `Connection terminated unexpectedly`.
+- **A call already sent or queued on that client fails with the driver's error.**
+  A statement sent at once after one whose session ended can be handed the same pooled client before its socket has closed, and a `commitTransaction()` sent at once, or queued behind the failing statement, meets the same client.
+  Each answers `Connection terminated unexpectedly` (HTTP 500), and the provider holds no transaction after such a COMMIT or ROLLBACK.
   Once the connection has ended, `pg` marks the client unqueryable and `pg-pool` discards it on release, so it is never handed out again and later statements get a fresh session.
 - **A held transaction is reported lost.**
-  The next `queryInTransaction()`, `commitTransaction()` or `rollbackTransaction()` sends nothing and answers a `ConnectionError` (HTTP 503 `CONNECTION_ERROR`): `The transaction was lost: its database session ended (<the server's or the driver's message>). The server ends an open transaction with its session, so nothing in it was committed. Begin a new transaction to continue.`
-  The held client goes back with the session's error, so the pool discards it, and the provider holds no transaction from then on: `isInTransaction()` answers false and a further COMMIT or ROLLBACK answers `NO_ACTIVE_TRANSACTION`, which the editor reads as the transaction having ended.
+  The next `queryInTransaction()`, `commitTransaction()` or `rollbackTransaction()` after the client heard its session end sends nothing and answers a `TransactionLostError` (HTTP 503 `TRANSACTION_LOST`): `The transaction was lost: its database session ended (<the server's or the driver's message>). The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again. Begin a new transaction to continue.`
+  The sentence does not claim that nothing was committed.
+  A COMMIT can reach the server and its answer be lost with the session: a typed `COMMIT` whose answer a network reset lost, a `COMMIT` followed in the same text by a statement that ended the session, or a `COMMIT; BEGIN` text that left a new transaction open.
+  Measured on PostgreSQL 17, each of these committed its rows while the next call reported the transaction lost.
+  The held client goes back with the session's error, so the pool discards it, and the provider holds no transaction from then on: `isInTransaction()` answers false and a further COMMIT or ROLLBACK answers `NO_ACTIVE_TRANSACTION`.
+  The editor reads `TRANSACTION_LOST` as the transaction having ended and leaves transaction mode, and under governance the statement's request records the transaction's terminal `rolled-back` row with `status` `error` ([GOVERNANCE.md](../GOVERNANCE.md#query-events)).
   Until that next call the provider still reports the transaction open, because nothing has asked it yet; the event itself is in the server log at once ([§4.2](#42-connection-pooling)).
 
 Measured on PostgreSQL 17 through this provider under Node: a terminated backend reports `terminating connection due to administrator command` (`57P01`) and then `Connection terminated unexpectedly`, and an idle-in-transaction timeout reports `terminating connection due to idle-in-transaction timeout` (`25P03`) and then the same second error.
-The cause named in the sentence is the first error the session reported.
-`tests/live/postgres-held-session-live.ts` drives each of these cases against a real server, under Bun and under Node, and fails if the process sees an uncaught exception or an unhandled rejection.
+The cause named in the sentence is the first error the client heard as an event.
+When the session ended while no statement was running, that is the server's own message.
+When a statement was running, the server's message went to that statement as its error and is never an event, so the sentence names `Connection terminated unexpectedly`.
+`tests/live/postgres-held-session-live.ts` drives each of these cases against a real server, under Bun and under Node, and fails unless every call reports its failure as an error the caller receives.
 
 ### 8.1 `endOpenQueryTransaction()` — a transaction left open on a pooled client
 
@@ -2521,7 +2527,7 @@ the shared hierarchy:
 | A privilege the role lacks (SQLSTATE `42501`: `permission denied for table orders`, `must be owner of table orders`) | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | A refused credential (SQLSTATE class `28`: `28P01` a wrong password, `28000` a `pg_hba.conf` refusal or an unknown role) | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Pool exhausted / too many connections | `PoolExhaustedError` |
-| A call on a held transaction whose database session has ended | `ConnectionError`, answered `503 CONNECTION_ERROR` with the transaction-lost sentence ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)) |
+| A call on a held transaction whose database session has ended | `TransactionLostError`, a `ConnectionError`, answered `503 TRANSACTION_LOST` with the transaction-lost sentence ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)) |
 
 The two refusals are read from the SQLSTATE and never from the words, so `column "password" does not exist` (`42703`) is a `QueryError`.
 Only an error `pg` raises itself, which carries no SQLSTATE, is read by its words, such as `SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string`.

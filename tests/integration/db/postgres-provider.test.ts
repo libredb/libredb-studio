@@ -25,6 +25,7 @@ import {
   PermissionDeniedError,
   PoolExhaustedError,
   QueryError,
+  TransactionLostError,
   NO_ACTIVE_TRANSACTION,
   NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
@@ -3857,7 +3858,7 @@ describe("PostgresProvider", () => {
         const SessionClient = lastPoolConfig.Client as new (config: unknown) => EventEmitter;
         const idle = new SessionClient(lastPoolConfig);
         // What `pg-pool` attaches to an idle client: it removes and destroys the client, then emits
-        // the error on the POOL, where no listener would be an uncaught exception.
+        // the error on the POOL, where with no listener the emit would throw it.
         idle.on("error", (error: Error) => pool.emit("error", error, idle));
 
         expect(() => idle.emit("error", new Error("Connection terminated unexpectedly"))).not.toThrow();
@@ -3944,7 +3945,7 @@ describe("PostgresProvider", () => {
     }
 
     const lostSentence = (cause: string) =>
-      `The transaction was lost: its database session ended (${cause}). The server ends an open transaction with its session, so nothing in it was committed. Begin a new transaction to continue.`;
+      `The transaction was lost: its database session ended (${cause}). The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again. Begin a new transaction to continue.`;
 
     test("every client the provider's pools build hears its own error from construction", async () => {
       provider = new PostgresProvider(makePgConfig({ password: "pw-never-logged" }));
@@ -3996,7 +3997,9 @@ describe("PostgresProvider", () => {
 
       mockWire = [];
       const lost = await provider.queryInTransaction("SELECT 1").catch((error: unknown) => error);
+      expect(lost).toBeInstanceOf(TransactionLostError);
       expect(lost).toBeInstanceOf(ConnectionError);
+      expect((lost as TransactionLostError).code).toBe(ApiErrorCode.TRANSACTION_LOST);
       expect((lost as Error).message).toBe(lostSentence("terminating connection due to idle-in-transaction timeout"));
       expect(mockWire).toEqual([]);
       // Released with the error, so the pool discards the client instead of handing it out again.
@@ -4016,7 +4019,7 @@ describe("PostgresProvider", () => {
 
         mockWire = [];
         const lost = await provider[end]().catch((error: unknown) => error);
-        expect(lost).toBeInstanceOf(ConnectionError);
+        expect(lost).toBeInstanceOf(TransactionLostError);
         expect((lost as Error).message).toBe(lostSentence("terminating connection due to administrator command"));
         expect(mockWire).toEqual([]);
         expect(releases).toEqual([cause]);
@@ -4037,6 +4040,57 @@ describe("PostgresProvider", () => {
       await expect(provider.queryInTransaction("SELECT 1")).rejects.toThrow(
         lostSentence("terminating connection due to administrator command"),
       );
+    });
+
+    test("a transaction whose statement ended the session is reported lost without claiming nothing was committed", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const held = session!;
+      // A text whose COMMIT ran before its next statement ended the session: the server answers the
+      // statement with its FATAL message, and only then does the socket close.
+      mockQueryFn = async (sql: string | { text: string }) => {
+        const text = typeof sql === "string" ? sql : sql.text;
+        if (text.startsWith("COMMIT;")) {
+          throw Object.assign(new Error("terminating connection due to administrator command"), { code: "57P01" });
+        }
+        return defaultMockQuery(text);
+      };
+
+      await expect(provider.queryInTransaction("COMMIT; SELECT 1")).rejects.toThrow(
+        "terminating connection due to administrator command",
+      );
+      endSession(held, "Connection terminated unexpectedly");
+
+      const lost = await provider.queryInTransaction("SELECT 1").catch((error: unknown) => error);
+      expect(lost).toBeInstanceOf(TransactionLostError);
+      expect((lost as Error).message).toBe(lostSentence("Connection terminated unexpectedly"));
+      expect((lost as Error).message).not.toContain("nothing in it was committed");
+      expect((lost as Error).message).toContain("a COMMIT that had already reached the server stays committed");
+    });
+
+    test("a transaction begun after a loss is not expired at the lost transaction's deadline", async () => {
+      // TX_TIMEOUT_MS is read at beginTransaction(), so the lost transaction gets a short deadline
+      // and the next one a long one; the lost one's timer must not outlive it.
+      const providerStatics = PostgresProvider as unknown as { TX_TIMEOUT_MS: number };
+      const originalTimeout = providerStatics.TX_TIMEOUT_MS;
+      try {
+        provider = new PostgresProvider(makePgConfig());
+        await provider.connect();
+        providerStatics.TX_TIMEOUT_MS = 20;
+        await provider.beginTransaction();
+        endSession(session!, "terminating connection due to administrator command", "57P01");
+        await expect(provider.queryInTransaction("SELECT 1")).rejects.toBeInstanceOf(TransactionLostError);
+
+        providerStatics.TX_TIMEOUT_MS = 60_000;
+        await provider.beginTransaction();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+
+        expect(provider.isInTransaction()).toBe(true);
+        await provider.rollbackTransaction();
+      } finally {
+        providerStatics.TX_TIMEOUT_MS = originalTimeout;
+      }
     });
 
     test("a statement whose session ends while it runs fails with the session's error", async () => {

@@ -521,10 +521,10 @@ jobs:
 
       - name: PostgreSQL held-session live check
         # A session the server ends while the provider holds its client (a terminated backend, an
-        # idle-in-transaction timeout) must reach the caller as a named error and never as an
-        # uncaught exception. Under Bun and then under Node, bundled with `bun build --target=node`
-        # so the `@/` alias is resolved, because the two runtimes surface an error thrown from a
-        # socket handler differently. Each run starts and removes its own container.
+        # idle-in-transaction timeout) must reach the caller as a named error. Under Bun and then
+        # under Node, bundled with `bun build --target=node` so the `@/` alias is resolved, because
+        # the two runtimes report an error raised in a socket handler differently. Each run starts
+        # and removes its own container.
         run: |
           bun tests/live/postgres-held-session-live.ts
           OUT="$(mktemp -d)"
