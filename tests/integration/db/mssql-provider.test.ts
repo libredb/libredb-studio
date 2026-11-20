@@ -6,6 +6,7 @@ import {
 } from "@/lib/db/object-kinds";
 import { EventEmitter } from "node:events";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
+import { mssqlDeclaredType } from "@/lib/db/providers/sql/mssql-declared-type";
 
 // ---------------------------------------------------------------------------
 // Mock mssql BEFORE importing the provider
@@ -3517,11 +3518,45 @@ const FIXTURE_TRIGGERS = [
 ];
 
 const FIXTURE_COLUMNS: Record<string, Array<Record<string, unknown>>> = {
+  // `max_length`, `precision` and `scale` are `sys.columns`' own, as SQL Server 2022 answers them for
+  // `int`, `DECIMAL(12,2)` and `NVARCHAR(200)`: an nvarchar's length is in BYTES, two per character (R6).
   orders: [
-    { name: "id", data_type: "int", is_nullable: false, default_definition: null },
-    { name: "customer_id", data_type: "int", is_nullable: true, default_definition: null },
-    { name: "total", data_type: "decimal", is_nullable: true, default_definition: "((0))" },
-    { name: "note", data_type: "nvarchar", is_nullable: true, default_definition: null },
+    {
+      name: "id",
+      data_type: "int",
+      is_nullable: false,
+      default_definition: null,
+      max_length: 4,
+      precision: 10,
+      scale: 0,
+    },
+    {
+      name: "customer_id",
+      data_type: "int",
+      is_nullable: true,
+      default_definition: null,
+      max_length: 4,
+      precision: 10,
+      scale: 0,
+    },
+    {
+      name: "total",
+      data_type: "decimal",
+      is_nullable: true,
+      default_definition: "((0))",
+      max_length: 9,
+      precision: 12,
+      scale: 2,
+    },
+    {
+      name: "note",
+      data_type: "nvarchar",
+      is_nullable: true,
+      default_definition: null,
+      max_length: 400,
+      precision: 0,
+      scale: 0,
+    },
   ],
   daily: [
     { name: "day", data_type: "date", is_nullable: false, default_definition: null },
@@ -4547,11 +4582,20 @@ describe("SQL Server object containers, listings and detail", () => {
     expect(detail.columns[0]).toEqual({
       name: "id",
       type: "int",
+      declaredType: "int",
       nullable: false,
       isPrimary: true,
       defaultValue: undefined,
     });
     expect(detail.columns[2].defaultValue).toBe("((0))");
+    // The declaration, length and precision included, which the schema-diff migration writes (R6): `decimal` alone
+    // is `decimal(18,0)` to SQL Server and `nvarchar` alone is `nvarchar(1)`.
+    expect(detail.columns.map((column) => column.declaredType)).toEqual([
+      "int",
+      "int",
+      "decimal(12,2)",
+      "nvarchar(200)",
+    ]);
     expect(detail.columns[3].isPrimary).toBe(false);
     expect(detail.indexes).toEqual([{ name: "app_orders_total_ix", columns: ["total"], unique: false }]);
     expect(detail.foreignKeys).toEqual([
@@ -5362,10 +5406,31 @@ describe("SQL Server bulk column read", () => {
     ]);
     const orders = batch.details[3];
     expect(orders.columns).toEqual([
-      { name: "id", type: "int", nullable: false, isPrimary: true, defaultValue: undefined },
-      { name: "customer_id", type: "int", nullable: true, isPrimary: false, defaultValue: undefined },
-      { name: "total", type: "decimal", nullable: true, isPrimary: false, defaultValue: "((0))" },
-      { name: "note", type: "nvarchar", nullable: true, isPrimary: false, defaultValue: undefined },
+      { name: "id", type: "int", declaredType: "int", nullable: false, isPrimary: true, defaultValue: undefined },
+      {
+        name: "customer_id",
+        type: "int",
+        declaredType: "int",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
+      {
+        name: "total",
+        type: "decimal",
+        declaredType: "decimal(12,2)",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: "((0))",
+      },
+      {
+        name: "note",
+        type: "nvarchar",
+        declaredType: "nvarchar(200)",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
     ]);
     expect(orders.indexes).toEqual([{ name: "app_orders_total_ix", columns: ["total"], unique: false }]);
     // Bare inside the object's OWN schema, qualified outside it, which is per object rather
@@ -6855,5 +6920,131 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     expect(lastPool?.closeCount).toBe(0);
     expect(engine.events.filter((event) => event === "rollback")).toHaveLength(1);
+  });
+});
+
+/**
+ * A column's declaration from its `sys.columns` facts (R6). Measured on SQL Server 2022 through Schema Diff > SQL
+ * Migration: the migration wrote `varchar`, `decimal` and `nvarchar`, which SQL Server created as `varchar(1)`,
+ * `decimal(18,0)` and `nvarchar(1)`.
+ */
+describe("mssqlDeclaredType", () => {
+  const facts = (
+    data_type: string,
+    max_length: number | null,
+    precision: number | null = 0,
+    scale: number | null = 0,
+  ) => ({
+    data_type,
+    max_length,
+    precision,
+    scale,
+  });
+
+  test("a length-declared type carries its length, an nvarchar's in characters rather than bytes", () => {
+    expect(mssqlDeclaredType(facts("varchar", 50))).toBe("varchar(50)");
+    expect(mssqlDeclaredType(facts("char", 3))).toBe("char(3)");
+    expect(mssqlDeclaredType(facts("nvarchar", 100))).toBe("nvarchar(50)");
+    expect(mssqlDeclaredType(facts("nchar", 20))).toBe("nchar(10)");
+    expect(mssqlDeclaredType(facts("varbinary", 16))).toBe("varbinary(16)");
+    expect(mssqlDeclaredType(facts("binary", 8))).toBe("binary(8)");
+  });
+
+  test("-1 is max", () => {
+    expect(mssqlDeclaredType(facts("varchar", -1))).toBe("varchar(max)");
+    expect(mssqlDeclaredType(facts("nvarchar", -1))).toBe("nvarchar(max)");
+    expect(mssqlDeclaredType(facts("varbinary", -1))).toBe("varbinary(max)");
+  });
+
+  test("decimal and numeric carry precision and scale, the time types their scale", () => {
+    expect(mssqlDeclaredType(facts("decimal", 9, 12, 2))).toBe("decimal(12,2)");
+    expect(mssqlDeclaredType(facts("numeric", 5, 10, 3))).toBe("numeric(10,3)");
+    expect(mssqlDeclaredType(facts("datetime2", 8, 27, 7))).toBe("datetime2(7)");
+    expect(mssqlDeclaredType(facts("time", 4, 12, 3))).toBe("time(3)");
+    expect(mssqlDeclaredType(facts("datetimeoffset", 10, 34, 7))).toBe("datetimeoffset(7)");
+  });
+
+  test("a missing precision or scale falls back to SQL Server's own default", () => {
+    expect(mssqlDeclaredType(facts("decimal", 9, null, null))).toBe("decimal(18,0)");
+    expect(mssqlDeclaredType(facts("datetime2", 8, null, null))).toBe("datetime2(7)");
+  });
+
+  test("a type with no modifier, an alias type included, is its own name", () => {
+    expect(mssqlDeclaredType(facts("int", 4, 10, 0))).toBe("int");
+    expect(mssqlDeclaredType(facts("float", 8, 53, 0))).toBe("float");
+    expect(mssqlDeclaredType(facts("Phone", 50))).toBe("Phone");
+  });
+
+  test("a row that selected no length declares nothing", () => {
+    expect(mssqlDeclaredType({ data_type: "varchar" })).toBeUndefined();
+    expect(mssqlDeclaredType(facts("varchar", null))).toBeUndefined();
+  });
+});
+
+/**
+ * Whether the engine numbers a column itself (R5, the SQL Server side of D27): `sys.columns.is_identity`,
+ * which the driver hands over as a boolean (measured, SQL Server 2022, `INT IDENTITY(1,1)` true and a plain
+ * `INT PRIMARY KEY` false). Without it the Test Data Generator guessed from the name, left `id int PRIMARY KEY`
+ * out of its INSERT, and the server refused it with `Cannot insert the value NULL into column 'id'`.
+ */
+describe("SQL Server autoIncrement from is_identity (R5)", () => {
+  beforeEach(installObjectFixture);
+
+  const IDENTITY_ROWS = [
+    { name: "id", data_type: "int", is_nullable: false, default_definition: null, is_identity: true },
+    { name: "plain_id", data_type: "int", is_nullable: false, default_definition: null, is_identity: false },
+    { name: "unsaid", data_type: "int", is_nullable: true, default_definition: null },
+  ];
+
+  async function columnsOfOrders(bulk: boolean) {
+    const saved = FIXTURE_COLUMNS.orders;
+    FIXTURE_COLUMNS.orders = IDENTITY_ROWS;
+    try {
+      const provider = await connectedForObjects();
+      const detail = bulk
+        ? (await provider.describeObjects(["libredb_objects"], "table")).details.find(
+            (entry) => entry.path.join(".") === "libredb_objects.app.orders",
+          )
+        : await provider.describeObject(["libredb_objects", "app", "orders"], "table");
+      await provider.disconnect();
+      return new Map((detail?.columns ?? []).map((column) => [column.name, column]));
+    } finally {
+      FIXTURE_COLUMNS.orders = saved;
+    }
+  }
+
+  for (const bulk of [false, true]) {
+    test(`${bulk ? "the bulk" : "the single"} read says which columns the engine numbers`, async () => {
+      const columns = await columnsOfOrders(bulk);
+
+      expect(columns.get("id")?.autoIncrement).toBe(true);
+      expect(columns.get("plain_id")?.autoIncrement).toBe(false);
+      // A row that does not carry the flag says nothing, and the reader keeps its own guess.
+      expect(Object.hasOwn(columns.get("unsaid") ?? {}, "autoIncrement")).toBe(false);
+      const columnReads = issued.filter((read) => read.sql.includes("sys.columns c") && read.sql.includes("ORDER BY"));
+      expect(columnReads.some((read) => read.sql.includes("c.is_identity"))).toBe(true);
+    });
+  }
+});
+
+// R1: `$` is never a dollar quote on this engine, measured on the engine itself and written in its doc, so a `$tag$`
+// inside a name hides no `;` and no write, and a plain read naming one is readable.
+describe("SQL Server SQL grammar: dollarQuotes", () => {
+  test("a `$tag$` inside a name opens no dollar quote, so the DELETE between two such names asks", async () => {
+    const { resolveSqlGrammar } = await import("@/lib/sql/grammar");
+    const { splitCursorTargets } = await import("@/lib/sql/statement-splitter");
+    const { hasUnreadableRun, isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+    const doc = await Bun.file(`${import.meta.dir}/../../../docs/providers/mssql.md`).text();
+    const text = "SELECT col$a$x FROM t;\nDELETE FROM t;\nSELECT y$a$z FROM t";
+
+    expect(resolveSqlGrammar("mssql").dollarQuotes).toBe(false);
+    expect(splitCursorTargets(text, resolveSqlGrammar("mssql")).map((target) => target.sql)).toEqual([
+      "SELECT col$a$x FROM t",
+      "DELETE FROM t",
+      "SELECT y$a$z FROM t",
+    ]);
+    expect(isDangerousQuery(text, "mssql")).toBe(true);
+    expect(hasUnreadableRun("SELECT c$a$ FROM t", "mssql")).toBe(false);
+    expect(doc).toContain("`dollarQuotes` is false: T-SQL has no dollar-quoted literal");
   });
 });

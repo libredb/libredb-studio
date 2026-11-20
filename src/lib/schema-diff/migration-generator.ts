@@ -4,9 +4,13 @@
  * `src/lib/db/migration-ddl/` (spec 5.3); this file only orders them and quotes every identifier. The live
  * regression probe is tests/live/schema-diff-dialects.ts.
  *
- * A diff is not a complete migration plan: source constraint names and
- * cross-table dependency order are not recorded here, and a foreign key's
- * referenced table is written as the reading spelled it. Tables are named by
+ * A diff is not a complete migration plan: source constraint names are not
+ * recorded here. New tables are created in the order their foreign keys need,
+ * the table a key references first, and a key that closes a cycle between new
+ * tables is added after all of them exist (R7); a dropped table is dropped
+ * before any other change, whatever still references it. A foreign key's
+ * referenced table is named by its path only where the target reading holds it,
+ * and otherwise as the reading spelled it. Tables are named by
  * their full path when the diff carries one, and an object that is not a table
  * (a view, a materialized view) is named in a comment rather than altered.
  * Review the generated SQL before executing it against the target database.
@@ -19,7 +23,7 @@ import type { DatabaseType } from "@/lib/types";
 // file used to carry its own copy that did not, so a schema object named with one
 // produced SQL that ended the quoted span early (PR #289 review).
 import { quoteIdentifier as escapeIdentifier } from "@/lib/sql/identifier";
-import type { SchemaDiff, TableDiff, ForeignKeyDiff, IndexDiff } from "./types";
+import type { ColumnDiff, SchemaDiff, TableDiff, ForeignKeyDiff, IndexDiff } from "./types";
 
 /**
  * The table as the statement names it: every segment of its path quoted on its own, container first, so
@@ -74,16 +78,94 @@ function indexDdl(table: TableDiff, idx: IndexDiff, dialect: DatabaseType | unde
   };
 }
 
+/**
+ * The referenced table as the statement names it: each segment of its path quoted on its own where the diff placed
+ * it, so `app.customers` is `"app"."customers"` and not the one identifier `"app.customers"` that names no table
+ * (D05). A reference the diff could not place is the reading's spelling quoted whole, as it always was.
+ *
+ * The containers it shares with the referencing table are left out, down to the innermost one, which is always kept:
+ * SQL Server's REFERENCES takes `schema.table` and not the `database.schema.table` its tables are addressed by, and
+ * no engine's foreign key leaves the referencing table's database. A table with no container is its name alone.
+ */
+function referencedTableId(table: TableDiff, fk: ForeignKeyDiff, dialect: DatabaseType | undefined): string {
+  const path = fk.targetReferencedPath;
+  if (path === undefined) return escapeIdentifier(fk.targetReferencedTable || "", dialect);
+  const own = (table.path ?? []).slice(0, -1);
+  let shared = 0;
+  while (shared < own.length && shared < path.length - 2 && own[shared] === path[shared]) shared++;
+  return path
+    .slice(shared)
+    .map((segment) => escapeIdentifier(segment, dialect))
+    .join(".");
+}
+
 /** The quoted parts of one foreign key; the `fk_<table>_<column>` name is this generator's own. */
 function foreignKeyDdl(table: TableDiff, fk: ForeignKeyDiff, dialect: DatabaseType | undefined): ForeignKeyDdl {
   return {
     constraint: escapeIdentifier(`fk_${table.tableName}_${fk.columnName}`, dialect),
     column: escapeIdentifier(fk.columnName, dialect),
-    references: `${escapeIdentifier(fk.targetReferencedTable || "", dialect)}(${escapeIdentifier(fk.targetReferencedColumn || "", dialect)})`,
+    references: `${referencedTableId(table, fk, dialect)}(${escapeIdentifier(fk.targetReferencedColumn || "", dialect)})`,
   };
 }
 
-function generateCreateTable(table: TableDiff, spec: TableDdlWritten, dialect: DatabaseType | undefined): string {
+/**
+ * The column as every module's statements read it: its type is the declaration where the provider read one
+ * (`character varying(50)`, `numeric(12,2)`), not the base name, which wrote a table without its lengths and
+ * precisions (D05). Done here, once, so no engine module has to know the field exists.
+ */
+function written(col: ColumnDiff): ColumnDiff {
+  return {
+    ...col,
+    sourceType: col.sourceDeclaredType ?? col.sourceType,
+    targetType: col.targetDeclaredType ?? col.targetType,
+  };
+}
+
+/** One table's identity, as its own path or, in a diff without paths, its name. */
+function tableKey(path: readonly string[] | undefined, name: string): string {
+  return JSON.stringify(path ?? [name]);
+}
+
+/** The table a foreign key references, keyed the way `tableKey` keys the table itself. */
+function referenceKey(fk: ForeignKeyDiff): string {
+  return tableKey(fk.targetReferencedPath, fk.targetReferencedTable ?? "");
+}
+
+/**
+ * New tables in the order their foreign keys need: a table is written once every other new table it references
+ * has been (R7). Measured on SQL Server 2022, MySQL 8.4 and Db2: in the reading's order, `rg_orders` and its key to
+ * `rg_ext` came before `rg_ext` existed and the script stopped there. Stable, so a table nothing orders keeps its
+ * place; a cycle is broken at its first table in the reading's order, and the key that closes it waits (`deferred`).
+ */
+function inDependencyOrder(tables: readonly TableDiff[]): TableDiff[] {
+  const keys = new Set(tables.map((t) => tableKey(t.path, t.tableName)));
+  const needs = (t: TableDiff): Set<string> =>
+    new Set(
+      t.foreignKeys
+        .filter((fk) => fk.action === "added")
+        .map(referenceKey)
+        .filter((key) => keys.has(key) && key !== tableKey(t.path, t.tableName)),
+    );
+  const pending = tables.map((t) => ({ table: t, needs: needs(t) }));
+  const written = new Set<string>();
+  const ordered: TableDiff[] = [];
+  while (pending.length > 0) {
+    const ready = pending.findIndex((entry) => [...entry.needs].every((key) => written.has(key)));
+    const [next] = pending.splice(ready === -1 ? 0 : ready, 1);
+    ordered.push(next.table);
+    written.add(tableKey(next.table.path, next.table.tableName));
+  }
+  return ordered;
+}
+
+function generateCreateTable(
+  table: TableDiff,
+  spec: TableDdlWritten,
+  dialect: DatabaseType | undefined,
+  /** Whether a key's referenced table is a new one this script has not created yet: its ALTER waits (R7). */
+  notYetCreated: (fk: ForeignKeyDiff) => boolean,
+  deferred: string[],
+): string {
   const lines: string[] = [];
   const id = tableId(table, dialect);
 
@@ -92,7 +174,7 @@ function generateCreateTable(table: TableDiff, spec: TableDdlWritten, dialect: D
 
   const colDefs = table.columns
     .filter((c) => c.action === "added")
-    .map((c) => `  ${spec.columnDef(c, escapeIdentifier(c.columnName, dialect))}`);
+    .map((c) => `  ${spec.columnDef(written(c), escapeIdentifier(c.columnName, dialect))}`);
 
   // Add primary key constraint
   const pkCols = table.columns.filter((c) => c.targetIsPrimary).map((c) => escapeIdentifier(c.columnName, dialect));
@@ -102,9 +184,8 @@ function generateCreateTable(table: TableDiff, spec: TableDdlWritten, dialect: D
 
   // A key the target can only declare here has to be emitted here, so the closing paren is not
   // written until the constraint list is complete.
-  const foreignKeys = table.foreignKeys
-    .filter((fk) => fk.action === "added")
-    .map((fk) => create.foreignKey(foreignKeyDdl(table, fk, dialect), id));
+  const added = table.foreignKeys.filter((fk) => fk.action === "added");
+  const foreignKeys = added.map((fk) => create.foreignKey(foreignKeyDdl(table, fk, dialect), id));
 
   lines.push(`CREATE TABLE ${id} (`);
   lines.push(colDefs.join(",\n"));
@@ -144,8 +225,9 @@ function generateCreateTable(table: TableDiff, spec: TableDdlWritten, dialect: D
 
   // Foreign keys. Already emitted above for the engines that can only declare one inside the
   // statement; for everyone else this separate statement is the shape that has always been emitted here.
-  foreignKeys.forEach((fk) => {
-    if ("after" in fk) lines.push(fk.after);
+  // One into a new table not created yet, the key that closes a cycle, waits until every new table exists.
+  foreignKeys.forEach((fk, index) => {
+    if ("after" in fk) (notYetCreated(added[index]) ? deferred : lines).push(fk.after);
   });
 
   return lines.join("\n");
@@ -175,18 +257,18 @@ function generateAlterTable(table: TableDiff, spec: TableDdlWritten, dialect: Da
   table.columns
     .filter((c) => c.action === "added")
     .forEach((col) => {
-      lines.push(spec.addColumn(spec.columnDef(col, escapeIdentifier(col.columnName, dialect)), id));
+      lines.push(spec.addColumn(spec.columnDef(written(col), escapeIdentifier(col.columnName, dialect)), id));
     });
 
   // Removed columns
   table.columns
     .filter((c) => c.action === "removed")
-    .forEach((col) => lines.push(spec.dropColumn(col, escapeIdentifier(col.columnName, dialect), id)));
+    .forEach((col) => lines.push(spec.dropColumn(written(col), escapeIdentifier(col.columnName, dialect), id)));
 
   // Modified columns
   table.columns
     .filter((c) => c.action === "modified")
-    .forEach((col) => lines.push(...spec.modifyColumn(col, escapeIdentifier(col.columnName, dialect), id)));
+    .forEach((col) => lines.push(...spec.modifyColumn(written(col), escapeIdentifier(col.columnName, dialect), id)));
 
   // Added and replaced indexes
   table.indexes
@@ -246,14 +328,44 @@ export function generateMigrationSQL(diff: SchemaDiff, dialect: DatabaseType | u
     sections.push("");
   }
 
+  // What the new tables and columns need first: a schema, a sequence (R9). Only an existing table's container is
+  // known to exist, so only a new table's is handed over.
+  const prerequisites = new Set<string>();
+  diff.tables
+    .filter((t) => isTableDdlTarget(t) && t.action !== "removed")
+    .forEach((t) => {
+      const container =
+        t.action === "added" && t.path !== undefined && t.path.length > 1
+          ? t.path
+              .slice(0, -1)
+              .map((segment) => escapeIdentifier(segment, dialect))
+              .join(".")
+          : undefined;
+      const columns = t.columns.filter((c) => c.action === "added");
+      spec.prerequisites?.(container, columns).forEach((statement) => prerequisites.add(statement));
+    });
+  if (prerequisites.size > 0) {
+    sections.push("-- What the new tables and columns need first");
+    sections.push(...prerequisites);
+    sections.push("");
+  }
+
   // Create new tables
-  const addedTables = diff.tables.filter((t) => t.action === "added" && isTableDdlTarget(t));
+  const addedTables = inDependencyOrder(diff.tables.filter((t) => t.action === "added" && isTableDdlTarget(t)));
   if (addedTables.length > 0) {
     sections.push("-- Create new tables");
+    const uncreated = new Set(addedTables.map((t) => tableKey(t.path, t.tableName)));
+    const deferred: string[] = [];
     addedTables.forEach((t) => {
-      sections.push(generateCreateTable(t, spec, dialect));
+      uncreated.delete(tableKey(t.path, t.tableName));
+      sections.push(generateCreateTable(t, spec, dialect, (fk) => uncreated.has(referenceKey(fk)), deferred));
       sections.push("");
     });
+    if (deferred.length > 0) {
+      sections.push("-- Foreign keys between new tables that reference each other");
+      sections.push(...deferred);
+      sections.push("");
+    }
   }
 
   // Alter existing tables
@@ -264,6 +376,24 @@ export function generateMigrationSQL(diff: SchemaDiff, dialect: DatabaseType | u
       sections.push(generateAlterTable(t, spec, dialect));
       sections.push("");
     });
+  }
+
+  // What ties a prerequisite back to its column, once the column exists: a sequence's owner.
+  const ownership = diff.tables
+    .filter((t) => isTableDdlTarget(t) && t.action !== "removed")
+    .flatMap(
+      (t) =>
+        spec.ownership?.(
+          tableId(t, dialect),
+          t.columns
+            .filter((c) => c.action === "added")
+            .map((c) => [c, escapeIdentifier(c.columnName, dialect)] as const),
+        ) ?? [],
+    );
+  if (ownership.length > 0) {
+    sections.push("-- What the new columns own");
+    sections.push(...new Set(ownership));
+    sections.push("");
   }
 
   if (wrapper !== null) {

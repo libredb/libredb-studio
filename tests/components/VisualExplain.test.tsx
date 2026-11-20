@@ -1447,3 +1447,61 @@ describe("VisualExplain and a column the engine only inferred from sampled data"
     expect(String(init.body)).not.toContain(SAMPLED_MARKER);
   });
 });
+
+// ============================================================================
+// The join type in a node's label
+// ============================================================================
+
+/**
+ * PostgreSQL's JSON plan names the join method in "Node Type" and the join type in a field of its own, "Join Type".
+ * Its text plan writes both in one label (explain.c), and the tree here reads the same way: PostgreSQL 19 plans a
+ * `NOT IN` over NOT NULL columns as a Hash Anti Join, which read as a plain "Hash Join" when only "Node Type" was
+ * shown, on PostgreSQL 18's anti joins (`NOT EXISTS`) as well.
+ */
+describe("VisualExplain join labels", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const joinPlan = (node: Record<string, unknown>): ExplainPlanResult[] => [
+    {
+      Plan: {
+        ...node,
+        "Actual Rows": 0,
+        "Plan Rows": 1,
+        "Actual Total Time": 1,
+        "Total Cost": 5,
+        Plans: [{ "Node Type": "Seq Scan", "Relation Name": "customers", "Actual Rows": 1, "Plan Rows": 1 }],
+      } as ExplainPlanResult["Plan"],
+      "Execution Time": 1,
+    },
+  ];
+
+  test.each([
+    ["Hash Join", "Anti", "Hash Anti Join"],
+    ["Hash Join", "Right Anti", "Hash Right Anti Join"],
+    ["Nested Loop", "Left", "Nested Loop Left Join"],
+    ["Merge Join", "Semi", "Merge Semi Join"],
+    ["Merge Join", "Full", "Merge Full Join"],
+    ["Hash Join", "Inner", "Hash Join"],
+    ["Nested Loop", "Inner", "Nested Loop"],
+  ])("%s with Join Type %s reads %s, as PostgreSQL's text plan does", (nodeType, joinType, label) => {
+    const { queryByText } = render(<VisualExplain plan={joinPlan({ "Node Type": nodeType, "Join Type": joinType })} />);
+    fireEvent.click(queryByText("tree")!);
+    expect(queryByText(label)).not.toBeNull();
+  });
+
+  test("the insights tab's plan reads the join type too", () => {
+    const { queryByText } = render(
+      <VisualExplain plan={joinPlan({ "Node Type": "Hash Join", "Join Type": "Anti" })} />,
+    );
+    expect(queryByText("Hash Anti Join")).not.toBeNull();
+    expect(queryByText("Hash Join")).toBeNull();
+  });
+
+  test("a node without a join type keeps its node type", () => {
+    const { queryByText } = render(<VisualExplain plan={joinPlan({ "Node Type": "Hash Join" })} />);
+    fireEvent.click(queryByText("tree")!);
+    expect(queryByText("Hash Join")).not.toBeNull();
+  });
+});

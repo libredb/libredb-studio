@@ -230,6 +230,17 @@ const CORE_UNAVAILABLE_TEXT: Readonly<Record<CoreUnavailableCode, string>> = Obj
     "That inventory is empty: the objects exist and declare none of these, so nothing was inspected. This database has no secondary index and no declared foreign key beyond what the schema inventory in this conversation already shows — reading it again with another spelling will return the same nothing. Treat the absence as a finding: it is an answer about how this database is built, and you may state it in a claim citing that inventory.",
   CATALOG_MATCHED_NOTHING:
     "There is no object of that name in this database, so nothing was inspected. Check the inventory this run was given and inspect a name it lists — a name from the objective may be the name of a query or a report rather than of a table.",
+  /*
+    The two sentences for an engine whose catalog read leaves its own schemas out (G-S2, PostgreSQL 19, 2026-11-20).
+
+    "There is no object of that name" was said of `pg_catalog.pg_locks` and `pg_stat_autovacuum_scores`, which exist
+    and which the agent role reads; the model believed it. Neither sentence denies the object, and both name the tool
+    that reads a system view, since the run holds it.
+  */
+  CATALOG_MATCHED_NO_USER_OBJECT:
+    "No user object of that name is in this database's catalog, so nothing was inspected. inspect_schema lists user objects only: the engine's own system schemas and catalog or statistics views, and objects an extension installed, are left out, so a system view of that name may still exist — read it directly with run_read_query. Otherwise check the inventory this run was given and inspect a name it lists — a name from the objective may be the name of a query or a report rather than of a table.",
+  CATALOG_SYSTEM_SCHEMA:
+    "That schema is the engine's own system catalog, and inspect_schema lists user objects only, so nothing was inspected — this says nothing about whether the object exists. Read a system catalog or statistics view directly with run_read_query, naming it in the statement.",
   UNVERIFIABLE_EVIDENCE: `At least one evidence reference does not match anything this run produced. Cite an artifact this run actually read, or the schema snapshot it captured. ${AGENT_EVIDENCE_CONTRACT}`,
   UNVERIFIABLE_PLAN:
     "At least one of those references is not an estimated plan this run produced. Inspect the plan of each statement first, then compare the two artifacts those inspections returned.",

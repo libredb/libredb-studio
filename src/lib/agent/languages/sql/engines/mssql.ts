@@ -69,7 +69,9 @@ const MSSQL_PLAN_ESTIMATE: AgentPlanEstimate = Object.freeze({ kind: "session-mo
  * A name list would have had to be right about nine schemas; this is right by
  * construction.
  */
-const MSSQL_SCHEMA_EXCLUSION = "s.name NOT IN ('sys', 'INFORMATION_SCHEMA')";
+const MSSQL_SYSTEM_SCHEMAS = Object.freeze(["sys", "INFORMATION_SCHEMA"] as const);
+
+const MSSQL_SCHEMA_EXCLUSION = `s.name NOT IN (${MSSQL_SYSTEM_SCHEMAS.map((schema) => `'${schema}'`).join(", ")})`;
 
 /**
  * The column inventory, ONE ROW PER OBJECT, symmetric with the PostgreSQL arm (B52).
@@ -226,6 +228,7 @@ const MSSQL_CATALOG_READ: AgentCatalogRead = Object.freeze({
     indexes: composeMssqlIndexes,
     statistics: composeMssqlStatistics,
   }),
+  systemSchemas: MSSQL_SYSTEM_SCHEMAS,
 });
 
 /**

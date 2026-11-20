@@ -2373,6 +2373,29 @@ export interface DatabaseProvider {
   endOpenQueryTransaction?(scope?: string): Promise<OpenQueryTransactionOutcome>;
 
   /**
+   * Give back the session a call scope kept, closed, so that what its statements set on it
+   * reaches nobody else (Q5).
+   *
+   * A pooled provider runs each `query()` on a connection it borrows, and a statement that
+   * changes the SESSION (a `SET`, a user variable, a temporary table, a named lock) changes it
+   * for whoever borrows that connection next. Measured on MySQL 8.4.13 and PostgreSQL 19 and 18
+   * on 2026-11-20: a script's `SET @v = 42` / `SET statement_timeout = '7s'` was read back by
+   * about half of the later, unrelated runs on the same stored connection. So when such a
+   * statement runs under a scope, the provider keeps that connection for the rest of the scope,
+   * which is also what lets the script's own next statement read what it set, and this call
+   * closes it instead of returning it to the pool. Without a scope the provider closes it at
+   * once. A statement that changes nothing is returned to the pool as before, so the cost is
+   * one reconnect after a session-changing statement and nothing otherwise.
+   *
+   * Called by every caller that minted the scope, after `endOpenQueryTransaction(scope)` and
+   * whether or not that one raised, because the transaction is ended on the very session this
+   * closes. A scope that kept nothing is a no-op. OPTIONAL: a provider that holds one session
+   * of its own, or none, has nothing to give back. A caller that passes a scope to `query()`
+   * and never calls this keeps that connection out of the pool until the provider disconnects.
+   */
+  endQueryScope?(scope: string): Promise<void>;
+
+  /**
    * Containers at `parent`, or the top level when `parent` is absent (#789).
    *
    * REQUIRED, along with the four below. They were optional through the phase that landed

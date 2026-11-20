@@ -90,6 +90,8 @@ import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 import { logger } from "@/lib/logger";
 import { unquoteLiteral } from "@/lib/sql/values";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { changesSessionState, type SessionStateVocabulary } from "./session-state";
 import type { QueryResultSet } from "@/lib/types";
 import { portableDefaultSql, showCreateColumnDefaults } from "./mysql-show-create";
 import { MYSQL_CREATE_TABLE } from "./mysql-create-table";
@@ -636,6 +638,21 @@ const MYSQL_IMPLICIT_COMMIT_EXCEPTIONS: readonly string[] = [
   "ANALYZE SELECT",
   "ANALYZE FORMAT",
 ];
+
+/**
+ * The statements whose session `query()` closes instead of pooling (Q5, `session-state.ts`).
+ *
+ * Leading: `SET` (a user variable, `SET SESSION`, `SET NAMES`, `SET autocommit`, `SET ROLE`),
+ * `USE` (the session's default database), `LOCK` (`LOCK TABLES`), `PREPARE` and `HANDLER`.
+ * Anywhere: a temporary table, a user variable assigned inside a read (`:=`, `INTO @v`) and a
+ * named lock (`GET_LOCK(`), which no ROLLBACK and no later statement on another session ends.
+ * Measured on MySQL 8.4.13 on 2026-11-20: `SET @v = 42` and `SET SESSION
+ * innodb_lock_wait_timeout = 7` run from a script were read back by three of six later runs.
+ */
+const MYSQL_SESSION_STATE: SessionStateVocabulary = {
+  leading: new Set(["SET", "USE", "LOCK", "PREPARE", "HANDLER"]),
+  markers: [/\bCREATE\s+TEMPORARY\b/i, /:=/, /\bINTO\s+@/i, /\bGET_LOCK\s*\(/i],
+};
 
 /** `SERVER_STATUS_IN_TRANS`, bit 0 of the status flags every OK packet carries. */
 const SERVER_STATUS_IN_TRANS = 1;
@@ -2866,6 +2883,9 @@ const CATALOG_DEFAULT_READING: Record<MySQLFlavour, CatalogDefaultReading> = {
  */
 const GENERATED_COLUMN_EXTRA = new Set(["STORED GENERATED", "VIRTUAL GENERATED"]);
 
+/** The `EXTRA` word both servers write for a column they number themselves (R5). */
+const AUTO_INCREMENT_EXTRA = /\bauto_increment\b/i;
+
 /**
  * One catalog row's default, as BOTH readings a column can have: the value it really
  * defaults to, and the SQL text that produces that value where this server's catalog text is
@@ -2949,6 +2969,9 @@ function objectDetailFromRows(
       isPrimary: row.column_key === "PRI",
       ...catalog,
       ...(ddl === undefined ? {} : { defaultExpression: portableDefaultSql(ddl, row.data_type) }),
+      // Whether the server numbers the column itself (R5): EXTRA names `auto_increment`, alone
+      // or beside `INVISIBLE` (measured, MySQL 8.4.13). A row without EXTRA says nothing.
+      ...(typeof row.extra === "string" ? { autoIncrement: AUTO_INCREMENT_EXTRA.test(row.extra) } : {}),
     };
   });
 
@@ -3276,6 +3299,8 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   public async disconnect(): Promise<void> {
+    // A scope's kept connection is the pool's own, so the end below closes it; only the names go.
+    this.scopeSessions.clear();
     if (this.pool) {
       await this.pool.end();
       this.pool = null;
@@ -3458,12 +3483,20 @@ export class MySQLProvider extends SQLBaseProvider {
   // Track running query thread IDs for cancellation
   private runningQueryThreadIds = new Map<string, number>();
 
-  public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
+  /**
+   * Per call scope, the connection a session-changing statement of that scope ran on (Q5). The
+   * scope's later statements run on it too, so a script reads what it set, and `endQueryScope`
+   * closes it rather than pooling it, so nobody else does.
+   */
+  private scopeSessions = new Map<string, PoolConnection>();
+
+  public async query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult> {
     this.ensureConnected();
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
-        const conn = await this.pool!.getConnection();
+        const kept = scope === undefined ? undefined : this.scopeSessions.get(scope);
+        const conn = kept ?? (await this.pool!.getConnection());
         try {
           // Track thread ID for cancellation support
           if (queryId) {
@@ -3475,12 +3508,37 @@ export class MySQLProvider extends SQLBaseProvider {
           throw mapDatabaseError(error, "mysql", sql);
         } finally {
           if (queryId) this.runningQueryThreadIds.delete(queryId);
-          conn.release();
+          if (kept === undefined) this.settleQueryConnection(conn, sql, scope);
         }
       });
 
       return this.buildQueryResult(result.rows, result.fields, executionTime, sql);
     });
+  }
+
+  /**
+   * Hand a `query()` connection back: to the pool when the statement cannot have changed the
+   * session, and otherwise never (Q5). Under a scope it is kept for the scope's later statements
+   * and closed by `endQueryScope`; without one it is closed now. Judged whether the statement
+   * succeeded or not, because a failed one can still have changed the session first. Closed
+   * rather than reset, for the reason `releaseHeldConnection()` gives for COM_RESET_CONNECTION.
+   */
+  private settleQueryConnection(conn: PoolConnection, sql: string, scope: string | undefined): void {
+    if (!changesSessionState(sql, MYSQL_SESSION_STATE, resolveSqlGrammar(this.type))) {
+      conn.release();
+    } else if (scope === undefined) {
+      conn.destroy();
+    } else {
+      this.scopeSessions.set(scope, conn);
+    }
+  }
+
+  /** Close the connection this scope kept, if it kept one (Q5); `DatabaseProvider.endQueryScope`. */
+  public async endQueryScope(scope: string): Promise<void> {
+    const conn = this.scopeSessions.get(scope);
+    if (conn === undefined) return;
+    this.scopeSessions.delete(scope);
+    conn.destroy();
   }
 
   public async cancelQuery(queryId: string): Promise<boolean> {
@@ -3999,7 +4057,8 @@ export class MySQLProvider extends SQLBaseProvider {
       } catch {
         /* ignore */
       } finally {
-        this.txConn.release();
+        // Closed, not released: see `releaseHeldConnection()`.
+        this.txConn.destroy();
         this.txConn = null;
         this.txActive = false;
         this.clearTxTimeout();
@@ -4076,14 +4135,22 @@ export class MySQLProvider extends SQLBaseProvider {
   }
 
   /**
-   * Hand `conn` back and forget the session, but only while it is still THE session's
+   * Close `conn` and forget the session, but only while it is still THE session's
    * connection. A COMMIT or ROLLBACK queued behind an in-flight `queryInTransaction()` can
-   * find that statement's `endHeldTransaction()` already released it, and releasing it
-   * twice (or `null`) is a crash rather than a no-op.
+   * find that statement's `endHeldTransaction()` already let go of it, and doing that
+   * twice (or to `null`) is a crash rather than a no-op.
+   *
+   * CLOSED, never returned to the pool (RG-DIGER1-6). MySQL rolls back rows, not the
+   * session: measured on MySQL 8.4.13 on 2026-11-20, a `CREATE TEMPORARY TABLE`, a user
+   * variable and a `GET_LOCK()` taken inside the transaction all survived its ROLLBACK, and
+   * the next ordinary query borrowed the same pooled connection and read them. The pool
+   * opens a fresh connection on the next borrow. Not COM_RESET_CONNECTION, for the reason
+   * `queryReadOnly()` gives: on MySQL it also put the session's character set back to the
+   * server default, dropping the one the handshake negotiated.
    */
   private releaseHeldConnection(conn: PoolConnection): void {
     if (this.txConn !== conn) return;
-    conn.release();
+    conn.destroy();
     this.txConn = null;
     this.txActive = false;
   }

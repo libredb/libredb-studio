@@ -11,6 +11,9 @@ BEGIN;
 -- Drop removed tables
 DROP TABLE IF EXISTS "app"."legacy";
 
+-- What the new tables and columns need first
+CREATE SCHEMA IF NOT EXISTS "app";
+
 -- Create new tables
 CREATE TABLE "app"."users" (
   "id" integer NOT NULL,

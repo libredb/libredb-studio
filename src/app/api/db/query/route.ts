@@ -10,10 +10,13 @@ import { readBoundParams } from "@/lib/api/bound-params";
 import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
-import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
-import { countCodeStatements } from "@/lib/sql/statement-splitter";
-import { hasLoneCarriageReturnInLineComment, hasUnterminatedSpan } from "@/lib/sql/spans";
-import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
+import type { ExplainMode } from "@/lib/explain";
+import {
+  buildExplainStatement,
+  explainsSeveralStatements,
+  ONE_STATEMENT_EXPLAIN_MESSAGE,
+  readExplainRequest,
+} from "@/lib/api/explain-request";
 import type { ExplainFormat, QueryPrepareOptions } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
@@ -24,39 +27,6 @@ import {
   recordRefusedRequest,
   requestedConnectionId,
 } from "@/lib/query-events/route-events";
-
-/**
- * The error an unreadable `explain` field gets. It names the whole allowed shape
- * rather than what was sent, the way `BOUND_PARAMS_MESSAGE` does.
- */
-const EXPLAIN_REQUEST_MESSAGE = 'explain must be { "mode": "estimate" } or { "mode": "analyze" }';
-
-type ExplainRequestResult =
-  | { valid: true; explain: { mode: ExplainMode } | undefined }
-  | { valid: false; message: string };
-
-/**
- * Read a request's `explain` field: the ASK for a plan, not a statement (#574).
- *
- * The EXPLAIN statement is built on this side because the accepted form is not
- * always knowable before connecting. Measured 2026-09-06 over the MySQL wire
- * protocol (mysql2 3.24.2, text protocol): `EXPLAIN FORMAT=JSON SELECT 1` is
- * refused by TiDB v8.5.1 (errno 1105, "explain format 'json' is not supported
- * now"), Apache Doris 4.1.3 (errno 1105, "mismatched input '='"), StarRocks
- * 3.3.22 and SingleStore (both errno 1064), while a plain `EXPLAIN SELECT 1` is
- * accepted on every one of them. `POST /api/db/provider-meta` never connects
- * (#457), so the client cannot be told which form to build; it asks for a mode
- * and the connected provider's capabilities decide the rest.
- */
-function readExplainRequest(value: unknown): ExplainRequestResult {
-  if (value === undefined) return { valid: true, explain: undefined };
-  if (typeof value !== "object" || value === null) return { valid: false, message: EXPLAIN_REQUEST_MESSAGE };
-
-  const mode = (value as { mode?: unknown }).mode;
-  if (mode !== "estimate" && mode !== "analyze") return { valid: false, message: EXPLAIN_REQUEST_MESSAGE };
-
-  return { valid: true, explain: { mode } };
-}
 
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -123,32 +93,10 @@ export async function POST(req: NextRequest) {
     }
     explainMode = explain.explain?.mode;
 
-    // AN EXPLAIN PREFIXES ONE STATEMENT (#1311). Handed `SELECT 1 AS a; INSERT ...` it
-    // explained the SELECT and the simple-query protocol then RAN the INSERT as a
-    // statement of its own: measured on Materialize 26.44.1, AlloyDB Omni 17.9 and
-    // Cloudberry 2.1.0, one RUN of that text applied the INSERT twice, once in the run
-    // and once in its background plan request. A plan of several statements is not a
-    // plan of anything, so the text is refused before a provider is opened. It is read
-    // under the connection's own grammar, the one the editor splits a run with, so a
-    // `;` inside a quote or a comment is not a second statement, and neither is a note
-    // after the final `;` (a fragment of comments only is not counted). A text with a
-    // run the grammar cannot close is refused too: the splitter finds no boundary in
-    // it, yet `SELECT E'\''; INSERT ...` is two statements to PostgreSQL. So is a text whose
-    // line comment holds a lone carriage return, which ends the comment on PostgreSQL and
-    // not on CockroachDB, so the code after it is a second statement to one. Only SQL text
-    // is counted: an engine whose text is not SQL enforces one statement in its own
-    // parser (Firestore's provider refuses a second statement), and the SQL counter
-    // would read a `;` in its comment as a boundary.
-    const explainGrammar = resolveSqlGrammar(connection.type);
-    if (
-      explain.explain &&
-      typeof sql === "string" &&
-      readsSqlText(connection.type) &&
-      (countCodeStatements(sql, explainGrammar) > 1 ||
-        hasUnterminatedSpan(sql, explainGrammar) ||
-        hasLoneCarriageReturnInLineComment(sql, explainGrammar))
-    ) {
-      return NextResponse.json({ error: "Only a single statement can be explained" }, { status: 400 });
+    // AN EXPLAIN PREFIXES ONE STATEMENT (#1311): a text of several is refused before a provider is opened, read under
+    // the connection's own grammar (`explainsSeveralStatements`).
+    if (explain.explain && explainsSeveralStatements(sql, connection.type)) {
+      return NextResponse.json({ error: ONE_STATEMENT_EXPLAIN_MESSAGE }, { status: 400 });
     }
 
     // The database one RUN should reach. A key lives in exactly one numbered database and
@@ -245,23 +193,12 @@ export async function POST(req: NextRequest) {
     let statement = sql;
     let explainFormat: ExplainFormat | undefined;
     if (explain.explain) {
-      const capabilities = provider.getCapabilities();
-      // `getExplainStrategy` indexes a Record, so a format outside this build's union
-      // (an external implementer of the published interface can declare anything)
-      // comes back undefined rather than null; a strict null check let that reach
-      // `strategy.buildSql` and surface as a TypeError 500 instead of this 400.
-      const strategy = capabilities.supportsExplain ? getExplainStrategy(capabilities.explainFormat) : null;
-      if (!strategy) {
-        return NextResponse.json({ error: "This server does not support EXPLAIN" }, { status: 400 });
+      const built = buildExplainStatement(provider.getCapabilities(), sql, explain.explain.mode);
+      if (!built.built) {
+        return NextResponse.json({ error: built.error }, { status: 400 });
       }
-      const built = strategy.buildSql(sql, explain.explain.mode);
-      if (built === null) {
-        return NextResponse.json({ error: "Only SELECT statements can be explained" }, { status: 400 });
-      }
-      statement = built;
-      // Named in the response so the client stores the plan under the format that
-      // really produced it, rather than under the static one provider-meta gave it.
-      explainFormat = strategy.format;
+      statement = built.statement;
+      explainFormat = built.format;
     }
 
     // The run itself, the steps the VS Code extension's backend child runs too (`src/lib/api/editor-query.ts`).

@@ -28,6 +28,13 @@ const HEADING = /^(#{2,4}) (?:[0-9.]+ )?Agent language pack$/;
 
 const NO_OVERRIDE_SENTENCE = "overrides no Shared member";
 
+/**
+ * The optional `catalogRead` fields a document names when, and only when, the overlay declares them (G-S1, G-S2): what
+ * the agent tells a model about the engine's own schemas and about a refused command is a per-engine fact, so the
+ * document says it where it says the rest of the pack.
+ */
+const CATALOG_READ_FIELDS = ["systemSchemas", "nonReadAdvice"] as const;
+
 /** An engine's server overlay as the registry holds it: its dialect, if any, and any overridden Shared member. */
 interface DocumentedOverlay {
   readonly dialect?: object;
@@ -113,6 +120,13 @@ function sectionViolations(
   const overrides = Object.keys(overlay).some((member) => member !== "dialect");
   if (overrides === section.includes(NO_OVERRIDE_SENTENCE)) {
     violations.push(`${type}: the "${NO_OVERRIDE_SENTENCE}" sentence does not match the overlay`);
+  }
+  const catalogRead = (overlay.dialect as { readonly catalogRead?: unknown } | undefined)?.catalogRead;
+  for (const field of CATALOG_READ_FIELDS) {
+    const declared = typeof catalogRead === "object" && catalogRead !== null && Object.hasOwn(catalogRead, field);
+    if (declared !== section.includes(`\`${field}\``)) {
+      violations.push(`${type}: the \`${field}\` sentence does not match the overlay`);
+    }
   }
   const empty = Object.keys(overlay).length === 0;
   if (empty && !section.includes(`resolves to the \`${family}\` family pack itself`)) {
@@ -202,6 +216,20 @@ describe("each check fails when the document is wrong", () => {
       "duckdb: missing row `answerNotADataRead` | Shared | Overridden",
       `duckdb: the "${NO_OVERRIDE_SENTENCE}" sentence does not match the overlay`,
     ]);
+  });
+
+  test("a catalogRead field is named exactly where the overlay declares it", () => {
+    const postgres = docOf("postgres");
+    const postgresOverlay = engineServerOverlay("postgres");
+    expect(sectionViolations("postgres", "sql", postgresOverlay, postgres)).toEqual([]);
+    expect(
+      sectionViolations("postgres", "sql", postgresOverlay, postgres.replaceAll("`nonReadAdvice`", "nonReadAdvice")),
+    ).toEqual(["postgres: the `nonReadAdvice` sentence does not match the overlay"]);
+    const declaring: DocumentedOverlay = {
+      ...duckdbOverlay,
+      dialect: { ...duckdbOverlay.dialect, catalogRead: { systemSchemas: ["main"] } },
+    };
+    expect(check(duckdb, declaring)).toEqual(["duckdb: the `systemSchemas` sentence does not match the overlay"]);
   });
 
   test("a missing family sentence, overlay path or second heading is named", () => {

@@ -146,6 +146,8 @@ const PLSQL_CREATE_MODIFIERS = new Set(["OR", "REPLACE", "EDITIONABLE", "NONEDIT
 const PLSQL_ROUTINES = new Set(["PROCEDURE", "FUNCTION", "PACKAGE"]);
 /** The closers that end a construct this reader never counted as opened. */
 const UNCOUNTED_CLOSERS = new Set(["IF", "LOOP"]);
+/** SQL PL's: its `WHILE … DO`, `REPEAT … UNTIL` and `FOR … DO` statements close with `END` and their own word too. */
+const SQL_PL_UNCOUNTED_CLOSERS = new Set([...UNCOUNTED_CLOSERS, "WHILE", "REPEAT", "FOR"]);
 /**
  * What may follow a routine header's `AS`/`IS` in place of a body: a call spec
  * (`AS LANGUAGE JAVA NAME '…'`, `AS LANGUAGE C …`, `AS EXTERNAL …`) or an MLE module call
@@ -254,6 +256,13 @@ class BodyReader {
       this.classify(word.text);
     }
     if (this.state !== "unit") return word.end;
+    // psql counts only outside parentheses, and a CASE only inside a body: `f(begin int)` and `RETURN CASE … END`
+    // open nothing there.
+    if (this.rule === "begin-atomic" && (this.parens !== 0 || (word.text === "CASE" && this.frames.length === 0))) {
+      return word.end;
+    }
+    // Db2 reads no word inside parentheses either: `f(begin INT)` and `VALUES (CASE … END)` open nothing.
+    if (this.rule === "sql-pl" && this.parens !== 0) return word.end;
 
     switch (word.text) {
       case "BEGIN":
@@ -265,7 +274,8 @@ class BodyReader {
         return word.end;
       case "END": {
         const next = peek();
-        if (next !== null && UNCOUNTED_CLOSERS.has(next.text)) return next.end;
+        const closers = this.rule === "sql-pl" ? SQL_PL_UNCOUNTED_CLOSERS : UNCOUNTED_CLOSERS;
+        if (next !== null && closers.has(next.text)) return next.end;
         this.frames.pop();
         return next !== null && next.text === "CASE" ? next.end : word.end;
       }
@@ -305,8 +315,11 @@ class BodyReader {
   private classify(text: string): void {
     const first = this.lead.length === 0;
     if (first && text !== "CREATE") {
-      // `BEGIN` opens a transaction in SQLite, so only PL/SQL reads it as a block.
-      const anonymous = this.rule === "pl-sql" && (text === "DECLARE" || text === "BEGIN");
+      // `BEGIN` opens a transaction in SQLite, so only PL/SQL reads it as a block, and SQL PL, which has no
+      // transaction `BEGIN`; its `DECLARE` first is `DECLARE GLOBAL TEMPORARY TABLE`, a statement of its own.
+      const anonymous =
+        (this.rule === "pl-sql" && (text === "DECLARE" || text === "BEGIN")) ||
+        (this.rule === "sql-pl" && text === "BEGIN");
       this.state = anonymous ? "unit" : "plain";
       return;
     }
@@ -316,6 +329,17 @@ class BodyReader {
     if (this.rule === "trigger-body") {
       if (text === "TRIGGER") this.state = "unit";
       else if (text !== "TEMP" && text !== "TEMPORARY") this.state = "plain";
+      return;
+    }
+
+    if (this.rule === "begin-atomic" || this.rule === "sql-pl") {
+      // psqlscan.l's lead: CREATE, then FUNCTION or PROCEDURE, either straight after it or after OR REPLACE. Db2's
+      // adds TRIGGER, whose body is a compound statement as well.
+      if (text === "FUNCTION" || text === "PROCEDURE" || (text === "TRIGGER" && this.rule === "sql-pl"))
+        this.state = "unit";
+      else if (!(text === "OR" && this.lead.length === 2) && !(text === "REPLACE" && this.lead.at(-2) === "OR")) {
+        this.state = "plain";
+      }
       return;
     }
 

@@ -55,10 +55,15 @@ describe("ParenthesisedRuns", () => {
     expect(opens.map((open) => innerFirst.closeOf(open))).toEqual(fresh);
   });
 
-  test("the characters walk reads a `$$` inside a word as a dollar-quoted run, and the words walk reads the word", () => {
+  test("where `$` opens a run after a name, the characters walk reads a `$$` inside a word as one, and the words walk reads the word", () => {
     const sql = "(a$$ ) $$)";
-    expect(closeOf(sql, 0, "characters")).toBe(10);
-    expect(closeOf(sql, 0, "words")).toBe(6);
+    expect(closeOf(sql, 0, "characters", DEFAULT_SQL_GRAMMAR)).toBe(10);
+    expect(closeOf(sql, 0, "words", DEFAULT_SQL_GRAMMAR)).toBe(6);
+  });
+
+  test("where `$` continues a name, both walks read a `$$` inside a word as part of the word", () => {
+    expect(closeOf("(a$$ ) $$)", 0, "characters", POSTGRES)).toBe(6);
+    expect(closeOf("(a$$ ) $$)", 0, "words", POSTGRES)).toBe(6);
   });
 
   test("reads the text under the dialect it is given", () => {

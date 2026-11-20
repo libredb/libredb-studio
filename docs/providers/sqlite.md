@@ -674,6 +674,7 @@ Its grammar is `SQLITE_GRAMMAR`, the one reading the statement splitter, the row
 Block comments are flat: `case CC_SLASH` scans for the first `*/` with no depth count.
 `//` is code, probed 2026-08-25 through the bundled driver: `SELECT 1 AS a // note` and `SELECT 1 // 2` are both 'near "/": syntax error'.
 `CREATE TRIGGER ... BEGIN ... END` is the one statement with a body: measured through node:sqlite 3.50.4, the trigger cut at its inner `;` was `incomplete input`.
+`dollarQuotes` is false: SQLite has no dollar-quoted literal, so every `$` is code. The tokenizer reads `$` as a name character (`col$a$x` is a column) and as a bind-parameter prefix (`SELECT $$a$$` binds a parameter named `$$a$$`), measured 2026-11-20 through bun:sqlite. Read as an opener, the `$a$` inside `col$a$x` hid a `;` and a `DELETE` up to the next such name, so the gate never saw the `DELETE`.
 `readsSqlText` is `true`: the editor text is SQL.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
@@ -927,6 +928,14 @@ generator writes after the word `DEFAULT`; without it, a decoded `abc` would be 
 column with no default carries neither field. `readCatalogDefault()` is local to this
 provider, the way per-provider normalization is everywhere else in this tree; the escape
 knowledge it relies on is the shared part.
+
+#### `autoIncrement`: the rowid alias (R5)
+
+SQLite numbers one kind of column itself: the rowid alias, which is a rowid table's only primary-key column declared exactly `INTEGER`, with or without `AUTOINCREMENT`.
+Both column reads join `pragma_table_list` on the xinfo function's hidden `arg` and `schema` columns, so they bind nothing more, and read whether the object is an ordinary rowid table (`type = 'table'` and `wr = 0`).
+`ColumnSchema.autoIncrement` is `true` for the alias and `false` for every other column: an `INT` or `BIGINT` key, a composite key, any column of a `WITHOUT ROWID` table, a view's and a virtual table's.
+The Test Data Generator leaves the alias out of its INSERT and generates the others; before this it guessed from the name, so `id INT PRIMARY KEY NOT NULL` and a `WITHOUT ROWID` key were left out and refused with `NOT NULL constraint failed` (measured 2026-11-20).
+One shape reads `true` without being the alias: `INTEGER PRIMARY KEY DESC`, whose order the pragma does not show.
 
 #### No `rowCount` and no `sizeBytes` on a listed object
 

@@ -23,7 +23,15 @@ const DB2_GRAMMAR: SqlGrammar = {
   // `SELECT 1 AS a FROM SYSIBM.SYSDUMMY1 // note` is SQLCODE -104.
   doubleSlashComment: false,
   backslashAlwaysEscapes: false,
-  script: DEFAULT_SQL_GRAMMAR.script,
+  // No dollar-quoted literal: `$` is a name character, first one included. Measured 2026-11-20 on 12.1.0.0 through
+  // db2-node: `col$a$x` and `y$a$z` are columns, and `SELECT $$a$$ FROM SYSIBM.SYSDUMMY1` is SQLCODE -206 naming
+  // `$$A$$` as a column. Read as an opener, the `$a$` inside `col$a$x` hid a `;` and a DELETE up to the next such name.
+  dollarQuotes: false,
+  // SQL PL compound statements: `BEGIN [NOT ATOMIC | ATOMIC] … END` sent alone and as the body of `CREATE [OR REPLACE]
+  // PROCEDURE | FUNCTION | TRIGGER` are one statement each. Measured 2026-11-20 on 12.1.0.0 through db2-node: each
+  // runs sent whole, with or without the `;` after its `END`, and cut at its inner `;` the first fragment was SQLCODE
+  // -104 (R3). One statement per request, and no separator line.
+  script: { ...DEFAULT_SQL_GRAMMAR.script, blocks: "sql-pl" },
   trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
 

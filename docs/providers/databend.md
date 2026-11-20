@@ -647,7 +647,7 @@ For a user statement, after the first answer, a kill that Databend did not ackno
 > The statement did not finish within [seconds] seconds, and Databend did not acknowledge Studio's request to stop it, so it may still finish: check before running it again.
 
 With no first answer by then the cause reads "no first answer within [seconds] seconds".
-The first of these sentences reaches a caller of the provider itself, such as an embedded host's route; Studio's statement routes answer it with HTTP 504 and their own sentence, "Query timed out. Please try a simpler query or increase timeout.", a status no browser sends again, so the statement runs once.
+Studio's statement routes answer each of these sentences unchanged with HTTP 504, a status no browser sends again, so the statement runs once.
 A statement that waits for a statement slot longer than its deadline sends nothing:
 
 > Studio's Databend statement slots stayed busy for [seconds] seconds, so nothing was sent. Try again when a running statement finishes.

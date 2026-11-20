@@ -84,7 +84,12 @@ import {
 import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/execution";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
-import { admitComposedStatement, type ComposedStatementAdmission } from "@/lib/db/operations/statement-guard";
+import {
+  AGENT_READ_KEYWORDS,
+  type AgentStatementRefusalCode,
+  admitComposedStatement,
+  type ComposedStatementAdmission,
+} from "@/lib/db/operations/statement-guard";
 import type {
   Container,
   DatabaseObject,
@@ -428,6 +433,19 @@ export type AgentToolUnavailableCode =
   | "KIND_REFUSED"
   /** A catalog read matched no object at all, so there is nothing to inspect or cite. */
   | "CATALOG_MATCHED_NOTHING"
+  /**
+   * A column read matched no USER object, on an engine whose catalog read leaves its own schemas out.
+   *
+   * Split from `CATALOG_MATCHED_NOTHING` because that one denies the object, and here a system or extension object of
+   * that name may exist: the read never looked at one (`AgentCatalogRead.systemSchemas`).
+   */
+  | "CATALOG_MATCHED_NO_USER_OBJECT"
+  /**
+   * The selector named one of the engine's own schemas, which the catalog read never lists, so nothing was sent.
+   *
+   * A refusal about the TOOL, not about the object: the view may well exist, and `run_read_query` reads it.
+   */
+  | "CATALOG_SYSTEM_SCHEMA"
   /**
    * The object exists, and the documents sampled from it held no field, so there is nothing to describe.
    *
@@ -1051,16 +1069,44 @@ const DENIAL_ADVICE_TEXT: Record<DenialAdvice, string> = {
  *
  * A shape denial is told in the statement language's own words where the language has
  * them: a kubectl read is neither valid nor invalid SQL. SQL keeps its sentence (D6).
+ *
+ * Where the statement guard is what refused the input, its code follows the deny code, and
+ * a `NON_READ_STATEMENT` names the keywords a read may be led by and the engine's own
+ * SELECT form of the refused command (`AgentCatalogRead.nonReadAdvice`). Measured (G1,
+ * PostgreSQL 19, 2026-11-20): a model that wrote `SHOW server_version` heard only
+ * `INPUT_VALIDATION_FAILED` and a sentence about shape, in three runs out of three.
  */
-function denialText(reasonCode: PolicyDenyCode, policyVersion: string, language: AgentStatementLanguageId): string {
+function denialText(
+  reasonCode: PolicyDenyCode,
+  policyVersion: string,
+  language: AgentStatementLanguageId,
+  guardViolation: AgentStatementRefusalCode | undefined,
+  engine: DatabaseConnection["type"],
+): string {
   const advice = DENIAL_ADVICE[reasonCode];
   return [
     `The database operation layer refused this call: ${reasonCode} (policy ${policyVersion}).`,
+    guardViolation === undefined ? "" : `The statement guard's reason: ${guardViolation}.`,
+    guardViolation === "NON_READ_STATEMENT" ? nonReadText(engine) : "",
     advice === "shape"
       ? (languageServer(language).shapeAdvice ?? DENIAL_ADVICE_TEXT.shape)
       : DENIAL_ADVICE_TEXT[advice],
     "Choose a different approach that stays inside a bounded read-only inspection.",
-  ].join(" ");
+  ]
+    .filter((part) => part.length > 0)
+    .join(" ");
+}
+
+/** What a `NON_READ_STATEMENT` adds: the keywords a read may be led by, then the engine's own sentence, if any. */
+function nonReadText(engine: DatabaseConnection["type"]): string {
+  const catalogRead = engineServerDialect(engine).catalogRead;
+  const own = catalogRead === "unsupported" ? undefined : catalogRead.nonReadAdvice;
+  return [
+    `Only a statement led by ${AGENT_READ_KEYWORDS.join(", ")} (a WITH before it is fine) is a read here, so a command such as SHOW, SET or PRAGMA is refused whatever it reads.`,
+    own ?? "",
+  ]
+    .filter((part) => part.length > 0)
+    .join(" ");
 }
 
 function approvalText(operationId: string): string {
@@ -1916,8 +1962,18 @@ export async function runAuditedAgentCall(
       context.repairs.recordFailure(fingerprint, "policy-denied");
       return {
         kind: "refused",
-        refusal: { class: "policy-denied", reasonCode: decision.reasonCode },
-        modelText: denialText(decision.reasonCode, policy.version, call.fingerprintLanguage ?? CURATED_CALL_LANGUAGE),
+        refusal: {
+          class: "policy-denied",
+          reasonCode: decision.reasonCode,
+          ...(decision.guardViolation === undefined ? {} : { guardViolation: decision.guardViolation }),
+        },
+        modelText: denialText(
+          decision.reasonCode,
+          policy.version,
+          call.fingerprintLanguage ?? CURATED_CALL_LANGUAGE,
+          decision.guardViolation,
+          context.connection.type,
+        ),
       };
     }
     context.repairs.recordFailure(fingerprint, "approval-required");
@@ -3063,8 +3119,21 @@ async function readCatalog(
     return composedSqlOutcome(error);
   }
   // Supplied: `composeCatalogRead` refuses an engine whose catalog read is unsupported.
-  const { declaredSchema, retry, commandShaped } = engineServerDialect(context.connection.type)
+  const { declaredSchema, retry, commandShaped, systemSchemas } = engineServerDialect(context.connection.type)
     .catalogRead as AgentCatalogRead;
+  /*
+    A selector naming the engine's OWN schema is answered before anything is sent (G-S2, PostgreSQL 19, 2026-11-20).
+
+    Every composer leaves those schemas out by name, so the read could only come back empty, and the empty answer used
+    to be "There is no object of that name in this database" - said of `pg_catalog.pg_locks` and
+    `pg_catalog.pg_stat_autovacuum_scores`, both there and both readable by the agent role. Measured on a local model:
+    two of three G2 runs spent a turn on it, and a G3 run gave up the view it was asked to read. The sentence says what
+    is true: the tool lists user objects, and a system view is read with `run_read_query`.
+  */
+  const named = selector.schema?.toLowerCase();
+  if (named !== undefined && systemSchemas?.some((schema) => schema.toLowerCase() === named) === true) {
+    return unavailable("CATALOG_SYSTEM_SCHEMA", selector.schema);
+  }
   const mapRows = catalogRowMapper(context.connection.type, selector.kind ?? "columns");
   const request: AgentOperationRequest = {
     operationId: "sql.query.read",
@@ -3173,7 +3242,10 @@ async function readCatalog(
     */
     const kind = (parsed.value as { kind?: string }).kind;
     if (kind === "indexes" || kind === "relations") return unavailable("CATALOG_INVENTORY_EMPTY", kind);
-    return unavailable("CATALOG_MATCHED_NOTHING");
+    // An engine that leaves its own schemas (and, on PostgreSQL, every extension's relations) out of the read cannot
+    // say no object has that name, only that no USER object does: `pg_stat_autovacuum_scores` asked for by table alone,
+    // or `public` holding nothing but `pg_stat_statements`, both came back empty and both exist (G3, 2026-11-20).
+    return unavailable(systemSchemas === undefined ? "CATALOG_MATCHED_NOTHING" : "CATALOG_MATCHED_NO_USER_OBJECT");
   }
   return outcome;
 }
@@ -3303,7 +3375,10 @@ const CURATED_READINGS: Readonly<Record<CuratedOperationKind, CuratedReading>> =
         durationMs: session.durationMs,
         waitEventType: session.waitEventType ?? null,
         waitEvent: session.waitEvent ?? null,
-        blocked: session.blocked ?? false,
+        // Null where the provider left it out, as every other optional field is: an absent `blocked` is a provider
+        // that could not tell (PostgreSQL's relative without `pg_blocking_pids()`, D11b), and `false` there would state
+        // that nothing is blocked on a reading that never looked.
+        blocked: session.blocked ?? null,
       })),
   },
   "slow-queries": {

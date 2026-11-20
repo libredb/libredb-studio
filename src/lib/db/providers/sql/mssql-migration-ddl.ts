@@ -3,9 +3,9 @@
  * drops an index with `ON <table>`.
  */
 import {
+  autoNumberedColumnDef,
   defaultSql,
   standardAddForeignKey,
-  standardColumnDef,
   standardCreateIndex,
   standardCreateTableForeignKey,
   standardDropColumn,
@@ -19,7 +19,8 @@ export const MSSQL_MIGRATION_DDL: MigrationDdlSpec = {
   tableDdl: "written",
   transactionWrapper: { begin: "BEGIN TRANSACTION;", commit: "COMMIT;" },
   createTable: { kind: "written", primaryKey: standardPrimaryKey, foreignKey: standardCreateTableForeignKey },
-  columnDef: standardColumnDef,
+  // `IDENTITY(1,1)`: the seed and increment are not read, so the engine's own defaults are written (R8).
+  columnDef: autoNumberedColumnDef("IDENTITY(1,1)"),
   createIndex: standardCreateIndex,
   dropIndex: (index, table) => `DROP INDEX IF EXISTS ${index.name} ON ${table};`,
   addForeignKey: standardAddForeignKey,

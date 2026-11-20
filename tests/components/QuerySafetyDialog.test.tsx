@@ -3129,3 +3129,80 @@ describe("a PostgreSQL DO block asks", () => {
     expect(isDangerousQuery("DO 'x'", "mysql")).toBe(false);
   });
 });
+
+// PostgreSQL's table rewrites: REPACK (19), CLUSTER and VACUUM FULL write a new copy of a table and its indexes and,
+// but for REPACK CONCURRENTLY, hold an ACCESS EXCLUSIVE lock while they do, so every read and write of the table waits
+// behind them (C10, C14). A plain VACUUM and VACUUM ANALYZE take a lock that lets reads and writes go on, and do not
+// ask; neither does FULL set to a boolean false, the reading PostgreSQL's defGetBoolean gives the option.
+describe("PostgreSQL table rewrites ask", () => {
+  test.each([
+    "REPACK t_c.orders",
+    "REPACK",
+    "repack (concurrently) t_c.orders",
+    "REPACK (VERBOSE, ANALYZE) t_c.orders USING INDEX orders_pkey",
+    "REPACK USING INDEX",
+    "REPACK (VERBOSE)",
+    "CLUSTER t_c.orders USING orders_pkey",
+    "CLUSTER",
+    "CLUSTER VERBOSE",
+    "VACUUM FULL t_c.orders",
+    "VACUUM FULL",
+    "vacuum /* c */ full verbose analyze t",
+    "VACUUM (FULL) t",
+    "VACUUM (FULL, ANALYZE) t",
+    "VACUUM (ANALYZE, FULL true) t",
+    "VACUUM (FULL on) t",
+    "VACUUM (FULL 1) t",
+    "VACUUM (FULL 'yes') t",
+    "VACUUM (FULL false, FULL) t",
+    "VACUUM (/* c */ FULL) t",
+    "-- nightly\nVACUUM FULL t",
+    "SELECT 1; VACUUM FULL t",
+    "SELECT 1; CLUSTER t",
+  ])("%j", (sql) => {
+    expect(isDangerousQuery(sql, "postgres")).toBe(true);
+  });
+
+  test.each([
+    "VACUUM",
+    "VACUUM t",
+    "VACUUM ANALYZE t",
+    "VACUUM VERBOSE t",
+    "VACUUM (ANALYZE) t",
+    "VACUUM (FULL false) t",
+    "VACUUM (FULL off, ANALYZE) t",
+    "VACUUM (FULL 0) t",
+    "VACUUM (FULL 'no') t",
+    "VACUUM (VERBOSE) t",
+    "VACUUM ('FULL') t",
+    "VACUUM (/* FULL */ ANALYZE) t",
+    "VACUUM (FULL",
+    "VACUUM FREEZE t",
+    "ANALYZE t",
+    "SELECT 'REPACK t' AS note",
+    "SELECT cluster FROM t -- VACUUM FULL",
+    "CREATE TABLE cluster (repack int)",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "postgres")).toBe(false);
+  });
+
+  test("a dialect whose row declares none of them does not ask", () => {
+    for (const type of ["sqlite", "duckdb", "mysql"] as const) {
+      expect(isDangerousQuery("VACUUM FULL t", type)).toBe(false);
+      expect(isDangerousQuery("VACUUM (FULL) t", type)).toBe(false);
+    }
+    expect(isDangerousQuery("VACUUM (FULL) t")).toBe(false);
+  });
+
+  test("an option form asks only where its keyword operates the statement", () => {
+    const FORM: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, confirmOptionForms: [{ keyword: "OPTIMIZE", option: "FINAL" }] };
+
+    expect(writesUnderGrammar("OPTIMIZE (FINAL) t", FORM)).toBe(true);
+    expect(writesUnderGrammar("optimize (final yes) t", FORM)).toBe(true);
+    expect(writesUnderGrammar("OPTIMIZE (FINAL no) t", FORM)).toBe(false);
+    expect(writesUnderGrammar("OPTIMIZE t", FORM)).toBe(false);
+    expect(writesUnderGrammar("OPTIMIZE FINAL t", FORM)).toBe(false);
+    expect(writesUnderGrammar("SELECT 1 FROM t WHERE OPTIMIZE (FINAL)", FORM)).toBe(false);
+    expect(writesUnderGrammar("VACUUM (FINAL) t", FORM)).toBe(false);
+  });
+});

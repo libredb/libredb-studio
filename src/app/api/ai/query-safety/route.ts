@@ -53,6 +53,7 @@ GUIDELINES:
 - UPDATE without WHERE is ALWAYS "high"
 - TRUNCATE is ALWAYS "high"
 - ALTER TABLE on large tables (>100K rows) is "medium" due to lock time
+- VACUUM FULL, CLUSTER and REPACK rewrite the whole table and its indexes and hold an ACCESS EXCLUSIVE lock that blocks every read and write of it until they finish (REPACK CONCURRENTLY holds it only briefly); they change no rows: riskLevel is at least "medium", with a "lock" warning
 - Always return valid JSON in the code block
 `;
 }
@@ -103,6 +104,15 @@ Return your analysis as a JSON code block.`;
       return NextResponse.json(
         { error: "The AI safety analysis did not finish in time.", code: ApiErrorCode.TIMEOUT_ERROR },
         { status: 504 },
+      );
+    }
+    // The dialog drops its request when the user decides before the analysis is done: a cancel, not
+    // a provider failure, so it is neither logged as an LLM stream error nor answered as one.
+    if (req.signal.aborted) {
+      logger.info("Query safety analysis cancelled by the caller");
+      return NextResponse.json(
+        { error: "The AI safety analysis was cancelled.", code: ApiErrorCode.QUERY_CANCELLED, statusCode: 499 },
+        { status: 499 },
       );
     }
     return createErrorResponse(error, { route: "api/ai/query-safety" });

@@ -111,12 +111,31 @@ export interface AgentCatalogRows {
  * How an engine reads its catalog (`composeCatalogRead` in `composed-sql.ts`, `readCatalog` in `tools.ts`): one
  * composer per kind; the fold from a selector's schema to the name a policy target declares, absent when the name is
  * declared as written; the one retry a refused read may take, absent when there is none; whether the composed
- * statement is a command rather than a SELECT; and the row mapper, absent when the composed statement answers the
- * catalog rows itself.
+ * statement is a command rather than a SELECT; the row mapper, absent when the composed statement answers the
+ * catalog rows itself; the engine's own schemas the composers leave out; and the sentence naming the SELECT form of a
+ * catalog command.
  */
 export interface AgentCatalogRead {
   readonly compose: Readonly<Record<AgentCatalogKind, (selector: AgentCatalogSelector) => string>>;
   readonly declaredSchema?: (schema: string) => string;
+  /**
+   * The schemas the engine keeps for itself, which every composer leaves out by name, and which a bounded read may
+   * still reach. Declared, so `readCatalog` in `tools.ts` tells a model that narrowed `inspect_schema` to one of them
+   * that the tool lists user objects only (`CATALOG_SYSTEM_SCHEMA`), and answers any other empty column read with the
+   * sentence that does not deny the object (`CATALOG_MATCHED_NO_USER_OBJECT`): with these left out, and on PostgreSQL
+   * every extension's own relations too, zero rows says no USER object has that name, never that none exists.
+   * Compared case-insensitively. Absent where the composers exclude no schema by name, or where the engine's fence
+   * refuses a read of them (Druid), since the sentence offers that read. `engine-overlays.test.ts` holds every name to
+   * the composed column read.
+   */
+  readonly systemSchemas?: readonly string[];
+  /**
+   * The engine's sentence for a model-written statement the guard refused as not a read (`NON_READ_STATEMENT`),
+   * naming the SELECT that answers what the refused command asks: PostgreSQL's `SHOW` reads a setting, which
+   * `current_setting()` and `pg_settings` read too. Appended to the shape denial by `denialText` in `tools.ts`; absent
+   * where the engine has none to name.
+   */
+  readonly nonReadAdvice?: string;
   readonly retry?: {
     /** Whether a database error is the one this retry answers. */
     readonly matches: (message: string) => boolean;

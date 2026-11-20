@@ -134,6 +134,8 @@ interface FakeColumn {
   nulls?: "Y" | "N";
   keyseq?: number;
   default?: string;
+  /** `SYSCAT.COLUMNS.IDENTITY` is `Y` (R5). */
+  identity?: true;
 }
 
 interface FakeRelation {
@@ -162,7 +164,10 @@ const RELATIONS: FakeRelation[] = [
     type: "T",
     status: "N",
     card: 2,
-    columns: [id("ID", 1), { name: "NAME", type: "VARCHAR", length: 100 }],
+    columns: [
+      { ...id("ID", 1), identity: true },
+      { name: "NAME", type: "VARCHAR", length: 100 },
+    ],
   },
   {
     schema: "APP",
@@ -321,6 +326,7 @@ function columnRows(relation: FakeRelation, withName: boolean): Record<string, u
       column.default === undefined ? null : `${hex(column.default)}${"20".repeat(254 - column.default.length)}`,
     DEFAULT_LENGTH: column.default === undefined ? null : column.default.length,
     KEYSEQ: column.keyseq ?? null,
+    IS_IDENTITY: column.identity ? "Y" : "N",
   }));
 }
 
@@ -1730,10 +1736,17 @@ describe("Db2Provider: object surface", () => {
     expect(await provider.describeObject(["APP", "ORDERS"], "table")).toEqual({
       path: ["APP", "ORDERS"],
       columns: [
-        { name: "ID", type: "INTEGER", nullable: false, isPrimary: true },
-        { name: "CUSTOMER_ID", type: "INTEGER", nullable: true, isPrimary: false },
-        { name: "TOTAL", type: "DECIMAL(12,2)", nullable: true, isPrimary: false, defaultValue: "0" },
-        { name: "NOTE", type: "VARCHAR(200)", nullable: true, isPrimary: false },
+        { name: "ID", type: "INTEGER", nullable: false, isPrimary: true, autoIncrement: false },
+        { name: "CUSTOMER_ID", type: "INTEGER", nullable: true, isPrimary: false, autoIncrement: false },
+        {
+          name: "TOTAL",
+          type: "DECIMAL(12,2)",
+          nullable: true,
+          isPrimary: false,
+          defaultValue: "0",
+          autoIncrement: false,
+        },
+        { name: "NOTE", type: "VARCHAR(200)", nullable: true, isPrimary: false, autoIncrement: false },
       ],
       indexes: [
         { name: "ORDERS_CUSTOMER_IX", columns: ["CUSTOMER_ID", "TOTAL"], unique: false },
@@ -1839,7 +1852,11 @@ describe("Db2Provider: the agent profiles read the columns from value-free sourc
   test("an editor handle keeps reading SYSCAT.COLUMNS, and no value-free statement", async () => {
     const provider = await connected();
 
-    expect(await provider.describeObject(["APP", "ORDERS"], "table")).toEqual(ORDERS_DETAIL);
+    // The same detail, and the one fact only SYSCAT.COLUMNS holds: whether the server numbers the column (R5).
+    expect(await provider.describeObject(["APP", "ORDERS"], "table")).toEqual({
+      ...ORDERS_DETAIL,
+      columns: ORDERS_DETAIL.columns.map((column) => Object.assign({}, column, { autoIncrement: false })),
+    });
     const statements = sent.map((statement) => statement.sql);
     expect(statements).toContain(CODE_PAGE_SQL);
     expect(statements).toContain(OBJECT_COLUMNS_SQL);
@@ -2880,5 +2897,86 @@ describe("MCP run_read_query on a Db2 connection", () => {
       ],
       isError: true,
     });
+  });
+});
+
+/**
+ * Whether the engine numbers a column itself (R5, the Db2 side of D27): `SYSCAT.COLUMNS.IDENTITY`, `Y` for a
+ * column GENERATED ALWAYS or BY DEFAULT AS IDENTITY and `N` for every other (measured, Db2 12.1, 2026-11-20).
+ * Without it the Test Data Generator guessed from the name, left `ID INTEGER NOT NULL PRIMARY KEY` out of its
+ * INSERT, and the server refused it with SQLSTATE 23502.
+ */
+describe("Db2Provider: autoIncrement from SYSCAT.COLUMNS.IDENTITY (R5)", () => {
+  test("the single and the bulk read say which columns the engine numbers", async () => {
+    const provider = await connected();
+    const flags = (columns: readonly { name: string; autoIncrement?: boolean }[]) =>
+      Object.fromEntries(columns.map((column) => [column.name, column.autoIncrement]));
+
+    expect(flags((await provider.describeObject(["APP", "CUSTOMERS"], "table")).columns)).toEqual({
+      ID: true,
+      NAME: false,
+    });
+    const bulk = await provider.describeObjects(["APP"], "table");
+    expect(flags(bulk.details.find((detail) => detail.path[1] === "ORDERS")!.columns)).toEqual({
+      ID: false,
+      CUSTOMER_ID: false,
+      TOTAL: false,
+      NOTE: false,
+    });
+  });
+
+  test("the value-free read an agent profile takes has no identity column, and says nothing", async () => {
+    const provider = await connected({}, { readOnly: true, sendsStatements: true });
+    const detail = await provider.describeObject(["APP", "CUSTOMERS"], "table");
+    for (const column of detail.columns) expect(Object.hasOwn(column, "autoIncrement")).toBe(false);
+  });
+});
+
+// R1: `$` is never a dollar quote on this engine, measured on the engine itself and written in its doc, so a `$tag$`
+// inside a name hides no `;` and no write, and a plain read naming one is readable.
+describe("Db2 SQL grammar: dollarQuotes", () => {
+  test("a `$tag$` inside a name opens no dollar quote, so the DELETE between two such names asks", async () => {
+    const { resolveSqlGrammar } = await import("@/lib/sql/grammar");
+    const { splitCursorTargets } = await import("@/lib/sql/statement-splitter");
+    const { hasUnreadableRun, isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+    const doc = await Bun.file(`${import.meta.dir}/../../../docs/providers/db2.md`).text();
+    const text = "SELECT col$a$x FROM t;\nDELETE FROM t;\nSELECT y$a$z FROM t";
+
+    expect(resolveSqlGrammar("db2").dollarQuotes).toBe(false);
+    expect(splitCursorTargets(text, resolveSqlGrammar("db2")).map((target) => target.sql)).toEqual([
+      "SELECT col$a$x FROM t",
+      "DELETE FROM t",
+      "SELECT y$a$z FROM t",
+    ]);
+    expect(isDangerousQuery(text, "db2")).toBe(true);
+    expect(hasUnreadableRun("SELECT c$a$ FROM t", "db2")).toBe(false);
+    expect(doc).toContain("`dollarQuotes` is false: Db2 has no dollar-quoted literal");
+  });
+});
+
+// R3: a SQL PL compound statement is one statement (`script.blocks: "sql-pl"`), so it reaches the server whole instead
+// of as fragments Db2 refuses (SQLCODE -104), and the gate still reads into it.
+describe("Db2 SQL grammar: compound statements", () => {
+  test("a block, a BEGIN ATOMIC block and a procedure body are one statement each, and a block that deletes asks", async () => {
+    const { resolveSqlGrammar } = await import("@/lib/sql/grammar");
+    const { splitCursorTargets, splitExecutionUnits } = await import("@/lib/sql/statement-splitter");
+    const { isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+    const doc = await Bun.file(`${import.meta.dir}/../../../docs/providers/db2.md`).text();
+    const DB2 = resolveSqlGrammar("db2");
+    const block =
+      "BEGIN DECLARE v INTEGER DEFAULT 0; SET v = 7; INSERT INTO RG_B.RG_PLAIN (ID, NAME) VALUES (v, 'x'); END";
+    const atomic = "BEGIN ATOMIC DECLARE v INTEGER DEFAULT 0; SET v = 9; END";
+    const proc = "CREATE OR REPLACE PROCEDURE RG_B.RG_P() BEGIN IF 1 = 1 THEN DELETE FROM RG_B.RG_PLAIN; END IF; END";
+
+    expect(DB2.script.blocks).toBe("sql-pl");
+    const script = `${block};\n${atomic};\n${proc};\nCALL RG_B.RG_P()`;
+    expect(splitExecutionUnits(script, DB2).map((unit) => unit.sql)).toEqual([block, atomic, proc, "CALL RG_B.RG_P()"]);
+    expect(splitCursorTargets(`${block};\nSELECT 1 FROM SYSIBM.SYSDUMMY1`, DB2).map((target) => target.sql)).toEqual([
+      block,
+      "SELECT 1 FROM SYSIBM.SYSDUMMY1",
+    ]);
+    expect(isDangerousQuery("BEGIN ATOMIC DELETE FROM RG_B.RG_PLAIN; END", "db2")).toBe(true);
+    expect(isDangerousQuery(block, "db2")).toBe(false);
+    expect(doc).toContain("The script rule is `sql-pl`: a compound statement");
   });
 });

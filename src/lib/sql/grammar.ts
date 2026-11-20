@@ -94,7 +94,7 @@ export type BlockCommentGrammar = "flat" | "nesting";
  * rather than the statement the engine receives.
  *
  * - `none` - no statement does, or every body is a literal the span reader already
- *   holds whole (PostgreSQL's `$$ … $$`). Every `;` that is code ends a statement.
+ *   holds whole. Every `;` that is code ends a statement.
  * - `trigger-body` - `CREATE [TEMP|TEMPORARY] TRIGGER … BEGIN … END` is the one
  *   statement with a body. SQLite and libSQL. `BEGIN` alone stays the statement that
  *   opens a transaction there, which is why this is not `pl-sql`.
@@ -102,8 +102,22 @@ export type BlockCommentGrammar = "flat" | "nesting";
  *   `CREATE [OR REPLACE] PROCEDURE | FUNCTION | PACKAGE [BODY] | TRIGGER | TYPE BODY`
  *   is one PL/SQL unit, and the `;` after its closing `END` belongs to the unit:
  *   Oracle refuses the unit without it (`PLS-00103`, "end-of-file"). Oracle.
+ * - `begin-atomic` - `CREATE [OR REPLACE] FUNCTION | PROCEDURE` may carry a SQL-standard
+ *   body, `BEGIN ATOMIC … END`, whose statements end in `;`. psql's own scanner
+ *   (`psqlscan.l`) is the rule: in such a statement, outside parentheses, `BEGIN` opens
+ *   a level, `CASE` opens one inside it and `END` closes one, and a `;` ends the
+ *   statement only at level 0. A body written as a literal (`AS $$ … $$`) is still the
+ *   span reader's, and `BEGIN` alone stays the statement that opens a transaction.
+ *   PostgreSQL.
+ * - `sql-pl` - a compound statement, `BEGIN [NOT ATOMIC | ATOMIC] … END`, is one statement
+ *   sent alone (`BEGIN` first) and as the body of `CREATE [OR REPLACE] PROCEDURE | FUNCTION
+ *   | TRIGGER`. Outside parentheses `BEGIN` and `CASE` open a level and `END` closes one,
+ *   while `END IF`, `END LOOP`, `END WHILE`, `END REPEAT` and `END FOR` close a statement
+ *   that opened none. There is no transaction `BEGIN`, so `BEGIN` alone is always a block,
+ *   and the `;` after the closing `END` is dropped, which the server accepts either way.
+ *   Db2 (SQL PL, measured on 12.1.0.0).
  */
-export type ProceduralBlockGrammar = "none" | "trigger-body" | "pl-sql";
+export type ProceduralBlockGrammar = "none" | "trigger-body" | "pl-sql" | "begin-atomic" | "sql-pl";
 
 /**
  * How a SCRIPT is cut into what the engine receives, beyond the `;` the span rules
@@ -221,6 +235,27 @@ export interface SqlGrammar {
    * or a string would be cut into statements.
    */
   readonly dollarTags?: boolean;
+  /**
+   * Whether `$` continues an unquoted name, so a `$` right after a name character (a letter, a digit, `_` or another
+   * `$`) is part of that name and opens no dollar-quoted run. Absent means false: a `$` opens a run wherever its tag
+   * reads, the reading every row had before the fact existed, and Spark's, whose names hold no `$`.
+   *
+   * It is a fact the text cannot settle: `SELECT col$a$x FROM t; DELETE FROM v; SELECT y$a$z FROM t` is three
+   * statements where `$` continues a name and one statement holding a literal where it does not, so under the wrong
+   * reading the `DELETE` would hide inside a literal or a literal would be cut into statements.
+   */
+  readonly dollarInNames?: boolean;
+  /**
+   * Whether the dialect has a dollar-quoted string at all (`$$ … $$` or `$tag$ … $tag$`); absent means true, the
+   * reading every row had before the fact existed, an opt-out like `dollarTags`. False: every `$` is code, so
+   * `dollarTags` and `dollarInNames` say nothing more. For an engine whose lexer has no such literal, where `$` is a
+   * name character, a bind-parameter prefix or a character it refuses.
+   *
+   * It is a fact the text cannot settle, the same shape as `dollarInNames`: `SELECT col$a$x FROM t; DELETE FROM t;
+   * SELECT y$a$z FROM t` is three statements on Oracle and one holding a literal where the form exists (R1), and a
+   * name like `c$a$` read as an opener never closes, so the gate says part of a plain read could not be read (R2).
+   */
+  readonly dollarQuotes?: boolean;
   /**
    * Whether a backslash escapes the next character inside `"…"`; absent means the reading `backslashAlwaysEscapes`
    * gives both quotes. False: a backslash there is an ordinary character, so `"a\"` is a terminated name. True: it
@@ -346,6 +381,15 @@ export interface SqlGrammar {
    */
   readonly confirmCodeForms?: readonly ConfirmCodeForm[];
   /**
+   * Statements that ask when the parenthesised option list right after their operative keyword enables an option:
+   * `{ keyword: "VACUUM", option: "FULL" }` matches `VACUUM (FULL) t` and `VACUUM (ANALYZE, FULL true) t`, and not
+   * `VACUUM (FULL false) t` or `VACUUM (ANALYZE) t`. An option with no value is on, and so is any value but a boolean
+   * false (`false`, `off`, `no`, `0` and their accepted prefixes) or an integer literal of value 0, the reading
+   * PostgreSQL's `defGetBoolean` gives it; the option named twice asks when either is on. The keyword spelling with no
+   * list (`VACUUM FULL`) is a `confirmForms` sequence. Absent means none.
+   */
+  readonly confirmOptionForms?: readonly ConfirmOptionForm[];
+  /**
    * Keyword sequences that ask only when the code word `when` also appears in the statement's code after them, read
    * where `confirmForms` is read. For a form harmless in one variant and not in the other, which a word of the
    * statement tells apart: Snowflake's `CREATE STAGE` keeps files in the account unless it names a `URL`. Absent means
@@ -396,6 +440,12 @@ export interface SqlGrammar {
    * plan would ask.
    */
   readonly explainExecutesWithAnalyze?: boolean;
+}
+
+/** A form `SqlGrammar.confirmOptionForms` looks for: the operative keyword and the option its list enables. */
+export interface ConfirmOptionForm {
+  readonly keyword: string;
+  readonly option: string;
 }
 
 /** A form `SqlGrammar.confirmFormsWhen` looks for: a keyword sequence and the code word that makes it ask. */

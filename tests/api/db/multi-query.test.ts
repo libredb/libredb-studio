@@ -1194,6 +1194,60 @@ describe("POST /api/db/multi-query", () => {
     expect(res.status).toBe(200);
     expect("openTransaction" in data).toBe(false);
   });
+
+  /**
+   * Q5: a statement that changed the session keeps its connection for the rest of the script, and
+   * the route hands that scope back once the script is done, after the ender, so the connection is
+   * closed rather than pooled for the next request on this stored connection.
+   */
+  test("the script's own scope is handed back after the ender, under the same name", async () => {
+    const order: string[] = [];
+    const endOpenQueryTransaction = mock(async () => {
+      order.push("ender");
+      return "none" as const;
+    });
+    const endQueryScope = mock(async () => {
+      order.push("scope");
+    });
+    mockGetOrCreateProvider.mockImplementation(
+      async () => ({ ...mockProvider, endOpenQueryTransaction, endQueryScope }) as never,
+    );
+
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SET @v = 42; SELECT @v" },
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    const scope = (mockProvider.query as ReturnType<typeof mock>).mock.calls[0][3];
+    expect(endQueryScope).toHaveBeenCalledTimes(1);
+    expect(endQueryScope).toHaveBeenCalledWith(scope);
+    expect(order).toEqual(["ender", "scope"]);
+  });
+
+  test("the scope is handed back even when the ender raised", async () => {
+    const endOpenQueryTransaction = mock(async () => {
+      throw new Error("Could not roll back");
+    });
+    const endQueryScope = mock(async () => {});
+    mockGetOrCreateProvider.mockImplementation(
+      async () => ({ ...mockProvider, endOpenQueryTransaction, endQueryScope }) as never,
+    );
+
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SET @v = 42; SELECT @v" },
+      }) as never,
+    );
+
+    // The describes below inherit the implementation without resetting it.
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    expect(res.status).toBe(500);
+    expect(endQueryScope).toHaveBeenCalledTimes(1);
+  });
 });
 
 /**

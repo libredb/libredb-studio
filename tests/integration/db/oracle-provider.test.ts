@@ -1599,6 +1599,9 @@ describe("OracleProvider", () => {
       // row editor builds (#269).
       expect(caps.supportsInlineRowEdit).toBe(true);
       expect(caps.supportsTestDataGeneration).toBe(true);
+      // `INSERT ... VALUES (..), (..)` is 23ai and later: 21c XE answers ORA-00933, so the
+      // generator and the import write one INSERT per row on every version.
+      expect(caps.supportsMultiRowInsert).toBe(false);
       // `OFFSET m ROWS FETCH NEXT n ROWS ONLY` from this provider's own override; page
       // one is `FETCH FIRST n ROWS ONLY` (#816).
       expect(caps.supportsResultPagination).toBe(true);
@@ -4519,9 +4522,25 @@ describe("Oracle object listing and detail", () => {
     const detail = await provider.describeObject(["REPORTING", "REPORT_DAILY"], "table");
     expect(detail.path).toEqual(["REPORTING", "REPORT_DAILY"]);
     expect(detail.columns).toEqual([
-      { name: "ID", type: "NUMBER(10)", baseType: "NUMBER", nullable: false, isPrimary: true, defaultValue: undefined },
+      {
+        name: "ID",
+        type: "NUMBER(10)",
+        baseType: "NUMBER",
+        nullable: false,
+        isPrimary: true,
+        defaultValue: undefined,
+        autoIncrement: false,
+      },
       // DATA_DEFAULT is a LONG carrying the source text with its trailing whitespace.
-      { name: "TOTAL", type: "NUMBER(12,2)", baseType: "NUMBER", nullable: true, isPrimary: false, defaultValue: "0" },
+      {
+        name: "TOTAL",
+        type: "NUMBER(12,2)",
+        baseType: "NUMBER",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: "0",
+        autoIncrement: false,
+      },
       {
         name: "NOTE",
         type: "VARCHAR2(200 BYTE)",
@@ -4529,6 +4548,7 @@ describe("Oracle object listing and detail", () => {
         nullable: true,
         isPrimary: false,
         defaultValue: undefined,
+        autoIncrement: false,
       },
     ]);
     expect(detail.indexes).toEqual([
@@ -4595,7 +4615,7 @@ describe("Oracle object listing and detail", () => {
     for (const kind of ["view", "materialized_view"]) {
       const detail = await provider.describeObject(["APP", "APP_ORDER_SUMMARY"], kind);
       expect(detail.columns).toEqual([
-        { name: "ID", type: "NUMBER", nullable: true, isPrimary: false, defaultValue: undefined },
+        { name: "ID", type: "NUMBER", nullable: true, isPrimary: false, defaultValue: undefined, autoIncrement: false },
       ]);
     }
     await provider.disconnect();
@@ -4792,10 +4812,10 @@ describe("Oracle bulk column read", () => {
     ]);
     const orders = batch.details[1];
     expect(orders.columns).toEqual([
-      { name: "ID", type: "NUMBER", nullable: false, isPrimary: true, defaultValue: undefined },
+      { name: "ID", type: "NUMBER", nullable: false, isPrimary: true, defaultValue: undefined, autoIncrement: false },
       // DATA_DEFAULT is a LONG holding source text, trailing spaces included, and it is
       // trimmed by the one mapper both reads share.
-      { name: "TOTAL", type: "NUMBER", nullable: true, isPrimary: false, defaultValue: "0" },
+      { name: "TOTAL", type: "NUMBER", nullable: true, isPrimary: false, defaultValue: "0", autoIncrement: false },
     ]);
     expect(orders.indexes).toEqual([{ name: "APP_ORDERS_TOTAL_IX", columns: ["TOTAL", "NOTE"], unique: false }]);
     // Bare within the owner, qualified outside it, exactly as the single read spells it.
@@ -5415,6 +5435,7 @@ describe("Oracle column type declaration (#1139)", () => {
     nullable: true,
     isPrimary: false,
     defaultValue: undefined,
+    autoIncrement: false,
   }));
 
   function columnRows(objectName?: string): Record<string, unknown>[] {
@@ -5547,6 +5568,7 @@ describe("Oracle vector column declaration (#1209)", () => {
       nullable: true,
       isPrimary: false,
       defaultValue: undefined,
+      autoIncrement: false,
     })),
     {
       name: "C_UROWID",
@@ -5555,6 +5577,7 @@ describe("Oracle vector column declaration (#1209)", () => {
       nullable: true,
       isPrimary: false,
       defaultValue: undefined,
+      autoIncrement: false,
     },
   ];
 
@@ -5642,6 +5665,7 @@ describe("Oracle column reads without VECTOR_INFO (#1209)", () => {
       nullable: true,
       isPrimary: false,
       defaultValue: undefined,
+      autoIncrement: false,
     },
   ];
 
@@ -7195,5 +7219,74 @@ describe("MCP run_read_query on an Oracle connection", () => {
     const sent = connectionLog.filter((entry) => entry.event === "execute").at(-1);
     expect(sent?.callTimeout).toBeGreaterThan(0);
     expect(sent?.callTimeout).toBeLessThanOrEqual(1_000);
+  });
+});
+
+/**
+ * Whether the engine numbers a column itself (R5, the Oracle side of D27). Read from `DATA_DEFAULT` rather than
+ * `IDENTITY_COLUMN`, because the default is there on every release the provider serves and the identity flag is
+ * a 12c column. The defaults are verbatim from Oracle Database 21c XE on 2026-11-20: an identity column, ALWAYS
+ * and BY DEFAULT ON NULL alike, defaults to `"SYSTEM"."ISEQ$$_75900".nextval`, and `DEFAULT RG_R5_S.NEXTVAL`
+ * reads back as `"SYSTEM"."RG_R5_S"."NEXTVAL"`, which is a default and not an identity: the migration copies it
+ * as written (R8). A plain `ID NUMBER PRIMARY KEY` has neither, so it is generated.
+ */
+describe("Oracle autoIncrement from the identity default (R5)", () => {
+  beforeEach(() => {
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+  });
+
+  const ROWS = [
+    { COLUMN_NAME: "IDENT", DATA_DEFAULT: '"SYSTEM"."ISEQ$$_75900".nextval' },
+    { COLUMN_NAME: "SEQ", DATA_DEFAULT: '"SYSTEM"."RG_R5_S"."NEXTVAL" ' },
+    { COLUMN_NAME: "PLAIN", DATA_DEFAULT: null },
+    { COLUMN_NAME: "ZERO", DATA_DEFAULT: "0 " },
+    { COLUMN_NAME: "NAMED", DATA_DEFAULT: "'nextval'" },
+  ].map((row) => Object.assign({}, row, NUMBER_BARE, { NULLABLE: "N" }));
+
+  for (const bulk of [false, true]) {
+    test(`${bulk ? "the bulk" : "the single"} read says which columns the engine numbers`, async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.includes("SELECT d.NAME FROM described d")) return { rows: [{ NAME: "RG_R5" }] };
+        if (sql.includes("WITH described AS") && sql.includes("ALL_TAB_COLUMNS")) {
+          return { rows: ROWS.map((row) => ({ OBJECT_NAME: "RG_R5", ...row })) };
+        }
+        if (sql.includes("ALL_TAB_COLUMNS")) return { rows: ROWS };
+        return { rows: [] };
+      };
+      const provider = new OracleProvider({ ...baseConfig, user: "app" });
+      await provider.connect();
+      const detail = bulk
+        ? (await provider.describeObjects(["APP"], "table")).details[0]
+        : await provider.describeObject(["APP", "RG_R5"], "table");
+      await provider.disconnect();
+      const flags = Object.fromEntries(detail.columns.map((column) => [column.name, column.autoIncrement]));
+
+      expect(flags).toEqual({ IDENT: true, SEQ: false, PLAIN: false, ZERO: false, NAMED: false });
+    });
+  }
+});
+
+// R1: `$` is never a dollar quote on this engine, measured on the engine itself and written in its doc, so a `$tag$`
+// inside a name hides no `;` and no write, and a plain read naming one is readable.
+describe("Oracle SQL grammar: dollarQuotes", () => {
+  test("a `$tag$` inside a name opens no dollar quote, so the DELETE between two such names asks", async () => {
+    const { resolveSqlGrammar } = await import("@/lib/sql/grammar");
+    const { splitCursorTargets } = await import("@/lib/sql/statement-splitter");
+    const { hasUnreadableRun, isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+    const doc = await Bun.file(`${import.meta.dir}/../../../docs/providers/oracle.md`).text();
+    const text = "SELECT col$a$x FROM t;\nDELETE FROM t;\nSELECT y$a$z FROM t";
+
+    expect(resolveSqlGrammar("oracle").dollarQuotes).toBe(false);
+    expect(splitCursorTargets(text, resolveSqlGrammar("oracle")).map((target) => target.sql)).toEqual([
+      "SELECT col$a$x FROM t",
+      "DELETE FROM t",
+      "SELECT y$a$z FROM t",
+    ]);
+    expect(isDangerousQuery(text, "oracle")).toBe(true);
+    expect(hasUnreadableRun("SELECT c$a$ FROM t", "oracle")).toBe(false);
+    expect(doc).toContain("`dollarQuotes` is false: Oracle has no dollar-quoted literal");
   });
 });

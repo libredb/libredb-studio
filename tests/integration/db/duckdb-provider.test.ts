@@ -3122,7 +3122,7 @@ describe("DuckDB object containers, listings and detail", () => {
 
       // And the three answer three DIFFERENT details for that one path.
       expect((await provider.describeObject(["memory", "main", "overlap"], "table")).columns).toEqual([
-        { name: "id", type: "INTEGER", nullable: true, isPrimary: false },
+        { name: "id", type: "INTEGER", nullable: true, isPrimary: false, autoIncrement: false },
       ]);
       expect((await provider.describeObject(["memory", "main", "overlap"], "sequence")).columns).toEqual([]);
       expect((await provider.describeObject(["memory", "main", "overlap"], "macro")).columns).toEqual([]);
@@ -3164,9 +3164,9 @@ describe("DuckDB object containers, listings and detail", () => {
       expect(await provider.describeObject(["memory", "main", "orders"], "table")).toEqual({
         path: ["memory", "main", "orders"],
         columns: [
-          { name: "id", type: "INTEGER", nullable: false, isPrimary: true },
-          { name: "customer_id", type: "INTEGER", nullable: true, isPrimary: false },
-          { name: "total", type: "DECIMAL(12,2)", nullable: true, isPrimary: false },
+          { name: "id", type: "INTEGER", nullable: false, isPrimary: true, autoIncrement: false },
+          { name: "customer_id", type: "INTEGER", nullable: true, isPrimary: false, autoIncrement: false },
+          { name: "total", type: "DECIMAL(12,2)", nullable: true, isPrimary: false, autoIncrement: false },
         ],
         indexes: [{ name: "ix_orders_customer", columns: ["customer_id"], unique: false }],
         foreignKeys: [{ columnName: "customer_id", referencedTable: "customers", referencedColumn: "id" }],
@@ -3177,8 +3177,8 @@ describe("DuckDB object containers, listings and detail", () => {
       expect(await provider.describeObject(["memory", "main", "customers"], "table")).toEqual({
         path: ["memory", "main", "customers"],
         columns: [
-          { name: "id", type: "INTEGER", nullable: false, isPrimary: true },
-          { name: "name", type: "VARCHAR", nullable: false, isPrimary: false },
+          { name: "id", type: "INTEGER", nullable: false, isPrimary: true, autoIncrement: false },
+          { name: "name", type: "VARCHAR", nullable: false, isPrimary: false, autoIncrement: false },
           // The catalog reports `'none'`; the value is `none`, and the text is kept (#1029).
           {
             name: "note",
@@ -3187,6 +3187,7 @@ describe("DuckDB object containers, listings and detail", () => {
             isPrimary: false,
             defaultValue: "none",
             defaultExpression: "'none'",
+            autoIncrement: false,
           },
         ],
         indexes: [],
@@ -3200,7 +3201,7 @@ describe("DuckDB object containers, listings and detail", () => {
       // does not have.
       expect(await provider.describeObject(["memory", "analytics", "customers"], "table")).toEqual({
         path: ["memory", "analytics", "customers"],
-        columns: [{ name: "event_id", type: "BIGINT", nullable: true, isPrimary: false }],
+        columns: [{ name: "event_id", type: "BIGINT", nullable: true, isPrimary: false, autoIncrement: false }],
         indexes: [],
         foreignKeys: [],
       });
@@ -3213,7 +3214,7 @@ describe("DuckDB object containers, listings and detail", () => {
       // four columns for a three-column table.
       expect(await provider.describeObject(["warehouse", "main", "customers"], "table")).toEqual({
         path: ["warehouse", "main", "customers"],
-        columns: [{ name: "sku", type: "VARCHAR", nullable: true, isPrimary: false }],
+        columns: [{ name: "sku", type: "VARCHAR", nullable: true, isPrimary: false, autoIncrement: false }],
         indexes: [],
         foreignKeys: [],
       });
@@ -3239,7 +3240,7 @@ describe("DuckDB object containers, listings and detail", () => {
     try {
       expect(await provider.describeObject(["memory", "main", "customer_names"], "view")).toEqual({
         path: ["memory", "main", "customer_names"],
-        columns: [{ name: "name", type: "VARCHAR", nullable: true, isPrimary: false }],
+        columns: [{ name: "name", type: "VARCHAR", nullable: true, isPrimary: false, autoIncrement: false }],
         indexes: [],
         foreignKeys: [],
       });
@@ -3301,8 +3302,8 @@ describe("DuckDB object containers, listings and detail", () => {
       // The referenced table is spelled the way `getSchema()` spells it on this engine:
       // bare in `main`, qualified anywhere else. `orders` above is the bare half.
       expect((await provider.describeObject(["memory", "analytics", "parent"], "table")).columns).toEqual([
-        { name: "a", type: "INTEGER", nullable: false, isPrimary: true },
-        { name: "b", type: "INTEGER", nullable: false, isPrimary: true },
+        { name: "a", type: "INTEGER", nullable: false, isPrimary: true, autoIncrement: false },
+        { name: "b", type: "INTEGER", nullable: false, isPrimary: true, autoIncrement: false },
       ]);
     } finally {
       await provider.disconnect();
@@ -4587,5 +4588,56 @@ describe("DuckDBProvider column defaults (#1029)", () => {
     } finally {
       await provider.disconnect();
     }
+  });
+});
+
+/**
+ * Whether the engine numbers a column itself (R5, the DuckDB side of D27). DuckDB has no identity column and no
+ * AUTOINCREMENT: a key is numbered by `DEFAULT nextval('seq')`, which the catalog reads back as
+ * `nextval('rg_seq')`. A plain `INTEGER PRIMARY KEY` has no default, so the Test Data Generator must generate it;
+ * guessing from the name left it out and the server refused the INSERT with `NOT NULL constraint failed`.
+ */
+describe("DuckDBProvider autoIncrement (R5)", () => {
+  test("a column fed by a sequence is numbered by the engine, and a plain key is not", async () => {
+    const provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+    try {
+      await provider.query("CREATE SEQUENCE rg_seq");
+      await provider.query(
+        "CREATE TABLE rg_keys (seq_id INTEGER PRIMARY KEY DEFAULT nextval('rg_seq'), plain_id INTEGER, note VARCHAR DEFAULT 'nextval')",
+      );
+      const flags = (columns: readonly { name: string; autoIncrement?: boolean }[]) =>
+        Object.fromEntries(columns.map((column) => [column.name, column.autoIncrement]));
+      const expected = { seq_id: true, plain_id: false, note: false };
+
+      expect(flags((await provider.describeObject(["memory", "main", "rg_keys"], "table")).columns)).toEqual(expected);
+      const batch = await provider.describeObjects(["memory", "main"], "table");
+      expect(flags(batch.details.find((detail) => detail.path.at(-1) === "rg_keys")!.columns)).toEqual(expected);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+});
+
+// F09 on DuckDB: `$` continues a name on this engine, measured on the engine itself and written in its doc, so a `$tag$`
+// inside a name hides no `;` and no write, and a plain read naming one is readable.
+describe("DuckDB SQL grammar: dollarInNames", () => {
+  test("`$` continues a name, so the DELETE between two `$tag$` names asks and dollar strings stay literals", async () => {
+    const { resolveSqlGrammar } = await import("@/lib/sql/grammar");
+    const { splitCursorTargets } = await import("@/lib/sql/statement-splitter");
+    const { hasUnreadableRun, isDangerousQuery } = await import("@/lib/sql/dangerous-query");
+    const doc = await Bun.file(`${import.meta.dir}/../../../docs/providers/duckdb.md`).text();
+    const text = "SELECT col$a$x FROM t;\nDELETE FROM t;\nSELECT y$a$z FROM t";
+
+    expect(resolveSqlGrammar("duckdb").dollarInNames).toBe(true);
+    expect(splitCursorTargets(text, resolveSqlGrammar("duckdb")).map((target) => target.sql)).toEqual([
+      "SELECT col$a$x FROM t",
+      "DELETE FROM t",
+      "SELECT y$a$z FROM t",
+    ]);
+    expect(isDangerousQuery(text, "duckdb")).toBe(true);
+    expect(hasUnreadableRun("SELECT c$a$ FROM t", "duckdb")).toBe(false);
+    expect(splitCursorTargets("SELECT $$a;b$$; SELECT $t$a;b$t$", resolveSqlGrammar("duckdb")).length).toBe(2);
+    expect(doc).toContain("`dollarInNames` is set: `$` continues a name, so `col$a$x` is one name");
   });
 });

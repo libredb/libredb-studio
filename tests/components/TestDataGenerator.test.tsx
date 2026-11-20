@@ -1677,3 +1677,168 @@ describe("TestDataGenerator Oracle literals (#1400)", () => {
     expect(statement.match(/\('\d{4}-\d{2}-\d{2}', '\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'\)/g)).toHaveLength(10);
   });
 });
+
+/**
+ * Whether the engine numbers a key is read from the catalog where the provider declares it
+ * (`ColumnSchema.autoIncrement`), not from the column's name. Measured on PostgreSQL 19.0 and
+ * 18.7: `id int PRIMARY KEY` with no default was left out of the INSERT because it is called
+ * `id`, and the statement failed with `null value in column "id" ... violates not-null
+ * constraint` (D27).
+ */
+describe("TestDataGenerator auto-increment read from the catalog (D27)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const table = (columns: DetailedObject["columns"]): DetailedObject => ({
+    name: "d27_form",
+    kind: "table",
+    path: ["t_d", "d27_form"],
+    indexes: [],
+    columns,
+  });
+  const note = { name: "note", type: "text", nullable: true, isPrimary: false };
+
+  const valuesOf = (statement: string, at: number): string[] =>
+    statement
+      .split("\n")
+      .filter((line) => line.startsWith("  ("))
+      .map((line) => line.replace(/^ {2}\(/, "").split(", ")[at]);
+
+  test("a key the catalog says the engine does not fill is written, with distinct integers", () => {
+    const statement = executed(
+      table([{ name: "id", type: "integer", nullable: false, isPrimary: true, autoIncrement: false }, note]),
+      postgresCaps,
+    );
+    expect(statement).toContain("INSERT INTO t_d.d27_form (id, note)");
+    const ids = valuesOf(statement, 0);
+    expect(ids).toHaveLength(10);
+    for (const id of ids) expect(id).toMatch(/^\d{6,7}$/);
+    expect(new Set(ids).size).toBe(10);
+    // Consecutive from one per-run start, so the run never repeats a value of its own.
+    expect(Number(ids[9]) - Number(ids[0])).toBe(9);
+  });
+
+  test("the dialog labels such a key as generated, not struck through", () => {
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["t_d", "d27_form"]}
+        tableSchema={table([
+          { name: "id", type: "integer", nullable: false, isPrimary: true, autoIncrement: false },
+          note,
+        ])}
+        databaseType="postgres"
+        capabilities={postgresCaps}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent || "";
+    expect(text).toContain("id: key");
+    expect(text).toContain("2 columns");
+    const struck = Array.from(container.querySelectorAll("span.line-through")).map((s) => s.textContent);
+    expect(struck).toEqual([]);
+  });
+
+  test("a smallint key starts low enough that a hundred rows stay inside its range", () => {
+    for (let run = 0; run < 20; run++) {
+      const { getByText } = render(
+        <TestDataGenerator
+          isOpen
+          onClose={mock(() => {})}
+          tablePath={["t_d", "d27_small"]}
+          tableSchema={table([
+            { name: "id", type: "smallint", nullable: false, isPrimary: true, autoIncrement: false },
+            note,
+          ])}
+          databaseType="postgres"
+          capabilities={postgresCaps}
+          onExecuteQuery={mock(() => {})}
+        />,
+      );
+      fireEvent.click(getByText("100"));
+      const statement = document.querySelector("pre")?.textContent ?? "";
+      const ids = valuesOf(statement, 0).map(Number);
+      expect(ids).toHaveLength(100);
+      expect(Math.min(...ids)).toBeGreaterThanOrEqual(10000);
+      expect(Math.max(...ids)).toBeLessThanOrEqual(32767);
+      cleanup();
+    }
+  });
+
+  test("an identity or serial column the catalog marks is left out, whatever its name", () => {
+    const statement = executed(
+      table([{ name: "order_no", type: "integer", nullable: false, isPrimary: true, autoIncrement: true }, note]),
+      postgresCaps,
+    );
+    expect(statement).toContain("INSERT INTO t_d.d27_form (note)");
+    expect(statement).not.toContain("order_no");
+  });
+
+  test("a key with a default the engine evaluates is still left to the engine", () => {
+    // CockroachDB's `DEFAULT unique_rowid()`: not a sequence, but the engine fills it.
+    const statement = executed(
+      table([
+        {
+          name: "id",
+          type: "bigint",
+          nullable: false,
+          isPrimary: true,
+          autoIncrement: false,
+          defaultValue: "unique_rowid()",
+        },
+        note,
+      ]),
+      postgresCaps,
+    );
+    expect(statement).toContain("(note)");
+  });
+
+  test("a key with a default expression the engine evaluates is still left to the engine", () => {
+    const statement = executed(
+      table([
+        {
+          name: "id",
+          type: "bigint",
+          nullable: false,
+          isPrimary: true,
+          autoIncrement: false,
+          defaultExpression: "unique_rowid()",
+        },
+        note,
+      ]),
+      postgresCaps,
+    );
+    expect(statement).toContain("(note)");
+  });
+
+  test("an `_id` column that is not a key and has no default gets ordinary integers", () => {
+    const statement = executed(
+      table([
+        { name: "id", type: "integer", nullable: false, isPrimary: true, autoIncrement: true },
+        { name: "batch_id", type: "integer", nullable: true, isPrimary: false, autoIncrement: false },
+      ]),
+      postgresCaps,
+    );
+    expect(statement).toContain("(batch_id)");
+    for (const value of valuesOf(statement, 0)) expect(value).toMatch(/^\d{1,4}\)?[;,]?$/);
+  });
+
+  test("a non-integer key named id is generated by its type", () => {
+    const statement = executed(
+      table([{ name: "id", type: "uuid", nullable: false, isPrimary: true, autoIncrement: false }, note]),
+      postgresCaps,
+    );
+    expect(statement).toContain("(id, note)");
+    for (const id of valuesOf(statement, 0)) expect(id).toMatch(/^'[0-9a-f-]{36}'$/);
+  });
+
+  test("an engine that declares nothing keeps the name rule", () => {
+    const statement = executed(
+      table([{ name: "id", type: "integer", nullable: false, isPrimary: true }, note]),
+      postgresCaps,
+    );
+    expect(statement).toContain("(note)");
+  });
+});

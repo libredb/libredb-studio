@@ -3,11 +3,11 @@
  * `MODIFY COLUMN`; everything else is the shared statement, wrapped in `BEGIN;` and `COMMIT;`.
  */
 import {
+  autoNumberedColumnDef,
   BEGIN_COMMIT,
   defaultSql,
   standardAddColumn,
   standardAddForeignKey,
-  standardColumnDef,
   standardCreateIndex,
   standardCreateTableForeignKey,
   standardDropColumn,
@@ -20,7 +20,8 @@ export const MYSQL_MIGRATION_DDL: MigrationDdlSpec = {
   tableDdl: "written",
   transactionWrapper: BEGIN_COMMIT,
   createTable: { kind: "written", primaryKey: standardPrimaryKey, foreignKey: standardCreateTableForeignKey },
-  columnDef: standardColumnDef,
+  // `AUTO_INCREMENT`, which the catalog reports in `EXTRA` and not in the type (R8).
+  columnDef: autoNumberedColumnDef("AUTO_INCREMENT"),
   createIndex: standardCreateIndex,
   dropIndex: (index, table) => `DROP INDEX ${index.name} ON ${table};`,
   addForeignKey: standardAddForeignKey,

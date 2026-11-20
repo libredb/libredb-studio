@@ -124,6 +124,14 @@ describe("readStatementEnd", () => {
       expect(readStatementEnd(sql).rewritable).toBe(true);
     });
 
+    // Where `$` continues a name, `$b$` inside `a$b$c` opens no dollar quote, so nothing is left unterminated (F09).
+    test("allows a cut after a `$` inside a bare identifier where the dialect reads it as part of the name", () => {
+      expect(readStatementEnd("SELECT a$b$c FROM t;", resolveSqlGrammar("postgres"))).toEqual({
+        end: 19,
+        rewritable: true,
+      });
+    });
+
     // A refused cut always reports the terminator strip as its end - trailing
     // whitespace and semicolons removed and nothing else, which is what this
     // module's callers read before it existed. So a caller's probes lose
