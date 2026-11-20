@@ -1,0 +1,23 @@
+diff --git a/lib/connection.js b/lib/connection.js
+index af7b016dc207b0b94558fcbc0451b627921d5d23..2881c48fafea6f9852def354fac1da8f3569f1b1 100644
+--- a/lib/connection.js
++++ b/lib/connection.js
+@@ -157,6 +157,18 @@ class Connection extends events.EventEmitter {
+     resultEmitter.on('frameEnded', this.freeStreamId.bind(this));
+     resultEmitter.on('nodeEvent', this.handleNodeEvent.bind(this));
+ 
++    // A stream that fails to read a frame emits 'error'; fail the connection the way a socket error does,
++    // so pending requests are rejected and the socket is closed, instead of leaving the event unheard.
++    const onReadError = (err) => {
++      const error = new errors.DriverError(
++        `The connection to ${this.endpointFriendlyName} failed while reading a response: ${err}`);
++      error.innerError = err;
++      this.netClient.destroy(error);
++    };
++    this.protocol.on('error', onReadError);
++    this.parser.on('error', onReadError);
++    resultEmitter.on('error', onReadError);
++
+     this.netClient
+       .pipe(this.protocol)
+       .pipe(this.parser)
