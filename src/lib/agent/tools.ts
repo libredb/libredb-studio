@@ -1722,6 +1722,23 @@ function repairLedgerKey(call: AuditedAgentCall, statementFingerprint: string): 
   return call.composedByServer === true ? `composed:${statementFingerprint}` : statementFingerprint;
 }
 
+/**
+ * Settles once the run has no live execution, or once the time the run has left has passed, whichever comes first.
+ * A run's execution outlives the call that made it only while a provider call it holds still runs.
+ */
+async function untilRunIdle(context: AgentToolContext): Promise<void> {
+  if (context.tracker.usage(context.runId).activeExecutions === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outOfTime = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, context.deadline.remainingMs());
+  });
+  try {
+    await Promise.race([context.tracker.whenIdle(context.runId), outOfTime]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function runAuditedAgentCall(
   context: AgentToolContext,
   call: AuditedAgentCall,
@@ -1739,6 +1756,12 @@ export async function runAuditedAgentCall(
   if (!repairAdmission.admitted) return unavailable(repairAdmission.reasonCode);
 
   const actor: ExecutionActor = { sessionId: context.actor.sessionId, role: context.actor.role, mode: "agent" };
+
+  // A statement this run stopped waiting for at its timeout keeps the run's one execution live until its provider call
+  // settles (`holdUntilSettled` in `executeAuditedOperation`). The loop is sequential, so the next call waits for that
+  // call, as a run waits on its statement, within the time the run has left; the deadline admission below then reads
+  // what the wait cost.
+  await untilRunIdle(context);
 
   // The ceilings this run is bounded by, chosen by its OWN persisted workflow. Read
   // once here so that the deadline admission, the clamp and the denial text a model

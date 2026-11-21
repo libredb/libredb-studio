@@ -7501,7 +7501,7 @@ describe("a provider that answers past the run's budget", () => {
     });
   });
 
-  test("a statement refused at the timeout keeps the run's execution slot until the provider's call settles", async () => {
+  test("a statement refused at the timeout keeps the run's execution slot until the provider's call settles, and the run's next call waits for it", async () => {
     let settle: (result: QueryResult) => void = () => {};
     const late = new Promise<QueryResult>((resolve) => {
       settle = resolve;
@@ -7515,19 +7515,51 @@ describe("a provider that answers past the run's budget", () => {
     if (refused.kind !== "refused") throw new Error(`expected refused, got ${refused.kind}`);
     expect(h.tracker.usage("run-1")).toMatchObject({ activeExecutions: 1, executedStatements: 1 });
 
-    // maxConcurrentExecutions is 1, and the first statement's provider call is still running.
-    const denied = await runReadQueryTool(h.context, { sql: "SELECT name FROM orders" });
-    expect(denied).toMatchObject({
-      kind: "refused",
-      refusal: { class: "policy-denied", reasonCode: "CONCURRENCY_BUDGET_EXCEEDED" },
-    });
+    // maxConcurrentExecutions is 1, and the first statement's provider call is still running, so the next call waits.
+    const next = runReadQueryTool(h.context, { sql: "SELECT name FROM orders" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(h.queryReadOnly).toHaveBeenCalledTimes(1);
 
     settle(queryResult());
-    await late;
-    expect(h.tracker.usage("run-1")).toMatchObject({ activeExecutions: 0, executedStatements: 1 });
+    expect(await next).toMatchObject({ kind: "completed" });
+    expect(h.queryReadOnly).toHaveBeenCalledTimes(2);
+    expect(h.tracker.usage("run-1")).toMatchObject({ activeExecutions: 0, executedStatements: 2 });
+  });
 
-    const completed = await runReadQueryTool(h.context, { sql: "SELECT total FROM orders" });
-    expect(completed).toMatchObject({ kind: "completed" });
+  test("a run's next statement runs once the call refused at the timeout fails late", async () => {
+    let fail: (error: Error) => void = () => {};
+    const late = new Promise<QueryResult>((_resolve, reject) => {
+      fail = reject;
+    });
+    const answers = [() => late, async () => queryResult()];
+    const h = harness({ deadline: new AgentRunDeadline(300, frozenClock) }, () =>
+      (answers.shift() as () => Promise<QueryResult>)(),
+    );
+
+    const refused = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+    if (refused.kind !== "refused") throw new Error(`expected refused, got ${refused.kind}`);
+
+    const next = runReadQueryTool(h.context, { sql: "SELECT name FROM orders" });
+    fail(new Error("canceling statement due to statement timeout"));
+
+    expect(await next).toMatchObject({ kind: "completed" });
+    expect(h.queryReadOnly).toHaveBeenCalledTimes(2);
+    expect(h.tracker.usage("run-1")).toMatchObject({ activeExecutions: 0, executedStatements: 2 });
+  });
+
+  test("the wait for a call refused at the timeout ends with the run's time, refused as the deadline's", async () => {
+    let now = 0;
+    const h = harness({ deadline: new AgentRunDeadline(300, () => now) }, () => new Promise<QueryResult>(() => {}));
+
+    const refused = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+    if (refused.kind !== "refused") throw new Error(`expected refused, got ${refused.kind}`);
+
+    // 50 ms left: the next call waits at most that long for the first call, then the deadline refuses it.
+    now = 250;
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT name FROM orders" });
+
+    expect(outcome).toMatchObject({ kind: "unavailable", reasonCode: "INSUFFICIENT_TIME_REMAINING" });
+    expect(h.queryReadOnly).toHaveBeenCalledTimes(1);
+    expect(h.tracker.usage("run-1").activeExecutions).toBe(1);
   });
 });
