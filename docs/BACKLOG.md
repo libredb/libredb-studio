@@ -4590,18 +4590,6 @@ Not fixed there: failing every 2xx whose body is not JSON changes how each Couch
 
 **Done when:** a Couchbase 2xx whose body is not JSON fails by name as a retriable `CouchbaseError` that reads as a `ConnectionError`, or the decision to keep reading it as empty is recorded in `docs/providers/couchbase.md` section 4.5, and a test drives both paths against a local listener that cuts a close-delimited answer.
 
-### D468. The guarded plaintext adapter never settles a 101 answer
-
-`httpTransportFetch` in `src/lib/db/http/egress-policy.ts`, the adapter every `fetch`-based provider transport uses when `DB_HTTP_BLOCK_PRIVATE_HOSTS` is set, sends its request through `node:http` with no `upgrade` listener.
-node:http hands a `101 Switching Protocols` answer with Connection: upgrade and an Upgrade header to that event, never to the response callback, so the returned promise never settles.
-Measured 2026-11-21 on Node 24.22.1 with a Couchbase plaintext query against a local listener that answers a 101 and then closes: still pending after 8 s, where the unguarded `fetch` fails at once with `UND_ERR_SOCKET`.
-D259 is the same gap in `createNodeTransport`; Couchbase's TLS path refuses a 101 since the answer bounds change.
-The adapter serves seven provider transports, so the fix is outside any one provider.
-
-Found 2026-11-21 by the review of the Couchbase answer bounds change.
-
-**Done when:** `httpTransportFetch` rejects a 101 answer at once as a network failure and destroys its socket, with a test against a local listener that answers a 101 and closes, and one that keeps the socket open.
-
 ### D469. The first concurrent opens of a fresh SQLite sample can fail with "database is locked", and the ERD then waits forever
 
 `seedSqliteSampleFile` in `src/lib/seed/sqlite-sample.ts` copies `seed-assets/sqlite/employee.db`, which is in rollback-journal mode, into the data directory.
