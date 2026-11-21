@@ -28,9 +28,9 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D474, U17 · 348
+- [Drivers and connections](#drivers-and-connections) — D1-D475, U17 · 348
 - [Value interpolation](#value-interpolation) — V1
-- [Row editing](#row-editing) — R1-R4 · 4
+- [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U220 · 205
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC37 · 31
@@ -4615,7 +4615,7 @@ Found 2026-11-21 by the review of the Redis resend change.
 
 **Done when:** a failed `CLIENT LIST` reaches the monitoring page as a panel error that names it, the refusal case `docs/providers/redis.md` section 7 describes is decided and documented, and `tests/integration/db/redis-provider.test.ts` covers a refusal and a reset.
 
-### D473. Connections cannot be exported or imported, so moving them to another Studio means entering each one again
+### D475. Connections cannot be exported or imported, so moving them to another Studio means entering each one again
 
 A user's connections live in the storage layer (`getConnections` in `src/lib/storage/storage-facade.ts`), and nothing in the UI writes them to a file or reads them back.
 The only library backup is for saved queries: `src/lib/saved-query-import.ts` checks and merges a saved-query JSON file, and connections are not part of it.
@@ -4684,7 +4684,7 @@ Two constraints from #269 that do not go away:
   "No primary key column detected" (`useInlineEditing` in `src/hooks/use-inline-editing.ts`), which reads as if
   the table had none (found by the end-to-end test pass of 2026-10-03 and 2026-10-04).
   The owner decided on 2026-11-21 that the key is read from the table's declared primary or unique keys, never from the name guess, and that a table declaring neither is refused with a sentence that says so.
-  R4 shows that key to the user before Apply sends anything.
+  R5 shows that key to the user before Apply sends anything.
 
 Whether row editing should be universal at all is a product decision. The published
 `WorkspaceFeatures.inlineEditing` flag is deprecated against this entry (#288): it becomes real, or
@@ -4742,7 +4742,7 @@ point on the engines whose drivers round - the scale beside the word, or a secon
 it - a whole key is refused only where it can, and a test carries the Oracle and SQL Server pairs
 above beside the fractional ones #969 added.
 
-### R4. Apply sends generated row edits without showing the statements
+### R5. Apply sends generated row edits without showing the statements
 
 `useInlineEditing` in `src/hooks/use-inline-editing.ts` builds one `UPDATE` per edited row and sends them with `skipSafety: true`, so Apply is the only confirmation.
 The user sees the edited cells in the grid, never the statement text, the bound values or the key column each `WHERE` matches on, which is where R1's name guess does its damage.
