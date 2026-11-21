@@ -26,6 +26,7 @@ import {
 } from "@/lib/db/providers/keyvalue/mqtt/objects";
 import { encodeString, encodeVariableByteInteger } from "@/lib/db/providers/keyvalue/mqtt/encoder";
 import {
+  type MqttSessionOptions,
   type MqttTopicRow,
   type MqttTransport,
   type MqttTransportFactory,
@@ -647,7 +648,7 @@ describe("a password without TLS", () => {
  * The tunnel a record asks for and the tunnel the factory opened are two facts, and the provider reads the second.
  *
  * The factory opens a tunnel only when `sshTunnel.enabled`, Host and Port are all set, and then hands the far end on
- * under `TUNNEL_FAR_END`; otherwise the record arrives as it was saved. MQTT reads whether a tunnel was opened from
+ * under `TUNNEL_FAR_END`; otherwise the record arrives untouched. MQTT reads whether a tunnel was opened from
  * that far end, as the other providers do, and a tunnel that is on without one is refused before any socket, in the
  * sentence those providers use.
  */
@@ -656,13 +657,19 @@ describe("an SSH tunnel", () => {
     "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the MQTT broker was not dialled directly: the tunnel opens only when both Host and Port are set.";
   const BASTION = { enabled: true, host: "bastion.example.net", port: 22, username: "jump", authMethod: "password" };
 
-  const counted = (over: Record<string, unknown>): { provider: MqttProvider; dials: () => number } => {
-    let dialled = 0;
-    const counting: MqttTransportFactory = () => {
-      dialled += 1;
+  const counted = (
+    over: Record<string, unknown>,
+  ): { provider: MqttProvider; dials: () => number; dialled: () => MqttSessionOptions[] } => {
+    const seen: MqttSessionOptions[] = [];
+    const counting: MqttTransportFactory = (options) => {
+      seen.push(options);
       throw new QueryError("the dial is refused once it has been reached", "mqtt");
     };
-    return { provider: new MqttProvider(connection(over), {}, {}, counting), dials: () => dialled };
+    return {
+      provider: new MqttProvider(connection(over), {}, {}, counting),
+      dials: () => seen.length,
+      dialled: () => seen,
+    };
   };
 
   test("that is on but was not opened is refused before any socket", async () => {
@@ -717,7 +724,7 @@ describe("an SSH tunnel", () => {
   });
 
   test("that the factory opened is dialled at the local end it handed on", async () => {
-    const { provider, dials } = counted({
+    const { provider, dialled } = counted({
       host: "127.0.0.1",
       port: 40_001,
       password: CANARY,
@@ -725,6 +732,33 @@ describe("an SSH tunnel", () => {
       sshTunnel: BASTION,
       [TUNNEL_FAR_END]: { host: "broker.example.net", port: 1883 },
     });
+    await expect(provider.connect()).rejects.toThrow(/the dial is refused once it has been reached/);
+    expect(dialled()).toHaveLength(1);
+    expect(dialled()[0]).toMatchObject({ host: "127.0.0.1", port: 40_001, tlsIdentity: "broker.example.net" });
+  });
+
+  test.each([
+    ["text", "true"],
+    ["a number", 1],
+  ])("whose switch is %s is refused naming the field before any socket", async (_label, enabled) => {
+    const { provider, dials } = counted({
+      host: "broker.example.net",
+      sshTunnel: { ...BASTION, enabled },
+      [TUNNEL_FAR_END]: { host: "broker.example.net", port: 1883 },
+    });
+    const error = await provider.connect().then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(
+      "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
+    );
+    expect(dials()).toBe(0);
+  });
+
+  test("whose switch is null reads as off and is dialled directly", async () => {
+    const { provider, dials } = counted({ host: "broker.example.net", sshTunnel: { ...BASTION, enabled: null } });
     await expect(provider.connect()).rejects.toThrow(/the dial is refused once it has been reached/);
     expect(dials()).toBe(1);
   });

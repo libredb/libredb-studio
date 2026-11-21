@@ -278,6 +278,11 @@ The provider reads whether a tunnel was opened from the far end Studio hands on 
 
 > This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the MQTT broker was not dialled directly: the tunnel opens only when both Host and Port are set.
 
+The switch is true, false or absent.
+Studio opens a tunnel on any truthy switch, so a switch of another type, such as the text `"true"`, is refused by name before any socket rather than read one way by Studio and another by the provider:
+
+> The connection's sshTunnel.enabled must be true or false; nothing was sent.
+
 With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a tunnelled connection is refused, for the reason in 4.8.
 
 ### 4.7 Server versions
@@ -561,7 +566,7 @@ bun tests/run-tests.ts tests/unit/db/mqtt/ tests/integration/db/mqtt-provider.te
 | `tests/unit/db/mqtt/session.test.ts` | The client id, the CONNACK sentences, the three budgets, and the payload the tree does not hold |
 | `tests/unit/db/mqtt/inbound-limit.test.ts` | The 8 MiB skip, including a body spanning chunks and the heap it does not grow |
 | `tests/unit/db/mqtt/key-scan.test.ts` | The page, its truncation report and every end-reason sentence |
-| `tests/unit/db/mqtt/provider.test.ts` | The declarations, the refusals, the SSH tunnel's, and the dial against a loopback server |
+| `tests/unit/db/mqtt/provider.test.ts` | The declarations, the refusals, the SSH tunnel's refusal, and the dial against a loopback server |
 | `tests/unit/db/mqtt/egress.test.ts` | Where the dial may connect: link-local and metadata addresses, the flag, and a tunnel |
 | `tests/unit/db/mqtt/session-stats.test.ts` | What a read counts besides the tree, the handshake-only session, and each failure's kind |
 | `tests/unit/db/mqtt/agent-statement.test.ts` | Agent mode's closed table of two reads, and every request refused before the network |
