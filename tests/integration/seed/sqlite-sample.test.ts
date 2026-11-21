@@ -42,6 +42,7 @@ afterEach(() => {
   delete process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE;
   delete process.env.GOVERNANCE_SOURCE;
   delete process.env.LIBREDB_SQLITE_WORKER;
+  delete process.env.LIBREDB_ENABLED_PROVIDERS;
   setSqliteSampleSeedState("idle");
 });
 
@@ -78,6 +79,20 @@ describe("sqlite-sample", () => {
     expect(isSqliteSampleEnabled()).toBe(false);
     // Unset is on by default, and still off under governance.
     delete process.env.SQLITE_EMBEDDED_SAMPLE;
+    expect(isSqliteSampleEnabled()).toBe(false);
+  });
+
+  // The factory refuses every open of a type LIBREDB_ENABLED_PROVIDERS leaves out, so a server whose list leaves out
+  // sqlite neither seeds the sample, which would load the SQLite provider, nor lists one that could never open.
+  test("isSqliteSampleEnabled() is false when LIBREDB_ENABLED_PROVIDERS is set and does not name sqlite", () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres,mysql";
+    expect(isSqliteSampleEnabled()).toBe(false);
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres, sqlite ,";
+    expect(isSqliteSampleEnabled()).toBe(true);
+    process.env.LIBREDB_ENABLED_PROVIDERS = "  ";
+    expect(isSqliteSampleEnabled()).toBe(true);
+    process.env.LIBREDB_ENABLED_PROVIDERS = "sqlite";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
     expect(isSqliteSampleEnabled()).toBe(false);
   });
 

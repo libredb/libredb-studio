@@ -16,18 +16,36 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { ManagedConnection } from "./types";
+import type { DatabaseType } from "@/lib/types";
 import { getDataDir } from "@/lib/data-dir";
 import { governanceEnabled } from "@/lib/governance/config";
 
 export const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
 
+/** The sample's connection type. */
+const SQLITE_SAMPLE_TYPE = "sqlite" satisfies DatabaseType;
+
 /**
  * Default on; only the literal "false" disables. Server-side env. Off under governance whatever
  * the variable says (docs/GOVERNANCE.md), so a governance install neither seeds nor lists it.
+ *
+ * Off too when `LIBREDB_ENABLED_PROVIDERS` is set and does not name sqlite: the provider factory
+ * refuses every open of a type that list leaves out, so the sample could never open, and seeding
+ * it would load the SQLite provider in a server that is not to run it. The list is read here as
+ * plain comma-separated entries; a value the factory refuses as a whole is named by the factory
+ * on every open, this sample's included.
  */
 export function isSqliteSampleEnabled(): boolean {
   if (governanceEnabled()) return false;
-  return process.env.SQLITE_EMBEDDED_SAMPLE !== "false";
+  if (process.env.SQLITE_EMBEDDED_SAMPLE === "false") return false;
+  return allowedByEnabledProviders(SQLITE_SAMPLE_TYPE);
+}
+
+/** Whether `LIBREDB_ENABLED_PROVIDERS` is unset or blank, or names `type` among its entries. */
+function allowedByEnabledProviders(type: DatabaseType): boolean {
+  const enabled = process.env.LIBREDB_ENABLED_PROVIDERS;
+  if (enabled === undefined || enabled.trim() === "") return true;
+  return enabled.split(",").some((entry) => entry.trim() === type);
 }
 
 /** Override via SQLITE_EMBEDDED_SAMPLE_PATH, else `<data dir>/sample-employees.db`,
@@ -155,7 +173,7 @@ async function switchToWalJournal(tempPath: string): Promise<void> {
   const provider = new SQLiteProvider({
     id: `seed:${SQLITE_SAMPLE_SEED_ID}`,
     name: "Sample (Employees)",
-    type: "sqlite",
+    type: SQLITE_SAMPLE_TYPE,
     database: tempPath,
     createdAt: new Date(0),
   });
@@ -174,7 +192,7 @@ export function buildSqliteSampleConnection(): ManagedConnection {
     id: `seed:${SQLITE_SAMPLE_SEED_ID}`,
     seedId: SQLITE_SAMPLE_SEED_ID,
     name: "Sample (Employees)",
-    type: "sqlite",
+    type: SQLITE_SAMPLE_TYPE,
     database: resolveSqliteSamplePath(),
     managed: false,
     roles: ["admin"],

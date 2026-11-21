@@ -512,6 +512,8 @@ The seed copies it to a temp file beside the target, opens that copy once with t
 So the published sample is already in WAL mode, and the first page load, which opens it from several routes at once, has no switch to race.
 A template that is not a SQLite database is refused by that open, and nothing is published.
 
+The sample is neither seeded nor listed when `LIBREDB_ENABLED_PROVIDERS` is set and does not name `sqlite`, because the factory refuses every open of a type that list leaves out.
+
 Unlike the LibreDB sample, the copy runs **asynchronously and fail-open**: `register()`
 fires-and-forgets the seed (start/completion/duration are logged), boot never waits on it, and a
 failure only logs a warning — the sample is then silently absent. While the copy is in flight the
@@ -522,7 +524,7 @@ Env vars:
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `SQLITE_EMBEDDED_SAMPLE` | `true` | Only the literal `false` disables |
+| `SQLITE_EMBEDDED_SAMPLE` | `true` | Only the literal `false` disables; off as well under governance, and when `LIBREDB_ENABLED_PROVIDERS` leaves out `sqlite` |
 | `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Runtime copy location |
 | `SQLITE_EMBEDDED_SAMPLE_TEMPLATE` | `<cwd>/seed-assets/sqlite/employee.db` | Vendored template location (packaging overrides) |
 

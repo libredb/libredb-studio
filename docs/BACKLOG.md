@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D472, U17 · 347
+- [Drivers and connections](#drivers-and-connections) — D1-D473, U17 · 348
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U210 · 195
@@ -4622,6 +4622,15 @@ Found 2026-11-21 while adding the reconnect `SELECT` cases to the Redis driver h
 Found 2026-11-21 by the review of the Redis resend change.
 
 **Done when:** a failed `CLIENT LIST` reaches the monitoring page as a panel error that names it, the refusal case `docs/providers/redis.md` section 7 describes is decided and documented, and `tests/integration/db/redis-provider.test.ts` covers a refusal and a reset.
+
+### D473. The LibreDB sample is seeded and listed when `LIBREDB_ENABLED_PROVIDERS` leaves out `libredb`
+
+`isSampleEnabled` in `src/lib/seed/libredb-sample.ts` reads only `LIBREDB_EMBEDDED_SAMPLE`, governance and the Kubernetes access review, so a server whose `LIBREDB_ENABLED_PROVIDERS` leaves out `libredb` still seeds `sample.libredb` at boot and `getManagedConnections` in `src/lib/seed/index.ts` lists "Sample (LibreDB)" to every role, while `createDatabaseProvider` in `src/lib/db/factory.ts` refuses every open of it with "The libredb provider is not available in this distribution of LibreDB Studio."
+The SQLite sample has been off under such a list since 2026-11-21 (`isSqliteSampleEnabled` in `src/lib/seed/sqlite-sample.ts`).
+The VS Code extension, the one channel that sets the list, runs no instrumentation, so it seeds neither sample.
+Found 2026-11-21 by the review of the SQLite sample seed change.
+
+**Done when:** `isSampleEnabled` is false when `LIBREDB_ENABLED_PROVIDERS` is set and does not name `libredb`, `docs/SEED_CONNECTIONS.md` says so, and a test in `tests/integration/seed/` covers the listing and the switch.
 
 ## Value interpolation
 
