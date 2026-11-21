@@ -180,8 +180,8 @@ case 'redis': {
 ```
 
 API routes use `getOrCreateProvider()`, which caches the connected provider per `connection.id` and
-evicts it after 30 minutes idle. `disconnect()` is called on eviction and on graceful shutdown
-(`SIGTERM`/`SIGINT`).
+evicts it after 30 minutes idle. `disconnect()` is called on eviction and at a shutdown Studio's handler owns on
+`SIGTERM`/`SIGINT` ([DISTRIBUTION.md](../DISTRIBUTION.md#stopping-the-server)).
 
 ---
 

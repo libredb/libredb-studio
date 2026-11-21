@@ -278,11 +278,11 @@ the clearest statement of what it buys, so both measurements stay here.
 The first is a file that must load a module before anything else does:
 
 - `tests/isolated/factory.test.ts` mocks six native driver packages and `@/lib/ssh/tunnel`, then
-  imports `@/lib/db/factory` under a temporary `NODE_ENV=production` so the SIGTERM and SIGINT
-  handlers the module registers on load can be captured by diffing `process.listeners`. Both steps
-  happen once per process.
+  imports `@/lib/db/factory` under a temporary `NODE_ENV=production`, diffing `process.listeners`
+  around the import to show that it adds no SIGTERM or SIGINT listener even under production. Both
+  steps happen once per process.
 - So it passes only while it is the FIRST file in its process to evaluate `@/lib/db/factory`. Any
-  earlier evaluation leaves it with an already-built module: no handler to capture, and unmocked
+  earlier evaluation leaves it with an already-built module: an import that proves nothing, and unmocked
   drivers behind `getOrCreateProvider`, whose cached entry throws inside the `clearProviderCache()`
   in `beforeEach` and fails every remaining test in the file.
 - Measured 2026-09-13: the file alone is 99 pass 0 fail; adding a three-line probe under

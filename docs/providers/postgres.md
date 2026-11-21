@@ -108,8 +108,8 @@ case 'postgres': {
 ```
 
 API routes use `getOrCreateProvider()`, which caches the connected provider per `connection.id`,
-evicts after 30 minutes idle, and disconnects on graceful shutdown — `disconnect()` calls
-`pool.end()` to drain the pool.
+evicts after 30 minutes idle, and disconnects at a shutdown Studio's handler owns
+([DISTRIBUTION.md](../DISTRIBUTION.md#stopping-the-server)): `disconnect()` calls `pool.end()` to drain the pool.
 
 ---
 

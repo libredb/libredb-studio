@@ -288,7 +288,7 @@ When a reload takes a person's access to a connection away or changes it, Studio
 - Then the provider's database sessions are closed, and Studio waits at most 10 seconds for that.
   Sessions that do not close in time are abandoned and logged, so a database that hangs never holds the next reload.
 - The person's next request on the connection is answered from the new snapshot: 404 `CONNECTION_NOT_FOUND` without a grant, or 409 `TRANSACTION_CREDENTIAL_CHANGED` when their transaction was open under a level or credential that changed.
-- A provider idle for 30 minutes, and every provider at shutdown, is closed the same way, its open transaction rolled back first.
+- A provider idle for 30 minutes, and every provider at a shutdown Studio's handler owns ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)), is closed the same way, its open transaction rolled back first.
 
 Without governance every person who opens a connection with the same credential shares one provider, as before.
 
@@ -415,7 +415,9 @@ How an instance connects to the governance source:
 - Each pooled connection names itself `libredb-studio-governance` in `application_name`, and the listener's connection `libredb-studio-governance-listener`, so they show up as such in `pg_stat_activity`.
 - A load waits at most 5 seconds for a connection, each statement runs under a `statement_timeout` of 10 seconds and is abandoned by Studio after 15, and the whole load gives up after 20 seconds, so a governance source that hangs never holds a load for long.
   Studio closes the connection of a load that gave up, and a statement still running on it keeps its server process busy until it ends, at most the 10 seconds of `statement_timeout`, because PostgreSQL notices a closed connection only when it next reads from it.
-- On SIGTERM or SIGINT Studio first inserts the [query events](#query-events) it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it, and then closes its connections to the users' databases and exits.
+- On SIGTERM or SIGINT Studio first inserts the [query events](#query-events) it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it.
+  Where Studio's handler owns the exit (`NEXT_MANUAL_SIG_HANDLE=true`), it then closes its connections to the users' databases and exits ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+  Where Next.js's handler owns it, which no image, chart or launcher changes yet, that insert runs beside Next.js's own shutdown and is cut when Next.js exits, within milliseconds on an idle server, so query events still queued can be lost.
 
 ## Admin status
 
@@ -691,6 +693,7 @@ Delivery:
   Each is logged as one line on standard output, `{"type":"query_event_rejected","event_id":"<uuid>","sqlstate":"23514","constraint":"query_event_not_future"}`, which carries neither the statement nor the server's message, because that can quote the row; `constraint` is null when the server names none.
   A refusal for good is not a reason to wait, so Studio does not back off after it.
 - At shutdown Studio inserts every queued event at once, batch after batch and without waiting out a backoff, for at most 4 seconds, and logs how many events it could not send.
+  The process waits for that insert only where Studio's handler owns the exit; where Next.js's handler owns it, as in every channel today, Next.js's exit can cut it ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
   An uncaught exception ends the process without that insert ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)): the events still queued are not inserted, and the line Studio logs for that exit counts them as `queryEventsLost`.
   The count includes an insert under way, whose rows may have landed, so the count is at most what was lost.
 - With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full, which is 9000 events.

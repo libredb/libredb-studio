@@ -121,7 +121,8 @@ case 'libredb': {
 The package is loaded lazily and the result is cached in a module-level variable — repeated
 `connect()` calls do not re-import. API routes use `getOrCreateProvider()`, which caches the
 connected provider per `connection.id` and evicts it after 30 minutes idle. `disconnect()` is
-called on eviction and on graceful shutdown (`SIGTERM` / `SIGINT`).
+called on eviction and at a shutdown Studio's handler owns on `SIGTERM` / `SIGINT`
+([DISTRIBUTION.md](../DISTRIBUTION.md#stopping-the-server)).
 
 ---
 
