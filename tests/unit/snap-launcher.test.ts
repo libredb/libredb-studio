@@ -33,6 +33,7 @@ const DEFAULTED_KEYS = [
   "STORAGE_SQLITE_PATH",
   "PORT",
   "HOSTNAME",
+  "SEED_ASSETS_DIR",
 ] as const;
 
 const SYSTEMD_INVOCATION_ID = "e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2";
@@ -61,7 +62,8 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
     for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
-  function runLauncher(env: Record<string, string> = {}): Record<string, string> {
+  /** Run the launcher and return the environment the stub node saw, plus the fixture's $SNAP. */
+  function runLauncher(env: Record<string, string> = {}): { env: Record<string, string>; snap: string } {
     const root = mkdtempSync(join(tmpdir(), "libredb-snap-launcher-"));
     fixtureRoots.push(root);
     const snap = join(root, "snap");
@@ -78,17 +80,21 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
       stderr: "pipe",
     });
     expect(result.exitCode).toBe(0);
-    return Object.fromEntries(
+    const seen = Object.fromEntries(
       result.stdout
         .toString()
         .trim()
         .split("\n")
         .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
     );
+    return { env: seen, snap };
   }
 
   test("applies the local-first defaults when systemd passes nothing", () => {
-    const env = runLauncher({ INVOCATION_ID: SYSTEMD_INVOCATION_ID, SNAP_DATA: "/var/snap/libredb-studio/69" });
+    const { env, snap } = runLauncher({
+      INVOCATION_ID: SYSTEMD_INVOCATION_ID,
+      SNAP_DATA: "/var/snap/libredb-studio/69",
+    });
     expect(env).toEqual({
       NODE_ENV: "production",
       NEXT_TELEMETRY_DISABLED: "1",
@@ -96,6 +102,7 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
       STORAGE_SQLITE_PATH: "/var/snap/libredb-studio/69/libredb-storage.db",
       PORT: "3000",
       HOSTNAME: "127.0.0.1",
+      SEED_ASSETS_DIR: join(snap, "seed-assets"),
     });
   });
 
@@ -107,15 +114,16 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
       STORAGE_SQLITE_PATH: "/var/snap/libredb-studio/common/other.db",
       PORT: "3999",
       HOSTNAME: "0.0.0.0",
+      SEED_ASSETS_DIR: "/var/snap/libredb-studio/common/seed-assets",
     };
-    expect(runLauncher({ INVOCATION_ID: SYSTEMD_INVOCATION_ID, ...overrides })).toEqual(overrides);
+    expect(runLauncher({ INVOCATION_ID: SYSTEMD_INVOCATION_ID, ...overrides }).env).toEqual(overrides);
   });
 
   test("forces loopback on a direct run that inherits HOSTNAME (e.g. Docker container ID)", () => {
-    expect(runLauncher({ HOSTNAME: CONTAINER_ID }).HOSTNAME).toBe("127.0.0.1");
+    expect(runLauncher({ HOSTNAME: CONTAINER_ID }).env.HOSTNAME).toBe("127.0.0.1");
   });
 
   test("honours LIBREDB_BIND as the opt-in on a direct run", () => {
-    expect(runLauncher({ HOSTNAME: CONTAINER_ID, LIBREDB_BIND: "0.0.0.0" }).HOSTNAME).toBe("0.0.0.0");
+    expect(runLauncher({ HOSTNAME: CONTAINER_ID, LIBREDB_BIND: "0.0.0.0" }).env.HOSTNAME).toBe("0.0.0.0");
   });
 });

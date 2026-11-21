@@ -39,4 +39,11 @@ if [ -z "${STORAGE_SQLITE_PATH:-}" ]; then
   export STORAGE_SQLITE_PATH
 fi
 
+# The built-in samples' assets ship in the payload; the server reads them from
+# SEED_ASSETS_DIR (docs/DISTRIBUTION.md, "Built-in sample assets").
+if [ -z "${SEED_ASSETS_DIR:-}" ]; then
+  SEED_ASSETS_DIR="$LIBREDB_STUDIO_HOME/seed-assets"
+  export SEED_ASSETS_DIR
+fi
+
 exec "$LIBREDB_STUDIO_HOME/node/bin/node" "$LIBREDB_STUDIO_HOME/server.js" "$@"
