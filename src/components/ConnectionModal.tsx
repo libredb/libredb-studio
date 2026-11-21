@@ -120,8 +120,8 @@ interface ConnectionModalProps {
   onConnect: (conn: DatabaseConnection) => void;
   /**
    * The connection to edit. A host may hand any record it holds: one whose type names no provider in this package,
-   * has no type, or has a type that is not text is refused by name in place of the form, open or closed, and nothing
-   * is tested or saved for it.
+   * has no type, or has a type that is not text is refused by name in place of the form when the dialog opens, whether
+   * it was handed the record open or closed, and nothing is tested or saved for it.
    */
   editConnection?: DatabaseConnection | null;
   /** Optional API adapter: when provided, bypasses the built-in /api/db/test-connection fetch. */

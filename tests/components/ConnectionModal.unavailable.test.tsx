@@ -104,6 +104,11 @@ describe("the published ConnectionModal and a connection whose type names no pro
     dialog(U);
 
     expectRefusal(`Acme: ${unknownTypeSentence("acmefoo")}`);
+    // The dialog's accessible description is the refusal too, so a screen reader is not read the form's description.
+    const describedBy = screen.getByRole("dialog").getAttribute("aria-describedby");
+    expect(describedBy === null ? null : document.getElementById(describedBy)?.textContent).toBe(
+      `Acme: ${unknownTypeSentence("acmefoo")}`,
+    );
   });
 
   test("names a connection with no type, a type that is not text, or a prototype key in its own words", () => {
