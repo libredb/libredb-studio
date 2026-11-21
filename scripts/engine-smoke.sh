@@ -88,8 +88,9 @@ check_absent() { # check_absent <description> <haystack> <needle>
 }
 
 # Isolate the launcher cache and force the zero-config path: HOME points into
-# the temp dir and no auth/storage env leaks in from the CI job environment.
-LAUNCH_ENV=(env -u JWT_SECRET -u ADMIN_PASSWORD -u USER_PASSWORD -u AUTH_BOOTSTRAP -u STORAGE_PROVIDER -u STORAGE_SQLITE_PATH -u HOSTNAME "HOME=$WORK")
+# the temp dir and no auth/storage env leaks in from the CI job environment,
+# and no inherited SEED_ASSETS_DIR, so the launcher's own value is the one used.
+LAUNCH_ENV=(env -u JWT_SECRET -u ADMIN_PASSWORD -u USER_PASSWORD -u AUTH_BOOTSTRAP -u STORAGE_PROVIDER -u STORAGE_SQLITE_PATH -u HOSTNAME -u SEED_ASSETS_DIR "HOME=$WORK")
 
 start_server() { # start_server <log> <port> [extra env KEY=VALUE...]
   local log=$1 port=$2

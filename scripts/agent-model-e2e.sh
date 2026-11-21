@@ -14,6 +14,10 @@
 set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO" || exit 1
+# The sweep opens "Sample (Employees)", whose assets the server reads from SEED_ASSETS_DIR
+# (docs/DISTRIBUTION.md, "Built-in sample assets"): pin this checkout's own directory. The
+# process environment wins over .env.local, so a value there never changes what is measured.
+export SEED_ASSETS_DIR="$REPO/seed-assets"
 
 MODELS=("$@")
 if [ ${#MODELS[@]} -eq 0 ]; then

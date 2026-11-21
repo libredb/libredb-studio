@@ -505,6 +505,7 @@ if [ "$RUN_SMOKE" = "true" ]; then
       PORT="$PORT" \
       STORAGE_PROVIDER=sqlite \
       STORAGE_SQLITE_PATH="$STORAGE_DIR/libredb-storage.db" \
+      SEED_ASSETS_DIR="$APPDIR_PAYLOAD/seed-assets" \
       "$APPDIR_NODE" server.js
   ) > "$WORK_DIR/server.log" 2>&1 &
   SERVER_PID=$!
@@ -537,6 +538,27 @@ if [ "$RUN_SMOKE" = "true" ]; then
     exit 1
   fi
   echo "==> Smoke: auth-bootstrap.json written (desktop auth handoff can read it)"
+
+  # SEED_ASSETS_DIR above mirrors what the shell's sidecar_env sets
+  # (desktop/src-tauri/src/sidecar.rs). Both built-in samples are copied
+  # asynchronously after boot, so wait for both files in the data directory,
+  # as scripts/build-standalone-payload.sh --smoke does: this is what proves
+  # the bundled payload's seed-assets are where the shell points the server.
+  SAMPLE_SEEDED=false
+  for _ in $(seq 1 30); do
+    if [ -f "$STORAGE_DIR/sample-employees.db" ] && [ -f "$STORAGE_DIR/sample.libredb" ]; then
+      SAMPLE_SEEDED=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$SAMPLE_SEEDED" != "true" ]; then
+    echo "Smoke test FAILED: the built-in samples were not both copied within 30s" >&2
+    echo "---- server.log ----" >&2
+    cat "$WORK_DIR/server.log" >&2 || true
+    exit 1
+  fi
+  echo "==> Smoke: both built-in samples copied"
 fi
 
 echo "==> Done: $OUT_DIR/$ASSET"

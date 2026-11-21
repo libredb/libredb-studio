@@ -142,6 +142,7 @@ Every lane, set up and torn down by `lane.mjs`:
 | Studio | `bun run start -- -p <port> -H 127.0.0.1` from the build worktree | postgres 3201, sqlite 3202, mysql 3203, mssql 3204, mongodb 3205 |
 | Database | container `basic-e2e-<provider>`, image from `database-compose.yml`, loopback host port; a running container of that name fails the lane (it may be another run's), a stopped one is removed | postgres 55432, mysql 53306, mssql 51433 (`--cpus 4 --memory 4g`, the compose limits), mongodb 57017; SQLite is a file the lane writes with `node:sqlite` |
 | Credentials | generated per lane, held in the lane process, passed to docker by variable name and to Studio by environment | root principal for the UI connection (MongoDB's root user name is generated too), `libredb_agent` for the agent, the Studio admin password and `JWT_SECRET` |
+| Sample assets | `SEED_ASSETS_DIR` | the build worktree's own `seed-assets` directory |
 | Data dirs | `STORAGE_SQLITE_PATH`, `WORKFLOW_LOCAL_DATA_DIR`, both embedded sample paths, all under the lane's work dir, which holds a `.basic-e2e-lane` marker; a non-empty `--work` path without it is refused, never deleted | `STORAGE_PROVIDER=sqlite` by default (`--storage local` to change it) |
 | Seed file | `SEED_CONFIG_PATH` pointing at the lane's own one-connection file | the password is `${BE2E_AGENT_PASSWORD}`, never a literal |
 | Browser | Playwright `launchPersistentContext` on the lane's own profile, `channel: 'chrome'` (`/usr/bin/google-chrome`), headless | the `playwright` package from the build worktree's `node_modules` |
