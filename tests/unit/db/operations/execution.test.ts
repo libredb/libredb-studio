@@ -3,7 +3,7 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { ExecutionBudget } from "@/lib/db/operations/budgets";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
-import { executeAuditedOperation, releaseExecutionRun } from "@/lib/db/operations/execution";
+import { executeAuditedOperation, refuseAuditedInput, releaseExecutionRun } from "@/lib/db/operations/execution";
 import type { ExecutionActor, ExecutionPolicy, OperationRequest, TargetScope } from "@/lib/db/operations/policy";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { ProviderCapabilities } from "@/lib/db/types";
@@ -332,5 +332,21 @@ describe("releaseExecutionRun", () => {
     expect(artifacts.get(outcome.correlationId, 2)).toBeUndefined();
     expect(artifacts.size).toBe(0);
     expect(tracker.usage("run-1")).toEqual({ activeExecutions: 0, executedStatements: 0, totalElapsedMs: 0 });
+  });
+});
+
+describe("refuseAuditedInput", () => {
+  test("answers an input the pipeline does not see as the pipeline's own input denial", () => {
+    const outcome = refuseAuditedInput(baseParams({ request: { operationId: "db.schema.read", input: {} } }));
+
+    expect(outcome.kind).toBe("denied");
+    expect(outcome.decision).toEqual({
+      kind: "deny",
+      reasonCode: "INPUT_VALIDATION_FAILED",
+      policyVersion: policy.version,
+      effectiveBudget: budgets,
+    });
+    expect(Object.isFrozen(outcome.decision.effectiveBudget)).toBe(true);
+    expect(outcome.correlationId).toMatch(/^[0-9a-f-]{36}$/);
   });
 });

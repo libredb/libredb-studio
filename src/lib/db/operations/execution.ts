@@ -116,6 +116,54 @@ function refusalReason(decision: RefusedDecision): AuditReason {
 }
 
 /**
+ * The descriptor id a request resolves to, or `unresolved`. Resolved
+ * independently of the pipeline (resolution is pure and cheap): the decision
+ * carries an operation id only when it allows or requires approval, and a
+ * denial still has to name what was attempted.
+ */
+function auditedAction(params: Pick<PolicyEvaluationParams, "registry" | "request">): string {
+  const resolution = params.registry.resolve(params.request?.operationId as string);
+  return resolution.kind === "resolved" ? resolution.descriptor.id : UNRESOLVED_OPERATION;
+}
+
+/** The decision event of a refused request. Not wrapped in a try/catch, so a sink failure propagates. */
+function auditRefusedDecision(action: string, user: string, decision: RefusedDecision, correlationId: string): void {
+  emitAuditEvent({
+    type: "agent_operation",
+    action,
+    target: DECISION_TARGET,
+    user,
+    result: "failure",
+    reason: refusalReason(decision),
+    correlationId,
+  });
+}
+
+/**
+ * Refuses a request for an input the pipeline does not see, audited and answered exactly as the pipeline's own
+ * `INPUT_VALIDATION_FAILED` denial is, and before anything is begun, charged or invoked.
+ *
+ * The agent tool layer calls it for the one statement it sends that a descriptor's input does not carry: the
+ * operations-profile statistics read is audited under `db.schema.read`, whose input is empty, and the statement it
+ * sends is validated against the input contract a statement read applies (`readStatisticsForGrounding` in
+ * `src/lib/agent/tools.ts`). Validating it is the caller's; this function only makes its refusal the pipeline's, so an
+ * operator reads one denial however it was decided.
+ */
+export function refuseAuditedInput(
+  params: Omit<PolicyEvaluationParams, "usage">,
+): Extract<AuditedExecutionResult<never>, { kind: "denied" }> {
+  const correlationId = randomUUID();
+  const decision: RefusedDecision = {
+    kind: "deny",
+    reasonCode: "INPUT_VALIDATION_FAILED",
+    policyVersion: params.policy.version,
+    effectiveBudget: Object.freeze({ ...params.policy.budgets }),
+  };
+  auditRefusedDecision(auditedAction(params), actorLabel(params.actor), decision, correlationId);
+  return { kind: "denied", correlationId, decision };
+}
+
+/**
  * Evaluates the request, audits the decision, and executes only on a plain
  * allow. The provider callback is unreachable on a denial or an approval
  * requirement (the spy-provider invariant `executeWithPolicy` pins, re-asserted
@@ -146,23 +194,11 @@ export async function executeAuditedOperation<T>(
   const evaluation: PolicyEvaluationParams = { ...params, usage: tracker.usage(runId) };
   const decision = evaluateOperation(evaluation);
 
-  // Resolved independently of the pipeline (resolution is pure and cheap): the
-  // decision carries an operation id only when it allows or requires approval,
-  // and a denial still has to name what was attempted.
-  const resolution = params.registry.resolve(params.request?.operationId as string);
-  const action = resolution.kind === "resolved" ? resolution.descriptor.id : UNRESOLVED_OPERATION;
+  const action = auditedAction(params);
   const user = actorLabel(params.actor);
 
   if (decision.kind !== "allow") {
-    emitAuditEvent({
-      type: "agent_operation",
-      action,
-      target: DECISION_TARGET,
-      user,
-      result: "failure",
-      reason: refusalReason(decision),
-      correlationId,
-    });
+    auditRefusedDecision(action, user, decision, correlationId);
     return { kind: "denied", correlationId, decision };
   }
 

@@ -81,11 +81,15 @@ import {
   agentCuratedReadInput,
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
-import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/execution";
+import { actorLabel, executeAuditedOperation, refuseAuditedInput } from "@/lib/db/operations/execution";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
-import { admitComposedStatement, type ComposedStatementAdmission } from "@/lib/db/operations/statement-guard";
+import {
+  admitComposedStatement,
+  agentQueryReadSqlInput,
+  type ComposedStatementAdmission,
+} from "@/lib/db/operations/statement-guard";
 import type {
   Container,
   DatabaseObject,
@@ -1519,6 +1523,14 @@ export interface AuditedAgentCall {
   readonly target?: { readonly catalog?: string; readonly schema?: string };
   /** The server's own grounding read. See `AgentOperationRequest.grounding`. */
   readonly grounding?: boolean;
+  /**
+   * A statement this call sends that its descriptor's input does not carry, set by the operations-profile statistics
+   * read alone: it is audited under `db.schema.read`, whose input is empty, and sends a composed statement through
+   * `provider.query`. The statement is validated with `agentQueryReadSqlInput`, the input contract `sql.query.read`
+   * applies, before the pipeline is consulted, and a refusal is the pipeline's own input denial (`refuseAuditedInput`):
+   * audited, answered and recorded in the repair ledger as one, with nothing acquired, charged or sent.
+   */
+  readonly guardedStatement?: { readonly sql: string; readonly composed?: ComposedStatementAdmission };
   readonly invoke: (
     validatedInput: unknown,
     budget: ExecutionBudget,
@@ -1677,6 +1689,13 @@ function otherStatementAdvice(
   return languageServerPack(language).catalogAdvice?.(message, engine);
 }
 
+/** Whether the statement guard refuses a call's guarded statement; a call with none has nothing to refuse. */
+function guardRefuses(statement: AuditedAgentCall["guardedStatement"]): boolean {
+  if (statement === undefined) return false;
+  const input = statement.composed === undefined ? { sql: statement.sql } : statement;
+  return !agentQueryReadSqlInput.safeParse(input).success;
+}
+
 /**
  * The key `call` is held under in the run's repair ledger. A statement fingerprint is a bare digest, so the prefix puts
  * a call carrying the server's admission where no model statement can land.
@@ -1769,29 +1788,33 @@ export async function runAuditedAgentCall(
   */
   const chargedBeforeMs = context.tracker.usage(context.runId).totalElapsedMs;
 
+  const evaluation = {
+    registry: context.registry,
+    policy,
+    actor,
+    scope: context.scope,
+    request: {
+      operationId: call.operationId,
+      target: { connectionId: context.scope.connectionId, ...call.target },
+      input: call.input,
+    },
+    capabilities: context.capabilities,
+  };
+
   let outcome: Awaited<ReturnType<typeof executeAuditedOperation<QueryResult>>>;
   try {
-    outcome = await executeAuditedOperation<QueryResult>(
-      {
-        registry: context.registry,
-        policy,
-        actor,
-        scope: context.scope,
-        request: {
-          operationId: call.operationId,
-          target: { connectionId: context.scope.connectionId, ...call.target },
-          input: call.input,
-        },
-        capabilities: context.capabilities,
-      },
-      {
-        runId: context.runId,
-        tracker: context.tracker,
-        artifacts: context.artifacts,
-        clock: context.clock,
-      },
-      ({ validatedInput, budget }) => call.invoke(validatedInput, budget, phase),
-    );
+    outcome = guardRefuses(call.guardedStatement)
+      ? refuseAuditedInput(evaluation)
+      : await executeAuditedOperation<QueryResult>(
+          evaluation,
+          {
+            runId: context.runId,
+            tracker: context.tracker,
+            artifacts: context.artifacts,
+            clock: context.clock,
+          },
+          ({ validatedInput, budget }) => call.invoke(validatedInput, budget, phase),
+        );
   } catch (error) {
     // A curated reading the run chose not to keep. First, because it is a decision
     // this layer made about a call that DID happen — not an environment failure and
@@ -3010,10 +3033,18 @@ export async function readStatisticsForGrounding(
   }
   const sql =
     statement === "availability" ? availabilityProbe(dialect) : composeCatalogRead(dialect, { kind: "statistics" });
+  // The estimates are the dialect's catalog read, so they carry the admission `readCatalog` gives that read; the probe
+  // is validated plain, as `readStatementForGrounding` sends it. Supplied: `readSchemaStatistics` asks only where the
+  // composer serves this dialect.
+  const admission =
+    statement === "estimates"
+      ? catalogReadAdmission((engineServerDialect(dialect).catalogRead as AgentCatalogRead).commandShaped, sql)
+      : {};
   return runAuditedAgentCall(context, {
     operationId: "db.schema.read",
     fingerprintSource: `statistics:${statement}:${context.connection.id}`,
     input: {},
+    guardedStatement: { sql, ...admission },
     label: statement === "availability" ? STATISTICS_AVAILABILITY_LABEL : CATALOG_LABELS.statistics,
     grounding: true,
     invoke: async (_validatedInput, budget, phase) => {
@@ -3056,6 +3087,18 @@ function availabilityProbe(dialect: DatabaseConnection["type"]): string {
   return probe;
 }
 
+/**
+ * The admission a composed catalog read carries: minted here, right after composing, and only where the overlay
+ * declares its catalog statement a command. The fence then admits this one statement by identity, and a retry's
+ * rewrite, which is another statement, meets the fence unchanged.
+ */
+function catalogReadAdmission(
+  commandShaped: boolean | undefined,
+  sql: string,
+): { readonly composed?: ComposedStatementAdmission } {
+  return commandShaped === true ? { composed: admitComposedStatement(sql) } : {};
+}
+
 async function readCatalog(
   context: AgentToolContext,
   selectorSchema: z.ZodType<{ kind?: AgentCatalogKind; schema?: string; table?: string }>,
@@ -3081,10 +3124,8 @@ async function readCatalog(
     grounding,
     label: CATALOG_LABELS[selector.kind ?? "columns"],
     ...(mapRows === undefined ? {} : { mapRows }),
-    // Minted here, right after composing, and only where the overlay declares its catalog statement a command: the
-    // fence then admits this one statement by identity, and a retry's rewrite, which is another statement, meets the
-    // fence unchanged.
-    ...(commandShaped === true ? { composed: admitComposedStatement(sql) } : {}),
+    // Minted right after composing, where the overlay declares its catalog statement a command (`catalogReadAdmission`).
+    ...catalogReadAdmission(commandShaped, sql),
     // Declared, so a scope carrying a schema allowlist bounds which schema may be
     // inspected. A raw read cannot declare its schema, which is why an allowlist
     // denies one, and it is not worked around here.
