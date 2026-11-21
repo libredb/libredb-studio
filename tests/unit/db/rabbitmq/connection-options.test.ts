@@ -24,6 +24,7 @@ import {
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
 import { RABBITMQ_TEST_PASSWORD, rabbitmqConnection } from "../../../helpers/rabbitmq-connection";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const CA = readFileSync(join(import.meta.dir, "../../../fixtures/tls/ca.crt"), "utf8");
 
@@ -42,9 +43,8 @@ function refusal(read: () => unknown): string {
 const refuse = (overrides: Partial<DatabaseConnection>) =>
   refusal(() => readConnectionOptions(rabbitmqConnection(overrides)));
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 afterEach(() => {
-  delete process.env[FLAG];
+  setEgressFlag(undefined);
 });
 
 describe("the endpoints of a valid record", () => {
@@ -196,7 +196,7 @@ describe("the plaintext rule", () => {
 
 describe("the egress flag", () => {
   test("a private literal under DB_HTTP_BLOCK_PRIVATE_HOSTS keeps the shared sentence, which the boundary passes", () => {
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     const message = refuse({ host: "10.0.0.8", ssl: { mode: "require" } });
     expect(EGRESS_REFUSAL_SENTENCES.has(message)).toBe(true);
   });

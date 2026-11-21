@@ -15,6 +15,7 @@ import type { AmqpEndpoint } from "@/lib/db/providers/stream/rabbitmq/connection
 import { tlsClientCertificateRefused } from "@/lib/db/providers/stream/rabbitmq/errors";
 import { makeCertificates, type TransportCertificates } from "../../../../helpers/node-transport-fixtures";
 import { closedPort, createManualClock, until } from "../../../../helpers/rabbitmq-fake-peer";
+import { withEgressFlag } from "../../../../helpers/egress-flag";
 
 interface Counted {
   readonly server: Server;
@@ -148,18 +149,6 @@ async function failure(promise: Promise<AmqpSocket>): Promise<Error> {
   throw new Error("the dial succeeded");
 }
 
-async function withFlag<T>(value: string | undefined, run: () => Promise<T>): Promise<T> {
-  const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-  if (value === undefined) delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-  else process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = value;
-  try {
-    return await run();
-  } finally {
-    if (before === undefined) delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-    else process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = before;
-  }
-}
-
 beforeAll(() => {
   certificates = makeCertificates();
 });
@@ -187,7 +176,7 @@ describe("plain dials", () => {
 
   test("an IPv6 literal dials without brackets and without a lookup", async () => {
     const v6 = await listen("plain", "::1");
-    const socket = await withFlag(undefined, () => dialAmqp(endpoint("::1", v6.port), new AbortController().signal));
+    const socket = await withEgressFlag(undefined, () => dialAmqp(endpoint("::1", v6.port), new AbortController().signal));
     await until(() => v6.accepted === 1, "the server's accept");
     socket.destroy();
     expect(v6.accepted).toBe(1);
@@ -331,7 +320,7 @@ describe("egress", () => {
   test("with the flag on, a private literal is refused before any connection, and a name by its lookup", async () => {
     const plain = await listen("plain");
     const secure = await listen(certificates.local);
-    await withFlag("true", async () => {
+    await withEgressFlag("true", async () => {
       const literal = await failure(dialAmqp(endpoint("127.0.0.1", plain.port), new AbortController().signal));
       expect(literal).toBeInstanceOf(DatabaseConfigError);
       expect(literal.message).toBe(BLOCKED_HOST);
@@ -352,7 +341,7 @@ describe("egress", () => {
   });
 
   test("with the flag off, link-local literals are refused on both families", async () => {
-    await withFlag(undefined, async () => {
+    await withEgressFlag(undefined, async () => {
       for (const host of ["169.254.169.254", "fe80::1"]) {
         const error = await failure(dialAmqp(endpoint(host, 5672), new AbortController().signal));
         expect(error).toBeInstanceOf(DatabaseConfigError);

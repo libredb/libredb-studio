@@ -43,6 +43,7 @@ import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-
 import { s3Signer } from "@/lib/db/providers/objectstore/s3/sigv4";
 import type { DatabaseProvider, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { setEgressFlag, withEgressFlag } from "../helpers/egress-flag";
 import type { ObjectSurfaceExpectation } from "../helpers/object-surface-conformance";
 import { normalizeMessage, type S3FixtureSecret } from "../helpers/s3-evidence-scrub";
 import {
@@ -1618,15 +1619,14 @@ export function resolveS3Sentence(ref: string, context: S3SentenceContext): S3Re
     return { text: thrown(() => validateHost(ref.slice(14)), "validateHost"), anyNumber: false };
   if (ref.startsWith("egress:blocked:")) {
     const previous = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-    process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
+    setEgressFlag("true");
     try {
       return {
         text: thrown(() => assertPublicLiteralHost(ref.slice(15)), "assertPublicLiteralHost"),
         anyNumber: false,
       };
     } finally {
-      if (previous === undefined) delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-      else process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = previous;
+      setEgressFlag(previous);
     }
   }
   if (ref.startsWith("notice:")) {
@@ -2297,16 +2297,6 @@ function serverToken(cursor: string): string {
   return payload.t;
 }
 
-function withEnv<T>(name: string, value: string | undefined, body: () => Promise<T>): Promise<T> {
-  const previous = process.env[name];
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
-  return body().finally(() => {
-    if (previous === undefined) delete process.env[name];
-    else process.env[name] = previous;
-  });
-}
-
 const needsLive = (row: string) => {
   throw new Error(`${row} runs only in tests/live/s3-live-check.ts, which gives the run its live context`);
 };
@@ -2318,7 +2308,7 @@ function linkLocalSteps(): Record<string, S3StepFunction> {
   for (const host of LINK_LOCAL_HOSTS)
     for (const setting of ["unset", "false"] as const)
       steps[`${host} ${setting}`] = (run, wire) =>
-        withEnv("DB_HTTP_BLOCK_PRIVATE_HOSTS", setting === "unset" ? undefined : "false", () =>
+        withEgressFlag(setting === "unset" ? undefined : "false", () =>
           testStep(`${host} ${setting}`, { role: "root", host, allowInsecureAuth: true })(run, wire),
         );
   for (const host of NUMERIC_HOSTS) steps[host] = testStep(host, { role: "root", host });
@@ -2417,7 +2407,7 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
   A55: linkLocalSteps(),
   A55b: {
     blocked: (run, wire) =>
-      withEnv("DB_HTTP_BLOCK_PRIVATE_HOSTS", "true", () => testStep("blocked", { role: "root" })(run, wire)),
+      withEgressFlag("true", () => testStep("blocked", { role: "root" })(run, wire)),
   },
   A63: {
     plain: (run, wire) => tunnelStep(run, wire, "plain", "silo", 9000, false),

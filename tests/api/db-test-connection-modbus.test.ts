@@ -17,6 +17,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { createServer, type Server } from "node:net";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
+import { setEgressFlag } from "../helpers/egress-flag";
 
 const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }) as unknown);
 mock.module("@/lib/auth", () => ({
@@ -36,7 +37,6 @@ mock.module("@/lib/seed/resolve-connection", () => ({
 }));
 
 const route = await import("@/app/api/db/test-connection/route");
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const MAP = JSON.stringify([{ name: "v", unitId: 1, table: "holding_register", address: 0, type: "uint16" }]);
 
 async function testConnection(port: number, registerMap: string) {
@@ -79,7 +79,7 @@ describe("Test Connection on a Modbus address", () => {
     ["with a one-point map", MAP],
   ] as const) {
     test(`an address with no device is refused ${label}, and the refusal names it`, async () => {
-      delete process.env[FLAG];
+      setEgressFlag(undefined);
       const { status, body } = await testConnection(9, registerMap);
       // 503 and CONNECTION_ERROR, which is the shape every other engine already answered with.
       expect(status).toBe(503);
@@ -99,7 +99,7 @@ describe("Test Connection on a Modbus address", () => {
    * before writing a map, on a wrong port as readily as on a right one.
    */
   test("a silent port with no map says nothing was read, rather than Connection successful", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const { server, port } = await silentPort();
     try {
       const { status, body } = await testConnection(port, "[]");
@@ -121,7 +121,7 @@ describe("Test Connection on a Modbus address", () => {
   test("a REAL device with no map carries the same caution, because nothing was read there either", async () => {
     // The caution is about the MAP, not the port. Without this case it would read as a wrong-port
     // alarm, and the next person would try to make it fire only on a bad address.
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const { server, port } = await device();
     try {
       const { body } = await testConnection(port, "[]");
@@ -133,7 +133,7 @@ describe("Test Connection on a Modbus address", () => {
   });
 
   test("an address that answers is a plain success, with no degraded flag", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const { server, port } = await device();
     try {
       const { status, body } = await testConnection(port, MAP);

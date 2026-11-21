@@ -24,6 +24,7 @@ import {
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { type DatabaseConnection, TUNNEL_FAR_END } from "@/lib/types";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_USER = "reader";
@@ -36,8 +37,7 @@ const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const originalFlag = process.env[FLAG];
 
 afterEach(() => {
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
+  setEgressFlag(originalFlag);
 });
 
 const PLAINTEXT =
@@ -130,7 +130,7 @@ describe("the endpoint is exactly what it claims", () => {
   });
 
   test("with the egress guard on, a private literal host is refused before anything else is read", () => {
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     expect(refusal("influxdb3", { host: "10.0.0.5", user: TEST_USER }).message).toBe(BLOCKED_HOST);
     expect(build("influxdb3", REMOTE).origin.host).toBe("influx.example.com");
   });

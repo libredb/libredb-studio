@@ -17,19 +17,19 @@ import type { ReadRequest } from "@/lib/db/providers/industrial/modbus/request";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { fakeModbusDevice, type FakeModbusDevice } from "../../../helpers/modbus-fake-device";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
 const closers: Array<() => Promise<void>> = [];
 
 beforeEach(() => {
-  delete process.env[FLAG];
+  setEgressFlag(undefined);
 });
 
 afterEach(async () => {
   for (const close of closers.splice(0)) await close();
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
+  setEgressFlag(original);
 });
 
 const MAP = parseRegisterMap(
@@ -139,7 +139,7 @@ describe("failures by category", () => {
   });
 
   test("an address the egress rule refuses is the connection's settings, and nothing is sent", async () => {
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     const dev = await device();
     expect(await message(run(dev.port, { kind: "range", unitId: 1, table: "coil", address: 0, count: 1 }))).toBe(
       MODBUS_AGENT_FAILURE_SENTENCES.settings,

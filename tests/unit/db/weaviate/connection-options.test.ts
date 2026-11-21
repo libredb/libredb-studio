@@ -15,6 +15,7 @@ import {
 } from "@/lib/db/providers/vector/weaviate/connection-options";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { type DatabaseConnection, TUNNEL_FAR_END } from "@/lib/types";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -28,8 +29,7 @@ const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const originalFlag = process.env[FLAG];
 
 afterEach(() => {
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
+  setEgressFlag(originalFlag);
 });
 
 function connection(overrides: Record<string, unknown> = {}): DatabaseConnection {
@@ -111,7 +111,7 @@ describe("W1: the endpoint is exactly what it claims", () => {
   });
 
   test("with the egress guard on, a private literal host is refused before anything else is read", () => {
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     expect(refusal({ host: "10.0.0.5", user: "someone" }).message).toBe(BLOCKED_HOST);
     expect(build({ host: "weaviate.example.com" }).origin.host).toBe("weaviate.example.com");
   });

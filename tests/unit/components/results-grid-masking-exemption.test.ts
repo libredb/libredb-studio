@@ -5,6 +5,7 @@ import { splitMaskedColumns } from "@/lib/db/masking-exemption";
 import { DEFAULT_MASKING_CONFIG } from "@/lib/data-masking";
 import { offersColumnProfiling } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { setEgressFlag } from "../../helpers/egress-flag";
 
 /**
  * THE DEFECT THIS FILE HOLDS: a Modbus read answers a column called `address`, and the grid drew
@@ -31,8 +32,7 @@ let open: Server | undefined;
 afterEach(() => {
   open?.close();
   open = undefined;
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
+  setEgressFlag(originalFlag);
 });
 
 /** A Modbus TCP device small enough to answer one read, and real enough to be answered by one. */
@@ -77,7 +77,7 @@ const provider = (port: number) =>
 
 /** The columns a real read answers with, and the capabilities of the provider that answered. */
 async function readColumns(statement: string): Promise<{ fields: readonly string[]; engine: ModbusProvider }> {
-  delete process.env[FLAG];
+  setEgressFlag(undefined);
   const port = await device([230, 231, 232]);
   const engine = provider(port);
   const result = await engine.query(statement);

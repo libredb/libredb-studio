@@ -16,6 +16,7 @@ import {
   type TransportError,
 } from "@/lib/db/http/node-transport";
 import { closeAll, eventually, rawAnswer, rawHttpListener } from "../../../helpers/node-transport-fixtures";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const LINK_LOCAL =
   "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says";
@@ -24,8 +25,7 @@ const original = process.env[FLAG];
 
 const transports: NodeTransport[] = [];
 afterEach(async () => {
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
+  setEgressFlag(original);
   for (const transport of transports.splice(0)) transport.close();
   await closeAll();
 });
@@ -54,7 +54,7 @@ describe("refusesLinkLocal", () => {
   test.each(["169.254.169.254", "[fe80::1]", "[fd00:ec2::254]", "[::ffff:169.254.169.254]"])(
     "%s is refused when the transport is built, with the guard off",
     (host) => {
-      delete process.env[FLAG];
+      setEgressFlag(undefined);
       const error = refusal(() => build(toHost(host, { refusesLinkLocal: true })));
       expect(error).toBeInstanceOf(DatabaseConfigError);
       expect(error.message).toBe(LINK_LOCAL);
@@ -62,20 +62,20 @@ describe("refusesLinkLocal", () => {
   );
 
   test("with the guard on, a link-local literal gets the guard's sentence, because the guard runs first", () => {
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     const error = refusal(() => build(toHost("169.254.169.254", { refusesLinkLocal: true })));
     expect(error.message).toBe(BLOCKED_HOST);
   });
 
   test.each([undefined, false])("set to %p, a link-local literal builds a transport as it always has", (value) => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     expect(() =>
       build(toHost("169.254.169.254", value === undefined ? {} : { refusesLinkLocal: value })),
     ).not.toThrow();
   });
 
   test("loopback stays reachable when it is set", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const listener = await rawHttpListener(() => rawAnswer("200 OK", ["content-length: 2"], "ok"));
     const origin = httpOrigin("http", "127.0.0.1", listener.port);
     const transport = build({ origin, tls: null, maxSockets: 1, headers: {}, refusesLinkLocal: true });
@@ -97,7 +97,7 @@ describe("refusesLinkLocal", () => {
   });
 
   test("the byte transport refuses a link-local literal whatever a caller passes for the text transport's option", () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const error = refusal(() =>
       createNodeByteTransport({ ...toHost("169.254.169.254"), ...({ refusesLinkLocal: false } as object) }),
     );

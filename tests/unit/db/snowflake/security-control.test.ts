@@ -15,6 +15,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const realDns = { ...(await import("node:dns")) };
 const lookups: string[] = [];
@@ -85,13 +86,12 @@ describe("the address policy on the Snowflake connect path", () => {
   const original = process.env[flag];
 
   afterEach(() => {
-    if (original === undefined) delete process.env[flag];
-    else process.env[flag] = original;
+    setEgressFlag(original);
     lookups.length = 0;
   });
 
   test("a PrivateLink host resolving to a private address is refused at the lookup, before any socket", async () => {
-    process.env[flag] = "true";
+    setEgressFlag("true");
     const provider = new SnowflakeProvider({
       id: "blocked-snowflake",
       name: "Blocked Snowflake",

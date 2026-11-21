@@ -28,6 +28,7 @@ import {
 import { fingerprintOf } from "@/lib/db/providers/network/netconf/hostkey";
 import { classifyLoginFailure } from "@/lib/db/providers/network/netconf/auth";
 import type { Transport } from "@/lib/db/providers/network/netconf/session";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const DEVICE_KEY = Buffer.from("the device's host key");
 const PIN = fingerprintOf(DEVICE_KEY);
@@ -318,13 +319,12 @@ const EGRESS_FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const flagBefore = process.env[EGRESS_FLAG];
 
 afterEach(() => {
-  if (flagBefore === undefined) delete process.env[EGRESS_FLAG];
-  else process.env[EGRESS_FLAG] = flagBefore;
+  setEgressFlag(flagBefore);
 });
 
 async function lookupInstalledFor(host: string, flag: "on" | "off"): Promise<LookupFunction> {
-  if (flag === "on") process.env[EGRESS_FLAG] = "true";
-  else delete process.env[EGRESS_FLAG];
+  if (flag === "on") setEgressFlag("true");
+  else setEgressFlag(undefined);
   const { ssh, socket, seen } = ports();
   await dialNetconf(config({ host }), ssh, socket);
   const lookup = seen.dialled[0]?.lookup;

@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, expect, mock, test } from "bun:test";
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import { type AddressInfo, createServer, type Server, type Socket } from "node:net";
 import { answerWithUpgrade, type UpgradeAnswer } from "../../../helpers/upgrade-answer";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const realHttp = { ...(await import("node:http")) };
 mock.module("node:http", () => ({
@@ -54,14 +55,13 @@ afterAll(async () => {
 });
 
 afterEach(() => {
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
+  setEgressFlag(original);
   answer = "ok";
   upgradedSockets.length = 0;
 });
 
 test("the wrapped dial reaches the local peer through the guarded path", async () => {
-  process.env[FLAG] = "true";
+  setEgressFlag("true");
   const response = await httpTransportFetch(`http://db.example.com:${port}/query`);
   expect([response.status, await response.text()]).toEqual([200, "ok"]);
 });
@@ -69,7 +69,7 @@ test("the wrapped dial reaches the local peer through the guarded path", async (
 test.each(["upgrade", "upgrade-close"] as const)(
   "a 101 that announces an upgrade (%s) rejects at once by name, and the switched socket is closed",
   async (upgrade) => {
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     answer = upgrade;
     const started = Date.now();
     // A plain await, so a call that never settles fails by the test's own timeout.

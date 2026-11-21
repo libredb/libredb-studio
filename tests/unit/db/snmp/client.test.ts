@@ -27,6 +27,7 @@ import {
 import { decodeResponse, encodeRequest } from "@/lib/db/providers/network/snmp/message";
 import { MAX_VARBINDS_PER_REQUEST } from "@/lib/db/providers/network/snmp/statement";
 import { PDU_GET, PDU_SET } from "@/lib/db/providers/network/snmp/valve";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const SYS_DESCR = [1, 3, 6, 1, 2, 1, 1, 1, 0];
 const CAPTURED = JSON.parse(
@@ -88,12 +89,11 @@ describe("a target is resolved and checked before a socket exists", () => {
     // shared guard refuses while the flag is on.
     const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
     const before = process.env[flag];
-    process.env[flag] = "true";
+    setEgressFlag("true");
     try {
       await expect(resolveTarget("localhost", 161)).rejects.toThrow(DatabaseConfigError);
     } finally {
-      if (before === undefined) delete process.env[flag];
-      else process.env[flag] = before;
+      setEgressFlag(before);
     }
   });
   test("and the same name passes while the flag is off, which is the default", async () => {
@@ -118,12 +118,11 @@ describe("a target is resolved and checked before a socket exists", () => {
       expect(await resolveTarget("127.1", 161)).toMatchObject({ address: "127.0.0.1", family: 4, asked: "127.1" });
       const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
       const before = process.env[flag];
-      process.env[flag] = "true";
+      setEgressFlag("true");
       try {
         await expect(resolveTarget("127.1", 161)).rejects.toThrow(DatabaseConfigError);
       } finally {
-        if (before === undefined) delete process.env[flag];
-        else process.env[flag] = before;
+        setEgressFlag(before);
       }
     },
   );

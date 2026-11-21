@@ -46,12 +46,14 @@ import {
 } from "../../../helpers/node-transport-fixtures";
 import { howItFailed } from "../../../helpers/spawn-outcome";
 import { answerWithUpgrade } from "../../../helpers/upgrade-answer";
+import type { setEgressFlag } from "../../../helpers/egress-flag";
 
 interface Deps {
   readonly createNodeTransport: typeof createNodeTransport;
   readonly nodeTlsMaterial: typeof nodeTlsMaterial;
   readonly endpointUrl: typeof endpointUrl;
   readonly httpOrigin: typeof httpOrigin;
+  readonly setEgressFlag: typeof setEgressFlag;
   readonly http: typeof http;
   readonly https: typeof https;
 }
@@ -384,7 +386,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   });
   // Built before the guard is on, so the refusal below is the transport's own and not httpOrigin's.
   const guardedOrigin = deps.httpOrigin("http", "127.0.0.1", ports.guarded);
-  process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
+  deps.setEgressFlag("true");
   try {
     await record("guard: 127.0.0.1 refused before a socket", async () => {
       kept.push(deps.createNodeTransport({ origin: guardedOrigin, tls: null, maxSockets: 4, headers: {} }));
@@ -394,7 +396,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
       once("http", "localhost", ports.guarded, null, "/guarded"),
     );
   } finally {
-    delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+    deps.setEgressFlag(undefined);
   }
   // A text transport built without refusesUpgrade, against a peer that answers an h2c upgrade and keeps its socket:
   // node:http has handed the switched socket over, so only the transport's own destroy closes it, which the socket
@@ -870,10 +872,11 @@ beforeAll(async () => {
       `import { createNodeTransport, nodeTlsMaterial } from ${JSON.stringify(join(HTTP_SOURCES, "node-transport.ts"))};`,
       `import { endpointUrl, httpOrigin } from ${JSON.stringify(join(HTTP_SOURCES, "endpoint.ts"))};`,
       `import { createNodeByteTransport } from ${JSON.stringify(join(HTTP_SOURCES, "node-transport.ts"))};`,
+      `import { setEgressFlag } from ${JSON.stringify(join(import.meta.dir, "../../../helpers/egress-flag.ts"))};`,
       `const runCases = ${runCases.toString()};`,
       `const runByteCases = ${runByteCases.toString()};`,
       'const plan = JSON.parse(readFileSync(process.argv[2], "utf8"));',
-      "const report = await runCases({ createNodeTransport, nodeTlsMaterial, endpointUrl, httpOrigin, http, https }, plan);",
+      "const report = await runCases({ createNodeTransport, nodeTlsMaterial, endpointUrl, httpOrigin, setEgressFlag, http, https }, plan);",
       "Object.assign(report, await runByteCases({ createNodeByteTransport, httpOrigin, http, https }, plan));",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "process.exit(0);",
