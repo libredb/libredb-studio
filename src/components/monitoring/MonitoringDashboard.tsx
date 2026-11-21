@@ -55,8 +55,9 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
   // selection and nothing re-reads it afterwards. `readString` answers null
   // without a window, so the server render and the hydration render agree.
   const [savedId] = useState(() => storage.getActiveConnectionId());
-  // Only what the user picked is state. The selection itself is derived below,
-  // so it is right on the render the connection list first arrives.
+  // The ids are state: the user's pick here, and the connection the page opened on in
+  // `shownId` below. The selected object is derived from them and the list, so it is
+  // right on the render the connection list first arrives.
   const [chosenId, setChosenId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
 

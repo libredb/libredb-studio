@@ -502,7 +502,8 @@ Studio never makes it the active connection by itself, at sign-in, on a reload o
 The monitoring dashboard and the Operations tab never open on it by themselves either: they open on the connection the editor had open last while a provider can open it, otherwise on the first one a provider can open, or on none.
 When the connection the editor had open last is listed with such a type, they say so with the same **Connection unavailable** notice as they open.
 The connection either page shows, whether the reader chose it or the page opened on it, stays shown when a later refresh lists it with such a type: the selector draws it with the marker, and the page draws the reason in place of its sections, so nothing read from it before is shown as current.
-Only a connection that leaves the list is replaced.
+A connection that leaves the list is replaced on the Operations tab, by the one it would open on.
+On the monitoring dashboard, a connection the reader chose that leaves the list leaves the page with no connection selected, and one it opened on is replaced by the one it would open on.
 It cannot be edited or duplicated, because the connection dialog has no form for an engine this Studio does not have; it can be deleted, favourited, grouped and reordered like any other.
 A Studio that has the provider lists and opens the same record as usual.
 
@@ -526,7 +527,7 @@ A pick of it in the command palette is refused with a **Saved query unavailable*
 
 **Import JSON** checks every entry of a backup before it saves anything.
 An entry whose `connectionType` names no provider this Studio has, or is missing, empty or not text, is not imported, so a file **Export all** wrote from a store that holds such a query imports the rest.
-The Saved tab then shows a line under its buttons that names each such entry with the reason, in the standalone app and in the embedded `StudioWorkspace` alike, until it is dismissed or the next import starts, and the backup's other entries are imported as usual.
+The Saved tab then shows a line under its buttons that names each such entry with the reason, in the standalone app and in the embedded `StudioWorkspace` alike, until it is dismissed, the next import starts or the Saved tab is left, and the backup's other entries are imported as usual.
 An entry with any other field that is not valid refuses the whole backup.
 Release 1.3.0 refused the whole backup for such an entry.
 

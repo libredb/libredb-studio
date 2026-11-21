@@ -243,10 +243,10 @@ export default defineConfig({
       testMatch: /mqtt-provider\.spec\.ts/,
     },
     {
-      // unknown-provider-connection.spec.ts and unknown-provider-saved-queries-and-pickers.spec.ts reload the studio, so
-      // they pay the shared account's hydration requests twice, and their files sort late, where the specs before them
-      // have spent that account's "query" bucket on the shared server. They take the second server for the reason
-      // kafka-provider.spec.ts does.
+      // unknown-provider-connection.spec.ts reloads the studio, and in unknown-provider-saved-queries-and-pickers.spec.ts
+      // the palette test reloads it and the monitoring test opens a second page, so both pay the shared account's
+      // hydration requests again, and their files sort late, where the specs before them have spent that account's
+      // "query" bucket on the shared server. They take the second server for the reason kafka-provider.spec.ts does.
       name: "chromium-unknown-provider",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /unknown-provider-(?:connection|saved-queries-and-pickers)\.spec\.ts/,

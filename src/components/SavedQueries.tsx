@@ -24,8 +24,9 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
   const [queries, setQueries] = useState<SavedQuery[]>(() => storage.getSavedQueries());
   const [search, setSearch] = useState("");
   const [isImporting, setIsImporting] = useState(false);
-  // The last import's report of the entries it left out, drawn in this panel until dismissed or replaced by the next
-  // import. A line here rather than a toast, so the npm StudioWorkspace, which mounts no toaster, shows it too.
+  // The last import's report of the entries it left out, drawn in this panel until dismissed, replaced by the next
+  // import or unmounted with the panel when the Saved tab is left. A line here rather than a toast, so the npm
+  // StudioWorkspace, which mounts no toaster, shows it too.
   const [importRefusals, setImportRefusals] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
