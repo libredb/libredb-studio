@@ -969,6 +969,11 @@ The confirmation gate asks before the INSERT-shaped statements whose text change
 `ON DUPLICATE KEY UPDATE` (`confirmCodeForms`) asks wherever it is in the statement's code, after `VALUES`, `SET` or `SELECT`.
 `INSERT OVERWRITE` (`confirmForms`) is StarRocks' and Apache Doris' statement (`INSERT OVERWRITE TABLE` in Doris) and replaces every row of the table or of the partitions it names.
 MySQL has no such statement, so on MySQL its one false prompt is an `INSERT` without `INTO` into a table named `overwrite`.
+`REPLACE INTO TABLE` (`confirmCodeForms`) is `LOAD DATA`'s and `LOAD XML`'s, after the file name: measured on MySQL 8.4.13, `LOAD DATA INFILE ... REPLACE INTO TABLE t` turned `(1, 'a', 'keep-me')` into the loaded row, `IGNORE` kept it, and a load with neither word refused the duplicate with ERROR 1062, so only `REPLACE` asks.
+No other MySQL statement writes those three words, since `REPLACE` and `TABLE` are reserved and a `REPLACE()` call takes a `(`, and no statement that leaves rows alone was found that the form makes ask.
+`CREATE OR REPLACE TABLE` (`confirmForms`) is MariaDB's: measured on MariaDB 11.8.9, it dropped the table and its rows, and the `AS SELECT` form left only the selected rows.
+MySQL 8.4.13 refuses it with ERROR 1064, so on MySQL it never runs.
+`CREATE OR REPLACE VIEW`, `PROCEDURE` and `FUNCTION` replace objects that hold no rows, and MariaDB's `CREATE OR REPLACE TEMPORARY TABLE` replaces only the session's temporary table of that name (a new session still read the base table's row), so none of them asks.
 A plain `INSERT`, `INSERT IGNORE` and `INSERT ... SELECT` do not ask.
 The gate reads the statement, not the table: StarRocks treats an `INSERT` into a Primary Key table, and Apache Doris an `INSERT` into a Unique Key table, as an upsert that overwrites the row with the same key (each engine's table-model documentation), and such an `INSERT` does not ask either.
 Inside a script led by `BEGIN`, the gate reads every form anywhere in the code, so there a `REPLACE()` call asks too, the fail-safe direction.

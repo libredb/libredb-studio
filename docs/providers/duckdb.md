@@ -806,6 +806,9 @@ Every fact was measured on v1.5.5 through `@duckdb/node-api` 1.5.5-r.4, and the 
 `[` is a subscript, not a name quote: `SELECT [1,2][1]` answers 1, a list literal followed by a 1-based index.
 Block comments nest: `/* a /* b */ still */ SELECT 1` runs.
 `SELECT q'[x]' AS a` is `Catalog Error: Type with name q does not exist!`, and `SELECT 1 AS a // note` is `Parser Error: syntax error at or near "//"`.
+The confirmation gate asks before `INSERT OR REPLACE` (`confirmForms`), as it asks before `UPDATE` and `DELETE`: measured on v1.5.5 against a table holding `(1, 'a', 'keep-me')`, `INSERT OR REPLACE` of key 1 left `(1, 'new', NULL)`, and with a column list or `BY NAME` it overwrote the listed columns and kept the others.
+`INSERT ... ON CONFLICT ... DO UPDATE SET` overwrote the row too, and asks through the gate's shared `UPDATE ... SET` reading rather than a form of this row.
+`INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, a plain `INSERT` and `INSERT ... BY NAME` or `BY POSITION` kept the row, refusing a duplicate key with a Constraint Error where they do not skip it, so none of them asks; `REPLACE INTO` and `INSERT OR ROLLBACK`, `OR ABORT` and `OR FAIL` are Parser Errors on DuckDB.
 The update-target reader takes `PIVOT`, `UNPIVOT`, `UNNEST`, `SUMMARIZE`, `DESCRIBE` and `SHOW` as words that open a query here alone: on DuckDB 1.5.5 `(PIVOT orders ON k USING max(note))` is a scalar subquery that answers with another table's value, and asking about them on every engine cost PostgreSQL a refusal for `coalesce(show, '')`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
