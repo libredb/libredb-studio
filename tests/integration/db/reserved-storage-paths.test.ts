@@ -187,3 +187,30 @@ test("sidecars follow the canonical storage file when its configured name is a s
   expect(isReservedStoragePath(`${target}-wal`)).toBe(true);
   expect(isReservedStoragePath(`${target}-shm`)).toBe(true);
 });
+
+test("a dangling symbolic link at a sidecar or backup name is reserved, and so is the file it points to", () => {
+  const elsewhere = path.join(dir, "elsewhere");
+  for (const name of ["storage.db-wal", "storage.db-shm", "auth-bootstrap.json.bak"]) {
+    const target = path.join(elsewhere, `${name}.target`);
+    fs.symlinkSync(target, path.join(dir, name));
+    expect([name, isReservedStoragePath(path.join(dir, name)), isReservedStoragePath(target)]).toEqual([
+      name,
+      true,
+      true,
+    ]);
+    expect(fs.existsSync(target)).toBe(false);
+  }
+});
+
+test("under a symlinked data directory, the bootstrap file is reserved by its real path and by its configured spelling in another letter case", () => {
+  const base = fs.realpathSync(dir);
+  fs.mkdirSync(path.join(base, "real"));
+  fs.symlinkSync(path.join(base, "real"), path.join(base, "alias"), "junction");
+  process.env.STORAGE_SQLITE_PATH = path.join(base, "alias", "storage.db");
+  for (const name of ["auth-bootstrap.json", "auth-bootstrap.json.bak", "auth-bootstrap.json.123.tmp"]) {
+    expect([name, isReservedStoragePath(path.join(base, "real", name))]).toEqual([name, true]);
+    // On Linux ALIAS is not the symlink, so only the configured spelling, folded, names the file.
+    expect([name, isReservedStoragePath(path.join(base, "ALIAS", name))]).toEqual([name, true]);
+  }
+  expect(isReservedStoragePath(path.join(base, "ALIAS", "auth-bootstrap.json.bak2"))).toBe(false);
+});

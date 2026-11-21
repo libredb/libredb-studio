@@ -72,28 +72,29 @@ export function foldPathKey(file: string): string {
   }).join("");
 }
 
-const BOOTSTRAP_FILE = "auth-bootstrap.json";
+/** The bootstrap credentials file's name in the data directory: the file the server writes and the one it reserves. */
+export const BOOTSTRAP_FILE_NAME = "auth-bootstrap.json";
 
 /**
  * Whether a folded path (`foldPathKey`) names one of the server's own storage files: the storage database, its `-wal`
  * and `-shm` files, and the bootstrap credentials file with its `.bak` and temporary (`<file>.<id>.tmp`) names, as
- * configured and as real paths. Two spellings that differ only in letter case, or only in Unicode normalization form
+ * configured and as real paths, each name also resolved on its own, so a symbolic link at a sidecar or backup name
+ * reserves the file it points to. Two spellings that differ only in letter case, or only in Unicode normalization form
  * (NFC against NFD), are one file here on every OS, because on macOS (both) and Windows (letter case) they name one
  * file, whether or not it exists yet. Throws what the path check throws.
  */
 export function reservedStorageKey(): (key: string) => boolean {
   const storage = path.resolve(getStorageSqlitePath());
-  const bootstrap = path.resolve(getDataDir(), BOOTSTRAP_FILE);
+  const bootstrap = path.resolve(getDataDir(), BOOTSTRAP_FILE_NAME);
   const bootstraps = [bootstrap, canonicalPath(bootstrap)];
-  const files = new Set(
-    [
-      ...reservedStoragePaths(),
-      storage,
-      `${storage}-wal`,
-      `${storage}-shm`,
-      ...bootstraps.flatMap((file) => [file, `${file}.bak`]),
-    ].map(foldPathKey),
-  );
+  const named = [
+    ...reservedStoragePaths(),
+    storage,
+    `${storage}-wal`,
+    `${storage}-shm`,
+    ...bootstraps.flatMap((file) => [file, `${file}.bak`]),
+  ];
+  const files = new Set([...named, ...named.map(canonicalPath)].map(foldPathKey));
   const temps = bootstraps.map((file) => foldPathKey(`${file}.`));
   const tmp = foldPathKey(".tmp");
   return (key) => files.has(key) || temps.some((prefix) => key.startsWith(prefix) && key.endsWith(tmp));
@@ -110,7 +111,7 @@ export function isReservedStoragePath(candidate: string): boolean {
   if (reservedStorageKey()(foldPathKey(resolved))) return true;
   const identity = fileIdentity(resolved);
   if (identity === undefined) return false;
-  const bootstrap = canonicalPath(path.resolve(getDataDir(), BOOTSTRAP_FILE));
+  const bootstrap = canonicalPath(path.resolve(getDataDir(), BOOTSTRAP_FILE_NAME));
   return [...reservedStoragePaths(), bootstrap, `${bootstrap}.bak`].some((file) => {
     const other = fileIdentity(file);
     return other !== undefined && identity.dev === other.dev && identity.ino === other.ino;

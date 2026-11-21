@@ -1425,7 +1425,8 @@ Connection targets reserve Studio's storage database, its WAL/SHM files and boot
 credentials (including backups and temporary files). This applies to every role.
 Checks normalize paths, resolve symbolic links and compare existing file identities
 so hard links cannot alias reserved files. Other user database files beside them remain usable.
-Names are compared with letter case and Unicode normalization (NFC against NFD) folded, on every OS, because macOS and Windows treat such spellings as one file, whether or not it exists yet.
+Names are compared with letter case and Unicode normalization (NFC against NFD) folded, on every OS, whether or not the file exists yet.
+macOS treats two spellings that differ only in letter case or only in normalization form as one file, and Windows treats two spellings that differ only in letter case as one file.
 
 ## 15. Agent mode: a read-only handle per statement
 
