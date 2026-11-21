@@ -150,6 +150,7 @@ The supervisor keeps the last 50 stderr lines of the child and logs them on a cr
 If any step does not finish within `STOP_STEP_MS` (2 s), the supervisor sends `SIGTERM`, and then `SIGKILL`.
 On its side, `startBackend` in `src/backend/start.ts` listens for the IPC channel's `disconnect`, closes every pool within `DISCONNECT_CLOSE_MS` and exits 0, so a child whose host died does not linger.
 It does the same on `SIGTERM` and `SIGINT`, once whichever comes first, because importing the provider factory adds no signal listener of its own.
+A close that fails, or that is still running at `DISCONNECT_CLOSE_MS`, writes one line on stderr naming what started it, the host going away, `SIGTERM` or `SIGINT`, and the child still exits 0.
 
 ## 5. Running a query end to end
 

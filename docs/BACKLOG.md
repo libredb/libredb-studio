@@ -10294,10 +10294,14 @@ This is an enhancement rather than a defect: the skip is reported, and nothing i
 `register()` in `src/instrumentation.ts` installs Studio's shutdown handler (`src/lib/shutdown-handler.ts`) at boot, and it owns the exit only with `NEXT_MANUAL_SIG_HANDLE=true` (`docs/DISTRIBUTION.md`, "Stopping the server").
 No channel sets the variable, so everywhere Next.js's own handler, `cleanup` in `next/dist/server/lib/start-server.js`, closes the HTTP server, waits for the requests in flight and exits with 143 or 130, within milliseconds on an idle server, while Studio's handler is still running the hooks that insert the query events Studio holds.
 Those rows are lost, and under systemd every stop of the service is recorded as a failed unit.
-Setting the variable as things stand trades one loss for another: with it Next.js drains nothing and Studio has no drain, so requests in flight would be cut.
+Next.js's wait has no bound of its own: it waits for every request in flight, an agent run's timeline stream included, and serves a keep-alive connection open at the signal while a client keeps sending requests on it, so such a stop ends only with the platform's SIGKILL.
+A second Ctrl+C does not force the exit, because both handlers ignore a repeated signal.
+The hooks closed the query event sink at the signal, so the statements those requests run leave query events that are never inserted; the line Studio logs at the exit counts them as `queryEventsLost`, and `queryLog.onSinkFailure` set to `refuse` refuses them, but with `continue` they are lost.
+Setting the variable as things stand trades one loss for another: with it Next.js drains nothing and Studio has no drain, so requests in flight would be cut, and the server keeps accepting new connections until Studio's exit, because nothing closes the HTTP server.
 The chart cannot set it before its `appVersion` names an image that installs the handler at boot: an older image registers its handler only once a route has loaded the provider factory, so with the variable it has no SIGTERM listener at all until then, and as PID 1 ignores the signal until the platform's SIGKILL.
 
-**Done when:** the images, and the chart once its `appVersion` names such an image, set the variable, requests in flight are drained or their cut is documented, and a test that sends SIGTERM to the built server under the image's environment shows the queued query events inserted before the process exits.
+**Done when:** the images, and the chart once its `appVersion` names such an image, set the variable, the HTTP server stops accepting connections and requests in flight are drained within a bound or their cut is documented, and a test that sends SIGTERM to the built server under the image's environment shows the queued query events inserted before the process exits.
+Each launcher that starts the standalone server (npx, .deb, .rpm, AUR, Homebrew, Snap, Windows and the desktop app) sets the variable too, or this entry records the owner's reason not to; when the images' part lands first, the launchers' part becomes an entry of its own before this one is deleted.
 
 ### GOV11. At shutdown the governance pool can close under the query event flush
 

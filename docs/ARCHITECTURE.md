@@ -320,7 +320,9 @@ Studio ships both as a standalone app and as the `@libredb/studio` npm package c
 - **`src/exports/`** — barrel modules (`components.ts`, `providers.ts`, `workspace.ts`, `types.ts`) that define the package's public surface; `package.json` `exports`/`main`/`module` point at the tsup `dist/` output.
 - **`src/styles/theme.css`** — the semantic colour tokens every exported component resolves through, shipped as `dist/styles.css` (`exports["./styles.css"]`) because `globals.css` is not packaged. A host imports it once: `import "@libredb/studio/styles.css"`. `build:lib` is `tsup && node scripts/copy-theme.mjs` in that order — tsup cleans `dist/`, so the copy has to follow it. See [`docs/ui/theming.md`](ui/theming.md).
 - Platform integration rules (Tailwind tokens, Lucide stroke widths, chunk scanning) live in `CLAUDE.md`.
-- **No process listeners**: importing the package, or the provider factory through `@libredb/studio/providers`, adds no SIGTERM or SIGINT listener to the embedder's process. An embedder that wants its pools closed on a signal calls `clearProviderCache()` from its own handler; Studio's own handler is installed only by its standalone boot ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+- **No process listeners**: importing the package, or the provider factory through `@libredb/studio/providers`, adds no SIGTERM or SIGINT listener to the embedder's process.
+  An embedder that wants its pools closed on a signal calls `clearProviderCache()` from its own handler; Studio's own handler is installed only by its standalone boot ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+  It changed what an import does: 1.3.0 and earlier added SIGTERM and SIGINT listeners when the factory was imported outside `NODE_ENV=test`, which ran the shutdown hooks, closed the provider caches and ended the process with exit code 0, so an embedder that relied on that exit now ends the process itself.
 
 ### 4.7. Standalone Boot Flow (`src/instrumentation.ts`)
 
@@ -329,7 +331,7 @@ Before any of the steps below it installs the uncaught-exception exit (`src/lib/
 An exception that nothing catches is then logged by Studio in one redacted line, after Next.js 16.4's own print of it with its stack, and ends the process with exit code 70, so whatever started it may start a fresh one ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)).
 It applies under `next dev` too: Next.js's dev command restarts its server only for its own exit code 77, so `bun dev` ends with code 70 and is started again by hand.
 Unhandled promise rejections stay non-fatal, as Next.js keeps them, unless Node.js runs with `--unhandled-rejections=strict`, which raises each one as an uncaught exception that then ends the process too.
-Second, it reads `NEXT_MANUAL_SIG_HANDLE` and installs the shutdown handler (`src/lib/shutdown-handler.ts`), once per process: a value other than unset, empty or `true` refuses the boot with exit code 1.
+Second, it reads `NEXT_MANUAL_SIG_HANDLE` and installs the shutdown handler (`src/lib/shutdown-handler.ts`), once per process: a value other than unset, empty or `true` refuses the boot with exit code 1, a deliberate stop for the reason step 2 gives, since a server whose exit has two owners or none cannot shut down as configured.
 On SIGTERM or SIGINT the handler runs the shutdown hooks, and where `NEXT_MANUAL_SIG_HANDLE=true` gives Studio the exit, it then closes every provider cache through the shutdown registry (`src/lib/shutdown.ts`) and exits with 0, 143 or 130 ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
 On standalone boot it then:
 

@@ -418,6 +418,8 @@ How an instance connects to the governance source:
 - On SIGTERM or SIGINT Studio first inserts the [query events](#query-events) it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it.
   Where Studio's handler owns the exit (`NEXT_MANUAL_SIG_HANDLE=true`), it then closes its connections to the users' databases and exits ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
   Where Next.js's handler owns it, which no image, chart or launcher changes yet, that insert runs beside Next.js's own shutdown and is cut when Next.js exits, within milliseconds on an idle server, so query events still queued can be lost.
+  Next.js then goes on serving the requests in flight and the connections open at the signal until they end, and the query events of the statements they run are never inserted, because the insert at the signal closed the query event sink.
+  Studio's line at the exit counts every event left unsent as `queryEventsLost`, and `queryLog.onSinkFailure` set to `refuse` refuses those statements instead ([query events](#query-events)).
 
 ## Admin status
 
@@ -693,10 +695,12 @@ Delivery:
   Each is logged as one line on standard output, `{"type":"query_event_rejected","event_id":"<uuid>","sqlstate":"23514","constraint":"query_event_not_future"}`, which carries neither the statement nor the server's message, because that can quote the row; `constraint` is null when the server names none.
   A refusal for good is not a reason to wait, so Studio does not back off after it.
 - At shutdown Studio inserts every queued event at once, batch after batch and without waiting out a backoff, for at most 4 seconds, and logs how many events it could not send.
+  That insert closes the query event sink: an event recorded after it is queued and never sent.
   The process waits for that insert only where Studio's handler owns the exit; where Next.js's handler owns it, as in every channel today, Next.js's exit can cut it ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+  Either way, the line Studio logs as the process exits counts the events left unsent, those recorded after the insert included, as `queryEventsLost`, and where Studio's handler owns the exit any such event makes the exit code 143 or 130.
   An uncaught exception ends the process without that insert ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)): the events still queued are not inserted, and the line Studio logs for that exit counts them as `queryEventsLost`.
   The count includes an insert under way, whose rows may have landed, so the count is at most what was lost.
-- With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full, which is 9000 events.
+- With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full, which is 9000 events, and from the shutdown's insert on, which closes the query event sink, until the process exits.
   It checks before a statement reaches the database, for an interactive transaction's `BEGIN`, statements, `COMMIT` and `ROLLBACK` alike, so a refused request runs nothing, and it admits executions again once an insert settles its whole batch and the queue holds fewer than 9000 events.
   A row the database refused for good never trips it, because Studio drops that row and goes on without backing off.
   The sink state's `backingOff` and `queued`, in the [heartbeat](#heartbeat) and on the [admin status](#admin-status), show when it applies.
@@ -842,6 +846,6 @@ Under governance Studio's API answers these codes in the `code` field of an erro
 | --- | --- | --- |
 | `CONNECTION_NOT_FOUND` | 404 | The connection does not exist or is not granted to the caller; the two are indistinguishable. |
 | `GOVERNANCE_UNAVAILABLE` | 503 | The snapshot is loading, too old, misconfigured or incompatible. |
-| `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events: it is backing off after a failed insert or its queue is at least 90% full, so the request was refused before any statement ran. |
+| `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events: it is backing off after a failed insert, its queue is at least 90% full, or the shutdown has closed its query event sink, so the request was refused before any statement ran. |
 | `TRANSACTION_CREDENTIAL_CHANGED` | 409 | The grant level or credential under the caller's open transaction changed, and Studio rolled the transaction back; `rolledBack` is `false` when it could not confirm the rollback. |
 | `AI_DISABLED` | 403 | `ai.enabled` is `false`, and a route of the AI bucket refused a signed-in caller before any LLM provider was built. |
