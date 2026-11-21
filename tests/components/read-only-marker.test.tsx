@@ -33,16 +33,14 @@ describe("showsReadOnlyMarker", () => {
     }
   });
 
-  test.each(OUTSIDE_THE_UNION)("refuses %s by name where it reads the engine's row", (_label, value) => {
+  test.each(OUTSIDE_THE_UNION)("refuses %s by name whatever the record's readOnly says", (_label, value) => {
+    // The row is read first, so a readOnly: true record does not answer for a type the check refuses.
     const type = value as DatabaseType;
-    expect(refusalThrownBy(() => showsReadOnlyMarker({ type, readOnly: undefined }))).toEqual(refusalOf(value));
-    expect(refusalThrownBy(() => showsReadOnlyMarker({ type, readOnly: false }))).toEqual(refusalOf(value));
+    for (const readOnly of [undefined, false, true]) {
+      expect({ readOnly, refusal: refusalThrownBy(() => showsReadOnlyMarker({ type, readOnly })) }).toEqual({
+        readOnly,
+        refusal: refusalOf(value),
+      });
+    }
   });
-
-  test.each(OUTSIDE_THE_UNION)(
-    "answers a readOnly: true record of %s from the record, reading no row",
-    (_label, value) => {
-      expect(showsReadOnlyMarker({ type: value as DatabaseType, readOnly: true })).toBe(true);
-    },
-  );
 });
