@@ -18,14 +18,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { BOOTSTRAP_FILE_NAME } from "@/lib/auth-bootstrap";
-import {
-  canonicalPath,
-  getDataDir,
-  getStorageSqlitePath,
-  isReservedStoragePath,
-  reservedStoragePaths,
-} from "@/lib/data-dir";
+import { canonicalPath, foldPathKey, getDataDir, isReservedStoragePath, reservedStorageKey } from "@/lib/data-dir";
 import { readEnabledProviders } from "@/lib/db/enabled-providers";
 import { governanceEnabled } from "@/lib/governance/config";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
@@ -190,58 +183,19 @@ function targetFamily(target: string): string[] {
 }
 
 /**
- * A path with Unicode normalization and letter case folded, the one key both admission comparisons use: first NFC, so
- * a precomposed ü and a u with a combining diaeresis are one letter, as on APFS, which ignores normalization; then letter
- * case, one code point at a time: lower case, then upper case where that is one code point, so σ and ς, which share Σ,
- * are one letter, while ß, whose upper case is SS, stays itself.
- */
-function foldKey(file: string): string {
-  return Array.from(file.normalize("NFC").toLowerCase(), (char) => {
-    const upper = char.toUpperCase();
-    return [...upper].length === 1 ? upper : char;
-  }).join("");
-}
-
-/**
- * Whether a folded path (`foldKey`) names one of the server's own storage files, the set `isReservedStoragePath`
- * holds, with normalization and letter case folded, as configured and as real paths. `isReservedStoragePath` compares
- * spellings exactly, and file identity only for a file that exists, so on its own it admits another case's or another
- * normalization form's spelling of a storage file that does not exist yet (the storage database before the first boot,
- * its `-wal` after a clean close), which on macOS (case and normalization) and Windows (case) is that file. Throws what
- * the path check throws.
- */
-function reservedStorageKey(): (key: string) => boolean {
-  const storage = path.resolve(getStorageSqlitePath());
-  const bootstrap = path.resolve(getDataDir(), BOOTSTRAP_FILE_NAME);
-  const bootstraps = [bootstrap, canonicalPath(bootstrap)];
-  const files = new Set(
-    [
-      ...reservedStoragePaths(),
-      storage,
-      `${storage}-wal`,
-      `${storage}-shm`,
-      ...bootstraps.flatMap((file) => [file, `${file}.bak`]),
-    ].map(foldKey),
-  );
-  const temps = bootstraps.map((file) => foldKey(`${file}.`));
-  const tmp = foldKey(".tmp");
-  return (key) => files.has(key) || temps.some((prefix) => key.startsWith(prefix) && key.endsWith(tmp));
-}
-
-/**
  * The enabled samples, in table order, each with its target and admission, computed from the environment and the
  * filesystem as they are now; it never throws. `startSampleSeeding` computes it once, at boot, and keeps it, and the
  * listings read what it kept (`seededSampleAdmissions`). A sample whose target's path cannot be checked (an error other
  * than ENOENT, such as EACCES, ENOTDIR or ELOOP, from resolving it or checking its family) is refused
  * `target-unreadable` with that error; a sample any of whose family names one of the server's own storage files
- * (`isReservedStoragePath`, and `reservedStorageKey` with normalization and letter case folded) is refused
+ * (`isReservedStoragePath`, and `reservedStorageKey` on its paths as given as well as real) is refused
  * `target-reserved`; a sample whose family shares a file with an earlier admitted sample's is refused
  * `target-conflict`. A refused sample claims nothing.
  *
  * Two paths that differ only in letter case, or only in Unicode normalization form (NFC against NFD), are one file for
  * both comparisons, on every OS, because on macOS (both) and Windows (letter case) they name one file: a configuration
  * that conflicts there conflicts on Linux too. So the family is compared with normalization and letter case folded
- * (`foldKey`), as real paths and also as given: a symlinked directory spelled in another case or form is followed on
+ * (`foldPathKey`), as real paths and also as given: a symlinked directory spelled in another case or form is followed on
  * macOS and Windows but not on Linux, where only the paths as given still match.
  */
 export function sampleAdmissions(): SampleAdmission[] {
@@ -256,7 +210,7 @@ export function sampleAdmissions(): SampleAdmission[] {
       const family = targetFamily(target);
       const given = FAMILY_SUFFIXES.map((suffix) => `${path.resolve(target)}${suffix}`);
       const isReservedKey = reservedStorageKey();
-      keys = [...family, ...given].map(foldKey);
+      keys = [...family, ...given].map(foldPathKey);
       reserved = family.some((file) => isReservedStoragePath(file)) || keys.some(isReservedKey);
     } catch (error) {
       const failure = { code: errnoCode(error), message: messageOf(error) };

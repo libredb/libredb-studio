@@ -2,7 +2,8 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { bootstrapAuth, isBootstrapEnabled, resolveBootstrapPath, BOOTSTRAP_FILE_NAME } from "@/lib/auth-bootstrap";
+import { bootstrapAuth, isBootstrapEnabled, resolveBootstrapPath } from "@/lib/auth-bootstrap";
+import { BOOTSTRAP_FILE_NAME, isReservedStoragePath } from "@/lib/data-dir";
 
 const ENV_KEYS = [
   "JWT_SECRET",
@@ -55,6 +56,13 @@ describe("auth-bootstrap bootstrapAuth()", () => {
 
   test("resolveBootstrapPath() lives in the data dir", () => {
     expect(resolveBootstrapPath()).toBe(path.join(tmpDir, BOOTSTRAP_FILE_NAME));
+  });
+
+  test("the file it writes, its .bak and its temporary name are the server's reserved storage paths", () => {
+    const file = resolveBootstrapPath();
+    for (const name of [file, `${file}.bak`, `${file}.${process.pid}.tmp`]) {
+      expect([name, isReservedStoragePath(name)]).toEqual([name, true]);
+    }
   });
 
   // Named in the title rather than returned early from the body, the way

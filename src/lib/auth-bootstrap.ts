@@ -8,11 +8,10 @@
 import { randomBytes } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
-import { getDataDir } from "@/lib/data-dir";
+import { BOOTSTRAP_FILE_NAME, getDataDir } from "@/lib/data-dir";
 import { JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
 import { authProviderSetting } from "@/lib/config/auth-provider";
 
-export const BOOTSTRAP_FILE_NAME = "auth-bootstrap.json";
 export const BOOTSTRAP_JWT_SECRET_INVALID_MESSAGE = `bootstrap file jwtSecret is not a string of at least ${JWT_SECRET_MIN_LENGTH} chars`;
 
 interface BootstrapFile {

@@ -960,6 +960,7 @@ bun run test:e2e         # includes the CSP verification against a real browser
 SQLite, DuckDB and LibreDB connection targets cannot name reserved server state or
 credential files, including filesystem aliases. Other database files in the same directory
 remain usable. These checks apply to every role and are checked before opening the target.
+A name is compared with letter case and Unicode normalization folded, on every OS, as macOS treats letter case and normalization variants as one file and Windows treats letter case variants as one file.
 
 SQLite connections require trusted file access. Studio denies them to non-admin callers
 and on managed connections shared with non-admin roles, including agent and MCP usage.

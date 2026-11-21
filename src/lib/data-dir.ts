@@ -59,21 +59,61 @@ function fileIdentity(candidate: string): fs.Stats | undefined {
   }
 }
 
-/** Studio state and credentials are reserved for all connection roles and file providers. */
+/**
+ * A path with Unicode normalization and letter case folded, the key every comparison with the server's own storage
+ * files uses: first NFC, so a precomposed ü and a u with a combining diaeresis are one letter, as on APFS, which ignores
+ * normalization; then letter case, one code point at a time: lower case, then upper case where that is one code point,
+ * so σ and ς, which share Σ, are one letter, while ß, whose upper case is SS, stays itself.
+ */
+export function foldPathKey(file: string): string {
+  return Array.from(file.normalize("NFC").toLowerCase(), (char) => {
+    const upper = char.toUpperCase();
+    return [...upper].length === 1 ? upper : char;
+  }).join("");
+}
+
+/** The bootstrap credentials file's name in the data directory: the file the server writes and the one it reserves. */
+export const BOOTSTRAP_FILE_NAME = "auth-bootstrap.json";
+
+/**
+ * Whether a folded path (`foldPathKey`) names one of the server's own storage files: the storage database, its `-wal`
+ * and `-shm` files, and the bootstrap credentials file with its `.bak` and temporary (`<file>.<id>.tmp`) names, as
+ * configured and as real paths, each name also resolved on its own, so a symbolic link at a sidecar or backup name
+ * reserves the file it points to. Two spellings that differ only in letter case, or only in Unicode normalization form
+ * (NFC against NFD), are one file here on every OS, because on macOS (both) and Windows (letter case) they name one
+ * file, whether or not it exists yet. Throws what the path check throws.
+ */
+export function reservedStorageKey(): (key: string) => boolean {
+  const storage = path.resolve(getStorageSqlitePath());
+  const bootstrap = path.resolve(getDataDir(), BOOTSTRAP_FILE_NAME);
+  const bootstraps = [bootstrap, canonicalPath(bootstrap)];
+  const named = [
+    ...reservedStoragePaths(),
+    storage,
+    `${storage}-wal`,
+    `${storage}-shm`,
+    ...bootstraps.flatMap((file) => [file, `${file}.bak`]),
+  ];
+  const files = new Set([...named, ...named.map(canonicalPath)].map(foldPathKey));
+  const temps = bootstraps.map((file) => foldPathKey(`${file}.`));
+  const tmp = foldPathKey(".tmp");
+  return (key) => files.has(key) || temps.some((prefix) => key.startsWith(prefix) && key.endsWith(tmp));
+}
+
+/**
+ * Studio state and credentials are reserved for all connection roles and file providers. A path is reserved when its
+ * real path names one of the server's own storage files with letter case and Unicode normalization folded
+ * (`reservedStorageKey`), or, for a file that exists, when it is the same file (device and inode) as one of them, so a
+ * hard link is refused too.
+ */
 export function isReservedStoragePath(candidate: string): boolean {
   const resolved = canonicalPath(path.resolve(candidate));
-  const bootstrap = canonicalPath(path.resolve(getDataDir(), "auth-bootstrap.json"));
-  if (
-    resolved === bootstrap ||
-    resolved === `${bootstrap}.bak` ||
-    (resolved.startsWith(`${bootstrap}.`) && resolved.endsWith(".tmp"))
-  )
-    return true;
+  if (reservedStorageKey()(foldPathKey(resolved))) return true;
   const identity = fileIdentity(resolved);
-  const reserved = [...reservedStoragePaths(), bootstrap, `${bootstrap}.bak`];
-  return reserved.some((file) => {
-    if (resolved === canonicalPath(file)) return true;
+  if (identity === undefined) return false;
+  const bootstrap = canonicalPath(path.resolve(getDataDir(), BOOTSTRAP_FILE_NAME));
+  return [...reservedStoragePaths(), bootstrap, `${bootstrap}.bak`].some((file) => {
     const other = fileIdentity(file);
-    return identity !== undefined && other !== undefined && identity.dev === other.dev && identity.ino === other.ino;
+    return other !== undefined && identity.dev === other.dev && identity.ino === other.ino;
   });
 }

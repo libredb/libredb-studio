@@ -20,6 +20,7 @@ import {
   linkSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -52,16 +53,6 @@ const UNFENCED: McpStatementArm = { ...RUN_LIBREDB_READ_ARM, fence: () => null }
 /** Studio's own state, where the server would keep it: its storage database, sidecars and credential file. */
 const STATE = join(dir, "state");
 const STORAGE = join(STATE, "libredb-storage.db");
-// macOS and Windows file systems fold case, so there a case variant of a name is the same file.
-const FOLDS_CASE = (() => {
-  const probe = join(dir, "case-probe");
-  writeFileSync(probe, "");
-  try {
-    return existsSync(join(dir, "CASE-PROBE"));
-  } finally {
-    rmSync(probe, { force: true });
-  }
-})();
 const BOOTSTRAP = join(STATE, "auth-bootstrap.json");
 const previousStoragePath = process.env.STORAGE_SQLITE_PATH;
 process.env.STORAGE_SQLITE_PATH = STORAGE;
@@ -517,38 +508,25 @@ describe("the data scope", () => {
     expect(existsSync(absent)).toBe(false);
   });
 
-  test.skipIf(FOLDS_CASE)(
-    "a name beside Studio's storage database that is not one of its files is never created by either tool",
-    async () => {
-      const variant = join(STATE, "LIBREDB-STORAGE.DB");
-      writeSeedFile(dir, [{ id: "variant", type: "libredb", database: variant }]);
-      for (const result of [
-        await call("inspect_schema", { connection_id: "seed:variant" }),
-        await libredb("prefix u", {}, "seed:variant"),
-      ]) {
-        expect(result.isError).toBe(true);
-        expect(text(result)).toContain("does not exist");
-      }
-      expect(existsSync(variant)).toBe(false);
-      expect(existsSync(`${variant}.lock`)).toBe(false);
-    },
-  );
-
-  test.skipIf(!FOLDS_CASE)(
-    "on a file system that folds case, a case variant of the storage database's name is refused as that database",
-    async () => {
-      const variant = join(STATE, "LIBREDB-STORAGE.DB");
-      writeSeedFile(dir, [{ id: "variant", type: "libredb", database: variant }]);
-      for (const result of [
-        await call("inspect_schema", { connection_id: "seed:variant" }),
-        await libredb("prefix u", {}, "seed:variant"),
-      ]) {
-        expect(result.isError).toBe(true);
-        expect(text(result)).toContain("This path is reserved for the server's own storage");
-      }
-      expect(existsSync(`${STORAGE}.lock`)).toBe(false);
-    },
-  );
+  // macOS and Windows file systems fold case, so there a case variant of a name is the same file; the check folds it on
+  // every OS.
+  test("a case variant of the storage database's name is refused as that database by both tools, and nothing is created", async () => {
+    const variant = join(STATE, "LIBREDB-STORAGE.DB");
+    writeSeedFile(dir, [{ id: "variant", type: "libredb", database: variant }]);
+    // On a file system that folds case the variant is the storage database itself, so what holds everywhere is that the
+    // state directory and the database are as they were.
+    const entries = readdirSync(STATE).sort();
+    const storage = readFileSync(STORAGE);
+    for (const result of [
+      await call("inspect_schema", { connection_id: "seed:variant" }),
+      await libredb("prefix u", {}, "seed:variant"),
+    ]) {
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("This path is reserved for the server's own storage");
+    }
+    expect(readdirSync(STATE).sort()).toEqual(entries);
+    expect(readFileSync(STORAGE).equals(storage)).toBe(true);
+  });
 
   test("a reserved path is refused by both tools before anything is created beside it", async () => {
     for (const result of [
