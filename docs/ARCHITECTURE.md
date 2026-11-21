@@ -320,6 +320,9 @@ Studio ships both as a standalone app and as the `@libredb/studio` npm package c
 - **`src/exports/`** — barrel modules (`components.ts`, `providers.ts`, `workspace.ts`, `types.ts`) that define the package's public surface; `package.json` `exports`/`main`/`module` point at the tsup `dist/` output.
 - **`src/styles/theme.css`** — the semantic colour tokens every exported component resolves through, shipped as `dist/styles.css` (`exports["./styles.css"]`) because `globals.css` is not packaged. A host imports it once: `import "@libredb/studio/styles.css"`. `build:lib` is `tsup && node scripts/copy-theme.mjs` in that order — tsup cleans `dist/`, so the copy has to follow it. See [`docs/ui/theming.md`](ui/theming.md).
 - Platform integration rules (Tailwind tokens, Lucide stroke widths, chunk scanning) live in `CLAUDE.md`.
+- **No process listeners**: importing the package, or the provider factory through `@libredb/studio/providers`, adds no SIGTERM or SIGINT listener to the embedder's process.
+  An embedder that wants its pools closed on a signal calls `clearProviderCache()` from its own handler; Studio's own handler is installed only by its standalone boot ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+  It changed what an import does: 1.3.0 and earlier added SIGTERM and SIGINT listeners when the factory was imported outside `NODE_ENV=test`, which ran the shutdown hooks, closed the provider caches and ended the process with exit code 0, so an embedder that relied on that exit now ends the process itself.
 
 ### 4.7. Standalone Boot Flow (`src/instrumentation.ts`)
 
@@ -328,7 +331,9 @@ Before any of the steps below it installs the uncaught-exception exit (`src/lib/
 An exception that nothing catches is then logged by Studio in one redacted line, after Next.js 16.4's own print of it with its stack, and ends the process with exit code 70, so whatever started it may start a fresh one ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)).
 It applies under `next dev` too: Next.js's dev command restarts its server only for its own exit code 77, so `bun dev` ends with code 70 and is started again by hand.
 Unhandled promise rejections stay non-fatal, as Next.js keeps them, unless Node.js runs with `--unhandled-rejections=strict`, which raises each one as an uncaught exception that then ends the process too.
-On standalone boot it:
+Second, it reads `NEXT_MANUAL_SIG_HANDLE` and installs the shutdown handler (`src/lib/shutdown-handler.ts`), once per process: a value other than unset, empty or `true` refuses the boot with exit code 1, a deliberate stop for the reason step 2 gives, since a server whose exit has two owners or none cannot shut down as configured.
+On SIGTERM or SIGINT the handler runs the shutdown hooks, and where `NEXT_MANUAL_SIG_HANDLE=true` gives Studio the exit, it then closes every provider cache through the shutdown registry (`src/lib/shutdown.ts`) and exits with 0, 143 or 130 ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+On standalone boot it then:
 
 1. **Bootstraps missing auth env** (`src/lib/auth-bootstrap.ts`, #109). When `JWT_SECRET` / `ADMIN_PASSWORD` are absent they are generated once, persisted to `<data dir>/auth-bootstrap.json` (mode `0600`), and injected into `process.env` before any secret reader runs; the admin password is printed once. Explicitly set env vars always win. Disable with `AUTH_BOOTSTRAP=off|false|0` (case-insensitive); an unrecognized value warns and stays on. In OIDC mode only the JWT secret is generated.
 2. **Runs the boot preflights, in this order**, each of which prints an operator-facing banner naming what to fix, never a secret's value, and exits with code 1, so the steps after it never run:
@@ -338,7 +343,7 @@ On standalone boot it:
    4. the governance preflight (`src/lib/governance/preflight.ts`, [GOVERNANCE.md](GOVERNANCE.md#boot-checks)), which with `GOVERNANCE_SOURCE` set refuses an environment that contradicts governance mode, and checks nothing while governance is off;
    5. the Kubernetes access review preflight (`src/lib/kubernetes-access/preflight.ts`, [SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#kubernetes-access-review)), which with `KUBERNETES_ACCESS_REVIEW` on refuses an environment that contradicts the review, and checks nothing while it is off.
 
-   These are the steps that intentionally stop boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling such a failure there would restart the pod forever and hide the actionable error behind a green check; refusing to start costs nothing because a server with such a setting cannot work as configured, a too-short secret, for one, can sign no session at all.
+   These steps, and the `NEXT_MANUAL_SIG_HANDLE` refusal above, are the ones that intentionally stop boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling such a failure there would restart the pod forever and hide the actionable error behind a green check; refusing to start costs nothing because a server with such a setting cannot work as configured, a too-short secret, for one, can sign no session at all.
 3. **Starts copying the built-in samples, asynchronously** (`src/lib/seed/samples.ts`, `src/lib/seed/sample-copy.ts`).
    Which samples are enabled, where each one's file goes and whether that path is admitted are decided here, once, and kept for the life of the process; every listing reads that decision, and checks only whether the file exists on each request; a file lost after boot is listed unavailable as `target-lost` and logged once.
    Every enabled sample, "Sample (Employees)" and "Sample (LibreDB)", has its committed, digest-pinned file in the seed assets directory (`SEED_ASSETS_DIR`, by default `<working directory>/seed-assets`) copied to the data directory, never over an existing file, and no database is opened.
@@ -348,7 +353,7 @@ On standalone boot it:
 A failure in the bootstrap step is logged and swallowed.
 A sample whose path cannot be checked, whose target is refused or whose copy fails is logged once, with its reason, and listed unavailable with that reason; boot never breaks.
 A copy that fails with an error the copy does not know is a defect: its sample is listed unavailable as `copy-defect`, and the error is rethrown into the copies' promise, which nothing awaits, so it is the process's unhandled rejection that Next.js logs and the server keeps serving.
-The preflights in step 2 are the deliberate exception.
+The preflights in step 2, and the `NEXT_MANUAL_SIG_HANDLE` refusal before them, are the deliberate exceptions.
 
 ### 4.8. SQLite Driver Selection (`src/lib/db/providers/sql/sqlite-driver.ts`)
 

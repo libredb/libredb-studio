@@ -7,7 +7,12 @@ import { forgetEgressDecision } from "@/lib/db/egress-decision";
 import { logger } from "@/lib/logger";
 import { getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
 import { getSampleSeedState, resetSampleSeedStates, SAMPLES, unavailableSentence } from "@/lib/seed/samples";
+import * as authBootstrap from "@/lib/auth-bootstrap";
+import * as shutdownHandler from "@/lib/shutdown-handler";
+import { installShutdownHandler, resetShutdownHandler } from "@/lib/shutdown-handler";
+import * as uncaughtException from "@/lib/uncaught-exception";
 import { installUncaughtExceptionExit, resetUncaughtExceptionExit } from "@/lib/uncaught-exception";
+import { shutdownStandIn } from "../helpers/shutdown-stand-in";
 import { standInProcess } from "../helpers/uncaught-exception-stand-in";
 
 /*
@@ -38,6 +43,7 @@ const ENV_KEYS = [
   "KUBERNETES_ACCESS_REVIEW",
   "NODE_EXTRA_CA_CERTS",
   "DB_HTTP_BLOCK_PRIVATE_HOSTS",
+  "NEXT_MANUAL_SIG_HANDLE",
 ] as const;
 
 /** Sets NODE_ENV, or removes it for `undefined`; the env typings declare it read-only. */
@@ -83,6 +89,9 @@ describe("instrumentation register()", () => {
     // install attaches nothing, so no test in this file binds the real process.exit. The tests about that install
     // reset this one first.
     installUncaughtExceptionExit(standInProcess());
+    // The same for the shutdown handler, so no test in this file attaches a real SIGTERM or SIGINT listener; the tests
+    // about that install reset this one first.
+    installShutdownHandler(shutdownStandIn(), "nextjs");
   });
 
   afterEach(async () => {
@@ -112,6 +121,7 @@ describe("instrumentation register()", () => {
       resetSampleSeedStates();
       forgetEgressDecision();
       resetUncaughtExceptionExit();
+      resetShutdownHandler();
     }
   });
 
@@ -143,6 +153,41 @@ describe("instrumentation register()", () => {
     return { exits, added: attached };
   }
 
+  /**
+   * Runs `body` with the shutdown handler forgotten and process.exit replaced by a recorder, so register() installs the
+   * handler on the real process without binding the real process.exit. It answers the SIGTERM and SIGINT listeners
+   * attached meanwhile, which are removed afterwards, and the handler forgotten again.
+   */
+  async function withSignalListeners(
+    body: (added: () => number) => Promise<void>,
+  ): Promise<{ exits: Array<number | undefined>; sigterm: number; sigint: number }> {
+    resetShutdownHandler();
+    const sigtermBefore = process.listeners("SIGTERM");
+    const sigintBefore = process.listeners("SIGINT");
+    const addedTerm = () => process.listeners("SIGTERM").filter((listener) => !sigtermBefore.includes(listener));
+    const addedInt = () => process.listeners("SIGINT").filter((listener) => !sigintBefore.includes(listener));
+    const originalExit = process.exit;
+    const exits: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exits.push(code);
+    }) as unknown as typeof process.exit;
+    let sigterm = 0;
+    let sigint = 0;
+    try {
+      await body(() => addedTerm().length + addedInt().length);
+    } finally {
+      const term = addedTerm();
+      const int = addedInt();
+      sigterm = term.length;
+      sigint = int.length;
+      for (const listener of term) process.removeListener("SIGTERM", listener);
+      for (const listener of int) process.removeListener("SIGINT", listener);
+      process.exit = originalExit;
+      resetShutdownHandler();
+    }
+    return { exits, sigterm, sigint };
+  }
+
   test("does nothing outside the nodejs runtime, and attaches no uncaught-exception exit", async () => {
     process.env.NEXT_RUNTIME = "edge";
 
@@ -152,6 +197,100 @@ describe("instrumentation register()", () => {
     expect(fs.readdirSync(tmpDir)).toHaveLength(0);
     expect(added).toEqual([]);
     expect(exits).toEqual([]);
+  });
+
+  test("does nothing outside the nodejs runtime, and attaches no shutdown handler", async () => {
+    process.env.NEXT_RUNTIME = "edge";
+
+    const { exits, sigterm, sigint } = await withSignalListeners(() => register());
+
+    expect([sigterm, sigint]).toEqual([0, 0]);
+    expect(exits).toEqual([]);
+  });
+
+  test("register() installs the shutdown handler once, and before the auth bootstrap", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    process.env.JWT_SECRET = "x".repeat(32);
+    const listenersAtBootstrap: number[] = [];
+    let realBootstrap = true;
+    const bootstrap = spyOn(authBootstrap, "bootstrapAuth");
+    try {
+      const { exits, sigterm, sigint } = await withSignalListeners(async (added) => {
+        bootstrap.mockImplementation(() => {
+          listenersAtBootstrap.push(added());
+          realBootstrap = false;
+        });
+        await register();
+        await register();
+      });
+
+      expect(realBootstrap).toBe(false);
+      expect(listenersAtBootstrap).toEqual([2, 2]);
+      expect([sigterm, sigint]).toEqual([1, 1]);
+      expect(exits).toEqual([]);
+    } finally {
+      bootstrap.mockRestore();
+    }
+  });
+
+  test.each([
+    ["true", "studio"],
+    ["", "nextjs"],
+    [undefined, "nextjs"],
+  ] as const)(
+    "with NEXT_MANUAL_SIG_HANDLE=%p register() installs the uncaught-exception exit, then the shutdown handler for owner %s on the process, then bootstraps auth",
+    async (value, owner) => {
+      process.env.NEXT_RUNTIME = "nodejs";
+      process.env.AUTH_BOOTSTRAP = "off";
+      process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+      process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+      process.env.JWT_SECRET = "x".repeat(32);
+      if (value !== undefined) process.env.NEXT_MANUAL_SIG_HANDLE = value;
+      const order: string[] = [];
+      const spies = [
+        spyOn(uncaughtException, "installUncaughtExceptionExit").mockImplementation(() => {
+          order.push("uncaught-exception exit");
+        }),
+        spyOn(shutdownHandler, "installShutdownHandler").mockImplementation(() => {
+          order.push("shutdown handler");
+        }),
+        spyOn(authBootstrap, "bootstrapAuth").mockImplementation(() => {
+          order.push("auth bootstrap");
+        }),
+      ];
+      try {
+        await register();
+
+        expect(order).toEqual(["uncaught-exception exit", "shutdown handler", "auth bootstrap"]);
+        expect(shutdownHandler.installShutdownHandler).toHaveBeenCalledWith(process, owner);
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+      }
+    },
+  );
+
+  test("register() refuses a NEXT_MANUAL_SIG_HANDLE that is neither empty nor true, before installing the handler", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.NEXT_MANUAL_SIG_HANDLE = "1";
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const bootstrap = spyOn(authBootstrap, "bootstrapAuth");
+    let banner = "";
+    try {
+      const { exits, sigterm, sigint } = await withSignalListeners(() => register());
+      banner = errorSpy.mock.calls.flat().join("\n");
+
+      expect(exits).toEqual([1]);
+      expect([sigterm, sigint]).toEqual([0, 0]);
+      expect(bootstrap).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      bootstrap.mockRestore();
+    }
+    expect(banner).toContain('NEXT_MANUAL_SIG_HANDLE is set to "1"');
+    expect(noSampleStarted()).toBe(true);
   });
 
   test.each(["production", "development"])(

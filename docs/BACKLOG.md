@@ -10305,15 +10305,20 @@ This is an enhancement rather than a defect: the skip is reported, and nothing i
 
 **Done when:** the manifest publishes, per engine, the credential and definition keys that engine's provider reads, from one exhaustive record a test holds equal to the providers' own rules, the manifest is regenerated, and `docs/GOVERNANCE.md` describes the new section.
 
-### GOV10. Studio's shutdown handler is registered by importing the provider factory, and Next's own SIGTERM handler exits first
+### GOV10. No image, chart or launcher sets `NEXT_MANUAL_SIG_HANDLE`, so Next.js's own SIGTERM handler still ends the server before Studio's shutdown
 
-The only `SIGTERM` and `SIGINT` listeners in `src/` are added by `registerShutdownHandlers` in `src/lib/db/factory.ts` when the module loads, so the hooks that flush query events and close the governance pool (`onShutdown` in `src/lib/shutdown.ts`) run only in a process that has loaded the factory.
-Nothing on the boot path loads it: `register()` in `src/instrumentation.ts` never reaches it, and the production server's preload of every route at start hides that in `node server.js` soon after boot, but not in `next dev` or for a signal that arrives earlier.
-Next's own handler, which `next start` and the standalone server add unless `NEXT_MANUAL_SIG_HANDLE` is set, closes the HTTP server and calls `process.exit(143)` without waiting for Studio's, which awaits the hooks for up to 5 seconds before its own `process.exit(0)`.
-So a routine restart normally exits while the hooks are still inserting the query events Studio holds, and those rows are lost, although `docs/GOVERNANCE.md` says Studio inserts them before it exits.
-On a busy server the reverse can happen, and Studio's `exit(0)` cuts Next's drain of the requests in flight.
+`register()` in `src/instrumentation.ts` installs Studio's shutdown handler (`src/lib/shutdown-handler.ts`) at boot, and it owns the exit only with `NEXT_MANUAL_SIG_HANDLE=true` (`docs/DISTRIBUTION.md`, "Stopping the server").
+No channel sets the variable, so everywhere Next.js's own handler, `cleanup` in `next/dist/server/lib/start-server.js`, closes the HTTP server, waits for the requests in flight and exits with 143 or 130, within milliseconds on an idle server, while Studio's handler is still running the hooks that insert the query events Studio holds.
+Those rows are lost, and under systemd every stop of the service is recorded as a failed unit.
+Next.js's wait has no bound of its own: it waits for every request in flight, an agent run's timeline stream included, and serves a keep-alive connection open at the signal while a client keeps sending requests on it, so such a stop ends only with the platform's SIGKILL.
+A second Ctrl+C does not force the exit, because both handlers ignore a repeated signal.
+When the process recorded a query event before the signal, the hooks closed the query event sink once their insert ended, so the statements those requests run after that leave query events that are never inserted; the line Studio logs at the exit counts them as `queryEventsLost`, unless the platform's SIGKILL ends the process, and `queryLog.onSinkFailure` set to `refuse` refuses them, but with `continue` they are lost.
+The hooks also stopped the governance listener and the snapshot reloads at the signal, so during that wait this instance applies no grant or session change, a revocation included.
+Setting the variable as things stand trades one loss for another: with it Next.js drains nothing and Studio has no drain, so requests in flight would be cut, and the server keeps accepting new connections until Studio's exit, because nothing closes the HTTP server.
+The chart cannot set it before its `appVersion` names an image that installs the handler at boot: an older image registers its handler only once a route has loaded the provider factory, so with the variable it has no SIGTERM listener at all until then, and as PID 1 ignores the signal until the platform's SIGKILL.
 
-**Done when:** one handler, registered at boot rather than by an import, owns the exit (for example with `NEXT_MANUAL_SIG_HANDLE=true` in the images and the chart), runs the shutdown hooks and lets Next drain, and a test that sends SIGTERM to the built server shows the queued query events inserted before the process exits.
+**Done when:** the images, and the chart once its `appVersion` names such an image, set the variable, the HTTP server stops accepting connections and requests in flight are drained within a bound or their cut is documented, and a test that sends SIGTERM to the built server under the image's environment shows the queued query events inserted before the process exits.
+Each launcher that starts the standalone server (npx, .deb, .rpm, AUR, Homebrew, Snap, Windows and the desktop app) sets the variable too, or this entry records the owner's reason not to; when the images' part lands first, the launchers' part becomes an entry of its own before this one is deleted.
 
 ### GOV11. At shutdown the governance pool can close under the query event flush
 
@@ -10329,13 +10334,16 @@ Alone this rarely loses a row (a connect queued on a full pool when `end()` runs
 
 Both providers arm a five-minute timer when an editor transaction begins (`TX_TIMEOUT_MS` and `expireTransaction` in `src/lib/db/providers/sql/postgres.ts`, the same in `src/lib/db/providers/sql/mysql.ts`), and neither `disconnect()` clears it or releases the transaction's client, where the SQL Server and Oracle providers start `disconnect()` with `clearTxTimeout()`.
 On PostgreSQL `pool.end()` waits for every checked-out client, so a `disconnect()` with a transaction open returns only when the timer releases the client, up to five minutes after `BEGIN`, and the transaction keeps its locks until then.
-A shared provider is disconnected without a rollback first, by `removeProvider`, by `clearProviderCache` at shutdown, and when a request names another query timeout (D115), so deleting a custom connection that has an open transaction leaves the request waiting.
+A shared provider is disconnected without a rollback first, by `removeProvider`, by the factory's cache close (`closeCaches`, which `closeCachesAtShutdown` runs at shutdown and `clearProviderCache` runs for its other callers), and when a request names another query timeout (D115), so deleting a custom connection that has an open transaction leaves the request waiting.
 On MySQL `end()` closes the held connection, so `disconnect()` returns and the server rolls back, but `txActive` stays true, and five minutes later the timer logs a timeout that never happened and sends a `ROLLBACK` to a closed connection.
 An owned provider is rolled back before it is disconnected (`teardownProvider` in `src/lib/db/factory.ts`) on every path but the query timeout change, which disconnects it directly (GOV24), so outside that path this is the shared providers' defect.
 On a server-level PostgreSQL connection the transaction lives on a catalog session, a provider of its own in `catalogSessions`, and the parent's `isInTransaction()` does not report it.
 So a fix inside `PostgresProvider.disconnect()` covers it, because `closeAll()` calls each session's own `disconnect()`, while a fix that checks only the parent's `isInTransaction()` would miss it.
 
-**Done when:** both providers' `disconnect()` roll back and release a held transaction and clear the timer before they end the pool, and a test per provider shows `disconnect()` resolving without the timer firing, `isInTransaction()` false and no timer left pending.
+`closeCaches` in `src/lib/db/factory.ts`, the body of both `clearProviderCache` and `closeCachesAtShutdown`, also awaits every shared provider's `disconnect()` in a `Promise.all` with no deadline, beside the owned providers' bounded teardown, so one shared provider whose disconnect never settles, such as a PostgreSQL pool waiting for this timer, holds the whole close.
+At shutdown Studio's handler stops waiting after 15 s and exits with 143 or 130 where it owns the exit, but every other caller, such as the VS Code backend's `shutdown` request or an embedder of the package, waits without a limit.
+
+**Done when:** both providers' `disconnect()` roll back and release a held transaction and clear the timer before they end the pool, `closeCaches` waits for a shared provider's disconnect at most a fixed deadline and names each provider still closing at the cut, and a test per provider shows `disconnect()` resolving without the timer firing, `isInTransaction()` false and no timer left pending.
 
 ### GOV13. The package exports `removeProvider` with a key scope that no embedder can build a key for
 
@@ -10361,8 +10369,8 @@ A seed connection is never closed by that route, which `docs/API_DOCS.md` docume
 The governed branch of `POST /api/db/disconnect` (`src/app/api/db/disconnect/route.ts`) calls `removeProvider(connectionId, { owner })`, and `teardownProvider` in `src/lib/db/factory.ts` rolls the caller's open transaction back, but the route records no terminal event and leaves the transaction's owner record in place.
 That record is closed later by `recordTimedOut` in `src/lib/api/transaction-ownership.ts`, from its watch timer about five minutes after `BEGIN`, the caller's next transaction request or the lapsed lease, which records `timed-out` with `status` `cancelled`.
 `docs/GOVERNANCE.md` reserves `timed-out` for the database driver rolling the transaction back at its five-minute limit, so the audit trail names the wrong cause at the wrong time, where the grant loader records `rolled-back` for the same rollback (`endRevokedTransactions` in `src/lib/governance/grant-diff.ts`).
-Only the API reaches it, since the UI disconnects only to delete a custom connection, which governance switches off, and at shutdown `clearProviderCache` rolls transactions back and records no terminal event at all.
-Recording one there is not enough on its own: `registerShutdownHandlers` in `src/lib/db/factory.ts` runs the shutdown hooks, the query event flush among them, before `clearProviderCache`, so a row recorded during that rollback is never sent (GOV10, GOV11).
+Only the API reaches it, since the UI disconnects only to delete a custom connection, which governance switches off, and at shutdown `closeCachesAtShutdown` rolls transactions back and records no terminal event at all.
+Recording one there is not enough on its own: the shutdown handler in `src/lib/shutdown-handler.ts` runs the shutdown hooks, the query event flush among them, before it closes the providers, so a row recorded during that rollback is never sent (GOV10, GOV11).
 The loader's own `rolled-back` is recorded even when the rollback did not finish in time, because `teardownProvider` never rejects, so the rule in `docs/GOVERNANCE.md` that a close that fails records nothing does not hold there either; a fix here should not copy it.
 
 **Done when:** the governed disconnect records `rolled-back`, with `status` `error` when the rollback was not confirmed, and releases the owner record, and a test shows that a `begin` followed by a disconnect records exactly one `rolled-back` and no later `timed-out`.

@@ -7,13 +7,13 @@
  * `@/lib/db/factory`. Two of its setup steps happen exactly once per process and cannot be
  * repeated: the `mock.module()` calls below, which stand in for six native driver packages
  * and `@/lib/ssh/tunnel` so that real providers can be constructed without a server, and the
- * `await import("@/lib/db/factory")` under a temporary `NODE_ENV=production`, which is how the
- * SIGTERM and SIGINT handlers the module registers on load are captured by diffing
- * `process.listeners`.
+ * `await import("@/lib/db/factory")` under a temporary `NODE_ENV=production`, which shows by
+ * diffing `process.listeners` that the import adds no SIGTERM or SIGINT listener even under
+ * production.
  *
  * If any other file in the same process has already evaluated the factory, this file inherits
- * an already-built module. Nothing registered a shutdown handler at an observable moment, so
- * the three `shutdown signal handlers` tests fail; and `getOrCreateProvider` caches a provider
+ * an already-built module. Its import then evaluates nothing at an observable moment, so the
+ * `importing the factory` tests prove nothing; and `getOrCreateProvider` caches a provider
  * built on unmocked drivers, whose entry then throws inside the `clearProviderCache()` in
  * `beforeEach` and fails every remaining test in the file.
  *
@@ -71,6 +71,7 @@ import { forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-de
 import { logger } from "@/lib/logger";
 import { encryptSecret } from "@/lib/storage/encryption";
 import { projectSeedConnection } from "@/lib/seed/connection-filter";
+import { closeProviderCaches, resetShutdownHooks } from "@/lib/shutdown";
 import type { SSHTunnelConfig } from "@/lib/types";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
@@ -384,9 +385,9 @@ mock.module("@/lib/ssh/tunnel", () => ({
 
 // ============================================================================
 // Import factory AFTER mocking native drivers.
-// NODE_ENV is temporarily overridden so the module-level auto-registration
-// (registerShutdownHandlers) executes on import; the SIGTERM/SIGINT handlers
-// it registers are captured by diffing the process listeners.
+// NODE_ENV is temporarily overridden to production, and the process listeners
+// diffed around the import, to show the import adds no SIGTERM or SIGINT
+// listener in any NODE_ENV.
 // ============================================================================
 
 const sigtermListenersBefore = process.listeners("SIGTERM");
@@ -401,7 +402,6 @@ const {
   clearProviderCache,
   getProviderCacheStats,
   evictIdleProviders,
-  registerShutdownHandlers,
   acquireExecutionProfileProvider: rawAcquireExecutionProfileProvider,
   executionContextFor,
   profiledCacheKey,
@@ -440,14 +440,12 @@ if (nodeEnvBefore === undefined) {
   (process.env as Record<string, string>).NODE_ENV = nodeEnvBefore;
 }
 
-const sigtermHandler = process.listeners("SIGTERM").find((l) => !sigtermListenersBefore.includes(l));
-const sigintHandler = process.listeners("SIGINT").find((l) => !sigintListenersBefore.includes(l));
+const sigtermListenersAdded = process.listeners("SIGTERM").filter((l) => !sigtermListenersBefore.includes(l));
+const sigintListenersAdded = process.listeners("SIGINT").filter((l) => !sigintListenersBefore.includes(l));
 
-// Detach the captured handlers immediately: the tests below invoke the
-// function references directly, and leaving them attached would leak
-// factory shutdown behavior into other tests sharing this process.
-if (sigtermHandler) process.removeListener("SIGTERM", sigtermHandler);
-if (sigintHandler) process.removeListener("SIGINT", sigintHandler);
+// Detach anything the import attached, so a real signal to this process never runs it; the test below fails on it.
+for (const listener of sigtermListenersAdded) process.removeListener("SIGTERM", listener);
+for (const listener of sigintListenersAdded) process.removeListener("SIGINT", listener);
 
 // ============================================================================
 // Tests
@@ -2739,6 +2737,120 @@ describe("teardown of an owned provider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
+  test("the close the factory registers for the shutdown rejects naming each provider whose close failed, while clearProviderCache resolves", async () => {
+    const shared = await getOrCreateProvider(makeConnection("sqlite", { id: "shutdown-shared", database: ":memory:" }));
+    const failedRollback = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:orders" }),
+      {},
+      owned("alice-subject"),
+    );
+    const closes = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:fine" }),
+      {},
+      owned("alice-subject"),
+    );
+    const failure = new Error("disconnect failed");
+    shared.disconnect = () => Promise.reject(failure);
+    const events: string[] = [];
+    openTransaction(failedRollback, events, async () => {
+      throw new Error("Connection terminated unexpectedly");
+    });
+    recordDisconnect(failedRollback, events);
+    recordDisconnect(closes, events);
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+
+    resetShutdownHooks();
+    try {
+      expect(await closeProviderCaches()).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({ message: "Providers not closed: shutdown-shared, seed:orders" }),
+        { route: "shutdown" },
+      );
+      expect(consoleError).toHaveBeenCalledWith("[DB] Error disconnecting provider", "shutdown-shared", failure);
+      expect(getProviderCacheStats().size).toBe(0);
+
+      // Outside the shutdown the same failures are logged and the clear resolves, as an embedder's call expects.
+      const again = await getOrCreateProvider(
+        makeConnection("sqlite", { id: "shutdown-shared", database: ":memory:" }),
+      );
+      again.disconnect = () => Promise.reject(failure);
+      expect(await clearProviderCache()).toBeUndefined();
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      resetShutdownHooks();
+      error.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
+  test("the close the factory registers for the shutdown names an owned provider whose rollback or disconnect timed out or failed, and a profiled one whose close failed", async () => {
+    const postgres = (id: string) => makeConnection("postgres", { id });
+    const rollbackHangs = await getOrCreateProvider(postgres("seed:rollback-hangs"), {}, owned("alice-subject"));
+    const disconnectHangs = await getOrCreateProvider(postgres("seed:disconnect-hangs"), {}, owned("alice-subject"));
+    const disconnectFails = await getOrCreateProvider(postgres("seed:disconnect-fails"), {}, owned("alice-subject"));
+    const closes = await getOrCreateProvider(postgres("seed:fine"), {}, owned("alice-subject"));
+    const profiledOwned = await acquireExecutionProfileProvider(
+      postgres("seed:profiled-owned"),
+      "agent-read-only",
+      {},
+      owned("alice-subject"),
+    );
+    const profiledShared = await acquireExecutionProfileProvider(postgres("seed:profiled-shared"), "agent-read-only");
+    const events: string[] = [];
+    openTransaction(rollbackHangs, events, hangs);
+    recordDisconnect(rollbackHangs, events);
+    recordDisconnect(disconnectHangs, events, hangs);
+    recordDisconnect(disconnectFails, events, async () => {
+      throw new Error("pool already ended");
+    });
+    recordDisconnect(closes, events);
+    recordDisconnect(profiledOwned, events, async () => {
+      throw new Error("pool already ended");
+    });
+    const failure = new Error("disconnect failed");
+    profiledShared.disconnect = () => Promise.reject(failure);
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+
+    resetShutdownHooks();
+    try {
+      jest.useFakeTimers();
+      let outcome: unknown;
+      const run = closeProviderCaches().then((result) => {
+        outcome = result;
+      });
+      await settle();
+      // The rollback is given up at 5 s, and the hanging disconnect at 10 s, inside the 15 s the closes may take.
+      jest.advanceTimersByTime(5_000);
+      await settle();
+      jest.advanceTimersByTime(5_000);
+      await run;
+
+      expect(outcome).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message:
+            "Providers not closed: seed:rollback-hangs, seed:disconnect-hangs, seed:disconnect-fails, seed:profiled-owned, seed:profiled-shared",
+        }),
+        { route: "shutdown" },
+      );
+      expect(consoleError).toHaveBeenCalledWith(
+        "[DB] Error disconnecting profiled provider",
+        "seed:profiled-shared",
+        failure,
+      );
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      resetShutdownHooks();
+      error.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
   test("the factory registers its owner-scoped removal, so the governance loader reaches this cache from another bundle", async () => {
     const conn = makeConnection("postgres", { id: "seed:orders" });
     const alice = await getOrCreateProvider(conn, {}, owned("alice-subject"));
@@ -2987,78 +3099,28 @@ describe("idle sweep timer", () => {
   });
 });
 
-// ─── registerShutdownHandlers ─────────────────────────────────────────────
+// ─── importing the factory ────────────────────────────────────────────────
+// The import above ran under NODE_ENV=production with the process listeners diffed around it.
 
-describe("registerShutdownHandlers", () => {
-  test("can be called multiple times without error (idempotent)", () => {
-    // Should not throw even when called repeatedly
-    registerShutdownHandlers();
-    registerShutdownHandlers();
-    registerShutdownHandlers();
-  });
-});
-
-// ─── shutdown signal handlers ─────────────────────────────────────────────
-// The handlers were auto-registered at import time (NODE_ENV override above)
-// and captured by diffing the process listeners.
-
-/** Stub process.exit with a spy whose promise resolves on the first call. */
-function stubProcessExit(): { exitCalls: Array<number | undefined>; exited: Promise<void>; restore: () => void } {
-  const originalExit = process.exit;
-  const exitCalls: Array<number | undefined> = [];
-  let resolveExited: () => void = () => {};
-  const exited = new Promise<void>((resolve) => {
-    resolveExited = resolve;
-  });
-  process.exit = ((code?: number) => {
-    exitCalls.push(code);
-    resolveExited();
-  }) as unknown as typeof process.exit;
-  return {
-    exitCalls,
-    exited,
-    restore: () => {
-      process.exit = originalExit;
-    },
-  };
-}
-
-describe("shutdown signal handlers", () => {
-  test("auto-registration on import captured SIGTERM and SIGINT handlers", () => {
-    expect(sigtermHandler).toBeDefined();
-    expect(sigintHandler).toBeDefined();
+describe("importing the factory", () => {
+  test("importing the factory adds no SIGTERM or SIGINT listener, even under NODE_ENV=production", () => {
+    expect(sigtermListenersAdded).toEqual([]);
+    expect(sigintListenersAdded).toEqual([]);
   });
 
-  test("SIGTERM handler clears the provider cache and exits with code 0", async () => {
-    await getOrCreateProvider(makeConnection("sqlite", { id: "shutdown-term", database: ":memory:" }));
+  test("the factory registers the close of its caches with the shutdown registry, and running it empties both caches", async () => {
+    await getOrCreateProvider(makeConnection("sqlite", { id: "shutdown-shared", database: ":memory:" }));
+    await acquireExecutionProfileProvider(makeConnection("postgres", { id: "shutdown-profiled" }), "agent-read-only");
+    expect(getProviderCacheStats().size).toBe(1);
+    expect(getExecutionProfileCacheStats().size).toBe(1);
 
-    const { exitCalls, exited, restore } = stubProcessExit();
+    resetShutdownHooks();
     try {
-      sigtermHandler?.("SIGTERM");
-      await exited;
-      expect(exitCalls).toEqual([0]);
+      expect(await closeProviderCaches()).toEqual({ cut: 0, failed: 0 });
       expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
     } finally {
-      restore();
-    }
-  });
-
-  test("SIGINT handler logs the error and still exits when cache clear fails", async () => {
-    const conn = makeConnection("sqlite", { id: "shutdown-int", database: ":memory:" });
-    const provider = await getOrCreateProvider(conn);
-    const realDisconnect = provider.disconnect.bind(provider);
-    // Return a non-promise so clearProviderCache rejects inside the handler
-    (provider as unknown as { disconnect: () => undefined }).disconnect = () => undefined;
-
-    const { exitCalls, exited, restore } = stubProcessExit();
-    try {
-      sigintHandler?.("SIGINT");
-      await exited;
-      expect(exitCalls).toEqual([0]);
-    } finally {
-      restore();
-      provider.disconnect = realDisconnect;
-      await clearProviderCache();
+      resetShutdownHooks();
     }
   });
 });

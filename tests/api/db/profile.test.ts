@@ -56,6 +56,7 @@ mock.module("@/lib/query-events/sink", () => ({
     if (governanceEnabled()) recordedEvents.push(input);
   },
   queryEventSinkState: () => sinkState,
+  queryEventSinkClosed: () => false,
   flushQueryEvents: async () => {},
   resetQueryEventSink: () => {},
 }));

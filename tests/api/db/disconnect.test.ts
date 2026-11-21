@@ -41,7 +41,6 @@ mock.module("@/lib/db/factory", () => ({
   removeProvider: mockRemoveProvider,
   clearProviderCache: mock(async () => {}),
   getProviderCacheStats: mock(() => ({ size: 0, connections: [] })),
-  registerShutdownHandlers: mock(() => {}),
 }));
 
 mock.module("@/lib/db", () => ({
@@ -50,7 +49,6 @@ mock.module("@/lib/db", () => ({
   removeProvider: mockRemoveProvider,
   clearProviderCache: mock(async () => {}),
   getProviderCacheStats: mock(() => ({ size: 0, connections: [] })),
-  registerShutdownHandlers: mock(() => {}),
   QueryError,
   TimeoutError,
   DatabaseError,

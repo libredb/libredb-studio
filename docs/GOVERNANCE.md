@@ -144,6 +144,7 @@ Studio checks the session of every request against these rules:
 - A password, passkey or launch session carries no subject and is refused, and so is a session whose subject is empty or whose issuer is not `OIDC_ISSUER`.
   With `OIDC_ISSUER` unset or not a URL every session is refused, and a changed `OIDC_ISSUER` ends the sessions of the previous issuer.
 - A session issued at or before its subject's latest `revoked_before` in [`bridge.session_revocations_v1`](#row-semantics) is refused, typically within a second of the commit that adds the row, because its change notification reloads the snapshot.
+  An instance that has received SIGTERM or SIGINT applies no such row until it exits ([operating notes](#operating-notes)).
   A session's issue time is its token's `iat`, in whole seconds, so a session signed within the second of `revoked_before` counts as issued before it.
   A sign-in after that second gets a session the row does not refuse, so a control plane that means to keep someone out also disables them at the identity provider.
 - The OIDC callback applies the same rule to the session it is about to mint: when the subject's latest `revoked_before` is at or after the current second, as when the control plane's clock runs ahead of Studio's or the row's `revoked_before` cannot be read, the sign-in ends on `/login?error=oidc_session_revoked` with no session, and the audit trail records `login_failure` with reason `oidc_session_revoked`.
@@ -288,7 +289,7 @@ When a reload takes a person's access to a connection away or changes it, Studio
 - Then the provider's database sessions are closed, and Studio waits at most 10 seconds for that.
   Sessions that do not close in time are abandoned and logged, so a database that hangs never holds the next reload.
 - The person's next request on the connection is answered from the new snapshot: 404 `CONNECTION_NOT_FOUND` without a grant, or 409 `TRANSACTION_CREDENTIAL_CHANGED` when their transaction was open under a level or credential that changed.
-- A provider idle for 30 minutes, and every provider at shutdown, is closed the same way, its open transaction rolled back first.
+- A provider idle for 30 minutes, and every provider at a shutdown Studio's handler owns ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)), is closed the same way, its open transaction rolled back first.
 
 Without governance every person who opens a connection with the same credential shares one provider, as before.
 
@@ -415,7 +416,13 @@ How an instance connects to the governance source:
 - Each pooled connection names itself `libredb-studio-governance` in `application_name`, and the listener's connection `libredb-studio-governance-listener`, so they show up as such in `pg_stat_activity`.
 - A load waits at most 5 seconds for a connection, each statement runs under a `statement_timeout` of 10 seconds and is abandoned by Studio after 15, and the whole load gives up after 20 seconds, so a governance source that hangs never holds a load for long.
   Studio closes the connection of a load that gave up, and a statement still running on it keeps its server process busy until it ends, at most the 10 seconds of `statement_timeout`, because PostgreSQL notices a closed connection only when it next reads from it.
-- On SIGTERM or SIGINT Studio first inserts the [query events](#query-events) it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it, and then closes its connections to the users' databases and exits.
+- On SIGTERM or SIGINT Studio first inserts the [query events](#query-events) it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it.
+  Where Studio's handler owns the exit (`NEXT_MANUAL_SIG_HANDLE=true`), it then closes its connections to the users' databases and exits ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+  Where Next.js's handler owns it, which no image, chart or launcher changes yet, that insert runs beside Next.js's own shutdown and is cut when Next.js exits, within milliseconds on an idle server, so query events still queued can be lost.
+  Next.js then goes on serving the requests in flight and the connections open at the signal until they end.
+  When the process recorded a query event before the signal, the insert at the signal closed the query event sink once it ended, so the query events of the statements run after that are never inserted; without such an event the sink stays open and inserts them as usual.
+  Studio's line at the exit counts every event left unsent as `queryEventsLost`, unless the platform's SIGKILL ends the process, and `queryLog.onSinkFailure` set to `refuse` refuses those statements instead ([query events](#query-events)).
+- Closing the listener and stopping the reloads at the signal means that from then on the instance applies no further change of grants or sessions, a revocation included: until the process exits it authorizes requests by the snapshot it held at the signal, wherever Studio's or Next.js's handler owns the exit.
 
 ## Admin status
 
@@ -691,12 +698,16 @@ Delivery:
   Each is logged as one line on standard output, `{"type":"query_event_rejected","event_id":"<uuid>","sqlstate":"23514","constraint":"query_event_not_future"}`, which carries neither the statement nor the server's message, because that can quote the row; `constraint` is null when the server names none.
   A refusal for good is not a reason to wait, so Studio does not back off after it.
 - At shutdown Studio inserts every queued event at once, batch after batch and without waiting out a backoff, for at most 4 seconds, and logs how many events it could not send.
+  The insert runs only when the process recorded an event before the signal, and it sends the events recorded while it runs.
+  It then closes the query event sink: an event recorded after it is queued and never sent.
+  The process waits for that insert only where Studio's handler owns the exit; where Next.js's handler owns it, as in every channel today, Next.js's exit can cut it ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+  Either way, the line Studio logs as the process exits, unless the platform's SIGKILL ends it, counts the events left unsent, those recorded after the insert included, as `queryEventsLost`, and where Studio's handler owns the exit any such event makes the exit code 143 or 130.
   An uncaught exception ends the process without that insert ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)): the events still queued are not inserted, and the line Studio logs for that exit counts them as `queryEventsLost`.
   The count includes an insert under way, whose rows may have landed, so the count is at most what was lost.
-- With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full, which is 9000 events.
-  It checks before a statement reaches the database, for an interactive transaction's `BEGIN`, statements, `COMMIT` and `ROLLBACK` alike, so a refused request runs nothing, and it admits executions again once an insert settles its whole batch and the queue holds fewer than 9000 events.
+- With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full, which is 9000 events, and from the shutdown's insert on, which closes the query event sink, until the process exits.
+  It checks before a statement reaches the database, for an interactive transaction's `BEGIN`, statements, `COMMIT` and `ROLLBACK` alike, so a refused request runs nothing, and it admits executions again once an insert settles its whole batch and the queue holds fewer than 9000 events; the refusal after the shutdown's insert lasts until the exit.
   A row the database refused for good never trips it, because Studio drops that row and goes on without backing off.
-  The sink state's `backingOff` and `queued`, in the [heartbeat](#heartbeat) and on the [admin status](#admin-status), show when it applies.
+  The sink state's `backingOff` and `queued`, in the [heartbeat](#heartbeat) and on the [admin status](#admin-status), show when the backoff or the full queue applies; the refusal after the shutdown's insert shows in neither.
 - With `continue`, the default, Studio keeps executing while it cannot record query events: their events wait in the queue, and once it is full the newest are dropped and counted in `dropped`.
 
 Capture follows `queryLog.statementCapture`, which is `none` while the control plane sets no valid value:
@@ -839,6 +850,6 @@ Under governance Studio's API answers these codes in the `code` field of an erro
 | --- | --- | --- |
 | `CONNECTION_NOT_FOUND` | 404 | The connection does not exist or is not granted to the caller; the two are indistinguishable. |
 | `GOVERNANCE_UNAVAILABLE` | 503 | The snapshot is loading, too old, misconfigured or incompatible. |
-| `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events: it is backing off after a failed insert or its queue is at least 90% full, so the request was refused before any statement ran. |
+| `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events: it is backing off after a failed insert, its queue is at least 90% full, or the shutdown has closed its query event sink, so the request was refused before any statement ran. |
 | `TRANSACTION_CREDENTIAL_CHANGED` | 409 | The grant level or credential under the caller's open transaction changed, and Studio rolled the transaction back; `rolledBack` is `false` when it could not confirm the rollback. |
 | `AI_DISABLED` | 403 | `ai.enabled` is `false`, and a route of the AI bucket refused a signed-in caller before any LLM provider was built. |

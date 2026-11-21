@@ -24,7 +24,7 @@ import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
-import { runShutdownHooks } from "@/lib/shutdown";
+import { onProviderCacheClose } from "@/lib/shutdown";
 import * as path from "path";
 
 // ============================================================================
@@ -992,17 +992,24 @@ function openTransaction(provider: DatabaseProvider): TransactionSession | null 
  *
  * A rollback or a disconnect that fails is logged, and a disconnect that does not finish in time is logged and its pool
  * abandoned, because a client stuck in a statement, or in a rollback that never answered, never comes back. So the
- * teardown ends within 15 s whatever the user's database does, and it never rejects.
+ * teardown ends within 15 s whatever the user's database does, and it never rejects. It answers whether the provider
+ * closed completely: false after any of those, which the shutdown counts (`closeCaches`).
  */
-async function teardownProvider(cache: Map<string, CachedProvider>, key: string, entry: CachedProvider): Promise<void> {
+async function teardownProvider(
+  cache: Map<string, CachedProvider>,
+  key: string,
+  entry: CachedProvider,
+): Promise<boolean> {
   cache.delete(key);
   const { provider, connectionId: id } = entry;
+  let closed = true;
   try {
     // Inside the try, as `keepsRunInFlight` guards `hasRunsInFlight`: a provider that throws here is not left open.
     const session = openTransaction(provider);
     if (session !== null) {
       const rollback = await within(session.rollbackTransaction(), TEARDOWN_ROLLBACK_MS);
       if (rollback === TIMED_OUT) {
+        closed = false;
         logger.warn(
           `[DB] The open transaction of an owned provider of ${sanitize(id)} did not roll back within ${TEARDOWN_ROLLBACK_MS} ms, so the provider is closed with it open.`,
           { connectionId: id },
@@ -1013,6 +1020,7 @@ async function teardownProvider(cache: Map<string, CachedProvider>, key: string,
       }
     }
   } catch (error) {
+    closed = false;
     logger.warn(
       `[DB] The open transaction of an owned provider of ${sanitize(id)} failed to roll back, so the provider is closed with it open.`,
       { connectionId: id, error: String(error) },
@@ -1020,14 +1028,17 @@ async function teardownProvider(cache: Map<string, CachedProvider>, key: string,
   }
   try {
     if ((await within(provider.disconnect(), TEARDOWN_DISCONNECT_MS)) === TIMED_OUT) {
+      closed = false;
       logger.warn(
         `[DB] Abandoned the pool of owned provider ${sanitize(id)}: its disconnect did not finish within ${TEARDOWN_DISCONNECT_MS} ms.`,
         { connectionId: id },
       );
     }
   } catch (error) {
+    closed = false;
     logger.warn(`[DB] Error disconnecting owned provider ${sanitize(id)}`, { connectionId: id, error: String(error) });
   }
+  return closed;
 }
 
 /** Idle timeout: evict providers unused for 30 minutes */
@@ -1807,7 +1818,7 @@ export async function removeProvider(
   );
   const removes = (entry: CachedProvider, keyed: boolean): boolean =>
     entry.connectionId === connectionId && (scope === undefined || (byKey ? keyed : entry.owner === owner));
-  const teardowns: Promise<void>[] = [];
+  const teardowns: Promise<boolean>[] = [];
 
   // A connection can hold more than one entry now - one per distinct server-and-credentials
   // it was opened with - so this removes every entry serving it, the way the profiled loop
@@ -1860,49 +1871,87 @@ export async function removeProvider(
 registerOwnerRemoval(removeProvider);
 
 /**
- * Clear all cached providers (shared and execution-profile), all at once.
+ * Closes every cached provider (shared and execution-profile), all at once, and answers the ids of those that did not
+ * close completely: a shared provider whose `disconnect()` rejected, and an owned one whose teardown failed or gave up.
  * An owned provider (docs/GOVERNANCE.md#per-user-providers) is torn down (`teardownProvider`), so an open transaction
  * it holds is rolled back before it closes, and it is waited for at most 15 s; a provider every caller shares is
- * disconnected as before.
+ * disconnected, and a disconnect that rejects is logged.
  */
-export async function clearProviderCache(): Promise<void> {
+async function closeCaches(): Promise<string[]> {
   // Stop idle sweep
   if (sweepTimer) {
     clearInterval(sweepTimer);
     sweepTimer = null;
   }
 
-  const disconnectPromises: Promise<void>[] = [];
+  const closes: Promise<string | null>[] = [];
+  /** Answers `id` when its close did not complete, so the caller lists it, and null when it did. */
+  const notClosed = (id: string) => (closed: boolean) => (closed ? null : sanitize(id));
 
   for (const [key, entry] of providerCache) {
     if (entry.owner !== undefined) {
-      disconnectPromises.push(teardownProvider(providerCache, key, entry));
+      closes.push(teardownProvider(providerCache, key, entry).then(notClosed(entry.connectionId)));
       continue;
     }
-    disconnectPromises.push(
-      entry.provider.disconnect().catch((error) => {
-        // The id is an argument, never part of the first one: `console.error`'s first argument
-        // is a format string, and a constant cannot be a format attack (js/tainted-format-string).
-        console.error("[DB] Error disconnecting provider", sanitize(entry.connectionId), error);
-      }),
+    closes.push(
+      entry.provider.disconnect().then(
+        () => null,
+        (error) => {
+          // The id is an argument, never part of the first one: `console.error`'s first argument
+          // is a format string, and a constant cannot be a format attack (js/tainted-format-string).
+          console.error("[DB] Error disconnecting provider", sanitize(entry.connectionId), error);
+          return sanitize(entry.connectionId);
+        },
+      ),
     );
   }
   for (const [key, entry] of profiledProviderCache) {
     if (entry.owner !== undefined) {
-      disconnectPromises.push(teardownProvider(profiledProviderCache, key, entry));
+      closes.push(teardownProvider(profiledProviderCache, key, entry).then(notClosed(entry.connectionId)));
       continue;
     }
-    disconnectPromises.push(
-      entry.provider.disconnect().catch((error) => {
-        console.error("[DB] Error disconnecting profiled provider", sanitize(entry.connectionId), error);
-      }),
+    closes.push(
+      entry.provider.disconnect().then(
+        () => null,
+        (error) => {
+          console.error("[DB] Error disconnecting profiled provider", sanitize(entry.connectionId), error);
+          return sanitize(entry.connectionId);
+        },
+      ),
     );
   }
 
-  await Promise.all(disconnectPromises);
+  const unclosed = (await Promise.all(closes)).filter((id): id is string => id !== null);
   providerCache.clear();
   profiledProviderCache.clear();
+  return unclosed;
 }
+
+/**
+ * Clear all cached providers (shared and execution-profile), all at once (`closeCaches`). A provider whose close fails
+ * is logged, and the clear still resolves.
+ * At a shutdown Studio's handler owns, the handler (src/lib/shutdown-handler.ts) closes the caches through the shutdown
+ * registry, where each copy of this module registers `closeCachesAtShutdown` below; importing this module adds no
+ * process listener, so an embedder of the package that wants its pools closed on a signal calls this from its own
+ * handler.
+ */
+export async function clearProviderCache(): Promise<void> {
+  await closeCaches();
+}
+
+/**
+ * The close each copy of this module registers for the shutdown: `closeCaches`, rejecting with the ids of the providers
+ * that did not close completely, so the shutdown counts them as a failed close and does not exit with 0.
+ */
+async function closeCachesAtShutdown(): Promise<void> {
+  const unclosed = await closeCaches();
+  if (unclosed.length > 0) throw new Error(`Providers not closed: ${unclosed.join(", ")}`);
+}
+
+// Every copy of this module a process loads registers the close of its own caches, as it registers its owner-scoped
+// removal above: the shutdown handler lives in the instrumentation bundle and reaches the route handlers' copies only
+// through this registry (src/lib/shutdown.ts).
+onProviderCacheClose(closeCachesAtShutdown);
 
 /**
  * Get cache statistics
@@ -1925,45 +1974,4 @@ export function getExecutionProfileCacheStats(): { size: number; connections: st
     size: profiledProviderCache.size,
     connections: Array.from(profiledProviderCache.values(), (entry) => entry.connectionId),
   };
-}
-
-// ============================================================================
-// Graceful Shutdown
-// ============================================================================
-
-let shutdownRegistered = false;
-
-/**
- * Register process signal handlers for graceful shutdown.
- * Safe to call multiple times — handlers are only registered once.
- * The hooks other modules registered with `onShutdown()` (src/lib/shutdown.ts), such as the governance
- * listener's close, run first, cut at their 5 s deadline, and the providers are closed after them.
- */
-export function registerShutdownHandlers(): void {
-  if (shutdownRegistered) return;
-  shutdownRegistered = true;
-
-  const shutdown = async (signal: string) => {
-    logger.info(`[DB] Received ${signal}, closing all database connections...`);
-    await runShutdownHooks();
-    try {
-      await clearProviderCache();
-      logger.info("[DB] All database connections closed gracefully");
-    } catch (error) {
-      logger.error("[DB] Error during graceful shutdown", error, { route: "db/factory" });
-    }
-    process.exit(0);
-  };
-
-  process.on("SIGTERM", () => {
-    void shutdown("SIGTERM");
-  });
-  process.on("SIGINT", () => {
-    void shutdown("SIGINT");
-  });
-}
-
-// Auto-register on server-side (not during tests)
-if (typeof process !== "undefined" && process.env.NODE_ENV !== "test") {
-  registerShutdownHandlers();
 }

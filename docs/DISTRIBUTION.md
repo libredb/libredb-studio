@@ -216,11 +216,11 @@ The line names the exit code, the error's class with its `code` when that is a s
 
 Only Studio's line is redacted: the error Next.js prints before it is the error as thrown.
 The line carries no stack of its own, but a message that quotes one, as Node.js's `ERR_UNHANDLED_ERROR` does for an `error` event whose payload holds an Error, is logged as it is.
-Under governance, the query events still queued are not inserted on this exit, unlike at a shutdown on SIGTERM, and the line counts them, for example `{route=uncaught-exception, queryEventsLost=12}` ([GOVERNANCE.md](GOVERNANCE.md#query-events)).
+Under governance, the query events still queued are not inserted on this exit, unlike at a shutdown Studio's handler owns ([Stopping the server](#stopping-the-server)), and the line counts them, for example `{route=uncaught-exception, queryEventsLost=12}` ([GOVERNANCE.md](GOVERNANCE.md#query-events)).
 The count includes an insert under way, whose rows may have landed, so the count is at most what was lost.
 
 Code 70 is `UNCAUGHT_EXCEPTION_EXIT_CODE` in [`src/lib/uncaught-exception.ts`](../src/lib/uncaught-exception.ts), the `EX_SOFTWARE` value of `sysexits.h`, "internal software error".
-No launcher gives it another meaning: 0 is a clean stop on SIGTERM or SIGINT, and 1 is a boot check that refused the configuration, a launcher's own failure, an exception that nothing caught before Next.js installed its own handler, which Node.js ends with its own 1, or, under npx, a server that a signal ended, such as the out-of-memory killer's SIGKILL.
+No launcher gives it another meaning: 0 is a complete shutdown on SIGTERM or SIGINT, 143 and 130 a shutdown on that signal that did not complete or that Next.js's own handler ended ([Stopping the server](#stopping-the-server)), and 1 is a boot check that refused the configuration, a launcher's own failure, an exception that nothing caught before Next.js installed its own handler, which Node.js ends with its own 1, or, under npx, a server that a signal ended, such as the out-of-memory killer's SIGKILL.
 
 A promise rejection that nothing handles does not stop the server: Next.js logs it and keeps serving.
 That is Next.js's own choice: a server component may start a request early and drop its promise when the answer turns out not to be needed, and the rejection of such a promise is no fault.
@@ -243,6 +243,77 @@ How each channel brings the server back after code 70:
 
 Platforms not listed here apply their own policy to a container that exits with a non-zero code.
 The VS Code extension does not run this server: its backend child runs no Next.js, keeps Node.js's own handling of an uncaught exception, and is restarted by the extension ([VSCODE_EXTENSION.md](VSCODE_EXTENSION.md)).
+
+## Stopping the server
+
+On SIGTERM or SIGINT exactly one handler ends the server, and which one is decided by `NEXT_MANUAL_SIG_HANDLE` when the server starts.
+
+- `NEXT_MANUAL_SIG_HANDLE=true`: Next.js installs no signal handler, and Studio's shutdown handler ends the process.
+- `NEXT_MANUAL_SIG_HANDLE` unset or empty: Next.js's own handler ends the process, and Studio's handler only runs the shutdown hooks beside it.
+- Any other value: the server refuses to start with exit code 1 and a banner naming the variable.
+
+Set the variable in the environment that starts the server, never in a `.env` file.
+Next.js reads it before it loads `.env` files and Studio reads it after, so a value in `.env` would leave both handlers ending the process.
+No image, chart or launcher sets it yet, so today Next.js's handler ends the server in every channel.
+It needs the first Studio release after 1.3.0: 1.3.0 and earlier register their handler only once a route loads the provider factory, so with `NEXT_MANUAL_SIG_HANDLE=true` they have no SIGTERM listener until then and, as PID 1 in a container, ignore the signal until the platform's SIGKILL.
+Next.js 16.4.6 documents the variable only for the Pages Router, in its self-hosting guide's "Manual Graceful Shutdowns", while Studio uses the App Router.
+That `startServer` in `next/dist/server/lib/start-server.js` installs no handler while the variable is set holds for both routers, as read in Next.js 16.4.6, so the live check [`tests/live/shutdown-signal-live.ts`](../tests/live/shutdown-signal-live.ts) must pass on every Next.js upgrade.
+
+Studio's handler is installed when the server boots, by `register()` in [`src/instrumentation.ts`](../src/instrumentation.ts), right after the [uncaught-exception exit](#uncaught-errors-and-restarts); the module is [`src/lib/shutdown-handler.ts`](../src/lib/shutdown-handler.ts).
+On the first signal it logs one line naming the signal and the owner of the exit, then:
+
+1. It runs the shutdown hooks, which insert the governance query events still queued and close the governance pool, all at once and for at most 5 s.
+2. Where Studio owns the exit, it then closes every cached database provider, all at once and for at most 15 s, logs one end line and exits with the code below.
+3. Where Next.js owns the exit, it closes no provider and never exits: Next.js closes the HTTP server, waits for the connections open at the signal to end and exits, and the process takes the open connections with it.
+
+So a shutdown Studio owns takes 20 s at most.
+Studio's handler does not close the HTTP server: until its exit the server accepts new connections and serves their requests, and a request that opens a provider after the close leaves it open until the exit.
+Requests still in flight are not drained either: a request that uses a provider fails once the providers close, and the exit ends the rest.
+A second SIGTERM or SIGINT during the shutdown starts nothing, does not cut it and does not change its exit code; npx delivers every Ctrl+C twice, once from the terminal and once from the launcher.
+Next.js's own handler ignores a repeated signal too, so under neither handler does a second Ctrl+C force the exit.
+
+| Code | Meaning |
+|---|---|
+| 0 | Studio's handler ended the process, every hook and every provider close completed in time, and no query event was left unsent |
+| 143 | SIGTERM, and the shutdown did not complete, as the end line names: a hook or a provider close was cut at its bound or failed, or query events were left unsent (`queryEventsLost`); or Next.js's own handler ended the process |
+| 130 | SIGINT, with the same meanings as 143 |
+| 70 | An uncaught exception, which ends the process at once, during a shutdown too ([Uncaught errors and restarts](#uncaught-errors-and-restarts)) |
+| 1 | A boot check refused the configuration, an unsupported `NEXT_MANUAL_SIG_HANDLE` among them |
+
+143 and 130 are 128 plus the signal's number, the codes Next.js's own handler exits with.
+A provider close fails when a shared provider's disconnect rejects, or when an owned provider's rollback or disconnect fails or passes its own deadline ([GOVERNANCE.md](GOVERNANCE.md#per-user-providers)); the end line's `cacheClosesFailed` counts it, and the error line before it names the providers.
+Query events are left unsent when the flush could not insert them, or when a request recorded them after the flush had ended.
+The flush runs only when the process recorded a query event before the signal; it sends the events recorded while it runs, and then closes the query event sink, which sends nothing after it.
+Under systemd (the .deb, .rpm, AUR and Snap services) an exit with 143 or 130 is recorded as a failed unit, and only 0 as a clean stop.
+
+Where Next.js ends the process, the stop has no bound of its own.
+On an idle server it exits within milliseconds, while the hooks may still be running.
+Otherwise it waits for every request in flight without a limit, and serves a keep-alive connection open at the signal for as long as a client keeps sending requests on it, the unauthenticated `GET /health` included.
+A long response, such as an agent run's timeline stream, which stays open until the run ends, holds the stop as long.
+Such a stop ends only with the platform's SIGKILL, or a `kill -9`, which the table below times.
+When the process recorded a query event before the signal, the shutdown hooks closed the query event sink once their insert ended, so a statement run after that during the wait leaves a query event that is never inserted; with `queryLog.onSinkFailure` at `refuse` Studio refuses such a statement with 503 `AUDIT_UNAVAILABLE` instead, until the exit ([GOVERNANCE.md](GOVERNANCE.md#query-events)).
+Without such an event the sink stays open and inserts the events of the wait as it does while the server runs.
+Under governance, from the signal on this instance applies no further change of grants or sessions, a revocation included, until it exits: the shutdown hooks stop the governance listener and the reloads at the signal, so it keeps authorizing requests by the snapshot it held then, during the shutdown Studio's handler owns too ([GOVERNANCE.md](GOVERNANCE.md#operating-notes)).
+As the process exits, unless the platform's SIGKILL ends it, Studio's handler logs `Exiting with 143 after SIGTERM`, as a warning carrying `queryEventsLost` and `hooksRunning` when the exit leaves query events unsent or cuts a hook still running; Studio's start line, `Received SIGTERM: running the shutdown hooks; Next.js's handler ends the process`, shows that its handler ran.
+
+What each platform waits for before it kills the process, against the 20 s Studio's handler may take where it owns the exit; where Next.js owns it, the stop may last until this kill:
+
+| Platform | Grace before SIGKILL |
+|---|---|
+| Kubernetes (Helm chart, OpenShift operator) | 30 s, the default `terminationGracePeriodSeconds` |
+| `docker stop` | 10 s; give it `--time 30`, or `stop_grace_period: 30s` in Compose |
+| systemd (.deb, .rpm, AUR) | 90 s, the default `TimeoutStopSec` |
+| Desktop app | 5 s |
+
+Limits:
+
+- `next dev` handles signals in its parent process, which kills the server `NEXT_EXIT_TIMEOUT_MS` after the signal, a variable Next.js does not document whose default is 100 ms in Next.js 16.4.6 (`next/dist/cli/next-dev.js`), and Next.js does not support manual signal handling there.
+- Windows delivers no SIGTERM; Ctrl+C reaches the server as SIGINT.
+- A signal in the first fraction of a second reaches no Studio handler, in one of two windows.
+  Before Next.js adds its own listener, or with `NEXT_MANUAL_SIG_HANDLE=true` before `register()` has run, Node.js's default for the signal applies: it ends the process, or, as PID 1 in a container, ignores the signal until the platform's SIGKILL.
+  With the variable unset, a signal after Next.js has added its listener but before `register()` has run ends the process through Next.js's handler with 143 or 130, and no Studio hook runs.
+
+The npm package and the VS Code extension's backend child run no Next.js server: importing `@libredb/studio` adds no signal listener, and an embedder that wants its pools closed on a signal calls `clearProviderCache()` from its own handler ([ARCHITECTURE.md](ARCHITECTURE.md)).
 
 ## Built-in sample assets
 
