@@ -229,9 +229,10 @@ visible in a replayed capture: a capture records what a correct CONNECT produced
 
 ### 4.4 Credentials in the clear
 
-A password sent with no SSL mode crosses the network in cleartext. Studio refuses that combination unless the
-host is this machine or an SSH tunnel carries the connection, and the Allow insecure authentication box is the
-override for a reader who has a reason. The remedy the hint names first is an SSL mode, not the override.
+A password sent with no SSL mode crosses the network in cleartext.
+Studio refuses that combination unless the host is this machine or an SSH tunnel carries the connection, and the Allow insecure authentication box is the override for a reader who has a reason.
+Whether a tunnel carries the connection is read from whether one was opened for it, as the other providers read it, and not from the tunnel switch alone (4.6).
+The remedy the hint names first is an SSL mode, not the override.
 
 ### 4.5 TLS
 
@@ -271,6 +272,11 @@ encrypts the credential the broker cannot.
 
 With TLS on as well, the certificate is checked against the tunnel's far end rather than against the local
 forward, which is the second bullet in 4.5.
+
+Studio opens the tunnel only when Host and Port are both set, and it reads the connection before the provider fills in the default port, so a connection with the tunnel on and Port empty arrives without a tunnel.
+The provider reads whether a tunnel was opened from the far end Studio hands on with an opened one, and refuses a connection whose tunnel is on and arrived without it before any socket, rather than dial the broker directly:
+
+> This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the MQTT broker was not dialled directly: the tunnel opens only when both Host and Port are set.
 
 With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a tunnelled connection is refused, for the reason in 4.8.
 
@@ -555,13 +561,13 @@ bun tests/run-tests.ts tests/unit/db/mqtt/ tests/integration/db/mqtt-provider.te
 | `tests/unit/db/mqtt/session.test.ts` | The client id, the CONNACK sentences, the three budgets, and the payload the tree does not hold |
 | `tests/unit/db/mqtt/inbound-limit.test.ts` | The 8 MiB skip, including a body spanning chunks and the heap it does not grow |
 | `tests/unit/db/mqtt/key-scan.test.ts` | The page, its truncation report and every end-reason sentence |
-| `tests/unit/db/mqtt/provider.test.ts` | The declarations, the refusals, and the dial against a loopback server |
+| `tests/unit/db/mqtt/provider.test.ts` | The declarations, the refusals, the SSH tunnel's, and the dial against a loopback server |
 | `tests/unit/db/mqtt/egress.test.ts` | Where the dial may connect: link-local and metadata addresses, the flag, and a tunnel |
 | `tests/unit/db/mqtt/session-stats.test.ts` | What a read counts besides the tree, the handshake-only session, and each failure's kind |
 | `tests/unit/db/mqtt/agent-statement.test.ts` | Agent mode's closed table of two reads, and every request refused before the network |
 | `tests/unit/db/mqtt/agent-provider.test.ts` | The agent path through the provider: full packets, answers, budgets, failures and every surface |
 | `tests/unit/db/mqtt/agent-seam.test.ts` | That the agent path can send no PUBLISH and no Will |
-| `tests/integration/db/mqtt-provider.test.ts` | The four captures, replayed |
+| `tests/integration/db/mqtt-provider.test.ts` | The four captures, replayed, and a tunnel that was not opened writing nothing |
 | `tests/unit/key-browser-line-contrast.test.ts` | The panel's text colours, as contrast ratios |
 | `e2e/mqtt-provider.spec.ts` | The connection dialog in a browser |
 

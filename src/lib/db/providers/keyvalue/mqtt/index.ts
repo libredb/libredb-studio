@@ -85,6 +85,14 @@ const MQTT_WRITE_REACH = noWritePath({
 
 const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
 const NO_ESTIMATE = "MQTT composes no estimating plan for the agent";
+/**
+ * A tunnel that is on and arrived without its far end. The factory opens a tunnel only when `sshTunnel.enabled`, Host
+ * and Port are all set, and otherwise hands the record on as it was saved, so dialling it would reach the broker
+ * directly, past the tunnel the record asks for. The sentence is the one the other tunnelled providers use.
+ */
+const TUNNEL_NOT_OPENED =
+  "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the MQTT broker was not " +
+  "dialled directly: the tunnel opens only when both Host and Port are set.";
 
 export class MqttProvider extends BaseDatabaseProvider {
   /** The last read. The panel's tree and its rows both come from it, and a refresh replaces it. */
@@ -216,7 +224,11 @@ export class MqttProvider extends BaseDatabaseProvider {
     // `ssl.mode` is the connection's own SSL / TLS panel; "disable" is the only value that means plain TCP.
     const mode = config.ssl?.mode;
     const tls = mode !== undefined && mode !== "disable";
+    // WHETHER A TUNNEL CARRIES THE CONNECTION IS READ FROM THE FAR END the factory hands on when it opened one, as
+    // every other provider reads it, and not from the record's request for one.
     const farEnd = config[TUNNEL_FAR_END];
+    if (config.sshTunnel?.enabled === true && farEnd === undefined)
+      throw new DatabaseConfigError(TUNNEL_NOT_OPENED, MQTT_TYPE);
     const user = config.user === undefined || config.user === "" ? undefined : config.user;
     const password = config.password === undefined || config.password === "" ? undefined : config.password;
 
@@ -227,7 +239,7 @@ export class MqttProvider extends BaseDatabaseProvider {
     // is the reader's informed consent, not a default.
     const plaintext = plaintextSecretRefusal({
       host,
-      tunnelled: config.sshTunnel?.enabled === true,
+      tunnelled: farEnd !== undefined,
       tls,
       hasSecret: password !== undefined,
     });
