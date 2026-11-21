@@ -1186,6 +1186,11 @@ export interface SavedQuery {
   name: string;
   query: string;
   description?: string;
+  /**
+   * The type id of the connection the query was saved from. A record read from storage may carry any value here: one
+   * saved by a newer Studio that shares the same storage, or one with no type at all. Studio keeps such a query as
+   * stored, lists it as unavailable, and never loads it into the editor.
+   */
   connectionType: DatabaseType;
   createdAt: Date;
   updatedAt: Date;

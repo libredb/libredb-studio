@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -67,6 +67,15 @@ import { useCatalogs } from "@/hooks/use-catalogs";
 import { catalogOfPath, declaresCatalogSessions } from "@/lib/db/object-kinds";
 import { sessionActivityFigure } from "@/lib/session-activity";
 import { CatalogSelect } from "@/components/catalog-select";
+import { ConnectionTypeLabel } from "@/components/connection-type-label";
+import { typeIdRefusal } from "@/lib/db/type-id";
+import {
+  savedConnectionNotice,
+  shownConnection,
+  unavailableConnectionNotice,
+  type UnavailableNotice,
+} from "@/lib/connection-availability";
+import { useToast } from "@/hooks/use-toast";
 
 /**
  * The per-row maintenance controls this tab can render, in display order, with the
@@ -277,18 +286,27 @@ function MaintenanceResultTable({ report }: { report: Pick<MaintenanceResult, "r
 }
 
 export function OperationsTab() {
-  // Only the operator's CHOICE is state; the list and the selected object are both
-  // calculated during render from it. `useAllConnections` is read here, above the
+  // The id of the connection shown is state (`shownId` below: the operator's pick, or the
+  // connection the tab opened on); the list and the selected object are both calculated
+  // during render from it. `useAllConnections` is read here, above the
   // hooks that take `selectedConnection` as an argument, because the derivation has
   // to happen before they run.
   const { connections } = useAllConnections();
-  const [selectedId, setSelectedId] = useState<string | null>(() => storage.getActiveConnectionId());
-  // The explicit length check rather than `?? connections[0] ?? null`:
-  // noUncheckedIndexedAccess is off, so `connections[0]` types as non-optional and a
-  // bare `??` chain would claim this can never be null while being undefined on an
-  // empty list.
-  const selectedConnection =
-    connections.find((c) => c.id === selectedId) ?? (connections.length > 0 ? connections[0] : null);
+  // The stored active connection is read once, at mount, and seeds the default.
+  const [savedId] = useState(() => storage.getActiveConnectionId());
+  // The id of the connection the tab shows, whether the operator picked it or the tab opened on it. It is held while
+  // that connection is listed, whatever its type: a later list that names no provider for it draws it as unavailable
+  // with the refusal (FND-1), so the tab never moves the maintenance target to another database by itself. Only a
+  // connection that leaves the list is replaced, by `defaultConnection`, which skips any whose type names no provider.
+  const [shownId, setShownId] = useState<string | null>(null);
+  const selectedConnection = shownConnection(connections, shownId, savedId);
+  // Adjusting state during render, as SavedQueries does for its refresh trigger: the id recorded is the one drawn.
+  if (selectedConnection !== null && selectedConnection.id !== shownId) setShownId(selectedConnection.id);
+  const selectedRefusal = selectedConnection === null ? null : typeIdRefusal(selectedConnection.type);
+  // The saved active connection, when the first list names no provider for its type, is not replaced in silence: the
+  // notice is decided once, on the first list, and raised by the effect below (FND-1).
+  const [savedNotice, setSavedNotice] = useState<UnavailableNotice | null | undefined>(undefined);
+  if (savedNotice === undefined && connections.length > 0) setSavedNotice(savedConnectionNotice(connections, savedId));
   const [operationLog, setOperationLog] = useState<OperationLogEntry[]>([]);
   const [confirmKill, setConfirmKill] = useState<ActiveSessionDetails | null>(null);
   const confirmKillReturnFocus = useReturnFocus();
@@ -304,6 +322,19 @@ export function OperationsTab() {
   // A per-row operation's dialog, keyed per opening the same way (spec 3.11).
   const [entityDialog, setEntityDialog] = useState<EntityDialogOpening | null>(null);
   const [entityDialogOpenings, setEntityDialogOpenings] = useState(0);
+  // A confirmation asks about the connection it was opened on. When the tab draws no sections, with no connection or
+  // with one whose type names no provider (FND-1), the dialogs are not drawn either, so each pending confirmation is
+  // dropped here, during render as for `shownId`: kept, it would open again over the next connection picked.
+  const drawsSections = selectedConnection !== null && selectedRefusal === null;
+  if (
+    !drawsSections &&
+    (confirmKill !== null || confirmGlobal !== null || typedDialog !== null || entityDialog !== null)
+  ) {
+    setConfirmKill(null);
+    setConfirmGlobal(null);
+    setTypedDialog(null);
+    setEntityDialog(null);
+  }
 
   /*
     The object an Explorer deep link named (`onOpenMaintenance("tables", object.path)` →
@@ -481,9 +512,23 @@ export function OperationsTab() {
   // operations run on one row (Milvus's Load and Release) draws no such section, so the rows say it themselves.
   const rowsSayReadOnly = readOnly && !anyMaintenance && declaredTableActions.length > 0;
 
+  const { toast } = useToast();
+
+  // The id makes a second run of this effect, as React's development mode does, replace the notice instead of adding one.
+  useEffect(() => {
+    if (savedNotice) toast({ ...savedNotice, variant: "destructive", id: "saved-connection-unavailable" });
+  }, [savedNotice, toast]);
+
   const handleConnectionChange = (id: string) => {
     const conn = connections.find((c) => c.id === id);
-    if (conn) setSelectedId(conn.id);
+    // A pick of a connection whose type names no provider is refused by name and changes
+    // nothing, with the notice the editor raises for the same pick (FND-1).
+    const refusal = conn === undefined ? null : typeIdRefusal(conn.type);
+    if (conn !== undefined && refusal !== null) {
+      toast({ ...unavailableConnectionNotice(conn, refusal.sentence), variant: "destructive" });
+      return;
+    }
+    if (conn) setShownId(conn.id);
     // A database picked for one connection is not a database of the next.
     setPickedCatalog(null);
   };
@@ -679,6 +724,58 @@ export function OperationsTab() {
     }
   };
 
+  // The connection picker, drawn above the sections, and alone above the states that draw no section: no connection can
+  // be selected, or the one shown names no provider. Refresh and the database select act on a connection that can be
+  // read, so they are drawn only with the sections.
+  const connectionPicker = (
+    <Select value={selectedConnection?.id || ""} onValueChange={handleConnectionChange}>
+      <SelectTrigger className="w-full sm:w-[280px] bg-panel border-hairline-strong text-fg-secondary">
+        <SelectValue placeholder="Select connection">
+          {selectedConnection && (
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 flex-shrink-0" />
+              <span className="truncate">{selectedConnection.name}</span>
+              <ConnectionTypeLabel type={selectedConnection.type} className="text-fg-muted hidden sm:inline" />
+            </div>
+          )}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {connections.map((conn) => (
+          <SelectItem key={conn.id} value={conn.id}>
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              <span>{conn.name}</span>
+              <ConnectionTypeLabel type={conn.type} />
+            </div>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+  const connectionSelector = (
+    <div className="flex items-center justify-between">
+      {connectionPicker}
+      <CatalogSelect
+        catalogs={catalogs}
+        value={catalog}
+        onChange={chooseCatalog}
+        className="h-9 w-full sm:w-[220px] ml-2 bg-panel border-hairline-strong text-fg-secondary"
+      />
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 text-fg-muted hover:text-fg-secondary"
+        // A refused database list holds every read, so Refresh lists the databases again (#1530).
+        onClick={catalogsError === null ? refresh : retryCatalogs}
+        disabled={loading}
+      >
+        <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
+        Refresh
+      </Button>
+    </div>
+  );
+
   if (connections.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center p-12 text-center">
@@ -689,52 +786,40 @@ export function OperationsTab() {
     );
   }
 
+  // Connections are listed, and a provider can open none of them (FND-1): the picker lists them as unavailable, and no
+  // section is drawn for a connection that was never read.
+  if (selectedConnection === null) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center">{connectionPicker}</div>
+        <div className="flex flex-col items-center justify-center p-12 text-center">
+          <Database className="h-12 w-12 text-fg-faint mb-4" />
+          <h3 className="text-lg font-semibold text-fg-secondary mb-2">No Connection Selected</h3>
+          <p className="text-fg-muted text-sm">No listed connection can be opened in this Studio.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // The connection shown names no provider since a later list (FND-1): its refusal is drawn in place of the sections,
+  // so no data read before it, and no action, is offered for it.
+  if (selectedRefusal !== null) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center">{connectionPicker}</div>
+        <div className="flex flex-col items-center justify-center p-12 text-center">
+          <Database className="h-12 w-12 text-fg-faint mb-4" />
+          <h3 className="text-lg font-semibold text-fg-secondary mb-2">Connection Unavailable</h3>
+          <p className="text-fg-muted text-sm">{selectedRefusal.sentence}</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Connection Selector */}
-      <div className="flex items-center justify-between">
-        <Select value={selectedConnection?.id || ""} onValueChange={handleConnectionChange}>
-          <SelectTrigger className="w-full sm:w-[280px] bg-panel border-hairline-strong text-fg-secondary">
-            <SelectValue placeholder="Select connection">
-              {selectedConnection && (
-                <div className="flex items-center gap-2">
-                  <Database className="h-4 w-4 flex-shrink-0" />
-                  <span className="truncate">{selectedConnection.name}</span>
-                  <span className="text-xs text-fg-muted hidden sm:inline">({selectedConnection.type})</span>
-                </div>
-              )}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {connections.map((conn) => (
-              <SelectItem key={conn.id} value={conn.id}>
-                <div className="flex items-center gap-2">
-                  <Database className="h-4 w-4" />
-                  <span>{conn.name}</span>
-                  <span className="text-xs text-muted-foreground">({conn.type})</span>
-                </div>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <CatalogSelect
-          catalogs={catalogs}
-          value={catalog}
-          onChange={chooseCatalog}
-          className="h-9 w-full sm:w-[220px] ml-2 bg-panel border-hairline-strong text-fg-secondary"
-        />
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 text-fg-muted hover:text-fg-secondary"
-          // A refused database list holds every read, so Refresh lists the databases again (#1530).
-          onClick={catalogsError === null ? refresh : retryCatalogs}
-          disabled={loading}
-        >
-          <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
-      </div>
+      {connectionSelector}
 
       {(catalogsError ?? error) && !data && (
         <div className="rounded-xl border border-danger-tint/20 bg-danger-tint/5 p-4 text-danger text-sm">

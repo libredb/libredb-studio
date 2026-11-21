@@ -213,6 +213,8 @@ Two components are described below and a claim true of one can be false of the o
 *   **Query Repository:** Save complex queries with custom names, detailed descriptions, and organizational tags.
 *   **Schema Filtering:** Automatically organizes queries based on the target database/schema to reduce clutter.
 *   **Team Knowledge Base:** Centralized storage for frequently used business logic and maintenance scripts.
+*   **Backup and Restore:** Export all writes every saved query to a JSON file, and Import JSON adds the queries of such a file after checking every entry.
+    An entry whose connection type names no provider in this Studio, or names none, is left out and named in a line the Saved tab shows, while the rest import; see [STORAGE.md](STORAGE.md#saved-queries-whose-type-this-studio-has-no-provider-for).
 
 ### 14. Enterprise Results Hub
 *   **Tabbed Workspace:** Professional interface managing Results, History, and Saved Queries in one unified panel.

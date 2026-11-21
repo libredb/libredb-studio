@@ -3287,6 +3287,11 @@ describe("OperationsTab", () => {
     cleanup();
 
     mockCatalogs = { catalogs: ["analytics", "shop"], catalog: "analytics" };
+    // Listed beside it, a connection whose type names no provider, whose pick is refused below (FND-1).
+    mockConnectionsList = [
+      ...mockConnectionsList,
+      { ...mockConnectionsList[0], id: "u", name: "Acme", type: "acmefoo" },
+    ];
     setMockSearchParams(
       new URLSearchParams([
         ["path", "shop"],
@@ -3306,6 +3311,15 @@ describe("OperationsTab", () => {
       fireEvent.keyDown(view!.getByRole("option", { name: "analytics" }), { key: "Enter" });
     });
     expect(mockSetCatalog).toHaveBeenCalledWith("analytics");
+    expect(lastMonitored?.catalog).toBe("analytics");
+
+    // A refused pick changes nothing: the picked database stays, rather than the linked one coming back.
+    await act(async () => {
+      fireEvent.keyDown(view!.getAllByRole("combobox")[0], { key: "ArrowDown" });
+    });
+    await act(async () => {
+      fireEvent.keyDown(view!.getByRole("option", { name: /^Acme/ }), { key: "Enter" });
+    });
     expect(lastMonitored?.catalog).toBe("analytics");
   });
 

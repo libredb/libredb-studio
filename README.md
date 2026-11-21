@@ -190,7 +190,7 @@ And nothing is held back. Single sign-on, ER diagrams, the AI features and the N
 - **Smart Autocomplete**: Schema-aware suggestions for tables, columns, and SQL keywords.
 - **Command Palette**: Quick access to tables, connections, saved queries, and actions with `Cmd/Ctrl+K`.
 - **Multi-Tab Workspace**: Handle parallel tasks with independent execution states.
-- **Saved Query Backups**: Export the complete saved-query library as JSON. Import validates the file, preserves query metadata and merges new entries, reporting duplicate IDs while keeping existing queries intact.
+- **Saved Query Backups**: Export the complete saved-query library as JSON. Import validates the file, preserves query metadata and merges new entries, reporting duplicate IDs while keeping existing queries intact; an entry whose connection type names no provider in this Studio is left out by name while the rest import ([details](docs/STORAGE.md#saved-queries-whose-type-this-studio-has-no-provider-for)).
 - **Duplicate Connections**: Open an independent `(copy)` of an editable saved connection in the connection editor, adjust its settings and save. Cancelling leaves the saved connections unchanged; administrator-managed connections cannot be duplicated.
 - **Visual EXPLAIN**: Graphical execution plans to identify performance bottlenecks.
 - **Interactive ER Diagrams**: Visual schema graph with real foreign key edges, cardinality labels, MiniMap navigation, table search/filter, compact mode, and PNG/SVG export. Automatic hierarchical layout powered by ELK.js.
