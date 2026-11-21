@@ -850,7 +850,8 @@ Three consequences worth stating plainly, because each is easy to assume the oth
    because SQLite resolves table names at prepare time). On the other forty-one it is **one**, the
    single `db.schema.read` call, except on SQL Server and libSQL, whose overlays supply `statistics` without a `catalogCapture`.
    SQL Server adds one statistics read and libSQL two, its `sqlite_stat1` availability probe first, each audited as a `db.schema.read` too and sent through `provider.query` only after the statement guard admits it as `sql.query.read`'s input contract would; a statement it refuses is audited as an input denial and never sent.
-   The other thirty-nine hold no statistics this run knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
+   The other thirty-nine hold no statistics this run knows how to read.
+   Since #789 an engine that declares object kinds costs **one more**, the
    object-surface reading above; an engine that declares none is charged nothing extra, because a read
    that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,
    and they are audited the same way. The ledger-reuse path saves the schema reading and deliberately
@@ -1245,6 +1246,7 @@ The fence is the command reader the provider reads with too (`readMongoCommand` 
 It is defence in depth: the user is the boundary, and the reader is the one refusal of what the server lets a reader run, such as the JavaScript operators.
 A read past the row budget is refused, never cut, with advice that names what that operation narrows with: a filter or `"options": {"limit": N}` for `find`, a `$match` or a `$limit` stage for `aggregate`.
 The byte budget counts each document's BSON bytes before it is decoded, while a `distinct` answers one reply that is decoded whole first (D370).
+Studio then checks the served rows' UTF-8 JSON bytes against the same budget, so a read whose BSON fitted can still be refused once decoded ([The boundary, layer by layer](./providers/mongodb.md#the-boundary-layer-by-layer), item 7).
 
 **`inspect_schema` reads the provider's own catalog, under `mongo.schema.read`.**
 It lists the bound database's collections and views, or describes one: its fields and the indexes it declares (`readCatalogReadOnly` in `src/lib/db/providers/document/mongodb/index.ts`).
@@ -2087,9 +2089,9 @@ at least the longest deadline it wants to serve, and a stream cut mid-run has no
 
 | Bound | Value | Counts |
 | --- | --- | --- |
-| `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. Handed to the provider, and on the read-only statement path Studio also stops waiting at it and refuses the statement in the time sentence, whatever the provider does. |
-| `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. The provider refuses past either, and Studio checks the answer again, each row's UTF-8 JSON bytes summed, before the run keeps it (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`). |
-| `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out — and a second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
+| `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. Handed to the provider, and on the read-only statement path Studio also stops waiting at it and refuses the statement in the time sentence. The wait includes the provider's connection checkout, so the sentence can also stand for a statement still queued for a connection, or for a connection that did not open in time; how such a call settled later is written to the server log. Stopping the wait does not stop the statement: it runs on until the engine's own deadline ends it, or to its end on an engine with none (the engine table in [MCP Limits](./MCP.md#limits)), and on DuckDB, which runs a connection's statements one at a time, the run's next statement waits behind it. A provider that reads on Studio's own thread (LibreDB, SQLite without its worker) cannot be stopped by Studio's timer, and its own check once the statement returns is the bound there. |
+| `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. The provider refuses past either, and on the read-only statement path (the model's statements, the composed catalog, plan and profile reads, and the hand-over) Studio checks the answer again, each row's UTF-8 JSON bytes summed, before the run keeps it (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`); an estimating plan is checked against the byte budget only, because its rows are the optimizer's operators. |
+| `maxConcurrentExecutions` | 1 | The loop is sequential, so the run waits on one statement at a time. It counts the executions Studio waits on: a statement Studio stopped waiting for at its timeout can still be running at the engine while the run goes on, up to the three repair attempts. A second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
 | One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
 | Repair attempts | 3 | Statements that failed **at the database**, and statements a provider's fence or the run read allowance refused before sending. |
 | Billed reads | 10,000 per run | Every budget-taking read the run hands a provider (statements, `readCatalogReadOnly`, the cluster readings), grounding and sampling statements included, on an engine that bills each read; carried across resumes; Firestore is the one engine that charges it. |
@@ -2183,6 +2185,7 @@ hide: **PostgreSQL preempts an overrunning statement (`SET LOCAL statement_timeo
 it by killing the child process that runs it.** An overrunning on-disk SQLite statement is killed
 mid-flight, so it stops at its timeout rather than running on; the in-memory database has no child
 to kill and is refused only once it returns. The rail states this where the meter is shown.
+Studio's own timer on the read-only statement path ends the wait, not the statement: the database time charged for a statement Studio stopped waiting for is the time it waited, while an engine with no deadline of its own (DuckDB among them) runs the statement on, and DuckDB's next statement on the run waits behind it.
 
 **The repair loop is bounded twice, and the two bounds are different.** A statement that already
 failed is never admitted again — keyed on a canonical fingerprint built from the shared SQL span

@@ -2743,8 +2743,9 @@ Four things about the PostgreSQL side of that layer are worth knowing here:
   cancel uses. Since #1145 `mapDatabaseError` recognises that phrasing (and `due to lock timeout`)
   **before** its cancellation branch and returns a `TimeoutError` carrying the engine's own text, so a
   budget timeout arrives as a `TimeoutError` on this engine like everywhere else — only
-  `pg_cancel_backend`'s `due to user request` stays a `QueryCancelledError`. The agent tool layer
-  treats the timeout as a repairable statement failure — narrowing the read is the repair that helps.
+  `pg_cancel_backend`'s `due to user request` stays a `QueryCancelledError`.
+  On the agent path Studio's own time refusal usually arrives first: its timer starts before the pool checkout, `BEGIN READ ONLY` and `SET LOCAL statement_timeout`, so the run reads `Read-only execution exceeded the time budget: no answer within <timeout>ms` (a `QueryError`, from `runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), and the engine's own cancel follows a few milliseconds later, once the statement has started.
+  The agent tool layer treats either timeout as a repairable statement failure: narrowing the read is the repair that helps.
   A run cancellation is still enforced by the run loop's own state rather than by that exception,
   because an operator cancel arriving mid-statement is repairable too (see [BACKLOG](../BACKLOG.md) B4
   for the residual: classification reads the message text rather than the `57014`/`55P03` SQLSTATE).

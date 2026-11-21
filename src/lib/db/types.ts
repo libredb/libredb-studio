@@ -1977,8 +1977,11 @@ export interface ProviderLabels {
  *
  * On the agent statement path, the hand-over replay and every MCP statement tool, core holds the provider's answer to
  * the same caps again (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`): it refuses an answer
- * past the row cap, sums each served row's UTF-8 JSON bytes against the byte cap, and stops waiting at the timeout or at
- * the caller's own deadline, so the caps hold whatever a provider does with them.
+ * past the row cap (an estimating plan excepted, whose rows are operators), sums each served row's UTF-8 JSON bytes
+ * against the byte cap, and stops waiting at the timeout or at the caller's own deadline. Stopping the wait does not
+ * stop the statement, and the wait includes the provider's connection checkout. A provider that runs its statement
+ * synchronously on the event loop (LibreDB, SQLite without its worker) returns only once the statement has ended, so
+ * no timer of core's bounds it, and its own check once the statement returns is the time bound there.
  *
  * The three caps bound one statement. `readAllowance` is the one bound that spans statements:
  * the billed-read allowance of the agent run, or of the single call (an MCP statement call, the
