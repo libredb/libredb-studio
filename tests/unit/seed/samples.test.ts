@@ -241,6 +241,16 @@ describe("targets and their admission", () => {
     }
   });
 
+  test("a target that spells a storage file in another Unicode normalization form is refused as target-reserved", () => {
+    // APFS ignores normalization, so on macOS the decomposed spelling is the storage file itself; it does not exist yet.
+    const dataDir = temporaryDirectory();
+    process.env.STORAGE_SQLITE_PATH = path.join(dataDir, "st\u00f6rage.db");
+    for (const name of ["sto\u0308rage.db", "STO\u0308RAGE.db-wal"]) {
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(dataDir, name);
+      expect([name, sampleAdmissions().map(({ refusal }) => refusal)]).toEqual([name, ["target-reserved", null]]);
+    }
+  });
+
   test.skipIf(process.platform === "win32")(
     "a storage database reached through a symlinked directory spelled in another case is target-reserved (POSIX)",
     () => {
@@ -319,6 +329,31 @@ describe("targets and their admission", () => {
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = spelled;
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = linked;
     expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
+  });
+
+  test("two targets that differ only in Unicode normalization form are one target on every OS, so the second is target-conflict", () => {
+    // APFS ignores normalization, so on macOS the precomposed and the decomposed u with diaeresis name one file.
+    const data = temporaryDirectory();
+    for (const [first, second] of [
+      ["m\u00fcller.db", "mu\u0308ller.db"],
+      ["Mu\u0308ller.db", "m\u00fcller.db-wal"],
+      [path.join("\u00dcber", "one.db"), path.join("u\u0308ber", "one.db")],
+    ]) {
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(data, first);
+      process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(data, second);
+      expect([first, second, sampleAdmissions().map(({ refusal }) => refusal)]).toEqual([
+        first,
+        second,
+        [null, "target-conflict"],
+      ]);
+    }
+  });
+
+  test("two targets whose names are different letters are both admitted, whatever their normalization form", () => {
+    const data = temporaryDirectory();
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(data, "m\u00fcller.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(data, "mo\u0308ller.db");
+    expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, null]);
   });
 
   test("letter case is folded one code point at a time, so the two lower-case sigmas are one letter", () => {

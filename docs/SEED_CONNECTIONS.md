@@ -1827,8 +1827,8 @@ So is a sample whose file a request finds lost after boot.
 | `copy-failed` | The copy into the data directory failed; the sentence names the error code, such as `EACCES` or `ENOSPC` |
 | `copy-defect` | The copy failed with an error the copy does not know, a defect, which the server log shows again as an unhandled rejection |
 | `target-unreadable` | The sample's path could not be checked before any copy; the sentence names the error code, such as `EACCES`, `ENOTDIR` or `ELOOP` |
-| `target-reserved` | The sample's path, or one of its sidecar files, names one of the server's own storage files, in any letter case |
-| `target-conflict` | The sample's path is another sample's, or differs from it only in letter case, so only the first one is created |
+| `target-reserved` | The sample's path, or one of its sidecar files, names one of the server's own storage files, in any letter case or Unicode normalization form |
+| `target-conflict` | The sample's path is another sample's, or differs from it only in letter case or Unicode normalization form, so only the first one is created |
 | `target-lost` | The sample's file was in place, and a later request could not find it or check its path; the sentence names the error code, such as `ENOENT` or `EACCES` |
 
 The sidebar shows each one as a row with the Unavailable marker, whose title is the sentence, and no action.
@@ -1882,10 +1882,11 @@ Hover the marker for the reason, and find the warning `Embedded sample unavailab
   The server log shows it as an unhandled rejection with its stack; report it with that log, and restart to try the copy again.
 - `target-unreadable`: the server could not check the sample's path.
   A `_PATH` override, or the data directory, names a directory the server cannot search (`EACCES`), a path through a regular file (`ENOTDIR`) or a symlink loop (`ELOOP`); correct it, then restart.
-- `target-reserved`: a `_PATH` override names the storage database, a sidecar of it or the bootstrap credentials file, in any letter case.
+- `target-reserved`: a `_PATH` override names the storage database, a sidecar of it or the bootstrap credentials file, in any letter case or Unicode normalization form.
   Point it elsewhere.
 - `target-conflict`: a `_PATH` override names another sample's file, its default one included, or a sidecar of it.
   Two paths that differ only in letter case conflict on every OS, because on macOS and Windows they name one file.
+  Two paths that differ only in Unicode normalization form, such as a precomposed `ü` against a `u` followed by a combining diaeresis (NFC against NFD), conflict on every OS too, because on macOS they name one file.
   Give each sample its own.
 - `target-lost`: the sample's file was in place, and a later request could not find it (`ENOENT`) or could not check its path (`EACCES`, `ENOTDIR`).
   Give the server back access to the path, or restart it, which copies a removed sample again.
