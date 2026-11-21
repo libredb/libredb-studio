@@ -310,7 +310,7 @@ describe("runReadOnlyStatement", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(warned).toHaveBeenCalledTimes(1);
       const [message, context] = warned.mock.calls[0];
-      expect(message).toBe("A read-only statement settled after Studio stopped waiting for it");
+      expect(message).toBe("A read-only call settled after Studio stopped waiting for it");
       expect(context).toMatchObject({ provider: "postgres", outcome: "failed", errorClass: "ConnectionError" });
       expect(typeof context?.settledAfterMs).toBe("number");
       expect(JSON.stringify(warned.mock.calls)).not.toContain(detail);
@@ -536,6 +536,32 @@ describe("runReadOnlyReading", () => {
       expect((error as QueryError).message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 5ms`);
       expect(holdUntilSettled).toHaveBeenCalledTimes(1);
       expect(holdUntilSettled.mock.calls[0][0]).toBe(pending);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  test("logs a read it stopped waiting for in the same line as a statement, naming neither a statement nor the read's label", async () => {
+    let resolve: (answer: Reading) => void = () => {};
+    const late = new Promise<Reading>((resolveLate) => {
+      resolve = resolveLate;
+    });
+    const statement = `usage ${crypto.randomUUID()}`;
+    const warned = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await settled(
+        runReadOnlyReading(
+          call(() => late, { type: "kubernetes", statement, budget: { ...budget, statementTimeoutMs: 1 } }),
+        ),
+      );
+      resolve(reading(1));
+      await late;
+      await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+      expect(warned).toHaveBeenCalledTimes(1);
+      const [message, context] = warned.mock.calls[0];
+      expect(message).toBe("A read-only call settled after Studio stopped waiting for it");
+      expect(context).toMatchObject({ provider: "kubernetes", outcome: "answered" });
+      expect(JSON.stringify(warned.mock.calls)).not.toContain(statement);
     } finally {
       warned.mockRestore();
     }

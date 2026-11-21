@@ -9,7 +9,8 @@
  * the caps are Studio's and not only a claim each provider makes. The agent's other budgeted reads, its catalog read
  * on an engine whose catalog is not a composed statement (`readCatalogReadOnly`) and the two cluster readings
  * (`readClusterUsage`, `readWorkloadProfile`), go through `runReadOnlyReading`, the same check over the rows the caller
- * serves from an answer that is not a `QueryResult`; `runReadOnlyStatement` is that function over `queryReadOnly`:
+ * serves from an answer that is not a `QueryResult`, and the same test holds each to its one agent caller;
+ * `runReadOnlyStatement` is that function over `queryReadOnly`:
  *
  * - **Rows.** An answer with more rows than `maxResultRows` is refused in the row sentence every provider raises
  *   (`rowBudgetSentence`). An estimating plan (`mode: "estimate-plan"`) is held to the byte budget only: its rows are
@@ -196,14 +197,14 @@ function withinStatementTimeout<T>(
 }
 
 /**
- * One server log line for a call this module stopped waiting for, once it settles: the connection type, whether it
- * answered or failed, the failure's class and how long after the call started it settled. A late failure can be the
- * real cause the time refusal stood in for (a connection that never opened, a pool with no free client), so it is
- * recorded rather than dropped. The statement and the error's message are never written: core has no redaction of its
- * own, and the class names the kind of failure.
+ * One server log line for a call this module stopped waiting for, once it settles, worded for a statement and a
+ * reading alike: the connection type, whether it answered or failed, the failure's class and how long after the call
+ * started it settled. A late failure can be the real cause the time refusal stood in for (a connection that never
+ * opened, a pool with no free client), so it is recorded rather than dropped. The statement, a reading's label and the
+ * error's message are never written: core has no redaction of its own, and the class names the kind of failure.
  */
 function logLateSettlement(answered: Promise<unknown>, type: DatabaseType, startedAt: number): void {
-  const line = "A read-only statement settled after Studio stopped waiting for it";
+  const line = "A read-only call settled after Studio stopped waiting for it";
   answered.then(
     () => logger.warn(line, { provider: type, outcome: "answered", settledAfterMs: Date.now() - startedAt }),
     (error: unknown) =>
