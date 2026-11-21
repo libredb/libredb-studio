@@ -17,6 +17,11 @@ let listedConnections: DatabaseConnection[] = [];
 let savedActiveId: string | null = null;
 const metadataConnections: (DatabaseConnection | null)[] = [];
 const monitoredConnections: (DatabaseConnection | null)[] = [];
+// What the provider declares and what the monitoring read answers; a case that opens a confirmation sets both.
+let declaredCapabilities: Record<string, unknown> = {};
+let monitoredData: Record<string, unknown> | null = null;
+const killedPids: (number | string)[] = [];
+const maintenanceRuns: unknown[][] = [];
 
 mock.module("@/hooks/use-all-connections", () => ({
   useAllConnections: () => ({ connections: listedConnections, loading: false }),
@@ -25,7 +30,11 @@ mock.module("@/hooks/use-all-connections", () => ({
 mock.module("@/hooks/use-provider-metadata", () => ({
   useProviderMetadata: (connection: DatabaseConnection | null) => {
     metadataConnections.push(connection);
-    return { metadata: connection === null ? null : { capabilities: {}, labels: {} }, isLoading: false, error: null };
+    return {
+      metadata: connection === null ? null : { capabilities: declaredCapabilities, labels: {} },
+      isLoading: false,
+      error: null,
+    };
   },
 }));
 
@@ -33,12 +42,18 @@ mock.module("@/hooks/use-monitoring-data", () => ({
   useMonitoringData: (connection: DatabaseConnection | null) => {
     monitoredConnections.push(connection);
     return {
-      data: null,
+      data: connection === null ? null : monitoredData,
       loading: false,
       error: null,
       refresh: () => {},
-      killSession: async () => true,
-      runMaintenanceOutcome: async () => ({ success: true }),
+      killSession: async (pid: number | string) => {
+        killedPids.push(pid);
+        return true;
+      },
+      runMaintenanceOutcome: async (...args: unknown[]) => {
+        maintenanceRuns.push(args);
+        return { success: true };
+      },
       maintenanceReport: null,
       previewMaintenance: async () => null,
     };
@@ -88,6 +103,10 @@ const handed = (calls: (DatabaseConnection | null)[]) => calls.map((connection) 
 beforeEach(() => {
   metadataConnections.length = 0;
   monitoredConnections.length = 0;
+  killedPids.length = 0;
+  maintenanceRuns.length = 0;
+  declaredCapabilities = {};
+  monitoredData = null;
   mockToastError.mockClear();
 });
 
@@ -254,5 +273,52 @@ describe("the Operations tab and a connection whose type names no provider (FND-
     rerender(<OperationsTab />);
 
     expect(within(connectionTrigger()).getByTitle(unknownTypeSentence("acmefoo")).className).not.toContain("hidden");
+  });
+  // The refusal is drawn in place of the sections, and the confirmations with them: a confirmation still open when
+  // the operator picks another connection would ask about, and send to, the connection just picked.
+  const SESSION = {
+    pid: 4242,
+    user: "app",
+    database: "orders",
+    state: "active",
+    query: "SELECT 1",
+    duration: "1s",
+    durationMs: 1000,
+  };
+  const MAINTAINED = { supportsMaintenance: true, maintenanceOperations: ["kill", "reindex"] };
+
+  test("a Terminate confirmation open when the shown connection is re-listed unavailable is closed, not reopened over the next pick", () => {
+    declaredCapabilities = MAINTAINED;
+    monitoredData = { activeSessions: [SESSION], tables: [] };
+    const { getByRole, queryByText, openConnections, connectionTrigger, rerender } = renderTab([P, P2], "p");
+    fireEvent.click(getByRole("button", { name: "Terminate session 4242" }));
+    expect(queryByText("Terminate Session?")).not.toBeNull();
+
+    listedConnections = [{ ...P, type: "acmefoo" } as unknown as DatabaseConnection, P2];
+    rerender(<OperationsTab />);
+    expect(queryByText("Connection Unavailable")).not.toBeNull();
+    openConnections();
+    fireEvent.keyDown(getByRole("option", { name: /^Billing/ }), { key: "Enter" });
+
+    expect(queryByText("Terminate Session?")).toBeNull();
+    expect(connectionTrigger().textContent).toContain("Billing");
+    expect(killedPids).toEqual([]);
+  });
+
+  test("a whole-database confirmation open when the shown connection is re-listed unavailable is closed, not reopened over the next pick", () => {
+    declaredCapabilities = MAINTAINED;
+    monitoredData = { activeSessions: [], tables: [] };
+    const { getByRole, queryByRole, openConnections, connectionTrigger, rerender } = renderTab([P, P2], "p");
+    fireEvent.click(getByRole("button", { name: "Run Reindex" }));
+    expect(queryByRole("alertdialog")).not.toBeNull();
+
+    listedConnections = [{ ...P, type: "acmefoo" } as unknown as DatabaseConnection, P2];
+    rerender(<OperationsTab />);
+    openConnections();
+    fireEvent.keyDown(getByRole("option", { name: /^Billing/ }), { key: "Enter" });
+
+    expect(queryByRole("alertdialog")).toBeNull();
+    expect(connectionTrigger().textContent).toContain("Billing");
+    expect(maintenanceRuns).toEqual([]);
   });
 });

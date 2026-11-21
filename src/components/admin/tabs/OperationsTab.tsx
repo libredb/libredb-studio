@@ -286,8 +286,9 @@ function MaintenanceResultTable({ report }: { report: Pick<MaintenanceResult, "r
 }
 
 export function OperationsTab() {
-  // Only the operator's CHOICE is state; the list and the selected object are both
-  // calculated during render from it. `useAllConnections` is read here, above the
+  // The id of the connection shown is state (`shownId` below: the operator's pick, or the
+  // connection the tab opened on); the list and the selected object are both calculated
+  // during render from it. `useAllConnections` is read here, above the
   // hooks that take `selectedConnection` as an argument, because the derivation has
   // to happen before they run.
   const { connections } = useAllConnections();
@@ -321,6 +322,19 @@ export function OperationsTab() {
   // A per-row operation's dialog, keyed per opening the same way (spec 3.11).
   const [entityDialog, setEntityDialog] = useState<EntityDialogOpening | null>(null);
   const [entityDialogOpenings, setEntityDialogOpenings] = useState(0);
+  // A confirmation asks about the connection it was opened on. When the tab draws no sections, with no connection or
+  // with one whose type names no provider (FND-1), the dialogs are not drawn either, so each pending confirmation is
+  // dropped here, during render as for `shownId`: kept, it would open again over the next connection picked.
+  const drawsSections = selectedConnection !== null && selectedRefusal === null;
+  if (
+    !drawsSections &&
+    (confirmKill !== null || confirmGlobal !== null || typedDialog !== null || entityDialog !== null)
+  ) {
+    setConfirmKill(null);
+    setConfirmGlobal(null);
+    setTypedDialog(null);
+    setEntityDialog(null);
+  }
 
   /*
     The object an Explorer deep link named (`onOpenMaintenance("tables", object.path)` →
