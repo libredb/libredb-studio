@@ -2,11 +2,13 @@ import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { hasCodeCharacter } from "@/lib/sql/spans";
 
 /**
- * The refusal the DuckDB provider makes before the engine reads a statement, read under the DuckDB grammar row so the
- * statement DuckDB parses is the one Studio's confirmation gate and row limiter read. Pure: no I/O, no logger.
+ * The refusal the DuckDB provider makes before the engine reads a statement, on `query` and `queryReadOnly` alike, read
+ * under the DuckDB grammar row so the statement DuckDB parses is the one Studio's readers check first: the confirmation
+ * gate and the row limiter on the editor path, the row limiter and the read-only statement guard on the agent and MCP
+ * path. The sentence names no one path for that reason. Pure: no I/O, no logger.
  */
 export const DUCKDB_UNICODE_SPACE_SENTENCE =
-  "This statement holds a non-breaking or other Unicode space outside a string. DuckDB reads it as a space and Studio's editor does not, so the confirmation prompt and the row limit could read the statement differently; replace it with an ordinary space.";
+  "This statement holds a non-breaking or other Unicode space outside a string. DuckDB reads it as a space and Studio's readers do not, so what Studio checks before it runs could differ from what DuckDB runs; replace it with an ordinary space.";
 
 const DUCKDB_GRAMMAR = resolveSqlGrammar("duckdb");
 /**
