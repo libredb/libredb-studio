@@ -187,6 +187,13 @@ export const REGISTRIES: readonly Listed[] = [
     reason: "an inbound mapping of a container image's env names, owned by the discovery spec",
   },
   {
+    path: "src/lib/seed/samples.ts",
+    declaration: "SAMPLES",
+    count: 4,
+    reason:
+      "the built-in sample databases, a core-owned Studio feature: one row per engine that ships a sample, in listing order",
+  },
+  {
     path: "src/lib/sql/fence-tags.ts",
     declaration: "ENGINE_FENCE_TAGS",
     count: 1,

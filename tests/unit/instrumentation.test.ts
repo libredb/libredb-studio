@@ -4,7 +4,8 @@ import * as os from "os";
 import * as path from "path";
 import { register } from "@/instrumentation";
 import { logger } from "@/lib/logger";
-import { getSqliteSampleSeedState, setSqliteSampleSeedState } from "@/lib/seed/sqlite-sample";
+import { getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
+import { getSampleSeedState, resetSampleSeedStates, SAMPLES, unavailableSentence } from "@/lib/seed/samples";
 import { installUncaughtExceptionExit, resetUncaughtExceptionExit } from "@/lib/uncaught-exception";
 import { standInProcess } from "../helpers/uncaught-exception-stand-in";
 
@@ -14,7 +15,8 @@ const ENV_KEYS = [
   "LIBREDB_EMBEDDED_SAMPLE_PATH",
   "SQLITE_EMBEDDED_SAMPLE",
   "SQLITE_EMBEDDED_SAMPLE_PATH",
-  "SQLITE_EMBEDDED_SAMPLE_TEMPLATE",
+  "SEED_ASSETS_DIR",
+  "LIBREDB_ENABLED_PROVIDERS",
   "STORAGE_SQLITE_PATH",
   "JWT_SECRET",
   "ADMIN_PASSWORD",
@@ -32,7 +34,12 @@ function setNodeEnv(value: string | undefined): void {
   else env.NODE_ENV = value;
 }
 
-/** The sqlite sample seeds fire-and-forget; poll for its observable effects. */
+/** No sample has a seed state: register() never started seeding. */
+function noSampleStarted(): boolean {
+  return [...SAMPLES.values()].every((spec) => getSampleSeedState(spec.seedId) === undefined);
+}
+
+/** The samples seed fire-and-forget; poll for their observable effects. */
 async function waitFor(cond: () => boolean, timeoutMs = 3000): Promise<void> {
   const start = Date.now();
   while (!cond()) {
@@ -56,7 +63,7 @@ describe("instrumentation register()", () => {
     // Keep the boot banner out of the test output; the banner tests below opt
     // back in explicitly.
     process.env.LIBREDB_NO_BANNER = "1";
-    setSqliteSampleSeedState("idle");
+    resetSampleSeedStates();
     // register() installs the uncaught-exception exit once per process; installed on a stand-in here first, its own
     // install attaches nothing, so no test in this file binds the real process.exit. The tests about that install
     // reset this one first.
@@ -64,33 +71,30 @@ describe("instrumentation register()", () => {
   });
 
   afterEach(async () => {
-    // Drain the fire-and-forget seed before anything it reads is taken away.
+    // Drain the fire-and-forget copies before anything they read is taken away.
     //
-    // register() returns while the sqlite copy is still running, and not every
-    // test above awaits it - "seeds the sample file on a nodejs boot" is about
-    // the libredb sample and leaves a sqlite seed in flight. That copy logs
-    // when it lands, so a later test's logger spy catches a line no call of
-    // its own produced: measured on 2026-09-17 as a red Windows leg (CI run
-    // 35172616920) where "SQLite embedded sample seed completed" reached the
-    // fast-path test, which asserts exactly that no such info line appears.
-    // Linux stayed green only because the stray line landed one test earlier,
-    // where nothing was watching info.
+    // register() returns while the sample copies are still running, and not
+    // every test above awaits them. A copy logs when it lands, so a later
+    // test's logger spy would catch a line no call of its own produced:
+    // measured on 2026-09-17 as a red Windows leg (CI run 35172616920) where a
+    // copy's completion line reached the fast-path test, which asserts exactly
+    // that no such info line appears.
     //
-    // Draining on the state is enough to contain the log: instrumentation.ts
-    // sets the terminal state and logs in the same synchronous step, so a
-    // state that is no longer "seeding" means the line has already been
-    // emitted into the test that started it. The cleanup runs in `finally`,
-    // because a drain that times out must not leave the next test to fail on
-    // this one's env and state.
+    // Draining on pendingSeeds is enough to contain the log: the sample
+    // service sets each terminal state and logs in the same synchronous step,
+    // so an empty list means every line has already been emitted into the
+    // test that started it. The cleanup runs in `finally`, because a drain
+    // that times out must not leave the next test to fail on this one's env
+    // and state.
     try {
-      await waitFor(() => getSqliteSampleSeedState() !== "seeding");
+      await waitFor(() => getPendingSeeds().length === 0);
     } finally {
       for (const key of ENV_KEYS) {
         if (orig[key] === undefined) delete process.env[key];
         else process.env[key] = orig[key];
       }
       fs.rmSync(tmpDir, { recursive: true, force: true });
-      setSqliteSampleSeedState("idle");
+      resetSampleSeedStates();
       resetUncaughtExceptionExit();
     }
   });
@@ -198,7 +202,7 @@ describe("instrumentation register()", () => {
     expect(fs.existsSync(path.join(tmpDir, "auth-bootstrap.json"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
-    expect(getSqliteSampleSeedState()).toBe("idle");
+    expect(noSampleStarted()).toBe(true);
   });
 
   test("hard-exits before seeding when JWT_SECRET is set but too short (#227)", async () => {
@@ -228,7 +232,7 @@ describe("instrumentation register()", () => {
     expect(banner).toContain("JWT_SECRET is too short");
     // register() must abandon the rest of boot: no sample seeding is started,
     // and the short secret is left exactly as the operator set it.
-    expect(getSqliteSampleSeedState()).toBe("idle");
+    expect(noSampleStarted()).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
     expect(process.env.JWT_SECRET).toBe("x".repeat(24));
@@ -265,7 +269,7 @@ describe("instrumentation register()", () => {
     expect(exitCalls).toEqual([1]);
     expect(banner).toContain("NODE_EXTRA_CA_CERTS");
     // register() abandons the rest of boot: no sample is seeded and no welcome is printed.
-    expect(getSqliteSampleSeedState()).toBe("idle");
+    expect(noSampleStarted()).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
     expect(output).not.toContain("Star the project");
@@ -304,7 +308,7 @@ describe("instrumentation register()", () => {
     expect(banner).toContain("GOVERNANCE_POSTGRES_URL is not set");
     expect(banner).toContain("GOVERNANCE_INSTANCE_ID is not set");
     // register() abandons the rest of boot: no sample is seeded and no welcome is printed.
-    expect(getSqliteSampleSeedState()).toBe("idle");
+    expect(noSampleStarted()).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
     expect(output).not.toContain("Star the project");
@@ -342,84 +346,103 @@ describe("instrumentation register()", () => {
     expect(banner).toContain(
       "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT and KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO are both unset",
     );
-    expect(getSqliteSampleSeedState()).toBe("idle");
+    expect(noSampleStarted()).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(output).not.toContain("Star the project");
   });
 
-  test("seeds the sample file on a nodejs boot", async () => {
+  test("starts copying both samples without blocking boot", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.AUTH_BOOTSTRAP = "off";
-    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample.libredb");
+    const sqliteFile = path.join(tmpDir, "sample-employees.db");
+    const libredbFile = path.join(tmpDir, "sample.libredb");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = sqliteFile;
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbFile;
 
-    await register();
+    await register(); // must resolve without waiting for either copy
 
-    expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(true);
-    expect(fs.statSync(path.join(tmpDir, "sample.libredb")).size).toBeGreaterThan(0);
+    // Non-blocking proof: a copy needs event-loop turns this synchronous check does not grant, so right after
+    // register() resolves both copies MUST still be in flight. If boot ever waits for a copy, this fails.
+    expect(getPendingSeeds()).toEqual(["sqlite-embedded-sample", "libredb-embedded-sample"]);
+    expect(fs.existsSync(sqliteFile)).toBe(false);
+    expect(fs.existsSync(libredbFile)).toBe(false);
+
+    await waitFor(() => getPendingSeeds().length === 0);
+    expect(getSampleSeedState("sqlite-embedded-sample")).toEqual({ phase: "done" });
+    expect(getSampleSeedState("libredb-embedded-sample")).toEqual({ phase: "done" });
+    expect(fs.statSync(sqliteFile).size).toBe(SAMPLES.get("sqlite")?.bytes ?? -1);
+    expect(fs.statSync(libredbFile).size).toBe(SAMPLES.get("libredb")?.bytes ?? -1);
   });
 
-  test("seeds the sqlite sample asynchronously without blocking boot", async () => {
+  test("a fast-path boot stays quiet: one debug line per present sample, no info line", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.AUTH_BOOTSTRAP = "off";
-    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
-    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample-employees.db");
-
-    await register(); // must resolve without waiting for the copy
-
-    // Non-blocking proof: the copy needs event-loop turns this synchronous
-    // check does not grant — right after register() resolves the seed MUST
-    // still be in flight. If the seeder ever regresses to sync fs calls, the
-    // state is already "done" here and this fails.
-    expect(getSqliteSampleSeedState()).toBe("seeding");
-    expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
-
-    await waitFor(() => fs.existsSync(path.join(tmpDir, "sample-employees.db")));
-    await waitFor(() => getSqliteSampleSeedState() === "done");
-    expect(fs.statSync(path.join(tmpDir, "sample-employees.db")).size).toBeGreaterThan(0);
-  });
-
-  test("fast-path boot (sample already present) stays quiet: one debug line, no info pair", async () => {
-    process.env.NEXT_RUNTIME = "nodejs";
-    process.env.AUTH_BOOTSTRAP = "off";
-    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
-    const samplePath = path.join(tmpDir, "sample-employees.db");
-    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = samplePath;
-    fs.writeFileSync(samplePath, "already seeded on a previous boot");
+    const sqliteFile = path.join(tmpDir, "sample-employees.db");
+    const libredbFile = path.join(tmpDir, "sample.libredb");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = sqliteFile;
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbFile;
+    fs.writeFileSync(sqliteFile, "already seeded on a previous boot");
+    fs.writeFileSync(libredbFile, "already seeded on a previous boot");
 
     const info = spyOn(logger, "info").mockImplementation(() => {});
     const debug = spyOn(logger, "debug").mockImplementation(() => {});
     try {
       await register();
-      await waitFor(() => getSqliteSampleSeedState() === "done");
+      await waitFor(() => getPendingSeeds().length === 0);
 
-      const infoMessages = info.mock.calls.map((c) => String(c[0]));
-      expect(infoMessages.some((m) => m.includes("SQLite embedded sample"))).toBe(false);
-      expect(debug.mock.calls.map((c) => String(c[0]))).toContain("SQLite embedded sample already present");
+      expect(info.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("Embedded sample"))).toEqual([]);
+      expect(
+        debug.mock.calls
+          .filter((c) => c[0] === "Embedded sample already present")
+          .map((c) => String(c[1]?.seedId))
+          .sort(),
+      ).toEqual(["libredb-embedded-sample", "sqlite-embedded-sample"]);
     } finally {
       info.mockRestore();
       debug.mockRestore();
     }
-    expect(fs.readFileSync(samplePath, "utf8")).toBe("already seeded on a previous boot");
+    expect(fs.readFileSync(sqliteFile, "utf8")).toBe("already seeded on a previous boot");
+    expect(fs.readFileSync(libredbFile, "utf8")).toBe("already seeded on a previous boot");
   });
 
-  test("marks the sqlite seed failed and keeps boot alive when the template is missing", async () => {
+  test("a copy that fails is listed unavailable, logged once, and boot continues", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.AUTH_BOOTSTRAP = "off";
-    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample-employees.db");
-    process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE = path.join(tmpDir, "no-such-template.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample.libredb");
+    const emptyAssets = path.join(tmpDir, "no-assets");
+    fs.mkdirSync(emptyAssets);
+    process.env.SEED_ASSETS_DIR = emptyAssets;
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
-      await expect(register()).resolves.toBeUndefined();
-      await waitFor(() => getSqliteSampleSeedState() === "failed");
-      expect(warn.mock.calls.map((c) => String(c[0]))).toContain("SQLite embedded sample seeding skipped");
+      await register();
+      await waitFor(() => getPendingSeeds().length === 0);
+      const unavailable = (c: unknown[]) => c[0] === "Embedded sample unavailable";
+      expect(
+        warn.mock.calls
+          .filter(unavailable)
+          .map(
+            (c) => `${String((c[1] as { seedId?: string })?.seedId)} ${String((c[1] as { reason?: string })?.reason)}`,
+          )
+          .sort(),
+      ).toEqual(["libredb-embedded-sample asset-missing", "sqlite-embedded-sample asset-missing"]);
+      const sentence = unavailableSentence("asset-missing");
+      expect(getUnavailableSamples(["admin"])).toEqual([
+        { seedId: "sqlite-embedded-sample", name: "Sample (Employees)", reason: "asset-missing", sentence },
+        { seedId: "libredb-embedded-sample", name: "Sample (LibreDB)", reason: "asset-missing", sentence },
+      ]);
+      // Listing again logs nothing: each failure was logged once, when it happened.
+      const logged = warn.mock.calls.length;
+      getUnavailableSamples(["admin"]);
+      expect(warn.mock.calls.length).toBe(logged);
     } finally {
       warn.mockRestore();
     }
     expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
   });
 
-  test("prints the boot banner even when the sqlite sample is disabled", async () => {
+  test("prints the boot banner even when both samples are disabled", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.AUTH_BOOTSTRAP = "off";
     process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
@@ -478,11 +501,19 @@ describe("instrumentation register()", () => {
       fs.mkdirSync(lockedDir);
       fs.chmodSync(lockedDir, 0o500);
       process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(lockedDir, "sample.libredb");
+      process.env.SQLITE_EMBEDDED_SAMPLE = "false";
       const warn = spyOn(logger, "warn").mockImplementation(() => {});
       try {
-        await expect(register()).resolves.toBeUndefined();
-        expect(warn).toHaveBeenCalled();
-        expect(String(warn.mock.calls[0]?.[0])).toContain("seeding skipped");
+        await register();
+        await waitFor(() => getPendingSeeds().length === 0);
+        expect(warn.mock.calls.map((c) => [c[0], c[1]?.seedId, c[1]?.reason])).toEqual([
+          ["Embedded sample unavailable", "libredb-embedded-sample", "copy-failed"],
+        ]);
+        expect(getSampleSeedState("libredb-embedded-sample")).toEqual({
+          phase: "failed",
+          reason: "copy-failed",
+          sentence: unavailableSentence("copy-failed", "EACCES"),
+        });
       } finally {
         warn.mockRestore();
         fs.chmodSync(lockedDir, 0o700);

@@ -24,7 +24,7 @@ import { GET } from "@/app/api/connections/managed/route";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { getSession } from "@/lib/auth";
-import { setSqliteSampleSeedState, SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
+import { resetSampleSeedStates, setSampleSeedState, unavailableSentence } from "@/lib/seed/samples";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
@@ -410,14 +410,56 @@ describe("GET /api/connections/managed", () => {
     });
   });
 
-  it("advertises the sqlite sample while its async seed is in flight", async () => {
-    setSqliteSampleSeedState("seeding");
+  it("pendingSeeds lists both samples while they copy", async () => {
+    setSampleSeedState("sqlite-embedded-sample", { phase: "seeding" });
+    setSampleSeedState("libredb-embedded-sample", { phase: "seeding" });
     try {
       const res = await GET();
       const data = await res.json();
-      expect(data.pendingSeeds).toEqual([SQLITE_SAMPLE_SEED_ID]);
+      expect(data.pendingSeeds).toEqual(["sqlite-embedded-sample", "libredb-embedded-sample"]);
+      expect(data.unavailableSamples).toEqual([]);
     } finally {
-      setSqliteSampleSeedState("idle");
+      resetSampleSeedStates();
+    }
+  });
+
+  it("answers unavailableSamples for the session's roles", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-unavailable-samples-"));
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample-employees.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample.libredb");
+    const failed = {
+      phase: "failed",
+      reason: "asset-missing",
+      sentence: unavailableSentence("asset-missing"),
+    } as const;
+    setSampleSeedState("sqlite-embedded-sample", failed);
+    setSampleSeedState("libredb-embedded-sample", failed);
+    try {
+      const admin = await (await GET()).json();
+      expect(admin.unavailableSamples).toEqual([
+        {
+          seedId: "sqlite-embedded-sample",
+          name: "Sample (Employees)",
+          reason: "asset-missing",
+          sentence: failed.sentence,
+        },
+        {
+          seedId: "libredb-embedded-sample",
+          name: "Sample (LibreDB)",
+          reason: "asset-missing",
+          sentence: failed.sentence,
+        },
+      ]);
+      expect(admin.connections.map((c: { seedId: string }) => c.seedId)).not.toContain("sqlite-embedded-sample");
+
+      (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "user", username: "user@test.com" }));
+      const user = await (await GET()).json();
+      expect(user.unavailableSamples.map((s: { seedId: string }) => s.seedId)).toEqual(["libredb-embedded-sample"]);
+    } finally {
+      resetSampleSeedStates();
+      delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+      delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -483,7 +525,7 @@ describe("GET /api/connections/managed", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
 
-      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds"]);
+      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds", "unavailableSamples"]);
       expect(data.connections.map((c: { seedId: string }) => c.seedId)).toEqual([
         "admin-only",
         "everyone",
@@ -552,10 +594,10 @@ describe("GET /api/connections/managed", () => {
       expect(JSON.stringify(data)).not.toContain(CANARY);
     });
 
-    it("keeps the response shape: connections, cacheHint and pendingSeeds, nothing else", async () => {
+    it("keeps the response shape: connections, cacheHint, pendingSeeds and unavailableSamples, nothing else", async () => {
       const res = await GET();
       const data = await res.json();
-      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds"]);
+      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds", "unavailableSamples"]);
       expect(data.cacheHint).toBe(60000);
       expect(data.pendingSeeds).toEqual([]);
     });
@@ -739,7 +781,7 @@ describe("GET /api/connections/managed under governance", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
 
-      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds"]);
+      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds", "unavailableSamples"]);
       expect(data.cacheHint).toBe(10000);
       expect(data.pendingSeeds).toEqual([]);
       // By name, the admin's own two and not the connection granted to another subject.

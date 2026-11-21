@@ -22,11 +22,12 @@ import { logger } from "@/lib/logger";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
-import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
-import { SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { LITERAL_SEED_FILE } from "@/lib/types";
 import { resetVaultCache } from "@/lib/seed/vault-client";
+
+const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
+const SAMPLE_SEED_ID = "libredb-embedded-sample";
 
 /** A seed file as a platform writes it: JSON, managed, a `${NAME}` user, a `${vault:...}` password and an admin-only `${JWT_SECRET}` user. */
 const FIXTURE = path.resolve(import.meta.dir, "../../fixtures/seed-connections/literal-values-config.json");

@@ -13,14 +13,15 @@ import {
 } from "@/lib/seed";
 import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
 import { getDiscoveredConnections, resetDiscoveryCache } from "@/lib/seed/discovery-loader";
-import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
 import { DEFAULT_SEED_CONFIG_PATH } from "@/lib/seed/sources/file";
-import { SQLITE_SAMPLE_SEED_ID, setSqliteSampleSeedState } from "@/lib/seed/sqlite-sample";
+import { resetSampleSeedStates, setSampleSeedState } from "@/lib/seed/samples";
 import { logger } from "@/lib/logger";
 import { LITERAL_SEED_FILE } from "@/lib/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/seed-connections");
+const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
+const SAMPLE_SEED_ID = "libredb-embedded-sample";
 
 describe("seed/index orchestrator", () => {
   beforeEach(() => {
@@ -456,7 +457,7 @@ describe("seed/index under governance", () => {
     }
     resetCache();
     resetDiscoveryCache();
-    setSqliteSampleSeedState("idle");
+    resetSampleSeedStates();
     scratch = mkdtempSync(path.join(tmpdir(), "libredb-seed-index-governance-"));
   });
 
@@ -468,7 +469,7 @@ describe("seed/index under governance", () => {
     }
     resetCache();
     resetDiscoveryCache();
-    setSqliteSampleSeedState("idle");
+    resetSampleSeedStates();
     rmSync(scratch, { recursive: true, force: true });
   });
 
@@ -508,7 +509,7 @@ describe("seed/index under governance", () => {
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbSample;
     const discovery = writeDiscoveryExport([postgresService("pg", "discovered-secret")]);
     process.env.SEED_DISCOVERY_PATH = discovery.path;
-    setSqliteSampleSeedState("seeding");
+    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     const open = spyOn(fsPromises, "open");
     const existsSync = spyOn(fs, "existsSync");

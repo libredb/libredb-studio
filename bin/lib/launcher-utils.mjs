@@ -50,8 +50,7 @@ export function mcpUrlFor(hostname, port) {
  * - SEED_CONFIG_PATH: src/lib/seed/sources/file.ts
  * - SEED_DISCOVERY_PATH: src/lib/seed/discovery-loader.ts
  * - STORAGE_SQLITE_PATH: src/lib/data-dir.ts and the sqlite storage provider
- * - SQLITE_EMBEDDED_SAMPLE_PATH, SQLITE_EMBEDDED_SAMPLE_TEMPLATE: src/lib/seed/sqlite-sample.ts
- * - LIBREDB_EMBEDDED_SAMPLE_PATH: src/lib/seed/libredb-sample.ts
+ * - SQLITE_EMBEDDED_SAMPLE_PATH, LIBREDB_EMBEDDED_SAMPLE_PATH, SEED_ASSETS_DIR: src/lib/seed/samples.ts
  * - VAULT_K8S_TOKEN_PATH: src/lib/seed/vault-client.ts
  * - WORKFLOW_LOCAL_DATA_DIR, AGENT_MODEL_TUNING_PATH: src/lib/agent/config.ts
  * - ORACLE_CLIENT_LIB_DIR: src/lib/db/providers/sql/oracle/index.ts (Thick mode libDir)
@@ -72,8 +71,8 @@ export const PATH_VARIABLES = Object.freeze([
   "SEED_DISCOVERY_PATH",
   "STORAGE_SQLITE_PATH",
   "SQLITE_EMBEDDED_SAMPLE_PATH",
-  "SQLITE_EMBEDDED_SAMPLE_TEMPLATE",
   "LIBREDB_EMBEDDED_SAMPLE_PATH",
+  "SEED_ASSETS_DIR",
   "VAULT_K8S_TOKEN_PATH",
   "WORKFLOW_LOCAL_DATA_DIR",
   "AGENT_MODEL_TUNING_PATH",

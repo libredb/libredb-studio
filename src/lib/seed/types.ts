@@ -736,3 +736,28 @@ export interface ManagedConnection extends DatabaseConnection, WithLiteralSeedFi
    */
   access?: "read" | "write";
 }
+
+/**
+ * Why a built-in sample (src/lib/seed/samples.ts) has no file to list: its asset is not in the seed assets directory,
+ * its asset is not the pinned one, the copy into the data directory failed, or its target was refused before any copy
+ * because it names one of the server's own storage files or another sample's file.
+ */
+export type SampleUnavailableReason =
+  | "asset-missing"
+  | "digest-mismatch"
+  | "copy-failed"
+  | "target-reserved"
+  | "target-conflict";
+
+/**
+ * A built-in sample that is enabled and offered to the caller's roles but has no file, as GET /api/connections/managed
+ * answers it in `unavailableSamples`. It is never a connection: no picker, route or MCP tool can reach it, and the
+ * browser draws it as a row with its sentence and no action. The sentence names no path and no secret; the server log
+ * names the path.
+ */
+export interface UnavailableSample {
+  readonly seedId: string;
+  readonly name: string;
+  readonly reason: SampleUnavailableReason;
+  readonly sentence: string;
+}

@@ -1,0 +1,320 @@
+/**
+ * The built-in sample databases: a core-owned Studio feature, one row per engine that ships a sample.
+ *
+ * At boot (src/instrumentation.ts) `startSampleSeeding` copies each enabled sample's committed, digest-pinned asset
+ * from the seed assets directory into the data directory, asynchronously, and opens no database: the copy is
+ * src/lib/seed/sample-copy.ts. The managed connections route lists a sample once its file exists, lists its seed id in
+ * `pendingSeeds` while it copies, and lists it unavailable, with a named reason, when its copy failed or its target was
+ * refused (src/lib/seed/index.ts composes those listings with the role filter, at request time).
+ *
+ * This module is loaded by the boot hook, so it imports no engine code and nothing that reaches it: not the role
+ * filter (./connection-filter brings in the provider connection-string rows), and from ./types and @/lib/types only
+ * types. tests/unit/seed/no-engine-imports.test.ts holds that.
+ *
+ * None of this is in the published @libredb/studio surface: instrumentation never runs there, no file is copied, and
+ * no state is set.
+ */
+import * as path from "path";
+import { getDataDir, isReservedStoragePath } from "@/lib/data-dir";
+import { readEnabledProviders } from "@/lib/db/enabled-providers";
+import { governanceEnabled } from "@/lib/governance/config";
+import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
+import { logger } from "@/lib/logger";
+import type { DatabaseType } from "@/lib/types";
+import { copySampleAsset, type SampleCopyError } from "./sample-copy";
+import type { ManagedConnection, SampleUnavailableReason } from "./types";
+
+/** One built-in sample. */
+export interface SampleSpec {
+  /** The seed id; the connection id is `seed:<seedId>`. */
+  readonly seedId: string;
+  readonly name: string;
+  /**
+   * The roles it is offered to: `admin` exactly when its engine refuses a handle under a denied file-access posture
+   * (`REFUSES_DENIED_FILE_ACCESS`), else every role.
+   */
+  readonly roles: readonly string[];
+  /** The target's file name in the data directory, when no path override is set. */
+  readonly fileName: string;
+  /** The committed asset, relative to the seed assets directory, with `/` between segments. */
+  readonly asset: string;
+  /** The asset's SHA-256 digest, in lowercase hex, and its size: a copy of any other bytes is refused. */
+  readonly sha256: string;
+  readonly bytes: number;
+  /** The variable that switches the sample off (`false`), or on under the Kubernetes access review (`true`). */
+  readonly switchVariable: string;
+  /** The variable that overrides the target's path. */
+  readonly pathVariable: string;
+}
+
+/**
+ * The built-in samples, in listing order: Map iteration follows insertion order, and every listing follows the map.
+ *
+ * The SQLite sample leads, and the order is the point: a client with no saved active connection opens the first one
+ * listed, so the first sample is what a new administrator lands on. Agent mode executes statements on SQLite
+ * (`AGENT_EXECUTION_ENGINES`, src/lib/agent/engine-support.ts), and the SQLite sample offers every agent workflow, where
+ * the LibreDB one offers no plan or profile workflow. An operator's own seed connections still lead both.
+ *
+ * Each asset is the output of a committed script, held by a test that reruns it: scripts/generate-sqlite-sample.mjs
+ * (tests/unit/seed/sqlite-sample-asset.test.ts) and scripts/generate-libredb-sample.mjs
+ * (tests/unit/seed/libredb-sample-asset.test.ts). A change to an asset is a rerun and a new pin here.
+ */
+export const SAMPLES: ReadonlyMap<DatabaseType, SampleSpec> = new Map<DatabaseType, SampleSpec>([
+  [
+    "sqlite",
+    {
+      seedId: "sqlite-embedded-sample",
+      name: "Sample (Employees)",
+      roles: ["admin"],
+      fileName: "sample-employees.db",
+      asset: "sqlite/employee.db",
+      sha256: "e640f759c20119081cbe7493f4bb2f812f965970aacc636fdfd4e8f8b5142acb",
+      bytes: 815104,
+      switchVariable: "SQLITE_EMBEDDED_SAMPLE",
+      pathVariable: "SQLITE_EMBEDDED_SAMPLE_PATH",
+    },
+  ],
+  [
+    "libredb",
+    {
+      seedId: "libredb-embedded-sample",
+      name: "Sample (LibreDB)",
+      roles: ["*"],
+      fileName: "sample.libredb",
+      asset: "libredb/sample.libredb",
+      sha256: "33ab4d1d0d513f370784f4a9d0f06d2ded759b67de310d7372ef4243f2a506da",
+      bytes: 761,
+      switchVariable: "LIBREDB_EMBEDDED_SAMPLE",
+      pathVariable: "LIBREDB_EMBEDDED_SAMPLE_PATH",
+    },
+  ],
+]);
+
+/**
+ * Whether a sample is on, one rule for every row, read on every call. Off under governance whatever its switch says
+ * (docs/GOVERNANCE.md). Off when `LIBREDB_ENABLED_PROVIDERS` does not let the provider factory open its engine: the
+ * factory would refuse every open of it, so the sample could never open; the list is the factory's own reading, and a
+ * value the factory refuses as a whole leaves every sample off. Otherwise its switch decides: only the exact value
+ * `false` turns it off, except that with the Kubernetes access review on, a sample offered to any role but admin is on
+ * only for the exact value `true`, because it is listed to every signed-in person and names no Secret, so no review
+ * gates it, and an install that promises people only the databases the review allows must not list it unasked.
+ */
+export function sampleEnabled(type: DatabaseType, spec: SampleSpec): boolean {
+  if (governanceEnabled()) return false;
+  const enabled = readEnabledProviders();
+  if (enabled.kind === "refused") return false;
+  if (enabled.kind === "listed" && !enabled.types.includes(type)) return false;
+  const value = process.env[spec.switchVariable];
+  if (accessReviewEnabled() && spec.roles.some((role) => role !== "admin")) return value === "true";
+  return value !== "false";
+}
+
+/**
+ * Whether a listing considers the sample at all: always, except in a test run, where only a sample whose path override
+ * is set is considered, so an uncontrolled real ./data/sample.* cannot perturb unrelated suites (the NODE_ENV guard of
+ * src/lib/db/factory.ts).
+ */
+export function sampleConsidered(spec: SampleSpec): boolean {
+  return process.env.NODE_ENV !== "test" || !!process.env[spec.pathVariable];
+}
+
+/** The path override when set, else the sample's file name in the data directory. */
+export function sampleTarget(spec: SampleSpec): string {
+  const override = process.env[spec.pathVariable];
+  if (override) return override;
+  return path.join(getDataDir(), spec.fileName);
+}
+
+/**
+ * The seed assets directory: `SEED_ASSETS_DIR`, trimmed, resolved against the working directory when relative; else
+ * `<working directory>/seed-assets`, where every channel ships the directory beside server.js (the standalone server
+ * runs from its own directory, and `next dev` and `next start` from the repository root).
+ */
+export function seedAssetsDirectory(): string {
+  const configured = (process.env.SEED_ASSETS_DIR ?? "").trim();
+  if (configured !== "") return path.resolve(configured);
+  return path.join(process.cwd(), "seed-assets");
+}
+
+/** The sample's asset file in the seed assets directory. */
+export function sampleAssetPath(spec: SampleSpec): string {
+  return path.join(seedAssetsDirectory(), ...spec.asset.split("/"));
+}
+
+/** Why an enabled sample's target is refused before any copy, or null when it is admitted. */
+export type SampleAdmissionRefusal = Extract<SampleUnavailableReason, "target-reserved" | "target-conflict">;
+
+/** An enabled sample, its target, and whether that target is admitted. */
+export interface SampleAdmission {
+  readonly type: DatabaseType;
+  readonly spec: SampleSpec;
+  readonly target: string;
+  readonly refusal: SampleAdmissionRefusal | null;
+}
+
+/** The files a sample on `target` can create: the engines' sidecars and the copy's own temp. */
+function targetFamily(target: string): string[] {
+  const resolved = path.resolve(target);
+  return [
+    resolved,
+    `${resolved}-wal`,
+    `${resolved}-shm`,
+    `${resolved}-journal`,
+    `${resolved}.lock`,
+    `${resolved}.${process.pid}.seeding`,
+  ];
+}
+
+/**
+ * The enabled samples, in table order, each with its target and admission, computed on every call. A sample any of
+ * whose family names one of the server's own storage files (`isReservedStoragePath`) is refused `target-reserved`; a
+ * sample whose family shares a file with an earlier admitted sample's is refused `target-conflict`.
+ */
+export function sampleAdmissions(): SampleAdmission[] {
+  const claimed = new Set<string>();
+  const admissions: SampleAdmission[] = [];
+  for (const [type, spec] of SAMPLES) {
+    if (!sampleEnabled(type, spec)) continue;
+    const target = sampleTarget(spec);
+    const family = targetFamily(target);
+    let refusal: SampleAdmissionRefusal | null = null;
+    if (family.some((file) => isReservedStoragePath(file))) refusal = "target-reserved";
+    else if (family.some((file) => claimed.has(file))) refusal = "target-conflict";
+    else for (const file of family) claimed.add(file);
+    admissions.push({ type, spec, target, refusal });
+  }
+  return admissions;
+}
+
+/** The sentence a client shows for an unavailable sample: it names no path and no secret, and says where to look. */
+export function unavailableSentence(reason: SampleUnavailableReason, code?: string): string {
+  switch (reason) {
+    case "asset-missing":
+      return "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied. The server log names the path.";
+    case "digest-mismatch":
+      return "This sample's file in the seed assets directory is not the one this LibreDB Studio ships, so it was not copied.";
+    case "copy-failed":
+      return `This sample could not be copied into the server's data directory${code === undefined ? "" : ` (${code})`}. The server log names the path.`;
+    case "target-reserved":
+      return "This sample's path names one of the server's own storage files, so the sample is not created there.";
+    case "target-conflict":
+      return "This sample's path is another sample's, so only the first one is created.";
+  }
+}
+
+/**
+ * A sample's seed state in this process. Absent until seeding starts; `seeding` while its copy runs; `done` once its
+ * file is present; `failed`, with the reason and sentence the listing shows, when its copy failed or its target was
+ * refused.
+ */
+export type SampleSeedState =
+  | { readonly phase: "seeding" }
+  | { readonly phase: "done" }
+  | { readonly phase: "failed"; readonly reason: SampleUnavailableReason; readonly sentence: string };
+
+/**
+ * Kept on globalThis under a Symbol.for key, because Next.js bundles instrumentation apart from the route handlers: a
+ * module-level variable would be one per bundle, and the route would never see what boot wrote.
+ */
+const SEED_STATES_KEY = Symbol.for("libredb-studio.sample-seed-states");
+
+type SeedStatesHolder = { [SEED_STATES_KEY]?: Map<string, SampleSeedState> };
+
+function seedStates(): Map<string, SampleSeedState> {
+  const holder = globalThis as SeedStatesHolder;
+  holder[SEED_STATES_KEY] ??= new Map();
+  return holder[SEED_STATES_KEY];
+}
+
+export function getSampleSeedState(seedId: string): SampleSeedState | undefined {
+  return seedStates().get(seedId);
+}
+
+/** The service's own writer; a test sets a state to observe a sample in flight. */
+export function setSampleSeedState(seedId: string, state: SampleSeedState): void {
+  seedStates().set(seedId, state);
+}
+
+export function resetSampleSeedStates(): void {
+  seedStates().clear();
+}
+
+/** The listed connection of a sample whose file exists: editable, unmanaged, at its target, created at the epoch. */
+export function sampleConnection(type: DatabaseType, spec: SampleSpec): ManagedConnection {
+  return {
+    id: `seed:${spec.seedId}`,
+    seedId: spec.seedId,
+    name: spec.name,
+    type,
+    database: sampleTarget(spec),
+    managed: false,
+    roles: [...spec.roles],
+    createdAt: new Date(0),
+  };
+}
+
+/**
+ * Start copying every enabled sample, for the boot hook. Synchronously, before it returns, each enabled sample is set
+ * `failed` with its admission refusal, or `seeding`, so no request can see a sample idle while its copy is about to
+ * start. The returned promise settles once every copy has, concurrently, and never rejects: the boot hook does not
+ * wait for it.
+ *
+ * Each outcome sets the state and logs exactly one line in one synchronous step, so a state that is no longer
+ * `seeding` means its line has been written: info "Embedded sample copied", debug "Embedded sample already present"
+ * (every boot after the first), or warn "Embedded sample unavailable" with the reason, the target and the seed assets
+ * directory. A failure never stops boot.
+ */
+export function startSampleSeeding(): Promise<void> {
+  const assets = seedAssetsDirectory();
+  const copies: Promise<void>[] = [];
+  for (const { spec, target, refusal } of sampleAdmissions()) {
+    if (refusal !== null) {
+      setSampleSeedState(spec.seedId, { phase: "failed", reason: refusal, sentence: unavailableSentence(refusal) });
+      logger.warn("Embedded sample unavailable", {
+        route: "instrumentation",
+        seedId: spec.seedId,
+        reason: refusal,
+        target,
+        assets,
+      });
+      continue;
+    }
+    setSampleSeedState(spec.seedId, { phase: "seeding" });
+    const started = Date.now();
+    const pinned = { asset: sampleAssetPath(spec), sha256: spec.sha256, bytes: spec.bytes };
+    copies.push(
+      copySampleAsset(pinned, target).then(
+        (outcome) => {
+          setSampleSeedState(spec.seedId, { phase: "done" });
+          if (outcome === "present") {
+            logger.debug("Embedded sample already present", { route: "instrumentation", seedId: spec.seedId, target });
+          } else {
+            logger.info("Embedded sample copied", {
+              route: "instrumentation",
+              seedId: spec.seedId,
+              target,
+              durationMs: Date.now() - started,
+            });
+          }
+        },
+        // copySampleAsset rejects with nothing but a SampleCopyError.
+        (error: SampleCopyError) => {
+          setSampleSeedState(spec.seedId, {
+            phase: "failed",
+            reason: error.reason,
+            sentence: unavailableSentence(error.reason, error.code),
+          });
+          logger.warn("Embedded sample unavailable", {
+            route: "instrumentation",
+            seedId: spec.seedId,
+            reason: error.reason,
+            target,
+            assets,
+            error: error.message,
+          });
+        },
+      ),
+    );
+  }
+  return Promise.all(copies).then(() => undefined);
+}

@@ -27,10 +27,8 @@ import {
   getKubernetesDiscoveredConnections,
   resetKubernetesDiscoveryCache,
 } from "@/lib/seed/kubernetes-discovery-loader";
-import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
-import { SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
 import { LITERAL_SEED_FILE } from "@/lib/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import {
@@ -40,6 +38,9 @@ import {
   writeKubernetesDiscoveryExport,
   type KubernetesDiscoveryExportFixture,
 } from "../../helpers/kubernetes-discovery-fixture";
+
+const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
+const SAMPLE_SEED_ID = "libredb-embedded-sample";
 
 // The ids come from the golden fixture, which the implementation generated: no id is typed by hand here.
 const [ORDERS, ANALYTICS, BILLING] = GOLDEN_CASES.filter((c) => goldenRow(c).slug === "cnpg").map(

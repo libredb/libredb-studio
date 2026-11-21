@@ -5,8 +5,8 @@
  *
  * Next.js bundles instrumentation, which runs the governance loads, apart from the route handlers that open providers,
  * and each bundle that loads `factory.ts` keeps provider caches of its own: measured on a production build of this
- * repository (Turbopack, Next.js 16), `src/lib/seed/sqlite-sample.ts`, which both instrumentation and the managed
- * connections route import, ran as two module instances. So the loader cannot reach the route handlers' providers by
+ * repository (Turbopack, Next.js 16), the built-in SQLite sample's module, which both instrumentation and the managed
+ * connections route imported, ran as two module instances. So the loader cannot reach the route handlers' providers by
  * importing `removeProvider`; it would reach the caches of its own bundle, which no route handler fills. Instead each
  * copy of the factory registers its owner-scoped removal here when it loads, in a global under a registered symbol,
  * one registry per process, and the loader asks every copy.

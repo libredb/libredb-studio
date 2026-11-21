@@ -2,8 +2,16 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { getManagedConnections, getPendingSeeds } from "@/lib/seed";
-import { seedSqliteSampleFile, setSqliteSampleSeedState, SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
+import { getManagedConnections, getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
+import { resetSampleSeedStates, setSampleSeedState, startSampleSeeding, unavailableSentence } from "@/lib/seed/samples";
+
+const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
+const LIBREDB_SAMPLE_SEED_ID = "libredb-embedded-sample";
+
+/** A file at the sample's path: the listing reads only that it exists, never its content. */
+function writeSampleFile(file: string): void {
+  fs.writeFileSync(file, "");
+}
 
 const tmpDirs: string[] = [];
 function useTempSamplePath(): string {
@@ -15,7 +23,7 @@ function useTempSamplePath(): string {
 }
 
 beforeEach(() => {
-  setSqliteSampleSeedState("idle");
+  resetSampleSeedStates();
 });
 
 afterEach(() => {
@@ -29,15 +37,16 @@ afterEach(() => {
   tmpDirs.length = 0;
   delete process.env.SQLITE_EMBEDDED_SAMPLE;
   delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
-  delete process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE;
   delete process.env.LIBREDB_ENABLED_PROVIDERS;
-  setSqliteSampleSeedState("idle");
+  delete process.env.LIBREDB_EMBEDDED_SAMPLE;
+  delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+  resetSampleSeedStates();
 });
 
 describe("getManagedConnections: sqlite embedded sample", () => {
   test("advertises the sample once the seeded file exists", async () => {
     const file = useTempSamplePath();
-    await seedSqliteSampleFile(file);
+    writeSampleFile(file);
 
     const conns = await getManagedConnections(["admin"]);
     const sample = conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID);
@@ -50,14 +59,56 @@ describe("getManagedConnections: sqlite embedded sample", () => {
 
   test("neither lists nor reports pending a sample the enabled providers leave out", async () => {
     const file = useTempSamplePath();
-    await seedSqliteSampleFile(file);
-    setSqliteSampleSeedState("seeding");
+    writeSampleFile(file);
+    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
     process.env.LIBREDB_ENABLED_PROVIDERS = "postgres";
 
     const conns = await getManagedConnections(["admin"]);
 
     expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
     expect(getPendingSeeds()).toEqual([]);
+  });
+
+  test("with LIBREDB_ENABLED_PROVIDERS=libredb no SQLite sample is seeded, listed, pending or unavailable", async () => {
+    const file = useTempSamplePath();
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.LIBREDB_ENABLED_PROVIDERS = "libredb";
+    await startSampleSeeding();
+    expect(fs.existsSync(file)).toBe(false);
+    writeSampleFile(file);
+    expect((await getManagedConnections(["admin"])).find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
+    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
+    expect(getPendingSeeds()).toEqual([]);
+    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, {
+      phase: "failed",
+      reason: "copy-failed",
+      sentence: unavailableSentence("copy-failed"),
+    });
+    expect(getUnavailableSamples(["admin"])).toEqual([]);
+  });
+
+  test("a target that names the storage database is refused, never listed although the file exists, and unavailable", async () => {
+    const storage = useTempSamplePath();
+    writeSampleFile(storage);
+    const savedStorage = process.env.STORAGE_SQLITE_PATH;
+    process.env.STORAGE_SQLITE_PATH = storage;
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    try {
+      await startSampleSeeding();
+      expect((await getManagedConnections(["admin"])).find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
+      expect(getUnavailableSamples(["admin"])).toEqual([
+        {
+          seedId: SQLITE_SAMPLE_SEED_ID,
+          name: "Sample (Employees)",
+          reason: "target-reserved",
+          sentence: unavailableSentence("target-reserved"),
+        },
+      ]);
+      expect(getUnavailableSamples(["user"])).toEqual([]);
+    } finally {
+      if (savedStorage === undefined) delete process.env.STORAGE_SQLITE_PATH;
+      else process.env.STORAGE_SQLITE_PATH = savedStorage;
+    }
   });
 
   /*
@@ -74,22 +125,17 @@ describe("getManagedConnections: sqlite embedded sample", () => {
   */
   test("leads the built-in samples, so a first run lands on an engine the agent supports", async () => {
     const sqliteFile = useTempSamplePath();
-    await seedSqliteSampleFile(sqliteFile);
+    writeSampleFile(sqliteFile);
 
     const libredbDir = fs.mkdtempSync(path.join(os.tmpdir(), "libredb-sample-order-"));
     tmpDirs.push(libredbDir);
     const libredbFile = path.join(libredbDir, "sample.libredb");
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbFile;
-    const { seedSampleFile, SAMPLE_SEED_ID } = await import("@/lib/seed/libredb-sample");
-    await seedSampleFile(libredbFile);
+    fs.writeFileSync(libredbFile, "");
 
-    try {
-      const seedIds = (await getManagedConnections(["admin"])).map((c) => c.seedId);
-      expect(seedIds).toContain(SAMPLE_SEED_ID);
-      expect(seedIds.indexOf(SQLITE_SAMPLE_SEED_ID)).toBeLessThan(seedIds.indexOf(SAMPLE_SEED_ID));
-    } finally {
-      delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
-    }
+    const seedIds = (await getManagedConnections(["admin"])).map((c) => c.seedId);
+    expect(seedIds).toContain(LIBREDB_SAMPLE_SEED_ID);
+    expect(seedIds.indexOf(SQLITE_SAMPLE_SEED_ID)).toBeLessThan(seedIds.indexOf(LIBREDB_SAMPLE_SEED_ID));
   });
 
   test("omits the sample while the file does not exist", async () => {
@@ -100,7 +146,7 @@ describe("getManagedConnections: sqlite embedded sample", () => {
 
   test("omits the sample when disabled via env", async () => {
     const file = useTempSamplePath();
-    await seedSqliteSampleFile(file);
+    writeSampleFile(file);
     process.env.SQLITE_EMBEDDED_SAMPLE = "false";
 
     const conns = await getManagedConnections(["admin"]);
@@ -118,16 +164,20 @@ describe("getManagedConnections: sqlite embedded sample", () => {
 describe("getPendingSeeds", () => {
   test("reports the sqlite sample only while seeding is in flight", () => {
     expect(getPendingSeeds()).toEqual([]);
-    setSqliteSampleSeedState("seeding");
+    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
     expect(getPendingSeeds()).toEqual([SQLITE_SAMPLE_SEED_ID]);
-    setSqliteSampleSeedState("done");
+    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "done" });
     expect(getPendingSeeds()).toEqual([]);
-    setSqliteSampleSeedState("failed");
+    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, {
+      phase: "failed",
+      reason: "copy-failed",
+      sentence: unavailableSentence("copy-failed"),
+    });
     expect(getPendingSeeds()).toEqual([]);
   });
 
   test("reports nothing while seeding if the sample is disabled", () => {
-    setSqliteSampleSeedState("seeding");
+    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
     process.env.SQLITE_EMBEDDED_SAMPLE = "false";
     expect(getPendingSeeds()).toEqual([]);
   });
@@ -135,7 +185,7 @@ describe("getPendingSeeds", () => {
 
 test("the SQLite sample is omitted for non-admin roles", async () => {
   const file = useTempSamplePath();
-  await seedSqliteSampleFile(file);
+  writeSampleFile(file);
   for (const roles of [["user"], ["*"], []]) {
     expect((await getManagedConnections(roles)).find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
   }
