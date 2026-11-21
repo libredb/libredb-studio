@@ -25,10 +25,11 @@
 import "@/lib/db/providers/industrial/opcua/hostname-guard";
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { type AddressInfo, connect, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OPCUACertificateManager } from "node-opcua-certificate-manager";
-import { DataType, type EndpointDescription, OPCUAClient, Variant } from "node-opcua-client";
+import { ClientSecureChannelLayer, DataType, type EndpointDescription, OPCUAClient, Variant } from "node-opcua-client";
 import { OPCUAServer } from "node-opcua-server";
 import { OPCUA_LIBRARY_BRIDGE } from "@/lib/db/providers/industrial/opcua/library";
 import { openReadOnlySession } from "@/lib/db/providers/industrial/opcua/session";
@@ -45,6 +46,7 @@ import { OPCUA_OBJECTS_FOLDER } from "@/lib/db/providers/industrial/opcua/consta
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { openLibrarySession } from "@/lib/db/providers/industrial/opcua/library";
 import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
+import { OpcuaUnansweredError } from "@/lib/db/providers/industrial/opcua/errors";
 import type { OpcuaConnectionOptions } from "@/lib/db/providers/industrial/opcua/connection";
 import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 
@@ -536,4 +538,279 @@ describe("the factory's own arm, against the running server", () => {
       openLibrarySession(options({ identity: "username", user: "nobody", password: "wrong" })),
     ).rejects.toThrow();
   });
+});
+
+/** A fabricated credential for a server that takes no username, so the session dial is refused after its channel opened. */
+const CANARY_SIGN_IN = "OPCUA-CANARY-5c1e";
+
+/**
+ * How many certificate managers the library still counts as live, read from its own registry.
+ *
+ * `checkAllDisposed` throws while any manager it built has not been disposed, and its message opens with how many;
+ * a manager leaves the registry only at the end of the dispose that closes its folder watchers, so this count is
+ * also the count of dials whose watchers are still open. It is read here rather than the watchers themselves
+ * because neither runtime offers a portable count: chokidar binds `fs.watch` from the ESM module, which Bun does
+ * not let a test observe, and Linux shares one inotify watch between every watcher of a folder. The in-process
+ * server's own manager is live for the whole file, so every test reads a difference, never an absolute.
+ */
+function liveCertificateStores(): number {
+  try {
+    OPCUACertificateManager.checkAllDisposed();
+    return 0;
+  } catch (error) {
+    const live = /^(\d+) CertificateManager/.exec(error instanceof Error ? error.message : String(error));
+    if (live === null) throw error;
+    return Number(live[1]);
+  }
+}
+
+/** The registry before a dial, and a check that the dial left no store of its own in it. */
+function holdings(): () => void {
+  const stores = liveCertificateStores();
+  return () => expect(liveCertificateStores() - stores).toBe(0);
+}
+
+/** A loopback port nothing listens on: the operating system's choice, released before it is dialled. */
+async function closedPort(): Promise<number> {
+  const listener = createServer();
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const { port } = listener.address() as AddressInfo;
+  await new Promise<void>((resolve, reject) => listener.close((error) => (error ? reject(error) : resolve())));
+  return port;
+}
+
+/**
+ * EACH DIAL RELEASES ITS CERTIFICATE STORE. Studio builds one certificate manager per dial (`library.ts`), and the
+ * client it is handed to counts itself as a holder: its disconnect gives that count back and nothing more, and a
+ * dial that failed to connect does not reach even that. So the store is disposed by Studio, after its client is
+ * disconnected, on every path out of a dial.
+ */
+describe("each dial releases its certificate store", () => {
+  test("a connect, a read and a disconnect leave no certificate store open", async () => {
+    const before = process.env[OPCUA_PKI_ROOT_ENV];
+    process.env[OPCUA_PKI_ROOT_ENV] = pkiRoot();
+    const provider = await createDatabaseProvider({
+      id: "opcua-store-release",
+      name: "in-process",
+      type: "opcua",
+      host: ENDPOINT,
+      securityMode: "None",
+      createdAt: new Date(0),
+    } as never);
+    try {
+      const released = holdings();
+      await provider.connect();
+      const result = await provider.query('{ "read": ["i=2258"] }');
+      expect(result.rows[0]?.statusCode).toBe("Good");
+      await provider.disconnect();
+      released();
+    } finally {
+      if (before === undefined) delete process.env[OPCUA_PKI_ROOT_ENV];
+      else process.env[OPCUA_PKI_ROOT_ENV] = before;
+    }
+  }, 60_000);
+
+  test("a dial to a port nothing listens on releases its store", async () => {
+    const port = await closedPort();
+    const released = holdings();
+    await expect(
+      openLibrarySession(options({ endpointUrl: `opc.tcp://127.0.0.1:${port}${PATH_SEGMENT}`, port })),
+    ).rejects.toThrow(/could not be opened/);
+    released();
+  });
+
+  test("a session dial whose connect fails releases its store", async () => {
+    const port = await closedPort();
+    const released = holdings();
+    await expect(
+      OPCUA_LIBRARY_BRIDGE.openSession(options({ endpointUrl: `opc.tcp://127.0.0.1:${port}${PATH_SEGMENT}`, port })),
+    ).rejects.toThrow();
+    released();
+  });
+
+  test("a session the server refuses after its channel opened releases its store", async () => {
+    const released = holdings();
+    // Straight to the bridge, past the provider's own refusal of a username this server does not take, so the
+    // library opens the channel and only then fails to build the session.
+    await expect(
+      OPCUA_LIBRARY_BRIDGE.openSession(options({ identity: "username", user: "nobody", password: CANARY_SIGN_IN })),
+    ).rejects.toThrow();
+    released();
+  });
+
+  test("a client the library refuses to build releases the store built for it", async () => {
+    const refused = spyOn(OPCUAClient, "create").mockImplementation(() => {
+      throw new Error("the client could not be built");
+    });
+    const released = holdings();
+    try {
+      await expect(OPCUA_LIBRARY_BRIDGE.readEndpoints(options())).rejects.toThrow("the client could not be built");
+    } finally {
+      refused.mockRestore();
+    }
+    released();
+  });
+});
+
+/** A proxy in front of the in-process server that rewrites the sequence header of one answer when armed. */
+interface CorruptingProxy {
+  readonly endpoint: string;
+  readonly port: number;
+  /** Rewrite the next server-to-client MSG chunk's sequence number and request id. */
+  arm(): void;
+  close(): Promise<void>;
+}
+
+/**
+ * A proxy that, when armed, writes a fixed pattern over bytes 16 to 23 (sequence number and request id) of one MSG
+ * chunk from the server, so the channel breaks the same way on every run.
+ */
+async function corruptingProxy(target: number): Promise<CorruptingProxy> {
+  let armed = false;
+  const sockets = new Set<Socket>();
+  const proxy = createServer((downstream) => {
+    const upstream = connect(target, "127.0.0.1");
+    for (const socket of [downstream, upstream]) {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    }
+    // Either side failing ends the pair: the test reads what the client reports, never the proxy's own errors.
+    downstream.on("error", () => upstream.destroy());
+    upstream.on("error", () => downstream.destroy());
+    downstream.on("close", () => upstream.destroy());
+    upstream.on("close", () => downstream.destroy());
+    downstream.pipe(upstream);
+    let pending = Buffer.alloc(0);
+    upstream.on("data", (data: Buffer) => {
+      pending = Buffer.concat([pending, data]);
+      while (pending.length >= 8) {
+        const size = pending.readUInt32LE(4);
+        // A size below the header's own cannot come from this server; the proxy stops forwarding rather than spin.
+        if (size < 8 || pending.length < size) break;
+        const chunk = Buffer.from(pending.subarray(0, size));
+        pending = pending.subarray(size);
+        if (armed && chunk.toString("ascii", 0, 3) === "MSG" && size >= 24) {
+          armed = false;
+          chunk.fill(0xee, 16, 24);
+        }
+        downstream.write(chunk);
+      }
+    });
+  });
+  await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  const { port } = proxy.address() as AddressInfo;
+  return {
+    endpoint: `opc.tcp://127.0.0.1:${port}${PATH_SEGMENT}`,
+    port,
+    arm: () => {
+      armed = true;
+    },
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve, reject) => proxy.close((error) => (error ? reject(error) : resolve())));
+    },
+  };
+}
+
+/**
+ * A SESSION WHOSE CHANNEL BROKE IS REPLACED, against the real library and a real server. The library's transaction
+ * timeout is 15 s; it is a static of the library's channel class, lowered here for this suite only so that a request
+ * that would wait it out costs two seconds, and restored after.
+ */
+describe("a session whose channel broke", () => {
+  const TRANSACTION_TIMEOUT_MS = 2_000;
+  const library = {
+    least: ClientSecureChannelLayer.minTransactionTimeout,
+    fallback: ClientSecureChannelLayer.defaultTransactionTimeout,
+  };
+  let proxy: CorruptingProxy;
+
+  beforeAll(async () => {
+    ClientSecureChannelLayer.minTransactionTimeout = TRANSACTION_TIMEOUT_MS;
+    ClientSecureChannelLayer.defaultTransactionTimeout = TRANSACTION_TIMEOUT_MS;
+    proxy = await corruptingProxy(PORT);
+  });
+
+  afterAll(async () => {
+    ClientSecureChannelLayer.minTransactionTimeout = library.least;
+    ClientSecureChannelLayer.defaultTransactionTimeout = library.fallback;
+    await proxy.close();
+  });
+
+  test("is replaced: the unanswered read is reported by name, the next read is answered, and disconnect does not wait", async () => {
+    const before = process.env[OPCUA_PKI_ROOT_ENV];
+    process.env[OPCUA_PKI_ROOT_ENV] = pkiRoot();
+    const provider = await createDatabaseProvider({
+      id: "opcua-broken-channel",
+      name: "in-process, through the proxy",
+      type: "opcua",
+      host: proxy.endpoint,
+      securityMode: "None",
+      createdAt: new Date(0),
+    } as never);
+    try {
+      await provider.connect();
+      expect((await provider.query('{ "read": ["i=2258"] }')).rows[0]?.statusCode).toBe("Good");
+      proxy.arm();
+      const failure = await provider.query('{ "read": ["i=2258"] }').then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(OpcuaUnansweredError);
+      expect(String((failure as Error).message)).toMatch(
+        /^A read got no answer from the server: Transaction has timed out/,
+      );
+      expect(provider.isConnected()).toBe(true);
+      // Answered at once on the session that replaced the broken one, not after another transaction timeout.
+      const started = Date.now();
+      const next = await provider.query('{ "read": ["i=2258"] }');
+      expect(next.rows[0]?.statusCode).toBe("Good");
+      expect(Date.now() - started).toBeLessThan(TRANSACTION_TIMEOUT_MS / 2);
+      const closing = Date.now();
+      await provider.disconnect();
+      expect(Date.now() - closing).toBeLessThan(TRANSACTION_TIMEOUT_MS / 2);
+    } finally {
+      await provider.disconnect();
+      if (before === undefined) delete process.env[OPCUA_PKI_ROOT_ENV];
+      else process.env[OPCUA_PKI_ROOT_ENV] = before;
+    }
+  }, 60_000);
+
+  test("a session whose request went unanswered closes without waiting for the server, and releases its store", async () => {
+    const sessions = server.currentSessionCount;
+    const client = await openLibrarySession(options({ endpointUrl: proxy.endpoint, port: proxy.port }));
+    const [level] = await client.browse([OPCUA_OBJECTS_FOLDER]);
+    expect(level?.references.length).toBeGreaterThan(0);
+    proxy.arm();
+    const failure = await client.read(["i=2258"]).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(OpcuaUnansweredError);
+    const stores = liveCertificateStores();
+    // The server's own signal that it ended the session, or a marker once the wait is over: the outcome is read with
+    // a plain await, never asserted on a promise a timer settles.
+    let waited: ReturnType<typeof setTimeout> | undefined;
+    const ended = Promise.race([
+      new Promise<string>((resolve) => server.once("session_closed", () => resolve("closed by the client"))),
+      new Promise<string>((resolve) => {
+        waited = setTimeout(() => resolve("still open on the server"), TRANSACTION_TIMEOUT_MS);
+      }),
+    ]);
+    const started = Date.now();
+    const closed = await client.close().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(closed).toBeUndefined();
+    // The CloseSession is sent and its answer is not waited for: the channel is closed at once.
+    expect(Date.now() - started).toBeLessThan(TRANSACTION_TIMEOUT_MS / 2);
+    // And the server ends the session then, rather than keeping it until its own session timeout.
+    const outcome = await ended;
+    clearTimeout(waited);
+    expect(outcome).toBe("closed by the client");
+    expect(server.currentSessionCount).toBe(sessions);
+    // And the session's store goes with it: one fewer live in the registry.
+    expect(liveCertificateStores()).toBe(stores - 1);
+  }, 60_000);
 });

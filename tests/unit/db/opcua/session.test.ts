@@ -6,6 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { OpcuaUnansweredError } from "@/lib/db/providers/industrial/opcua/errors";
 import type { OpcuaEndpoint } from "@/lib/db/providers/industrial/opcua/client";
 import type { OpcuaConnectionOptions } from "@/lib/db/providers/industrial/opcua/connection";
 import {
@@ -483,6 +484,30 @@ describe("a library throw becomes a sentence, and the code in it is read", () =>
     } catch (error) {
       expect(String((error as Error).message)).not.toContain("plant-reader");
     }
+  });
+
+  /**
+   * A REQUEST THE CLIENT STOPPED WAITING FOR IS NAMED AS ONE, because the session pool acts on it: a channel that left
+   * a request unanswered cannot be trusted with the next one, so the session that carried the request is replaced
+   * rather than handed the next one. The library's own words travel with the sentence, since they say which
+   * request and how long.
+   */
+  test("a request that got no answer within the library's timeout is reported as unanswered, by name", async () => {
+    const client = await openReadOnlySession(
+      throwingBridge(new Error("Transaction has timed out ( timeout = 15000 ms , request = ReadRequest)"), [
+        endpoint("SignAndEncrypt", PLC_THUMB),
+      ]),
+      options(),
+    );
+    const failure = await client.read(["ns=3;s=X"]).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(OpcuaUnansweredError);
+    expect(String((failure as Error).message)).toBe(
+      "A read got no answer from the server: Transaction has timed out ( timeout = 15000 ms , request = ReadRequest). " +
+        "The session it was sent on is closed without waiting for the server any longer, and a new session is opened for the next request.",
+    );
   });
 
   /**

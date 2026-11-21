@@ -181,3 +181,18 @@ export function isStaleSession(error: unknown): boolean {
 export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message.trim() : String(error);
 }
+
+/**
+ * A request the client stopped waiting for: no answer arrived within the library's transaction timeout.
+ *
+ * ITS OWN CLASS BECAUSE THE SESSION POOL ACTS ON IT, and a status code cannot carry it: no answer means no code. A
+ * secure channel can break in a way the library does not report, so a session whose request went unanswered cannot be
+ * trusted with the next one (`OpcuaSessionPool.withSession`).
+ */
+export class OpcuaUnansweredError extends QueryError {
+  constructor(message: string) {
+    super(message, OPCUA_TYPE);
+    this.name = "OpcuaUnansweredError";
+    Object.setPrototypeOf(this, OpcuaUnansweredError.prototype);
+  }
+}

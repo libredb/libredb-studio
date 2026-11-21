@@ -16,7 +16,7 @@
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { OPCUA_TYPE } from "./constants";
 import type { OpcuaReadOnlyClient } from "./client";
-import { isStaleSession, messageOf } from "./errors";
+import { isStaleSession, messageOf, OpcuaUnansweredError } from "./errors";
 
 /** How a session is opened, so a test substitutes its own without touching the pool's rules. */
 export type OpcuaSessionFactory = () => Promise<OpcuaReadOnlyClient>;
@@ -95,6 +95,9 @@ export class OpcuaSessionPool {
     try {
       return await run(client);
     } catch (error) {
+      // Before the stale check, and outside the try: a replacement that cannot be opened is reported as it is, never
+      // read as a stale session and answered by opening another.
+      if (error instanceof OpcuaUnansweredError) return await this.replaceUnanswered(client, error);
       if (!isStaleSession(error)) throw error;
       /*
        * THE CONNECTION STAYS OPEN WHILE ITS SESSION IS REPLACED. `invalidate` clears the held
@@ -106,13 +109,41 @@ export class OpcuaSessionPool {
        * thing O-S6 exists to prevent. The flag is what keeps the window invisible from outside.
        */
       this.replacing = true;
+      let retry: OpcuaReadOnlyClient | undefined;
       try {
         await this.invalidate(client);
-        return await run(await this.acquire());
+        retry = await this.acquire();
+        return await run(retry);
+      } catch (retryError) {
+        if (retry !== undefined && retryError instanceof OpcuaUnansweredError)
+          return await this.replaceUnanswered(retry, retryError);
+        throw retryError;
       } finally {
         this.replacing = false;
       }
     }
+  }
+
+  /**
+   * Replace a session whose request went unanswered, then report that request's failure.
+   *
+   * A SESSION WHOSE CHANNEL BROKE IS REPLACED. A secure channel can break in a way the library does not report, and an
+   * unanswered request is the only sign that reaches here, so the session that carried it is closed (`library.ts`
+   * sends its CloseSession without waiting for the answer) and a new one opened, and only then is the failure
+   * reported. An answer slower than the library's transaction timeout is the same fact from here, so it costs a
+   * replacement too. The request itself is NOT run again: it already waited out a timeout, and the reader is told so.
+   * A new session that cannot be opened is reported in its own words instead, and the pool then holds none.
+   */
+  private async replaceUnanswered(client: OpcuaReadOnlyClient, error: OpcuaUnansweredError): Promise<never> {
+    // Open throughout, as in the stale-session swap: the connection is between two sessions.
+    this.replacing = true;
+    try {
+      await this.invalidate(client);
+      await this.acquire();
+    } finally {
+      this.replacing = false;
+    }
+    throw error;
   }
 
   /**
