@@ -291,11 +291,14 @@ the usual 6 ms.
 
 **Stopping a statement that is still being written to the child.**
 A request reaches the child as one line on its stdin, and a statement larger than the 64 KiB pipe buffer is still being written when a cancel, the query timeout, the agent read-only deadline or a disconnect kills the child.
-The rest of that write then fails with `EPIPE` on the worker's stdin.
+Which reaches the client first, the failed write or the child's exit, depends on the platform.
+On Linux and macOS the rest of that write fails first, with `EPIPE` on the worker's stdin.
+On Windows the exit can arrive first: the runtime then closes the worker's stdin, drops the rest of the write without an error and logs nothing for it.
 The client listens for `error` on the child's stdin, stdout and stderr, so such a failure is reported as `SQLiteWorkerError` instead of being thrown out of the stream's event handler.
 After the provider's own kill the request has already been rejected (`SQLite worker was terminated`, `SQLite worker timed out after <n>ms (query)` for the query timeout, or `QueryError` "Read-only execution exceeded the time budget" for the read-only deadline), and the failed write is logged at debug level as `[sqlite-worker] stdin failed after terminate(): ...`: it is the expected end of that write, not a new failure.
 That line shows by default outside production, and with `LOG_LEVEL=debug` in production.
 Any other stream failure, for example a child that died on its own before the next request was written, rejects every request with `SQLite worker <stream> failed: <reason>`, is logged as a warning, and stops the child, so the next statement starts a fresh one.
+A request still in flight when the exit arrives first is rejected with `SQLite worker exited (code <n>, signal <name>)`.
 A child that exits without the client stopping it is logged as a warning with its exit code and signal (`[sqlite-worker] child exited (code null, signal SIGKILL)`), so the cause stays visible when a failed write reached the request first.
 A worker that cannot be spawned at all (its executable missing or not runnable, or no file descriptor left for its pipes) fails the connect or the restart with `SQLite worker failed: <reason>`, and the next statement tries a fresh spawn.
 Nothing is retried.

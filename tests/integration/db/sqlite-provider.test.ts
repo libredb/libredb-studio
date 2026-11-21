@@ -1746,7 +1746,15 @@ describe("SQLiteProvider", () => {
       /**
        * Connect a provider on a fresh file and hand back its worker, plus a promise that
        * settles once the worker's stdin has closed: the statement is written to that
-       * stream, and the part still queued fails with EPIPE when the child is killed.
+       * stream, and when the child is killed the part still queued fails (EPIPE on Linux
+       * and macOS) or, when the exit reaches the client first, is dropped by the runtime.
+       *
+       * `events` records the worker's pipe failures, its stdin closing and its exit, in
+       * the order the runtime delivers them, after the client's own listeners. Either the
+       * failed write or the exit can come first: Linux and macOS fail the write first, and
+       * windows-latest can deliver the exit first, after which the runtime destroys stdin
+       * (Node's and Bun's `ChildProcess` both do, just before they emit `exit`) and the
+       * rest of the write is dropped without a stdin error.
        *
        * The child is given BUSY first, written to its stdin by the test itself under an id
        * the client never issues, so the statement under test stays queued in the pipe
@@ -1758,11 +1766,26 @@ describe("SQLiteProvider", () => {
         provider = new SQLiteProvider(makeSQLiteConfig({ database: join(fileTmpDir, name) }), { queryTimeout });
         await provider.connect();
         const worker = (provider as unknown as { worker: SQLiteWorkerClient }).worker;
-        const stdin = (worker as unknown as { child: ChildProcessWithoutNullStreams }).child.stdin;
+        const child = (worker as unknown as { child: ChildProcessWithoutNullStreams }).child;
+        const stdin = child.stdin;
+        const events: Array<
+          | { event: "stream-error"; stream: "stdin" | "stdout" | "stderr"; error: Error }
+          | { event: "stdin-close" }
+          | { event: "exit" }
+        > = [];
+        for (const stream of ["stdin", "stdout", "stderr"] as const) {
+          child[stream].on("error", (error) => events.push({ event: "stream-error", stream, error }));
+        }
+        child.once("exit", () => events.push({ event: "exit" }));
         // Not `events.once`, which would reject on the very `error` event under test.
-        const closed = new Promise<void>((resolve) => stdin.once("close", () => resolve()));
+        const closed = new Promise<void>((resolve) =>
+          stdin.once("close", () => {
+            events.push({ event: "stdin-close" });
+            resolve();
+          }),
+        );
         stdin.write(`${JSON.stringify({ id: 0, op: "get", sql: BUSY })}\n`);
-        return { worker, closed };
+        return { worker, closed, events };
       }
 
       /** Record every uncaught exception and unhandled rejection until `stop()`. */
@@ -1830,9 +1853,17 @@ describe("SQLiteProvider", () => {
             await large.closed;
             await new Promise((resolve) => setImmediate(resolve));
             expect(watch.seen).toEqual([]);
-            // The write really was cut short, so the case above is not passing vacuously.
-            expect(debug).toHaveBeenCalledWith(
-              expect.stringMatching(/^\[sqlite-worker\] stdin failed after terminate\(\): .*EPIPE/),
+            // The stream did not close cleanly before the child died. When the exit comes
+            // first this cannot tell a dropped write from a finished one; BUSY is what keeps
+            // the write queued, so the case above is not passing vacuously.
+            expect(large.events[0]?.event).not.toBe("stdin-close");
+            // A failed write is reported on the stream at debug level, not thrown.
+            expect(debug.mock.calls.filter(([line]) => String(line).startsWith("[sqlite-worker]"))).toEqual(
+              large.events.flatMap((entry) =>
+                entry.event === "stream-error"
+                  ? [[`[sqlite-worker] ${entry.stream} failed after terminate(): ${entry.error.message}`]]
+                  : [],
+              ),
             );
           } finally {
             // A test that fails before its stop leaves the child counting BUSY for minutes.

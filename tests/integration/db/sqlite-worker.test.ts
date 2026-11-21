@@ -36,7 +36,8 @@ const BUDGET: ReadOnlyStatementBudget = {
 /**
  * A statement far larger than the 64 KiB pipe buffer, so most of its write is still
  * queued on the child's stdin when the child is killed, and that write then fails
- * with EPIPE on the parent side.
+ * (EPIPE on Linux and macOS) or, when the exit reaches the client first, is dropped
+ * by the runtime.
  */
 const LARGE = `SELECT '${"x".repeat(8 * 1024 * 1024)}' AS v`;
 
@@ -49,6 +50,35 @@ function stdinClosed(client: SQLiteWorkerClient): Promise<void> {
   const stdin = (client as unknown as { child: ChildProcessWithoutNullStreams }).child.stdin;
   return new Promise((resolve) => stdin.once("close", () => resolve()));
 }
+
+/** What the runtime delivered on the worker's pipes and child, in its order. */
+type WorkerEvent =
+  | { readonly event: "stream-error"; readonly stream: "stdin" | "stdout" | "stderr"; readonly error: Error }
+  | { readonly event: "stdin-close" }
+  | { readonly event: "exit" };
+
+/**
+ * Record the worker's pipe failures, its stdin closing and its exit, in the order the
+ * runtime delivers them. When the child dies under a large write, either the failed write
+ * or the exit can reach the client first: Linux and macOS fail the write first, and
+ * windows-latest can deliver the exit first. Node's and Bun's `ChildProcess` both destroy
+ * stdin just before they emit `exit`, so after an exit that came first the rest of the
+ * write is dropped without a stdin error. These listeners run after the client's own,
+ * so this is also the order the client saw.
+ */
+function recordWorkerEvents(client: SQLiteWorkerClient): WorkerEvent[] {
+  const child = (client as unknown as { child: ChildProcessWithoutNullStreams }).child;
+  const events: WorkerEvent[] = [];
+  for (const stream of ["stdin", "stdout", "stderr"] as const) {
+    child[stream].on("error", (error) => events.push({ event: "stream-error", stream, error }));
+  }
+  child.stdin.once("close", () => events.push({ event: "stdin-close" }));
+  child.once("exit", () => events.push({ event: "exit" }));
+  return events;
+}
+
+/** The warning the client logs for a child it did not stop, killed by SIGKILL. */
+const EXIT_WARNING = "[sqlite-worker] child exited (code null, signal SIGKILL)";
 
 /** Record every uncaught exception and unhandled rejection until `stop()`. */
 function watchUncaught(): { readonly seen: unknown[]; stop(): void } {
@@ -376,6 +406,7 @@ describe("SQLite child-process worker (#1623)", () => {
       queryOnly: false,
     });
     try {
+      const events = recordWorkerEvents(client);
       const closed = stdinClosed(client);
       const exited = once((client as unknown as { child: ChildProcessWithoutNullStreams }).child, "exit");
       const outcome = client.queryRows(LARGE, []).then(
@@ -388,16 +419,24 @@ describe("SQLite child-process worker (#1623)", () => {
       const failure = (await outcome) as Error;
       expect(failure.name).toBe("SQLiteWorkerError");
       expect(failure.message).toBe("SQLite worker was terminated");
-      // The queued write fails once the child is gone; that failure is reported on
-      // the stream, not thrown out of its event handler.
       await closed;
+      await exited;
       await new Promise((resolve) => setImmediate(resolve));
       expect(watch.seen).toEqual([]);
-      expect(debug).toHaveBeenCalledWith(
-        expect.stringMatching(/^\[sqlite-worker\] stdin failed after terminate\(\): .*EPIPE/),
+      // The stream did not close cleanly before the child died. When the exit comes first
+      // this cannot tell a dropped write from a finished one; terminate() right after the
+      // write is what keeps the write queued.
+      expect(events[0]?.event).not.toBe("stdin-close");
+      // A write that failed once the child was gone is reported on the stream at debug
+      // level, not thrown out of its event handler.
+      expect(debug.mock.calls.filter(([line]) => String(line).startsWith("[sqlite-worker]"))).toEqual(
+        events.flatMap((entry) =>
+          entry.event === "stream-error"
+            ? [[`[sqlite-worker] ${entry.stream} failed after terminate(): ${entry.error.message}`]]
+            : [],
+        ),
       );
       // The client stopped the child on purpose, so its exit is not reported as a failure.
-      await exited;
       expect(warn).not.toHaveBeenCalled();
     } finally {
       watch.stop();
@@ -416,6 +455,7 @@ describe("SQLite child-process worker (#1623)", () => {
       queryOnly: false,
     });
     try {
+      const events = recordWorkerEvents(client);
       const closed = stdinClosed(client);
       const exited = once((client as unknown as { child: ChildProcessWithoutNullStreams }).child, "exit");
       // Killed from outside the client, so the client still believes it is alive and
@@ -426,16 +466,76 @@ describe("SQLite child-process worker (#1623)", () => {
         (error: unknown) => error,
       )) as Error;
 
-      // Either the exit or the failed write reaches the client first; both reject the
-      // request with the worker's named error.
+      await closed;
+      await exited;
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(watch.seen).toEqual([]);
+      // Either the exit or the failed write reaches the client first, and whichever does
+      // rejects the request with the worker's named error in its own words.
+      const [first] = events.filter((entry) => entry.event !== "stdin-close");
       expect(failure.name).toBe("SQLiteWorkerError");
+      expect(failure.message).toBe(
+        first?.event === "stream-error"
+          ? `SQLite worker ${first.stream} failed: ${first.error.message}`
+          : "SQLite worker exited (code null, signal SIGKILL)",
+      );
+      // Each is reported once, as a warning: the failed write does not say why the child
+      // is gone, and its exit does.
+      expect(warn.mock.calls).toEqual(
+        events.flatMap((entry) => {
+          if (entry.event === "stream-error") {
+            return [[`[sqlite-worker] ${entry.stream} failed: ${entry.error.message}`]];
+          }
+          return entry.event === "exit" ? [[EXIT_WARNING]] : [];
+        }),
+      );
+    } finally {
+      watch.stop();
+      warn.mockRestore();
+      client.terminate();
+    }
+  });
+
+  test("a child whose exit reaches the client before its large write fails rejects the statement with the exit, reported once", async () => {
+    const watch = watchUncaught();
+    const warn = spyOn(logger, "warn");
+    const client = await SQLiteWorkerClient.start({
+      dbPath: join(dir, "large-exit-first.db"),
+      readonly: false,
+      queryOnly: false,
+    });
+    const child = (client as unknown as { child: ChildProcessWithoutNullStreams }).child;
+    try {
+      const events = recordWorkerEvents(client);
+      const closed = stdinClosed(client);
+      const exited = once(child, "exit");
+      // The order windows-latest can deliver, made certain here: the statement's write is
+      // held until the runtime has delivered the child's exit, and only then handed to the
+      // stream, which the runtime destroyed on that exit.
+      const held: string[] = [];
+      const write = spyOn(child.stdin, "write").mockImplementation(((chunk: string) => {
+        held.push(chunk);
+        return false;
+      }) as unknown as typeof child.stdin.write);
+      child.kill("SIGKILL");
+      const outcome = client.queryRows(LARGE, []).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await exited;
+      write.mockRestore();
+      expect(held).toHaveLength(1);
+      child.stdin.write(held[0]);
+
+      const failure = (await outcome) as Error;
       await closed;
       await new Promise((resolve) => setImmediate(resolve));
       expect(watch.seen).toEqual([]);
-      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^\[sqlite-worker\] stdin failed: .*EPIPE/));
-      // The failed write does not say why the child is gone; its exit does.
-      await exited;
-      expect(warn).toHaveBeenCalledWith("[sqlite-worker] child exited (code null, signal SIGKILL)");
+      expect(failure.name).toBe("SQLiteWorkerError");
+      expect(failure.message).toBe("SQLite worker exited (code null, signal SIGKILL)");
+      // The runtime closed stdin without an error, so the exit is the only report.
+      expect(events.map((entry) => entry.event)).toEqual(["exit", "stdin-close"]);
+      expect(warn.mock.calls).toEqual([[EXIT_WARNING]]);
     } finally {
       watch.stop();
       warn.mockRestore();
