@@ -348,13 +348,14 @@ mock.module("ioredis", () => ({
  * test overrides one call with a forward that reaches somewhere else, which is what a pooled
  * tunnel opened for a previous record actually is.
  */
-const mockCreateSSHTunnel = mock(async (_id: string, _sshConfig: unknown, remoteHost: string, remotePort: number) => ({
+const forwardToTheAskedAddress = async (_id: string, _sshConfig: unknown, remoteHost: string, remotePort: number) => ({
   localHost: "127.0.0.1",
   localPort: 54321,
   remoteHost,
   remotePort,
   close: mock(async () => {}),
-}));
+});
+const mockCreateSSHTunnel = mock(forwardToTheAskedAddress);
 
 const mockCloseSSHTunnel = mock(async () => {});
 
@@ -450,10 +451,12 @@ if (sigintHandler) process.removeListener("SIGINT", sigintHandler);
 
 beforeEach(async () => {
   await clearProviderCache();
-  mockCreateSSHTunnel.mockClear();
+  // Resets, not clears: a test that overrides one dial or one release and fails before its call would otherwise
+  // leave the override queued for whichever later test dials or releases a tunnel next (Bun's mockClear keeps a
+  // queued mockImplementationOnce).
+  mockCreateSSHTunnel.mockReset();
+  mockCreateSSHTunnel.mockImplementation(forwardToTheAskedAddress);
   mockCloseSSHTunnel.mockClear();
-  // A reset, not a clear: a test that overrides one release and fails before its call would otherwise leave the
-  // override queued for whichever later test releases a tunnel next.
   mockReleaseUnopenedTunnel.mockReset();
   mockReleaseUnopenedTunnel.mockImplementation(releaseByClosing);
   mockTunnelProviderOpened.mockClear();
