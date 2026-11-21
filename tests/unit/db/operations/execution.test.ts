@@ -428,6 +428,22 @@ describe("executeAuditedOperation: a provider call the callback holds the execut
     expect(endExecution).toHaveBeenCalledTimes(1);
   });
 
+  test("a held answer that is not a promise still releases the execution once", async () => {
+    const { tracker, endExecution, context } = setUp();
+    // A provider that breaks its declared Promise<QueryResult> and answers with the result itself.
+    const answer = { rows: [{ id: 1 }] };
+
+    const outcome = await executeAuditedOperation(baseParams(), context, async ({ holdUntilSettled }) => {
+      holdUntilSettled(answer as unknown as PromiseLike<unknown>);
+      return answer;
+    });
+
+    expect(outcome.kind).toBe("executed");
+    await tracker.whenIdle("run-1");
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 0, executedStatements: 1, totalElapsedMs: 60 });
+    expect(endExecution).toHaveBeenCalledTimes(1);
+  });
+
   test("refuses a hold handed in after the execution ended", async () => {
     const { tracker, context } = setUp();
     let hold: ((call: PromiseLike<unknown>) => void) | undefined;

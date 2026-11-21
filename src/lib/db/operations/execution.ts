@@ -140,14 +140,16 @@ function executionRelease(tracker: ExecutionBudgetTracker, runId: string) {
           `a provider call of run "${runId}" was held after the execution it belongs to ended`,
         );
       }
-      running += 1;
       const settled = () => {
         running -= 1;
         if (running > 0 || !answered) return;
         ended = true;
         tracker.endExecution(runId, { statements: 0, elapsedMs: 0 });
       };
-      call.then(settled, settled);
+      // Subscribed before it is counted, through `Promise.resolve`, which adopts any answer a provider gives: a hold is
+      // never counted without the handler that releases it.
+      Promise.resolve(call).then(settled, settled);
+      running += 1;
     },
     answer(elapsedMs: number): void {
       answered = true;
