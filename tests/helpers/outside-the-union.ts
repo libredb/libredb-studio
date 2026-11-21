@@ -11,7 +11,7 @@ import { typeIdRefusal } from "@/lib/db/type-id";
  * - Malformed: a value that is not a primitive string, including a `String` object and an object whose `toString`
  *   spells a type id, which a coercing read would take for that type.
  */
-export const UNKNOWN_TYPE_VALUES: readonly (readonly [string, string])[] = [
+const UNKNOWN_TYPE_VALUES: readonly (readonly [string, string])[] = [
   ["acmefoo", "acmefoo"],
   ["Postgres", "Postgres"],
   ["constructor", "constructor"],
@@ -21,13 +21,13 @@ export const UNKNOWN_TYPE_VALUES: readonly (readonly [string, string])[] = [
 ];
 
 /** The absent values of `OUTSIDE_THE_UNION`: neither is no connection. */
-export const ABSENT_TYPE_VALUES: readonly (readonly [string, unknown])[] = [
+const ABSENT_TYPE_VALUES: readonly (readonly [string, unknown])[] = [
   ["the empty string", ""],
   ["null", null],
 ];
 
 /** The malformed values of `OUTSIDE_THE_UNION`. */
-export const MALFORMED_TYPE_VALUES: readonly (readonly [string, unknown])[] = [
+const MALFORMED_TYPE_VALUES: readonly (readonly [string, unknown])[] = [
   ["the number 5", 5],
   ['a String object of "mysql"', new String("mysql")],
   ['the array ["mongodb"]', ["mongodb"]],
@@ -42,7 +42,7 @@ export const OUTSIDE_THE_UNION: readonly (readonly [string, unknown])[] = [
 ];
 
 /** What a refusal by name carries: the reason, the refused string for an unknown type, and the sentence. */
-export interface RefusalShape {
+interface RefusalShape {
   readonly reason: string;
   readonly typeId: string | undefined;
   readonly message: string;
