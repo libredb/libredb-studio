@@ -365,7 +365,8 @@ const mockCloseSSHTunnel = mock(async () => {});
  * that against the real pool. This release closes, which is the pool's answer for a forward only this call held; a test
  * that needs the pool to keep the forward overrides it.
  */
-const mockReleaseUnopenedTunnel = mock(async (tunnel: unknown) => (tunnel as { close: () => Promise<void> }).close());
+const releaseByClosing = async (tunnel: unknown) => (tunnel as { close: () => Promise<void> }).close();
+const mockReleaseUnopenedTunnel = mock(releaseByClosing);
 const mockTunnelProviderOpened = mock((_tunnel: unknown) => {});
 
 mock.module("@/lib/ssh/tunnel", () => ({
@@ -451,7 +452,10 @@ beforeEach(async () => {
   await clearProviderCache();
   mockCreateSSHTunnel.mockClear();
   mockCloseSSHTunnel.mockClear();
-  mockReleaseUnopenedTunnel.mockClear();
+  // A reset, not a clear: a test that overrides one release and fails before its call would otherwise leave the
+  // override queued for whichever later test releases a tunnel next.
+  mockReleaseUnopenedTunnel.mockReset();
+  mockReleaseUnopenedTunnel.mockImplementation(releaseByClosing);
   mockTunnelProviderOpened.mockClear();
 });
 
@@ -3880,6 +3884,42 @@ describe("acquireExecutionProfileProvider", () => {
     } finally {
       mockPgPool.connect = originalConnect;
     }
+  });
+
+  test.each([
+    [
+      "the agent credential is refused for its form",
+      pgConn({ id: "pg-tunnel-credential-form", agentUser: "agent_ro" }),
+      "AGENT_CREDENTIAL_UNRESOLVABLE" as const,
+    ],
+    [
+      "the provider has no read-only statement path",
+      makeConnection("spark", { id: "spark-tunnel-profile" }),
+      "PROFILE_UNSUPPORTED_BY_PROVIDER" as const,
+    ],
+  ])("releases the tunnel when %s", async (_refusal, connection, reasonCode) => {
+    const tunnelled: DatabaseConnection = {
+      ...connection,
+      host: "remote-db.example.com",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.com",
+        port: 22,
+        username: "admin",
+        authMethod: "password",
+        password: "secret",
+      },
+    };
+
+    const error: unknown = await acquireExecutionProfileProvider(tunnelled, "agent-read-only").catch((e: unknown) => e);
+
+    expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe(reasonCode);
+    const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
+    expect(tunnel).toBeDefined();
+    expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
+    expect(tunnel?.close).toHaveBeenCalledTimes(1);
+    expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
+    expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
   test("evicting an idle shared provider keeps the tunnel of a live profile provider", async () => {
