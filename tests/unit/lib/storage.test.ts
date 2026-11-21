@@ -241,7 +241,8 @@ describe("storage: saved queries", () => {
 // unavailable by the UI, and storage never drops it, rewrites it or writes its availability into it.
 describe("a stored saved query whose connection type names no provider (FND-1)", () => {
   const unknown = { ...makeSavedQuery({ id: "acme", name: "Acme query" }), connectionType: "acmefoo" };
-  const { connectionType: _connectionType, ...untyped } = makeSavedQuery({ id: "untyped", name: "Untyped query" });
+  const untyped: Record<string, unknown> = { ...makeSavedQuery({ id: "untyped", name: "Untyped query" }) };
+  Reflect.deleteProperty(untyped, "connectionType");
 
   function storeBoth() {
     localStorage.setItem("libredb_saved_queries", JSON.stringify([unknown, untyped]));

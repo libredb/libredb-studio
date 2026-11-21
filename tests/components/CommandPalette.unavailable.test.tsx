@@ -188,6 +188,7 @@ describe("the command palette and a saved query whose type names no provider (FN
     for (let index = 0; index < 4; index++) {
       if (index > 0) fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
       fireEvent.click(savedGroup().getAllByRole("option")[index]);
+      // oxlint-disable-next-line no-await-in-loop -- a pick closes the palette, so each one lands before the next reopens it.
       await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(index + 1));
     }
 

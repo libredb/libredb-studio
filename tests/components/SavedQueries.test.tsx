@@ -168,7 +168,8 @@ describe("SavedQueries", () => {
     });
 
     test("an entry that has no connection type, or one that is not text, is left out by itself with its reason", async () => {
-      const { connectionType: _connectionType, ...untyped } = { ...acme, id: "untyped", name: "Untyped report" };
+      const untyped: Record<string, unknown> = { ...acme, id: "untyped", name: "Untyped report" };
+      Reflect.deleteProperty(untyped, "connectionType");
       const malformed = { ...acme, id: "malformed", name: "Malformed report", connectionType: 5 };
       const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
       importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([known, untyped, malformed]));
@@ -199,7 +200,8 @@ describe("SavedQueries", () => {
       query: "FIND acme",
       connectionType: "acmefoo",
     } as unknown as SavedQuery;
-    const { connectionType: _connectionType, ...untypedFields } = { ...pg, id: "untyped", name: "Untyped query" };
+    const untypedFields: Record<string, unknown> = { ...pg, id: "untyped", name: "Untyped query" };
+    Reflect.deleteProperty(untypedFields, "connectionType");
     const untyped = untypedFields as unknown as SavedQuery;
     const malformed = {
       ...pg,
@@ -247,7 +249,7 @@ describe("SavedQueries", () => {
 
     test("a saved query of a type id still loads from its name and from Edit", () => {
       mockGetSavedQueries.mockReturnValue(library);
-      const onSelectQuery = mock((_query: string) => {});
+      const onSelectQuery = mock<(query: string) => void>(() => {});
       const view = render(<SavedQueries onSelectQuery={onSelectQuery} />);
       fireEvent.click(view.getByRole("button", { name: "Active Users" }));
       fireEvent.click(view.getByRole("button", { name: "Edit Active Users" }));
