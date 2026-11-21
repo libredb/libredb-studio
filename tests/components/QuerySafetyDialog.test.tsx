@@ -3531,3 +3531,36 @@ describe("Databend's REPLACE asks", () => {
     expect(isDangerousQuery(sql, "databend")).toBe(false);
   });
 });
+
+describe("DuckDB's INSERT OR REPLACE asks", () => {
+  // Measured on DuckDB 1.5.5: INSERT OR REPLACE overwrote (1, 'a', 'keep-me') with (1, 'new', NULL) from the editor with
+  // no dialog, BY NAME included, and ON CONFLICT ... DO UPDATE SET updated it, which the code-wide UPDATE ... SET
+  // reading already asks about. INSERT OR IGNORE, ON CONFLICT DO NOTHING, a plain INSERT and INSERT ... BY NAME or BY
+  // POSITION kept the row, refusing a duplicate key with a Constraint Error where they do not skip it.
+  test.each([
+    "INSERT OR REPLACE INTO t VALUES (1, 'a')",
+    "INSERT OR REPLACE INTO t (id, v) VALUES (1, 'a')",
+    "INSERT OR REPLACE INTO t BY NAME SELECT 1 AS id, 'a' AS v",
+    "insert or replace into t values (1, 'a')",
+    "INSERT /* c */ OR -- d\nREPLACE INTO t VALUES (1, 'a')",
+    "WITH c AS (SELECT 1 AS id) INSERT OR REPLACE INTO t SELECT id, 'a' FROM c",
+    "SELECT 1; INSERT OR REPLACE INTO t VALUES (1, 'a')",
+    "BEGIN; INSERT OR REPLACE INTO t VALUES (1, 'a'); COMMIT;",
+    "INSERT INTO t VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET v = EXCLUDED.v",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "duckdb")).toBe(true);
+  });
+
+  test.each([
+    "INSERT INTO t VALUES (1, 'a')",
+    "INSERT OR IGNORE INTO t VALUES (1, 'a')",
+    "INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING",
+    "INSERT INTO t BY NAME SELECT 1 AS id, 'a' AS v",
+    "INSERT INTO t BY POSITION VALUES (1, 'a')",
+    "SELECT replace(v, 'a', 'b') FROM t",
+    "BEGIN; SELECT replace(v, 'a', 'b') FROM t; COMMIT;",
+    "SELECT 'INSERT OR REPLACE INTO t' AS note",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "duckdb")).toBe(false);
+  });
+});
