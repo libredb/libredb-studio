@@ -494,9 +494,9 @@ The provider `createDatabaseProvider` returns is built from a copy of the connec
 A copy loses a field defined on the prototype or as not enumerable, and reads an own getter once, so a connection with an `sshTunnel`, and the tunnel itself, must be plain data, as parsed JSON is.
 A non-object `sshTunnel`, a class instance, a getter or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built, by `createDatabaseProvider` and by `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` before they dial the tunnel.
 
-Every factory entry point, `createDatabaseProvider`, `getOrCreateProvider` and `withOneShotTunnel` included, takes the process's egress decision before it looks in a cache, dials a tunnel or builds a provider.
-The first call reads `DB_HTTP_BLOCK_PRIVATE_HOSTS`, logs which way it decided and whether that is the default, and keeps the decision for the life of the process, so set the variable before the first call: a later change takes effect when the process restarts.
-A value other than `true`, `on`, `1`, `false`, `off`, `0` or empty is refused with a `DatabaseConfigError` naming the variable, on that call and every later one, and nothing is built.
+`createDatabaseProvider`, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` take the process's egress decision before they look in a cache, dial a tunnel or build a provider.
+The first call reads `DB_HTTP_BLOCK_PRIVATE_HOSTS`, logs which way it decided and whether that is the default in one info line, which a `LOG_LEVEL` of `warn` or `error` hides, and keeps the decision for the life of the process, so set the variable before the first call: a later change takes effect when the process restarts.
+A value other than `true`, `on`, `1`, `false`, `off`, `0` or empty (trimmed, any case) is refused with a `DatabaseConfigError` naming the variable, on that call and every later one, and nothing is built.
 A standalone Studio takes the decision at boot instead, and refuses to start on such a value.
 
 ### DuckDB file access and the execution context

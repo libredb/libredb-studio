@@ -46,12 +46,18 @@ describe("control 0.6 names the egress decision", () => {
     expect(control).toContain("SNMP's name lookup included");
     expect(control).toContain("a standalone server refuses to boot on a value other than");
     expect(control).toContain("the provider factory takes the decision before any cache, tunnel or provider");
+    expect(control).toContain("(trimmed, any case)");
+    expect(control).toContain("logs the decision once, at info level,");
   });
 
-  test("Known limits says the decision is logged once and a change waits for a restart", () => {
+  test("Known limits says the decision is logged once, at info level, and a change waits for a restart", () => {
     expect(GUARD_BULLET).toContain(
-      "Studio reads the variable once per process, logs which way it decided and whether that is the default",
+      "Studio reads the variable once per process, logs which way it decided and whether that is the default in one info line, which a `LOG_LEVEL` of `warn` or `error` hides,",
     );
     expect(GUARD_BULLET).toContain("A change to the variable takes effect when the process restarts.");
+  });
+
+  test("Known limits names SNMP's agent lookup as covered, as row 0.6 does", () => {
+    expect(GUARD_BULLET).toContain("SNMP's agent lookup is covered too");
   });
 });
