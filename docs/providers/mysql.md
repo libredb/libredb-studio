@@ -964,6 +964,12 @@ Block comments are flat: the MySQL reference manual (11.7 Comments, checked 2026
 `//` is code, probed 2026-08-25 on 26.7.0: `SELECT 1 AS a // note` is ERROR 1064.
 A backslash does not always escape, because `NO_BACKSLASH_ESCAPES` in `sql_mode` turns the escape off per session.
 `[...]` and compound statements (`CREATE PROCEDURE ... BEGIN ... END`, cut with `DELIMITER` by MySQL's own client) are not established and stay at the fail-safe default; the second gap is BACKLOG S7.
+The confirmation gate asks before the two INSERT-shaped statements that change rows already there, as it asks before `UPDATE` and `DELETE`.
+`REPLACE` (`confirmForms`) deletes the row a new one collides with on a primary or unique key; its `INTO` is optional, so every statement led by the word asks.
+`ON DUPLICATE KEY UPDATE` (`confirmCodeForms`) asks wherever it is in the statement's code, after `VALUES`, `SET` or `SELECT`.
+A plain `INSERT`, `INSERT IGNORE` and `INSERT ... SELECT` add rows and do not ask.
+Inside a script led by `BEGIN`, the gate reads every form anywhere in the code, so there a `REPLACE()` call asks too, the fail-safe direction.
+Every MySQL-wire relative in section 1.1 connects through the `mysql` type id and gets the same answers.
 The update-target reader takes `--` as a comment only before a space or a control character, as MySQL and MariaDB do; its measurement on MariaDB 11.8.9 sits beside its regex in `src/lib/sql/update-target.ts`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with a backtick as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
