@@ -741,6 +741,14 @@ describe("seedAssetsEnv", () => {
   test("keeps the operator's own value", () => {
     expect(seedAssetsEnv(payloadDir, path.join(tempDir, "own-assets"))).toEqual({});
   });
+
+  test("hands an absolute path when the payload directory is relative", () => {
+    // A relative HOME gives a relative payload directory, and server.js changes into it before it reads
+    // SEED_ASSETS_DIR, so the value is resolved here against the launcher's directory, as spawn resolves cwd.
+    expect(seedAssetsEnv(path.join("rel-home", "payload"), undefined)).toEqual({
+      SEED_ASSETS_DIR: path.resolve("rel-home", "payload", "seed-assets"),
+    });
+  });
 });
 
 describe("resolveBindAddress (issue #813)", () => {
@@ -1068,13 +1076,22 @@ describe("launcher path variables", () => {
  * stub payload prints what it was given.
  */
 describe("launcher seed assets directory", () => {
-  function launch(overrides: Record<string, string> = {}, cwd?: string): { output: string; payload: string } {
+  /**
+   * With `relativeHome`, os.homedir() reports the fixture home by its bare name and the launcher runs from
+   * the home's parent directory, as with a relative HOME on POSIX, where os.homedir() returns HOME as given.
+   */
+  function launch(
+    overrides: Record<string, string> = {},
+    cwd?: string,
+    { relativeHome = false } = {},
+  ): { output: string; payload: string } {
     const node = Bun.which("node");
     expect(node).not.toBeNull();
     const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
     expect(assessNodeRuntime(ambient).message).toBeNull();
 
     const home = fs.mkdtempSync(path.join(tempDir, "seed-assets-"));
+    if (relativeHome) cwd = path.dirname(home);
     const root = path.resolve(import.meta.dir, "../..");
     const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
     const payload = path.join(home, ".libredb-studio", version, "payload");
@@ -1084,7 +1101,7 @@ describe("launcher seed assets directory", () => {
     fs.writeFileSync(
       preload,
       'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
-        `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
+        `os.homedir = () => ${JSON.stringify(relativeHome ? path.basename(home) : home)}; syncBuiltinESMExports();`,
     );
     const env = { ...process.env };
     for (const name of ["PORT", "LIBREDB_STUDIO_ARCHIVE", "LIBREDB_BIND", "HOSTNAME", "SEED_ASSETS_DIR"])
@@ -1103,6 +1120,12 @@ describe("launcher seed assets directory", () => {
   test("hands the server the payload's seed-assets when the operator set none", () => {
     const { output, payload } = launch();
     expect(output).toContain(`SEED_ASSETS=${path.join(payload, "seed-assets")}\n`);
+  });
+
+  test("hands an absolute seed-assets path when the home directory is relative", () => {
+    const { output, payload } = launch({}, undefined, { relativeHome: true });
+    // realpath: on macOS the temp directory is a symlink, and process.cwd() reports its target.
+    expect(output).toContain(`SEED_ASSETS=${path.join(fs.realpathSync(payload), "seed-assets")}\n`);
   });
 
   test("treats a whitespace-only SEED_ASSETS_DIR as unset", () => {
