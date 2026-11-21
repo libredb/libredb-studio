@@ -1107,10 +1107,13 @@ and is the larger change, which is why this is filed rather than folded into D87
 
 D86 was closed by KEYING the tunnel pool on the forward - `(connectionId, remoteHost, remotePort,
 tunnelRoute(sshConfig))` in `poolKey`, `src/lib/ssh/tunnel.ts` - rather than by refusing a mismatch.
+The key has since gained two components, `tunnelCredentialDigest(sshConfig)` and the connection's pinned
+`hostKeyFingerprint`, so a forward is also shared only under the credential and pin it was opened with.
 That was the trade D86 itself allowed, and refusing is still the wrong answer: nothing on the
 edit path closes a stale forward, so a refusal would leave the connection unusable, and every second
 provider on a live tunnel legitimately reuses it. The cost is that the pool now holds one live
-forward per distinct (route, far end) asked for under an id, where before it held exactly one.
+forward per distinct (route, far end, credential, pin) asked for under an id, where before it held
+exactly one.
 
 MEASURED at the unit level, real pool, `ssh2` and `net` faked so the handles are countable
 (`scratchpad/probes/d86-unbounded-route.test.ts`): 50 requests under ONE connection id, 25 far ends
@@ -1140,7 +1143,8 @@ line counts forwards per connection, and `docs/SECURITY.md` says nothing about i
 cap that refuses or by closing a forward once nothing can still be using it, and the choice is
 written down where the next writer of the pool will read it. A test drives N distinct forwards under
 one id and asserts the bound holds, with a control that the honest population is untouched: a second
-provider on the same id, route and far end still gets the one forward and opens no second one.
+provider on the same id, route, far end, credential and pin still gets the one forward and opens no
+second one.
 
 ### D94. On a single-connection provider the transaction ender cannot tell whose transaction it is ending
 

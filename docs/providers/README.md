@@ -280,6 +280,10 @@ the comparison above to be possible at all. `src/lib/storage/secret-fields.ts` c
 `public` alongside the certificates in `ssl`; the tunnel's password, private key and passphrase stay
 encrypted at rest.
 
+**One forward per connection, bastion, far end, credential and pin.** Studio pools each open tunnel forward and hands it to every provider of the same connection that asks for the same bastion route and far end, and a forward is shared only by calls that present the credential it was opened with and pin the same host key (or none).
+A changed credential (another auth method, password, private key or passphrase) or another pin opens its own forward.
+The forward opened with the old credential is not closed by the change: it stays open, shared by calls that present the old credential, until the connection's own teardown closes every forward under it, which is removing the connection's providers, or the idle sweep once no provider of the connection is left, or the end of its SSH session.
+
 ## Connecting to the container fixture
 
 What to type into the connection dialog for **every shipped provider**, against
