@@ -1,6 +1,6 @@
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
-import { readSqlSpan } from "@/lib/sql/spans";
+import { hasCodeCharacter, readSqlSpan } from "@/lib/sql/spans";
 
 /**
  * The refusals made before any call to Spark, each read under the Spark grammar row so
@@ -60,25 +60,12 @@ export function scriptBlockRefusal(sql: string): string | undefined {
 }
 
 /**
- * The Unicode-space refusal when one of those spaces stands at a code position: outside every string, raw string,
- * dollar string, quoted name and comment span of `readSqlSpan`; the contents of a subscript span read as code. A `[`
- * reads as code without a call to `readSqlSpan`, the one character the walk does not hand it: under the Spark row a
- * `[` opens no span but a subscript, which `readSqlSpan` reads to the matching `]`, or to the end of the text when
- * none closes it, and a walk that then stepped one character into it would read the rest of the text again at each
- * nested or unclosed `[`, quadratic in them.
+ * The Unicode-space refusal when one of those spaces stands at a code position under the Spark row: outside every
+ * string, raw string, dollar string, quoted name and comment span of `readSqlSpan`, with a `[` and the contents of a
+ * subscript read as code (`hasCodeCharacter`, which says why a `[` is not handed to the span reader).
  */
 export function unicodeSpaceRefusal(sql: string): string | undefined {
-  let index = 0;
-  while (index < sql.length) {
-    const span = sql[index] === "[" ? null : readSqlSpan(sql, index, SPARK_GRAMMAR);
-    if (span === null || span.kind === "subscript") {
-      if (UNICODE_SPACE.test(sql[index])) return SPARK_STATEMENT_SENTENCES.unicodeSpace;
-      index += 1;
-    } else {
-      index = span.end;
-    }
-  }
-  return undefined;
+  return hasCodeCharacter(sql, SPARK_GRAMMAR, UNICODE_SPACE) ? SPARK_STATEMENT_SENTENCES.unicodeSpace : undefined;
 }
 
 /** The address form that starts at `index` (`ADDRESS_LETTERS`, `://`, `ADDRESS_REST`), or undefined. */
@@ -92,8 +79,8 @@ function addressAt(sql: string, index: number): string | undefined {
 /**
  * The address refusal when an address written without quotes stands at a code position in one of the three shapes
  * where Studio's span reader starts a comment or a raw string at a character Spark reads as part of the address: a
- * `--` inside it, a final `/` before `*`, a final `r` or `R` before `'` or `"`. Spans are stepped over as in
- * `unicodeSpaceRefusal` (a `[` and the contents of a subscript read as code), and code a word at a time
+ * `--` inside it, a final `/` before `*`, a final `r` or `R` before `'` or `"`. Spans are stepped over as
+ * `hasCodeCharacter` steps them (a `[` and the contents of a subscript read as code), and code a word at a time
  * (`WORD_STEP`), so an address is tried where a token starts: after a code point that is not a letter, an ASCII digit
  * or `_`, and at `LATE_START`, a non-ASCII letter right after an ASCII letter or digit. An address in no such shape
  * reads alike in both and is stepped over.
