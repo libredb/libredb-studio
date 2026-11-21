@@ -56,6 +56,24 @@ describe("unicodeSpaceRefusal", () => {
     }
   });
 
+  test("a line comment ends at the line feed even after a backslash, so a space on the next line is refused", () => {
+    // DuckDB 1.5.5 ends a `--` comment at the line feed and ran the INSERT OR REPLACE below, replacing row 1.
+    // Spark's row continues a backslash-ended line comment past the line feed, so under it the space is a comment's.
+    for (const space of SPACES) {
+      expect(unicodeSpaceRefusal(`-- a\\\nSELECT${space}1`)).toBe(DUCKDB_UNICODE_SPACE_SENTENCE);
+      expect(unicodeSpaceRefusal(`-- a\\\nINSERT${space}OR${space}REPLACE INTO t VALUES (1, 'new', NULL)`)).toBe(
+        DUCKDB_UNICODE_SPACE_SENTENCE,
+      );
+    }
+  });
+
+  test("a /*+ comment is a comment, so the same character inside it is not refused", () => {
+    // DuckDB 1.5.5 reads `/*+ ... */` as a comment and answers 1. Spark's row reads it as an optimizer hint, code.
+    for (const space of SPACES) {
+      expect(unicodeSpaceRefusal(`SELECT /*+ x${space} */ 1`)).toBeUndefined();
+    }
+  });
+
   test("the contents of a subscript are code, so the same character there is refused", () => {
     expect(unicodeSpaceRefusal("SELECT [1,\u00A02][1]")).toBe(DUCKDB_UNICODE_SPACE_SENTENCE);
     expect(unicodeSpaceRefusal("SELECT [[1],[\u3000 2]][2]")).toBe(DUCKDB_UNICODE_SPACE_SENTENCE);
