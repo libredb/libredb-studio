@@ -1366,6 +1366,39 @@ describe("RedisProvider", () => {
       await expect(provider.scanKeysPage({ cursor: "0", count: 10 })).rejects.toThrow(/NOPERM/);
     });
 
+    // ioredis rejects a command whose reply its parser could not read with the parser's own RangeError, and a command in
+    // flight on a connection that closed with "Connection is closed." (docs/providers/redis.md section 4.6). The object
+    // read opens a connection of its own, so a SELECT that fails that way is a failed connect, named as connect() names
+    // it, and a read that fails that way is the editor's "Redis error: ...", never the driver's untyped error.
+    test("a SELECT whose reply the driver could not read fails the read as a ConnectionError naming it", async () => {
+      selectFailure = new RangeError("Invalid array length. Please report this.");
+      try {
+        openedClients.length = 0;
+        const error = await provider.scanKeysPage({ cursor: "0", count: 10, database: 1 }).then(
+          () => new Error("scanKeysPage() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: Invalid array length. Please report this.");
+        expect(isRetryableError(error)).toBe(true);
+        expect(openedClients).toEqual([{ database: 0, disconnected: true }]);
+      } finally {
+        selectFailure = null;
+      }
+    });
+
+    test("a read the driver failed without a reply fails as a QueryError naming the driver's message", async () => {
+      scanRefusal = "Connection is closed.";
+      openedClients.length = 0;
+      const error = await provider.scanKeysPage({ cursor: "0", count: 10 }).then(
+        () => new Error("scanKeysPage() resolved"),
+        (failure: Error) => failure,
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Redis error: Connection is closed.");
+      expect(openedClients).toEqual([{ database: 0, disconnected: true }]);
+    });
+
     test("answers each key's type, so a row can be read without a second request", async () => {
       scanPages = ["session:abc", "app:env"];
 

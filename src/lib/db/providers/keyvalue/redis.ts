@@ -2009,15 +2009,25 @@ export class RedisProvider extends BaseDatabaseProvider {
    * a `SELECT` on the shared client would decide which database a concurrent query ran
    * against. Closed with `disconnect()` rather than `quit()` because nothing is pending on
    * it - `quit()` waits for a reply this caller has no use for.
+   *
+   * Every failure leaves typed, as `connect()` and the editor type theirs: a `SELECT` the driver
+   * rejected without a reply (one it could not read, a closed connection) is a connect that failed,
+   * and a read the driver or the server failed is the editor's `"Redis error: ..."`
+   * (docs/providers/redis.md section 4.6).
    */
   private async withDatabase<T>(db: number, read: (client: Redis) => Promise<T>): Promise<T> {
-    const client = await this.openClient(db);
+    const client = await this.openClient(db).catch((error: unknown) => {
+      throw error instanceof DatabaseError ? error : connectFailure(error, this.config.host, this.config.port || 6379);
+    });
     try {
       return await read(client);
     } catch (error) {
+      if (error instanceof DatabaseError) throw error;
       // On an agent-mode handle a server refusal is worded without the ACL user its words name.
-      if (!this.agentProfile || !isServerErrorReply(error)) throw error;
-      throw new QueryError(`Redis refused the read: ${agentRefusalReason(error as Error)}`, "redis");
+      if (this.agentProfile && isServerErrorReply(error)) {
+        throw new QueryError(`Redis refused the read: ${agentRefusalReason(error as Error)}`, "redis");
+      }
+      throw new QueryError(`Redis error: ${error instanceof Error ? error.message : String(error)}`, "redis");
     } finally {
       client.disconnect();
     }

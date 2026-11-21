@@ -10,7 +10,8 @@
  *  - on a TLS connection, one record the client cannot decrypt written under the TLS layer: in place of the answer to a
  *    command, to a connect or to a reconnect, with the socket kept open, or on an idle connection, then a reset or one
  *    more command;
- *  - a reset in place of the answer to a command.
+ *  - a reset in place of the answer to a command;
+ *  - on the object surface's own connection, the same header answering its `SELECT` or its read.
  *
  * Each case records what the caller got, what the next command got, the `[Redis]` warnings the provider logged, and
  * every error that escaped a call instead of reaching its caller (uncaughtException, unhandledRejection). The test runs this file twice, under Bun and, bundled
@@ -102,6 +103,8 @@ function defaultAnswer(command: string[]): string {
   if (name === "INFO") return bulk("# Server\r\nredis_version:8.10.2\r\nloading:0\r\n");
   if (name === "PING") return "+PONG\r\n";
   if (name === "GET") return bulk("value");
+  if (name === "SCAN") return `*2\r\n${bulk("0")}*0\r\n`;
+  if (name === "DBSIZE") return ":0\r\n";
   return "+OK\r\n";
 }
 
@@ -429,5 +432,26 @@ cases.push(
   }),
 );
 
+/** One page of the object surface's key walk, which opens a connection of its own, in `database` when given. */
+function scanPage(provider: RedisProvider, database?: number): Promise<void> {
+  return provider
+    .scanKeysPage({ cursor: "0", count: 10, ...(database === undefined ? {} : { database }) })
+    .then(() => undefined);
+}
+
+cases.push(
+  await runCase("oversized array header answering an object read's SELECT", false, async (provider, peer) => {
+    await provider.connect();
+    peer.answer = onFirst("SELECT", OVERSIZED_ARRAY_HEADER);
+    return { call: await settle(4_000, () => scanPage(provider, 1)) };
+  }),
+);
+cases.push(
+  await runCase("oversized array header answering an object read", false, async (provider, peer) => {
+    await provider.connect();
+    peer.answer = onFirst("SCAN", OVERSIZED_ARRAY_HEADER);
+    return { call: await settle(4_000, () => scanPage(provider)) };
+  }),
+);
 console.log(JSON.stringify({ runtime: typeof Bun === "undefined" ? "node" : "bun", cases }));
 process.exit(0);

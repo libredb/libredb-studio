@@ -231,4 +231,20 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
       expect(reset.escaped).toEqual([]);
     }
   });
+
+  test("a header no JS array can hold answering the SELECT of an object read fails the read as a failed connect", () => {
+    for (const report of reports) {
+      const read = find(report, "oversized array header answering an object read's SELECT");
+      expect(read.call).toMatch(new RegExp(`^ConnectionError: Failed to connect to Redis: .+${FATAL}`));
+      expect(read.escaped).toEqual([]);
+    }
+  });
+
+  test("a header no JS array can hold answering an object read fails the read with a named error", () => {
+    for (const report of reports) {
+      const read = find(report, "oversized array header answering an object read");
+      expect(read.call).toMatch(new RegExp(`^QueryError: Redis error: .+${FATAL}`));
+      expect(read.escaped).toEqual([]);
+    }
+  });
 });

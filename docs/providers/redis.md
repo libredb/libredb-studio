@@ -558,6 +558,8 @@ What the user sees depends on where the reply arrives:
 | --- | --- |
 | The answer to an editor command | `QueryError` (400), *"Redis error: Maximum call stack size exceeded. Please report this."* for the nesting, *"Redis error: Invalid array length. Please report this."* for the header (Node's wording; Bun words the header *"Array length must be a positive integer of safe magnitude."*) |
 | The answer to the sign-in, the ready check, the `SELECT` of a numbered database, or the agent profile's read-only proof, during `connect()` | `ConnectionError` (503, retryable), *"Failed to connect to Redis: "* and the same message, for example *"Failed to connect to Redis: Invalid array length. Please report this."*; the connection is closed and the provider stays disconnected |
+| The answer to the `SELECT` of an object read's own connection (the key browser, the object tree), when it reads a numbered database | `ConnectionError` (503, retryable), *"Failed to connect to Redis: "* and the same message, as for `connect()` |
+| The answer to an object read's own command, such as its `SCAN` | `QueryError` (400), *"Redis error: "* and the same message, as for an editor command |
 | The answer to the agent's one-command connection | the driver's own error: that connection sets `retryStrategy: () => null` and `enableOfflineQueue: false` (`oneCommandOptions()`), so it ends instead of reconnecting |
 | The next editor command on the same provider | its own answer, on the reconnected connection |
 
@@ -585,7 +587,7 @@ What the user sees:
 | While the agent's one-command connection waits for its answer | the driver's own error, the TLS error itself; that connection ends instead of reconnecting, as for a reply the parser cannot hold |
 | On an idle connection | nothing until the next command, which is answered on the reconnected connection; the error is logged |
 
-[`redis-driver.test.ts`](../../tests/integration/db/redis-driver.test.ts) holds the editor command, the ready check, the `SELECT` and the read-only proof, the idle connection, a reset that follows the record, a command sent while the client reconnects, and a reset while a command waits, on Bun and on Node, and [`redis-nested-reply-live.ts`](../../tests/live/redis-nested-reply-live.ts) holds a nested reply from a real server ([§11.2](#112-coverage)).
+[`redis-driver.test.ts`](../../tests/integration/db/redis-driver.test.ts) holds the editor command, the ready check, the `SELECT` and the read-only proof, an object read's `SELECT` and `SCAN`, the idle connection, a reset that follows the record, a command sent while the client reconnects, and a reset while a command waits, on Bun and on Node, and [`redis-nested-reply-live.ts`](../../tests/live/redis-nested-reply-live.ts) holds a nested reply from a real server ([§11.2](#112-coverage)).
 An application that embeds `@libredb/studio` installs ioredis itself, unpatched, unless it applies the same patch.
 
 ### Connection string
@@ -1992,7 +1994,8 @@ The provider raises the shared error classes from
 | A quoted argument that never closes ([§3.4a](#34a-comments-lines-and-how-one-command-is-picked-out-of-a-buffer)) | `QueryError` - *"Line N opens a quoted argument with ... that never closes ..."* |
 | A second command before the first blank line ([§3.4a](#34a-comments-lines-and-how-one-command-is-picked-out-of-a-buffer)) | `QueryError` - *"Line N holds a second command, which begins with ..."* |
 | Redis-side command failure | `QueryError` — *"Redis error: …"* |
-| A reply the parser cannot hold (nesting deeper than the stack, an array header past a JS array's length) | `QueryError` - *"Redis error: Maximum call stack size exceeded. Please report this."* or the runtime's array-length message, and the connection reconnects; *"Redis error: Maximum call stack size exceeded"* without the ending when the overflow is in Studio's decoding, and the connection stays open; during `connect()`, `ConnectionError`; on the agent's one-command connection, the driver's own error ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
+| A reply the parser cannot hold (nesting deeper than the stack, an array header past a JS array's length) | `QueryError` - *"Redis error: Maximum call stack size exceeded. Please report this."* or the runtime's array-length message, and the connection reconnects; *"Redis error: Maximum call stack size exceeded"* without the ending when the overflow is in Studio's decoding, and the connection stays open; during `connect()` or the `SELECT` of an object read's own connection, `ConnectionError`; on the agent's one-command connection, the driver's own error ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
+| An object read's own command failed by the server or the driver | `QueryError` - *"Redis error: …"*; on an agent-mode handle a server refusal is *"Redis refused the read: …"*, naming the command and never the ACL user |
 | A TLS record the client cannot decrypt, while a command waits | `QueryError` - *"Redis error: "* and the TLS error, at once, and the connection reconnects; during `connect()`, `ConnectionError`; on the agent's one-command connection, the driver's own error ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
 
 All `QueryError`s carry the `QUERY_ERROR` API code and surface to the client as `400 Bad Request`.
