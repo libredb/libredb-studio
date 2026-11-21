@@ -354,7 +354,7 @@ describe("hashRunIsAmbiguous", () => {
  * grammar to read it under.
  *
  * `resolveSqlGrammar` answers the second question and has an answer for every
- * input, so a MongoDB document or a Redis command gets the compatibility grammar
+ * type id, so a MongoDB document or a Redis command gets the compatibility grammar
  * and is then read as SQL. That is what the readers under `src/lib/sql/` do to
  * text no dialect here describes, and for the confirmation gate it produced a
  * prompt on ordinary reads: the escaped quote in a Mongo filter or a Redis value
