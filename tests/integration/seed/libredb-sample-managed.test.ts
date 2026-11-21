@@ -1,7 +1,8 @@
-import { describe, test, expect, afterEach, beforeEach } from "bun:test";
+import { describe, test, expect, afterEach, beforeEach, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { type LogContext, logger } from "@/lib/logger";
 import { getManagedConnections, getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
 import {
   getSampleSeedState,
@@ -69,14 +70,22 @@ describe("getManagedConnections — embedded sample", () => {
     expect(sample?.database).toBe(file);
   });
 
-  test("excludes the sample when the file is absent", async () => {
+  test("excludes the sample when the file is absent, and lists it unavailable", async () => {
     useTempSamplePath();
     fs.writeFileSync(file, "");
     await seedSamples();
     // Admitted at boot, but the listing checks the file on every request.
     fs.rmSync(file);
-    const conns = await getManagedConnections(["*"]);
-    expect(conns.find((c) => c.seedId === SAMPLE_SEED_ID)).toBeUndefined();
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const conns = await getManagedConnections(["*"]);
+      expect(conns.find((c) => c.seedId === SAMPLE_SEED_ID)).toBeUndefined();
+      expect(getUnavailableSamples(["*"]).map(({ seedId, reason }) => [seedId, reason])).toEqual([
+        [SAMPLE_SEED_ID, "target-lost"],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("excludes the sample when disabled", async () => {
@@ -186,6 +195,101 @@ describe("the samples a listing offers are the ones boot admitted", () => {
         sentence: unavailableSentence("asset-missing"),
       },
     ]);
+  });
+});
+
+describe("a sample whose file is lost after boot", () => {
+  beforeEach(() => {
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+  });
+
+  /** The unavailable warnings about this sample, as [reason, target]. */
+  function lostWarnings(warn: { mock: { calls: [string, LogContext?][] } }): unknown[][] {
+    return warn.mock.calls
+      .filter(([message, context]) => message === "Embedded sample unavailable" && context?.seedId === SAMPLE_SEED_ID)
+      .map(([, context]) => [context?.reason, context?.target]);
+  }
+
+  test("a removed file is listed unavailable as target-lost naming ENOENT, logged once, and listed again once it is back", async () => {
+    useTempSamplePath();
+    fs.writeFileSync(file, "");
+    await seedSamples();
+    expect(getSampleSeedState(SAMPLE_SEED_ID)).toEqual({ phase: "done" });
+    expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toContain(SAMPLE_SEED_ID);
+
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      fs.rmSync(file);
+      const lost = {
+        seedId: SAMPLE_SEED_ID,
+        name: "Sample (LibreDB)",
+        reason: "target-lost" as const,
+        sentence: unavailableSentence("target-lost", "ENOENT"),
+      };
+      expect((await getManagedConnections(["user"])).map((c) => c.seedId)).not.toContain(SAMPLE_SEED_ID);
+      expect(getUnavailableSamples(["user"])).toEqual([lost]);
+      expect(getUnavailableSamples(["admin"])).toEqual([lost]);
+      expect(getPendingSeeds()).toEqual([]);
+      expect(lostWarnings(warn)).toEqual([["target-lost", file]]);
+      expect(String(warn.mock.calls[0]?.[1]?.error)).toContain("ENOENT");
+
+      // Back again: listed, not unavailable.
+      fs.writeFileSync(file, "");
+      expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toContain(SAMPLE_SEED_ID);
+      expect(getUnavailableSamples(["user"])).toEqual([]);
+
+      // Gone again: unavailable, and the process does not log it a second time.
+      fs.rmSync(file);
+      expect(getUnavailableSamples(["user"])).toEqual([lost]);
+      expect((await getManagedConnections(["user"])).map((c) => c.seedId)).not.toContain(SAMPLE_SEED_ID);
+      expect(lostWarnings(warn)).toEqual([["target-lost", file]]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "a file in a directory the server can no longer search is listed unavailable as target-lost naming EACCES (POSIX, not root)",
+    async () => {
+      useTempSamplePath();
+      fs.writeFileSync(file, "");
+      await seedSamples();
+      const directory = path.dirname(file);
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      fs.chmodSync(directory, 0o000);
+      try {
+        expect((await getManagedConnections(["admin"])).map((c) => c.seedId)).not.toContain(SAMPLE_SEED_ID);
+        expect(getUnavailableSamples(["admin"])).toEqual([
+          {
+            seedId: SAMPLE_SEED_ID,
+            name: "Sample (LibreDB)",
+            reason: "target-lost",
+            sentence: unavailableSentence("target-lost", "EACCES"),
+          },
+        ]);
+        expect(lostWarnings(warn)).toEqual([["target-lost", file]]);
+      } finally {
+        fs.chmodSync(directory, 0o700);
+        warn.mockRestore();
+      }
+    },
+  );
+
+  test("a sample still copying, or whose copy failed, has no file to lose", async () => {
+    useTempSamplePath();
+    process.env.SEED_ASSETS_DIR = tempDir(); // empty: the asset is missing
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await startSampleSeeding();
+      expect(getUnavailableSamples(["user"]).map(({ reason }) => reason)).toEqual(["asset-missing"]);
+      setSampleSeedState(SAMPLE_SEED_ID, { phase: "seeding" });
+      expect(getUnavailableSamples(["user"])).toEqual([]);
+      expect((await getManagedConnections(["user"])).map((c) => c.seedId)).not.toContain(SAMPLE_SEED_ID);
+      expect(getSampleSeedState(SAMPLE_SEED_ID)).toEqual({ phase: "seeding" });
+      expect(lostWarnings(warn)).toEqual([["asset-missing", file]]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

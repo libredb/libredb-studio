@@ -1,7 +1,8 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { logger } from "@/lib/logger";
 import { getManagedConnections, getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
 import { resetSampleSeedStates, setSampleSeedState, startSampleSeeding, unavailableSentence } from "@/lib/seed/samples";
 import { seedSamples } from "../../helpers/sample-seeding";
@@ -177,14 +178,22 @@ describe("getManagedConnections: sqlite embedded sample", () => {
     expect(seedIds.indexOf(SQLITE_SAMPLE_SEED_ID)).toBeLessThan(seedIds.indexOf(LIBREDB_SAMPLE_SEED_ID));
   });
 
-  test("omits the sample while the file does not exist", async () => {
+  test("omits the sample while the file does not exist, and lists it unavailable", async () => {
     const file = useTempSamplePath();
     writeSampleFile(file);
     await seedSamples();
     // Admitted at boot, but the listing checks the file on every request.
     fs.rmSync(file);
-    const conns = await getManagedConnections(["admin"]);
-    expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const conns = await getManagedConnections(["admin"]);
+      expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
+      expect(getUnavailableSamples(["admin"]).map(({ seedId, reason }) => [seedId, reason])).toEqual([
+        [SQLITE_SAMPLE_SEED_ID, "target-lost"],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("omits the sample when disabled via env", async () => {

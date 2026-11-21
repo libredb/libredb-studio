@@ -5,9 +5,9 @@
  * is and whether it is admitted, keeps that decision for the process, and copies each admitted sample's committed,
  * digest-pinned asset from the seed assets directory into the data directory, asynchronously, opening no database:
  * the copy is src/lib/seed/sample-copy.ts. The managed connections route lists a sample once its file exists, lists its
- * seed id in `pendingSeeds` while it copies, and lists it unavailable, with a named reason, when its copy failed or its
- * target was refused (src/lib/seed/index.ts composes those listings from the kept decision with the role filter, at
- * request time).
+ * seed id in `pendingSeeds` while it copies, and lists it unavailable, with a named reason, when its copy failed, its
+ * target was refused or its file was lost after boot (src/lib/seed/index.ts composes those listings from the kept
+ * decision with the role filter, at request time).
  *
  * This module is loaded by the boot hook, so it imports no engine code and nothing that reaches it: not the role
  * filter (./connection-filter brings in the provider connection-string rows), and from ./types and @/lib/types only
@@ -16,8 +16,16 @@
  * None of this is in the published @libredb/studio surface: instrumentation never runs there, no file is copied, and
  * no state is set.
  */
+import * as fs from "fs";
 import * as path from "path";
-import { canonicalPath, getDataDir, isReservedStoragePath } from "@/lib/data-dir";
+import { BOOTSTRAP_FILE_NAME } from "@/lib/auth-bootstrap";
+import {
+  canonicalPath,
+  getDataDir,
+  getStorageSqlitePath,
+  isReservedStoragePath,
+  reservedStoragePaths,
+} from "@/lib/data-dir";
 import { readEnabledProviders } from "@/lib/db/enabled-providers";
 import { governanceEnabled } from "@/lib/governance/config";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
@@ -182,17 +190,55 @@ function targetFamily(target: string): string[] {
 }
 
 /**
+ * A path with letter case folded, one code point at a time: lower case, then upper case where that is one code point,
+ * so σ and ς, which share Σ, are one letter, while ß, whose upper case is SS, stays itself. Not Unicode normalization.
+ */
+function caseKey(file: string): string {
+  return Array.from(file.toLowerCase(), (char) => {
+    const upper = char.toUpperCase();
+    return [...upper].length === 1 ? upper : char;
+  }).join("");
+}
+
+/**
+ * Whether a folded path (`caseKey`) names one of the server's own storage files, the set `isReservedStoragePath`
+ * holds, with letter case folded, as configured and as real paths. `isReservedStoragePath` compares spellings exactly,
+ * and file identity only for a file that exists, so on its own it admits another case's spelling of a storage file
+ * that does not exist yet (the storage database before the first boot, its `-wal` after a clean close), which on macOS
+ * and Windows is that file. Throws what the path check throws.
+ */
+function reservedStorageKey(): (key: string) => boolean {
+  const storage = path.resolve(getStorageSqlitePath());
+  const bootstrap = path.resolve(getDataDir(), BOOTSTRAP_FILE_NAME);
+  const bootstraps = [bootstrap, canonicalPath(bootstrap)];
+  const files = new Set(
+    [
+      ...reservedStoragePaths(),
+      storage,
+      `${storage}-wal`,
+      `${storage}-shm`,
+      ...bootstraps.flatMap((file) => [file, `${file}.bak`]),
+    ].map(caseKey),
+  );
+  const temps = bootstraps.map((file) => caseKey(`${file}.`));
+  const tmp = caseKey(".tmp");
+  return (key) => files.has(key) || temps.some((prefix) => key.startsWith(prefix) && key.endsWith(tmp));
+}
+
+/**
  * The enabled samples, in table order, each with its target and admission, computed from the environment and the
  * filesystem as they are now; it never throws. `startSampleSeeding` computes it once, at boot, and keeps it, and the
  * listings read what it kept (`seededSampleAdmissions`). A sample whose target's path cannot be checked (an error other
  * than ENOENT, such as EACCES, ENOTDIR or ELOOP, from resolving it or checking its family) is refused
  * `target-unreadable` with that error; a sample any of whose family names one of the server's own storage files
- * (`isReservedStoragePath`) is refused `target-reserved`; a sample whose family shares a file with an earlier admitted
- * sample's is refused `target-conflict`. A refused sample claims nothing.
+ * (`isReservedStoragePath`, and `reservedStorageKey` with letter case folded) is refused `target-reserved`; a sample
+ * whose family shares a file with an earlier admitted sample's is refused `target-conflict`. A refused sample claims
+ * nothing.
  *
- * Two family members that differ only in letter case are one file for that comparison, on every OS: `canonicalPath`
- * keeps the case it is given, and on macOS and Windows the two spellings name one file, so a configuration that
- * conflicts there conflicts on Linux too. Only letter case is folded (`toLowerCase`), not Unicode normalization.
+ * Two paths that differ only in letter case are one file for both comparisons, on every OS, because on macOS and
+ * Windows they name one file: a configuration that conflicts there conflicts on Linux too. So the family is compared
+ * with letter case folded (`caseKey`), as real paths and also as given: a symlinked directory spelled in another case
+ * is followed on macOS and Windows but not on Linux, where only the paths as given still match.
  */
 export function sampleAdmissions(): SampleAdmission[] {
   const claimed = new Set<string>();
@@ -200,17 +246,19 @@ export function sampleAdmissions(): SampleAdmission[] {
   for (const [type, spec] of SAMPLES) {
     if (!sampleEnabled(type, spec)) continue;
     const target = sampleTarget(spec);
-    let family: string[];
+    let keys: string[];
     let reserved: boolean;
     try {
-      family = targetFamily(target);
-      reserved = family.some((file) => isReservedStoragePath(file));
+      const family = targetFamily(target);
+      const given = FAMILY_SUFFIXES.map((suffix) => `${path.resolve(target)}${suffix}`);
+      const isReservedKey = reservedStorageKey();
+      keys = [...family, ...given].map(caseKey);
+      reserved = family.some((file) => isReservedStoragePath(file)) || keys.some(isReservedKey);
     } catch (error) {
       const failure = { code: errnoCode(error), message: messageOf(error) };
       admissions.push({ type, spec, target, refusal: "target-unreadable", failure });
       continue;
     }
-    const keys = family.map((file) => file.toLowerCase());
     let refusal: SampleAdmissionRefusal | null = null;
     if (reserved) refusal = "target-reserved";
     else if (keys.some((key) => claimed.has(key))) refusal = "target-conflict";
@@ -235,19 +283,23 @@ export function unavailableSentence(reason: SampleUnavailableReason, code?: stri
       return "This sample's file in the seed assets directory is not the one this LibreDB Studio ships, so it was not copied.";
     case "copy-failed":
       return `This sample could not be copied into the server's data directory${withCode(code)}. The server log names the path.`;
+    case "copy-defect":
+      return "This sample's copy met an internal error, so it was not copied. The server log shows the error as an unhandled rejection.";
     case "target-unreadable":
       return `The server could not check this sample's path${withCode(code)}, so the sample is not created there. The server log names the path.`;
     case "target-reserved":
       return "This sample's path names one of the server's own storage files, so the sample is not created there.";
     case "target-conflict":
       return "This sample's path is another sample's, so only the first one is created.";
+    case "target-lost":
+      return `The server can no longer find or check this sample's file${withCode(code)}. The server log names the path.`;
   }
 }
 
 /**
  * A sample's seed state in this process. Absent until seeding starts; `seeding` while its copy runs; `done` once its
- * file is present; `failed`, with the reason and sentence the listing shows, when its copy failed or its target was
- * refused.
+ * file is present; `failed`, with the reason and sentence the listing shows, when its copy failed, its target was
+ * refused, or its file was lost after that (`sampleFilePresent`).
  */
 export type SampleSeedState =
   | { readonly phase: "seeding" }
@@ -289,7 +341,7 @@ export function getSampleSeedState(seedId: string): SampleSeedState | undefined 
   return seeding().states.get(seedId);
 }
 
-/** The service's own writer; a test sets a state to observe a sample in flight. */
+/** A test seam: sets a sample's state in this process's current seeding, as a copy in flight would. */
 export function setSampleSeedState(seedId: string, state: SampleSeedState): void {
   seeding().states.set(seedId, state);
 }
@@ -297,6 +349,39 @@ export function setSampleSeedState(seedId: string, state: SampleSeedState): void
 /** Forget this process's seeding, its admissions and its states, as a process that never seeded. */
 export function resetSampleSeedStates(): void {
   delete (globalThis as SampleSeedingHolder)[SAMPLE_SEEDING_KEY];
+}
+
+/**
+ * Whether an admitted sample's file is at its target now; a listing asks on every request. A file a check cannot find
+ * or cannot check (ENOENT, EACCES, ENOTDIR and the like) is not there. A sample whose copy ended `done` and whose file
+ * is then not there was lost after boot: in one synchronous step it is set `failed` with `target-lost` and that
+ * error's code, and logged once as the warning "Embedded sample unavailable", so the listings show it unavailable
+ * instead of dropping it in silence. It is listed again if its file comes back, and a later loss logs nothing more. A
+ * sample still copying, or whose copy failed, has no file to lose: its check only answers.
+ */
+export function sampleFilePresent({ spec, target }: SampleAdmission): boolean {
+  try {
+    fs.statSync(target);
+    return true;
+  } catch (error) {
+    const { states } = seeding();
+    if (states.get(spec.seedId)?.phase !== "done") return false;
+    const code = errnoCode(error);
+    states.set(spec.seedId, {
+      phase: "failed",
+      reason: "target-lost",
+      sentence: unavailableSentence("target-lost", code),
+    });
+    logger.warn("Embedded sample unavailable", {
+      route: "seed/samples",
+      seedId: spec.seedId,
+      reason: "target-lost",
+      target,
+      assets: seedAssetsDirectory(),
+      error: messageOf(error),
+    });
+    return false;
+  }
 }
 
 /** The listed connection of a sample whose file exists: editable, unmanaged, at its target, created at the epoch. */
@@ -325,7 +410,7 @@ export function sampleConnection(type: DatabaseType, spec: SampleSpec, target: s
  * directory. A failure never stops boot.
  *
  * copySampleAsset rejects with a SampleCopyError for every failure it knows. Anything else is a defect: its sample is
- * set `failed` with `copy-failed` and logged as above, so it never stays pending, and the error is rethrown, so the
+ * set `failed` with `copy-defect` and logged as above, so it never stays pending, and the error is rethrown, so the
  * returned promise rejects with it (with an AggregateError of them, in table order, when several copies met one). The
  * boot hook does not catch that rejection either: it surfaces as the process's unhandled rejection.
  */
@@ -372,7 +457,7 @@ export function startSampleSeeding(): Promise<void> {
         },
         (error: unknown) => {
           const known = error instanceof SampleCopyError;
-          const reason = known ? error.reason : "copy-failed";
+          const reason = known ? error.reason : "copy-defect";
           states.set(spec.seedId, {
             phase: "failed",
             reason,

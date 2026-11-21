@@ -1,4 +1,3 @@
-import * as fs from "fs";
 import { governanceEnabled } from "@/lib/governance/config";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import { filterByRoles, filterUnavailableByRoles, projectSeedConnection, rolesMatch } from "./connection-filter";
@@ -11,6 +10,7 @@ import {
   type SampleAdmission,
   sampleConnection,
   sampleConsidered,
+  sampleFilePresent,
   seededSampleAdmissions,
 } from "./samples";
 import type { OperatorEntry, OperatorUnavailableEntry } from "./sources/types";
@@ -147,8 +147,9 @@ export async function getSeedListing(roles: string[]): Promise<SeedListing> {
     ? [...fromOperators, ...unavailable, ...discovered]
     : [...fromOperators, ...unavailable, ...discovered, ...kubernetes];
   // The built-in samples, in the order of SAMPLES (src/lib/seed/samples.ts, whose docblock says why SQLite leads).
+  // Each file is checked on this request: one lost after boot is listed unavailable instead (sampleFilePresent).
   const after = offeredSamples(roles)
-    .filter(({ refusal, target }) => refusal === null && fs.existsSync(target))
+    .filter((admission) => admission.refusal === null && sampleFilePresent(admission))
     .map(({ type, spec, target }) => sampleConnection(type, spec, target));
 
   return { before, pendingReview: reviewed ? kubernetes : [], after };
@@ -185,15 +186,17 @@ export function getPendingSeeds(): string[] {
 }
 
 /**
- * The samples boot enabled, offered to these roles, that have no file and whose copy failed or whose target was
- * refused, in table order, each with its reason and the sentence a client shows. Never a connection, so no picker,
- * route or MCP tool can reach one. Empty under governance, where boot enables no sample.
+ * The samples boot enabled, offered to these roles, that have no file and whose copy failed, whose target was refused,
+ * or whose file was lost after boot, in table order, each with its reason and the sentence a client shows. The file is
+ * checked first (`sampleFilePresent`), so a loss this request finds is listed at once. Never a connection, so no
+ * picker, route or MCP tool can reach one. Empty under governance, where boot enables no sample.
  */
 export function getUnavailableSamples(roles: string[]): UnavailableSample[] {
-  return offeredSamples(roles).flatMap(({ spec, target, refusal }): UnavailableSample[] => {
+  return offeredSamples(roles).flatMap((admission): UnavailableSample[] => {
+    const present = admission.refusal === null && sampleFilePresent(admission);
+    const { spec } = admission;
     const state = getSampleSeedState(spec.seedId);
-    if (state?.phase !== "failed") return [];
-    if (refusal === null && fs.existsSync(target)) return [];
+    if (present || state?.phase !== "failed") return [];
     return [{ seedId: spec.seedId, name: spec.name, reason: state.reason, sentence: state.sentence }];
   });
 }

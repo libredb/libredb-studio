@@ -37,7 +37,6 @@ const ENV_KEYS = [
   "LIBREDB_ENABLED_PROVIDERS",
   "SQLITE_EMBEDDED_SAMPLE",
   "SQLITE_EMBEDDED_SAMPLE_PATH",
-  "SQLITE_EMBEDDED_SAMPLE_TEMPLATE",
   "LIBREDB_EMBEDDED_SAMPLE",
   "LIBREDB_EMBEDDED_SAMPLE_PATH",
   "SEED_ASSETS_DIR",
@@ -226,6 +225,33 @@ describe("targets and their admission", () => {
     expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-reserved"]);
   });
 
+  test("a target that names a storage file in another letter case is refused as target-reserved, before that file exists", () => {
+    // On macOS and Windows each spelling is the storage file itself; none of the files exists yet, as on a first boot.
+    const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");
+    for (const name of [
+      "LIBREDB-STORAGE.db",
+      "LibreDB-Storage.db-WAL",
+      "libredb-storage.DB-shm",
+      "Auth-Bootstrap.json",
+      "AUTH-BOOTSTRAP.JSON.BAK",
+      "Auth-Bootstrap.json.1234.TMP",
+    ]) {
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(dataDir, name);
+      expect([name, sampleAdmissions().map(({ refusal }) => refusal)]).toEqual([name, ["target-reserved", null]]);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "a storage database reached through a symlinked directory spelled in another case is target-reserved (POSIX)",
+    () => {
+      const root = temporaryDirectory();
+      symlinkSync(temporaryDirectory(), path.join(root, "Data"), "dir");
+      process.env.STORAGE_SQLITE_PATH = path.join(root, "Data", "libredb-storage.db");
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(root, "data", "libredb-storage.db");
+      expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual(["target-reserved", null]);
+    },
+  );
+
   test("a second sample on the first one's file is refused as target-conflict", () => {
     const shared = path.join(temporaryDirectory(), "one.db");
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = shared;
@@ -279,6 +305,37 @@ describe("targets and their admission", () => {
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(data, "Sub", "one.db");
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(data, "sub", "one.db");
     expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
+  });
+
+  test("a symlinked directory and another spelling of it in letter case are one target, in either order", () => {
+    // On Linux `dir` does not exist and is not followed, so the paths as given are compared too; on macOS and Windows `dir` is `Dir`.
+    const root = temporaryDirectory();
+    symlinkSync(temporaryDirectory(), path.join(root, "Dir"), process.platform === "win32" ? "junction" : "dir");
+    const linked = path.join(root, "Dir", "s.db");
+    const spelled = path.join(root, "dir", "s.db");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = linked;
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = spelled;
+    expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = spelled;
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = linked;
+    expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
+  });
+
+  test("letter case is folded one code point at a time, so the two lower-case sigmas are one letter", () => {
+    // NTFS upcases both σ and ς to Σ, and APFS folds ς to σ.
+    const data = temporaryDirectory();
+    for (const [first, second] of [
+      ["οδοσ.db", "οδος.db"],
+      ["ΟΔΟΣ.db", "οδος.db"],
+    ]) {
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(data, first);
+      process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(data, second);
+      expect([first, second, sampleAdmissions().map(({ refusal }) => refusal)]).toEqual([
+        first,
+        second,
+        [null, "target-conflict"],
+      ]);
+    }
   });
 
   test.skipIf(process.platform === "win32")(
@@ -350,13 +407,6 @@ describe("the seed assets directory", () => {
     delete process.env.SEED_ASSETS_DIR;
     expect(seedAssetsDirectory()).toBe(path.join(process.cwd(), "seed-assets"));
   });
-
-  test("no longer reads SQLITE_EMBEDDED_SAMPLE_TEMPLATE", () => {
-    const elsewhere = path.join(temporaryDirectory(), "template.db");
-    writeFileSync(elsewhere, "");
-    process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE = elsewhere;
-    expect(sampleAssetPath(row("sqlite"))).toBe(path.join(ROOT, "seed-assets", "sqlite", "employee.db"));
-  });
 });
 
 describe("the seed state and the connection record", () => {
@@ -421,6 +471,15 @@ describe("the seed state and the connection record", () => {
     );
     expect(unavailableSentence("target-conflict")).toBe(
       "This sample's path is another sample's, so only the first one is created.",
+    );
+    expect(unavailableSentence("copy-defect")).toBe(
+      "This sample's copy met an internal error, so it was not copied. The server log shows the error as an unhandled rejection.",
+    );
+    expect(unavailableSentence("target-lost", "ENOENT")).toBe(
+      "The server can no longer find or check this sample's file (ENOENT). The server log names the path.",
+    );
+    expect(unavailableSentence("target-lost")).toBe(
+      "The server can no longer find or check this sample's file. The server log names the path.",
     );
   });
 });

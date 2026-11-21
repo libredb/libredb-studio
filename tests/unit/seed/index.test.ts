@@ -518,7 +518,7 @@ describe("seed/index under governance", () => {
     setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     const open = spyOn(fsPromises, "open");
-    const existsSync = spyOn(fs, "existsSync");
+    const statSync = spyOn(fs, "statSync");
 
     try {
       // Control: without governance the export and both samples are read and listed, and the SQLite sample pends.
@@ -528,12 +528,12 @@ describe("seed/index under governance", () => {
         SAMPLE_SEED_ID,
       ]);
       expect(open.mock.calls.map((call) => call[0])).toEqual([discovery.path]);
-      expect(existsSync.mock.calls.map((call) => call[0])).toEqual([sqliteSample, libredbSample]);
+      expect(statSync.mock.calls.map((call) => call[0])).toEqual([sqliteSample, libredbSample]);
       expect(getPendingSeeds()).toEqual([SQLITE_SAMPLE_SEED_ID]);
       resetCache();
       resetDiscoveryCache();
       open.mockClear();
-      existsSync.mockClear();
+      statSync.mockClear();
 
       process.env.GOVERNANCE_SOURCE = "postgres";
       // A governance boot enables no sample, so even a sample set seeding is not pending.
@@ -545,9 +545,9 @@ describe("seed/index under governance", () => {
       expect(await getSeedListing(["user"])).toEqual({ before: [], pendingReview: [], after: [] });
       expect(getPendingSeeds()).toEqual([]);
       expect(open).not.toHaveBeenCalled();
-      expect(existsSync).not.toHaveBeenCalled();
+      expect(statSync).not.toHaveBeenCalled();
     } finally {
-      existsSync.mockRestore();
+      statSync.mockRestore();
       open.mockRestore();
       warn.mockRestore();
       discovery.remove();

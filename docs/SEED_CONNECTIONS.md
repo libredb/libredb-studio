@@ -1797,6 +1797,7 @@ The SQLite sample is committed in WAL journal mode, so the first opens of a fres
 ### Who sees a sample
 
 `getManagedConnections()` appends each sample boot admitted to the managed-connections list once its file exists (`managed: false`); whether the file exists is checked on every request.
+A sample whose file was in place and is then removed, or whose path the server can no longer check, is listed unavailable as `target-lost` from that request on, and logged once ([A sample that could not be created](#a-sample-that-could-not-be-created)); it is listed again once its file is back.
 The SQLite sample is offered only to administrators (`roles: ["admin"]`), because its engine cannot confine statement-level file access; the LibreDB sample is offered to all roles (`roles: ["*"]`).
 Both behave like other unmanaged seeds: editable, and if deleted they go to the dismissed list rather than reappearing.
 Neither sample is ever visible to an MCP client, because neither carries `mcp: true`.
@@ -1810,11 +1811,12 @@ One rule decides whether a sample is on, for both:
   The SQLite sample keeps its own default there, because it is offered only to administrators, and with the review on only the review makes an administrator.
 
 The server applies this rule, and decides each sample's path and whether it is admitted, once, at boot, and keeps that decision until it stops.
-A change to any of these variables, or to a path, takes effect at the next restart.
+A change to any of these variables, or to a `_PATH` override, takes effect at the next restart.
 
 ### A sample that could not be created
 
 A sample whose copy fails, or whose target is refused, is logged once as the warning `Embedded sample unavailable` with its reason, the target path and the seed assets directory, and boot continues.
+So is a sample whose file a request finds lost after boot.
 `GET /api/connections/managed` then answers it in `unavailableSamples`, for the roles the sample is offered to, with one of these reasons and a sentence that names no path:
 
 | Reason | What happened |
@@ -1822,10 +1824,12 @@ A sample whose copy fails, or whose target is refused, is logged once as the war
 | `asset-missing` | The sample's file is not in the seed assets directory |
 | `asset-unreadable` | The sample's file in the seed assets directory could not be read; the sentence names the error code, such as `EACCES` or `EIO` |
 | `digest-mismatch` | The file in the seed assets directory is not the one this release ships |
-| `copy-failed` | The copy into the data directory failed; the sentence names the error code, such as `EACCES` or `ENOSPC`. Also a copy that failed with an error the copy does not know, a defect, which the server log shows again as an unhandled rejection |
+| `copy-failed` | The copy into the data directory failed; the sentence names the error code, such as `EACCES` or `ENOSPC` |
+| `copy-defect` | The copy failed with an error the copy does not know, a defect, which the server log shows again as an unhandled rejection |
 | `target-unreadable` | The sample's path could not be checked before any copy; the sentence names the error code, such as `EACCES`, `ENOTDIR` or `ELOOP` |
-| `target-reserved` | The sample's path, or one of its sidecar files, names one of the server's own storage files |
+| `target-reserved` | The sample's path, or one of its sidecar files, names one of the server's own storage files, in any letter case |
 | `target-conflict` | The sample's path is another sample's, or differs from it only in letter case, so only the first one is created |
+| `target-lost` | The sample's file was in place, and a later request could not find it or check its path; the sentence names the error code, such as `ENOENT` or `EACCES` |
 
 The sidebar shows each one as a row with the Unavailable marker, whose title is the sentence, and no action.
 It is never a connection: no picker, route or MCP tool can reach a sample that has no file.
@@ -1863,7 +1867,7 @@ Correct the type, or run a Studio that has the provider; until then no route ope
 
 ### A sample shows Unavailable
 
-The built-in sample could not be created at boot ([A sample that could not be created](#a-sample-that-could-not-be-created)).
+The built-in sample could not be created at boot, or its file was lost after boot ([A sample that could not be created](#a-sample-that-could-not-be-created)).
 Hover the marker for the reason, and find the warning `Embedded sample unavailable` in the server log, which names the path:
 
 - `asset-missing`: the seed assets directory does not hold the sample's file.
@@ -1874,13 +1878,17 @@ Hover the marker for the reason, and find the warning `Embedded sample unavailab
   Use the `seed-assets` directory of the same release as the server; never edit the files in it.
 - `copy-failed`: the data directory could not take the copy.
   Give the server write access to it (`EACCES`, `EROFS`) or free space (`ENOSPC`), then restart.
+- `copy-defect`: the copy met an error it does not know, which is a defect in Studio, not in your setup.
+  The server log shows it as an unhandled rejection with its stack; report it with that log, and restart to try the copy again.
 - `target-unreadable`: the server could not check the sample's path.
   A `_PATH` override, or the data directory, names a directory the server cannot search (`EACCES`), a path through a regular file (`ENOTDIR`) or a symlink loop (`ELOOP`); correct it, then restart.
-- `target-reserved`: a `_PATH` override names the storage database, a sidecar of it or the bootstrap credentials file.
+- `target-reserved`: a `_PATH` override names the storage database, a sidecar of it or the bootstrap credentials file, in any letter case.
   Point it elsewhere.
 - `target-conflict`: a `_PATH` override names another sample's file, its default one included, or a sidecar of it.
   Two paths that differ only in letter case conflict on every OS, because on macOS and Windows they name one file.
   Give each sample its own.
+- `target-lost`: the sample's file was in place, and a later request could not find it (`ENOENT`) or could not check its path (`EACCES`, `ENOTDIR`).
+  Give the server back access to the path, or restart it, which copies a removed sample again.
 
 A restart retries the copy and reads the variables again; a sample whose file exists is never copied again.
 
@@ -1978,8 +1986,8 @@ seed-connections.yaml (SEED_CONFIG_PATH)
         │         │                                        │  else admin; literal, Secret marker
         │         └───────────────────────────────────────┘
         │         ┌───────────────────────────────────────┐
-        ├─────────┤ Built-in samples (samples.ts, copied   │  Appended if enabled and the
-        │         │ at boot by sample-copy.ts)             │  sample file exists
+        ├─────────┤ Built-in samples (samples.ts, copied   │  Appended if boot admitted it and
+        │         │ at boot by sample-copy.ts)             │  its file exists on this request
         │         └───────────────────────────────────────┘
   ┌─────▼───────────────────────┐
   │ GET /api/connections/managed │  Auth + strip credentials for managed:true
