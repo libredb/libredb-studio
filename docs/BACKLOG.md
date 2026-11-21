@@ -1855,10 +1855,10 @@ This departs from the MCP rule that a server should stop work on a cancelled req
 Where an engine serialises a seed's reads, the read that runs on also holds the next call: it keeps the seed's read slot until it ends on its own, so a later call on that seed waits behind a read its client already gave up, and one whose `timeout_ms` ends first is answered as the timeout; the cancel table says which engines do.
 The agent run and the editor's hand-over stop waiting by Studio's own statement timer (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), and there too the statement runs on.
 The timer's wait includes the provider's connection checkout, so a statement Studio stopped waiting for may still be waiting for a connection, and may start once it gets one.
-An engine the cancel table lists as running a statement to its end has no provider deadline on this path either.
+An engine the cancel table lists as running a statement to its end runs it to its end on this path too, also where its provider stops waiting at the budget's timeout; a provider with no deadline of its own on this path settles its call only when the statement ends.
 Where a provider runs a handle's statements on one connection, a later statement on that handle waits behind the abandoned one, although that provider already stops a running statement for `cancelQuery` by interrupting its connection, which a deadline could do as well.
-A provider that arms its own kill only after round trips to a worker process arms it a few milliseconds after Studio's timer, so Studio's time refusal arrives first and the provider's kill just after it (measured 2026-11-21: refused at 506 ms under a 500 ms timeout, the worker killed 1 to 3 ms later).
-An agent run counts the statement against `maxConcurrentExecutions` until the provider's call settles, and the run's end waits for it.
+A provider that arms its own kill only after round trips to a worker process arms it a few milliseconds after Studio's timer, so Studio's time refusal arrives first and the provider's kill just after it (measured 2026-11-21: refused at 506 ms under a 500 ms timeout, the worker killed 1 to 3 ms later, and about 19 ms later once an earlier kill had restarted the worker).
+An agent run counts the statement against `maxConcurrentExecutions` until the provider's call settles, and the run's next call and its end wait for it.
 
 **Done when:** `queryReadOnly` accepts an `AbortSignal`, every engine a statement tool serves stops the statement on abort, the cancel table and each provider doc say so, `/api/mcp` passes the tool call's signal, and on the agent and hand-over paths Studio's statement timer hands providers its deadline or aborts that signal, so an abandoned connection checkout or statement is withdrawn, on a one-connection handle by interrupting the statement.
 
@@ -9882,7 +9882,7 @@ Found 2026-11-04 while building the read roots, and left out of that change by d
 ### B172. The curated readings and the operations statistics read compare UTF-16 length with a byte budget, and a bigint cell throws
 
 `runCuratedRead` and `readStatisticsForGrounding` in `src/lib/agent/tools.ts` hold their rows to `maxResultBytes` by `JSON.stringify(rows).length`, which counts UTF-16 code units, not bytes.
-Text outside ASCII then passes at up to three times the byte budget: measured 2026-11-21, a table statistics reading of 150 rows whose names are CJK text completed under the operations workflow's 262,144-byte budget at 156,531 code units, while its rows carry 456,380 UTF-8 bytes summed per row.
+Text outside ASCII then passes at up to three times the byte budget: measured 2026-11-21, a table statistics reading of 150 rows whose names are CJK text completed under the operations workflow's 262,144-byte budget at 172,881 code units, while its rows carry 472,730 UTF-8 bytes summed per row.
 A bigint cell makes the same comparison throw `TypeError: JSON.stringify cannot serialize BigInt`, which leaves the tool layer as a server fault rather than the `READING_OVER_BUDGET` refusal or a reading.
 The read-only statement path measures with `measureRowBytes` in `src/lib/db/providers/sql/read-only-budget.ts`, which sums each row's UTF-8 JSON bytes and counts a bigint as its decimal text.
 Found 2026-11-21 while reviewing the read-only statement re-check.

@@ -240,8 +240,8 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
  * and with no drive producer yet (`docs/BACKLOG.md` B9), nothing would return to it.
  *
  * Every failure of the recording itself is swallowed, on purpose. The run may have
- * ended between the throw and this call, or have an execution still in flight; both
- * make `finish` throw, and neither is what the caller asked about. Losing the
+ * ended between the throw and this call, which makes `finish` throw, and that is not
+ * what the caller asked about; an execution still in flight is waited for first. Losing the
  * original error to a bookkeeping error would trade a diagnosable failure for a
  * confusing one.
  */

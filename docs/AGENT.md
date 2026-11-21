@@ -1050,8 +1050,8 @@ Three properties are deliberate:
 
 Recording the ending is best effort and never replaces the error the caller sees: if the run ended
 between the throw and the recording, `finish` itself throws, which is logged, and the original
-failure is what propagates. An execution still in flight is waited for first, so the ending is
-recorded once it lands.
+failure is what propagates.
+An execution still in flight is waited for first, so the ending is recorded once it lands.
 
 ## The tool set
 
@@ -3282,7 +3282,7 @@ the role's own grants are the whole boundary (A3).
 - **B169**: on Couchbase a user-defined function call the agent user may not run is answered as "Error evaluating projection", because the server keeps the missing role only in the error's structured reason, so neither agent mode nor MCP's `run_read_query` names the role the call needed.
 - **B170**: OPC UA proves its read roots on every agent and MCP read, with nothing held between reads, so a read of one value repeats the walk down from the roots; a cache keyed by seed id, identity and root list waits for a fixture where the walk dominates a read.
 - **B171**: an OPC UA operator cannot exclude one node beneath a read root, so a vendor identity or credential node that no prune table names is answered inside a declared root until the roots are moved below it.
-- **B172**: an operational reading and the operations workflow's statistics read are held to the byte budget by the length of their JSON text, not its UTF-8 bytes, so a reading of text outside ASCII can pass at up to three times the budget, and a bigint cell in one fails the call instead of being measured.
+- **B172**: an operational reading and the plan-mode statistics read are held to the byte budget by the length of their JSON text, not its UTF-8 bytes, so a reading of text outside ASCII can pass at up to three times the budget, and a bigint cell in one fails the call instead of being measured.
 - **B146**: database assessment opens on every engine with a catalog read, an engine with no table profile composition included, where its verdict can never be met: measured on OpenSearch 3.8.0, the run ends with "No table was profiled", and Elasticsearch, Oracle and Db2 open it by the same requirement.
 
 **What machine redaction leaves unmasked on Kubernetes.**
