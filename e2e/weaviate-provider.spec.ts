@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * Gate 2 and gate 5 for the Weaviate provider (#1566 spec 8.3), the Qdrant shape (e2e/qdrant-provider.spec.ts).
@@ -23,8 +24,7 @@ test.describe("Weaviate in the connection dialog", () => {
     await page.goto("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
     await page.locator('[role="dialog"]').getByRole("button", { name: "Weaviate", exact: true }).click();
   });

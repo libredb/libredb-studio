@@ -3,6 +3,7 @@ import { forbiddenSentence } from "../src/lib/db/providers/platform/kubernetes/e
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../tests/helpers/kubernetes-markers";
 import { type GridFact, READER_STATEMENT_FACTS, READER_STATEMENTS } from "../tests/live/kubernetes-evidence-plan";
 import { type KubernetesStub, STUB_TOKENS, startKubernetesStub } from "./helpers/kubernetes-stub";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * The Kubernetes provider in a browser, against a stub API server that replays the v1.35.5 captures of
@@ -41,8 +42,7 @@ async function signInAndOpenDialog(page: Page) {
   await page.waitForURL(/\/admin/);
   await page.goto("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10_000 });
-  const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-  await sidebarButtons.last().click();
+  await openConnectionDialog(page);
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 5000 });
   await dialog.getByRole("button", { name: "Kubernetes", exact: true }).click();

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * THE OPC UA PANEL IN A REAL BROWSER, WITH A REAL SERVER, AND A PICTURE OF EVERY STEP (#1677).
@@ -66,11 +67,7 @@ test.describe("OPC UA, end to end, with pictures", () => {
     });
 
     // ---- the dialog ---------------------------------------------------------------------------
-    // `.last()` is the add-connection button; `.first()` is the layers panel, which is what a
-    // screenshot caught this test clicking - it opened the ERD visualizer and waited three minutes
-    // for a dialog that was never going to appear.
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 15_000 });
     await dialog.getByRole("button", { name: "OPC UA", exact: true }).click();

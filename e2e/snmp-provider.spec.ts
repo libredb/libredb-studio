@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * The SNMP entry in a real browser (#1721).
@@ -32,8 +33,7 @@ test.describe("SNMP in the connection dialog", () => {
     await page.waitForURL("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.first().click();
+    await openConnectionDialog(page);
   });
 
   test("is offered as its own driver", async ({ page }) => {

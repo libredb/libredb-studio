@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * The s3 provider's connection dialog in a browser.
@@ -20,8 +21,7 @@ test.describe("S3 in the connection dialog", () => {
     await page.waitForURL("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
   });
 

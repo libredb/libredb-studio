@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { INFLUX_CONNECTION_SENTENCES } from "../src/lib/db/providers/timeseries/influxdb/connection-options";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * Gate 5 for the two InfluxDB connection types (InfluxDB spec, SPEC-delivery D), one spec for the pair as
@@ -66,8 +67,7 @@ test.describe("InfluxDB (InfluxQL) and InfluxDB 3 (SQL) in the connection dialog
     await page.goto("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     await expect(dialogOf(page)).toBeVisible({ timeout: 5000 });
   });
 

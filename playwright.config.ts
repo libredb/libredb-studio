@@ -289,11 +289,22 @@ export default defineConfig({
       // rm -f first: without it, a local re-run reusing a stale .next/BUILD_ID from a previous
       // build would let the second server below start serving mid-rebuild, before this build
       // finishes overwriting it.
+      //
+      // RATE_LIMIT_QUERY_MAX is raised for the reason the second server raises it: nearly every spec
+      // here signs in as user@libredb.org, so the suite shares that account's "query" bucket, and the
+      // production budget of 120 requests a minute is sized for one person. Measured on 2026-11-21, in a
+      // local run of every spec on this server (12 workers, no retries): user@libredb.org spent 532
+      // requests of that bucket inside 50 seconds and admin@libredb.org 137. With the default, `CI=1
+      // bunx playwright test e2e/security-headers.spec.ts e2e/object-edit.spec.ts --project=chromium
+      // --repeat-each=5 --retries=0` failed 2 of its 40 runs on "Too many requests" and 10 more did not
+      // run. 10000 is the second server's figure, close to twenty times that peak. Raised rather than
+      // set to 0, so the limiter still runs on every request; no spec on this server asserts its refusal
+      // (tests/unit/e2e-project-servers.test.ts).
       command: "rm -f .next/BUILD_ID && bun run build && bun start",
       url: `http://localhost:${port}`,
       reuseExistingServer: !process.env.CI,
       timeout: SERVER_START_TIMEOUT_MS,
-      env: { PORT: String(port), ...testCredentials },
+      env: { PORT: String(port), RATE_LIMIT_QUERY_MAX: "10000", ...testCredentials },
     },
     {
       // Reuses the SAME build output as the server above - it only ever needs to wait for that

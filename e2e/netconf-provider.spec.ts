@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * The NETCONF provider in a browser, against the fixture on 127.0.0.1:1830
@@ -79,7 +80,7 @@ async function signIn(page: Page): Promise<void> {
 test.describe("NETCONF in the connection dialog", () => {
   test.beforeEach(async ({ page }) => {
     await signIn(page);
-    await page.getByRole("button", { name: "New connection", exact: true }).click();
+    await openConnectionDialog(page);
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
     await page.locator('[role="dialog"]').getByRole("button", { name: "NETCONF", exact: true }).click();
   });
@@ -153,7 +154,7 @@ test.describe("a read of the fixture, as a reader sees it", () => {
 
   test.beforeEach(async ({ page }) => {
     await signIn(page);
-    await page.getByRole("button", { name: "New connection", exact: true }).click();
+    await openConnectionDialog(page);
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 5000 });
     await dialog.getByRole("button", { name: "NETCONF", exact: true }).click();
@@ -267,7 +268,7 @@ test.describe("the Keys panel, as a reader reaches it", () => {
 
   test.beforeEach(async ({ page }) => {
     await signIn(page);
-    await page.getByRole("button", { name: "New connection", exact: true }).click();
+    await openConnectionDialog(page);
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 5000 });
     await dialog.getByRole("button", { name: "NETCONF", exact: true }).click();

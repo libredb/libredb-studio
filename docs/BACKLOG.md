@@ -28,13 +28,13 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D468, U17 · 346
+- [Drivers and connections](#drivers-and-connections) — D1-D469, U17 · 347
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 188
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 187
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC37 · 31
-- [Release pipeline](#release-pipeline) — REL1-REL10 · 10
+- [Release pipeline](#release-pipeline) — REL1-REL11 · 10
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
@@ -4612,6 +4612,21 @@ Found 2026-11-21 by the review of the Couchbase answer bounds change.
 
 **Done when:** `httpTransportFetch` rejects a 101 answer at once as a network failure and destroys its socket, with a test against a local listener that answers a 101 and closes, and one that keeps the socket open.
 
+### D469. The first concurrent opens of a fresh SQLite sample can fail with "database is locked", and the ERD then waits forever
+
+`seedSqliteSampleFile` in `src/lib/seed/sqlite-sample.ts` copies `seed-assets/sqlite/employee.db`, which is in rollback-journal mode, into the data directory.
+Every writable open then runs `PRAGMA journal_mode = WAL` (`src/lib/db/providers/sql/sqlite-worker.ts`, and `src/lib/db/providers/sql/sqlite.ts` on the in-process path) with no busy timeout, so when several routes open the fresh file at once, the opens that lose the switch fail with `database is locked`.
+When the loser is `/api/db/objects/inventory`, the only catalog read `use-connection-manager.ts` makes, the schema diagram in `src/components/SchemaDiagram.tsx` has no relations and draws "Generating ERD Diagram..." with no failure state, so it never resolves.
+Measured 2026-11-21 from a worktree with no `data/` directory: `CI=1 bunx playwright test e2e/security-headers.spec.ts e2e/object-edit.spec.ts --project=chromium --repeat-each=5 --retries=0` failed 1 of 40 runs, the test "drives the editor, a query, the diagram and both exports with no policy violation" in `security-headers.spec.ts` drawing no PNG button within 30 s, while the server logged `database is locked` for `api/db/health` and `api/db/objects/inventory`.
+Six more runs of `security-headers.spec.ts` alone, each from a fresh data directory, logged lock errors on the first open in all six and failed the same way in one, the run in which the inventory read lost.
+Four processes running the worker's open sequence on a fresh copy of the sample had at least three of four opens fail in 6 of 6 trials, and none failed on a copy already in WAL mode (4 of 4 trials).
+A warm data directory does not show it, because the sample is already in WAL mode there.
+
+Found 2026-11-21 by the review of the E2E query budget change, which this symptom had been filed under (REL7).
+Not fixed there: the cause is in the SQLite provider and the sample seed, not in the E2E harness.
+
+**Done when:** concurrent first opens of a freshly seeded sample all succeed (for example, the sample is shipped or seeded in WAL mode, or the switch waits on a busy timeout), a failed inventory read draws a named failure with a retry on the schema diagram instead of its spinner, and tests cover both: several concurrent opens of a fresh rollback-journal copy, and the diagram given a failed catalog read.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -6480,17 +6495,6 @@ Found 2026-10-14 in the final review of the Apache Spark provider (#1759).
 
 **Done when:** a test under `tests/unit/lib/export/` renders edge values through the functions of `temporal.ts` and asserts that `typedLiteral(..., "spark")` writes each as a literal.
 
-### U145. E2E specs open the connection dialog by clicking the sidebar header's first button, which is the ERD button once metadata has loaded
-
-The `beforeEach` of 27 specs under `e2e/` opens the connection dialog with `page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button").first()`.
-`Sidebar.tsx` renders `Show ERD Diagram` before `New connection` in that header whenever the active connection offers a schema diagram, and the Sample (LibreDB) connection is active at sign-in, so which button is first depends on whether its metadata arrived before the click.
-When it has, the click opens the ERD visualizer instead, the dialog never opens, and the test times out waiting for an engine button inside it.
-Measured 2026-10-17 on `main` at 674683b19 with `e2e/opcua-provider.spec.ts`, one worker and four repeats while a second run loaded the machine: 3 of 28 tests failed this way, and 0 of 14 without the load.
-
-Found 2026-10-17 while verifying #1790.
-
-**Done when:** the specs open the dialog by the button's own name (`getByRole("button", { name: "New connection" })`, the header's `aria-label`), and no spec under `e2e/` picks a sidebar header button by its position.
-
 ### U146. An import into a new table spells types the engine may not have
 
 `inferSqlType` in `src/components/DataImportModal.tsx` writes `TEXT`, `INTEGER`, `NUMERIC` or `BOOLEAN` for every engine that declares a `createTable`.
@@ -7834,23 +7838,6 @@ Not fixed there: none of the five files reported on 2026-10-01 is an etcd file.
 
 **Done when:** `bun run build` prints no tracing warning, because each read it reports tells Turbopack what it reaches or is marked as outside the trace, and a payload built from the committed tree holds at its root only what the server runs, `LICENSE` and `README.md`.
 
-### REL7. A local E2E run spends the shared account's query budget
-
-`playwright.config.ts` signs nearly every spec in as `user@libredb.org` against one server process, whose "query" bucket in `src/lib/api/rate-limit.ts` (120 requests a minute by default, `RATE_LIMIT_QUERY_MAX`) every db-reaching route draws from.
-CI runs Playwright with one worker and two retries, while a local run takes half the cores as workers and retries nothing, so a fast machine spends the budget in the middle of the suite.
-Measured 2026-10-01 on main 4b6aae8e and on the etcd branch alike: `CI=1 bunx playwright test e2e/security-headers.spec.ts e2e/object-edit.spec.ts --project=chromium --repeat-each=5 --retries=0` failed 3 of its 40 runs on each side, the test "a refused apply marks the READER's own line, not the engine's line in the assembled batch" in `object-edit.spec.ts` reading "The source read failed. Too many requests. Try again in 41 seconds.", another test of that file timing out after the same refusal, and the test "drives the editor, a query, the diagram and both exports with no policy violation" in `security-headers.spec.ts` drawing no PNG button on the ERD within 30 s; 4 more did not run, because a failure stops the rest of `object-edit.spec.ts`'s serial group.
-One pass of the suite in CI mode saw the test "drives the editor, a query, the diagram and both exports with no policy violation" in `security-headers.spec.ts` and the test "a refused apply marks the READER's own line, not the engine's line in the assembled batch" in `object-edit.spec.ts` fail once each and pass on a retry, and a pass with the local defaults failed 7 tests on "Too many requests" in the page.
-The comments in `playwright.config.ts` and `e2e/offline-editor.spec.ts` record the same cause, and three specs, `offline-editor.spec.ts`, `kafka-provider.spec.ts` and `etcd-provider.spec.ts`, were moved to a second server process for it.
-
-Found while running every local gate for the etcd provider (#1089).
-Not fixed there: the E2E harness is not part of the etcd work, and the fix is a choice about the limiter's test configuration.
-
-Amended 2026-10-05: a functional smoke run without retries on 2026-10-05 failed the test "a refused apply marks the READER's own line, not the engine's line in the assembled batch" in `object-edit.spec.ts` on the same budget, and the wait it failed in has a cause of its own.
-`waitForTheObjectTree` in `e2e/object-edit.spec.ts` clicks only `tree-retry`, while a rate-limited metadata read draws the sidebar's `sidebar-provider-retry` (`src/components/sidebar/Sidebar.tsx`) instead, so a rate-limited run presses no retry and waits out the helper's 120 s before the test fails.
-The same test passed on a retry with CI's `--retries=2`.
-
-**Done when:** the E2E servers get a query budget sized for the suite, through `RATE_LIMIT_QUERY_MAX` in their `webServer` env as the passkey server sets `RATE_LIMIT_LOGIN_MAX`, or each spec signs in as an account of its own, and the repeated command above passes all 40 of its runs locally.
-
 ### REL8. Local drafts fail typecheck, lint and build, because two configs read every file on disk
 
 `tsconfig.json` includes `**/*.ts`, `**/*.tsx` and `**/*.mts` and excludes only `node_modules`, so `bun run typecheck` (`tsc --noEmit`) and the type check of `bun run build` read every TypeScript file in the working tree, git-ignored or not.
@@ -7886,6 +7873,18 @@ Its docblock calls the list the bounds that pass through the helper today, and i
 Found 2026-11-05 while sizing a per-test bound for the standalone zip packing tests.
 
 **Done when:** every bound passed to `platformTimeoutMs` under `tests/` is held by those checks, either because `BOUNDS_IN_USE` lists it or because the test collects the bounds from the tests that pass them, and a new bound outside the list fails the test.
+
+### REL11. The tab management E2E fails when the main server's specs run at a local worker count
+
+Two runs of the main server's chromium project with 12 workers and no retries, on 2026-11-21 at `642ad97be` with the query budget raised for the suite, both failed the test "can switch between tabs" in `e2e/tab-management.spec.ts`, which did not find the "Query 2" tab, and one of them also failed "can close a tab when multiple exist".
+The first of those runs had no query limit at all, so the budget of REL7's former entry is not the cause.
+CI runs Playwright with one worker and two retries and has not shown it.
+Not diagnosed: every spec on that server signs in as the same account, so a tab state that the server or the browser keeps per account is one suspect, and worker load is another.
+The same runs saw `e2e/libsql-provider.spec.ts` time out once in its `beforeEach` wait for `/`, and `e2e/opcua-provider.spec.ts` hit `net::ERR_NETWORK_CHANGED` once on `goto` while other work on the machine created container networks; neither repeated.
+
+Found 2026-11-21 by the E2E flake fixes for REL7 and U145.
+
+**Done when:** the cause is measured, and `bunx playwright test e2e/tab-management.spec.ts --project=chromium --repeat-each=10 --retries=0` passes all its runs beside the rest of the main server's specs at the local default worker count.
 
 ---
 

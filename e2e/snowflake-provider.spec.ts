@@ -2,6 +2,7 @@ import { expect, type Page, test } from "@playwright/test";
 import { DB_UI_CONFIG } from "../src/lib/db-ui-config";
 import { SNOWFLAKE_FIELD_SENTENCES, snowflakeHostHint } from "../src/lib/db/providers/sql/snowflake/account-host";
 import { pemArmour } from "../tests/helpers/pem-armour";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * What a user sees in the connection dialog when choosing Snowflake.
@@ -26,8 +27,7 @@ async function openDialog(page: Page) {
   await page.waitForURL("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-  const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-  await sidebarButtons.last().click();
+  await openConnectionDialog(page);
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 5000 });
   return dialog;
