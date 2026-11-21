@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { ExecutionProfileError, OffsetUnsupportedError } from "@/lib/db/errors";
+import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider, PreparedQuery } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
@@ -264,8 +265,7 @@ async function execute(
     if (error instanceof McpDatabaseChoiceError) return [ownWordsError(error.message), "mcp_execution_failed"];
     throw error;
   }
-  const queryReadOnly = provider.queryReadOnly?.bind(provider);
-  if (queryReadOnly === undefined) {
+  if (typeof provider.queryReadOnly !== "function") {
     // The profile seam refuses such a provider, so this is a server fault; query() is never the fallback.
     const refusal = profileRefusalText(
       "the acquired provider exposes no read-only execution path",
@@ -277,14 +277,21 @@ async function execute(
   const prepared = prepare(call, provider, connection.type);
   if ("refused" in prepared) return prepared.refused;
   const { query } = prepared.prepared;
+  // Through the one core call of the read-only path, which holds the answer to the read budget before it is cut to
+  // max_rows and the answer cap; this call's own deadline bounds the wait, so that function sets no timer of its own.
   const executed = await raceDeadline(
     () =>
-      queryReadOnly(query, {
-        maxResultRows: MCP_PROVIDER_ROW_CAP,
-        maxResultBytes: MCP_PROVIDER_BYTE_CAP,
-        statementTimeoutMs: Math.max(1, Math.floor(deadline - Date.now())),
-        // A call is its own run here: a fresh allowance per call, so one call's billed reads never reach the next.
-        readAllowance: new RunReadAllowance(MCP_CALL_READ_ALLOWANCE, { scope: "call" }),
+      runReadOnlyStatement(provider, {
+        type: connection.type,
+        statement: query,
+        budget: {
+          maxResultRows: MCP_PROVIDER_ROW_CAP,
+          maxResultBytes: MCP_PROVIDER_BYTE_CAP,
+          statementTimeoutMs: Math.max(1, Math.floor(deadline - Date.now())),
+          // A call is its own run here: a fresh allowance per call, so one call's billed reads never reach the next.
+          readAllowance: new RunReadAllowance(MCP_CALL_READ_ALLOWANCE, { scope: "call" }),
+        },
+        wait: "caller-deadline",
       }),
     tool.signal,
     deadline,

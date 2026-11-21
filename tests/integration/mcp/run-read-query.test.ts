@@ -318,6 +318,44 @@ describe("the offset rule and the provider budgets", () => {
   });
 });
 
+/*
+  The provider's own code refuses past the 1000 rows and 1 MiB it is handed. These overrides answer past both, so
+  what refuses is the tool holding the answer to the read budget itself, never cutting it to max_rows or 32 KiB.
+*/
+describe("a provider that answers past the read budget", () => {
+  async function answeredWith(rows: Record<string, unknown>[]) {
+    const original = SQLiteProvider.prototype.queryReadOnly;
+    SQLiteProvider.prototype.queryReadOnly = async () => ({
+      rows,
+      fields: Object.keys(rows[0]),
+      rowCount: rows.length,
+      executionTime: 1,
+    });
+    try {
+      return await direct({ connection_id: "seed:shop", sql: "SELECT id FROM numbers" });
+    } finally {
+      SQLiteProvider.prototype.queryReadOnly = original;
+    }
+  }
+
+  test("more rows than the read takes are refused as too large, never cut", async () => {
+    const result = await answeredWith(Array.from({ length: 1_001 }, (_, index) => ({ id: index })));
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([{ type: "text", text: ROWS }]);
+    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_result_too_large" });
+  });
+
+  test("more bytes than the read takes are refused as too large, never cut", async () => {
+    const result = await answeredWith([
+      { id: 1, pad: "a".repeat(600_000) },
+      { id: 2, pad: "b".repeat(600_000) },
+    ]);
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([{ type: "text", text: BYTES }]);
+    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_result_too_large" });
+  });
+});
+
 describe("the read allowance", () => {
   /** Patches SQLite's read so it charges `units` to the allowance its budget carries, and records each one. */
   function billingSqlite(units: number) {
