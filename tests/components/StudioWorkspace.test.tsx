@@ -31,6 +31,7 @@ const mockSetActiveConnection = mock(() => {});
 const mockSetSchema = mock(() => {});
 const mockLoadObjects = mock(() => {});
 const mockFetchSchema = mock(() => {});
+const mockDismissConnectionRefusal = mock(() => {});
 // Tab manager
 const mockSetTabs = mock((_next?: unknown) => {});
 const mockUpdateCurrentTab = mock(() => {});
@@ -112,6 +113,8 @@ mock.module("@/workspace/hooks/use-connection-adapter", () => ({
     loadObjects: mockLoadObjects,
     schemaContext: JSON.stringify([usersTable]),
     metadata: null,
+    connectionRefusal: null,
+    dismissConnectionRefusal: mockDismissConnectionRefusal,
     ...connAdapterOverride,
   })),
 }));
@@ -318,7 +321,7 @@ mock.module("@/components/ui/resizable", () => {
 // that no real heavy child module evaluates in this process.
 
 import { describe, test, expect, afterEach, beforeEach } from "bun:test";
-import { render, cleanup, act } from "@testing-library/react";
+import { render, cleanup, act, fireEvent, screen, within } from "@testing-library/react";
 import React from "react";
 import type { SavedQueryInput, StudioWorkspaceProps } from "@/workspace/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
@@ -416,6 +419,7 @@ describe("StudioWorkspace", () => {
     mockSetActiveConnection.mockClear();
     mockSetSchema.mockClear();
     mockFetchSchema.mockClear();
+    mockDismissConnectionRefusal.mockClear();
     mockSetTabs.mockClear();
     mockUpdateCurrentTab.mockClear();
     mockUpdateTabById.mockClear();
@@ -1040,6 +1044,27 @@ describe("StudioWorkspace", () => {
   test("control: a host connection that does not defer hands the tree no deferral", () => {
     renderWorkspace();
     expect(capturedSidebarProps.objectScanDeferred).toBe(false);
+  });
+
+  // FND-1. The embedded shell mounts no toaster, so the adapter's refusal of a host connection whose type names no
+  // provider is drawn on a line of the workspace's own, and only while the adapter holds one.
+  test("draws the adapter's connection refusal on a line of its own and dismisses it through the adapter", () => {
+    renderWorkspace();
+    expect(screen.queryByTestId("workspace-connection-refusal")).toBeNull();
+    cleanup();
+
+    connAdapterOverride = {
+      connectionRefusal: { title: "Connection unavailable", description: "Acme: the refusal's sentence." },
+    };
+    renderWorkspace();
+
+    const line = screen.getByTestId("workspace-connection-refusal");
+    expect(line.tagName).toBe("OUTPUT");
+    expect(line.textContent).toContain("Connection unavailable");
+    expect(line.textContent).toContain("Acme: the refusal's sentence.");
+    expect(mockToast).not.toHaveBeenCalled();
+    fireEvent.click(within(line).getByRole("button", { name: "Dismiss" }));
+    expect(mockDismissConnectionRefusal).toHaveBeenCalledTimes(1);
   });
 
   test("sidebar noop callbacks and references are wired", () => {

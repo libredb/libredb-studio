@@ -4,7 +4,9 @@ import type { CsvDelimiter } from "@/lib/export/csv";
 
 import React, { useState, useEffect, useImperativeHandle, useRef, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { TriangleAlert } from "lucide-react";
 import { Sidebar } from "@/components/sidebar";
+import { Button } from "@/components/ui/button";
 import { type TreeRowActionHandlers } from "@/components/object-tree";
 import { ObjectSourceView, type ObjectSourcePatch } from "@/components/object-source";
 // MobileNav and mobile tab panels excluded in embedded mode — platform provides its own navigation
@@ -902,6 +904,34 @@ export function StudioWorkspace({
         <ResizablePanel id="workspace-body" defaultSize="78">
           <div className="flex-1 flex flex-col min-w-0 h-full bg-surface">
             {/* No desktop/mobile headers — platform provides its own */}
+
+            {/*
+              The adapter's refusal of a host connection whose type names no provider (FND-1): a pick of
+              one, or a host list that gave the open connection such a type. Drawn here and not toasted,
+              because this shell mounts no Toaster (the NO TOAST paragraph above), in the style of the
+              Saved tab's import line. In the body rather than the sidebar, so it is shown below the
+              mobile breakpoint too, where no sidebar is drawn and only a host list can raise it.
+            */}
+            {conn.connectionRefusal !== null && (
+              <output
+                data-testid="workspace-connection-refusal"
+                className="flex items-start gap-2 border-b border-hairline bg-warning-tint/10 px-3 py-1.5 text-warning"
+              >
+                <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span className="min-w-0 text-xs break-words">
+                  <span className="font-medium">{conn.connectionRefusal.title}</span>
+                  <span className="block text-fg-muted">{conn.connectionRefusal.description}</span>
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-5 px-1.5 ml-auto text-xs text-warning hover:text-fg-bright"
+                  onClick={conn.dismissConnectionRefusal}
+                >
+                  Dismiss
+                </Button>
+              </output>
+            )}
 
             <StudioTabBar
               tabs={tabBarTabs}

@@ -8,6 +8,7 @@ import type { WorkspaceConnection, WorkspaceObjectReader } from "@/workspace/typ
 import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 import { SAMPLED_MARKER } from "../fixtures/sampled-schema";
+import { ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 
 // ── Test Data ───────────────────────────────────────────────────────────────
 
@@ -777,6 +778,178 @@ describe("useConnectionAdapter and the object model", () => {
       "users",
       "orders",
     ]);
+  });
+});
+
+// =============================================================================
+// A host connection whose type names no provider (FND-1)
+// =============================================================================
+//
+// A host is ordinary JavaScript, so a `WorkspaceConnection` may carry a type this version of the
+// package has no provider for (one the host's own backend serves), no type, or a type that is not
+// text. The shell lists such a connection and never opens it, as the standalone connection hook
+// does since FND-1: it is never shown by itself, a pick of it is refused by name, and a host list
+// that gives the open connection such a type moves the shell off it and says why.
+describe("useConnectionAdapter and a host connection whose type names no provider (FND-1)", () => {
+  const ACME_SENTENCE = unknownTypeSentence("acmefoo");
+  const hostRecord = (record: object) => record as unknown as WorkspaceConnection;
+  const U = hostRecord({ id: "u", name: "Acme", type: "acmefoo" });
+  const N = hostRecord({ id: "n", name: "Untyped" });
+  const M = hostRecord({ id: "m", name: "Malformed", type: { id: "postgres" } });
+  const P1 = makeWorkspaceConnection({ id: "p1", name: "DB One" });
+  const P2 = makeWorkspaceConnection({ id: "p2", name: "DB Two" });
+
+  function adapterOver(initial: WorkspaceConnection[]) {
+    const onSchemaFetch = mock((_id: string) => Promise.resolve([] as DetailedObject[]));
+    const hook = renderHook(
+      ({ connections }) => useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+      { initialProps: { connections: initial } },
+    );
+    return { ...hook, onSchemaFetch };
+  }
+
+  test("opens on the first connection a provider can open, not on the first one listed", () => {
+    expect(adapterOver([U, P1]).result.current.activeConnection?.id).toBe("p1");
+    expect(adapterOver([N, M, P1]).result.current.activeConnection?.id).toBe("p1");
+  });
+
+  test("opens on no connection when no listed connection can be opened, and lists each as the host gave it", () => {
+    const { result } = adapterOver([U, N]);
+
+    expect(result.current.activeConnection).toBeNull();
+    expect(result.current.connections.map((c) => [c.id, c.type])).toEqual([
+      ["u", "acmefoo"],
+      ["n", undefined],
+    ]);
+    expect(result.current.connectionRefusal).toBeNull();
+  });
+
+  test("a connection the host withdraws falls back past one whose type names no provider", () => {
+    const { result, rerender } = adapterOver([P1, P2]);
+    expect(result.current.activeConnection?.id).toBe("p1");
+
+    rerender({ connections: [U, P2] });
+
+    expect(result.current.activeConnection?.id).toBe("p2");
+  });
+
+  test("clearing the selection falls back to the first connection a provider can open", () => {
+    const { result } = adapterOver([U, P1, P2]);
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[2]);
+    });
+    expect(result.current.activeConnection?.id).toBe("p2");
+
+    act(() => {
+      result.current.setActiveConnection(null);
+    });
+
+    expect(result.current.activeConnection?.id).toBe("p1");
+  });
+
+  test("never reads the declared capabilities of a connection that cannot be opened", () => {
+    const capabilities = { queryLanguage: "sql" } as unknown as ProviderCapabilities;
+    const { result } = adapterOver([hostRecord({ id: "u", name: "Acme", type: "acmefoo", capabilities })]);
+
+    expect(result.current.activeConnection).toBeNull();
+    expect(result.current.metadata).toBeNull();
+  });
+
+  test("a pick of it is refused by name and changes nothing", () => {
+    const { result, onSchemaFetch } = adapterOver([P1, U]);
+    let answer: boolean | undefined;
+
+    act(() => {
+      answer = result.current.setActiveConnection(result.current.connections[1]);
+    });
+
+    expect(answer).toBe(false);
+    expect(result.current.activeConnection?.id).toBe("p1");
+    expect(result.current.connectionRefusal).toEqual({
+      title: "Connection unavailable",
+      description: `Acme: ${ACME_SENTENCE}`,
+    });
+    expect(onSchemaFetch.mock.calls.map(([id]) => id)).not.toContain("u");
+  });
+
+  test("a connection with no type, a type that is not text, or no name is refused in its own words", () => {
+    const { result } = adapterOver([P1, N, M, hostRecord({ id: "x", type: "acmefoo" })]);
+    const refusalOf = (index: number) => {
+      act(() => {
+        result.current.setActiveConnection(result.current.connections[index]);
+      });
+      return result.current.connectionRefusal?.description;
+    };
+
+    expect(refusalOf(1)).toBe(`Untyped: ${ABSENT_TYPE_SENTENCE}`);
+    expect(refusalOf(2)).toBe(`Malformed: ${MALFORMED_TYPE_SENTENCE}`);
+    expect(refusalOf(3)).toBe(`This connection: ${ACME_SENTENCE}`);
+    expect(result.current.activeConnection?.id).toBe("p1");
+  });
+
+  test("an accepted pick clears the refusal, and so does dismissing it", () => {
+    const { result } = adapterOver([P1, U, P2]);
+    let answer: boolean | undefined;
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[1]);
+    });
+    expect(result.current.connectionRefusal).not.toBeNull();
+
+    act(() => {
+      answer = result.current.setActiveConnection(result.current.connections[2]);
+    });
+    expect(answer).toBe(true);
+    expect(result.current.activeConnection?.id).toBe("p2");
+    expect(result.current.connectionRefusal).toBeNull();
+
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[1]);
+    });
+    expect(result.current.connectionRefusal).not.toBeNull();
+    act(() => {
+      result.current.dismissConnectionRefusal();
+    });
+    expect(result.current.connectionRefusal).toBeNull();
+    expect(result.current.activeConnection?.id).toBe("p2");
+  });
+
+  test("a host list that gives the open connection such a type moves to the first one a provider can open and says why", () => {
+    const { result, rerender } = adapterOver([P1, P2]);
+    expect(result.current.activeConnection?.id).toBe("p1");
+
+    rerender({ connections: [hostRecord({ ...P1, type: "acmefoo" }), P2] });
+
+    // Synchronous, as the removal pins above: the move is committed during the render that retyped P1.
+    expect(result.current.activeConnection?.id).toBe("p2");
+    expect(result.current.connectionRefusal?.description).toBe(`DB One: ${ACME_SENTENCE}`);
+    expect(result.current.connections[0].type).toBe("acmefoo");
+  });
+
+  test("and to no connection when none is left", () => {
+    const { result, rerender } = adapterOver([P1]);
+
+    rerender({ connections: [hostRecord({ ...P1, type: "acmefoo" })] });
+
+    expect(result.current.activeConnection).toBeNull();
+    expect(result.current.connectionRefusal?.description).toBe(`DB One: ${ACME_SENTENCE}`);
+  });
+
+  test("says so once, and holds the fallback when the type comes back", () => {
+    const retyped = [hostRecord({ ...P1, type: "acmefoo" }), P2];
+    const { result, rerender } = adapterOver([P1, P2]);
+    rerender({ connections: retyped });
+    expect(result.current.connectionRefusal).not.toBeNull();
+
+    act(() => {
+      result.current.dismissConnectionRefusal();
+    });
+    rerender({ connections: [...retyped] });
+    expect(result.current.connectionRefusal).toBeNull();
+    expect(result.current.activeConnection?.id).toBe("p2");
+
+    rerender({ connections: [P1, P2] });
+    expect(result.current.activeConnection?.id).toBe("p2");
+    expect(result.current.connectionRefusal).toBeNull();
   });
 });
 

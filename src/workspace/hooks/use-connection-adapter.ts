@@ -9,6 +9,8 @@ import type { ObjectSourceApplier, ObjectSourceReader } from "@/components/objec
 import { EDIT_PLAN_EXECUTABLE_LIMIT } from "@/lib/db/object-edit";
 import { SOURCE_CHARACTER_LIMIT } from "@/lib/db/object-kinds";
 import { useReadGeneration } from "@/hooks/use-read-generation";
+import { defaultConnection, unavailableConnectionNotice, type UnavailableNotice } from "@/lib/connection-availability";
+import { isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
 import type { WorkspaceConnection, WorkspaceObjectReader } from "@/workspace/types";
 
 /**
@@ -225,31 +227,72 @@ export function useConnectionAdapter({
   /** The connection whose deferred catalog read the user has explicitly asked for, by id. */
   const [scanRequested, setScanRequested] = useState<string | null>(null);
 
+  /**
+   * The refusal the shell draws on a line of its own, since it mounts no toaster (FND-1): a pick of a connection whose
+   * type names no provider, or a host list that gave the open connection such a type. Null when there is nothing to
+   * say. An accepted pick and `dismissConnectionRefusal` clear it; the next refusal replaces it.
+   */
+  const [connectionRefusal, setConnectionRefusal] = useState<UnavailableNotice | null>(null);
+
   // Resolution is by id ONLY — no positional tail. An embedded shell still shows
-  // the host's first connection when nothing has been chosen yet, but that fallback
+  // a connection by itself when nothing has been chosen yet, but that fallback
   // is resolved once and then HELD as the id below, because re-resolving it
   // positionally on every render let the host move the selection: prepend or
   // reorder the list and the editor silently points at a database nobody picked,
   // with a schema re-fetch behind it (StudioWorkspace keys that fetch on
   // `activeConnection?.id`).
+  //
+  // The held id resolves only to a listed connection a provider can open (FND-1). A host is ordinary JavaScript, so a
+  // `WorkspaceConnection` may carry a type this package has no provider for, no type, or a type that is not text; such
+  // a connection is listed, and the sidebar marks it unavailable, but it is never the active one.
   const activeConnection = useMemo(
-    () => connections.find((c) => c.id === activeConnectionId) ?? null,
+    () => connections.find((c) => c.id === activeConnectionId && isDatabaseType(c.type)) ?? null,
     [connections, activeConnectionId],
   );
 
   // React's documented adjust-state-while-rendering guard (react.dev, "You Might
   // Not Need an Effect" — adjusting some state when a prop changes). It commits
-  // the fallback for both ways the id can fail to resolve: nothing chosen yet, and
-  // the chosen connection dropped by the host. It terminates — the id it commits
-  // comes from the very list it just failed against, so the next pass resolves —
-  // and an empty list falls straight through, leaving `activeConnection` null.
-  if (!activeConnection && connections.length > 0) {
-    setActiveConnectionId(connections[0].id);
+  // the fallback for every way the id can fail to resolve: nothing chosen yet, the
+  // choice cleared, the chosen connection dropped by the host, and the host giving
+  // it a type that names no provider. The fallback is the first listed connection a
+  // provider can open, or none, as the standalone hook chooses (`defaultConnection`).
+  // It terminates: the id is set only when it differs from the fallback's, and the
+  // fallback comes from the very list it just failed against, so the next pass
+  // resolves it, or holds null and changes nothing.
+  //
+  // A connection still listed under the held id but no longer openable is a host list
+  // that retyped the open connection: the shell moves off it and says why, in the
+  // refusal's own sentence, as the standalone hook does for a managed refresh. It says
+  // so once, because after the move the held id no longer names that connection.
+  if (activeConnection === null) {
+    const fallbackId = defaultConnection(connections, null)?.id ?? null;
+    if (fallbackId !== activeConnectionId) {
+      const held = connections.find((c) => c.id === activeConnectionId);
+      const refusal = held === undefined ? null : typeIdRefusal(held.type);
+      setActiveConnectionId(fallbackId);
+      if (held !== undefined && refusal !== null)
+        setConnectionRefusal(unavailableConnectionNotice(held, refusal.sentence));
+    }
   }
 
-  const setActiveConnection = useCallback((conn: DatabaseConnection | null) => {
+  /**
+   * The setter every picker of this shell gets (the sidebar). Answers whether it selected: a connection whose type
+   * names no provider is refused by name on the shell's refusal line and changes nothing (FND-1). Null clears the
+   * choice, and the shell then shows the first listed connection a provider can open, or none.
+   */
+  const setActiveConnection = useCallback((conn: DatabaseConnection | null): boolean => {
+    const refusal = conn === null ? null : typeIdRefusal(conn.type);
+    if (conn !== null && refusal !== null) {
+      setConnectionRefusal(unavailableConnectionNotice(conn, refusal.sentence));
+      return false;
+    }
     setActiveConnectionId(conn?.id ?? null);
+    setConnectionRefusal(null);
+    return true;
   }, []);
+
+  /** Clears the refusal line; the selection is unchanged. */
+  const dismissConnectionRefusal = useCallback(() => setConnectionRefusal(null), []);
 
   /**
    * Which catalog read is the CURRENT one (#789).
@@ -491,5 +534,8 @@ export function useConnectionAdapter({
     /** The host's own object editor, or `undefined` where it declared none. */
     sourceApplier,
     schemaContext,
+    /** Why the last pick, or the host's last list, left a connection unopened; null when there is nothing to say. */
+    connectionRefusal,
+    dismissConnectionRefusal,
   };
 }
