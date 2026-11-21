@@ -96,6 +96,14 @@ describe("sqlite-sample", () => {
     expect(isSqliteSampleEnabled()).toBe(false);
   });
 
+  // The factory refuses every open under a value it cannot read, so the sample, which names sqlite there, is off too.
+  test("isSqliteSampleEnabled() is false when LIBREDB_ENABLED_PROVIDERS is a value the factory refuses as a whole", () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = "sqlite,postgresql";
+    expect(isSqliteSampleEnabled()).toBe(false);
+    process.env.LIBREDB_ENABLED_PROVIDERS = " , ,";
+    expect(isSqliteSampleEnabled()).toBe(false);
+  });
+
   test("resolveSqliteSamplePath: override wins; else derives from data dir", () => {
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = "/custom/employees.db";
     expect(resolveSqliteSamplePath()).toBe("/custom/employees.db");

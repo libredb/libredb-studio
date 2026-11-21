@@ -18,8 +18,9 @@ import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
 import { registerOwnerRemoval } from "./owner-removal";
 import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
-import { assertDatabaseType, isDatabaseType } from "./type-id";
-import { TUNNEL_FAR_END, type DatabaseType, type WithTunnelFarEnd } from "@/lib/types";
+import { assertDatabaseType } from "./type-id";
+import { enabledProviderTypes } from "./enabled-providers";
+import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import { runShutdownHooks } from "@/lib/shutdown";
 import * as path from "path";
@@ -180,38 +181,8 @@ function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: Prov
 // Enabled providers (LIBREDB_ENABLED_PROVIDERS)
 // ============================================================================
 
-/**
- * The connection types this server may open: `LIBREDB_ENABLED_PROVIDERS` as a comma list, trimmed, with empty
- * entries dropped and each type kept once in first-seen order, or `null` when the variable is unset or blank, which
- * enables every provider. The VS Code extension is the one channel that sets it, in its backend process; the web app,
- * Docker, Helm, npx and the desktop launchers leave it unset. Read on every call, never cached.
- *
- * @throws DatabaseConfigError naming the entry when an entry is not a connection type id, or when a set value lists none.
- */
-export function enabledProviderTypes(): readonly DatabaseType[] | null {
-  const raw = process.env.LIBREDB_ENABLED_PROVIDERS;
-  if (raw === undefined || raw.trim() === "") return null;
-  const entries = [
-    ...new Set(
-      raw
-        .split(",")
-        .map((entry) => entry.trim())
-        .filter((entry) => entry !== ""),
-    ),
-  ];
-  if (entries.length === 0) {
-    throw new DatabaseConfigError(
-      "LIBREDB_ENABLED_PROVIDERS is set but lists no connection type id. Leave it unset to enable every provider.",
-    );
-  }
-  const unknown = entries.find((entry) => !isDatabaseType(entry));
-  if (unknown !== undefined) {
-    throw new DatabaseConfigError(
-      `LIBREDB_ENABLED_PROVIDERS names ${JSON.stringify(unknown)}, which is not a connection type id. List type ids such as postgres, separated by commas.`,
-    );
-  }
-  return entries as DatabaseType[];
-}
+// Read in ./enabled-providers, which the SQLite sample shares; the VS Code backend takes it from this factory surface.
+export { enabledProviderTypes };
 
 /**
  * Refuse a connection whose type `LIBREDB_ENABLED_PROVIDERS` leaves out, before anything is built, loaded or dialled.
