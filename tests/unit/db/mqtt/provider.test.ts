@@ -35,7 +35,7 @@ import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { TUNNEL_FAR_END, type DatabaseConnection, type SSLMode } from "@/lib/types";
 
 /** A fabricated credential, so a test that checks where a password goes never carries a real one. */
-const CANARY = "SEED-CANARY-7f3a";
+const CANARY = `canary-${crypto.randomUUID()}`;
 
 const CONNACK = Buffer.from([0x20, 0x03, 0x00, 0x00, 0x00]);
 const SUBACK = Buffer.from([0x90, 0x04, 0x00, 0x01, 0x00, 0x00]);

@@ -22,7 +22,7 @@ import type { MqttSessionOptions, MqttTransport, MqttTransportFactory } from "@/
 import { TUNNEL_FAR_END, type DatabaseConnection } from "@/lib/types";
 
 /** A fabricated credential, so a test that checks where a password goes never carries a real one. */
-const CANARY = "SEED-CANARY-7f3a";
+const CANARY = `canary-${crypto.randomUUID()}`;
 
 const CAPTURES = path.join(import.meta.dir, "..", "..", "fixtures", "mqtt", "captures");
 
