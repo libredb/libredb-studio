@@ -157,15 +157,24 @@ export interface SampleAdmission {
   readonly failure?: { readonly code: string | undefined; readonly message: string };
 }
 
+/** The file itself (no suffix) and the engines' sidecars. */
+const FAMILY_SUFFIXES = ["", "-wal", "-shm", "-journal", ".lock"] as const;
+
 /**
  * The files a sample on `target` can create, as real paths (`canonicalPath`), so two spellings of one file, through a
- * symlinked directory for one, name one family: the target and the engines' sidecars. The copy's temp is not a member:
- * its name carries a random part (src/lib/seed/sample-copy.ts), so no other path can name it. Throws what the path
- * check throws.
+ * symlinked directory for one, name one family: the target and the engines' sidecars. A target can live in two places,
+ * and the family claims both: where the copy's rename creates it (the real directory plus the target's own name, since
+ * the rename replaces a symlink at the target with a regular file), and where an engine opens it (the target followed
+ * through a symlink, dangling or not). The two are one place unless the target itself is a symlink. The copy's temp is
+ * not a member: its name carries a random part (src/lib/seed/sample-copy.ts), so no other path can name it. Throws what
+ * the path check throws.
  */
 function targetFamily(target: string): string[] {
-  const resolved = canonicalPath(path.resolve(target));
-  return [resolved, `${resolved}-wal`, `${resolved}-shm`, `${resolved}-journal`, `${resolved}.lock`];
+  const resolved = path.resolve(target);
+  const created = path.join(canonicalPath(path.dirname(resolved)), path.basename(resolved));
+  const opened = canonicalPath(resolved);
+  const places = created === opened ? [created] : [created, opened];
+  return places.flatMap((place) => FAMILY_SUFFIXES.map((suffix) => `${place}${suffix}`));
 }
 
 /**
@@ -175,8 +184,8 @@ function targetFamily(target: string): string[] {
  * names one of the server's own storage files (`isReservedStoragePath`) is refused `target-reserved`; a sample whose
  * family shares a file with an earlier admitted sample's is refused `target-conflict`. A refused sample claims nothing.
  *
- * Two spellings that differ only in letter case on a case-insensitive filesystem are not resolved to one path for a
- * file that does not exist yet.
+ * `canonicalPath` does not fold letter case: on a case-insensitive filesystem, two spellings that differ only in case
+ * are two targets, whether the file exists or not.
  */
 export function sampleAdmissions(): SampleAdmission[] {
   const claimed = new Set<string>();

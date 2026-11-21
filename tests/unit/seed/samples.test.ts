@@ -263,6 +263,23 @@ describe("targets and their admission", () => {
     ]);
   });
 
+  test.skipIf(process.platform === "win32")(
+    "a dangling symlink target claims both the link path and its target, so a sidecar of either is target-conflict (POSIX)",
+    () => {
+      const data = temporaryDirectory();
+      const elsewhere = temporaryDirectory();
+      const link = path.join(data, "link.db");
+      symlinkSync(path.join(elsewhere, "x.db"), link);
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = link;
+      // The copy's rename replaces the dangling link with a regular file, so the sample and its sidecars live at the link path.
+      process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = `${link}-wal`;
+      expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
+      // An engine that opens the link while it is live reaches the link's target.
+      process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(elsewhere, "x.db-wal");
+      expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
+    },
+  );
+
   test("a target whose path cannot be checked is refused as target-unreadable with its error, and the other row is admitted", () => {
     const blocker = path.join(temporaryDirectory(), "a-regular-file");
     writeFileSync(blocker, "");
