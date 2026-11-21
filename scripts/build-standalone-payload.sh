@@ -290,7 +290,7 @@ fi
 cp THIRD_PARTY_NOTICES.txt "$PAYLOAD_DIR/THIRD_PARTY_NOTICES.txt"
 
 # The built-in sample assets (seed-assets/): read at runtime relative to the
-# payload root, so output file tracing never includes them — copy explicitly
+# payload root, so output file tracing never includes them: copy explicitly
 # (mirrors the Dockerfile runner stage COPY). Every asset the sample table
 # (src/lib/seed/samples.ts) pins must be here.
 for asset in seed-assets/sqlite/employee.db seed-assets/libredb/sample.libredb; do

@@ -74,7 +74,7 @@ function readBootstrapFile(filePath: string): BootstrapFile {
     // Unreadable state: keep the evidence, regenerate. Sessions signed with a
     // lost secret become invalid; that is logged by the caller's banner path.
     // Windows rename throws if the destination exists (see copySampleAsset in
-    // src/lib/seed/sample-copy.ts), so clear any older .bak first — the newest
+    // src/lib/seed/sample-copy.ts), so clear any older .bak first: the newest
     // evidence wins.
     fs.rmSync(`${filePath}.bak`, { force: true });
     fs.renameSync(filePath, `${filePath}.bak`);
