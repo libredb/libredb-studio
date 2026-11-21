@@ -1780,7 +1780,8 @@ An operator's own seed connections are listed before both.
 
 ### How a sample is created
 
-Each sample is a committed file in the seed assets directory (`SEED_ASSETS_DIR`, by default `<working directory>/seed-assets`, which every distribution ships beside `server.js`).
+Each sample is a committed file in the seed assets directory, `SEED_ASSETS_DIR`.
+Every launcher sets it to the `seed-assets` directory its payload ships beside `server.js` ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)), and when nothing sets it the server reads `<working directory>/seed-assets`.
 Each file is the output of a committed script, held by a test that reruns it, and the sample table pins its size and SHA-256 digest; `seed-assets/README.md` lists them.
 At boot, `src/lib/seed/sample-copy.ts` copies each enabled sample's file into the data directory and opens no database:
 
@@ -1842,7 +1843,7 @@ This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own
 | `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Override the LibreDB sample file's location |
 | `SQLITE_EMBEDDED_SAMPLE` | `true` | Set to `false` (exact match) to disable the SQLite sample |
 | `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Override the SQLite sample file's location |
-| `SEED_ASSETS_DIR` | `<working directory>/seed-assets` | The directory both samples are copied from; a relative value is resolved against the working directory |
+| `SEED_ASSETS_DIR` | Set by every launcher to its payload's `seed-assets` ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)); `<working directory>/seed-assets` when nothing sets it | The directory both samples are copied from; a relative value is resolved against the working directory |
 
 `SEED_ASSETS_DIR` replaces `SQLITE_EMBEDDED_SAMPLE_TEMPLATE`, which is no longer read.
 
