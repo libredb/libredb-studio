@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
 import { CREDENTIAL_WARNINGS } from "../src/lib/db/credential-warnings";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * Gate 2 and gate 5 for the Qdrant provider (vector-family spec 8.3).
@@ -34,8 +35,7 @@ test.describe("Qdrant in the connection dialog", () => {
     await page.goto("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
     await page.locator('[role="dialog"]').getByRole("button", { name: "Qdrant", exact: true }).click();
   });

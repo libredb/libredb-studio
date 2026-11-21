@@ -2,6 +2,7 @@ import { expect, type Page, test } from "@playwright/test";
 import { connectionFieldHint, connectionFieldLabel, DB_UI_CONFIG, RABBITMQ_FIELD_RULES } from "../src/lib/db-ui-config";
 import { PLAINTEXT_REFUSAL } from "../src/lib/db/providers/stream/rabbitmq/errors";
 import { type RabbitMQStub, startRabbitMQStub } from "./helpers/rabbitmq-stub";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * The RabbitMQ provider in a browser (#1656, #424 gates 2 and 5). The dialog's fields for RabbitMQ are declarations
@@ -33,8 +34,7 @@ async function openDialog(page: Page) {
   await page.waitForURL(/\/admin/);
   await page.goto("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10_000 });
-  const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-  await sidebarButtons.last().click();
+  await openConnectionDialog(page);
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 5000 });
   await dialog.getByRole("button", { name: "RabbitMQ", exact: true }).click();

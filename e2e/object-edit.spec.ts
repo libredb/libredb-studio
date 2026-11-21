@@ -48,6 +48,7 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * Per run, and on a loopback port Docker picks: a fixed host port inside the ephemeral range (32768-60999) can be held
@@ -218,8 +219,7 @@ async function login(page: Page): Promise<void> {
  * on the first poll, and a refusal that is not the rate limiter's still costs one bounded wait.
  */
 async function connectToTheFixture(page: Page): Promise<void> {
-  const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-  await sidebarButtons.last().click();
+  await openConnectionDialog(page);
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 10_000 });
   await dialog.getByRole("button", { name: "PostgreSQL", exact: true }).click();

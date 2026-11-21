@@ -26,6 +26,7 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { expect, test } from "@playwright/test";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * Per run, and on a loopback port Docker picks: a fixed host port inside the ephemeral range (32768-60999) can be held
@@ -150,8 +151,7 @@ test.describe("Functional smoke: a statement that reaches its query timeout", ()
     await page.goto("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 15_000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 5000 });
     await dialog.getByRole("button", { name: "PostgreSQL", exact: true }).click();

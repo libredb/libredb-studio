@@ -1,6 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import { DATABEND_DSN_REFUSALS } from "../src/lib/connection-string-parser";
 import { DATABEND_FIELD_RULES, DB_UI_CONFIG } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * What a user sees in the connection dialog when choosing Databend (design 6.1 to 6.3).
@@ -25,8 +26,7 @@ async function openDialog(page: Page) {
   await page.waitForURL("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-  const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-  await sidebarButtons.last().click();
+  await openConnectionDialog(page);
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 5000 });
   return dialog;

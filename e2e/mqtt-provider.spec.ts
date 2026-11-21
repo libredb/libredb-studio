@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * Gate 2 and gate 5 for the MQTT provider (#1635).
@@ -24,9 +25,7 @@ test.describe("MQTT in the connection dialog", () => {
     await page.waitForURL("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    // By name, not by position: the header draws Show ERD Diagram before it once the sample's capabilities load,
-    // and `.first()` clicked that instead whenever they had loaded before the click.
-    await page.getByRole("button", { name: "New connection", exact: true }).click();
+    await openConnectionDialog(page);
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
   });
 

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 test.describe("Connection Management", () => {
   test.beforeEach(async ({ page }) => {
@@ -13,10 +14,7 @@ test.describe("Connection Management", () => {
   });
 
   test("add connection button opens modal", async ({ page }) => {
-    // The sidebar header has buttons next to LibreDB Studio logo
-    // The last button in that row is the add connection button
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
 
     // Connection modal should appear
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
@@ -24,8 +22,7 @@ test.describe("Connection Management", () => {
 
   test("connection modal shows database type selector", async ({ page }) => {
     // Open connection modal
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
 
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 5000 });
@@ -37,8 +34,7 @@ test.describe("Connection Management", () => {
   });
 
   test("connection modal has required fields", async ({ page }) => {
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
 
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
 
@@ -48,8 +44,7 @@ test.describe("Connection Management", () => {
 
   test("Trino sends the catalog and session schema entered in the form", async ({ page }) => {
     await page.route("**/api/db/test-connection", (route) => route.fulfill({ json: { success: true, latency: 1 } }));
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("button", { name: "Trino", exact: true }).click();
     await dialog.getByLabel("Catalog Name").fill("memory");
@@ -64,8 +59,7 @@ test.describe("Connection Management", () => {
   });
 
   test("connection modal can be closed", async ({ page }) => {
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
 
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
 

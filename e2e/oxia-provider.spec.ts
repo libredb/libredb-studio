@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { CREDENTIAL_WARNINGS } from "../src/lib/db/credential-warnings";
 import { parseDataServers } from "../src/lib/db/providers/keyvalue/oxia/connection-options";
 import { DB_UI_CONFIG, READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * What a user sees in the connection dialog when choosing Oxia (SB3-5.8), and the refusals Test Connection answers.
@@ -48,8 +49,7 @@ test.describe("Oxia in the connection dialog", () => {
     await page.goto("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
     await page.locator('[role="dialog"]').getByRole("button", { name: oxia.label, exact: true }).click();
   });

@@ -1,6 +1,7 @@
 import { connect } from "node:net";
 import { expect, test } from "@playwright/test";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * Sparkplug B in the browser (#1720).
@@ -62,7 +63,7 @@ test.describe("Sparkplug B in the connection dialog", () => {
     await page.waitForURL("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    await page.getByRole("button", { name: "New connection", exact: true }).click();
+    await openConnectionDialog(page);
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
   });
 

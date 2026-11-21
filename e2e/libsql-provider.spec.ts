@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * Gate 5 for issue #424 Phase 5.
@@ -28,8 +29,7 @@ test.describe("libSQL in the connection dialog", () => {
     await page.waitForURL("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
   });
 
