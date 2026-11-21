@@ -4,8 +4,8 @@
  * WHY A REAL SDK AND A REAL SOCKET. `@google/generative-ai` tees the parsed answer: one branch is
  * `result.stream`, which the provider reads, and the other feeds `result.response`, a promise that
  * aggregates every chunk and rejects when the answer fails. `gemini-provider.test.ts` replaces the
- * SDK, so it has no `result.response` to leave unhandled. Here the provider talks to the real SDK,
- * which talks to an in-process stand-in for `streamGenerateContent`.
+ * SDK, and its `result.response` always resolves, so it has nothing to leave unhandled. Here the
+ * provider talks to the real SDK, which talks to an in-process stand-in for `streamGenerateContent`.
  *
  * WHAT CATCHES A REJECTION LEFT UNHANDLED. bun's test runner: it fails the case during which the
  * rejection is reported, with the rejection as the case's error. MEASURED on bun 1.4.4 without the
@@ -17,6 +17,10 @@
  * Each case answers one chunk, waits until the caller has read it, then fails the answer its own
  * way: a reset connection, a line cut short, a line that is not JSON, bytes that are not UTF-8, and
  * a caller that aborts the request.
+ *
+ * A last case answers a chunk that parses as JSON but is not an answer the SDK can aggregate
+ * (`candidates` is a number). The stream itself does not fail there: `text()` reads it as empty.
+ * Only `result.response` rejects, so the body errors with that rejection once the stream ends.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import http from "node:http";
@@ -26,7 +30,7 @@ import { NO_BACKOFF } from "../../helpers/llm-no-backoff";
 
 const KEY = "SEED-CANARY-gemini-7f3a";
 
-type Failure = "reset" | "truncated" | "malformed" | "invalid-utf8" | "held";
+type Failure = "reset" | "truncated" | "malformed" | "invalid-utf8" | "held" | "unaggregatable";
 
 function sseLine(text: string): string {
   return `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text }], role: "model" }, index: 0 }] })}\r\n\r\n`;
@@ -51,6 +55,7 @@ beforeAll(async () => {
       else if (mode === "truncated") response.end('data: {"candidates": [');
       else if (mode === "malformed") response.end("data: {not json\r\n\r\n");
       else if (mode === "invalid-utf8") response.end(Buffer.from([0x64, 0x61, 0xff, 0xfe, 0x0a]));
+      else if (mode === "unaggregatable") response.end('data: {"candidates":5}\r\n\r\n');
       // "held" never ends: the caller aborts the request instead.
     });
   });
@@ -113,4 +118,12 @@ describe("GeminiProvider: an answer that fails after it started", () => {
       expect((error as Error).message).toContain(message);
     },
   );
+
+  test("a chunk the SDK cannot aggregate: the body errors with the aggregate's failure", async () => {
+    const { text, error } = await answerThatFails("unaggregatable");
+
+    expect(text).toBe("Hello");
+    // The class, not the message: Node and bun word this TypeError differently.
+    expect(error).toBeInstanceOf(TypeError);
+  });
 });
