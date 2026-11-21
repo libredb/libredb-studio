@@ -7,7 +7,8 @@
  * event sink (`sink.ts`) is backing off after a failed insert, or while its queue holds at least 90% of its capacity,
  * so a governed Studio stops executing instead of running statements whose events would wait or be dropped. It reads
  * the sink's state as the heartbeat reports it, and lifts on its own: once an insert settles its whole batch the sink
- * stops backing off, and the queue drains.
+ * stops backing off, and the queue drains. It also refuses once the shutdown flush has closed the sink, which never
+ * sends an event recorded after it (docs/DISTRIBUTION.md#stopping-the-server); that does not lift.
  *
  * A row the governance source refused for good (SQLSTATE class 22 or 23) never trips it. The sink drops that row,
  * counts it in `rejected` and goes on without a backoff, so one malformed event cannot stop every execution.
@@ -18,7 +19,7 @@
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { runtimeSetting } from "@/lib/governance/settings";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
-import { QUERY_EVENT_QUEUE_CAPACITY, queryEventSinkState } from "./sink";
+import { QUERY_EVENT_QUEUE_CAPACITY, queryEventSinkClosed, queryEventSinkState } from "./sink";
 
 /**
  * The queue length from which `refuse` refuses: 90% of the queue's capacity (docs/GOVERNANCE.md#query-events), so the
@@ -31,11 +32,11 @@ const AUDIT_UNAVAILABLE_MESSAGE = "Query execution is unavailable while this ser
 
 /**
  * Returns when a statement may run. Throws 503 AUDIT_UNAVAILABLE when `queryLog.onSinkFailure` is `refuse` and the
- * query event sink is backing off or its queue is at least 90% full.
+ * query event sink is backing off, its queue is at least 90% full, or the shutdown flush has closed it.
  */
 export function admitQueryExecution(): void {
   if (runtimeSetting("queryLog.onSinkFailure") !== "refuse") return;
   const { backingOff, queued } = queryEventSinkState();
-  if (!backingOff && queued < REFUSE_FROM_QUEUED) return;
+  if (!backingOff && queued < REFUSE_FROM_QUEUED && !queryEventSinkClosed()) return;
   throw new SeedConnectionError(AUDIT_UNAVAILABLE_MESSAGE, 503, ApiErrorCode.AUDIT_UNAVAILABLE);
 }

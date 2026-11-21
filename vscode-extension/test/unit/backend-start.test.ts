@@ -4,7 +4,8 @@ import { type Clock, install } from "@sinonjs/fake-timers";
 import type { BackendFactory } from "../../src/backend/handlers";
 import {
   type BackendProcess,
-  DISCONNECT_CLOSE_FAILED,
+  closeCutLine,
+  closeFailedLine,
   DISCONNECT_CLOSE_MS,
   NO_IPC_CHANNEL,
   startBackend,
@@ -129,7 +130,7 @@ describe("startBackend", () => {
       assert.deepEqual(errors, []);
     });
 
-    it("exits 0 at 2,000 ms when the close never resolves", async () => {
+    it("exits 0 at 2,000 ms when the close never resolves, with a line saying its connections were not closed", async () => {
       const proc = new FakeProcess();
       startBackend(proc, fakeFactory(() => new Promise<void>(() => {})).factory, ">=24.0.0");
       proc.emit("disconnect");
@@ -138,7 +139,11 @@ describe("startBackend", () => {
       assert.deepEqual(proc.exits, []);
       await clock.tickAsync(1);
       assert.deepEqual(proc.exits, [0]);
-      assert.deepEqual(errors, []);
+      assert.deepEqual(errors, [[closeCutLine("disconnect")]]);
+      assert.equal(
+        closeCutLine("disconnect"),
+        "The LibreDB backend exits with its connections not closed after its host went away: the close did not finish within 2000 ms.",
+      );
     });
 
     it("logs a close that fails, then exits 0", async () => {
@@ -147,7 +152,11 @@ describe("startBackend", () => {
       startBackend(proc, fakeFactory(() => Promise.reject(failure)).factory, ">=24.0.0");
       proc.emit("disconnect");
       await clock.tickAsync(0);
-      assert.deepEqual(errors, [[DISCONNECT_CLOSE_FAILED, failure]]);
+      assert.deepEqual(errors, [[closeFailedLine("disconnect"), failure]]);
+      assert.equal(
+        closeFailedLine("disconnect"),
+        "The LibreDB backend could not close its connections after its host went away:",
+      );
       assert.deepEqual(proc.exits, [0]);
     });
   });
@@ -155,13 +164,20 @@ describe("startBackend", () => {
 
 describe("on SIGTERM or SIGINT", () => {
   let clock: Clock;
+  let errors: unknown[][];
+  const consoleError = console.error;
 
   beforeEach(() => {
     clock = install({ toFake: ["setTimeout", "clearTimeout"] });
+    errors = [];
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
   });
 
   afterEach(() => {
     clock.uninstall();
+    console.error = consoleError;
   });
 
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
@@ -179,6 +195,33 @@ describe("on SIGTERM or SIGINT", () => {
       close();
       await clock.tickAsync(0);
       assert.deepEqual(proc.exits, [0]);
+      assert.deepEqual(errors, []);
+      connection.dispose();
+    });
+
+    it(`names ${signal} in the line of a close that fails, then exits 0`, async () => {
+      const failure = new Error("pool hung");
+      const proc = new FakeProcess();
+      const connection = startBackend(proc, fakeFactory(() => Promise.reject(failure)).factory, ">=24.0.0");
+      proc.emit(signal, signal);
+      await clock.tickAsync(0);
+      assert.deepEqual(errors, [[closeFailedLine(signal), failure]]);
+      assert.equal(closeFailedLine(signal), `The LibreDB backend could not close its connections on ${signal}:`);
+      assert.deepEqual(proc.exits, [0]);
+      connection.dispose();
+    });
+
+    it(`names ${signal} in the line of a close cut at 2,000 ms, then exits 0`, async () => {
+      const proc = new FakeProcess();
+      const connection = startBackend(proc, fakeFactory(() => new Promise<void>(() => {})).factory, ">=24.0.0");
+      proc.emit(signal, signal);
+      await clock.tickAsync(DISCONNECT_CLOSE_MS);
+      assert.deepEqual(proc.exits, [0]);
+      assert.deepEqual(errors, [[closeCutLine(signal)]]);
+      assert.equal(
+        closeCutLine(signal),
+        `The LibreDB backend exits with its connections not closed on ${signal}: the close did not finish within 2000 ms.`,
+      );
       connection.dispose();
     });
   }

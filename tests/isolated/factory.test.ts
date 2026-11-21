@@ -2737,6 +2737,54 @@ describe("teardown of an owned provider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
+  test("the close the factory registers for the shutdown rejects naming each provider whose close failed, while clearProviderCache resolves", async () => {
+    const shared = await getOrCreateProvider(makeConnection("sqlite", { id: "shutdown-shared", database: ":memory:" }));
+    const failedRollback = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:orders" }),
+      {},
+      owned("alice-subject"),
+    );
+    const closes = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:fine" }),
+      {},
+      owned("alice-subject"),
+    );
+    const failure = new Error("disconnect failed");
+    shared.disconnect = () => Promise.reject(failure);
+    const events: string[] = [];
+    openTransaction(failedRollback, events, async () => {
+      throw new Error("Connection terminated unexpectedly");
+    });
+    recordDisconnect(failedRollback, events);
+    recordDisconnect(closes, events);
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+
+    resetShutdownHooks();
+    try {
+      expect(await closeProviderCaches()).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({ message: "Providers not closed: shutdown-shared, seed:orders" }),
+        { route: "shutdown" },
+      );
+      expect(consoleError).toHaveBeenCalledWith("[DB] Error disconnecting provider", "shutdown-shared", failure);
+      expect(getProviderCacheStats().size).toBe(0);
+
+      // Outside the shutdown the same failures are logged and the clear resolves, as an embedder's call expects.
+      const again = await getOrCreateProvider(
+        makeConnection("sqlite", { id: "shutdown-shared", database: ":memory:" }),
+      );
+      again.disconnect = () => Promise.reject(failure);
+      expect(await clearProviderCache()).toBeUndefined();
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      resetShutdownHooks();
+      error.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
   test("the factory registers its owner-scoped removal, so the governance loader reaches this cache from another bundle", async () => {
     const conn = makeConnection("postgres", { id: "seed:orders" });
     const alice = await getOrCreateProvider(conn, {}, owned("alice-subject"));

@@ -5,12 +5,14 @@
  * process. A test that runs `register()` installs the handler on a stand-in first, so `register()`'s own install
  * attaches nothing and the test process never gets a signal listener that calls the real `process.exit`.
  *
- * Its exit records the code, resolves `exited` with the first code and returns, so a test awaits `exited` instead of
- * a timer before it asserts, and sees whatever the handler did after the exit too.
+ * Its exit records the code, calls every `exit` listener with it, as Node.js's `process.exit` does, resolves `exited`
+ * with the first code and returns, so a test awaits `exited` instead of a timer before it asserts, and sees whatever
+ * the handler did after the exit too. A case calls its exit itself to stand for Next.js's handler ending the process.
  */
 import type { ShutdownProcess, ShutdownSignal } from "@/lib/shutdown-handler";
 
-type Listener = Parameters<ShutdownProcess["on"]>[1];
+/** A signal listener, called with the signal, or an `exit` listener, called with the code. */
+type Listener = ((signal: ShutdownSignal) => void) | ((code: number) => void);
 
 export interface ShutdownStandIn extends ShutdownProcess {
   /** Every listener attached, in order, with its event. */
@@ -35,16 +37,20 @@ export function shutdownStandIn(): ShutdownStandIn {
     registrations,
     exits,
     exited,
-    on(event, listener) {
+    on(event: string, listener: Listener) {
       registrations.push({ event, listener });
       return this;
     },
     exit(code) {
       exits.push(code);
+      // An `exit` registration holds an exit listener, as a signal registration holds a signal listener.
+      for (const each of registrations) if (each.event === "exit") (each.listener as (code: number) => void)(code);
       resolveExited(code);
     },
     signal(signal) {
-      for (const each of registrations) if (each.event === signal) each.listener(signal);
+      for (const each of registrations) {
+        if (each.event === signal) (each.listener as (signal: ShutdownSignal) => void)(signal);
+      }
     },
   };
 }

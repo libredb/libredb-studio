@@ -14,6 +14,7 @@ import {
   resetShutdownHooks,
   runShutdownHooks,
   SHUTDOWN_HOOKS_DEADLINE_MS,
+  shutdownHooksRunning,
 } from "@/lib/shutdown";
 
 let spies: ReturnType<typeof spyOn>[] = [];
@@ -113,6 +114,21 @@ describe("shutdown hooks", () => {
       route: "shutdown",
       pending: ["stuck"],
     });
+  });
+
+  test("shutdownHooksRunning names the hooks of the run that have not ended, and none before a run", async () => {
+    let release: () => void = () => {};
+    onShutdown("quick", async () => {});
+    onShutdown("slow", () => new Promise<void>((resolve) => (release = resolve)));
+    expect(shutdownHooksRunning()).toEqual([]);
+
+    const run = runShutdownHooks();
+    await settle();
+    expect(shutdownHooksRunning()).toEqual(["slow"]);
+
+    release();
+    await run;
+    expect(shutdownHooksRunning()).toEqual([]);
   });
 
   test("runShutdownHooks answers nothing cut and nothing failed when every hook settled", async () => {

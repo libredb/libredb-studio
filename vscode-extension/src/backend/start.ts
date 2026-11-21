@@ -23,18 +23,38 @@ export const NO_IPC_CHANNEL = "The LibreDB backend needs the IPC channel its hos
 /** How long the child waits for its pools to close once its host has gone (part 1 criterion 13 allows 3 s). */
 export const DISCONNECT_CLOSE_MS = 2000;
 
-export const DISCONNECT_CLOSE_FAILED = "The LibreDB backend could not close its connections after its host went away:";
+/** What made the child close its pools: its host closing the channel, or a signal. */
+export type CloseTrigger = "disconnect" | "SIGTERM" | "SIGINT";
 
-/** Closes every pool, waiting at most DISCONNECT_CLOSE_MS, then exits 0. */
-async function closeThenExit(proc: BackendProcess, factory: BackendFactory): Promise<void> {
+const CLOSE_TRIGGER_WORDS: Readonly<Record<CloseTrigger, string>> = {
+  disconnect: "after its host went away",
+  SIGTERM: "on SIGTERM",
+  SIGINT: "on SIGINT",
+};
+
+/** The stderr line of a close that failed, followed by its error. */
+export const closeFailedLine = (trigger: CloseTrigger): string =>
+  `The LibreDB backend could not close its connections ${CLOSE_TRIGGER_WORDS[trigger]}:`;
+
+/** The stderr line of a close that was still running at DISCONNECT_CLOSE_MS, when the child exits without it. */
+export const closeCutLine = (trigger: CloseTrigger): string =>
+  `The LibreDB backend exits with its connections not closed ${CLOSE_TRIGGER_WORDS[trigger]}: the close did not finish within ${DISCONNECT_CLOSE_MS} ms.`;
+
+const CUT = Symbol("cut");
+
+/**
+ * Closes every pool, waiting at most DISCONNECT_CLOSE_MS, then exits 0. A close that fails, or that is still running
+ * at the deadline, writes one stderr line naming what started it.
+ */
+async function closeThenExit(proc: BackendProcess, factory: BackendFactory, trigger: CloseTrigger): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<void>((resolve) => {
-    timer = setTimeout(resolve, DISCONNECT_CLOSE_MS);
+  const deadline = new Promise<typeof CUT>((resolve) => {
+    timer = setTimeout(() => resolve(CUT), DISCONNECT_CLOSE_MS);
   });
   try {
-    await Promise.race([factory.clearProviderCache(), deadline]);
+    if ((await Promise.race([factory.clearProviderCache(), deadline])) === CUT) console.error(closeCutLine(trigger));
   } catch (error) {
-    console.error(DISCONNECT_CLOSE_FAILED, error);
+    console.error(closeFailedLine(trigger), error);
   } finally {
     clearTimeout(timer);
   }
@@ -59,13 +79,13 @@ export function startBackend(proc: BackendProcess, factory: BackendFactory, node
   // Open pool sockets would keep the child alive after its host is gone; the body sits on its own line so the
   // line-granular coverage gate sees whether a test closes the channel or signals the child.
   let closing: Promise<void> | undefined;
-  const close = (): void => {
-    closing ??= closeThenExit(proc, factory);
+  const close = (trigger: CloseTrigger): void => {
+    closing ??= closeThenExit(proc, factory, trigger);
   };
-  proc.once("disconnect", close);
+  proc.once("disconnect", () => close("disconnect"));
   // `on`, not `once`: with no listener left, a second signal would end the child by Node's default before the close.
-  proc.on("SIGTERM", close);
-  proc.on("SIGINT", close);
+  proc.on("SIGTERM", () => close("SIGTERM"));
+  proc.on("SIGINT", () => close("SIGINT"));
   connection.listen();
   return connection;
 }

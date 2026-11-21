@@ -51,6 +51,8 @@ interface ShutdownRegistry {
   readonly cacheCloses: Set<ProviderCacheClose>;
   /** The run of the hooks, once one has started. */
   run?: Promise<ShutdownHooksOutcome>;
+  /** The names of the hooks of that run that have not ended yet. */
+  running?: ReadonlySet<string>;
   /** The run of the provider cache closes, once one has started. */
   cacheCloseRun?: Promise<ProviderCacheClosesOutcome>;
 }
@@ -91,8 +93,12 @@ async function withinDeadline(work: Promise<unknown>, ms: number): Promise<void>
   clearTimeout(deadline);
 }
 
-async function runHooks(hooks: ReadonlyMap<string, ShutdownHook>): Promise<ShutdownHooksOutcome> {
+async function runHooks(
+  state: ShutdownRegistry,
+  hooks: ReadonlyMap<string, ShutdownHook>,
+): Promise<ShutdownHooksOutcome> {
   const pending = new Set(hooks.keys());
+  state.running = pending;
   const failed: string[] = [];
   const runs = [...hooks].map(async ([name, hook]) => {
     try {
@@ -117,8 +123,16 @@ async function runHooks(hooks: ReadonlyMap<string, ShutdownHook>): Promise<Shutd
  */
 export function runShutdownHooks(): Promise<ShutdownHooksOutcome> {
   const state = registry();
-  state.run ??= runHooks(new Map(state.hooks));
+  state.run ??= runHooks(state, new Map(state.hooks));
   return state.run;
+}
+
+/**
+ * The names of the hooks of the run that have not ended, read synchronously, so a line written as the process exits
+ * names the hooks the exit cuts; none before a run.
+ */
+export function shutdownHooksRunning(): readonly string[] {
+  return [...(registry().running ?? [])];
 }
 
 async function runCacheCloses(closes: readonly ProviderCacheClose[]): Promise<ProviderCacheClosesOutcome> {

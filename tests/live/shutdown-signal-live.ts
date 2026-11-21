@@ -181,7 +181,7 @@ async function readyServer(extra: Readonly<Record<string, string>>): Promise<Ser
         console.log("     the port was taken before the server bound it; retrying once with a new port");
         continue;
       }
-      throw new Error(`${(error as Error).message}\n${server.output()}`);
+      throw new Error(`${(error as Error).message}\n${server.output()}`, { cause: error });
     }
   }
 }

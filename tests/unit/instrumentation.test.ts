@@ -8,7 +8,9 @@ import { logger } from "@/lib/logger";
 import { getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
 import { getSampleSeedState, resetSampleSeedStates, SAMPLES, unavailableSentence } from "@/lib/seed/samples";
 import * as authBootstrap from "@/lib/auth-bootstrap";
+import * as shutdownHandler from "@/lib/shutdown-handler";
 import { installShutdownHandler, resetShutdownHandler } from "@/lib/shutdown-handler";
+import * as uncaughtException from "@/lib/uncaught-exception";
 import { installUncaughtExceptionExit, resetUncaughtExceptionExit } from "@/lib/uncaught-exception";
 import { shutdownStandIn } from "../helpers/shutdown-stand-in";
 import { standInProcess } from "../helpers/uncaught-exception-stand-in";
@@ -206,7 +208,7 @@ describe("instrumentation register()", () => {
     expect(exits).toEqual([]);
   });
 
-  test("register() installs the shutdown handler right after the uncaught-exception exit, before the auth bootstrap", async () => {
+  test("register() installs the shutdown handler once, and before the auth bootstrap", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.AUTH_BOOTSTRAP = "off";
     process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
@@ -233,6 +235,42 @@ describe("instrumentation register()", () => {
       bootstrap.mockRestore();
     }
   });
+
+  test.each([
+    ["true", "studio"],
+    ["", "nextjs"],
+    [undefined, "nextjs"],
+  ] as const)(
+    "with NEXT_MANUAL_SIG_HANDLE=%p register() installs the uncaught-exception exit, then the shutdown handler for owner %s on the process, then bootstraps auth",
+    async (value, owner) => {
+      process.env.NEXT_RUNTIME = "nodejs";
+      process.env.AUTH_BOOTSTRAP = "off";
+      process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+      process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+      process.env.JWT_SECRET = "x".repeat(32);
+      if (value !== undefined) process.env.NEXT_MANUAL_SIG_HANDLE = value;
+      const order: string[] = [];
+      const spies = [
+        spyOn(uncaughtException, "installUncaughtExceptionExit").mockImplementation(() => {
+          order.push("uncaught-exception exit");
+        }),
+        spyOn(shutdownHandler, "installShutdownHandler").mockImplementation(() => {
+          order.push("shutdown handler");
+        }),
+        spyOn(authBootstrap, "bootstrapAuth").mockImplementation(() => {
+          order.push("auth bootstrap");
+        }),
+      ];
+      try {
+        await register();
+
+        expect(order).toEqual(["uncaught-exception exit", "shutdown handler", "auth bootstrap"]);
+        expect(shutdownHandler.installShutdownHandler).toHaveBeenCalledWith(process, owner);
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+      }
+    },
+  );
 
   test("register() refuses a NEXT_MANUAL_SIG_HANDLE that is neither empty nor true, before installing the handler", async () => {
     process.env.NEXT_RUNTIME = "nodejs";

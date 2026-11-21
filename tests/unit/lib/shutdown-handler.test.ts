@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:
 import { clearProviderCache, getOrCreateProvider, getProviderCacheStats } from "@/lib/db/factory";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
+import { QUERY_EVENT_SINK_KEY } from "@/lib/query-events/queued";
 import * as shutdownRegistry from "@/lib/shutdown";
 import {
   onProviderCacheClose,
@@ -51,6 +52,16 @@ function registerClose(close: () => Promise<void>): void {
   unregister.push(onProviderCacheClose(close));
 }
 
+/**
+ * Leaves `count` query events in this process's sink queue, where `queuedQueryEventCount()` reads them, as events the
+ * sink never sent do.
+ */
+function leaveQueryEvents(count: number): void {
+  (globalThis as { [QUERY_EVENT_SINK_KEY]?: { queue: unknown[] } })[QUERY_EVENT_SINK_KEY] = {
+    queue: Array.from({ length: count }, () => ({})),
+  };
+}
+
 /** Every line the logger was asked for at `level`, as message and context. */
 function lines(level: "info" | "warn"): unknown[][] {
   return (logger[level] as unknown as { mock: { calls: unknown[][] } }).mock.calls;
@@ -68,6 +79,7 @@ afterEach(async () => {
   unregister = [];
   resetShutdownHooks();
   resetShutdownHandler();
+  delete (globalThis as { [QUERY_EVENT_SINK_KEY]?: unknown })[QUERY_EVENT_SINK_KEY];
   await clearProviderCache();
   for (const spy of spies) spy.mockRestore();
 });
@@ -152,6 +164,7 @@ describe("installShutdownHandler", () => {
       cacheClosesCut: undefined,
       cacheClosesFailed: undefined,
       stepsFailed: undefined,
+      queryEventsLost: undefined,
     });
   });
 
@@ -173,6 +186,7 @@ describe("installShutdownHandler", () => {
       cacheClosesCut: undefined,
       cacheClosesFailed: undefined,
       stepsFailed: undefined,
+      queryEventsLost: undefined,
     });
   });
 
@@ -198,6 +212,7 @@ describe("installShutdownHandler", () => {
       cacheClosesCut: 1,
       cacheClosesFailed: undefined,
       stepsFailed: undefined,
+      queryEventsLost: undefined,
     });
   });
 
@@ -226,7 +241,58 @@ describe("installShutdownHandler", () => {
       cacheClosesCut: undefined,
       cacheClosesFailed: 2,
       stepsFailed: undefined,
+      queryEventsLost: undefined,
     });
+  });
+
+  test("a query event recorded after the hooks flushed the queue makes the exit code 143 and the end line counts it", async () => {
+    // A request still running records its event once the flush has closed the sink, which then never sends it.
+    registerClose(async () => {
+      leaveQueryEvents(2);
+    });
+    const proc = shutdownStandIn();
+    installShutdownHandler(proc, "studio");
+
+    proc.signal("SIGTERM");
+
+    expect(await proc.exited).toBe(143);
+    expect(logger.warn).toHaveBeenCalledWith("Shutdown incomplete, exiting with 143", {
+      route: "shutdown",
+      signal: "SIGTERM",
+      hooksCut: undefined,
+      hooksFailed: undefined,
+      cacheClosesCut: undefined,
+      cacheClosesFailed: undefined,
+      stepsFailed: undefined,
+      queryEventsLost: 2,
+    });
+  });
+
+  test("a cached provider whose disconnect rejects makes the exit code 143, through the factory's own close", async () => {
+    const provider = await getOrCreateProvider(MEMORY_DATABASE, {}, { allowExternalFileAccess: true });
+    const failure = new Error("disconnect failed");
+    provider.disconnect = () => Promise.reject(failure);
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const proc = shutdownStandIn();
+      installShutdownHandler(proc, "studio");
+
+      proc.signal("SIGTERM");
+
+      expect(await proc.exited).toBe(143);
+      expect(consoleError).toHaveBeenCalledWith("[DB] Error disconnecting provider", "shutdown-handler", failure);
+      expect(logger.error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({ message: "Providers not closed: shutdown-handler" }),
+        { route: "shutdown" },
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Shutdown incomplete, exiting with 143",
+        expect.objectContaining({ cacheClosesFailed: 1 }),
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   test("SIGINT exits with 0 when the shutdown completed and with 130 when it did not", async () => {
@@ -293,7 +359,6 @@ describe("installShutdownHandler", () => {
     installShutdownHandler(proc, "nextjs");
 
     proc.signal("SIGTERM");
-    await shutdownRegistry.runShutdownHooks();
     await settle();
 
     expect(hookRan).toBe(true);
@@ -306,6 +371,39 @@ describe("installShutdownHandler", () => {
         { route: "shutdown", owner: "nextjs" },
       ],
     ]);
+  });
+
+  test("where Next.js owns the exit, its exit is logged once, with nothing lost when the hooks ended and nothing was left queued", async () => {
+    onShutdown("hook", async () => {});
+    const proc = shutdownStandIn();
+    installShutdownHandler(proc, "nextjs");
+
+    proc.signal("SIGTERM");
+    await settle();
+    // Next.js's handler ends the process, which runs the exit listeners.
+    proc.exit(143);
+
+    expect(lines("info").at(-1)).toEqual(["Exiting with 143 after SIGTERM", { route: "shutdown", signal: "SIGTERM" }]);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test("where Next.js owns the exit, its exit is logged with the query events left unsent and the hooks still running", async () => {
+    onShutdown("slow", () => new Promise<void>(() => {}));
+    const proc = shutdownStandIn();
+    installShutdownHandler(proc, "nextjs");
+
+    proc.signal("SIGINT");
+    await settle();
+    leaveQueryEvents(3);
+    proc.exit(130);
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith("Exiting with 130 after SIGINT", {
+      route: "shutdown",
+      signal: "SIGINT",
+      queryEventsLost: 3,
+      hooksRunning: ["slow"],
+    });
   });
 
   test("a hooks run or a cache close run that rejects is logged, counts as incomplete, and the exit still runs", async () => {
@@ -338,6 +436,7 @@ describe("installShutdownHandler", () => {
         cacheClosesCut: undefined,
         cacheClosesFailed: undefined,
         stepsFailed: ["hooks", "provider cache closes"],
+        queryEventsLost: undefined,
       });
     } finally {
       hooks.mockRestore();
