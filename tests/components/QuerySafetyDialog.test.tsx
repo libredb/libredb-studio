@@ -3396,6 +3396,28 @@ describe("MySQL's statements that overwrite rows through an INSERT ask", () => {
     expect(isDangerousQuery("BEGIN; SELECT REPLACE(v, 'a', 'b') FROM t; COMMIT;", "mysql")).toBe(true);
   });
 
+  const REPLACED_WITHOUT_ROWS = [
+    "CREATE OR REPLACE VIEW v AS SELECT 1 AS x",
+    "CREATE OR REPLACE PROCEDURE p() SELECT 1",
+    "CREATE OR REPLACE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1",
+  ];
+
+  test.each(REPLACED_WITHOUT_ROWS)(
+    "a script led by BEGIN that holds %j asks: the same accepted false prompt",
+    (sql) => {
+      // The object holds no rows of its own, but inside a block led by BEGIN the gate reads every form anywhere in the
+      // code, so the REPLACE in CREATE OR REPLACE counts as the statement: one click, the fail-safe direction.
+      expect(isDangerousQuery(`BEGIN; ${sql}; COMMIT;`, "mysql")).toBe(true);
+    },
+  );
+
+  test.each(REPLACED_WITHOUT_ROWS.flatMap((sql) => [sql, `SELECT 1; ${sql}`, `START TRANSACTION; ${sql}; COMMIT;`]))(
+    "does not ask for %j outside a script led by BEGIN",
+    (sql) => {
+      expect(isDangerousQuery(sql, "mysql")).toBe(false);
+    },
+  );
+
   test.each(["postgres", "mssql", "oracle"] as const)("%s keeps its verdicts", (type) => {
     expect(isDangerousQuery("SELECT REPLACE(v, 'a', 'b') FROM t", type)).toBe(false);
     expect(isDangerousQuery("INSERT INTO t VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'b'", type)).toBe(false);

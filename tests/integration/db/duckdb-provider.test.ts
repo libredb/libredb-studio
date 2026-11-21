@@ -1787,6 +1787,25 @@ describe("queryReadOnly()", () => {
     },
   );
 
+  // The order the docblock states: the Unicode-space refusal comes before the statement guard, so a statement both
+  // would refuse gets the sentence about the space, the one that says what the guard itself could not read.
+  test.each(["SELECT\u00A0id FROM users; INSTALL httpfs", "SELECT id FROM\u3000read_text('/etc/hostname')"])(
+    "a Unicode space is refused before the statement guard reads %j",
+    async (sql) => {
+      expect(() => assertReadOnlyStatementIsBounded(sql)).toThrow(/^Read-only execution refused /);
+      provider = await readOnlyProvider();
+      const client = (provider as unknown as { client: { run(sql: string): Promise<unknown> } }).client;
+      const run = spyOn(client, "run");
+
+      const error = await provider.queryReadOnly(sql, GENEROUS_BUDGET).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(RefusedBeforeSendError);
+      expect((error as Error).message).toBe(DUCKDB_UNICODE_SPACE_SENTENCE);
+      expect(run).not.toHaveBeenCalled();
+      run.mockRestore();
+    },
+  );
+
   test("a Unicode space inside a string is the string's own, and the read runs on this path too", async () => {
     provider = await readOnlyProvider();
 
