@@ -160,6 +160,10 @@ const NOOP_MASKING_CONFIG: MaskingConfig = {
   },
 };
 
+/** Why the import dialog ran nothing: no connection is open. Shown in the dialog, which stays open with its mapping. */
+export const IMPORT_WITHOUT_CONNECTION_SENTENCE =
+  "Nothing was imported: no connection is open. Open the connection the data is meant for and import it again.";
+
 export function StudioWorkspace({
   connections: externalConnections,
   currentUser,
@@ -253,11 +257,12 @@ export function StudioWorkspace({
   // === Modal / overlay state ===
   const [showDiagram, setShowDiagram] = useState(false);
   /**
-   * The type of the connection the Save Query dialog was opened for; null while it is closed. The query is saved under
-   * this type and not under the one open when Save Query is pressed, since the host's list can close or retype the open
-   * connection while the dialog is open, and the query was written for this type.
+   * What the Save Query dialog was opened on: the open connection's type and the current tab's text; null while it is
+   * closed. Both are taken when the dialog opens, and the dialog shows and saves these and not what is open when Save
+   * Query is pressed, since the host's list can close or retype the open connection while the dialog is open. Closing
+   * it loads another connection's workspace into the tabs, so the current tab is then another text.
    */
-  const [saveQueryType, setSaveQueryType] = useState<DatabaseType | null>(null);
+  const [saveQueryDraft, setSaveQueryDraft] = useState<{ type: DatabaseType; query: string } | null>(null);
   /** The open connection's type, which the toolbar's Save hands the dialog; undefined while none is open. */
   const activeType = conn.activeConnection?.type;
   const [savedKey, setSavedKey] = useState(0);
@@ -305,16 +310,16 @@ export function StudioWorkspace({
 
   // === Save query handler ===
   const handleSaveQuery = useStableCallback(async (name: string, description: string, tags: string[]) => {
-    // The dialog is drawn only while it holds the type it was opened for, so this is a caller that bypassed it.
-    if (saveQueryType === null) throw new Error("The Save Query dialog saved without being opened for a connection.");
+    // The dialog is drawn only while it holds what it was opened on, so this is a caller that bypassed it.
+    if (saveQueryDraft === null) throw new Error("The Save Query dialog saved without being opened for a connection.");
 
     if (onSaveQueryProp) {
       try {
         await onSaveQueryProp({
           name,
-          query: tabMgr.currentTab.query,
+          query: saveQueryDraft.query,
           description,
-          connectionType: saveQueryType,
+          connectionType: saveQueryDraft.type,
           tags,
         });
         setSavedKey((prev) => prev + 1);
@@ -327,7 +332,7 @@ export function StudioWorkspace({
   });
 
   // === Modal handlers (handed to `StudioModals`) ===
-  const closeSaveQuery = useCallback(() => setSaveQueryType(null), []);
+  const closeSaveQuery = useCallback(() => setSaveQueryDraft(null), []);
   const closeImport = useCallback(() => setIsImportModalOpen(false), []);
   const closeSafety = useCallback(() => queryExec.setSafetyCheckQuery(null), [queryExec.setSafetyCheckQuery]);
   // Bound to the connection the statement was confirmed for: the adapter runs nothing on another one.
@@ -336,6 +341,21 @@ export function StudioWorkspace({
   const closeCodeGen = useCallback(() => setCodeGenPath(null), []);
   const closeTestData = useCallback(() => setTestDataPath(null), []);
   const runModalStatement = useCallback((sql: string) => queryExec.executeQuery(sql), [queryExec.executeQuery]);
+  /**
+   * The import dialog's run. While no connection is open, the host's list having closed the one the dialog was opened
+   * on, the import is refused through the dialog's failure channel, so the dialog stays open and says why rather than
+   * closing as if the rows landed. Otherwise it runs as any modal statement does.
+   */
+  const runImport = useCallback(
+    async (sql: string, onFailure: (message: string) => void) => {
+      if (conn.activeConnection === null) {
+        onFailure(IMPORT_WITHOUT_CONNECTION_SENTENCE);
+        return false;
+      }
+      return runModalStatement(sql);
+    },
+    [conn.activeConnection, runModalStatement],
+  );
   // The embedded shell never talks to the AI safety route; it answers its own analysis.
   const analyzeSafety = useCallback(
     async () => ({
@@ -916,7 +936,8 @@ export function StudioWorkspace({
 
             {/*
               The adapter's refusal of a host connection whose type names no provider (FND-1): a pick of
-              one, or a host list that gave the open connection such a type. Drawn here and not toasted,
+              one, a host list that gave the open connection such a type, or a host list with nothing a
+              provider can open while it holds such a connection. Drawn here and not toasted,
               because this shell mounts no Toaster (the NO TOAST paragraph above), in the style of the
               Saved tab's import line. In the body rather than the sidebar, so it is shown below the
               mobile breakpoint too, where no sidebar is drawn and only a host list can raise it.
@@ -1021,7 +1042,7 @@ export function StudioWorkspace({
                               // a saved query records its connection's type.
                               onSaveQuery={
                                 onSaveQueryProp && activeType !== undefined
-                                  ? () => setSaveQueryType(activeType)
+                                  ? () => setSaveQueryDraft({ type: activeType, query: tabMgr.currentTab.query })
                                   : undefined
                               }
                               onExecuteQuery={() => queryExec.executeQuery()}
@@ -1196,14 +1217,14 @@ export function StudioWorkspace({
         databaseType={conn.activeConnection?.type}
         connectionName={conn.activeConnection?.name}
         showSaveQuery={!!onSaveQueryProp}
-        saveQueryModalOpen={saveQueryType !== null}
+        saveQueryModalOpen={saveQueryDraft !== null}
         onCloseSaveQuery={closeSaveQuery}
         onSaveQuery={handleSaveQuery}
-        defaultQuery={tabMgr.currentTab.query}
+        defaultQuery={saveQueryDraft?.query ?? ""}
         showImport={features.dataImport}
         importModalOpen={isImportModalOpen}
         onCloseImport={closeImport}
-        onImport={runModalStatement}
+        onImport={runImport}
         safetyCheckQuery={queryExec.safetyCheckQuery}
         onCloseSafety={closeSafety}
         onProceedSafety={proceedSafety}

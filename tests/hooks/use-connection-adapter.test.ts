@@ -1009,6 +1009,55 @@ describe("useConnectionAdapter and a host connection whose type names no provide
     expect(result.current.connectionRefusal?.description).toBe(`DB One: ${ACME_SENTENCE}`);
   });
 
+  test("a retype of the open connection replaces the line about a pick refused before it", () => {
+    const { result, rerender } = adapterOver([P1, U]);
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[1]);
+    });
+    expect(result.current.connectionRefusal?.description).toBe(`Acme: ${ACME_SENTENCE}`);
+
+    rerender({ connections: [hostRecord({ ...P1, type: "acmefoo" }), U] });
+
+    expect(result.current.activeConnection).toBeNull();
+    expect(result.current.connectionRefusal?.description).toBe(`DB One: ${ACME_SENTENCE}`);
+
+    // A pick refused after the retype is the newer fact, so the line names it, and the host repeating the list keeps it.
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[1]);
+    });
+    rerender({ connections: [hostRecord({ ...P1, type: "acmefoo" }), U] });
+    expect(result.current.connectionRefusal?.description).toBe(`Acme: ${ACME_SENTENCE}`);
+  });
+
+  test("one dismiss clears the line when the refused pick is the connection the list line already names", () => {
+    const { result } = adapterOver([U]);
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[0]);
+    });
+    expect(result.current.connectionRefusal?.description).toBe(`Acme: ${ACME_SENTENCE}`);
+
+    act(() => {
+      result.current.dismissConnectionRefusal();
+    });
+
+    expect(result.current.connectionRefusal).toBeNull();
+  });
+
+  test("one dismiss clears the line when the refused pick is the retyped open connection", () => {
+    const { result, rerender } = adapterOver([P1, P2]);
+    rerender({ connections: [hostRecord({ ...P1, type: "acmefoo" }), P2] });
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[0]);
+    });
+
+    act(() => {
+      result.current.dismissConnectionRefusal();
+    });
+
+    expect(result.current.connectionRefusal).toBeNull();
+    expect(result.current.activeConnection).toBeNull();
+  });
+
   test("a pick of another connection while the open one is retyped opens it and withdraws the line", () => {
     const { result, rerender } = adapterOver([P1, P2]);
     rerender({ connections: [hostRecord({ ...P1, type: "acmefoo" }), P2] });

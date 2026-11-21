@@ -229,10 +229,15 @@ export function useConnectionAdapter({
 
   // The two facts the shell's refusal line can state (FND-1), each held as the id of the connection it names and read
   // against the host's current list on every render, so the line never outlives what it says.
-  /** The connection whose pick was last refused, by id, until a pick is accepted or the line is dismissed. */
+  /**
+   * The connection whose pick was last refused, by id, until a pick is accepted, the line is dismissed, or the host
+   * retypes the open connection.
+   */
   const [refusedPickId, setRefusedPickId] = useState<string | null>(null);
   /** The text of a line about the host's list that the reader dismissed, so the same list does not draw it again. */
   const [dismissedListLine, setDismissedListLine] = useState<string | null>(null);
+  /** The id of the held connection the host retyped, as of the last render, so a new retype is told from a repeat. */
+  const [lastRetypedHeldId, setLastRetypedHeldId] = useState<string | null>(null);
 
   // Resolution is by id ONLY — no positional tail. An embedded shell still shows
   // a connection by itself when nothing has been chosen yet, but that fallback
@@ -277,6 +282,14 @@ export function useConnectionAdapter({
     if (fallbackId !== activeConnectionId) setActiveConnectionId(fallbackId);
   }
 
+  // The same guard, for a retype of the held connection: it is newer than any pick refused before it, so the refused
+  // pick is forgotten and the line says why the open connection closed. A pick refused after the retype is kept.
+  const retypedHeldId = retypedHeld?.id ?? null;
+  if (retypedHeldId !== lastRetypedHeldId) {
+    setLastRetypedHeldId(retypedHeldId);
+    if (retypedHeldId !== null) setRefusedPickId(null);
+  }
+
   /** The refused pick's connection as the host lists it now, while it is still listed and still refused. */
   const refusedPick = refusedPickId === null ? undefined : connections.find((c) => c.id === refusedPickId);
   const pickRefusal = refusedPick === undefined ? null : typeIdRefusal(refusedPick.type);
@@ -301,7 +314,8 @@ export function useConnectionAdapter({
 
   /**
    * The refusal the shell draws on a line of its own, since it mounts no toaster (FND-1). A refused pick is stated while
-   * that connection is still listed and still refused, until a pick is accepted or the line is dismissed. Otherwise,
+   * that connection is still listed and still refused, until a pick is accepted, the line is dismissed, or the host
+   * retypes the open connection, which is the newer fact. Otherwise,
    * while no connection is open, the line says which listed connection the host left unopenable, until the reader
    * dismisses it or the host's list changes what it says. Null when there is nothing to say.
    */
@@ -327,11 +341,16 @@ export function useConnectionAdapter({
     return true;
   }, []);
 
-  /** Clears the refusal line; the selection is unchanged. A refused pick's line goes first, then the list's. */
+  /**
+   * Clears the refusal line; the selection is unchanged. A refused pick's line goes first, then the list's. When the
+   * refused pick is the connection the list's line names, the two lines say the same thing, so both go at once.
+   */
   const dismissConnectionRefusal = useCallback(() => {
     if (refusedPickId !== null) setRefusedPickId(null);
-    else setDismissedListLine(listNotice?.description ?? null);
-  }, [refusedPickId, listNotice]);
+    if (refusedPickId === null || refusedPickId === listSubject?.id) {
+      setDismissedListLine(listNotice?.description ?? null);
+    }
+  }, [refusedPickId, listSubject, listNotice]);
 
   /**
    * Which catalog read is the CURRENT one (#789).

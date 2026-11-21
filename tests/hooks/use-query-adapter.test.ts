@@ -8,7 +8,11 @@ import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
 import { influxqlRefusal } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import { renderHook, act } from "@testing-library/react";
 
-import { CONFIRMED_ELSEWHERE_SENTENCE, useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
+import {
+  CONFIRMED_ELSEWHERE_SENTENCE,
+  NO_CONNECTION_SENTENCE,
+  useQueryAdapter,
+} from "@/workspace/hooks/use-query-adapter";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { WorkspaceQueryResult, WorkspaceFeatures } from "@/workspace/types";
 import { mockToastSuccess, mockToastError, mockToastDefault } from "../helpers/mock-sonner";
@@ -457,6 +461,8 @@ describe("useQueryAdapter", () => {
 
     // Should toast error
     expect(mockToastError).toHaveBeenCalled();
+    // And say so on the tab, since the embedded shell mounts no toaster: a modal's statement (Test Data) lands here.
+    expect(params.tabs[0].runError).toBe(NO_CONNECTION_SENTENCE);
   });
 
   // ── executeQuery toasts error when query is empty ──────────────────────────
@@ -623,6 +629,9 @@ describe("useQueryAdapter", () => {
 
       expect(params.onQueryExecute).not.toHaveBeenCalled();
       expect(params.tabs[0].runError).toBe(CONFIRMED_ELSEWHERE_SENTENCE);
+      // Worded for this case too: it asks for no run on the connection open now, since none is.
+      expect(CONFIRMED_ELSEWHERE_SENTENCE).not.toContain("open now");
+      expect(CONFIRMED_ELSEWHERE_SENTENCE).toContain("Open the connection it is meant for");
     });
 
     test("a confirmation the setter raises is bound to the connection open at that moment", async () => {

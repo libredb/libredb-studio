@@ -220,6 +220,39 @@ describe("the embedded workspace and a host connection whose type names no provi
     await waitFor(() => expect(saved.map((query) => [query.name, query.connectionType])).toEqual([["Q1", "postgres"]]));
   });
 
+  test("in a host build, a Save dialog left open while the host retypes the connection saves the text it was opened on", async () => {
+    // A host bundle runs with workspace persistence on (`useTabManager` turns it off only under NODE_ENV "test"), so the
+    // retype that closes the connection loads another workspace's tabs under the open dialog. Restored below.
+    const env = process.env as Record<string, string | undefined>;
+    const nodeEnv = env.NODE_ENV;
+    env.NODE_ENV = "production";
+    try {
+      const saved: SavedQueryInput[] = [];
+      const onSaveQuery = async (query: SavedQueryInput) => {
+        saved.push(query);
+      };
+      const { rerender } = render(workspace([P1], noSchema, { onSaveQuery }));
+      fireEvent.click(await screen.findByTestId("query-editor"));
+      fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+      fireEvent.change(await screen.findByPlaceholderText("e.g. Monthly Active Users"), { target: { value: "Q1" } });
+      expect(within(screen.getByRole("dialog")).getByText("DROP TABLE users")).toBeTruthy();
+
+      rerender(workspace([{ ...P1, type: "acmefoo" } as unknown as WorkspaceConnection], noSchema, { onSaveQuery }));
+      await screen.findByTestId("workspace-connection-refusal");
+      expect(within(screen.getByRole("dialog")).getByText("DROP TABLE users")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Save Query" }));
+
+      await waitFor(() =>
+        expect(saved.map((query) => [query.name, query.query, query.connectionType])).toEqual([
+          ["Q1", "DROP TABLE users", "postgres"],
+        ]),
+      );
+    } finally {
+      env.NODE_ENV = nodeEnv;
+      localStorage.clear();
+    }
+  });
+
   async function confirmThenRerender(next: WorkspaceConnection[]) {
     const executed: [string, string][] = [];
     const onQueryExecute = async (id: string, sql: string) => {

@@ -53,7 +53,14 @@ function carriedChannels(
  * because the host's list closed or replaced it while the dialog was open. Drawn on the tab, as a refused statement is.
  */
 export const CONFIRMED_ELSEWHERE_SENTENCE =
-  "This statement was not run: it was confirmed for a connection that is no longer the open one. Run it again to confirm it for the connection that is open now.";
+  "This statement was not run: it was confirmed for a connection that is no longer the open one. Open the connection it is meant for and run it again.";
+
+/**
+ * Why `executeQuery` ran nothing: no connection is open. Drawn on the tab, as a refused statement is, because this shell
+ * mounts no toaster; a modal's statement (Test Data) left open while the host's list closed the connection lands here.
+ */
+export const NO_CONNECTION_SENTENCE =
+  "This statement was not run: no connection is open. Open the connection it is meant for and run it again.";
 
 interface UseQueryAdapterParams {
   activeConnection: DatabaseConnection | null;
@@ -213,7 +220,7 @@ export function useQueryAdapter({
       const queryToExecute = overrideQuery || tabToExec.query;
 
       if (!activeConnection) {
-        toast({ title: "No Connection", description: "Select a connection first.", variant: "destructive" });
+        refuseRun(targetTabId, NO_CONNECTION_SENTENCE);
         return;
       }
 

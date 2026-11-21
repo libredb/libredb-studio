@@ -335,7 +335,7 @@ import type { TreeRowActionHandlers } from "@/components/object-tree";
 import { generateTableQuery } from "@/lib/query-generators";
 import { DEFAULT_MASKING_CONFIG } from "@/lib/data-masking";
 
-const { StudioWorkspace } = await import("@/workspace/StudioWorkspace");
+const { StudioWorkspace, IMPORT_WITHOUT_CONNECTION_SENTENCE } = await import("@/workspace/StudioWorkspace");
 
 // =============================================================================
 // Test data + helpers
@@ -1212,15 +1212,43 @@ describe("StudioWorkspace", () => {
     expect(capturedQueryToolbarProps.onToggleEditing).toBeUndefined();
   });
 
-  test("toolbar onImport opens the import modal which delegates and closes", () => {
+  test("toolbar onImport opens the import modal which delegates and closes", async () => {
     const { queryByTestId } = renderWorkspace();
     expect(queryByTestId("dataimportmodal")).toBeNull();
     act(() => (capturedQueryToolbarProps.onImport as () => void)());
     expect(queryByTestId("dataimportmodal")).not.toBeNull();
-    act(() => (capturedDataImportModalProps.onImport as (sql: string) => void)("INSERT INTO t VALUES (1)"));
+    await act(async () => {
+      await (capturedDataImportModalProps.onImport as (sql: string) => Promise<unknown>)("INSERT INTO t VALUES (1)");
+    });
     expect(mockExecuteQuery).toHaveBeenCalledWith("INSERT INTO t VALUES (1)");
     act(() => (capturedDataImportModalProps.onClose as () => void)());
     expect(queryByTestId("dataimportmodal")).toBeNull();
+  });
+
+  test("the import modal's run is refused through its failure channel while no connection is open", async () => {
+    const { queryByTestId, rerender } = renderWorkspace();
+    act(() => (capturedQueryToolbarProps.onImport as () => void)());
+    // The host's list closes the connection while the dialog is open.
+    connAdapterOverride = { activeConnection: null };
+    rerender(
+      <StudioWorkspace
+        connections={workspaceConnections}
+        onQueryExecute={mockOnQueryExecute}
+        onSchemaFetch={mockOnSchemaFetch}
+        onObjectsFetch={mockOnObjectsFetch}
+        onSaveQuery={mockOnSaveQuery}
+      />,
+    );
+    const failures: string[] = [];
+
+    const outcome = await (
+      capturedDataImportModalProps.onImport as (sql: string, onFailure: (m: string) => void) => Promise<unknown>
+    )("INSERT INTO t VALUES (1)", (message) => failures.push(message));
+
+    expect(outcome).toBe(false);
+    expect(failures).toEqual([IMPORT_WITHOUT_CONNECTION_SENTENCE]);
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+    expect(queryByTestId("dataimportmodal")).not.toBeNull();
   });
 
   // =========================================================================
