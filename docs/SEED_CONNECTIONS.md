@@ -1882,6 +1882,7 @@ Hover the marker for the reason, and find the warning `Embedded sample unavailab
   The server log shows it as an unhandled rejection with its stack; report it with that log, and restart to try the copy again.
 - `target-unreadable`: the server could not check the sample's path.
   A `_PATH` override, or the data directory, names a directory the server cannot search (`EACCES`), a path through a regular file (`ENOTDIR`) or a symlink loop (`ELOOP`); correct it, then restart.
+  On Windows a path through a regular file reads as absent, so it is not refused here: its copy fails instead, as `copy-failed` with `EEXIST`.
 - `target-reserved`: a `_PATH` override names the storage database, a sidecar of it or the bootstrap credentials file, in any letter case or Unicode normalization form.
   Point it elsewhere.
 - `target-conflict`: a `_PATH` override names another sample's file, its default one included, or a sidecar of it.

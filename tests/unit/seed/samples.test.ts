@@ -390,18 +390,35 @@ describe("targets and their admission", () => {
     },
   );
 
-  test("a target whose path cannot be checked is refused as target-unreadable with its error, and the other row is admitted", () => {
+  test.skipIf(process.platform === "win32")(
+    "a target whose path cannot be checked is refused as target-unreadable with its error, and the other row is admitted (POSIX: Windows reads a path through a regular file as absent)",
+    () => {
+      const blocker = path.join(temporaryDirectory(), "a-regular-file");
+      writeFileSync(blocker, "");
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
+      const admissions = sampleAdmissions();
+      expect(admissions.map(({ type, refusal }) => ({ type, refusal }))).toEqual([
+        { type: "sqlite", refusal: "target-unreadable" },
+        { type: "libredb", refusal: null },
+      ]);
+      expect(admissions[0]?.failure?.code).toBe("ENOTDIR");
+      expect(admissions[0]?.failure?.message).toContain(blocker);
+      expect(admissions[1]?.failure).toBeUndefined();
+    },
+  );
+
+  // POSIX reports a path through a regular file as ENOTDIR, so the admission refuses it; Windows reports it as absent
+  // (ENOENT), which the admission reads as a target that does not exist yet, so it admits it and its copy fails later.
+  test("a target through a regular file is refused as target-unreadable on POSIX and admitted on Windows", () => {
     const blocker = path.join(temporaryDirectory(), "a-regular-file");
     writeFileSync(blocker, "");
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
-    const admissions = sampleAdmissions();
-    expect(admissions.map(({ type, refusal }) => ({ type, refusal }))).toEqual([
-      { type: "sqlite", refusal: "target-unreadable" },
-      { type: "libredb", refusal: null },
-    ]);
-    expect(admissions[0]?.failure?.code).toBe("ENOTDIR");
-    expect(admissions[0]?.failure?.message).toContain(blocker);
-    expect(admissions[1]?.failure).toBeUndefined();
+    const [sqlite] = sampleAdmissions();
+    expect({ refusal: sqlite?.refusal, code: sqlite?.failure?.code }).toEqual(
+      process.platform === "win32"
+        ? { refusal: null, code: undefined }
+        : { refusal: "target-unreadable", code: "ENOTDIR" },
+    );
   });
 
   test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
@@ -615,33 +632,36 @@ describe("startSampleSeeding", () => {
     }
   });
 
-  test("a target whose path cannot be checked is failed at once with its code, logged once, and the other sample is still copied", async () => {
-    const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");
-    const blocker = path.join(temporaryDirectory(), "a-regular-file");
-    writeFileSync(blocker, "");
-    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
-    const warn = spyOn(logger, "warn").mockImplementation(() => {});
-    const info = spyOn(logger, "info").mockImplementation(() => {});
-    try {
-      const seeding = startSampleSeeding();
-      expect(getSampleSeedState("sqlite-embedded-sample")).toEqual({
-        phase: "failed",
-        reason: "target-unreadable",
-        sentence: unavailableSentence("target-unreadable", "ENOTDIR"),
-      });
-      expect(getSampleSeedState("libredb-embedded-sample")).toEqual({ phase: "seeding" });
-      await seeding;
-      expect(getSampleSeedState("libredb-embedded-sample")).toEqual({ phase: "done" });
-      expect(readdirSync(dataDir)).toEqual(["sample.libredb"]);
-      expect(warn.mock.calls.map(([message, context]) => [message, context?.seedId, context?.reason])).toEqual([
-        ["Embedded sample unavailable", "sqlite-embedded-sample", "target-unreadable"],
-      ]);
-      expect(String(warn.mock.calls[0]?.[1]?.error)).toContain("ENOTDIR");
-    } finally {
-      warn.mockRestore();
-      info.mockRestore();
-    }
-  });
+  test.skipIf(process.platform === "win32")(
+    "a target whose path cannot be checked is failed at once with its code, logged once, and the other sample is still copied (POSIX: Windows reads a path through a regular file as absent, so its copy fails instead)",
+    async () => {
+      const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");
+      const blocker = path.join(temporaryDirectory(), "a-regular-file");
+      writeFileSync(blocker, "");
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      const info = spyOn(logger, "info").mockImplementation(() => {});
+      try {
+        const seeding = startSampleSeeding();
+        expect(getSampleSeedState("sqlite-embedded-sample")).toEqual({
+          phase: "failed",
+          reason: "target-unreadable",
+          sentence: unavailableSentence("target-unreadable", "ENOTDIR"),
+        });
+        expect(getSampleSeedState("libredb-embedded-sample")).toEqual({ phase: "seeding" });
+        await seeding;
+        expect(getSampleSeedState("libredb-embedded-sample")).toEqual({ phase: "done" });
+        expect(readdirSync(dataDir)).toEqual(["sample.libredb"]);
+        expect(warn.mock.calls.map(([message, context]) => [message, context?.seedId, context?.reason])).toEqual([
+          ["Embedded sample unavailable", "sqlite-embedded-sample", "target-unreadable"],
+        ]);
+        expect(String(warn.mock.calls[0]?.[1]?.error)).toContain("ENOTDIR");
+      } finally {
+        warn.mockRestore();
+        info.mockRestore();
+      }
+    },
+  );
 
   test("keeps the admissions it computed for the process, replacing an earlier call's, until a reset", async () => {
     const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");

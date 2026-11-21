@@ -9,6 +9,17 @@ import { getSampleSeedState, resetSampleSeedStates, SAMPLES, unavailableSentence
 import { installUncaughtExceptionExit, resetUncaughtExceptionExit } from "@/lib/uncaught-exception";
 import { standInProcess } from "../helpers/uncaught-exception-stand-in";
 
+/*
+  A sample path that runs through a regular file is a path the admission cannot check on POSIX, which reports it as
+  ENOTDIR, so the sample is refused target-unreadable. Windows reports the same path as absent (ENOENT), so the
+  admission lets it through and its copy fails at the mkdir instead, as copy-failed with EEXIST. Both are a failed
+  sample listed unavailable with its reason and code while the rest goes on, which is what the test below holds.
+*/
+const UNCHECKABLE_PATH =
+  process.platform === "win32"
+    ? ({ reason: "copy-failed", code: "EEXIST" } as const)
+    : ({ reason: "target-unreadable", code: "ENOTDIR" } as const);
+
 const ENV_KEYS = [
   "NEXT_RUNTIME",
   "LIBREDB_EMBEDDED_SAMPLE",
@@ -456,13 +467,13 @@ describe("instrumentation register()", () => {
       await waitFor(() => getPendingSeeds().length === 0);
       expect(
         warn.mock.calls.filter((c) => c[0] === "Embedded sample unavailable").map((c) => [c[1]?.seedId, c[1]?.reason]),
-      ).toEqual([["sqlite-embedded-sample", "target-unreadable"]]);
+      ).toEqual([["sqlite-embedded-sample", UNCHECKABLE_PATH.reason]]);
       expect(getUnavailableSamples(["admin"])).toEqual([
         {
           seedId: "sqlite-embedded-sample",
           name: "Sample (Employees)",
-          reason: "target-unreadable",
-          sentence: unavailableSentence("target-unreadable", "ENOTDIR"),
+          reason: UNCHECKABLE_PATH.reason,
+          sentence: unavailableSentence(UNCHECKABLE_PATH.reason, UNCHECKABLE_PATH.code),
         },
       ]);
     } finally {

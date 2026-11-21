@@ -130,6 +130,8 @@ describe("the committed SQLite sample", () => {
   });
 
   test("the CLI with --out writes the same bytes into a temp dir only", () => {
+    // Read before any stat, so nothing reads the committed file after checking it.
+    const committed = readFileSync(COMMITTED);
     const committedModified = statSync(COMMITTED).mtimeMs;
     const directory = temporaryDirectory();
     const child = Bun.spawnSync(["node", SCRIPT, "--out", "out.db"], {
@@ -141,7 +143,7 @@ describe("the committed SQLite sample", () => {
     expect(child.exitCode).toBe(0);
     expect(child.stdout.toString()).toBe("Wrote out.db\n");
     expect(readdirSync(directory)).toEqual(["out.db"]);
-    expect(readFileSync(path.join(directory, "out.db")).equals(readFileSync(COMMITTED))).toBe(true);
+    expect(readFileSync(path.join(directory, "out.db")).equals(committed)).toBe(true);
     expect(statSync(COMMITTED).mtimeMs).toBe(committedModified);
   });
 

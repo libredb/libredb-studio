@@ -31,6 +31,14 @@ import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } fr
 import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
 import { admittedConnection, grantedSnapshot, WRITE_CREDENTIAL } from "../../helpers/governance/granted-snapshot";
 
+/*
+  A sample path that runs through a regular file is a path the admission cannot check on POSIX, which reports it as
+  ENOTDIR, so the sample is refused target-unreadable. Windows reports the same path as absent (ENOENT), so the
+  admission lets it through and its copy fails at the mkdir instead, as copy-failed. Both are a failed sample listed
+  unavailable with its reason while the listing still answers, which is what the test below holds.
+*/
+const UNCHECKABLE_PATH_REASON = process.platform === "win32" ? "copy-failed" : "target-unreadable";
+
 describe("GET /api/connections/managed", () => {
   beforeEach(() => {
     resetCache();
@@ -483,7 +491,7 @@ describe("GET /api/connections/managed", () => {
       expect(admin.status).toBe(200);
       const adminData = await admin.json();
       expect(adminData.connections.map((c: { seedId: string }) => c.seedId)).toContain("everyone");
-      expect(adminData.unavailableSamples.map((s: { reason: string }) => s.reason)).toEqual(["target-unreadable"]);
+      expect(adminData.unavailableSamples.map((s: { reason: string }) => s.reason)).toEqual([UNCHECKABLE_PATH_REASON]);
 
       (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "user", username: "user@test.com" }));
       const user = await GET();

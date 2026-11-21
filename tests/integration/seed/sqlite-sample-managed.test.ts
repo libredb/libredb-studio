@@ -10,6 +10,17 @@ import { seedSamples } from "../../helpers/sample-seeding";
 const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
 const LIBREDB_SAMPLE_SEED_ID = "libredb-embedded-sample";
 
+/*
+  A sample path that runs through a regular file is a path the admission cannot check on POSIX, which reports it as
+  ENOTDIR, so the sample is refused target-unreadable. Windows reports the same path as absent (ENOENT), so the
+  admission lets it through and its copy fails at the mkdir instead, as copy-failed with EEXIST. Both are a failed
+  sample listed unavailable with its reason and code while the rest goes on, which is what the test below holds.
+*/
+const UNCHECKABLE_PATH =
+  process.platform === "win32"
+    ? ({ reason: "copy-failed", code: "EEXIST" } as const)
+    : ({ reason: "target-unreadable", code: "ENOTDIR" } as const);
+
 /** A file at the sample's path: the listing reads only that it exists, never its content. */
 function writeSampleFile(file: string): void {
   fs.writeFileSync(file, "");
@@ -138,8 +149,8 @@ describe("getManagedConnections: sqlite embedded sample", () => {
         {
           seedId: SQLITE_SAMPLE_SEED_ID,
           name: "Sample (Employees)",
-          reason: "target-unreadable",
-          sentence: unavailableSentence("target-unreadable", "ENOTDIR"),
+          reason: UNCHECKABLE_PATH.reason,
+          sentence: unavailableSentence(UNCHECKABLE_PATH.reason, UNCHECKABLE_PATH.code),
         },
       ]);
       expect(getUnavailableSamples(["user"])).toEqual([]);

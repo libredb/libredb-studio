@@ -124,9 +124,9 @@ describe("getManagedConnections — embedded sample", () => {
     process.env.SQLITE_EMBEDDED_SAMPLE = "false";
     process.env.LIBREDB_ENABLED_PROVIDERS = "sqlite";
     await startSampleSeeding();
-    expect(fs.existsSync(file)).toBe(false);
-    // A file put there by hand is not listed either: the factory could never open it.
-    fs.writeFileSync(file, "");
+    // The exclusive create fails with EEXIST if the seeding wrote a file there. A file put there by hand is not
+    // listed either: the factory could never open it.
+    fs.writeFileSync(file, "", { flag: "wx" });
     expect((await getManagedConnections(["admin"])).find((c) => c.seedId === SAMPLE_SEED_ID)).toBeUndefined();
     setSampleSeedState(SAMPLE_SEED_ID, { phase: "seeding" });
     expect(getPendingSeeds()).toEqual([]);

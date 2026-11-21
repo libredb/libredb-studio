@@ -87,6 +87,8 @@ describe("the committed LibreDB sample", () => {
   });
 
   test("the CLI with --out writes the same bytes into a temp dir only, and leaves no .lock", () => {
+    // Read before any stat, so nothing reads the committed file after checking it.
+    const committed = readFileSync(COMMITTED);
     const committedModified = statSync(COMMITTED).mtimeMs;
     const directory = temporaryDirectory();
     const child = Bun.spawnSync(["node", SCRIPT, "--out", "out.libredb"], {
@@ -98,7 +100,7 @@ describe("the committed LibreDB sample", () => {
     expect(child.exitCode).toBe(0);
     expect(child.stdout.toString()).toBe("Wrote out.libredb\n");
     expect(readdirSync(directory)).toEqual(["out.libredb"]);
-    expect(readFileSync(path.join(directory, "out.libredb")).equals(readFileSync(COMMITTED))).toBe(true);
+    expect(readFileSync(path.join(directory, "out.libredb")).equals(committed)).toBe(true);
     expect(statSync(COMMITTED).mtimeMs).toBe(committedModified);
   });
 
