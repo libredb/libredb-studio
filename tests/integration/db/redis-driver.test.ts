@@ -12,8 +12,9 @@
  * The driver is patched (docs/TOOLCHAIN.md, "Patched dependencies"): the parser's throw takes ioredis's own fatal-error
  * path, which rejects the commands in flight and reconnects under the provider's options (the editor connection keeps
  * ioredis's default retry strategy); an error the TLS socket survives takes the same path, and commands not yet sent
- * wait for the next connection; and the stream keeps its error listener for its whole life. A reset still takes
- * ioredis's own close path, which sends a command in flight again on the next connection.
+ * wait for the next connection; the stream keeps its error listener for its whole life; and a reset fails the
+ * commands in flight with ioredis's own "Connection is closed." instead of leaving them unsettled, now that the
+ * provider stops ioredis from sending them again on the next connection (`autoResendUnfulfilledCommands: false`).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -27,6 +28,7 @@ interface CaseReport {
   readonly call: string;
   readonly next?: string;
   readonly delivered?: number;
+  readonly database?: string;
   readonly logged: string[];
   readonly escaped: string[];
 }
@@ -222,13 +224,87 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
     }
   });
 
-  test("a reset while a command waits keeps ioredis's own reconnect, which sends the command again", () => {
+  test("a reset while a command waits fails the command with a named error, once, and the next command answers", () => {
     for (const report of reports) {
       const reset = find(report, "reset while a command waits");
-      expect(reset.call).toBe('ok {"result":"value"}');
-      expect(reset.delivered).toBe(2);
+      // The exact message also holds the patch's `!stream.destroyed` check: without it, the reset's own error would
+      // take the fatal-error path and fail the command with "read ECONNRESET" instead.
+      expect(reset.call).toBe("QueryError: Redis error: Connection is closed.");
+      // The server may have run the command before the reset, so it is not sent again on the next connection.
+      expect(reset.delivered).toBe(1);
       expect(reset.next).toBe(PONG);
       expect(reset.escaped).toEqual([]);
+    }
+  });
+
+  test("a command sent while the client reconnects after a reset waits for a connection that answers it, once", () => {
+    for (const report of reports) {
+      const queued = find(report, "reset, then a command sent while the client reconnects");
+      // The command is sent once the reset is logged, so it is not written to the connection that reset.
+      expect(queued.logged).toEqual(["[Redis] read ECONNRESET"]);
+      expect(queued.call).toBe('ok {"result":"value"}');
+      expect(queued.delivered).toBe(1);
+      expect(queued.escaped).toEqual([]);
+    }
+  });
+
+  test("a header no JS array can hold answering the SELECT of an object read fails the read as a failed connect", () => {
+    for (const report of reports) {
+      const read = find(report, "oversized array header answering an object read's SELECT");
+      expect(read.call).toMatch(new RegExp(`^ConnectionError: Failed to connect to Redis: .+${FATAL}`));
+      expect(read.escaped).toEqual([]);
+    }
+  });
+
+  test("a header no JS array can hold answering an object read fails the read with a named error", () => {
+    for (const report of reports) {
+      const read = find(report, "oversized array header answering an object read");
+      expect(read.call).toMatch(new RegExp(`^QueryError: Redis error: .+${FATAL}`));
+      expect(read.escaped).toEqual([]);
+    }
+  });
+
+  // ioredis selects a numbered database again on the connection that follows a reset with a SELECT it sends itself,
+  // which no caller awaits. Failed with the commands in flight, that SELECT's error is the client's `error` event,
+  // which the provider logs, as for the SELECT connect() sends; the next command still runs in the database.
+  test("a reset while the reconnect's own SELECT waits is logged, and the next command runs in the database", () => {
+    for (const report of reports) {
+      const reselect = find(report, "reset while the reconnect's own SELECT of database 1 waits");
+      expect(reselect.escaped).toEqual([]);
+      expect(reselect.logged).toContain("[Redis] Connection is closed.");
+      expect(reselect.call).toBe('ok {"result":"value"}');
+      expect(reselect.database).toBe("1");
+    }
+  });
+
+  test("a header no JS array can hold answering the reconnect's own SELECT is logged, and the next command answers", () => {
+    for (const report of reports) {
+      const reselect = find(report, "oversized array header answering the reconnect's own SELECT of database 1");
+      expect(reselect.escaped).toEqual([]);
+      expect(reselect.logged.some((line) => new RegExp(`^\\[Redis\\] .+${FATAL}`).test(line))).toBe(true);
+      expect(reselect.call).toBe('ok {"result":"value"}');
+      expect(reselect.database).toBe("1");
+    }
+  });
+
+  test("a reset while an object read selects its database again marks each kind unavailable by name", () => {
+    for (const report of reports) {
+      const read = find(report, "reset while an object read selects its database again after a reset");
+      expect(read.escaped).toEqual([]);
+      // countObjects answers a kind it could not count as unavailable, with the driver's message.
+      expect(read.call).toBe(
+        'ok {"keyspace":{"unavailable":"Connection is closed."},"function":{"unavailable":"Connection is closed."}}',
+      );
+      expect(read.next).toBe(PONG);
+    }
+  });
+
+  test("a reset while an object read waits fails the read with the editor's named error, once", () => {
+    for (const report of reports) {
+      const read = find(report, "reset while an object read waits");
+      expect(read.call).toBe("QueryError: Redis error: Connection is closed.");
+      expect(read.delivered).toBe(1);
+      expect(read.escaped).toEqual([]);
     }
   });
 });

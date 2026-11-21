@@ -1100,6 +1100,14 @@ function connectFailure(cause: unknown, host: string | undefined, port: number):
 }
 
 /**
+ * A command the driver or the server failed, worded as the editor words its own: `"Redis error: "` and the message.
+ * A reset while the command waited is one such failure, since ioredis does not send it again (`redisOptions()`).
+ */
+function redisError(cause: unknown): QueryError {
+  return new QueryError(`Redis error: ${cause instanceof Error ? cause.message : String(cause)}`, "redis");
+}
+
+/**
  * The exact command the revision token is a digest OF, as a plan reader will see it.
  *
  * `ObjectEditRevision.basis` is "the engine expression the comparison is over", so it carries the
@@ -1530,6 +1538,11 @@ export class RedisProvider extends BaseDatabaseProvider {
       // `DBSIZE` counts this provider reads for itself go through `integerReply`, which reads
       // the digit string back as a number; `SLOWLOG GET` is read through `String()`/`Number()`.
       stringNumbers: true,
+      // A command written to a connection that then closes may already have run on the server, so it is not sent
+      // again on the next connection, where an `INCR` the user ran once would run twice. ioredis's default resends it;
+      // with the option off, the patched driver fails it with "Connection is closed." (docs/providers/redis.md
+      // section 4.6). A command sent while the client reconnects still waits for the next connection and goes out once.
+      autoResendUnfulfilledCommands: false,
       // Under the agent read-only profile, no ready check: its INFO is @dangerous, refused a +@read user, and ioredis
       // then warns of the refusal on every connection, which is one per agent command. The proof's HELLO is the check.
       ...(this.readOnlyProfile ? { enableReadyCheck: false } : {}),
@@ -1779,7 +1792,7 @@ export class RedisProvider extends BaseDatabaseProvider {
     this.ensureConnected();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const reading = await (this.client as any).call("PING");
+    const reading = await this.onSharedConnection(() => (this.client as any).call("PING"));
     if (reading === PONG_REPLY) return "none";
     if (reading !== QUEUED_REPLY) {
       // A third answer is a reading this code does not have. Reporting it as a clean
@@ -1797,7 +1810,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       // The queue is gone either way, which is what "rolled-back" reports. Anything else is
       // a real failure - an ACL that refuses the `DISCARD`, a dead socket - and is raised:
       // the transaction is still open and this must not report it as ended.
-      if (!message.includes(NO_TRANSACTION_MARKER)) throw error;
+      if (!message.includes(NO_TRANSACTION_MARKER)) throw redisError(error);
     }
 
     return "rolled-back";
@@ -2003,21 +2016,44 @@ export class RedisProvider extends BaseDatabaseProvider {
   // ============================================================================
 
   /**
+   * One command on the shared connection, for a read the provider makes for itself (the overview, the monitoring
+   * panels, the transaction check): a failure the driver or the server gave it is the editor's `"Redis error: ..."`
+   * (docs/providers/redis.md section 4.6), never the driver's untyped error.
+   */
+  private async onSharedConnection<T>(command: () => Promise<T>): Promise<T> {
+    try {
+      return await command();
+    } catch (error) {
+      throw redisError(error);
+    }
+  }
+
+  /**
    * A short-lived connection to ONE numbered database, for one object read.
    *
    * Its own connection rather than the session's, for the reason `redisOptions()` records:
    * a `SELECT` on the shared client would decide which database a concurrent query ran
    * against. Closed with `disconnect()` rather than `quit()` because nothing is pending on
    * it - `quit()` waits for a reply this caller has no use for.
+   *
+   * Every failure leaves typed, as `connect()` and the editor type theirs: a `SELECT` the driver
+   * rejected without a reply (one it could not read, a closed connection) is a connect that failed,
+   * and a read the driver or the server failed is the editor's `"Redis error: ..."`
+   * (docs/providers/redis.md section 4.6).
    */
   private async withDatabase<T>(db: number, read: (client: Redis) => Promise<T>): Promise<T> {
-    const client = await this.openClient(db);
+    const client = await this.openClient(db).catch((error: unknown) => {
+      throw error instanceof DatabaseError ? error : connectFailure(error, this.config.host, this.config.port || 6379);
+    });
     try {
       return await read(client);
     } catch (error) {
+      if (error instanceof DatabaseError) throw error;
       // On an agent-mode handle a server refusal is worded without the ACL user its words name.
-      if (!this.agentProfile || !isServerErrorReply(error)) throw error;
-      throw new QueryError(`Redis refused the read: ${agentRefusalReason(error as Error)}`, "redis");
+      if (this.agentProfile && isServerErrorReply(error)) {
+        throw new QueryError(`Redis refused the read: ${agentRefusalReason(error as Error)}`, "redis");
+      }
+      throw redisError(error);
     } finally {
       client.disconnect();
     }
@@ -2057,7 +2093,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       reply = await (this.client as any).call("CONFIG", "GET", "databases");
     } catch (error) {
       if (isRefusedCommandReply(error)) return this.sessionDatabaseAlone();
-      throw error;
+      throw redisError(error);
     }
     const count = parseDatabaseCount(reply);
     const session = this.sessionDatabase();
@@ -2879,12 +2915,12 @@ export class RedisProvider extends BaseDatabaseProvider {
 
   public async getOverview(): Promise<DatabaseOverview> {
     this.ensureConnected();
-    const info = await this.client!.info();
+    const info = await this.onSharedConnection(() => this.client!.info());
     const parsed = this.parseRedisInfo(info);
     // A digit string under `stringNumbers`, whatever the method's declared type says. A reply
     // that is not a count is refused, as `scanKeysPage` refuses it: `tableCount` is required,
     // so the only alternative would be a stand-in number nobody measured.
-    const dbsize = integerReply(await this.client!.dbsize());
+    const dbsize = integerReply(await this.onSharedConnection(() => this.client!.dbsize()));
     if (dbsize === undefined) throw new QueryError("Redis answered no key count for the overview", "redis");
 
     return {
@@ -2903,7 +2939,7 @@ export class RedisProvider extends BaseDatabaseProvider {
 
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
     this.ensureConnected();
-    const info = await this.client!.info();
+    const info = await this.onSharedConnection(() => this.client!.info());
     const parsed = this.parseRedisInfo(info);
 
     return {
@@ -2980,7 +3016,7 @@ export class RedisProvider extends BaseDatabaseProvider {
 
   public async getStorageStats(): Promise<StorageStats[]> {
     this.ensureConnected();
-    const info = await this.client!.info("memory");
+    const info = await this.onSharedConnection(() => this.client!.info("memory"));
     const parsed = this.parseRedisInfo(info);
 
     return [

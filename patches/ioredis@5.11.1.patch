@@ -44,3 +44,52 @@ index 30c5b4573e2df2601ca637b72383702d6efbbc3d..0c606910aa149dfb16ad6a21d3c1c822
                      stream.once("close", eventHandler.closeHandler(_this));
                  }
                  const connectionReadyHandler = function () {
+diff --git a/built/redis/event_handler.js b/built/redis/event_handler.js
+index ba8b1dc27e4752be9dafd10f109d3c1d524d2f1f..b5fcc80cb828da01f6821f01b2659df1ee39356f 100644
+--- a/built/redis/event_handler.js
++++ b/built/redis/event_handler.js
+@@ -172,7 +172,14 @@ function closeHandler(self) {
+                 self.prevCondition = self.condition;
+             }
+             if (self.commandQueue.length) {
+-                self.prevCommandQueue = self.commandQueue;
++                if (self.options.autoResendUnfulfilledCommands) {
++                    self.prevCommandQueue = self.commandQueue;
++                }
++                else {
++                    // Not to be sent again, so failed now: kept, readyHandler would drop them on the next connection
++                    // and their promises would never settle. Commands not yet sent stay in the offline queue.
++                    self.flushQueue(new Error(utils_1.CONNECTION_CLOSED_ERROR_MSG), { offlineQueue: false });
++                }
+             }
+         }
+         if (self.manuallyClosing) {
+@@ -256,7 +263,8 @@ function readyHandler(self) {
+                 // `SELECT` command is not valid in sub mode.
+                 if (self.condition.select !== finalSelect) {
+                     debug("connect to db [%d]", finalSelect);
+-                    self.select(finalSelect);
++                    // Its own command, which no caller awaits: a connection that closes fails it, as connectHandler's SELECT.
++                    self.select(finalSelect).catch((err) => self.silentEmit("error", err));
+                 }
+                 const subscribeChannels = condition.subscriber.channels("subscribe");
+                 if (subscribeChannels.length) {
+@@ -301,14 +309,16 @@ function readyHandler(self) {
+                 const item = offlineQueue.shift();
+                 if (item.select !== self.condition.select &&
+                     item.command.name !== "select") {
+-                    self.select(item.select);
++                    // Its own command, which no caller awaits: a connection that closes fails it, as connectHandler's SELECT.
++                    self.select(item.select).catch((err) => self.silentEmit("error", err));
+                 }
+                 self.sendCommand(item.command, item.stream);
+             }
+         }
+         if (self.condition.select !== finalSelect) {
+             debug("connect to db [%d]", finalSelect);
+-            self.select(finalSelect);
++            // Its own command, which no caller awaits: a connection that closes fails it, as connectHandler's SELECT.
++            self.select(finalSelect).catch((err) => self.silentEmit("error", err));
+         }
+     };
+ }
