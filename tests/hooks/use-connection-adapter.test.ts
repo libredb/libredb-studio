@@ -789,7 +789,7 @@ describe("useConnectionAdapter and the object model", () => {
 // package has no provider for (one the host's own backend serves), no type, or a type that is not
 // text. The shell lists such a connection and never opens it, as the standalone connection hook
 // does since FND-1: it is never shown by itself, a pick of it is refused by name, and a host list
-// that gives the open connection such a type moves the shell off it and says why.
+// that gives the open connection such a type closes it without opening another and says why.
 describe("useConnectionAdapter and a host connection whose type names no provider (FND-1)", () => {
   const ACME_SENTENCE = unknownTypeSentence("acmefoo");
   const hostRecord = (record: object) => record as unknown as WorkspaceConnection;
@@ -821,7 +821,23 @@ describe("useConnectionAdapter and a host connection whose type names no provide
       ["u", "acmefoo"],
       ["n", undefined],
     ]);
+    // Said on the workspace's line, which is drawn below the mobile breakpoint too, where no sidebar marks the rows.
+    expect(result.current.connectionRefusal).toEqual({
+      title: "Connection unavailable",
+      description: `Acme: ${ACME_SENTENCE}`,
+    });
+  });
+
+  test("a dismissed line for a list with nothing to open stays dismissed while the host passes the same list again", () => {
+    const { result, rerender } = adapterOver([U, N]);
+    act(() => {
+      result.current.dismissConnectionRefusal();
+    });
+
+    rerender({ connections: [U, N] });
+
     expect(result.current.connectionRefusal).toBeNull();
+    expect(result.current.activeConnection).toBeNull();
   });
 
   test("a connection the host withdraws falls back past one whose type names no provider", () => {
@@ -850,6 +866,14 @@ describe("useConnectionAdapter and a host connection whose type names no provide
   test("never reads the declared capabilities of a connection that cannot be opened", () => {
     const capabilities = { queryLanguage: "sql" } as unknown as ProviderCapabilities;
     const { result } = adapterOver([hostRecord({ id: "u", name: "Acme", type: "acmefoo", capabilities })]);
+
+    expect(result.current.activeConnection).toBeNull();
+    expect(result.current.metadata).toBeNull();
+  });
+
+  test("reads no declared capabilities while no connection is open, whatever ids the host left out", () => {
+    const capabilities = { queryLanguage: "sql" } as unknown as ProviderCapabilities;
+    const { result } = adapterOver([hostRecord({ name: "Acme", type: "acmefoo", capabilities })]);
 
     expect(result.current.activeConnection).toBeNull();
     expect(result.current.metadata).toBeNull();
@@ -913,28 +937,58 @@ describe("useConnectionAdapter and a host connection whose type names no provide
     expect(result.current.activeConnection?.id).toBe("p2");
   });
 
-  test("a host list that gives the open connection such a type moves to the first one a provider can open and says why", () => {
-    const { result, rerender } = adapterOver([P1, P2]);
+  test("a refused pick's line is withdrawn when the host makes that connection openable, or drops it", () => {
+    const { result, rerender } = adapterOver([P1, U]);
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[1]);
+    });
+    expect(result.current.connectionRefusal?.description).toBe(`Acme: ${ACME_SENTENCE}`);
+
+    rerender({ connections: [P1, hostRecord({ ...U, type: "postgres" })] });
+    expect(result.current.connectionRefusal).toBeNull();
+    expect(result.current.activeConnection?.id).toBe("p1");
+
+    rerender({ connections: [P1, U] });
+    expect(result.current.connectionRefusal).toBeNull();
+
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[1]);
+    });
+    expect(result.current.connectionRefusal).not.toBeNull();
+    rerender({ connections: [P1] });
+    expect(result.current.connectionRefusal).toBeNull();
+  });
+
+  test("a host list that gives the open connection such a type opens no connection in its place and says why", () => {
+    const { result, rerender, onSchemaFetch } = adapterOver([P1, P2]);
     expect(result.current.activeConnection?.id).toBe("p1");
 
     rerender({ connections: [hostRecord({ ...P1, type: "acmefoo" }), P2] });
 
-    // Synchronous, as the removal pins above: the move is committed during the render that retyped P1.
-    expect(result.current.activeConnection?.id).toBe("p2");
-    expect(result.current.connectionRefusal?.description).toBe(`DB One: ${ACME_SENTENCE}`);
+    // Synchronous, as the removal pins above: the connection is closed in the render that retyped it, and the shell
+    // does not move the reader to DB Two, a database they did not pick.
+    expect(result.current.activeConnection).toBeNull();
+    expect(result.current.connectionRefusal).toEqual({
+      title: "Connection unavailable",
+      description: `DB One: ${ACME_SENTENCE}`,
+    });
     expect(result.current.connections[0].type as unknown).toBe("acmefoo");
+    expect(onSchemaFetch.mock.calls.map(([id]) => id)).not.toContain("p2");
   });
 
-  test("and to no connection when none is left", () => {
+  test("and opens the same connection again, withdrawing the line, when the host gives its type back", () => {
     const { result, rerender } = adapterOver([P1]);
 
     rerender({ connections: [hostRecord({ ...P1, type: "acmefoo" })] });
-
     expect(result.current.activeConnection).toBeNull();
     expect(result.current.connectionRefusal?.description).toBe(`DB One: ${ACME_SENTENCE}`);
+
+    rerender({ connections: [P1] });
+    expect(result.current.activeConnection?.id).toBe("p1");
+    expect(result.current.connectionRefusal).toBeNull();
   });
 
-  test("says so once, and holds the fallback when the type comes back", () => {
+  test("a dismissed line stays dismissed while the host repeats the list, and is drawn again for the next retype", () => {
     const retyped = [hostRecord({ ...P1, type: "acmefoo" }), P2];
     const { result, rerender } = adapterOver([P1, P2]);
     rerender({ connections: retyped });
@@ -945,9 +999,24 @@ describe("useConnectionAdapter and a host connection whose type names no provide
     });
     rerender({ connections: [...retyped] });
     expect(result.current.connectionRefusal).toBeNull();
-    expect(result.current.activeConnection?.id).toBe("p2");
+    expect(result.current.activeConnection).toBeNull();
 
     rerender({ connections: [P1, P2] });
+    expect(result.current.activeConnection?.id).toBe("p1");
+    expect(result.current.connectionRefusal).toBeNull();
+
+    rerender({ connections: [...retyped] });
+    expect(result.current.connectionRefusal?.description).toBe(`DB One: ${ACME_SENTENCE}`);
+  });
+
+  test("a pick of another connection while the open one is retyped opens it and withdraws the line", () => {
+    const { result, rerender } = adapterOver([P1, P2]);
+    rerender({ connections: [hostRecord({ ...P1, type: "acmefoo" }), P2] });
+
+    act(() => {
+      result.current.setActiveConnection(result.current.connections[1]);
+    });
+
     expect(result.current.activeConnection?.id).toBe("p2");
     expect(result.current.connectionRefusal).toBeNull();
   });
@@ -1066,6 +1135,32 @@ describe("useConnectionAdapter and a slow host read", () => {
     // B is still in flight.
     expect(result.current.isLoadingSchema).toBe(true);
     expect(result.current.schema).toEqual([]);
+  });
+
+  test("clearing the schema when no connection is open supersedes the read in flight", async () => {
+    const { onSchemaFetch, settle } = pendingReader();
+    const connections = [makeWorkspaceConnection({ id: "a" })];
+
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
+
+    let readA: Promise<void>;
+    act(() => {
+      readA = result.current.fetchSchema(result.current.connections[0]);
+    });
+    expect(result.current.isLoadingSchema).toBe(true);
+
+    act(() => {
+      result.current.clearSchema();
+    });
+    await act(async () => {
+      settle.get("a")!([objectNamed("a_table")]);
+      await readA!;
+    });
+
+    expect(result.current.schema).toEqual([]);
+    expect(result.current.isLoadingSchema).toBe(false);
   });
 
   test("moving to a connection that defers its scan supersedes the read in flight", async () => {

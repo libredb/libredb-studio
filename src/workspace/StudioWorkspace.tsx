@@ -15,6 +15,7 @@ import { StudioTabBar, QueryToolbar, BottomPanel } from "@/components/studio/ind
 import { StudioModals } from "@/components/studio/StudioModals";
 import { DEFAULT_MASKING_CONFIG, type MaskingConfig } from "@/lib/data-masking";
 import type { DatabaseObject } from "@/lib/db/types";
+import type { DatabaseType } from "@/lib/types";
 import { activationRowActionForKind, findKind, kindHasSource, relationKindIds } from "@/lib/db/object-kinds";
 import { objectPathLabel } from "@/lib/db/object-path";
 import { useToast } from "@/hooks/use-toast";
@@ -211,7 +212,8 @@ export function StudioWorkspace({
     if (conn.activeConnection) {
       conn.fetchSchema(conn.activeConnection);
     } else {
-      conn.setSchema([]);
+      // Supersedes the read in flight too, so the closed connection's late answer cannot land while nothing is open.
+      conn.clearSchema();
     }
     // Keyed on the ID, not the object: `activeConnection` is derived from the
     // host's `connections` prop, so a host that passes a fresh array on every
@@ -250,7 +252,14 @@ export function StudioWorkspace({
 
   // === Modal / overlay state ===
   const [showDiagram, setShowDiagram] = useState(false);
-  const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
+  /**
+   * The type of the connection the Save Query dialog was opened for; null while it is closed. The query is saved under
+   * this type and not under the one open when Save Query is pressed, since the host's list can close or retype the open
+   * connection while the dialog is open, and the query was written for this type.
+   */
+  const [saveQueryType, setSaveQueryType] = useState<DatabaseType | null>(null);
+  /** The open connection's type, which the toolbar's Save hands the dialog; undefined while none is open. */
+  const activeType = conn.activeConnection?.type;
   const [savedKey, setSavedKey] = useState(0);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   // ADDRESSES, not labels, for the reason `src/components/Studio.tsx` gives at the same
@@ -296,7 +305,8 @@ export function StudioWorkspace({
 
   // === Save query handler ===
   const handleSaveQuery = useStableCallback(async (name: string, description: string, tags: string[]) => {
-    if (!conn.activeConnection) return;
+    // The dialog is drawn only while it holds the type it was opened for, so this is a caller that bypassed it.
+    if (saveQueryType === null) throw new Error("The Save Query dialog saved without being opened for a connection.");
 
     if (onSaveQueryProp) {
       try {
@@ -304,7 +314,7 @@ export function StudioWorkspace({
           name,
           query: tabMgr.currentTab.query,
           description,
-          connectionType: conn.activeConnection.type,
+          connectionType: saveQueryType,
           tags,
         });
         setSavedKey((prev) => prev + 1);
@@ -317,12 +327,11 @@ export function StudioWorkspace({
   });
 
   // === Modal handlers (handed to `StudioModals`) ===
-  const closeSaveQuery = useCallback(() => setIsSaveQueryModalOpen(false), []);
+  const closeSaveQuery = useCallback(() => setSaveQueryType(null), []);
   const closeImport = useCallback(() => setIsImportModalOpen(false), []);
   const closeSafety = useCallback(() => queryExec.setSafetyCheckQuery(null), [queryExec.setSafetyCheckQuery]);
-  const proceedSafety = useCallback(() => {
-    if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery);
-  }, [queryExec.safetyCheckQuery, queryExec.forceExecuteQuery]);
+  // Bound to the connection the statement was confirmed for: the adapter runs nothing on another one.
+  const proceedSafety = queryExec.proceedSafetyCheck;
   const closeProfiler = useCallback(() => setProfilerPath(null), []);
   const closeCodeGen = useCallback(() => setCodeGenPath(null), []);
   const closeTestData = useCallback(() => setTestDataPath(null), []);
@@ -986,10 +995,11 @@ export function StudioWorkspace({
                           the third door onto the same hazard (#789 fix round 1). It read
                           `|| conn.activeConnection === null`, on a docblock arguing the state
                           was admitted by the type and not reached by the product. It is
-                          reached: `use-connection-adapter.ts` auto-selects whenever the host's
-                          list is non-empty, so a null active connection is exactly "the host
-                          handed an empty connections array", which a host does when a person
-                          deletes the last connection in its own UI while a Source tab is open.
+                          reached: a null active connection is a host that handed an empty
+                          connections array, which a host does when a person deletes the last
+                          connection in its own UI while a Source tab is open, and, since FND-1,
+                          also a list in which no connection's type names a provider, or one that
+                          retyped the open connection (`use-connection-adapter.ts`).
                           The tab then came back labelled `Source: <name>` over an EMPTY,
                           EDITABLE buffer with a live Run button. The viewer now takes a
                           nullable connection and refuses in its own grammar, so the pane stays
@@ -1007,7 +1017,13 @@ export function StudioWorkspace({
                               // Withheld, not `noop`: a host that wired no save has
                               // nowhere to save to, and `noop` put a dead Save button
                               // on every embedded surface (U7).
-                              onSaveQuery={onSaveQueryProp ? () => setIsSaveQueryModalOpen(true) : undefined}
+                              // Withheld too while no connection is open, as RUN is disabled then:
+                              // a saved query records its connection's type.
+                              onSaveQuery={
+                                onSaveQueryProp && activeType !== undefined
+                                  ? () => setSaveQueryType(activeType)
+                                  : undefined
+                              }
                               onExecuteQuery={() => queryExec.executeQuery()}
                               onCancelQuery={queryExec.cancelQuery}
                               // Withheld, not `noop`: this shell runs no transaction,
@@ -1180,7 +1196,7 @@ export function StudioWorkspace({
         databaseType={conn.activeConnection?.type}
         connectionName={conn.activeConnection?.name}
         showSaveQuery={!!onSaveQueryProp}
-        saveQueryModalOpen={isSaveQueryModalOpen}
+        saveQueryModalOpen={saveQueryType !== null}
         onCloseSaveQuery={closeSaveQuery}
         onSaveQuery={handleSaveQuery}
         defaultQuery={tabMgr.currentTab.query}

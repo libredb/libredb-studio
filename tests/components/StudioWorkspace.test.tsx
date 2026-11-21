@@ -32,6 +32,7 @@ const mockSetSchema = mock(() => {});
 const mockLoadObjects = mock(() => {});
 const mockFetchSchema = mock(() => {});
 const mockDismissConnectionRefusal = mock(() => {});
+const mockClearSchema = mock(() => {});
 // Tab manager
 const mockSetTabs = mock((_next?: unknown) => {});
 const mockUpdateCurrentTab = mock(() => {});
@@ -42,6 +43,7 @@ const mockHandleGenerateCount = mock(() => {});
 // Query adapter
 const mockExecuteQuery = mock(() => {});
 const mockForceExecuteQuery = mock(() => {});
+const mockProceedSafetyCheck = mock(() => {});
 const mockCancelQuery = mock(() => {});
 const mockSetSafetyCheckQuery = mock(() => {});
 const mockSetBottomPanelMode = mock(() => {});
@@ -106,6 +108,7 @@ mock.module("@/workspace/hooks/use-connection-adapter", () => ({
     setActiveConnection: mockSetActiveConnection,
     schema: [usersTable],
     setSchema: mockSetSchema,
+    clearSchema: mockClearSchema,
     isLoadingSchema: false,
     connectionPulse: null,
     fetchSchema: mockFetchSchema,
@@ -123,6 +126,7 @@ mock.module("@/workspace/hooks/use-query-adapter", () => ({
   useQueryAdapter: mock(() => ({
     executeQuery: mockExecuteQuery,
     forceExecuteQuery: mockForceExecuteQuery,
+    proceedSafetyCheck: mockProceedSafetyCheck,
     cancelQuery: mockCancelQuery,
     handleLoadMore: mockHandleLoadMore,
     handleUnlimitedQuery: mockHandleUnlimitedQuery,
@@ -428,6 +432,8 @@ describe("StudioWorkspace", () => {
     mockHandleGenerateCount.mockClear();
     mockExecuteQuery.mockClear();
     mockForceExecuteQuery.mockClear();
+    mockProceedSafetyCheck.mockClear();
+    mockClearSchema.mockClear();
     mockCancelQuery.mockClear();
     mockSetSafetyCheckQuery.mockClear();
     mockSetBottomPanelMode.mockClear();
@@ -555,7 +561,8 @@ describe("StudioWorkspace", () => {
     connAdapterOverride = { activeConnection: null, connections: [], schema: [], schemaContext: "[]" };
     renderWorkspace({ connections: [] });
     expect(mockFetchSchema).not.toHaveBeenCalled();
-    expect(mockSetSchema).toHaveBeenCalledWith([]);
+    // Through the adapter's own clear, which supersedes a read still in flight for the connection that closed.
+    expect(mockClearSchema).toHaveBeenCalledTimes(1);
   });
 
   // =========================================================================
@@ -564,6 +571,7 @@ describe("StudioWorkspace", () => {
 
   test("handleSaveQuery delegates to onSaveQuery and shows success toast", async () => {
     renderWorkspace();
+    act(() => (capturedQueryToolbarProps.onSaveQuery as () => void)());
     const onSave = capturedSaveQueryModalProps.onSave as (n: string, d: string, t: string[]) => Promise<void>;
     await act(async () => {
       await onSave("My Query", "A test query", ["tag1"]);
@@ -581,6 +589,7 @@ describe("StudioWorkspace", () => {
   test("handleSaveQuery shows destructive toast when onSaveQuery rejects", async () => {
     mockOnSaveQuery.mockImplementationOnce(() => Promise.reject(new Error("save exploded")));
     renderWorkspace();
+    act(() => (capturedQueryToolbarProps.onSaveQuery as () => void)());
     const onSave = capturedSaveQueryModalProps.onSave as (n: string, d: string, t: string[]) => Promise<void>;
     await act(async () => {
       await onSave("Broken", "", []);
@@ -594,15 +603,20 @@ describe("StudioWorkspace", () => {
     );
   });
 
-  test("handleSaveQuery returns early without an active connection", async () => {
-    connAdapterOverride = { activeConnection: null };
+  test("handleSaveQuery refuses, by throwing, a save the dialog was not opened for", async () => {
     renderWorkspace();
     const onSave = capturedSaveQueryModalProps.onSave as (n: string, d: string, t: string[]) => Promise<void>;
-    await act(async () => {
-      await onSave("Noop", "", []);
-    });
+    await expect(onSave("Noop", "", [])).rejects.toThrow(
+      "The Save Query dialog saved without being opened for a connection.",
+    );
     expect(mockOnSaveQuery).not.toHaveBeenCalled();
     expect(mockToast).not.toHaveBeenCalled();
+  });
+
+  test("the toolbar gets no save handler while no connection is open", () => {
+    connAdapterOverride = { activeConnection: null };
+    renderWorkspace();
+    expect(capturedQueryToolbarProps.onSaveQuery).toBeUndefined();
   });
 
   test("SaveQueryModal opens via toolbar and closes via onClose", () => {
@@ -1067,6 +1081,21 @@ describe("StudioWorkspace", () => {
     expect(mockDismissConnectionRefusal).toHaveBeenCalledTimes(1);
   });
 
+  // Below the breakpoint no sidebar is drawn, so the line is the only place the reason can be read.
+  test("draws the connection refusal below the mobile breakpoint too, with no sidebar", () => {
+    setViewportMobile(true);
+    connAdapterOverride = {
+      connectionRefusal: { title: "Connection unavailable", description: "Acme: the refusal's sentence." },
+    };
+    renderWorkspace();
+
+    expect(screen.queryByTestId("sidebar")).toBeNull();
+    const line = screen.getByTestId("workspace-connection-refusal");
+    expect(line.textContent).toContain("Acme: the refusal's sentence.");
+    fireEvent.click(within(line).getByRole("button", { name: "Dismiss" }));
+    expect(mockDismissConnectionRefusal).toHaveBeenCalledTimes(1);
+  });
+
   test("sidebar noop callbacks and references are wired", () => {
     renderWorkspace();
     expect(capturedSidebarProps.onSelectConnection).toBe(mockSetActiveConnection);
@@ -1470,17 +1499,10 @@ describe("StudioWorkspace", () => {
     const { queryByTestId } = renderWorkspace();
     expect(queryByTestId("querysafetydialog")).not.toBeNull();
     expect(capturedSafetyDialogProps.query).toBe("DROP TABLE users");
-    act(() => (capturedSafetyDialogProps.onProceed as () => void)());
-    expect(mockForceExecuteQuery).toHaveBeenCalledWith("DROP TABLE users");
+    // The adapter's bound Proceed, which runs nothing on a connection the statement was not confirmed for.
+    expect(capturedSafetyDialogProps.onProceed).toBe(mockProceedSafetyCheck);
     act(() => (capturedSafetyDialogProps.onClose as () => void)());
     expect(mockSetSafetyCheckQuery).toHaveBeenCalledWith(null);
-  });
-
-  test("safety dialog onProceed is a no-op without a pending query", () => {
-    renderWorkspace();
-    expect(capturedSafetyDialogProps.query).toBe("");
-    act(() => (capturedSafetyDialogProps.onProceed as () => void)());
-    expect(mockForceExecuteQuery).not.toHaveBeenCalled();
   });
 
   test("onAnalyzeSafety returns the embedded high-risk stub", async () => {

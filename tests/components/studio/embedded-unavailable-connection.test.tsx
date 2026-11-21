@@ -2,7 +2,7 @@ import "../../setup-dom";
 import "../../helpers/mock-navigation";
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { setupFramerMotionMock, setupMonacoMock } from "../../helpers/mock-monaco";
 
 setupMonacoMock();
@@ -22,9 +22,14 @@ mock.module("@/components/QueryEditor", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require("react");
   return {
-    QueryEditor: (props: { databaseType?: unknown }) => {
+    // A button that types a destructive statement, so a run can raise the safety confirmation.
+    QueryEditor: (props: { databaseType?: unknown; onContentChange?: (value: string) => void }) => {
       editorTypes.push(props.databaseType);
-      return React.createElement("div", { "data-testid": "query-editor" });
+      return React.createElement(
+        "button",
+        { "data-testid": "query-editor", onClick: () => props.onContentChange?.("DROP TABLE users") },
+        "editor",
+      );
     },
   };
 });
@@ -40,7 +45,9 @@ mock.module("@/components/ui/resizable", () => {
 });
 
 import { StudioWorkspace, type WorkspaceConnection, type WorkspaceObjectReader } from "@/exports/workspace";
+import type { SavedQueryInput, WorkspaceQueryResult } from "@/workspace/types";
 import { ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
+import { CONFIRMED_ELSEWHERE_SENTENCE } from "@/workspace/hooks/use-query-adapter";
 
 const ACME_SENTENCE = unknownTypeSentence("acmefoo");
 
@@ -58,15 +65,41 @@ const reader: WorkspaceObjectReader = {
   listObjects: async () => [],
 };
 
-function workspace(connections: WorkspaceConnection[], onSchemaFetch: (id: string) => Promise<[]>) {
+interface HostCallbacks {
+  onQueryExecute?: (id: string, sql: string) => Promise<WorkspaceQueryResult>;
+  onSaveQuery?: (query: SavedQueryInput) => Promise<void>;
+}
+
+function workspace(
+  connections: WorkspaceConnection[],
+  onSchemaFetch: (id: string) => Promise<[]>,
+  {
+    onQueryExecute = async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),
+    onSaveQuery,
+  }: HostCallbacks = {},
+) {
   return (
     <StudioWorkspace
       connections={connections}
-      onQueryExecute={async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 })}
+      onQueryExecute={onQueryExecute}
       onSchemaFetch={onSchemaFetch}
       onObjectsFetch={reader}
+      onSaveQuery={onSaveQuery}
     />
   );
+}
+
+const noSchema = async (): Promise<[]> => [];
+
+/** Below the mobile breakpoint, through `window.matchMedia` as `StudioWorkspace.test.tsx` drives it. */
+const originalMatchMedia = window.matchMedia;
+function setViewportMobile(matches: boolean) {
+  window.matchMedia = ((query: string) => ({
+    matches,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
 }
 
 /** The sidebar row of the connection named `name`. */
@@ -85,6 +118,7 @@ function markerTitle(name: string): string | null {
 afterEach(() => {
   cleanup();
   editorTypes.length = 0;
+  window.matchMedia = originalMatchMedia;
 });
 
 describe("the embedded workspace and a host connection whose type names no provider (FND-1)", () => {
@@ -127,7 +161,7 @@ describe("the embedded workspace and a host connection whose type names no provi
     expect(editorTypes.at(-1)).toBe("postgres");
   });
 
-  test("a host list that gives the open connection such a type moves the editor to one a provider can open and says why", async () => {
+  test("a host list that gives the open connection such a type closes it without opening another, and says why", async () => {
     const asked: string[] = [];
     const onSchemaFetch = async (id: string): Promise<[]> => {
       asked.push(id);
@@ -139,12 +173,84 @@ describe("the embedded workspace and a host connection whose type names no provi
     const retyped = { ...P1, type: "acmefoo" } as unknown as WorkspaceConnection;
     rerender(workspace([retyped, P2], onSchemaFetch));
 
-    await waitFor(() => expect(asked).toEqual(["p1", "p2"]));
-    expect(editorTypes).not.toContain("acmefoo");
-    expect(editorTypes.at(-1)).toBe("postgres");
-    const line = screen.getByTestId("workspace-connection-refusal");
+    const line = await screen.findByTestId("workspace-connection-refusal");
     expect(line.textContent).toContain(`DB One: ${ACME_SENTENCE}`);
     expect(markerTitle("DB One")).toBe(ACME_SENTENCE);
+    expect(asked).toEqual(["p1"]);
+    expect(editorTypes).not.toContain("acmefoo");
+    expect(editorTypes.at(-1)).toBeUndefined();
+    expect((screen.getByRole("button", { name: /RUN/ }) as HTMLButtonElement).disabled).toBe(true);
+
+    // The host gives the type back: the same connection opens again and the line goes with what it said.
+    rerender(workspace([P1, P2], onSchemaFetch));
+    await waitFor(() => expect(asked).toEqual(["p1", "p1"]));
+    expect(editorTypes.at(-1)).toBe("postgres");
+    expect(screen.queryByTestId("workspace-connection-refusal")).toBeNull();
+  });
+
+  test("below the mobile breakpoint a host list with nothing to open says why on the line", async () => {
+    setViewportMobile(true);
+    render(workspace([U], noSchema));
+
+    const line = await screen.findByTestId("workspace-connection-refusal");
+    expect(line.textContent).toContain(`Acme: ${ACME_SENTENCE}`);
+    expect((screen.getByRole("button", { name: /RUN/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("offers no Save while no connection is open", async () => {
+    render(workspace([U], noSchema, { onSaveQuery: async () => {} }));
+
+    await screen.findByTestId("workspace-connection-refusal");
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
+
+  test("a Save dialog left open while the host retypes the connection saves under the type it was opened for", async () => {
+    const saved: SavedQueryInput[] = [];
+    const onSaveQuery = async (query: SavedQueryInput) => {
+      saved.push(query);
+    };
+    const { rerender } = render(workspace([P1], noSchema, { onSaveQuery }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    fireEvent.change(await screen.findByPlaceholderText("e.g. Monthly Active Users"), { target: { value: "Q1" } });
+
+    rerender(workspace([{ ...P1, type: "acmefoo" } as unknown as WorkspaceConnection], noSchema, { onSaveQuery }));
+    await screen.findByTestId("workspace-connection-refusal");
+    fireEvent.click(screen.getByRole("button", { name: "Save Query" }));
+
+    await waitFor(() => expect(saved.map((query) => [query.name, query.connectionType])).toEqual([["Q1", "postgres"]]));
+  });
+
+  async function confirmThenRerender(next: WorkspaceConnection[]) {
+    const executed: [string, string][] = [];
+    const onQueryExecute = async (id: string, sql: string) => {
+      executed.push([id, sql]);
+      return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+    };
+    const { rerender } = render(workspace([P1, P2], noSchema, { onQueryExecute }));
+    fireEvent.click(screen.getByTestId("query-editor"));
+    fireEvent.click(screen.getByRole("button", { name: /RUN/ }));
+    const proceed = await screen.findByRole("button", { name: /Proceed/ });
+    await waitFor(() => expect((proceed as HTMLButtonElement).disabled).toBe(false));
+
+    rerender(workspace(next, noSchema, { onQueryExecute }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Proceed/ }));
+    });
+    return executed;
+  }
+
+  test("Proceed runs nothing once the host has retyped the connection the statement was confirmed for", async () => {
+    const executed = await confirmThenRerender([{ ...P1, type: "acmefoo" } as unknown as WorkspaceConnection, P2]);
+
+    expect(executed).toEqual([]);
+    expect(await screen.findByText(CONFIRMED_ELSEWHERE_SENTENCE)).toBeTruthy();
+  });
+
+  test("Proceed runs nothing on the connection the shell falls back to once the host has dropped the confirmed one", async () => {
+    const executed = await confirmThenRerender([P2]);
+
+    expect(executed).toEqual([]);
+    expect(await screen.findByText(CONFIRMED_ELSEWHERE_SENTENCE)).toBeTruthy();
   });
 
   test("a host connection with no type, or a type that is not text, is listed with its reason and never handed to the editor", async () => {
