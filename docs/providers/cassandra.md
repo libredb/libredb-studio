@@ -16,7 +16,7 @@
 | **Status** | Implemented & shipped |
 | **Database type id** | `cassandra` |
 | **Family** | SQL (`src/lib/db/providers/sql/cassandra/`) |
-| **Driver** | [`cassandra-driver`](https://www.npmjs.com/package/cassandra-driver) 4.10.0, Apache-2.0, pure JS (no `binding.gyp`, no `.node`, no postinstall) ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)); installed with one patch ([§3.10](#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver)) |
+| **Driver** | [`cassandra-driver`](https://www.npmjs.com/package/cassandra-driver) 4.10.0, Apache-2.0, pure JS (no `binding.gyp`, no `.node`, no postinstall) ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)); installed with one patch ([§3.10](#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver), [§3.11](#311-a-connection-the-driver-opens-again-after-a-lost-one-is-closed-by-disconnect-patched-driver)) |
 | **Query language** | `sql` — CQL is SQL-*shaped*: no JOIN, no subquery, no OFFSET, no EXPLAIN ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | **Default port** | `9042` — the native protocol. Thrift (9160) is gone from 4.0 onwards; 7000/7001 are internode and 7199 is JMX |
 | **Connection pooling** | The driver's own, one session per connection: core 1 connection per local host, 2048 requests in flight per connection |
@@ -476,11 +476,49 @@ So the patch also marks a connect that has failed, and the downgrade does not re
 | Answering a statement on an open connection | `QueryError`: `Socket was closed`, the driver's error for a request whose connection was lost, as for a reset; the connection is closed |
 | An EVENT pushed on an idle connection, with no request pending | Nothing reaches a caller; the connection is closed and replaced as below |
 
-After a connection is lost this way the driver replaces it as it does after any lost connection: the control connection reconnects at once and reads the topology again, and the host's pool dials again on the driver's default reconnection policy (`ExponentialReconnectionPolicy`, 1 s base, 10 min cap), which `cassandraClientOptions` does not change.
+After a connection is lost this way the driver replaces it as it does after any lost connection: the control connection reconnects at once and reads the topology again, and the host's pool dials again on the driver's default reconnection policy (`ExponentialReconnectionPolicy`, 1 s base, 10 min cap), which `cassandraClientOptions` does not change; when the lost connection was the cluster's only one, the control connection's new connection serves the host instead ([§3.11](#311-a-connection-the-driver-opens-again-after-a-lost-one-is-closed-by-disconnect-patched-driver)).
 A statement sent in the moment before the replacement is up fails with a `ConnectionError`: `All host(s) tried for query failed.` when the driver has already marked the host down, or `No connection available` when the host is still up with no open connection; nothing is retried by Studio.
 
 The cases run against a fake node on 127.0.0.1 ([`tests/helpers/cassandra-fake-peer.ts`](../../tests/helpers/cassandra-fake-peer.ts)), through the real provider and the real patched driver, under Bun and under Node, in the integration suite ([§10](#10-testing)).
 The patch is removed when a driver release listens on these streams itself; the test stays, and holds the release to the same behaviour.
+
+### 3.11 A connection the driver opens again after a lost one is closed by `disconnect()` (patched driver)
+
+When the control connection loses its connection and no host that is up can lend it one, 4.10.0 reconnects through the contact points (`lib/control-connection.js`, `_initializeConnection`) and records the node it reaches as a new host (`_setLocalInfo`).
+On a one-node cluster that is every lost connection, since the session holds a single connection there.
+A host whose connections all carry `maxRequestsPerConnection` requests cannot lend one either, so with other pooling options the host replaced below could still have statements in flight, which would fail when it is shut down; Studio's pooling (one connection per host, 2048 requests in flight on it) does not get there.
+
+Four things on that path left a connection open after `disconnect()` had returned, and the same patch ([§3.10](#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver)) changes each of them.
+
+The host object the reconnection replaces was dropped from the session's host list without being shut down, and its pool still had the reconnection it scheduled when the connection was lost.
+About a second later, the first delay of the default reconnection policy, that pool opened a connection of its own, which no host in the list owned, so `Client.shutdown()`, and with it `disconnect()`, did not close it.
+The patch shuts down the replaced host's pool, which cancels the reconnection scheduled there.
+
+After reconnecting this way, the control connection read the topology, registered for events and set its health listeners a second time on its new connection.
+The next lost connection then started one reconnection per set of listeners, and every loss doubled the count; the reconnections shared one reference to the connection, so all but one of the connections they opened were left with no owner.
+Under Node the third lost connection could also leave the session handing out a closed connection, so that every statement waited out its read timeout.
+The patch keeps the one set that `_initializeConnection` registered, so each lost connection starts one reconnection.
+
+A reconnection that met a server error on its `OPTIONS`, its topology read or its event registration moved on to the next contact point and left its connection open with no owner, and a first connect that failed at the same step did the same.
+The patch closes that connection first, as the driver already does for a connection that fails to open; the control connection's scheduled retry then reconnects.
+
+`Client.shutdown()` shuts down the hosts it has when it starts, and a reconnection still under way then added its connection to a host it had not seen.
+That happened when `disconnect()` closely followed a lost connection, and when a connection was lost during `connect()`, whose failure closes the driver at once.
+The patch has the reconnection check for a shutdown once its connection is open and again before it hands the connection to a pool, and close the connection instead.
+That connection can still be dialled after `disconnect()` has returned, while the driver negotiates its protocol version, and it is closed as soon as it is open.
+
+Studio cannot reach any of this through a public driver API: a host's `shutdown()` and the control connection are internal.
+Nothing else changes: the new host is served by the control connection's new connection, nothing is retried that the driver did not retry already, and the reconnection policy stays the driver's default.
+
+The fake node's `lost-connection` cases run under Bun and under Node through the real provider, and each ends with `disconnect()` and a check that no connection is left open:
+
+- `lost-connection` resets the session's only connection while a statement is in flight, and waits past the reconnection delay before disconnecting.
+- `lost-connection-repeated` does that three times, and after each the next statement is answered with one connection open.
+- `lost-connection-disconnect` disconnects while a reconnection whose answers come late is still under way.
+- `lost-connection-in-connect` resets the connection that carries the provider's identity read, so `connect()` fails with `QueryError: Socket was closed`.
+- `lost-connection-reinit-error` answers the first reconnection's `system.peers` read with a server error.
+
+The patch's changes are removed with the rest of it when a driver release makes them itself; the cases stay.
 
 
 ---
@@ -1353,7 +1391,7 @@ A result set does not know which column is the real key, so the first one is cho
 | [`tests/unit/db/cassandra/agent-boundary.test.ts`](../../tests/unit/db/cassandra/agent-boundary.test.ts) | The agent profile's check of the role: every statement it sends, pinned by full text, and every refusal |
 | [`tests/live/cassandra-agent-boundary.ts`](../../tests/live/cassandra-agent-boundary.ts) | The agent profile's boundary against a live node ([§14.6](#146-boundary-record)); not in `bun run test` |
 | [`tests/unit/db/cassandra/seam-guard.test.ts`](../../tests/unit/db/cassandra/seam-guard.test.ts) | That the driver, its value classes and its per-statement knobs appear in code only in `driver-transport.ts` |
-| [`tests/helpers/cassandra-fake-peer.ts`](../../tests/helpers/cassandra-fake-peer.ts) | A fake node on 127.0.0.1 that answers one frame the driver cannot parse; the integration suite drives the real provider and the real patched driver through it under Bun and Node ([§3.10](#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver)) |
+| [`tests/helpers/cassandra-fake-peer.ts`](../../tests/helpers/cassandra-fake-peer.ts) | A fake node on 127.0.0.1 that answers one frame the driver cannot parse, or resets a connection; the integration suite drives the real provider and the real patched driver through it under Bun and Node ([§3.10](#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver), [§3.11](#311-a-connection-the-driver-opens-again-after-a-lost-one-is-closed-by-disconnect-patched-driver)) |
 
 The session stand-in **throws on an unknown statement** rather than answering empty: a provider whose
 CQL drifts has to fail there, not quietly report no rows.

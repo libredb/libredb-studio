@@ -4581,6 +4581,11 @@ describe("the agent read-only profile", () => {
  * connection the way a socket error does, so the connect or the request in flight fails at once, by name, the
  * connection is closed, and the driver's pool dials a replacement. docs/TOOLCHAIN.md, "Patched dependencies".
  *
+ * The `lost-connection` cases hold the patch's other changes, to the control connection's reconnection after a lost
+ * connection: it shuts down the host it replaces, registers one set of listeners on its new connection, closes a
+ * connection whose reconnection failed, and closes its new connection when the client is shutting down. Each case
+ * checks that `disconnect()` leaves no connection open.
+ *
  * Studio's real provider and the real (patched) driver run each case of tests/helpers/cassandra-fake-peer.ts under
  * Bun in this process and under every Node binary in NODE_TRANSPORT_NODES (or the node on PATH), from a bundle,
  * because the two runtimes report an error thrown in a stream handler differently.
@@ -4730,6 +4735,101 @@ describe("a frame the driver cannot parse fails the connection by name", () => {
         dialledSince: outcome.accepted > outcome.acceptedBefore,
         open: outcome.accepted - outcome.closedBeforeDisconnect,
       }).toEqual({ runtime, dialledSince: true, open: outcome.acceptedBefore - outcome.closedBefore });
+    }
+  });
+
+  test("lost-connection: the connection the driver opens again after a lost one is the only one left, and disconnect() closes it", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      expect({ runtime, query: outcome.malformedQuery }).toEqual({ runtime, query: "QueryError: Socket was closed" });
+      expect({ runtime, next: outcome.nextQuery }).toEqual({ runtime, next: "resolved" });
+      // The lost connection was the cluster's only one, so the control connection opened a new one, which also serves
+      // queries. With the reconnection delay of the host it replaced passed, that is still the only open connection:
+      // nothing scheduled for the replaced host dialled the peer.
+      expect({
+        runtime,
+        closedSince: outcome.closedBeforeDisconnect > outcome.closedBefore,
+        dialledSince: outcome.accepted > outcome.acceptedBefore,
+        open: outcome.accepted - outcome.closedBeforeDisconnect,
+      }).toEqual({
+        runtime,
+        closedSince: true,
+        dialledSince: true,
+        open: outcome.acceptedBefore - outcome.closedBefore,
+      });
+      // disconnect() closed it, and nothing was dialled once it had returned.
+      expect({
+        runtime,
+        accepted: outcome.acceptedAfterDisconnect,
+        closed: outcome.closedAfterDisconnect,
+      }).toEqual({ runtime, accepted: outcome.accepted, closed: outcome.accepted });
+    }
+  });
+
+  test("lost-connection-repeated: after each of three lost connections the next query is answered, one connection is open, and disconnect() closes it", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection-repeated")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      const round = { lost: "QueryError: Socket was closed", next: "resolved" };
+      expect({ runtime, losses: outcome.losses }).toEqual({ runtime, losses: [round, round, round] });
+      // Each reconnection registered one set of listeners on its connection, so the next loss started one
+      // reconnection, not one per earlier loss: the connection open before the first loss has one successor.
+      expect({ runtime, open: outcome.accepted - outcome.closedBeforeDisconnect }).toEqual({
+        runtime,
+        open: outcome.acceptedBefore - outcome.closedBefore,
+      });
+      expect({
+        runtime,
+        accepted: outcome.acceptedAfterDisconnect,
+        closed: outcome.closedAfterDisconnect,
+      }).toEqual({ runtime, accepted: outcome.accepted, closed: outcome.accepted });
+    }
+  });
+
+  test("lost-connection-disconnect: disconnect() while the driver is still reconnecting leaves no connection open", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection-disconnect")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      expect({ runtime, query: outcome.malformedQuery }).toEqual({ runtime, query: "QueryError: Socket was closed" });
+      // The reconnection's connection may be dialled after disconnect() returned, while the driver negotiates its
+      // protocol version, but it is closed as soon as it is open instead of joining a pool nothing shuts down.
+      expect({ runtime, closed: outcome.closedAfterDisconnect }).toEqual({
+        runtime,
+        closed: outcome.acceptedAfterDisconnect,
+      });
+    }
+  });
+
+  test("lost-connection-in-connect: a connection lost during connect() fails it by name and leaves no connection open", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection-in-connect")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "QueryError: Socket was closed" });
+      // connect() closed the driver while its control connection was reconnecting. The reconnection's connection may
+      // be dialled after that, while the driver negotiates its protocol version, but it is closed as soon as it is
+      // open.
+      expect({ runtime, closed: outcome.closedAfterDisconnect }).toEqual({
+        runtime,
+        closed: outcome.acceptedAfterDisconnect,
+      });
+    }
+  });
+
+  test("lost-connection-reinit-error: a reconnection that fails on a server error closes its connection, and the retry's is the only one open", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection-reinit-error")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      expect({ runtime, query: outcome.malformedQuery }).toEqual({ runtime, query: "QueryError: Socket was closed" });
+      expect({ runtime, next: outcome.nextQuery }).toEqual({ runtime, next: "resolved" });
+      expect({ runtime, open: outcome.accepted - outcome.closedBeforeDisconnect }).toEqual({
+        runtime,
+        open: outcome.acceptedBefore - outcome.closedBefore,
+      });
+      expect({
+        runtime,
+        accepted: outcome.acceptedAfterDisconnect,
+        closed: outcome.closedAfterDisconnect,
+      }).toEqual({ runtime, accepted: outcome.accepted, closed: outcome.accepted });
     }
   });
 });

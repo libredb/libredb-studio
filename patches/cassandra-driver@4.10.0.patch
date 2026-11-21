@@ -41,3 +41,141 @@ index af7b016dc207b0b94558fcbc0451b627921d5d23..68e7cef56d609b0c39e6dfaddad39a13
      this.log('warning', `There was an error when trying to connect to the host ${this.endpointFriendlyName}`, err);
      if (destroy) {
        //there is a TCP connection that should be killed.
+diff --git a/lib/control-connection.js b/lib/control-connection.js
+index fd707529a148953374f616eb36de816db5f6dff9..520f5a4746d87a05775cf3c2369280eba22fcafc 100644
+--- a/lib/control-connection.js
++++ b/lib/control-connection.js
+@@ -427,6 +427,7 @@ class ControlConnection extends events.EventEmitter {
+ 
+     if (this.options.sni) {
+       this.connection = this._borrowAConnection(hostIterator);
++      return false;
+     }
+     else {
+       try { this.connection = this._borrowAConnection(hostIterator); }
+@@ -441,7 +442,9 @@ class ControlConnection extends events.EventEmitter {
+         const refreshedContactPoints = Array.from(this._contactPoints).join(',');
+         this.log('info', `Refreshed contact points: ${refreshedContactPoints}`);
+         await this._initializeConnection();
++        return true;
+       }
++      return false;
+     }
+   }
+ 
+@@ -461,6 +464,7 @@ class ControlConnection extends events.EventEmitter {
+     // Reset host and connection
+     this.host = null;
+     this.connection = null;
++    let reinitialized;
+ 
+     try {
+       if (!hostIterator) {
+@@ -469,7 +473,7 @@ class ControlConnection extends events.EventEmitter {
+         hostIterator = await promiseUtils.newQueryPlan(this._profileManager.getDefaultLoadBalancing(), null, null);
+       }
+ 
+-      await this._refreshControlConnection(hostIterator);
++      reinitialized = await this._refreshControlConnection(hostIterator);
+     } catch (err) {
+       // There was a failure obtaining a connection or during metadata retrieval
+       this.log('error', 'ControlConnection failed to acquire a connection', err);
+@@ -486,24 +490,29 @@ class ControlConnection extends events.EventEmitter {
+ 
+     this.log('info',`ControlConnection connected to ${this.connection.endpointFriendlyName}`);
+ 
+-    try {
+-      await this._refreshHosts(false, true);
++    // _initializeConnection has already read the topology, registered for events and set the health listeners on the
++    // connection it opened: a second set of listeners would start one refresh per set when that connection is lost
++    if (!reinitialized) {
++      try {
++        await this._refreshHosts(false, true);
+ 
+-      await this._registerToConnectionEvents();
+-    } catch (err) {
+-      this.log('error', 'ControlConnection failed to retrieve topology and keyspaces information', err);
+-      this._triedHosts[this.connection.endpoint] = err;
++        await this._registerToConnectionEvents();
++      } catch (err) {
++        this.log('error', 'ControlConnection failed to retrieve topology and keyspaces information', err);
++        this._triedHosts[this.connection.endpoint] = err;
++
++        if (err.isSocketError && this.host) {
++          this.host.removeFromPool(this.connection);
++        }
+ 
+-      if (err.isSocketError && this.host) {
+-        this.host.removeFromPool(this.connection);
++        // Retry the whole thing with the same query plan
++        return await this._refresh(hostIterator);
+       }
+ 
+-      // Retry the whole thing with the same query plan
+-      return await this._refresh(hostIterator);
++      this._setHealthListeners(this.host, this.connection);
+     }
+ 
+     this._reconnectionSchedule = this._reconnectionPolicy.newSchedule();
+-    this._setHealthListeners(this.host, this.connection);
+     this.emit('newConnection', null, this.connection, this.host);
+ 
+     this.log('info', `ControlConnection connected to ${this.connection.endpointFriendlyName} and up to date`);
+@@ -526,6 +535,7 @@ class ControlConnection extends events.EventEmitter {
+ 
+     while (true) {
+       await this._borrowFirstConnection(contactPointsIterator);
++      this._closeConnectionIfShuttingDown();
+ 
+       this.log('info', `ControlConnection using protocol version 0x${
+         this.protocolVersion.toString(16)}, connected to ${this.connection.endpointFriendlyName}`);
+@@ -541,9 +551,14 @@ class ControlConnection extends events.EventEmitter {
+       } catch (err) {
+         this.log('error', 'ControlConnection failed to retrieve topology and keyspaces information', err);
+         this._triedHosts[this.connection.endpoint] = err;
++        // No pool owns this connection yet: close it before trying the next contact point, as _createConnection
++        // closes a connection that failed to open
++        promiseUtils.toBackground(this.connection.closeAsync());
+       }
+     }
+ 
++    this._closeConnectionIfShuttingDown();
++
+     // The healthy connection used to initialize should be part of the Host pool
+     this.host.pool.addExistingConnection(this.connection);
+ 
+@@ -552,6 +567,18 @@ class ControlConnection extends events.EventEmitter {
+     this.log('info', `ControlConnection connected to ${this.connection.endpointFriendlyName}`);
+   }
+ 
++  /**
++   * Closes the connection that _initializeConnection opened, and throws, when the Client started shutting down while
++   * it was being opened: the Client shuts down only the hosts it had then, so no pool may take this connection.
++   */
++  _closeConnectionIfShuttingDown() {
++    if (!this._isShuttingDown) {
++      return;
++    }
++    promiseUtils.toBackground(this.connection.closeAsync());
++    throw new errors.DriverError('ControlConnection is being shutdown');
++  }
++
+   async _getSupportedOptions() {
+     const response = await this.connection.send(requests.options, null);
+ 
+@@ -748,8 +775,15 @@ class ControlConnection extends events.EventEmitter {
+ 
+     if (initializing) {
+       localHost = new Host(endpoint, this.protocolVersion, this.options, this.metadata);
++      const replacedHost = this.hosts.get(endpoint);
+       this.hosts.set(endpoint, localHost);
+       this.log('info', `Adding host ${endpoint}`);
++      if (replacedHost) {
++        // A reconnection that fell back to the contact points replaces the Host at this endpoint: shut down the
++        // replaced Host's pool, so a reconnection it still has scheduled does not open a connection that no Host in
++        // this.hosts owns and that Client.shutdown() would never close
++        promiseUtils.toBackground(replacedHost.shutdown(false));
++      }
+     } else {
+       localHost = this.hosts.get(endpoint);
+ 
