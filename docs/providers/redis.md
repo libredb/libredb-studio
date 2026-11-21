@@ -557,8 +557,7 @@ What the user sees depends on where the reply arrives:
 | Where the reply arrives | What the user sees |
 | --- | --- |
 | The answer to an editor command | `QueryError` (400), *"Redis error: Maximum call stack size exceeded. Please report this."* for the nesting, *"Redis error: Invalid array length. Please report this."* for the header (Node's wording; Bun words the header *"Array length must be a positive integer of safe magnitude."*) |
-| The answer to the sign-in or the ready check of `connect()` | `ConnectionError` (503), *"Failed to connect to Redis: "* and the same message |
-| The answer to the `SELECT` of a numbered database, or to the agent profile's read-only proof, during `connect()` | the driver's own error, for example *"Invalid array length. Please report this."*, reported as a generic database error (500) |
+| The answer to the sign-in, the ready check, the `SELECT` of a numbered database, or the agent profile's read-only proof, during `connect()` | `ConnectionError` (503, retryable), *"Failed to connect to Redis: "* and the same message, for example *"Failed to connect to Redis: Invalid array length. Please report this."*; the connection is closed and the provider stays disconnected |
 | The answer to the agent's one-command connection | the driver's own error: that connection sets `retryStrategy: () => null` and `enableOfflineQueue: false` (`oneCommandOptions()`), so it ends instead of reconnecting |
 | The next editor command on the same provider | its own answer, on the reconnected connection |
 
@@ -1982,7 +1981,7 @@ The provider raises the shared error classes from
 | A quoted argument that never closes ([§3.4a](#34a-comments-lines-and-how-one-command-is-picked-out-of-a-buffer)) | `QueryError` - *"Line N opens a quoted argument with ... that never closes ..."* |
 | A second command before the first blank line ([§3.4a](#34a-comments-lines-and-how-one-command-is-picked-out-of-a-buffer)) | `QueryError` - *"Line N holds a second command, which begins with ..."* |
 | Redis-side command failure | `QueryError` — *"Redis error: …"* |
-| A reply the parser cannot hold (nesting deeper than the stack, an array header past a JS array's length) | `QueryError` - *"Redis error: Maximum call stack size exceeded. Please report this."* or the runtime's array-length message, and the connection reconnects; *"Redis error: Maximum call stack size exceeded"* without the ending when the overflow is in Studio's decoding, and the connection stays open; while connecting, `ConnectionError` or the driver's own error ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
+| A reply the parser cannot hold (nesting deeper than the stack, an array header past a JS array's length) | `QueryError` - *"Redis error: Maximum call stack size exceeded. Please report this."* or the runtime's array-length message, and the connection reconnects; *"Redis error: Maximum call stack size exceeded"* without the ending when the overflow is in Studio's decoding, and the connection stays open; during `connect()`, `ConnectionError`; on the agent's one-command connection, the driver's own error ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
 
 All `QueryError`s carry the `QUERY_ERROR` API code and surface to the client as `400 Bad Request`.
 
@@ -2303,7 +2302,7 @@ Nothing is kept between two proofs: `+del` granted to a user that passed is caug
 The proof covers the probed commands only: a user granted a write they leave out passes it, as `~* +@read +flushall` and `~* +@read +publish` pass the open (measured on Redis 8.10.2 and Valkey 9.1.2 on 2026-11-02), and the closed table, which refuses every command outside it before anything is sent, is what refuses that user's `FLUSHALL` or `PUBLISH`; the proof is never instead of it.
 A key-pattern reader (`%R~* +@read` or `~app:* +@read`) passes, since it holds no probed command, and a key outside its pattern answers `NOPERM No permissions to access a key` (`prefix.json`), which agent mode is told without the server's words.
 A connection that names a database other than 0 is opened with a `SELECT`, which `+@read` does not hold, so its user also needs `+select`, or the open is refused as "Redis refused database 1: the connection's ACL user does not hold the 'select' command it needs (NOPERM).", which names the command and never the user the server's `NOPERM` names (measured on Redis 8.10.2 and Valkey 9.1.2 on 2026-11-02).
-A transport failure is raised as itself, never read as a verdict: a round trip or a `SELECT` the server does not answer before its timeout is the read's timeout, not a refusal.
+A transport failure is never read as a verdict: at the open it fails the connect as a `ConnectionError` carrying the driver's message ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)), and on a command's own connection a round trip or a `SELECT` the server does not answer before its timeout is the read's timeout, not a refusal.
 An agent connection skips ioredis's ready check, whose `INFO` is refused a `+@read` user and would log a warning on every command; the proof's `HELLO` checks the connection instead.
 The operations profile sends no command of the model's, so it opens with any user and no proof, and plan mode keeps grounding on a privileged connection, `default` included.
 

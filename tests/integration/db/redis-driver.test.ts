@@ -111,6 +111,29 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
     }
   });
 
+  test("the same replies answering the SELECT of a numbered database fail the connect with a named error", () => {
+    for (const report of reports) {
+      for (const name of ["oversized array header answering SELECT", "deeply nested reply answering SELECT"]) {
+        const connect = find(report, name);
+        expect(connect.call).toMatch(new RegExp(`^ConnectionError: Failed to connect to Redis: .+${FATAL}`));
+        expect(connect.escaped).toEqual([]);
+      }
+    }
+  });
+
+  test("the same replies answering the agent read-only proof fail the connect with a named error", () => {
+    for (const report of reports) {
+      for (const name of [
+        "oversized array header answering the read-only proof",
+        "deeply nested reply answering the read-only proof",
+      ]) {
+        const connect = find(report, name);
+        expect(connect.call).toMatch(new RegExp(`^ConnectionError: Failed to connect to Redis: .+${FATAL}`));
+        expect(connect.escaped).toEqual([]);
+      }
+    }
+  });
+
   test("an unreadable TLS record and then a reset on an idle connection is reported, and the next command answers", () => {
     for (const report of reports) {
       const idle = find(report, "unreadable TLS record then reset");

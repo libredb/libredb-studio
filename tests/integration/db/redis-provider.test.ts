@@ -378,6 +378,8 @@ let slowlogRefusal: string | null = null;
 /** Server error replies to `SCAN` and `SELECT`, as an ACL user without the command is refused each. */
 let scanReplyRefusal: string | null = null;
 let selectRefusal: string | null = null;
+/** When set, `SELECT` rejects with this driver error, as ioredis rejects a command whose reply it could not read. */
+let selectFailure: Error | null = null;
 
 /** Keys whose `TYPE` the server refuses, as an ACL user without `+type` is refused. */
 const typeRefusals = new Set<string>();
@@ -605,6 +607,7 @@ mock.module("ioredis", () => {
      */
     async select(db: number) {
       if (selectRefusal !== null) throw replyError(selectRefusal);
+      if (selectFailure !== null) throw selectFailure;
       if (db >= Number(databasesReply[1])) throw replyError("ERR DB index is out of range");
       this._db = db;
       this._state.database = db;
@@ -911,6 +914,29 @@ describe("RedisProvider", () => {
       expect(provider.isConnected()).toBe(false);
       // Nothing was left open in database 0 to be read from by accident.
       expect(openedClients.every((client) => client.disconnected)).toBe(true);
+    });
+
+    // ioredis rejects a command whose reply its parser could not read with the parser's own RangeError, suffixed
+    // ". Please report this." (docs/providers/redis.md section 4.6). On the SELECT of connect() that is a failed
+    // connect, named as one, never the driver's untyped error.
+    test("a SELECT whose reply the driver could not read fails the connect as a ConnectionError naming it", async () => {
+      selectFailure = new RangeError("Invalid array length. Please report this.");
+      try {
+        provider = new RedisProvider({ ...baseConfig, database: "1" });
+        openedClients.length = 0;
+
+        const error = await provider.connect().then(
+          () => new Error("connect() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: Invalid array length. Please report this.");
+        expect(isRetryableError(error)).toBe(true);
+        expect(provider.isConnected()).toBe(false);
+        expect(openedClients.every((client) => client.disconnected)).toBe(true);
+      } finally {
+        selectFailure = null;
+      }
     });
 
     test("a session database that is not a number is refused before anything is opened", async () => {

@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
-import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { ConnectionError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { REDIS_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/redis-agent-statement";
 import { REDIS_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/keyvalue/redis-metadata-read";
 import { REDIS_PROOF_SENTENCES } from "@/lib/db/providers/keyvalue/redis-read-only-proof";
@@ -25,6 +25,8 @@ const VERSION = "8.10.2";
 /** Which captured principal the double answers as, and the probe answers that override the capture's. */
 let principal = "reader-info";
 let probeOverride: readonly CapturedStep[] | undefined;
+/** An error the driver rejects the whole proof round trip with, as it does every command of a reply it cannot read. */
+let proofFailure: Error | undefined;
 /** A reply that stands in for the next table read's, or an error to throw from it. */
 let readOverride: { reply?: unknown; error?: Error } | undefined;
 /** An error the driver emits while the next connection connects, which still resolves, and one SELECT throws. */
@@ -98,6 +100,8 @@ mock.module("ioredis", () => {
           return pipeline;
         },
         async exec() {
+          const failure = proofFailure;
+          if (failure !== undefined) return queued.map((): [Error, undefined] => [failure, undefined]);
           return queued.map(probeAnswer);
         },
       };
@@ -145,6 +149,7 @@ beforeEach(() => {
   readOverride = undefined;
   connectingError = undefined;
   selectError = undefined;
+  proofFailure = undefined;
   opened.length = 0;
 });
 
@@ -212,6 +217,29 @@ describe("the profile", () => {
     expect((error as Error).message).toBe(REDIS_PROOF_SENTENCES.admitted(label));
     expect(opened[0].disconnected).toBe(true);
     expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a SELECT or a proof whose reply the driver could not read fails the open as a ConnectionError naming it", async () => {
+    selectError = new RangeError("Invalid array length. Please report this.");
+    const numbered = new RedisProvider(connection({ database: "3" }), {}, PROFILE);
+    const select = await failureOf(numbered.connect());
+    expect(select).toBeInstanceOf(ConnectionError);
+    expect((select as Error).message).toBe("Failed to connect to Redis: Invalid array length. Please report this.");
+    expect(opened[0].pipelines).toEqual([]);
+    expect(opened[0].disconnected).toBe(true);
+    expect(numbered.isConnected()).toBe(false);
+
+    selectError = undefined;
+    opened.length = 0;
+    proofFailure = new RangeError("Maximum call stack size exceeded. Please report this.");
+    const proved = new RedisProvider(connection(), {}, PROFILE);
+    const proof = await failureOf(proved.connect());
+    expect(proof).toBeInstanceOf(ConnectionError);
+    expect((proof as Error).message).toBe(
+      "Failed to connect to Redis: Maximum call stack size exceeded. Please report this.",
+    );
+    expect(opened[0].disconnected).toBe(true);
+    expect(proved.isConnected()).toBe(false);
   });
 
   test("a user that may write inside its own key pattern is refused at the open", async () => {
