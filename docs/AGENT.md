@@ -1251,6 +1251,7 @@ Studio then checks the served rows' UTF-8 JSON bytes against the same budget, so
 It lists the bound database's collections and views, or describes one: its fields and the indexes it declares (`readCatalogReadOnly` in `src/lib/db/providers/document/mongodb/index.ts`).
 A collection listing past the row budget is refused, not truncated.
 One collection's fields are inferred from a sample of up to 100 of its documents, which stops short of the run's byte budget, and listed up to the provider's fixed bound (`MAX_INFERRED_FIELDS`), `_id` first and the rest in sorted order, so a field missing from a very wide collection's list may still exist.
+Studio then checks the served rows' UTF-8 JSON bytes against the byte budget, so a description whose sample fitted can still be refused (`runReadOnlyReading`).
 `relations` is refused (`KIND_REFUSED`), because MongoDB declares no foreign keys and an empty block would read as an absence the engine never stated, and `indexes` needs a collection, since a collection's indexes are described beside its fields.
 
 **`inspect_plan` asks the engine for the estimated plan, under `mongo.plan.estimate`.**
