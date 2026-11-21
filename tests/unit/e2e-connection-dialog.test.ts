@@ -33,12 +33,11 @@ describe("specs open the connection dialog by the button's name, never by its po
   });
 
   test("no E2E source climbs from the LibreDB Studio heading to the header's buttons", () => {
+    // The whole source, not line by line: the formatter breaks a long locator chain across lines.
     const climbs = e2eSources.flatMap(({ file, source }) =>
-      source
-        .split("\n")
-        .map((line, index) => ({ at: `${file}:${index + 1}`, line }))
-        .filter(({ line }) => HEADER_CLIMB.test(line))
-        .map(({ at }) => at),
+      [...source.matchAll(new RegExp(HEADER_CLIMB.source, "g"))].map(
+        (match) => `${file}:${source.slice(0, match.index).split("\n").length}`,
+      ),
     );
     expect(climbs).toEqual([]);
   });
