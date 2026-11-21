@@ -1,17 +1,19 @@
 /**
  * The Redis provider over the real ioredis, on the runtimes production runs: a reply the parser cannot hold and a TLS
- * stream that fails twice each reach the caller as a named error, and the connection serves the next command.
+ * record the client cannot decrypt each reach the caller as a named error, and the connection serves the next command.
  *
  * redis-provider.test.ts replaces ioredis with a stand-in, so it cannot see the driver's own socket handling. This file
  * runs redis-driver-harness.ts in a Bun child and, bundled with `bun build --target=node`, in one Node child per binary
  * NODE_TRANSPORT_NODES lists (or the node on PATH), so CI's Node 24 suite and its step on the image's Node both run it.
- * The two runtimes report socket errors differently: after an unreadable TLS record Bun raises no second error on the
- * socket while Node does, so the Node child is the one that holds the stream fix, through the `[Redis]` warnings the
- * provider logs.
+ * The two runtimes report socket errors differently: after an unreadable TLS record Bun closes the socket while Node
+ * keeps it open, so the Node child is the one that holds the fatal-error path for an error the socket survives, and
+ * the one that reports a reset that follows the record while the connection closes.
  *
  * The driver is patched (docs/TOOLCHAIN.md, "Patched dependencies"): the parser's throw takes ioredis's own fatal-error
  * path, which rejects the commands in flight and reconnects under the provider's options (the editor connection keeps
- * ioredis's default retry strategy), and the stream keeps its error listener for its whole life.
+ * ioredis's default retry strategy); an error the TLS socket survives takes the same path, and commands not yet sent
+ * wait for the next connection; and the stream keeps its error listener for its whole life. A reset still takes
+ * ioredis's own close path, which sends a command in flight again on the next connection.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -24,6 +26,7 @@ interface CaseReport {
   readonly name: string;
   readonly call: string;
   readonly next?: string;
+  readonly delivered?: number;
   readonly logged: string[];
   readonly escaped: string[];
 }
@@ -37,6 +40,8 @@ const HARNESS = join(import.meta.dir, "redis-driver-harness.ts");
 const PONG = 'ok {"result":"PONG"}';
 /** ioredis's fatal-error path appends this sentence to the message of every error it takes. */
 const FATAL = "\\. Please report this\\.$";
+/** How Node (OpenSSL) and Bun (BoringSSL) word a TLS record the client cannot decrypt. */
+const UNREADABLE = "(decryption failed or bad record mac|DECRYPTION_FAILED_OR_BAD_RECORD_MAC)";
 
 function nodeBinaries(): string[] {
   const listed = process.env.NODE_TRANSPORT_NODES;
@@ -137,17 +142,18 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
   test("an unreadable TLS record and then a reset on an idle connection is reported, and the next command answers", () => {
     for (const report of reports) {
       const idle = find(report, "unreadable TLS record then reset");
-      // Bun raises no error for the reset, so only Node's log holds the second one.
-      if (report.runtime === "node") expect(idle.logged).toContainEqual(expect.stringMatching(/read ECONNRESET/));
+      // The record closes the connection, so the reset reaches a socket the client has already left.
+      expect(idle.logged).toEqual([expect.stringMatching(new RegExp(UNREADABLE))]);
       expect(idle.next).toBe(PONG);
       expect(idle.escaped).toEqual([]);
     }
   });
 
-  test("an unreadable TLS record and then a command: the failed write is reported and the command answers", () => {
+  test("an unreadable TLS record and then a command: the record is reported and the command answers", () => {
     for (const report of reports) {
       const write = find(report, "unreadable TLS record then a command");
-      if (report.runtime === "node") expect(write.logged).toContainEqual(expect.stringMatching(/write EPROTO/));
+      // The record closes the connection, so the command is written to the next one, not to the failed socket.
+      expect(write.logged).toEqual([expect.stringMatching(new RegExp(UNREADABLE))]);
       expect(write.call).toBe(PONG);
       expect(write.escaped).toEqual([]);
     }
@@ -160,6 +166,69 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
         /^ConnectionError: Failed to connect to Redis: .*(decryption failed or bad record mac|DECRYPTION_FAILED_OR_BAD_RECORD_MAC)/,
       );
       expect(connect.escaped).toEqual([]);
+    }
+  });
+
+  test("an unreadable TLS record fails the command in flight with a named error, once, and the next command answers", () => {
+    for (const report of reports) {
+      const inflight = find(report, "unreadable TLS record while a command waits");
+      expect(inflight.call).toMatch(new RegExp(`^QueryError: Redis error: .*${UNREADABLE}`));
+      // The server may have run the command before the record, so it is not sent again on the next connection.
+      expect(inflight.delivered).toBe(1);
+      expect(inflight.logged).toContainEqual(expect.stringMatching(new RegExp(UNREADABLE)));
+      expect(inflight.next).toBe(PONG);
+      expect(inflight.escaped).toEqual([]);
+    }
+  });
+
+  test("an unreadable TLS record while connecting fails the connect with a named error", () => {
+    for (const report of reports) {
+      const connect = find(report, "unreadable TLS record while connecting");
+      expect(connect.call).toMatch(new RegExp(`^ConnectionError: Failed to connect to Redis: .*${UNREADABLE}`));
+      expect(connect.escaped).toEqual([]);
+    }
+  });
+
+  test("an unreadable TLS record answering the SELECT or the read-only proof fails the connect with a named error", () => {
+    for (const report of reports) {
+      for (const name of [
+        "unreadable TLS record answering SELECT",
+        "unreadable TLS record answering the read-only proof",
+      ]) {
+        const connect = find(report, name);
+        expect(connect.call).toMatch(new RegExp(`^ConnectionError: Failed to connect to Redis: .*${UNREADABLE}`));
+        expect(connect.escaped).toEqual([]);
+      }
+    }
+  });
+
+  test("a reset that follows the record while the connection closes is reported like the first error", () => {
+    for (const report of reports) {
+      const closing = find(report, "unreadable TLS record then reset while the connection closes");
+      // Bun has closed the socket by the time of the reset; Node keeps it open until ioredis's disconnect timeout.
+      const after = report.runtime === "node" ? [expect.stringMatching(/read ECONNRESET/)] : [];
+      expect(closing.logged).toEqual([expect.stringMatching(new RegExp(UNREADABLE)), ...after]);
+      expect(closing.next).toBe(PONG);
+      expect(closing.escaped).toEqual([]);
+    }
+  });
+
+  test("a command sent while the client reconnects after the record waits for a connection that answers it", () => {
+    for (const report of reports) {
+      const queued = find(report, "unreadable TLS record, then a command sent while the client reconnects");
+      expect(queued.call).toBe('ok {"result":"value"}');
+      expect(queued.delivered).toBe(1);
+      expect(queued.escaped).toEqual([]);
+    }
+  });
+
+  test("a reset while a command waits keeps ioredis's own reconnect, which sends the command again", () => {
+    for (const report of reports) {
+      const reset = find(report, "reset while a command waits");
+      expect(reset.call).toBe('ok {"result":"value"}');
+      expect(reset.delivered).toBe(2);
+      expect(reset.next).toBe(PONG);
+      expect(reset.escaped).toEqual([]);
     }
   });
 });

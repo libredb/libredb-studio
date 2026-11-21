@@ -19,17 +19,28 @@ index 7f95466b0260668ba81d68e937af4e49002a1714..4e076b2070a5858a8d339a5ce70f4483
          // prependListener() doesn't enable flowing mode automatically - we need to resume the stream manually
          redis.stream.resume();
 diff --git a/built/Redis.js b/built/Redis.js
-index 30c5b4573e2df2601ca637b72383702d6efbbc3d..41c96907cc9a7edc5dbf760f12e30129a54d8ee6 100644
+index 30c5b4573e2df2601ca637b72383702d6efbbc3d..0c606910aa149dfb16ad6a21d3c1c822ffbee46f 100644
 --- a/built/Redis.js
 +++ b/built/Redis.js
-@@ -208,7 +208,9 @@ class Redis extends Commander_1.default {
+@@ -208,7 +208,20 @@ class Redis extends Commander_1.default {
                      process.nextTick(eventHandler.connectHandler(_this));
                  }
                  if (!stream.destroyed) {
 -                    stream.once("error", eventHandler.errorHandler(_this));
-+                    // For the stream's whole life: a TLS socket can emit a second error after a first one it
-+                    // survives (an unreadable record, then a reset or a failed write).
-+                    stream.on("error", eventHandler.errorHandler(_this));
++                    // For the stream's whole life, so an error after the first, while the socket closes, also
++                    // reaches the client.
++                    const errorHandler = eventHandler.errorHandler(_this);
++                    stream.on("error", function (err) {
++                        // An error the socket survives (a TLS record it cannot decrypt) leaves it open with no reply
++                        // to come, so it takes the fatal-error path a parser error takes: the commands in flight fail
++                        // with it, and the connection closes and reconnects. A destroyed socket is closing anyway,
++                        // and its error is only reported.
++                        if (!stream.destroyed) {
++                            _this.recoverFromFatalError(err, err, { offlineQueue: false });
++                            return;
++                        }
++                        errorHandler(err);
++                    });
                      stream.once("close", eventHandler.closeHandler(_this));
                  }
                  const connectionReadyHandler = function () {

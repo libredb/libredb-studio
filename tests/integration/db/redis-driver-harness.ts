@@ -7,8 +7,10 @@
  *  - a reply the parser cannot hold: an array header no JS array can take (`*4294967296`), or arrays nested deeper
  *    than the stack, answered to a command, to the first command of a connect, or to the `SELECT` or the agent
  *    read-only proof a connect sends after it;
- *  - on a TLS connection, one record the client cannot decrypt written under the TLS layer, then a reset, or one more
- *    client write, which Node reports as a second `error` on the same socket.
+ *  - on a TLS connection, one record the client cannot decrypt written under the TLS layer: in place of the answer to a
+ *    command, to a connect or to a reconnect, with the socket kept open, or on an idle connection, then a reset or one
+ *    more command;
+ *  - a reset in place of the answer to a command.
  *
  * Each case records what the caller got, what the next command got, the `[Redis]` warnings the provider logged, and
  * every error that escaped a call instead of reaching its caller (uncaughtException, unhandledRejection). The test runs this file twice, under Bun and, bundled
@@ -31,10 +33,15 @@ process.on("unhandledRejection", (reason) =>
 
 /** Every `[Redis]` warning the provider logged, in order: an error the client's listener took after connecting. */
 const logged: string[] = [];
+/** Called once the next `[Redis]` warning is logged, when a case waits for one. */
+let onLogged: (() => void) | undefined;
 const warn = console.warn;
 console.warn = (...args: unknown[]) => {
   const line = args.map(String).join(" ");
-  if (line.includes("[Redis]")) logged.push(line.slice(line.indexOf("[Redis]")));
+  if (line.includes("[Redis]")) {
+    logged.push(line.slice(line.indexOf("[Redis]")));
+    onLogged?.();
+  }
   warn(...args);
 };
 
@@ -98,10 +105,14 @@ function defaultAnswer(command: string[]): string {
   return "+OK\r\n";
 }
 
-async function startPeer(secure: boolean): Promise<Peer> {
+/**
+ * A local RESP peer. With `halfOpen`, it keeps its side of a connection open after the client ends its own, as a server
+ * may, so the client's socket stays open until ioredis's disconnect timeout destroys it.
+ */
+async function startPeer(secure: boolean, halfOpen: boolean): Promise<Peer> {
   const connections: PeerConnection[] = [];
   const peer: Peer = { port: 0, connections, answer: () => undefined, close: () => undefined };
-  const server = net.createServer((raw) => {
+  const server = net.createServer({ allowHalfOpen: halfOpen }, (raw) => {
     const socket = secure
       ? new tls.TLSSocket(raw, {
           isServer: true,
@@ -171,6 +182,8 @@ interface CaseReport {
   readonly call: string;
   /** What the next command on the same provider settled with, when the case sends one. */
   readonly next?: string;
+  /** How many times the peer received the command the fault answered, when the case counts it. */
+  readonly delivered?: number;
   readonly logged: string[];
   readonly escaped: string[];
 }
@@ -179,17 +192,19 @@ interface CaseReport {
 interface Opening {
   readonly fields?: Partial<DatabaseConnection>;
   readonly execution?: ProviderExecutionContext;
+  /** The peer keeps its side of the connection open after the client ends its own. */
+  readonly halfOpen?: boolean;
 }
 
 async function runCase(
   name: string,
   secure: boolean,
-  body: (provider: RedisProvider, peer: Peer) => Promise<{ call: string; next?: string }>,
+  body: (provider: RedisProvider, peer: Peer) => Promise<{ call: string; next?: string; delivered?: number }>,
   opening: Opening = {},
 ): Promise<CaseReport> {
   escaped.length = 0;
   logged.length = 0;
-  const peer = await startPeer(secure);
+  const peer = await startPeer(secure, opening.halfOpen ?? false);
   const provider = new RedisProvider(
     { ...connection(peer.port, secure), ...opening.fields },
     { queryTimeout: 5_000 },
@@ -233,9 +248,16 @@ async function replyCase(name: string, reply: string | Buffer): Promise<CaseRepo
 }
 
 /**
- * Answers a command `connect()` sends after the sign-in with `reply`: the `SELECT` of numbered database 1, or the
+ * The opening under which `connect()` sends `step` after the sign-in: the `SELECT` of numbered database 1, or the
  * `HELLO 2` that opens the agent read-only profile's proof.
  */
+function stepOpening(step: "SELECT" | "HELLO"): Opening {
+  return step === "SELECT"
+    ? { fields: { database: "1" } }
+    : { fields: { user: "agent" }, execution: { readOnly: true, sendsStatements: true } };
+}
+
+/** Answers a command `connect()` sends after the sign-in with `reply`. */
 async function connectStepCase(name: string, step: "SELECT" | "HELLO", reply: string | Buffer): Promise<CaseReport> {
   return runCase(
     name,
@@ -244,9 +266,20 @@ async function connectStepCase(name: string, step: "SELECT" | "HELLO", reply: st
       peer.answer = onFirst(step, reply);
       return { call: await settle(4_000, () => provider.connect()) };
     },
-    step === "SELECT"
-      ? { fields: { database: "1" } }
-      : { fields: { user: "agent" }, execution: { readOnly: true, sendsStatements: true } },
+    stepOpening(step),
+  );
+}
+
+/** Writes the unreadable record in place of the answer to a command `connect()` sends after the sign-in. */
+async function recordStepCase(name: string, step: "SELECT" | "HELLO"): Promise<CaseReport> {
+  return runCase(
+    name,
+    true,
+    async (provider, peer) => {
+      peer.answer = recordFor(step);
+      return { call: await settle(4_000, () => provider.connect()) };
+    },
+    stepOpening(step),
   );
 }
 
@@ -264,6 +297,39 @@ async function idleRecordCase(name: string, then: "reset" | "command"): Promise<
     }
     return { call: await settle(4_000, () => provider.query("PING")) };
   });
+}
+
+/**
+ * Writes the unreadable record where an answer to `name` belongs, once, and keeps the socket open: nothing but the
+ * record tells the client that this connection cannot answer the command any more.
+ */
+function recordFor(name: string): Answer {
+  let sent = false;
+  return (command, { raw }) => {
+    if (sent || (command[0] ?? "").toUpperCase() !== name) return undefined;
+    sent = true;
+    raw.write(UNREADABLE_TLS_RECORD);
+    return "silence";
+  };
+}
+
+/** Counts the `name` commands the peer receives, and answers each as `answer` says. */
+function counting(name: string, answer: Answer): { answer: Answer; count: () => number } {
+  let count = 0;
+  return {
+    answer: (command, connection) => {
+      if ((command[0] ?? "").toUpperCase() === name) count++;
+      return answer(command, connection);
+    },
+    count: () => count,
+  };
+}
+
+/** Resolves once the provider has logged a `[Redis]` warning, or after `ms`. */
+async function untilLogged(ms: number): Promise<void> {
+  if (logged.length > 0) return;
+  await Promise.race([new Promise<void>((resolve) => (onLogged = resolve)), sleep(ms)]);
+  onLogged = undefined;
 }
 
 const cases: CaseReport[] = [];
@@ -291,6 +357,75 @@ cases.push(
       return "silence";
     };
     return { call: await settle(4_000, () => provider.connect()) };
+  }),
+);
+cases.push(
+  await runCase("unreadable TLS record while a command waits", true, async (provider, peer) => {
+    await provider.connect();
+    const get = counting("GET", recordFor("GET"));
+    peer.answer = get.answer;
+    const call = await settle(4_000, () => provider.query("GET k"));
+    const next = await settle(4_000, () => provider.query("PING"));
+    return { call, next, delivered: get.count() };
+  }),
+);
+cases.push(
+  await runCase("unreadable TLS record while connecting", true, async (provider, peer) => {
+    peer.answer = recordFor("INFO");
+    return { call: await settle(4_000, () => provider.connect()) };
+  }),
+);
+cases.push(await recordStepCase("unreadable TLS record answering SELECT", "SELECT"));
+cases.push(await recordStepCase("unreadable TLS record answering the read-only proof", "HELLO"));
+
+cases.push(
+  await runCase(
+    "unreadable TLS record then reset while the connection closes",
+    true,
+    async (provider, peer) => {
+      await provider.connect();
+      const { raw } = peer.connections[peer.connections.length - 1];
+      raw.write(UNREADABLE_TLS_RECORD);
+      // The record closes the connection: the client ends its side, and the peer keeps its own open, then resets it.
+      await sleep(300);
+      raw.resetAndDestroy();
+      await sleep(300);
+      return { call: "ok", next: await settle(8_000, () => provider.query("PING")) };
+    },
+    { halfOpen: true },
+  ),
+);
+cases.push(
+  await runCase(
+    "unreadable TLS record, then a command sent while the client reconnects",
+    true,
+    async (provider, peer) => {
+      await provider.connect();
+      const get = counting("GET", () => undefined);
+      // The next connection's first CLIENT SETINFO is answered by the record too, so it closes before it is ready.
+      const record = recordFor("CLIENT");
+      peer.answer = (command, connection) => record(command, connection) ?? get.answer(command, connection);
+      peer.connections[peer.connections.length - 1].raw.write(UNREADABLE_TLS_RECORD);
+      await untilLogged(4_000);
+      const call = await settle(8_000, () => provider.query("GET k"));
+      return { call, delivered: get.count() };
+    },
+  ),
+);
+cases.push(
+  await runCase("reset while a command waits", true, async (provider, peer) => {
+    await provider.connect();
+    let sent = false;
+    const get = counting("GET", (command, { raw }) => {
+      if (sent || (command[0] ?? "").toUpperCase() !== "GET") return undefined;
+      sent = true;
+      raw.resetAndDestroy();
+      return "silence";
+    });
+    peer.answer = get.answer;
+    const call = await settle(4_000, () => provider.query("GET k"));
+    const next = await settle(4_000, () => provider.query("PING"));
+    return { call, next, delivered: get.count() };
   }),
 );
 
