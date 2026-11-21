@@ -9179,16 +9179,36 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       );
     });
 
+    /**
+     * The statement under test reaching the fixture, which is when the read is in flight
+     * with its deadline armed. The cases below wait on this rather than on a clock, so
+     * "the statement started, then the disconnect, then the deadline" is an order the test
+     * fixes rather than one it expects. A clock here also hung bun test on windows-latest:
+     * after the continuation of a timer called `expect(...).rejects`, no timer fired again.
+     * Bun 1.4.4 runs a timer's continuation inside its Windows timer dispatch, where the
+     * matcher's nested wait cannot fire one (oven-sh/bun#40023; oven-sh/bun#44833 makes
+     * the matcher non-blocking).
+     */
+    const statementStart = () => {
+      let started: () => void = () => {};
+      const reached = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      return { started, reached };
+    };
+
     test("a deadline that fires after the connection was closed sends no KILL and says the connection was closed", async () => {
-      // `disconnect()` ends the main pool, which the KILL is sent from, and then waits on
-      // the read-only pool, whose statement is still running. The deadline firing in that
-      // window has no session to send the KILL from: it is recorded as not sent, and the
-      // read is refused with what happened to it rather than "killed server-side".
+      // `disconnect()` ends the read-only pool and then lets the main pool go, which the
+      // KILL is sent from. The deadline firing after that has no session to send the KILL
+      // from: it is recorded as not sent, and the read is refused with what happened to it
+      // rather than "killed server-side".
       const warn = spyOn(logger, "warn").mockImplementation(() => {});
       try {
         const profiled = await profiledProvider();
+        const statement = statementStart();
         mockExecuteFn = (sql: string) => {
           if (sql.trim().toLowerCase().startsWith("select")) {
+            statement.started();
             // The server's own deadline, one backstop later, is what ends the statement.
             return new Promise((_resolve, reject) =>
               setTimeout(() => {
@@ -9204,7 +9224,7 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
           return profileDefault(sql);
         };
         const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
-        await Bun.sleep(20);
+        await statement.reached;
         await profiled.disconnect();
         await expect(refusal).rejects.toThrow(
           "The connection was closed while the read-only statement ran, so it was not killed at its deadline of 60ms and was not answered",
@@ -9225,14 +9245,16 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       try {
         const profiled = await profiledProvider();
         const rows = Array.from({ length: 20 }, (_, i) => ({ id: i }));
+        const statement = statementStart();
         mockExecuteFn = (sql: string) => {
           if (sql.trim().toLowerCase().startsWith("select")) {
+            statement.started();
             return new Promise((resolve) => setTimeout(() => resolve([rows, [{ name: "id" }]]), 60));
           }
           return profileDefault(sql);
         };
         const refusal = profiled.queryReadOnly("SELECT id FROM t", budget({ maxResultRows: 10 }));
-        await Bun.sleep(20);
+        await statement.reached;
         await profiled.disconnect();
         await expect(refusal).rejects.toThrow(/row budget: 11 rows > 10 allowed/);
         expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill"))).toBe(false);
@@ -9271,9 +9293,11 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       try {
         const profiled = await profiledProvider();
         let killStatement: (error: Error) => void = () => {};
+        const statement = statementStart();
         mockExecuteFn = (sql: string) => {
           const text = sql.trim().toLowerCase();
           if (text.startsWith("select sleep")) {
+            statement.started();
             return new Promise((_resolve, reject) => {
               killStatement = reject;
               // Without a KILL, the session's own deadline variable is what ends it.
@@ -9290,7 +9314,7 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
           return profileDefault(sql);
         };
         const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
-        await Bun.sleep(20);
+        await statement.reached;
         const closing = profiled.disconnect();
         await expect(refusal).rejects.toThrow(
           "Read-only execution exceeded the statement deadline of 60ms and was killed server-side",
@@ -9316,19 +9340,28 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       const mainEndGate = new Promise<void>((resolve) => {
         releaseMainEnd = resolve;
       });
-      const mainEnd = spyOn(mockPool, "end").mockImplementation(() => mainEndGate);
+      let mainEndCalled: () => void = () => {};
+      const mainEndCall = new Promise<void>((resolve) => {
+        mainEndCalled = resolve;
+      });
+      const mainEnd = spyOn(mockPool, "end").mockImplementation(() => {
+        mainEndCalled();
+        return mainEndGate;
+      });
       try {
         const profiled = await profiledProvider();
+        const statement = statementStart();
         mockExecuteFn = (sql: string) => {
           if (sql.trim().toLowerCase().startsWith("select sleep")) {
+            statement.started();
             return new Promise((_resolve, reject) => setTimeout(() => reject(stoppedByDeadlineVariable()), 200));
           }
           return profileDefault(sql);
         };
         const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
-        await Bun.sleep(20);
+        await statement.reached;
         const closing = profiled.disconnect();
-        await Bun.sleep(0);
+        await mainEndCall;
         expect(mainEnd).toHaveBeenCalledTimes(1);
         expect(profiled.isConnected()).toBe(false);
         await expect(refusal).rejects.toThrow(CLOSED_UNDER);
@@ -9347,14 +9380,16 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       const warn = spyOn(logger, "warn").mockImplementation(() => {});
       try {
         const profiled = await profiledProvider();
+        const statement = statementStart();
         mockExecuteFn = (sql: string) => {
           if (sql.trim().toLowerCase().startsWith("select sleep")) {
+            statement.started();
             return new Promise((_resolve, reject) => setTimeout(() => reject(stoppedByDeadlineVariable()), 200));
           }
           return profileDefault(sql);
         };
         const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
-        await Bun.sleep(20);
+        await statement.reached;
         await profiled.disconnect();
         nextMainPool = { ...mockPool };
         await profiled.connect();
@@ -9371,8 +9406,10 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       const warn = spyOn(logger, "warn").mockImplementation(() => {});
       try {
         const profiled = await profiledProvider();
+        const statement = statementStart();
         mockExecuteFn = (sql: string) => {
           if (sql.trim().toLowerCase().startsWith("select sleep")) {
+            statement.started();
             return new Promise((resolve) =>
               setTimeout(() => resolve([[{ "SLEEP(5)": 0 }], [{ name: "SLEEP(5)" }]]), 200),
             );
@@ -9380,7 +9417,7 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
           return profileDefault(sql);
         };
         const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
-        await Bun.sleep(20);
+        await statement.reached;
         await profiled.disconnect();
         const error = await refusal.catch((caught: unknown) => caught);
         expect(error).toBeInstanceOf(QueryError);
@@ -9396,8 +9433,10 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       const warn = spyOn(logger, "warn").mockImplementation(() => {});
       try {
         const profiled = await profiledProvider();
+        const statement = statementStart();
         mockExecuteFn = (sql: string) => {
           if (sql.trim().toLowerCase().startsWith("select sleep")) {
+            statement.started();
             return new Promise((_resolve, reject) =>
               setTimeout(() => {
                 const error = new Error("Connection lost: The server closed the connection.") as Error & {
@@ -9411,7 +9450,7 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
           return profileDefault(sql);
         };
         const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
-        await Bun.sleep(20);
+        await statement.reached;
         await profiled.disconnect();
         const error = await refusal.catch((caught: unknown) => caught);
         expect(error).toBeInstanceOf(QueryError);
