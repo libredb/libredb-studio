@@ -19,7 +19,7 @@ index 7f95466b0260668ba81d68e937af4e49002a1714..4e076b2070a5858a8d339a5ce70f4483
          // prependListener() doesn't enable flowing mode automatically - we need to resume the stream manually
          redis.stream.resume();
 diff --git a/built/Redis.js b/built/Redis.js
-index 30c5b4573e2df2601ca637b72383702d6efbbc3d..ab011ac25d5392f9aad891321563b6492ea22f28 100644
+index 30c5b4573e2df2601ca637b72383702d6efbbc3d..0c606910aa149dfb16ad6a21d3c1c822ffbee46f 100644
 --- a/built/Redis.js
 +++ b/built/Redis.js
 @@ -208,7 +208,20 @@ class Redis extends Commander_1.default {
@@ -33,9 +33,9 @@ index 30c5b4573e2df2601ca637b72383702d6efbbc3d..ab011ac25d5392f9aad891321563b649
 +                    stream.on("error", function (err) {
 +                        // An error the socket survives (a TLS record it cannot decrypt) leaves it open with no reply
 +                        // to come, so it takes the fatal-error path a parser error takes: the commands in flight fail
-+                        // with it, and the connection closes and reconnects. A socket destroyed or already ending is
-+                        // closing anyway, and its error is only reported.
-+                        if (!stream.destroyed && !stream.writableEnded) {
++                        // with it, and the connection closes and reconnects. A destroyed socket is closing anyway,
++                        // and its error is only reported.
++                        if (!stream.destroyed) {
 +                            _this.recoverFromFatalError(err, err, { offlineQueue: false });
 +                            return;
 +                        }
