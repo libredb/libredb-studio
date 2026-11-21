@@ -21,6 +21,7 @@ import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { useMonacoInstance } from "@/hooks/use-monaco-instance";
 import { logger } from "@/lib/logger";
+import { assertDatabaseType } from "@/lib/db/type-id";
 import { setLineNumbersPreference, useLineNumbersPreference } from "@/hooks/use-line-numbers-preference";
 import { writeToClipboard } from "@/components/copy-button";
 import { toast } from "sonner";
@@ -80,6 +81,9 @@ interface QueryEditorProps {
    *
    * Optional, and a caller that omits it gets the compatibility reading - the same
    * stated default every reader in `src/lib/sql/` applies to a dialect-less call.
+   * A value outside `DatabaseType`, which only a caller outside TypeScript's checks can
+   * pass, is refused by name as the editor renders: it throws `UnknownProviderError`
+   * before any hook or reader runs with it, so the host's error boundary receives it.
    */
   databaseType?: DatabaseType;
   schemaContext?: string;
@@ -157,6 +161,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     },
     ref,
   ) => {
+    // Before every hook and reader, so a refused value never reaches a grammar, a completion or a policy profile
+    // (FND-1). The throw is the same on every render that has the value, so the hook order never changes.
+    if (databaseType !== undefined) assertDatabaseType(databaseType);
     const monaco = useMonacoInstance();
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
