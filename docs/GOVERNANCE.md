@@ -691,6 +691,8 @@ Delivery:
   Each is logged as one line on standard output, `{"type":"query_event_rejected","event_id":"<uuid>","sqlstate":"23514","constraint":"query_event_not_future"}`, which carries neither the statement nor the server's message, because that can quote the row; `constraint` is null when the server names none.
   A refusal for good is not a reason to wait, so Studio does not back off after it.
 - At shutdown Studio inserts every queued event at once, batch after batch and without waiting out a backoff, for at most 4 seconds, and logs how many events it could not send.
+  An uncaught exception ends the process without that insert ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)): the events still queued are not inserted, and the line Studio logs for that exit counts them as `queryEventsLost`.
+  The count includes an insert under way, whose rows may have landed, so the count is at most what was lost.
 - With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full, which is 9000 events.
   It checks before a statement reaches the database, for an interactive transaction's `BEGIN`, statements, `COMMIT` and `ROLLBACK` alike, so a refused request runs nothing, and it admits executions again once an insert settles its whole batch and the queue holds fewer than 9000 events.
   A row the database refused for good never trips it, because Studio drops that row and goes on without backing off.

@@ -102,6 +102,7 @@ The chart is tightly coupled to the Dockerfile:
 | `GET /api/ready` | Readiness endpoint: `200` without governance, the governance freshness state under governance |
 
 Liveness stays on `GET /api/db/health`, which depends on nothing, so a governance source that is down never gets a healthy pod restarted.
+A server that meets an uncaught exception exits with code 70, and the kubelet restarts the container as it restarts any container that exits; `kubectl logs <pod> --previous` shows the line it logged ([DISTRIBUTION.md](./DISTRIBUTION.md#uncaught-errors-and-restarts)).
 `GET /api/ready` is the readiness endpoint ([API_DOCS.md](./API_DOCS.md#get-apiready), [GOVERNANCE.md](./GOVERNANCE.md#freshness-and-readiness)): it answers `200` with `status` `ready` without governance, and under governance `503` while the snapshot is loading, misconfigured or incompatible, so a pod receives traffic only once it can serve data routes.
 It reads only in-process state and opens no user database, so it is as cheap to probe as the liveness path.
 Under `governance.enabled` the chart moves the shipped readiness path to `/api/ready` itself (section 11), and a readiness probe the operator wrote with another path is kept as it is.
