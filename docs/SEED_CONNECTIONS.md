@@ -1785,9 +1785,10 @@ Each file is the output of a committed script, held by a test that reruns it, an
 At boot, `src/lib/seed/sample-copy.ts` copies each enabled sample's file into the data directory and opens no database:
 
 - a target that already exists is never touched, so a user's edits survive every restart;
-- the asset's size is checked before a byte is written, and its bytes are hashed while they are copied into a temporary file opened exclusively beside the target;
+- the asset's size is checked before a byte is written, and its bytes are hashed while they are copied into a temporary file beside the target, opened exclusively under a name of this copy's own (`<target>.<pid>.<random UUID>.seeding`), so two copies never share one, not even two replicas that each run the server as pid 1 on one shared volume;
 - a file that is not the pinned one is refused, and nothing is published;
-- the temporary file is flushed to disk and renamed onto the target, so a published sample is always complete.
+- the temporary file is flushed to disk after its last write and renamed onto the target, so a published sample is always complete;
+- a temporary file that a crashed copy left behind is never touched, and stays until it is removed by hand.
 
 Both copies are asynchronous: boot never waits for them.
 While a copy is in flight, `GET /api/connections/managed` lists the sample's seed id in `pendingSeeds`, and the client polls (1s, max 30 attempts; the interval constant is inlined at build time, so `NEXT_PUBLIC_MANAGED_POLL_MS` only affects source builds and tests, not packaged artifacts) so the connection appears without a page refresh.
@@ -1816,8 +1817,10 @@ A sample whose copy fails, or whose target is refused, is logged once as the war
 | Reason | What happened |
 |--------|---------------|
 | `asset-missing` | The sample's file is not in the seed assets directory |
+| `asset-unreadable` | The sample's file in the seed assets directory could not be read; the sentence names the error code, such as `EACCES` or `EIO` |
 | `digest-mismatch` | The file in the seed assets directory is not the one this release ships |
 | `copy-failed` | The copy into the data directory failed; the sentence names the error code, such as `EACCES` or `ENOSPC` |
+| `target-unreadable` | The sample's path could not be checked before any copy; the sentence names the error code, such as `EACCES`, `ENOTDIR` or `ELOOP` |
 | `target-reserved` | The sample's path, or one of its sidecar files, names one of the server's own storage files |
 | `target-conflict` | The sample's path is another sample's, so only the first one is created |
 
@@ -1860,11 +1863,20 @@ Correct the type, or run a Studio that has the provider; until then no route ope
 The built-in sample could not be created at boot ([A sample that could not be created](#a-sample-that-could-not-be-created)).
 Hover the marker for the reason, and find the warning `Embedded sample unavailable` in the server log, which names the path:
 
-- `asset-missing`: the seed assets directory does not hold the sample's file. Point `SEED_ASSETS_DIR` at the `seed-assets` directory of this release, or start the server from the directory that holds it.
-- `digest-mismatch`: the file there is not this release's. Use the `seed-assets` directory of the same release as the server; never edit the files in it.
-- `copy-failed`: the data directory could not take the copy. Give the server write access to it (`EACCES`, `EROFS`) or free space (`ENOSPC`), then restart.
-- `target-reserved`: a `_PATH` override names the storage database, a sidecar of it or the bootstrap credentials file. Point it elsewhere.
-- `target-conflict`: both `_PATH` overrides name one file. Give each sample its own.
+- `asset-missing`: the seed assets directory does not hold the sample's file.
+  Point `SEED_ASSETS_DIR` at the `seed-assets` directory of this release, or start the server from the directory that holds it.
+- `asset-unreadable`: the server could not read the sample's file in the seed assets directory.
+  Give the server read access to `SEED_ASSETS_DIR` and the files in it (`EACCES`), or check the volume it is on (`EIO`), then restart.
+- `digest-mismatch`: the file there is not this release's.
+  Use the `seed-assets` directory of the same release as the server; never edit the files in it.
+- `copy-failed`: the data directory could not take the copy.
+  Give the server write access to it (`EACCES`, `EROFS`) or free space (`ENOSPC`), then restart.
+- `target-unreadable`: the server could not check the sample's path.
+  A `_PATH` override, or the data directory, names a directory the server cannot search (`EACCES`), a path through a regular file (`ENOTDIR`) or a symlink loop (`ELOOP`); correct it, then restart.
+- `target-reserved`: a `_PATH` override names the storage database, a sidecar of it or the bootstrap credentials file.
+  Point it elsewhere.
+- `target-conflict`: a `_PATH` override names another sample's file, its default one included, or a sidecar of it.
+  Give each sample its own.
 
 A restart retries the copy; a sample whose file exists is never copied again.
 

@@ -4,7 +4,7 @@
  * copies every enabled, admitted sample and logs each outcome once.
  */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { REFUSES_DENIED_FILE_ACCESS } from "@/lib/db/compatibility";
@@ -238,6 +238,61 @@ describe("targets and their admission", () => {
     expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
   });
 
+  test.each(["", "-wal", "-shm", "-journal", ".lock"])(
+    "a sample on another's file or on its %p sidecar is refused as target-conflict, in either direction",
+    (suffix) => {
+      const base = path.join(temporaryDirectory(), "one.db");
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = base;
+      process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = `${base}${suffix}`;
+      expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = `${base}${suffix}`;
+      process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = base;
+      expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
+    },
+  );
+
+  test("two paths to one file through a symlinked directory are one target, so the second is target-conflict", () => {
+    const data = temporaryDirectory();
+    const alias = path.join(temporaryDirectory(), "alias");
+    symlinkSync(data, alias, process.platform === "win32" ? "junction" : "dir");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(data, "shared.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(alias, "shared.db");
+    expect(sampleAdmissions().map(({ type, refusal }) => ({ type, refusal }))).toEqual([
+      { type: "sqlite", refusal: null },
+      { type: "libredb", refusal: "target-conflict" },
+    ]);
+  });
+
+  test("a target whose path cannot be checked is refused as target-unreadable with its error, and the other row is admitted", () => {
+    const blocker = path.join(temporaryDirectory(), "a-regular-file");
+    writeFileSync(blocker, "");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
+    const admissions = sampleAdmissions();
+    expect(admissions.map(({ type, refusal }) => ({ type, refusal }))).toEqual([
+      { type: "sqlite", refusal: "target-unreadable" },
+      { type: "libredb", refusal: null },
+    ]);
+    expect(admissions[0]?.failure?.code).toBe("ENOTDIR");
+    expect(admissions[0]?.failure?.message).toContain(blocker);
+    expect(admissions[1]?.failure).toBeUndefined();
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "a target in a directory the server cannot search is refused as target-unreadable naming EACCES (POSIX, not root)",
+    () => {
+      const locked = temporaryDirectory();
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(locked, "sample-employees.db");
+      chmodSync(locked, 0o000);
+      try {
+        const admissions = sampleAdmissions();
+        expect(admissions.map(({ refusal }) => refusal)).toEqual(["target-unreadable", null]);
+        expect(admissions[0]?.failure?.code).toBe("EACCES");
+      } finally {
+        chmodSync(locked, 0o700);
+      }
+    },
+  );
+
   test("only enabled rows are admitted, so a disabled row conflicts with nothing", () => {
     const shared = path.join(temporaryDirectory(), "one.db");
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = shared;
@@ -300,7 +355,7 @@ describe("the seed state and the connection record", () => {
     }
   });
 
-  test("every reason has a sentence that names no path, and copy-failed names its code when it has one", () => {
+  test("every reason has a sentence that names no path, and a failure names its code when it has one", () => {
     expect(unavailableSentence("asset-missing")).toBe(
       "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied. The server log names the path.",
     );
@@ -312,6 +367,18 @@ describe("the seed state and the connection record", () => {
     );
     expect(unavailableSentence("copy-failed")).toBe(
       "This sample could not be copied into the server's data directory. The server log names the path.",
+    );
+    expect(unavailableSentence("asset-unreadable", "EACCES")).toBe(
+      "This sample's file in the seed assets directory (SEED_ASSETS_DIR) could not be read (EACCES), so it was not copied. The server log names the path.",
+    );
+    expect(unavailableSentence("asset-unreadable")).toBe(
+      "This sample's file in the seed assets directory (SEED_ASSETS_DIR) could not be read, so it was not copied. The server log names the path.",
+    );
+    expect(unavailableSentence("target-unreadable", "ENOTDIR")).toBe(
+      "The server could not check this sample's path (ENOTDIR), so the sample is not created there. The server log names the path.",
+    );
+    expect(unavailableSentence("target-unreadable")).toBe(
+      "The server could not check this sample's path, so the sample is not created there. The server log names the path.",
     );
     expect(unavailableSentence("target-reserved")).toBe(
       "This sample's path names one of the server's own storage files, so the sample is not created there.",
@@ -415,6 +482,34 @@ describe("startSampleSeeding", () => {
       expect(readdirSync(path.dirname(process.env.STORAGE_SQLITE_PATH ?? ""))).toEqual([]);
     } finally {
       warn.mockRestore();
+    }
+  });
+
+  test("a target whose path cannot be checked is failed at once with its code, logged once, and the other sample is still copied", async () => {
+    const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");
+    const blocker = path.join(temporaryDirectory(), "a-regular-file");
+    writeFileSync(blocker, "");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      const seeding = startSampleSeeding();
+      expect(getSampleSeedState("sqlite-embedded-sample")).toEqual({
+        phase: "failed",
+        reason: "target-unreadable",
+        sentence: unavailableSentence("target-unreadable", "ENOTDIR"),
+      });
+      expect(getSampleSeedState("libredb-embedded-sample")).toEqual({ phase: "seeding" });
+      await seeding;
+      expect(getSampleSeedState("libredb-embedded-sample")).toEqual({ phase: "done" });
+      expect(readdirSync(dataDir)).toEqual(["sample.libredb"]);
+      expect(warn.mock.calls.map(([message, context]) => [message, context?.seedId, context?.reason])).toEqual([
+        ["Embedded sample unavailable", "sqlite-embedded-sample", "target-unreadable"],
+      ]);
+      expect(String(warn.mock.calls[0]?.[1]?.error)).toContain("ENOTDIR");
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
     }
   });
 

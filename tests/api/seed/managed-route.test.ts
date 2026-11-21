@@ -463,6 +463,36 @@ describe("GET /api/connections/managed", () => {
     }
   });
 
+  it("a sample whose path cannot be checked never fails the listing: the operator's connections still answer for every role", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-unreadable-sample-"));
+    const blocker = path.join(dir, "a-regular-file");
+    writeFileSync(blocker, "");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
+    setSampleSeedState("sqlite-embedded-sample", {
+      phase: "failed",
+      reason: "target-unreadable",
+      sentence: unavailableSentence("target-unreadable", "ENOTDIR"),
+    });
+    try {
+      const admin = await GET();
+      expect(admin.status).toBe(200);
+      const adminData = await admin.json();
+      expect(adminData.connections.map((c: { seedId: string }) => c.seedId)).toContain("everyone");
+      expect(adminData.unavailableSamples.map((s: { reason: string }) => s.reason)).toEqual(["target-unreadable"]);
+
+      (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "user", username: "user@test.com" }));
+      const user = await GET();
+      expect(user.status).toBe(200);
+      const userData = await user.json();
+      expect(userData.connections.map((c: { seedId: string }) => c.seedId)).toContain("everyone");
+      expect(userData.unavailableSamples).toEqual([]);
+    } finally {
+      resetSampleSeedStates();
+      delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("returns 500 when config is invalid", async () => {
     const origPath = process.env.SEED_CONFIG_PATH;
     process.env.SEED_CONFIG_PATH = path.join(

@@ -332,9 +332,14 @@ On standalone boot it:
 
 1. **Bootstraps missing auth env** (`src/lib/auth-bootstrap.ts`, #109). When `JWT_SECRET` / `ADMIN_PASSWORD` are absent they are generated once, persisted to `<data dir>/auth-bootstrap.json` (mode `0600`), and injected into `process.env` before any secret reader runs; the admin password is printed once. Explicitly set env vars always win. Disable with `AUTH_BOOTSTRAP=off|false|0` (case-insensitive); an unrecognized value warns and stays on. In OIDC mode only the JWT secret is generated.
 2. **Runs the auth-config preflight** (`src/lib/config/auth-preflight.ts`, #227). A `JWT_SECRET` that is set but shorter than 32 characters prints an operator-facing banner (length only, never the value) and exits with code 1. It runs *after* bootstrap so a generated secret is validated too. This is the one step that intentionally stops boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling the failure there would restart the pod forever and hide the login screen's actionable 503; refusing to start costs nothing because a too-short secret can sign no session at all.
-3. **Starts copying the built-in samples, asynchronously** (`src/lib/seed/samples.ts`, `src/lib/seed/sample-copy.ts`). Every enabled sample, "Sample (Employees)" and "Sample (LibreDB)", has its committed, digest-pinned file in the seed assets directory (`SEED_ASSETS_DIR`, by default `<working directory>/seed-assets`) copied to the data directory, never over an existing file, and no database is opened. Boot never waits: while a copy is in flight the managed-connections API advertises the seed id in `pendingSeeds`; `useConnectionManager` polls (1s, max 30) so the sample appears without a page refresh. Each is then listed as an editable, dismissable connection ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#built-in-sample-connections)).
+3. **Starts copying the built-in samples, asynchronously** (`src/lib/seed/samples.ts`, `src/lib/seed/sample-copy.ts`).
+   Every enabled sample, "Sample (Employees)" and "Sample (LibreDB)", has its committed, digest-pinned file in the seed assets directory (`SEED_ASSETS_DIR`, by default `<working directory>/seed-assets`) copied to the data directory, never over an existing file, and no database is opened.
+   Boot never waits: while a copy is in flight the managed-connections API advertises the seed id in `pendingSeeds`; `useConnectionManager` polls (1s, max 30) so the sample appears without a page refresh.
+   Each is then listed as an editable, dismissable connection ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#built-in-sample-connections)).
 
-A failure in the bootstrap step is logged and swallowed. A sample whose copy fails is logged once, with its reason, and listed unavailable with that reason; boot never breaks. The preflight in step 2 is the deliberate exception.
+A failure in the bootstrap step is logged and swallowed.
+A sample whose path cannot be checked, whose target is refused or whose copy fails is logged once, with its reason, and listed unavailable with that reason; boot never breaks.
+The preflight in step 2 is the deliberate exception.
 
 ### 4.8. SQLite Driver Selection (`src/lib/db/providers/sql/sqlite-driver.ts`)
 

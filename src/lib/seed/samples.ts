@@ -15,13 +15,13 @@
  * no state is set.
  */
 import * as path from "path";
-import { getDataDir, isReservedStoragePath } from "@/lib/data-dir";
+import { canonicalPath, getDataDir, isReservedStoragePath } from "@/lib/data-dir";
 import { readEnabledProviders } from "@/lib/db/enabled-providers";
 import { governanceEnabled } from "@/lib/governance/config";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import { logger } from "@/lib/logger";
 import type { DatabaseType } from "@/lib/types";
-import { copySampleAsset, type SampleCopyError } from "./sample-copy";
+import { copySampleAsset, errnoCode, messageOf, type SampleCopyError } from "./sample-copy";
 import type { ManagedConnection, SampleUnavailableReason } from "./types";
 
 /** One built-in sample. */
@@ -142,7 +142,10 @@ export function sampleAssetPath(spec: SampleSpec): string {
 }
 
 /** Why an enabled sample's target is refused before any copy, or null when it is admitted. */
-export type SampleAdmissionRefusal = Extract<SampleUnavailableReason, "target-reserved" | "target-conflict">;
+export type SampleAdmissionRefusal = Extract<
+  SampleUnavailableReason,
+  "target-unreadable" | "target-reserved" | "target-conflict"
+>;
 
 /** An enabled sample, its target, and whether that target is admitted. */
 export interface SampleAdmission {
@@ -150,25 +153,30 @@ export interface SampleAdmission {
   readonly spec: SampleSpec;
   readonly target: string;
   readonly refusal: SampleAdmissionRefusal | null;
-}
-
-/** The files a sample on `target` can create: the engines' sidecars and the copy's own temp. */
-function targetFamily(target: string): string[] {
-  const resolved = path.resolve(target);
-  return [
-    resolved,
-    `${resolved}-wal`,
-    `${resolved}-shm`,
-    `${resolved}-journal`,
-    `${resolved}.lock`,
-    `${resolved}.${process.pid}.seeding`,
-  ];
+  /** With `target-unreadable` only: the errno code and message of the error the path check threw. */
+  readonly failure?: { readonly code: string | undefined; readonly message: string };
 }
 
 /**
- * The enabled samples, in table order, each with its target and admission, computed on every call. A sample any of
- * whose family names one of the server's own storage files (`isReservedStoragePath`) is refused `target-reserved`; a
- * sample whose family shares a file with an earlier admitted sample's is refused `target-conflict`.
+ * The files a sample on `target` can create, as real paths (`canonicalPath`), so two spellings of one file, through a
+ * symlinked directory for one, name one family: the target and the engines' sidecars. The copy's temp is not a member:
+ * its name carries a random part (src/lib/seed/sample-copy.ts), so no other path can name it. Throws what the path
+ * check throws.
+ */
+function targetFamily(target: string): string[] {
+  const resolved = canonicalPath(path.resolve(target));
+  return [resolved, `${resolved}-wal`, `${resolved}-shm`, `${resolved}-journal`, `${resolved}.lock`];
+}
+
+/**
+ * The enabled samples, in table order, each with its target and admission, computed on every call; it never throws. A
+ * sample whose target's path cannot be checked (an error other than ENOENT, such as EACCES, ENOTDIR or ELOOP, from
+ * resolving it or checking its family) is refused `target-unreadable` with that error; a sample any of whose family
+ * names one of the server's own storage files (`isReservedStoragePath`) is refused `target-reserved`; a sample whose
+ * family shares a file with an earlier admitted sample's is refused `target-conflict`. A refused sample claims nothing.
+ *
+ * Two spellings that differ only in letter case on a case-insensitive filesystem are not resolved to one path for a
+ * file that does not exist yet.
  */
 export function sampleAdmissions(): SampleAdmission[] {
   const claimed = new Set<string>();
@@ -176,9 +184,18 @@ export function sampleAdmissions(): SampleAdmission[] {
   for (const [type, spec] of SAMPLES) {
     if (!sampleEnabled(type, spec)) continue;
     const target = sampleTarget(spec);
-    const family = targetFamily(target);
+    let family: string[];
+    let reserved: boolean;
+    try {
+      family = targetFamily(target);
+      reserved = family.some((file) => isReservedStoragePath(file));
+    } catch (error) {
+      const failure = { code: errnoCode(error), message: messageOf(error) };
+      admissions.push({ type, spec, target, refusal: "target-unreadable", failure });
+      continue;
+    }
     let refusal: SampleAdmissionRefusal | null = null;
-    if (family.some((file) => isReservedStoragePath(file))) refusal = "target-reserved";
+    if (reserved) refusal = "target-reserved";
     else if (family.some((file) => claimed.has(file))) refusal = "target-conflict";
     else for (const file of family) claimed.add(file);
     admissions.push({ type, spec, target, refusal });
@@ -186,15 +203,23 @@ export function sampleAdmissions(): SampleAdmission[] {
   return admissions;
 }
 
+function withCode(code: string | undefined): string {
+  return code === undefined ? "" : ` (${code})`;
+}
+
 /** The sentence a client shows for an unavailable sample: it names no path and no secret, and says where to look. */
 export function unavailableSentence(reason: SampleUnavailableReason, code?: string): string {
   switch (reason) {
     case "asset-missing":
       return "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied. The server log names the path.";
+    case "asset-unreadable":
+      return `This sample's file in the seed assets directory (SEED_ASSETS_DIR) could not be read${withCode(code)}, so it was not copied. The server log names the path.`;
     case "digest-mismatch":
       return "This sample's file in the seed assets directory is not the one this LibreDB Studio ships, so it was not copied.";
     case "copy-failed":
-      return `This sample could not be copied into the server's data directory${code === undefined ? "" : ` (${code})`}. The server log names the path.`;
+      return `This sample could not be copied into the server's data directory${withCode(code)}. The server log names the path.`;
+    case "target-unreadable":
+      return `The server could not check this sample's path${withCode(code)}, so the sample is not created there. The server log names the path.`;
     case "target-reserved":
       return "This sample's path names one of the server's own storage files, so the sample is not created there.";
     case "target-conflict":
@@ -267,15 +292,20 @@ export function sampleConnection(type: DatabaseType, spec: SampleSpec): ManagedC
 export function startSampleSeeding(): Promise<void> {
   const assets = seedAssetsDirectory();
   const copies: Promise<void>[] = [];
-  for (const { spec, target, refusal } of sampleAdmissions()) {
+  for (const { spec, target, refusal, failure } of sampleAdmissions()) {
     if (refusal !== null) {
-      setSampleSeedState(spec.seedId, { phase: "failed", reason: refusal, sentence: unavailableSentence(refusal) });
+      setSampleSeedState(spec.seedId, {
+        phase: "failed",
+        reason: refusal,
+        sentence: unavailableSentence(refusal, failure?.code),
+      });
       logger.warn("Embedded sample unavailable", {
         route: "instrumentation",
         seedId: spec.seedId,
         reason: refusal,
         target,
         assets,
+        ...(failure === undefined ? {} : { error: failure.message }),
       });
       continue;
     }

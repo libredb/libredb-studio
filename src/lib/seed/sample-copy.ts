@@ -4,7 +4,7 @@
  *
  * No engine opens anything: the bytes are copied as they are, and no `-wal`, `-shm` or `.lock` file is created.
  */
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { logger } from "@/lib/logger";
@@ -18,7 +18,10 @@ export interface PinnedAsset {
 }
 
 /** The reasons a copy itself can fail, a subset of the reasons a sample is listed unavailable. */
-export type SampleCopyFailure = Extract<SampleUnavailableReason, "asset-missing" | "digest-mismatch" | "copy-failed">;
+export type SampleCopyFailure = Extract<
+  SampleUnavailableReason,
+  "asset-missing" | "asset-unreadable" | "digest-mismatch" | "copy-failed"
+>;
 
 /** A copy that failed, with its reason, the errno code of the error underneath when it has one, and that error. */
 export class SampleCopyError extends Error {
@@ -33,13 +36,15 @@ export class SampleCopyError extends Error {
   }
 }
 
-function errnoCode(error: unknown): string | undefined {
+/** The errno code of an error, such as `EACCES`, when it has one. */
+export function errnoCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null) return undefined;
   const { code } = error as { code?: unknown };
   return typeof code === "string" ? code : undefined;
 }
 
-function messageOf(error: unknown): string {
+/** An error's message, or the text of a thrown value that is not an Error. */
+export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -60,17 +65,21 @@ async function targetPresent(target: string): Promise<boolean> {
  *
  * 1. An existing target is never touched: "present".
  * 2. The asset must be a regular file (else `asset-missing`) of the pinned size (else `digest-mismatch`), checked
- *    before any byte is written.
- * 3. The target's directory is created, a stale `<target>.<pid>.seeding` from a crashed boot with a reused pid is
- *    removed, and the temp is opened exclusively (`wx`).
- * 4. The asset is streamed into the temp and into a SHA-256; a stream that passes the pinned size is refused at once.
- * 5. Size and digest must equal the pins (else `digest-mismatch`); the temp is flushed (`sync`) and closed, so a
- *    published file is complete across a power loss.
+ *    before any byte is written. An asset that cannot be checked for another reason is `asset-unreadable`.
+ * 3. The target's directory is created, and the temp `<target>.<pid>.<random UUID>.seeding` is opened exclusively
+ *    (`wx`). The name is this copy's own, so two copies never share a temp, not even two processes with one pid on
+ *    one data directory (replicas on a shared volume, each running the server as pid 1). A temp a crashed copy left
+ *    behind is never touched, and stays until someone removes it.
+ * 4. The asset is streamed into the temp and into a SHA-256; a stream that passes the pinned size is refused at once,
+ *    and an asset that cannot be read is `asset-unreadable`.
+ * 5. Size and digest must equal the pins (else `digest-mismatch`); the temp is flushed (`sync`) after its last write
+ *    and closed, so a published file is complete across a power loss.
  * 6. The temp is renamed onto the target. A rename that fails while the target now exists means another seeder
  *    published first: the temp is removed and the answer is "present" (Windows refuses a rename over an open file).
  *
- * Any failure removes the temp and leaves no target; a temp that cannot be removed is logged, and the first error is
- * the one reported. Every failure in steps 3 to 6 that is not a digest mismatch is `copy-failed`, with its errno code.
+ * Any failure removes the temp and leaves no target; a temp that cannot be closed or removed is logged, and the first
+ * error is the one reported. Every other failure in steps 3 to 6, on the data directory's side, is `copy-failed`, with
+ * its errno code.
  *
  * Invariant: a rename replaces a file only when another seeder published it after this one's existence check, and
  * that file holds the same pinned bytes. A `link()` publish would refuse to replace anything, but filesystems without
@@ -93,7 +102,7 @@ export async function copySampleAsset(pinned: PinnedAsset, target: string): Prom
       throw new SampleCopyError("asset-missing", `The sample asset ${pinned.asset} does not exist.`, error);
     }
     throw new SampleCopyError(
-      "copy-failed",
+      "asset-unreadable",
       `Could not read the sample asset ${pinned.asset}: ${messageOf(error)}`,
       error,
     );
@@ -108,10 +117,9 @@ export async function copySampleAsset(pinned: PinnedAsset, target: string): Prom
     );
   }
 
-  const temp = `${target}.${process.pid}.seeding`;
+  const temp = `${target}.${process.pid}.${randomUUID()}.seeding`;
   try {
     await fs.promises.mkdir(path.dirname(target), { recursive: true });
-    await fs.promises.rm(temp, { force: true });
     await writeVerified(pinned, temp);
     try {
       await fs.promises.rename(temp, target);
@@ -132,26 +140,37 @@ export async function copySampleAsset(pinned: PinnedAsset, target: string): Prom
   }
 }
 
-/** Steps 3 (the exclusive open) to 5 of copySampleAsset: the temp holds the pinned bytes, flushed and closed. */
+/**
+ * Steps 3 (the exclusive open) to 5 of copySampleAsset: the temp holds the pinned bytes, flushed and closed. On a
+ * failure the handle is closed and the failure rethrown; a close that fails then is logged and never replaces it. A
+ * close that fails after a verified write is the failure.
+ */
 async function writeVerified(pinned: PinnedAsset, temp: string): Promise<void> {
   const handle = await fs.promises.open(temp, "wx");
   try {
     const digest = createHash("sha256");
     let count = 0;
-    for await (const chunk of fs.createReadStream(pinned.asset)) {
-      const bytes = chunk as Buffer;
-      count += bytes.length;
-      if (count > pinned.bytes) {
-        throw new SampleCopyError(
-          "digest-mismatch",
-          `The sample asset ${pinned.asset} holds more than the pinned ${pinned.bytes} bytes.`,
-        );
+    try {
+      for await (const chunk of fs.createReadStream(pinned.asset)) {
+        const bytes = chunk as Buffer;
+        count += bytes.length;
+        if (count > pinned.bytes) {
+          throw new SampleCopyError(
+            "digest-mismatch",
+            `The sample asset ${pinned.asset} holds more than the pinned ${pinned.bytes} bytes.`,
+          );
+        }
+        digest.update(bytes);
+        await writeChunk(handle, bytes, temp);
       }
-      digest.update(bytes);
-      const { bytesWritten } = await handle.write(bytes, 0, bytes.length);
-      if (bytesWritten !== bytes.length) {
-        throw new Error(`short write: ${bytesWritten} of ${bytes.length} bytes reached ${temp}`);
-      }
+    } catch (error) {
+      // The loop body throws nothing but a SampleCopyError, so any other error came from reading the asset.
+      if (error instanceof SampleCopyError) throw error;
+      throw new SampleCopyError(
+        "asset-unreadable",
+        `Could not read the sample asset ${pinned.asset}: ${messageOf(error)}`,
+        error,
+      );
     }
     const sha256 = digest.digest("hex");
     if (count !== pinned.bytes || sha256 !== pinned.sha256) {
@@ -161,8 +180,35 @@ async function writeVerified(pinned: PinnedAsset, temp: string): Promise<void> {
       );
     }
     await handle.sync();
-  } finally {
+  } catch (error) {
+    await closeAfterFailure(handle, temp);
+    throw error;
+  }
+  await handle.close();
+}
+
+/** One chunk into the temp, whole: a write that fails or falls short is `copy-failed`. */
+async function writeChunk(handle: fs.promises.FileHandle, bytes: Buffer, temp: string): Promise<void> {
+  let written: number;
+  try {
+    ({ bytesWritten: written } = await handle.write(bytes, 0, bytes.length));
+  } catch (error) {
+    throw new SampleCopyError("copy-failed", `Could not write the sample temp ${temp}: ${messageOf(error)}`, error);
+  }
+  if (written !== bytes.length) {
+    throw new SampleCopyError(
+      "copy-failed",
+      `Could not write the sample temp ${temp}: short write, ${written} of ${bytes.length} bytes`,
+    );
+  }
+}
+
+/** Close the temp after a failure; a close that fails is logged and never replaces the failure being reported. */
+async function closeAfterFailure(handle: fs.promises.FileHandle, temp: string): Promise<void> {
+  try {
     await handle.close();
+  } catch (error) {
+    logger.warn("Embedded sample temp not closed", { route: "instrumentation", temp, error: messageOf(error) });
   }
 }
 

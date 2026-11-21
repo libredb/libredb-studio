@@ -739,13 +739,16 @@ export interface ManagedConnection extends DatabaseConnection, WithLiteralSeedFi
 
 /**
  * Why a built-in sample (src/lib/seed/samples.ts) has no file to list: its asset is not in the seed assets directory,
- * its asset is not the pinned one, the copy into the data directory failed, or its target was refused before any copy
- * because it names one of the server's own storage files or another sample's file.
+ * its asset could not be read, its asset is not the pinned one, the copy into the data directory failed, or its target
+ * was refused before any copy because its path could not be checked or names one of the server's own storage files or
+ * another sample's file.
  */
 export type SampleUnavailableReason =
   | "asset-missing"
+  | "asset-unreadable"
   | "digest-mismatch"
   | "copy-failed"
+  | "target-unreadable"
   | "target-reserved"
   | "target-conflict";
 

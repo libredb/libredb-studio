@@ -111,6 +111,37 @@ describe("getManagedConnections: sqlite embedded sample", () => {
     }
   });
 
+  test("a target whose path cannot be checked is unavailable, and every listing still answers for every role", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sqlite-sample-managed-"));
+    tmpDirs.push(dir);
+    const blocker = path.join(dir, "a-regular-file");
+    writeSampleFile(blocker);
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
+    const libredbFile = path.join(dir, "sample.libredb");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbFile;
+    const savedAssets = process.env.SEED_ASSETS_DIR;
+    process.env.SEED_ASSETS_DIR = path.resolve(import.meta.dir, "../../../seed-assets");
+    try {
+      await startSampleSeeding();
+      expect(fs.existsSync(libredbFile)).toBe(true);
+      expect((await getManagedConnections(["admin"])).map((c) => c.seedId)).toEqual([LIBREDB_SAMPLE_SEED_ID]);
+      expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toEqual([LIBREDB_SAMPLE_SEED_ID]);
+      expect(getPendingSeeds()).toEqual([]);
+      expect(getUnavailableSamples(["admin"])).toEqual([
+        {
+          seedId: SQLITE_SAMPLE_SEED_ID,
+          name: "Sample (Employees)",
+          reason: "target-unreadable",
+          sentence: unavailableSentence("target-unreadable", "ENOTDIR"),
+        },
+      ]);
+      expect(getUnavailableSamples(["user"])).toEqual([]);
+    } finally {
+      if (savedAssets === undefined) delete process.env.SEED_ASSETS_DIR;
+      else process.env.SEED_ASSETS_DIR = savedAssets;
+    }
+  });
+
   /*
     Order is the default connection. `useConnectionManager` selects the first merged
     connection when no active id is persisted, so whichever sample leads is what a

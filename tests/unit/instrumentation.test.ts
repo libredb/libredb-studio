@@ -442,6 +442,61 @@ describe("instrumentation register()", () => {
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
   });
 
+  test("a sample whose path cannot be checked is listed unavailable, logged once, and boot continues with the other", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    const blocker = path.join(tmpDir, "a-regular-file");
+    fs.writeFileSync(blocker, "");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
+    const libredbFile = path.join(tmpDir, "sample.libredb");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbFile;
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await register();
+      await waitFor(() => getPendingSeeds().length === 0);
+      expect(
+        warn.mock.calls.filter((c) => c[0] === "Embedded sample unavailable").map((c) => [c[1]?.seedId, c[1]?.reason]),
+      ).toEqual([["sqlite-embedded-sample", "target-unreadable"]]);
+      expect(getUnavailableSamples(["admin"])).toEqual([
+        {
+          seedId: "sqlite-embedded-sample",
+          name: "Sample (Employees)",
+          reason: "target-unreadable",
+          sentence: unavailableSentence("target-unreadable", "ENOTDIR"),
+        },
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(fs.statSync(libredbFile).size).toBe(SAMPLES.get("libredb")?.bytes ?? -1);
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "a sample in a directory the server cannot search does not stop boot (POSIX, not root)",
+    async () => {
+      process.env.NEXT_RUNTIME = "nodejs";
+      process.env.AUTH_BOOTSTRAP = "off";
+      const locked = path.join(tmpDir, "locked");
+      fs.mkdirSync(locked);
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(locked, "sample-employees.db");
+      const libredbFile = path.join(tmpDir, "sample.libredb");
+      process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbFile;
+      fs.chmodSync(locked, 0o000);
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        await register();
+        await waitFor(() => getPendingSeeds().length === 0);
+        expect(getUnavailableSamples(["admin"]).map(({ reason, sentence }) => ({ reason, sentence }))).toEqual([
+          { reason: "target-unreadable", sentence: unavailableSentence("target-unreadable", "EACCES") },
+        ]);
+        expect(fs.existsSync(libredbFile)).toBe(true);
+      } finally {
+        warn.mockRestore();
+        fs.chmodSync(locked, 0o700);
+      }
+    },
+  );
+
   test("prints the boot banner even when both samples are disabled", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.AUTH_BOOTSTRAP = "off";

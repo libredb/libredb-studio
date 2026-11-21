@@ -141,7 +141,7 @@ describe("copySampleAsset", () => {
     );
   });
 
-  test("an asset that cannot be read for another reason is copy-failed naming its code", async () => {
+  test("an asset that cannot be checked for another reason is asset-unreadable naming its code", async () => {
     const { pinned, target } = fixture();
     const stat = spyOn(fs.promises, "stat").mockImplementation((async (file: fs.PathLike) => {
       if (file === pinned.asset) throw Object.assign(new Error("EACCES: simulated"), { code: "EACCES" });
@@ -149,11 +149,28 @@ describe("copySampleAsset", () => {
     }) as typeof fs.promises.stat);
     try {
       const error = await failure(copySampleAsset(pinned, target));
-      expect({ reason: error.reason, code: error.code }).toEqual({ reason: "copy-failed", code: "EACCES" });
+      expect({ reason: error.reason, code: error.code }).toEqual({ reason: "asset-unreadable", code: "EACCES" });
+      expect(error.message).toContain(pinned.asset);
     } finally {
       stat.mockRestore();
     }
   });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "an asset that exists but cannot be read is asset-unreadable naming EACCES and leaves no temp (POSIX, not root)",
+    async () => {
+      const { pinned, target, targetDir } = fixture();
+      fs.chmodSync(pinned.asset, 0o000);
+      try {
+        const error = await failure(copySampleAsset(pinned, target));
+        expect({ reason: error.reason, code: error.code }).toEqual({ reason: "asset-unreadable", code: "EACCES" });
+        expect(error.message).toContain(pinned.asset);
+        expect(fs.readdirSync(targetDir)).toEqual([]);
+      } finally {
+        fs.chmodSync(pinned.asset, 0o600);
+      }
+    },
+  );
 
   test("a target that cannot be checked is copy-failed naming its code", async () => {
     const { pinned, target } = fixture();
@@ -217,7 +234,10 @@ describe("copySampleAsset", () => {
     const open = spyOn(fs.promises, "open").mockImplementation((async (file: fs.PathLike, flags?: string | number) => {
       const handle = await realOpen(file, flags);
       return Object.assign(Object.create(handle), {
-        write: (...args: Parameters<typeof handle.write>) => handle.write(...args),
+        write: (...args: Parameters<typeof handle.write>) => {
+          calls.push("write");
+          return handle.write(...args);
+        },
         sync: async () => {
           calls.push("sync");
           await handle.sync();
@@ -235,19 +255,54 @@ describe("copySampleAsset", () => {
     }) as typeof fs.promises.rename);
     try {
       expect(await copySampleAsset(pinned, target)).toBe("copied");
-      expect(calls).toEqual(["sync", "close", "rename"]);
+      // Every write lands before the flush, so the flush covers the last byte.
+      expect(calls.filter((call) => call !== "write").length).toBe(3);
+      expect(calls.indexOf("write")).toBe(0);
+      expect(calls.slice(calls.lastIndexOf("write") + 1)).toEqual(["sync", "close", "rename"]);
     } finally {
       open.mockRestore();
       rename.mockRestore();
     }
   });
 
-  test("discards a stale temp of this pid first", async () => {
+  test("each copy writes a temp of its own, named for its pid and a random part", async () => {
+    const { pinned, target, targetDir } = fixture(Buffer.alloc(300_000, 3));
+    const temps: string[] = [];
+    const realOpen = fs.promises.open;
+    const open = spyOn(fs.promises, "open").mockImplementation((async (file: fs.PathLike, flags?: string | number) => {
+      if (flags === "wx") temps.push(String(file));
+      return realOpen(file, flags);
+    }) as typeof fs.promises.open);
+    try {
+      // Two copies in one process share its pid, as two replicas that each run the server as pid 1 do.
+      const outcomes = await Promise.all([copySampleAsset(pinned, target), copySampleAsset(pinned, target)]);
+      expect(outcomes.includes("copied")).toBe(true);
+      expect(outcomes.every((outcome) => outcome === "copied" || outcome === "present")).toBe(true);
+    } finally {
+      open.mockRestore();
+    }
+    expect(temps.length).toBe(2);
+    expect(new Set(temps).size).toBe(2);
+    const prefix = `${target}.${process.pid}.`;
+    for (const temp of temps) {
+      expect(temp.startsWith(prefix)).toBe(true);
+      expect(temp.endsWith(".seeding")).toBe(true);
+      expect(temp.slice(prefix.length, -".seeding".length)).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+    }
+    expect(fs.readdirSync(targetDir)).toEqual(["sample.db"]);
+    expect(fs.readFileSync(target).equals(fs.readFileSync(pinned.asset))).toBe(true);
+  });
+
+  test("never touches a temp another copy left, even one of this pid", async () => {
     const { pinned, target, targetDir } = fixture();
     fs.mkdirSync(targetDir);
-    fs.writeFileSync(`${target}.${process.pid}.seeding`, "half a copy from a crashed boot");
+    const leftover = `${target}.${process.pid}.seeding`;
+    fs.writeFileSync(leftover, "another copy's unfinished temp");
     expect(await copySampleAsset(pinned, target)).toBe("copied");
-    expect(fs.readdirSync(targetDir)).toEqual(["sample.db"]);
+    expect(fs.readdirSync(targetDir).sort()).toEqual(["sample.db", path.basename(leftover)].sort());
+    expect(fs.readFileSync(leftover, "utf8")).toBe("another copy's unfinished temp");
     expect(fs.readFileSync(target).equals(fs.readFileSync(pinned.asset))).toBe(true);
   });
 
@@ -286,24 +341,79 @@ describe("copySampleAsset", () => {
       throw Object.assign(new Error("EACCES: simulated rename failure"), { code: "EACCES" });
     }) as typeof fs.promises.rename);
     const realRm = fs.promises.rm;
-    let removals = 0;
+    const removed: string[] = [];
     const rm = spyOn(fs.promises, "rm").mockImplementation((async (file: fs.PathLike, options?: fs.RmOptions) => {
-      removals += 1;
-      // The first removal is the stale-temp discard before the copy; the second is the cleanup after the failure.
-      if (removals === 2) throw Object.assign(new Error("EBUSY: simulated removal failure"), { code: "EBUSY" });
+      removed.push(String(file));
+      // The only removal is the cleanup after the failure.
+      if (removed.length === 1) throw Object.assign(new Error("EBUSY: simulated removal failure"), { code: "EBUSY" });
       await realRm(file, options);
     }) as typeof fs.promises.rm);
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
       const error = await failure(copySampleAsset(pinned, target));
       expect({ reason: error.reason, code: error.code }).toEqual({ reason: "copy-failed", code: "EACCES" });
+      expect(removed.length).toBe(1);
+      expect(removed[0]?.startsWith(`${target}.${process.pid}.`)).toBe(true);
       expect(warn.mock.calls.map(([message, context]) => [message, context?.temp, context?.error])).toEqual([
-        ["Embedded sample temp not removed", `${target}.${process.pid}.seeding`, "EBUSY: simulated removal failure"],
+        ["Embedded sample temp not removed", removed[0], "EBUSY: simulated removal failure"],
       ]);
     } finally {
       rename.mockRestore();
       rm.mockRestore();
       warn.mockRestore();
+    }
+  });
+
+  test("a close that fails after a failure is logged, and the first failure is the one reported", async () => {
+    const { pinned, target, targetDir } = fixture();
+    const changed = fs.readFileSync(pinned.asset);
+    changed[0] = (changed[0] ?? 0) ^ 1;
+    fs.writeFileSync(pinned.asset, changed);
+    const realOpen = fs.promises.open;
+    const open = spyOn(fs.promises, "open").mockImplementation((async (file: fs.PathLike, flags?: string | number) => {
+      const handle = await realOpen(file, flags);
+      return Object.assign(Object.create(handle), {
+        write: (...args: Parameters<typeof handle.write>) => handle.write(...args),
+        close: async () => {
+          await handle.close();
+          throw Object.assign(new Error("EIO: simulated close failure"), { code: "EIO" });
+        },
+      });
+    }) as typeof fs.promises.open);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const error = await failure(copySampleAsset(pinned, target));
+      expect(error.reason).toBe("digest-mismatch");
+      expect(warn.mock.calls.map(([message, context]) => [message, context?.error])).toEqual([
+        ["Embedded sample temp not closed", "EIO: simulated close failure"],
+      ]);
+      expect(String(warn.mock.calls[0]?.[1]?.temp).startsWith(`${target}.${process.pid}.`)).toBe(true);
+      expect(fs.readdirSync(targetDir)).toEqual([]);
+    } finally {
+      open.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  test("a close that fails after a verified write is copy-failed naming its code", async () => {
+    const { pinned, target, targetDir } = fixture();
+    const realOpen = fs.promises.open;
+    const open = spyOn(fs.promises, "open").mockImplementation((async (file: fs.PathLike, flags?: string | number) => {
+      const handle = await realOpen(file, flags);
+      return Object.assign(Object.create(handle), {
+        write: (...args: Parameters<typeof handle.write>) => handle.write(...args),
+        close: async () => {
+          await handle.close();
+          throw Object.assign(new Error("EIO: simulated close failure"), { code: "EIO" });
+        },
+      });
+    }) as typeof fs.promises.open);
+    try {
+      const error = await failure(copySampleAsset(pinned, target));
+      expect({ reason: error.reason, code: error.code }).toEqual({ reason: "copy-failed", code: "EIO" });
+      expect(fs.readdirSync(targetDir)).toEqual([]);
+    } finally {
+      open.mockRestore();
     }
   });
 

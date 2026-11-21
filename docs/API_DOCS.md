@@ -2283,9 +2283,9 @@ Auth required. Returns seed/managed connections for the current user's role. A `
 ```
 
 `pendingSeeds` lists the seed ids of the built-in samples whose copy at boot is still in flight, `sqlite-embedded-sample` and `libredb-embedded-sample`, in that order; a client polls while it is not empty, so a sample appears without a page refresh.
-`unavailableSamples` lists the built-in samples offered to the session's roles whose copy failed or whose target was refused, so they have no file and are not in `connections` ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
+`unavailableSamples` lists the built-in samples offered to the session's roles whose copy failed or whose target was refused or could not be checked, so they have no file and are not in `connections` ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
 The SQLite sample is offered to the `admin` role only, and the LibreDB sample to every role.
-Each entry carries `seedId`, `name`, `reason` (`asset-missing`, `digest-mismatch`, `copy-failed`, `target-reserved` or `target-conflict`) and `sentence`, which a client shows and which names no path:
+Each entry carries `seedId`, `name`, `reason` (`asset-missing`, `asset-unreadable`, `digest-mismatch`, `copy-failed`, `target-unreadable`, `target-reserved` or `target-conflict`) and `sentence`, which a client shows and which names no path:
 
 ```json
 {
