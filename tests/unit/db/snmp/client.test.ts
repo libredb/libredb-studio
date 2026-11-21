@@ -107,20 +107,26 @@ describe("a target is resolved and checked before a socket exists", () => {
     expect(await resolveTarget("::1", 161)).toMatchObject({ address: "::1", family: 6 });
     expect(await resolveTarget("[::1]", 161)).toMatchObject({ address: "::1", family: 6 });
   });
-  test("a dotted host that is not an IP literal is resolved as a name and checked as one", async () => {
-    // `127.1` is not an IP literal (`isIP` answers 0), but a resolver reads it as 127.0.0.1. It is resolved here, so
-    // the socket is connected to the address the checks saw.
-    expect(await resolveTarget("127.1", 161)).toMatchObject({ address: "127.0.0.1", family: 4, asked: "127.1" });
-    const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-    const before = process.env[flag];
-    process.env[flag] = "true";
-    try {
-      await expect(resolveTarget("127.1", 161)).rejects.toThrow(DatabaseConfigError);
-    } finally {
-      if (before === undefined) delete process.env[flag];
-      else process.env[flag] = before;
-    }
-  });
+  // Named in the title rather than returned early from the body, the way tests/unit/lib/auth-bootstrap.test.ts does it.
+  // Windows' resolver answers ENOTFOUND for `127.1`, so there the name fails to resolve by name and nothing reaches a
+  // socket either; measured on windows-latest.
+  test.skipIf(process.platform === "win32")(
+    "a dotted host that is not an IP literal is resolved as a name and checked as one (not on Windows: its resolver does not read 127.1 as 127.0.0.1)",
+    async () => {
+      // `127.1` is not an IP literal (`isIP` answers 0), but a resolver that reads the inet_aton shorthand answers
+      // 127.0.0.1. It is resolved here, so the socket is connected to the address the checks saw.
+      expect(await resolveTarget("127.1", 161)).toMatchObject({ address: "127.0.0.1", family: 4, asked: "127.1" });
+      const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
+      const before = process.env[flag];
+      process.env[flag] = "true";
+      try {
+        await expect(resolveTarget("127.1", 161)).rejects.toThrow(DatabaseConfigError);
+      } finally {
+        if (before === undefined) delete process.env[flag];
+        else process.env[flag] = before;
+      }
+    },
+  );
 });
 
 /** A real socket the exchange is handed, with a record of whether the exchange closed it. */
