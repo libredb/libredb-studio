@@ -359,16 +359,21 @@ const mockCreateSSHTunnel = mock(async (_id: string, _sshConfig: unknown, remote
 const mockCloseSSHTunnel = mock(async () => {});
 
 /**
- * Takes its arguments so the assertions on them are not vacuous: the factory must ask about ONE
- * forward - this connection's route and far end - and the loose question would answer `true` for
- * a forward this call is about to open, which is the FD-leak the `tunnelPreexisted` flag guards.
+ * The two reports a cached entry point makes on the tunnel it was handed: its provider opened, or it did not and the
+ * tunnel is released. Whether a release closes the forward is the pool's decision (it closes only when no other caller
+ * is connecting through it and no provider opened on it), and `tests/unit/lib/ssh/tunnel-factory-share.test.ts` drives
+ * that against the real pool. This release closes, which is the pool's answer for a forward only this call held; a test
+ * that needs the pool to keep the forward overrides it.
  */
-const mockHasTunnel = mock((_connectionId: string, _forward?: unknown) => false);
+const releaseByClosing = async (tunnel: unknown) => (tunnel as { close: () => Promise<void> }).close();
+const mockReleaseUnopenedTunnel = mock(releaseByClosing);
+const mockTunnelProviderOpened = mock((_tunnel: unknown) => {});
 
 mock.module("@/lib/ssh/tunnel", () => ({
   createSSHTunnel: mockCreateSSHTunnel,
   closeSSHTunnel: mockCloseSSHTunnel,
-  hasTunnel: mockHasTunnel,
+  releaseUnopenedTunnel: mockReleaseUnopenedTunnel,
+  tunnelProviderOpened: mockTunnelProviderOpened,
   getTunnelInfo: mock(() => undefined),
 }));
 
@@ -447,6 +452,11 @@ beforeEach(async () => {
   await clearProviderCache();
   mockCreateSSHTunnel.mockClear();
   mockCloseSSHTunnel.mockClear();
+  // A reset, not a clear: a test that overrides one release and fails before its call would otherwise leave the
+  // override queued for whichever later test releases a tunnel next.
+  mockReleaseUnopenedTunnel.mockReset();
+  mockReleaseUnopenedTunnel.mockImplementation(releaseByClosing);
+  mockTunnelProviderOpened.mockClear();
 });
 
 // ─── createDatabaseProvider ────────────────────────────────────────────────
@@ -1669,13 +1679,11 @@ describe("getOrCreateProvider", () => {
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
   });
 
-  test("asks the pool about THIS forward, route and far end, before opening one", async () => {
-    // D86. `tunnelPreexisted` decides whether a failed connect may close the tunnel, so the
-    // question has to be the specific one: a loose `hasTunnel(id)` answers `true` for any forward
-    // under the id, and the forward this call opened would then be left open on failure. Deleting
-    // the second argument in `getOrCreateProvider` fails here and nowhere else.
+  test("reports the provider that opened through the tunnel to the pool, and releases nothing", async () => {
+    // A provider that opened leaves its forward to the connection's teardown, so a concurrent connect of the same
+    // forward that fails cannot close it under this provider.
     const conn = makeConnection("sqlite", {
-      id: "ssh-has-tunnel-args",
+      id: "ssh-tunnel-opened",
       host: "remote-db.example.com",
       port: 5432,
       sshTunnel: {
@@ -1690,10 +1698,9 @@ describe("getOrCreateProvider", () => {
 
     await getOrCreateProvider(conn);
 
-    expect(mockHasTunnel).toHaveBeenLastCalledWith("ssh-has-tunnel-args", {
-      ssh: conn.sshTunnel,
-      farEnd: { host: "remote-db.example.com", port: 5432 },
-    });
+    const tunnel = await mockCreateSSHTunnel.mock.results[0]?.value;
+    expect(mockTunnelProviderOpened.mock.calls).toEqual([[tunnel]]);
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
   });
 
   test("seals the far end the tunnel forwards to, not the one the record names", async () => {
@@ -1751,14 +1758,16 @@ describe("getOrCreateProvider", () => {
 
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
     const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
+    expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
     expect(tunnel?.close).toHaveBeenCalledTimes(1);
+    expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
     expect(getProviderCacheStats().size).toBe(0);
   });
 
-  test("does not close a pre-existing tunnel when provider connect fails", async () => {
-    // createSSHTunnel returns the existing tunnel for the connection id, so a
-    // failed connect must not tear down a tunnel another provider (e.g. an
-    // execution-profile one) is still using.
+  test("leaves a tunnel the pool keeps open when provider connect fails", async () => {
+    // createSSHTunnel hands every caller of one forward the same forward, so a failed connect
+    // releases it to the pool and does not close it itself: another provider (e.g. an
+    // execution-profile one) may be connecting or serving through it.
     const conn = makeConnection("sqlite", {
       id: "ssh-connect-fail-shared",
       database: "bad\u0000path.db",
@@ -1771,11 +1780,12 @@ describe("getOrCreateProvider", () => {
         password: "secret",
       },
     } as Partial<DatabaseConnection>);
-    mockHasTunnel.mockReturnValueOnce(true);
+    mockReleaseUnopenedTunnel.mockImplementationOnce(async () => {});
 
     await expect(getOrCreateProvider(conn)).rejects.toThrow(/NUL bytes/);
 
     const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
+    expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
     expect(tunnel?.close).not.toHaveBeenCalled();
     expect(getProviderCacheStats().size).toBe(0);
   });
@@ -3839,15 +3849,12 @@ describe("acquireExecutionProfileProvider", () => {
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
     expect(agent.config.host).toBe("127.0.0.1");
     expect(agent.config.port).toBe(54321);
-    // The same specific question as the writable path, for the same reason (D86): this
-    // acquisition may only tear down a forward it opened itself.
-    expect(mockHasTunnel).toHaveBeenLastCalledWith("pg-tunnel-profile", {
-      ssh: conn.sshTunnel,
-      farEnd: { host: "remote-db.example.com", port: 5432 },
-    });
+    // The same report as the writable path, for the same reason: a provider opened on the forward.
+    expect(mockTunnelProviderOpened.mock.calls).toEqual([[await mockCreateSSHTunnel.mock.results[0]?.value]]);
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
   });
 
-  test("tears down a freshly created tunnel when the profile connection fails", async () => {
+  test("releases the tunnel when the profile connection fails", async () => {
     const conn = pgConn({
       id: "pg-tunnel-fail",
       sshTunnel: {
@@ -3870,11 +3877,49 @@ describe("acquireExecutionProfileProvider", () => {
       const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as
         | { close: ReturnType<typeof mock> }
         | undefined;
+      expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
       expect(tunnel?.close).toHaveBeenCalledTimes(1);
+      expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
       expect(getExecutionProfileCacheStats().size).toBe(0);
     } finally {
       mockPgPool.connect = originalConnect;
     }
+  });
+
+  test.each([
+    [
+      "the agent credential is refused for its form",
+      pgConn({ id: "pg-tunnel-credential-form", agentUser: "agent_ro" }),
+      "AGENT_CREDENTIAL_UNRESOLVABLE" as const,
+    ],
+    [
+      "the provider has no read-only statement path",
+      makeConnection("spark", { id: "spark-tunnel-profile" }),
+      "PROFILE_UNSUPPORTED_BY_PROVIDER" as const,
+    ],
+  ])("releases the tunnel when %s", async (_refusal, connection, reasonCode) => {
+    const tunnelled: DatabaseConnection = {
+      ...connection,
+      host: "remote-db.example.com",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.com",
+        port: 22,
+        username: "admin",
+        authMethod: "password",
+        password: "secret",
+      },
+    };
+
+    const error: unknown = await acquireExecutionProfileProvider(tunnelled, "agent-read-only").catch((e: unknown) => e);
+
+    expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe(reasonCode);
+    const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
+    expect(tunnel).toBeDefined();
+    expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
+    expect(tunnel?.close).toHaveBeenCalledTimes(1);
+    expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
+    expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
   test("evicting an idle shared provider keeps the tunnel of a live profile provider", async () => {
@@ -4674,13 +4719,6 @@ describe("single-writer file reuse", () => {
 // ============================================================================
 
 describe("withOneShotTunnel", () => {
-  // `mockHasTunnel` is not reset by the file-level beforeEach, and one assertion below
-  // is that this scope never consults the shared pool - a negative that only means
-  // anything against a counter this describe owns.
-  beforeEach(() => {
-    mockHasTunnel.mockClear();
-  });
-
   const tunnelled = () =>
     makeConnection("postgres", {
       id: "one-shot-conn",
@@ -4722,9 +4760,10 @@ describe("withOneShotTunnel", () => {
       5432,
       { shared: false },
     );
-    // The shared pool is never consulted: a one-shot scope must not adopt, or be
-    // mistaken for, the tunnel serving a cached provider of the same connection.
-    expect(mockHasTunnel).not.toHaveBeenCalled();
+    // The shared pool is never told of it: a one-shot scope must not hold, or release, a claim
+    // on the tunnel serving a cached provider of the same connection.
+    expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
   });
 
   test("closes the tunnel after the callback succeeds", async () => {
@@ -4805,12 +4844,6 @@ describe("withOneShotTunnel", () => {
 // ─── A readOnly the engine cannot keep is refused before anything is built or dialled (#1089) ──
 
 describe("assertReadOnlyHonoured", () => {
-  // `mockHasTunnel` is not reset by the file-level beforeEach, and two assertions below are that no
-  // pool is consulted: negatives that only mean anything against a counter this describe owns.
-  beforeEach(() => {
-    mockHasTunnel.mockClear();
-  });
-
   const bastion: SSHTunnelConfig = {
     enabled: true,
     host: "bastion.example.com",
@@ -4916,7 +4949,7 @@ describe("assertReadOnlyHonoured", () => {
       log.mockRestore();
     }
 
-    expect(mockHasTunnel).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
     expect(getProviderCacheStats().size).toBe(0);
   });
@@ -4963,7 +4996,7 @@ describe("assertReadOnlyHonoured", () => {
       unenforced("postgres"),
     );
 
-    expect(mockHasTunnel).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
@@ -5012,11 +5045,6 @@ describe("assertReadOnlyHonoured", () => {
 // ─── A connection whose type names no provider is refused before anything else (FND-1) ──
 
 describe("a connection whose type names no provider (FND-1)", () => {
-  // `mockHasTunnel` is not reset by the file-level beforeEach, and the assertions below are that no pool is consulted.
-  beforeEach(() => {
-    mockHasTunnel.mockClear();
-  });
-
   const bastion: SSHTunnelConfig = {
     enabled: true,
     host: "bastion.example.com",
@@ -5120,7 +5148,7 @@ describe("a connection whose type names no provider (FND-1)", () => {
     } finally {
       log.mockRestore();
     }
-    expect(mockHasTunnel).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
     expect(getProviderCacheStats().size).toBe(0);
   });
@@ -5128,7 +5156,7 @@ describe("a connection whose type names no provider (FND-1)", () => {
   test("acquireExecutionProfileProvider refuses an unknown tunnelled type before the tunnel and the cache", async () => {
     const error = await rejection(() => acquireExecutionProfileProvider(tunnelled("acmefoo"), "agent-operations"));
     expect(error).toBeInstanceOf(UnknownProviderError);
-    expect(mockHasTunnel).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
@@ -5200,7 +5228,7 @@ describe("a tunnelled connection its provider refuses to build", () => {
   };
 
   for (const { label, connection, sentence } of refusedRecords) {
-    test(`getOrCreateProvider closes the tunnel it dialled and raises the refusal unchanged: ${label}`, async () => {
+    test(`getOrCreateProvider releases the tunnel it was handed and raises the refusal unchanged: ${label}`, async () => {
       const error = await rejection(() => getOrCreateProvider(connection));
 
       expect(error).toBeInstanceOf(DatabaseConfigError);
@@ -5209,7 +5237,7 @@ describe("a tunnelled connection its provider refuses to build", () => {
       expect(getProviderCacheStats().size).toBe(0);
     });
 
-    test(`acquireExecutionProfileProvider closes the tunnel it dialled and raises the refusal unchanged: ${label}`, async () => {
+    test(`acquireExecutionProfileProvider releases the tunnel it was handed and raises the refusal unchanged: ${label}`, async () => {
       const error = await rejection(() => acquireExecutionProfileProvider(connection, "agent-operations"));
 
       expect(error).toBeInstanceOf(DatabaseConfigError);
@@ -5219,11 +5247,11 @@ describe("a tunnelled connection its provider refuses to build", () => {
     });
   }
 
-  test("a tunnel another provider already holds stays open after the refusal, on both entry points", async () => {
+  test("a tunnel the pool keeps for another caller stays open after the refusal, on both entry points", async () => {
     const [{ connection, sentence }] = refusedRecords;
-    mockHasTunnel.mockReturnValueOnce(true);
+    mockReleaseUnopenedTunnel.mockImplementationOnce(async () => {});
     const editor = await rejection(() => getOrCreateProvider(connection));
-    mockHasTunnel.mockReturnValueOnce(true);
+    mockReleaseUnopenedTunnel.mockImplementationOnce(async () => {});
     const profiled = await rejection(() => acquireExecutionProfileProvider(connection, "agent-operations"));
 
     expect((editor as Error).message).toBe(sentence);
@@ -5232,6 +5260,7 @@ describe("a tunnelled connection its provider refuses to build", () => {
     const tunnels = (await Promise.all(mockCreateSSHTunnel.mock.results.map((result) => result.value))) as {
       close: ReturnType<typeof mock>;
     }[];
+    expect(mockReleaseUnopenedTunnel.mock.calls).toEqual(tunnels.map((tunnel) => [tunnel]));
     for (const tunnel of tunnels) expect(tunnel.close).not.toHaveBeenCalled();
   });
 

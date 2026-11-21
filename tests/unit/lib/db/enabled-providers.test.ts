@@ -30,7 +30,8 @@ const createSSHTunnel = mock(async () => {
 mock.module("@/lib/ssh/tunnel", () => ({
   createSSHTunnel,
   closeSSHTunnel: mock(async () => {}),
-  hasTunnel: () => false,
+  releaseUnopenedTunnel: mock(async () => {}),
+  tunnelProviderOpened: mock(() => {}),
 }));
 
 const {

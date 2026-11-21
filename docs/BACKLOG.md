@@ -2002,7 +2002,7 @@ It predates the Neo4j provider, but a Bolt provider now leaks a driver holding u
 
 Found 2026-10-03 while reviewing the Neo4j provider (PR #1239, review N6).
 
-**Done when:** concurrent `getOrCreateProvider` calls for one cache key share one creation, or the loser disconnects its provider and closes a tunnel it created, and a test drives two overlapping first calls with a provider that counts its connects and disconnects.
+**Done when:** concurrent `getOrCreateProvider` calls for one cache key share one creation, or the loser disconnects its provider and leaves the forward it shares with the winner to the pool, and a test drives two overlapping first calls with a provider that counts its connects and disconnects.
 
 ### D145. Db2 Create Table is off until the dialog and the import have Db2 column types
 

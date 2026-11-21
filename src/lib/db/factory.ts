@@ -12,7 +12,7 @@ import {
   type ProviderExecutionContext,
 } from "./types";
 import { connectPhase, DatabaseConfigError, ExecutionProfileError } from "./errors";
-import { createSSHTunnel, closeSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
+import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderOpened } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
@@ -133,7 +133,7 @@ function assertConnectionIdPresent(connection: DatabaseConnection): void {
  * `getOrCreateProvider` and `acquireExecutionProfileProvider`, ahead of their cache lookup and of
  * `createSSHTunnel`: those two open the tunnel before they call `createDatabaseProvider`, so a refusal
  * raised only inside the factory would dial the bastion for a connection it then refuses, and the fresh
- * tunnel would only be closed again afterwards (`closeTunnelOfUnopenedProvider`). Ahead of the lookup
+ * tunnel would only be released again afterwards (`releaseTunnelOfUnopenedProvider`). Ahead of the lookup
  * too, because a mode that is not a boolean keys as `read-write` (`providerCacheKey`), so the lookup
  * would hand it the connection's cached read-write provider without refusing it. `assertProviderEnabled`
  * stands beside it in all four places for the same reason: a type `LIBREDB_ENABLED_PROVIDERS` leaves out
@@ -632,19 +632,22 @@ function tunnelledConnection(base: DatabaseConnection, tunnel: TunnelInfo): Data
 }
 
 /**
- * Close a tunnel that `getOrCreateProvider` or `acquireExecutionProfileProvider` dialled for a provider that did not
- * open: one its constructor refused (MySQL without a database, Apache Cassandra without a local data centre), one its
- * connect failed, or one the acquisition refused before connecting. Only a forward this call opened is passed here; a
- * pooled one another provider holds stays open.
+ * Release the tunnel that `getOrCreateProvider` or `acquireExecutionProfileProvider` was handed for a provider that did
+ * not open: one its constructor refused (MySQL without a database, Apache Cassandra without a local data centre), one
+ * its connect failed, or one the acquisition refused before connecting.
  *
- * Nothing else closes it soon. No cache entry holds the provider, so the idle sweep never reaches it; only a disconnect
- * of the connection (`removeProvider`, which closes every forward of an id nothing serves) or the eviction of another
- * entry of the same id would, and a `seed:` connection's disconnect removes nothing without governance. A failure to
- * close is logged and does not replace the caller's error, which is the one that says why the provider did not open.
+ * The tunnel pool decides whether the forward closes (`releaseUnopenedTunnel`): it closes once no other caller is
+ * still connecting through it and no provider opened on it. A concurrent connect of the same forward is handed the same
+ * forward, so this call alone cannot tell whether a sibling needs it. A forward every caller failed on must be closed
+ * here, because nothing else closes it soon. No cache entry holds the provider, so the idle sweep never reaches it; only
+ * a disconnect of the connection (`removeProvider`, which closes every forward of an id nothing serves) or the eviction
+ * of another entry of the same id would, and a `seed:` connection's disconnect removes nothing without governance. A
+ * failure to close is logged and does not replace the caller's error, which is the one that says why the provider did
+ * not open.
  */
-async function closeTunnelOfUnopenedProvider(tunnel: TunnelInfo, connectionId: string): Promise<void> {
+async function releaseTunnelOfUnopenedProvider(tunnel: TunnelInfo, connectionId: string): Promise<void> {
   try {
-    await tunnel.close();
+    await releaseUnopenedTunnel(tunnel);
   } catch (error) {
     logger.warn(`[DB] Error closing the SSH tunnel of a provider that did not open`, {
       connectionId,
@@ -1284,17 +1287,12 @@ export async function getOrCreateProvider(
   }
 
   // If SSH tunnel is configured, create tunnel first and rewrite connection.
-  // createSSHTunnel returns a pre-existing tunnel for the same connection id, bastion route
-  // AND far end, so ask about exactly that forward — only a tunnel this call created may be
-  // torn down on failure (a pre-existing one may still serve an execution-profile provider).
+  // createSSHTunnel hands every caller for the same connection id, bastion route AND far end the
+  // one forward, pooled or still being dialled, so this call reports how its provider fared and the
+  // pool decides whether a failure closes the forward (another caller may connect or serve through it).
   let effectiveConnection = connection;
-  let tunnelPreexisted = false;
   let tunnel: TunnelInfo | null = null;
   if (connection.sshTunnel?.enabled && connection.host && connection.port) {
-    tunnelPreexisted = hasTunnel(connection.id, {
-      ssh: connection.sshTunnel,
-      farEnd: { host: connection.host, port: connection.port },
-    });
     tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port);
     // Rewrite connection to point to local tunnel endpoint, keeping the far end for the seal
     effectiveConnection = tunnelledConnection(connection, tunnel);
@@ -1306,7 +1304,7 @@ export async function getOrCreateProvider(
   // refuses to open under one. An owner opens the pool of that user's share
   // (docs/GOVERNANCE.md#per-user-providers).
   // The build is inside the try with the connect: a provider constructor that refuses the record comes
-  // after the tunnel, and a freshly dialled tunnel is closed for that refusal as for a failed connect.
+  // after the tunnel, and the tunnel is released for that refusal as for a failed connect.
   let provider: DatabaseProvider;
   try {
     provider = await createDatabaseProvider(effectiveConnection, options, {
@@ -1315,11 +1313,12 @@ export async function getOrCreateProvider(
     });
     await connectPhase(() => provider.connect());
   } catch (error) {
-    if (tunnel && !tunnelPreexisted) {
-      await closeTunnelOfUnopenedProvider(tunnel, connection.id);
+    if (tunnel) {
+      await releaseTunnelOfUnopenedProvider(tunnel, connection.id);
     }
     throw error;
   }
+  if (tunnel) tunnelProviderOpened(tunnel);
 
   // Cache it, remembering the file when this engine admits only one handle on it -
   // that is what lets the callers that would otherwise open a second one find this.
@@ -1695,25 +1694,20 @@ export async function acquireExecutionProfileProvider(
     : connection;
 
   // The SSH tunnel is keyed by connection id, bastion route and far end, and shared with the
-  // writable provider (createSSHTunnel returns the existing one for that forward). Only a
-  // tunnel this acquisition freshly created may be torn down on failure.
-  let tunnelPreexisted = false;
+  // writable provider (createSSHTunnel hands every caller for that forward the one forward). This
+  // acquisition reports how its provider fared, and the pool decides whether a failure closes it.
   let tunnel: TunnelInfo | null = null;
   if (connection.sshTunnel?.enabled && connection.host && connection.port) {
-    tunnelPreexisted = hasTunnel(connection.id, {
-      ssh: connection.sshTunnel,
-      farEnd: { host: connection.host, port: connection.port },
-    });
     tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port);
     effectiveConnection = tunnelledConnection(effectiveConnection, tunnel);
   }
 
-  const closeFreshTunnel = async () => {
-    if (tunnel && !tunnelPreexisted) await closeTunnelOfUnopenedProvider(tunnel, connection.id);
+  const releaseTunnel = async () => {
+    if (tunnel) await releaseTunnelOfUnopenedProvider(tunnel, connection.id);
   };
 
-  // A provider constructor that refuses the record comes after the tunnel, so the build closes a freshly
-  // dialled tunnel on that refusal as every later step below does on its own.
+  // A provider constructor that refuses the record comes after the tunnel, so the build releases the
+  // tunnel on that refusal as every later step below does on its own.
   let provider: DatabaseProvider;
   try {
     provider = await createDatabaseProvider(effectiveConnection, options, {
@@ -1721,19 +1715,19 @@ export async function acquireExecutionProfileProvider(
       ...ownerContext(owner, requester),
     });
   } catch (error) {
-    await closeFreshTunnel();
+    await releaseTunnel();
     throw error;
   }
   if (credential !== null) {
     try {
       assertAgentCredentialForm(connection, provider, credential.password);
     } catch (error) {
-      await closeFreshTunnel();
+      await releaseTunnel();
       throw error;
     }
   }
   if (acquisition.requiresReadOnlyStatements && typeof provider.queryReadOnly !== "function") {
-    await closeFreshTunnel();
+    await releaseTunnel();
     throw new ExecutionProfileError(
       `Provider type "${connection.type}" implements no read-only statement path (queryReadOnly)`,
       "PROFILE_UNSUPPORTED_BY_PROVIDER",
@@ -1743,9 +1737,10 @@ export async function acquireExecutionProfileProvider(
   try {
     await connectPhase(() => provider.connect());
   } catch (error) {
-    await closeFreshTunnel();
+    await releaseTunnel();
     throw error;
   }
+  if (tunnel) tunnelProviderOpened(tunnel);
 
   profiledProviderCache.set(cacheKey, { provider, lastUsed: Date.now(), connectionId: connection.id, owner });
   startIdleSweep();

@@ -4,7 +4,13 @@ import net from "node:net";
 import { Server as SshServer, utils, type Connection, type ServerChannel } from "ssh2";
 import { logger } from "@/lib/logger";
 import type { SSHTunnelConfig } from "@/lib/types";
-import { closeSSHTunnel, createSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
+import {
+  closeSSHTunnel,
+  createSSHTunnel,
+  hasTunnel,
+  releaseUnopenedTunnel,
+  tunnelProviderOpened,
+} from "@/lib/ssh/tunnel";
 
 /**
  * The pooled tunnel against a real `ssh2` bastion, for the ways an SSH session ends.
@@ -19,11 +25,16 @@ import { closeSSHTunnel, createSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
  * BY_APPLICATION, and a TCP close with a FIN as when the bastion restarts, are `end` and `close`
  * only. The tunnel's cleanup ran on `error` alone, so the second kind left the forward pooled and its
  * loopback listener open, and the next connection to it asked a closed client for a channel.
+ *
+ * The same bastion also counts the sessions it is asked for, so concurrent calls for one tunnel can be
+ * shown to share one SSH connection.
  */
 
 /** How the bastion treats the next client: hold its channel opens pending, or close before the handshake. */
 let bastionMode: "serve" | "hold-channels" | "close-before-handshake" = "serve";
 const sessions: Connection[] = [];
+/** The sessions whose connection has closed, as the bastion sees it. */
+const closedSessions = new Set<Connection>();
 /** The channel opens the bastion is holding, each confirmed when the test calls it. */
 const heldChannels: Array<() => ServerChannel> = [];
 
@@ -45,6 +56,7 @@ beforeAll(async () => {
   const key = utils.generateKeyPairSync("ecdsa", { bits: 256 });
   bastion = new SshServer({ hostKeys: [key.private] }, (session) => {
     sessions.push(session);
+    session.on("close", () => closedSessions.add(session));
     session.on("error", () => {});
     if (bastionMode === "close-before-handshake") {
       (session as unknown as { _sock: net.Socket })._sock.end();
@@ -214,5 +226,89 @@ describe("a loopback connection whose channel open is still pending", () => {
 
     bastionMode = "serve";
     expect(hasTunnel(connId, forwardOf())).toBe(true);
+  });
+});
+
+describe("concurrent calls for one tunnel", () => {
+  test("share one SSH connection, and closing the connection closes it and its loopback listener", async () => {
+    const connId = `session-share-${Date.now()}`;
+    const before = sessions.length;
+
+    const [first, second] = await Promise.all([open(connId), open(connId)]);
+
+    expect(second).toBe(first);
+    expect(sessions.length - before).toBe(1);
+    expect(await roundTrip(first.localPort)).toBe("echoed ping");
+
+    await closeSSHTunnel(connId);
+
+    expect(hasTunnel(connId)).toBe(false);
+    expect(await roundTrip(first.localPort)).toBe("error ECONNREFUSED");
+    await until("the bastion to see every session of this tunnel close", () =>
+      sessions.slice(before).every((session) => closedSessions.has(session)),
+    );
+  });
+
+  test("a caller whose provider did not open leaves the shared forward answering for the one that opened", async () => {
+    const connId = `session-share-release-${Date.now()}`;
+    const before = sessions.length;
+    const [opened, unopened] = await Promise.all([open(connId), open(connId)]);
+
+    // Released first, while the other caller is still connecting, and again after it opened: neither closes it.
+    await releaseUnopenedTunnel(unopened);
+    expect(await roundTrip(opened.localPort)).toBe("echoed ping");
+    tunnelProviderOpened(opened);
+    const later = await open(connId);
+    await releaseUnopenedTunnel(later);
+
+    expect(await roundTrip(opened.localPort)).toBe("echoed ping");
+    expect(sessions.length - before).toBe(1);
+    expect(sessions.slice(before).some((session) => closedSessions.has(session))).toBe(false);
+  });
+
+  test("a shared forward every caller released unopened closes its session and its loopback listener", async () => {
+    const connId = `session-share-all-released-${Date.now()}`;
+    const before = sessions.length;
+    const [first, second] = await Promise.all([open(connId), open(connId)]);
+
+    await Promise.all([releaseUnopenedTunnel(first), releaseUnopenedTunnel(second)]);
+
+    expect(hasTunnel(connId)).toBe(false);
+    expect(await roundTrip(first.localPort)).toBe("error ECONNREFUSED");
+    await until("the bastion to see the session close", () =>
+      sessions.slice(before).every((session) => closedSessions.has(session)),
+    );
+  });
+
+  test("a call made after the shared dial settled is handed the pooled forward", async () => {
+    const connId = `session-share-later-${Date.now()}`;
+    const before = sessions.length;
+    const [first] = await Promise.all([open(connId), open(connId)]);
+
+    const later = await open(connId);
+
+    expect(later).toBe(first);
+    expect(sessions.length - before).toBe(1);
+  });
+
+  test("a dial that fails rejects every caller waiting on it by name, and the next call dials again", async () => {
+    bastionMode = "close-before-handshake";
+    const connId = `session-share-failed-${Date.now()}`;
+    const before = sessions.length;
+    const refusal = `SSH connection to 127.0.0.1:${bastionPort} closed before the tunnel was ready`;
+
+    const results = await Promise.allSettled([open(connId), open(connId)]);
+
+    expect(results.map((result) => (result.status === "rejected" ? String(result.reason) : result.status))).toEqual([
+      `Error: ${refusal}`,
+      `Error: ${refusal}`,
+    ]);
+    expect(sessions.length - before).toBe(1);
+    expect(hasTunnel(connId)).toBe(false);
+
+    bastionMode = "serve";
+    const next = await open(connId);
+    expect(sessions.length - before).toBe(2);
+    expect(await roundTrip(next.localPort)).toBe("echoed ping");
   });
 });

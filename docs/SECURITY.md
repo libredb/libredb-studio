@@ -551,6 +551,9 @@ credential must not invalidate a plan built five minutes earlier. Both of the la
 from external review of the change that introduced the control, each with a colliding pair measured
 against the real module, so this list is a measured floor rather than a design intention.
 
+Concurrent connects through one forward share one SSH connection: a connect that arrives while that forward is still being dialled is handed the forward the dial opens, or the error it fails with.
+A connect whose provider does not open releases the forward rather than closing it, and the pool closes it only when no other connect is still using it and no provider opened on it, so one connect's failure never closes the forward a sibling connects or serves through.
+
 **What the round trip carried, on PostgreSQL: guarded on both sides, and neither guard is a
 parser.** The day-one PostgreSQL unit is a multi-statement simple query, so every statement the
 reader's text carried used to run, and the audit event named only the addressed object. This
