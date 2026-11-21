@@ -3443,3 +3443,65 @@ describe("SQLite's statements that overwrite rows through an INSERT ask", () => 
     expect(isDangerousQuery(sql, type)).toBe(false);
   });
 });
+
+describe("MySQL's LOAD DATA and LOAD XML that replace rows ask", () => {
+  // REPLACE before INTO TABLE deletes the row a loaded one collides with on a primary or unique key. Measured on MySQL
+  // 8.4.13: `LOAD DATA INFILE ... REPLACE INTO TABLE t` turned (1, 'a', 'keep-me') into (1, 'loaded', NULL) from the
+  // editor with no dialog, IGNORE kept the row, and a load with neither refused the duplicate with ERROR 1062. The words
+  // follow a file name, not the statement's keyword, so the form is read anywhere in the code.
+  test.each([
+    "LOAD DATA INFILE '/var/lib/mysql-files/rows.csv' REPLACE INTO TABLE t FIELDS TERMINATED BY ','",
+    "LOAD DATA LOCAL INFILE 'rows.csv' REPLACE INTO TABLE t",
+    "LOAD DATA LOW_PRIORITY LOCAL INFILE 'rows.csv' REPLACE INTO TABLE probe.t (id, v)",
+    "LOAD XML LOCAL INFILE 'rows.xml' REPLACE INTO TABLE t ROWS IDENTIFIED BY '<row>'",
+    "load data local infile 'rows.csv' replace into table t",
+    "LOAD DATA INFILE 'rows.csv' REPLACE /* c */ INTO -- d\nTABLE t",
+    "LOAD DATA INFILE 'rows.csv' REPLACE INTO TABLE `t`",
+    "SELECT 1; LOAD DATA INFILE 'rows.csv' REPLACE INTO TABLE t",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(true);
+  });
+
+  // What the code form could newly catch and must not: a load that keeps the rows there, the words in a literal or a
+  // comment, and a REPLACE() call, which a `(` follows rather than INTO.
+  test.each([
+    "LOAD DATA INFILE 'rows.csv' IGNORE INTO TABLE t",
+    "LOAD DATA INFILE 'rows.csv' INTO TABLE t",
+    "LOAD DATA INFILE 'replace into table.csv' INTO TABLE t",
+    "LOAD DATA INFILE 'rows.csv' INTO TABLE t # REPLACE INTO TABLE t",
+    "SELECT 'REPLACE INTO TABLE t' AS note",
+    "SELECT REPLACE(note, 'INTO', 'TABLE') FROM t",
+    "SELECT `replace` FROM t",
+    "CREATE TABLE u REPLACE SELECT id, v FROM t",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(false);
+  });
+});
+
+describe("MariaDB's CREATE OR REPLACE TABLE asks on a mysql connection", () => {
+  // MariaDB connects through the mysql type id. Measured on MariaDB 11.8.9: CREATE OR REPLACE TABLE dropped t and its
+  // row with no dialog, and the AS SELECT form left only the selected row. MySQL refuses the TABLE form (8.4.13, ERROR
+  // 1064), so on MySQL it never runs.
+  test.each([
+    "CREATE OR REPLACE TABLE t (id INT PRIMARY KEY, v VARCHAR(32))",
+    "CREATE OR REPLACE TABLE t AS SELECT 2 AS id, 'other' AS v",
+    "CREATE OR REPLACE TABLE t LIKE u",
+    "create or replace table t (id int)",
+    "CREATE /* c */ OR -- d\nREPLACE TABLE t (id INT)",
+    "SELECT 1; CREATE OR REPLACE TABLE t (id INT)",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(true);
+  });
+
+  // Each replaces an object that holds no rows of its own and kept t's row on MariaDB 11.8.9. A TEMPORARY table replaces
+  // only the session's temporary table of that name: a new session still read t's row.
+  test.each([
+    "CREATE OR REPLACE VIEW v AS SELECT 1 AS x",
+    "CREATE OR REPLACE PROCEDURE p() SELECT 1",
+    "CREATE OR REPLACE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1",
+    "CREATE OR REPLACE TEMPORARY TABLE t (id INT)",
+    "CREATE TABLE IF NOT EXISTS t (id INT)",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(false);
+  });
+});

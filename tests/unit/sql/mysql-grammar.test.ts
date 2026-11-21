@@ -9,7 +9,16 @@ describe("the MySQL grammar", () => {
     // DUPLICATE KEY UPDATE updates it (MySQL 8.4 reference, "REPLACE Statement" and "INSERT ... ON DUPLICATE KEY UPDATE
     // Statement"); INSERT OVERWRITE, StarRocks' and Apache Doris', replaces every row of a table or of the partitions it
     // names.
-    expect(grammar.confirmForms).toEqual([["REPLACE"], ["INSERT", "OVERWRITE"]]);
-    expect(grammar.confirmCodeForms).toEqual([["ON", "DUPLICATE", "KEY", "UPDATE"]]);
+    expect(grammar.confirmForms).toContainEqual(["REPLACE"]);
+    expect(grammar.confirmForms).toContainEqual(["INSERT", "OVERWRITE"]);
+    expect(grammar.confirmCodeForms).toContainEqual(["ON", "DUPLICATE", "KEY", "UPDATE"]);
+  });
+
+  test("declares the confirmation forms of the loads and the CREATE that replace rows", () => {
+    // LOAD DATA and LOAD XML with REPLACE before INTO TABLE delete the row a loaded one collides with (MySQL 8.4
+    // reference, "LOAD DATA Statement" and "LOAD XML Statement"), and MariaDB's CREATE OR REPLACE TABLE drops the table
+    // (MariaDB reference, "CREATE TABLE"); MariaDB connects through this type id.
+    expect(grammar.confirmCodeForms).toContainEqual(["REPLACE", "INTO", "TABLE"]);
+    expect(grammar.confirmForms).toContainEqual(["CREATE", "OR", "REPLACE", "TABLE"]);
   });
 });

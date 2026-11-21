@@ -52,11 +52,20 @@ const MYSQL_GRAMMAR: SqlGrammar = {
   // key, and its INTO is optional, so the word alone is the form: no other statement starts with it. INSERT OVERWRITE
   // is StarRocks' and Apache Doris' (reference "INSERT" and "INSERT OVERWRITE" of each), replacing every row of the
   // table or of the partitions it names; MySQL has no such statement, so the one false prompt is an INSERT without INTO
-  // into a table named overwrite. Inside a block the gate reads every form anywhere in the code, so there a REPLACE()
-  // call asks too, the fail-safe direction.
-  confirmForms: [["REPLACE"], ["INSERT", "OVERWRITE"]],
-  // Anywhere in the code: the clause updates the row a new one collides with, after VALUES, SET or SELECT.
-  confirmCodeForms: [["ON", "DUPLICATE", "KEY", "UPDATE"]],
+  // into a table named overwrite. MariaDB's CREATE OR REPLACE TABLE drops the table and its rows (MariaDB reference,
+  // "CREATE TABLE"; measured on 11.8.9); MySQL refuses the TABLE form with ERROR 1064 (8.4.13), and the VIEW, PROCEDURE
+  // and FUNCTION forms replace objects that hold no rows, so only TABLE asks. Inside a block the gate reads every form
+  // anywhere in the code, so there a REPLACE() call asks too, the fail-safe direction.
+  confirmForms: [["REPLACE"], ["INSERT", "OVERWRITE"], ["CREATE", "OR", "REPLACE", "TABLE"]],
+  // Anywhere in the code: ON DUPLICATE KEY UPDATE updates the row a new one collides with, after VALUES, SET or SELECT.
+  // REPLACE INTO TABLE is LOAD DATA's and LOAD XML's, after the file name (MySQL 8.4 reference, "LOAD DATA Statement"
+  // and "LOAD XML Statement"): it deletes the row a loaded one collides with, measured on 8.4.13, while IGNORE keeps it.
+  // No other MySQL statement writes the three words, since REPLACE and TABLE are reserved and a REPLACE() call takes a
+  // `(` rather than INTO.
+  confirmCodeForms: [
+    ["ON", "DUPLICATE", "KEY", "UPDATE"],
+    ["REPLACE", "INTO", "TABLE"],
+  ],
 };
 
 /** How MySQL statement text is read: grammar, SQL text, redaction, update target and completion. */
