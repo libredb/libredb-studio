@@ -12,16 +12,18 @@ import (
 // launchPaths are the payload files the launcher composes, resolved
 // relative to the directory of the real executable (the zip root).
 type launchPaths struct {
-	Node   string // bundled private runtime: <exeDir>/node/node.exe
-	Server string // standalone Next.js server: <exeDir>/server.js
+	Node       string // bundled private runtime: <exeDir>/node/node.exe
+	Server     string // standalone Next.js server: <exeDir>/server.js
+	SeedAssets string // the built-in samples' assets: <exeDir>/seed-assets
 }
 
 // resolveLaunchPaths maps the launcher's directory to the payload layout
 // packed by scripts/lib/pack-standalone-zip.sh (flat zip, issue #114).
 func resolveLaunchPaths(exeDir string) launchPaths {
 	return launchPaths{
-		Node:   filepath.Join(exeDir, "node", "node.exe"),
-		Server: filepath.Join(exeDir, "server.js"),
+		Node:       filepath.Join(exeDir, "node", "node.exe"),
+		Server:     filepath.Join(exeDir, "server.js"),
+		SeedAssets: filepath.Join(exeDir, "seed-assets"),
 	}
 }
 
@@ -75,8 +77,11 @@ func resolveLocalAppData(environ []string) string {
 //   - STORAGE_SQLITE_PATH defaults under LOCALAPPDATA when unset, so the
 //     zero-config first run can persist generated credentials outside the
 //     (potentially read-only or replaced-on-upgrade) install directory.
+//   - SEED_ASSETS_DIR defaults to seedAssets, the payload's own seed-assets
+//     directory, so the server finds the built-in samples' assets without
+//     depending on its working directory (src/lib/seed/samples.ts).
 //   - NODE_ENV defaults to production (parity with the npx launcher).
-func launcherEnv(environ []string) []string {
+func launcherEnv(environ []string, seedAssets string) []string {
 	env := append([]string(nil), environ...)
 
 	bind := "127.0.0.1"
@@ -92,6 +97,10 @@ func launcherEnv(environ []string) []string {
 		if storage := defaultStoragePath(resolveLocalAppData(environ)); storage != "" {
 			env = append(env, "STORAGE_SQLITE_PATH="+storage)
 		}
+	}
+
+	if value, ok := envValue(environ, "SEED_ASSETS_DIR"); !ok || value == "" {
+		env = append(env, "SEED_ASSETS_DIR="+seedAssets)
 	}
 
 	if value, ok := envValue(environ, "NODE_ENV"); !ok || value == "" {

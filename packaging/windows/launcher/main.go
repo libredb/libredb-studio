@@ -42,7 +42,7 @@ func main() {
 		}
 	}
 
-	env := launcherEnv(os.Environ())
+	env := launcherEnv(os.Environ(), paths.SeedAssets)
 	// The default storage path's parent directories may not exist yet
 	// (fresh %LOCALAPPDATA%); the server expects the directory to be there
 	// (the deb/Homebrew packages pre-create theirs the same way). An empty
