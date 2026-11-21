@@ -636,6 +636,7 @@ It is the same grammar object as `sqlite`'s, and every one of its facts was re-m
 The trigger-body fact was measured on the same sqld: a trigger cut at its inner `;` is "SQL string could not be parsed: unexpected end of input", and sent whole it is created.
 Sharing the object is deliberate: a divergence would have to be written down as its own grammar, which is the change a reader should see.
 The confirmation gate therefore asks before `REPLACE INTO` and `INSERT OR REPLACE` here as on `sqlite`, the `confirmForms` of `SQLITE_GRAMMAR`: both delete the row a new one collides with on a primary or unique key, and the other `INSERT OR` forms do not ask.
+That fact was measured over Hrana on the same sqld 0.24.33, whose embedded SQLite is 3.45.1, against a table holding `(1, 'a', 'keep-me')`: `INSERT OR ROLLBACK`, `OR ABORT` and `OR FAIL` of key 1 answer "SQLite error: UNIQUE constraint failed: t.id" and keep the row, `OR IGNORE` keeps it with no error, and `OR REPLACE` and `REPLACE INTO` leave `(1, 'new', NULL)`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 

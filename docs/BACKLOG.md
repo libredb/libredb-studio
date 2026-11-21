@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D475, U17 · 348
+- [Drivers and connections](#drivers-and-connections) — D1-D476, U17 · 349
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U220 · 205
@@ -3309,12 +3309,23 @@ Found 2026-10-12 while designing the Snowflake provider.
 
 ### D331. Most SQL engines declare no confirmation forms of their own
 
-`SqlGrammar.confirmForms` and `confirmCodeForms` let a dialect name the destructive forms the shared keyword set misses, and only the Snowflake and Spark rows declare a full set; PostgreSQL's row declares only its `DO` block, MySQL's only `REPLACE` and `ON DUPLICATE KEY UPDATE`, and SQLite's only `REPLACE INTO` and `INSERT OR REPLACE`.
+`SqlGrammar.confirmForms` and `confirmCodeForms` let a dialect name the destructive forms the shared keyword set misses, and only the Snowflake and Spark rows declare a full set; PostgreSQL's row declares only its `DO` block, MySQL's only `REPLACE`, `ON DUPLICATE KEY UPDATE` and `INSERT OVERWRITE`, and SQLite's only `REPLACE INTO` and `INSERT OR REPLACE`.
 `MERGE` asks on every engine, as shared vocabulary; other engines' replace, call, unload and opaque-text forms still run unconfirmed; D246 covers Databend's, and the rest have no entry.
 
 Found 2026-10-12 while designing the Snowflake provider; narrowed 2026-10-14 when `MERGE` joined the shared set and PostgreSQL's row named `DO`, and 2026-11-21 when the MySQL and SQLite rows named the INSERTs that overwrite rows.
 
 **Done when:** every SQL engine's row declares its own confirmation forms, each form is pinned by `isDangerousQuery` for that engine, also behind comments, and each provider doc lists what its gate asks for.
+
+### D476. TiDB's non-transactional DML runs with no confirmation
+
+TiDB's non-transactional DML puts `BATCH [ON col] LIMIT n` before a `DELETE`, `UPDATE`, `INSERT` or `REPLACE` (TiDB "BATCH" and "Non-Transactional DML Statements"; `DELETE` since v6.1, the others since v6.5), and TiDB documents that such a statement is not atomic and that its deletion cannot be rolled back.
+TiDB connects through the `mysql` type id, and `isDangerousQuery` reads `BATCH` as the statement's keyword, so `BATCH ON id LIMIT 2 DELETE FROM t WHERE v < 6`, `BATCH LIMIT 1000 DELETE FROM t` and `BATCH ON id LIMIT 2 REPLACE INTO t SELECT * FROM u` run unprompted.
+`BATCH ... UPDATE t SET ...` and `BATCH ... ON DUPLICATE KEY UPDATE` ask, through the code-wide `UPDATE ... SET` reading and the mysql row's `confirmCodeForms`.
+A fact for the prefix has a cost to weigh: a form read at the operative keyword is also read anywhere in the code of a `BEGIN`-led MySQL script, so a form keyed on `BATCH` would also ask for a script that names a table `batch`.
+
+Found 2026-11-21 in the review of the MySQL confirmation forms; the `DELETE` half predates them.
+
+**Done when:** each of the three statements above asks on a `mysql` connection, through a fact of the mysql grammar row, with a test per statement in `tests/components/QuerySafetyDialog.test.tsx`, and `docs/providers/mysql.md` 5.7 no longer names the gap.
 
 ### D332. The seed plaintext warning knows only `password`
 
@@ -4072,7 +4083,7 @@ Found 2026-10-29 in the review of #1950; pre-existing.
 ### D409. The dangerous-query gate is a pure function tested from a component test file
 
 The gate, `isDangerousQuery` and `writesUnderGrammar` with the helpers they call, lives in `src/lib/sql/dangerous-query.ts` since #1990, and `src/components/QuerySafetyDialog.tsx` re-exports both.
-Its tests live in `tests/components/QuerySafetyDialog.test.tsx`: the `isDangerousQuery` block and the blocks from Snowflake's confirmation forms to the end of the file, about 1640 of its 3131 lines, render nothing and call the two functions directly.
+Its tests live in `tests/components/QuerySafetyDialog.test.tsx`: the `isDangerousQuery` block and the blocks from Snowflake's confirmation forms to the end of the file, about 1740 of its 3233 lines, render nothing and call the two functions directly.
 The hooks still import the gate through that re-export (`src/hooks/use-query-execution.ts`, `src/workspace/hooks/use-query-adapter.ts`), so the tests that stub it mock the component's module (`tests/hooks/use-query-execution.test.ts`, `tests/hooks/script-cancel-contract.test.ts`, `tests/components/StudioWorkspace.test.tsx`).
 Five unit test files import the gate from the component too: `tests/unit/db/destructive-commands.test.ts` and the BigQuery, Couchbase, Druid and carriage-return comment tests in `tests/unit/sql/`.
 #1990 moved the gate's code only: its tests, its imports and its stub seams stayed where they were.

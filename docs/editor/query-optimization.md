@@ -593,7 +593,8 @@ Which statements reach it is decided by `isDangerousQuery` (`src/lib/sql/dangero
 |-----------|--------------|
 | `DELETE` / `DROP` / `TRUNCATE` / `ALTER` / `GRANT` / `REVOKE` / `UPDATE` / `MERGE` | Yes |
 | MySQL's `REPLACE` and `INSERT ... ON DUPLICATE KEY UPDATE`, and SQLite's and libSQL's `REPLACE INTO` and `INSERT OR REPLACE`, which overwrite or delete the row a new one collides with | Yes |
-| A plain `INSERT`, `INSERT ... SELECT`, and on SQLite `INSERT OR IGNORE`, `OR ABORT`, `OR FAIL` and `OR ROLLBACK`, which leave the rows already there | No |
+| `INSERT OVERWRITE` on a `mysql` connection (StarRocks' and Apache Doris' statement, `INSERT OVERWRITE TABLE` in Doris), which replaces every row of a table or of the partitions it names | Yes |
+| A plain `INSERT`, `INSERT ... SELECT`, and on SQLite `INSERT OR IGNORE`, `OR ABORT`, `OR FAIL` and `OR ROLLBACK`. The gate reads the statement, not the table, so an `INSERT` that the table's own definition turns into a replace (a SQLite constraint declared `ON CONFLICT REPLACE`, a StarRocks Primary Key table, an Apache Doris Unique Key table) does not ask either | No |
 | A PostgreSQL `DO` block (`DO $$ … $$`, `DO '…'`, `DO LANGUAGE …`), whatever its body does, since the gate does not read the body | Yes |
 | The `DO` of `ON CONFLICT DO NOTHING` or `CREATE RULE … DO INSTEAD`, which a word follows | No |
 | Any of those behind a comment (`-- note`, `/* note */`, MySQL's `# note`, several stacked) | Yes |
