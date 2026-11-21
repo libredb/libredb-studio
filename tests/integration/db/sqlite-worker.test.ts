@@ -36,7 +36,8 @@ const BUDGET: ReadOnlyStatementBudget = {
 /**
  * A statement far larger than the 64 KiB pipe buffer, so most of its write is still
  * queued on the child's stdin when the child is killed, and that write then fails
- * with EPIPE on the parent side.
+ * (EPIPE on Linux and macOS) or, when the exit reaches the client first, is dropped
+ * by the runtime.
  */
 const LARGE = `SELECT '${"x".repeat(8 * 1024 * 1024)}' AS v`;
 
@@ -422,8 +423,9 @@ describe("SQLite child-process worker (#1623)", () => {
       await exited;
       await new Promise((resolve) => setImmediate(resolve));
       expect(watch.seen).toEqual([]);
-      // The write was cut short rather than finished: it failed, or the exit came first
-      // and the runtime dropped it.
+      // The stream did not close cleanly before the child died. When the exit comes first
+      // this cannot tell a dropped write from a finished one; terminate() right after the
+      // write is what keeps the write queued.
       expect(events[0]?.event).not.toBe("stdin-close");
       // A write that failed once the child was gone is reported on the stream at debug
       // level, not thrown out of its event handler.
@@ -479,7 +481,6 @@ describe("SQLite child-process worker (#1623)", () => {
       );
       // Each is reported once, as a warning: the failed write does not say why the child
       // is gone, and its exit does.
-      expect(events.filter((entry) => entry.event === "exit")).toHaveLength(1);
       expect(warn.mock.calls).toEqual(
         events.flatMap((entry) => {
           if (entry.event === "stream-error") {

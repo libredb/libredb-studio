@@ -1746,7 +1746,8 @@ describe("SQLiteProvider", () => {
       /**
        * Connect a provider on a fresh file and hand back its worker, plus a promise that
        * settles once the worker's stdin has closed: the statement is written to that
-       * stream, and the part still queued fails with EPIPE when the child is killed.
+       * stream, and when the child is killed the part still queued fails (EPIPE on Linux
+       * and macOS) or, when the exit reaches the client first, is dropped by the runtime.
        *
        * `events` records the worker's pipe failures, its stdin closing and its exit, in
        * the order the runtime delivers them, after the client's own listeners. Either the
@@ -1852,8 +1853,9 @@ describe("SQLiteProvider", () => {
             await large.closed;
             await new Promise((resolve) => setImmediate(resolve));
             expect(watch.seen).toEqual([]);
-            // The write really was cut short, so the case above is not passing vacuously: it
-            // failed, or the exit came first and the runtime dropped it.
+            // The stream did not close cleanly before the child died. When the exit comes
+            // first this cannot tell a dropped write from a finished one; BUSY is what keeps
+            // the write queued, so the case above is not passing vacuously.
             expect(large.events[0]?.event).not.toBe("stdin-close");
             // A failed write is reported on the stream at debug level, not thrown.
             expect(debug.mock.calls.filter(([line]) => String(line).startsWith("[sqlite-worker]"))).toEqual(
