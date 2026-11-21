@@ -5651,6 +5651,108 @@ describe("the SSH tunnel's secret fields stay in core (FND-2)", () => {
     expectWithoutTunnelSecrets(provider);
   });
 
+  const CONNECTION_REFUSAL =
+    "A connection with an sshTunnel must be a plain object of data fields; no provider was built.";
+  const TUNNEL_REFUSAL = "The connection's sshTunnel must be a plain object of data fields; no provider was built.";
+
+  /** A tunnel whose `enabled` is a prototype getter, which a copy of the tunnel would lose. */
+  class GetterTunnel {
+    host = "bastion.internal";
+    port = 22;
+    username = "jump";
+    password = TUNNEL_MARKER_ONE;
+    get enabled(): boolean {
+      return true;
+    }
+  }
+
+  /**
+   * Tunnelled records that are not plain data, each with the refusal that names it. An entry point that opens the tunnel
+   * builds from a copy of the record, and a copy loses a field defined on the prototype or as not enumerable.
+   */
+  const NOT_PLAIN_DATA: Array<[string, (id: string) => DatabaseConnection, string]> = [
+    [
+      "a record whose database is not enumerable",
+      (id) => {
+        const hidden = record(id);
+        Object.defineProperty(hidden, "database", { value: "app", enumerable: false });
+        return hidden;
+      },
+      CONNECTION_REFUSAL,
+    ],
+    [
+      "a record whose password is a prototype getter",
+      (id) => {
+        const withoutPassword = record(id);
+        delete withoutPassword.password;
+        const prototype = {
+          get password(): string {
+            return "stand-in-database-value";
+          },
+        };
+        return Object.assign(Object.create(prototype) as DatabaseConnection, withoutPassword);
+      },
+      CONNECTION_REFUSAL,
+    ],
+    [
+      "a tunnel whose enabled is a prototype getter",
+      (id) => record(id, { sshTunnel: new GetterTunnel() as unknown as DatabaseConnection["sshTunnel"] }),
+      TUNNEL_REFUSAL,
+    ],
+    [
+      "a tunnel that is a string",
+      (id) => record(id, { sshTunnel: "on" as unknown as DatabaseConnection["sshTunnel"] }),
+      TUNNEL_REFUSAL,
+    ],
+  ];
+
+  test.each(NOT_PLAIN_DATA)("withOneShotTunnel refuses by name, before it dials, %s", async (_case, build, refusal) => {
+    const run = mock(async (effective: DatabaseConnection) => await createDatabaseProvider(effective));
+    const error: unknown = await withOneShotTunnel(build("fnd2-shape-one-shot"), run).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(refusal);
+    expect(run).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test.each(NOT_PLAIN_DATA)(
+    "getOrCreateProvider refuses by name, before the cache key and the dial, %s",
+    async (_case, build, refusal) => {
+      const error: unknown = await getOrCreateProvider(build("fnd2-shape-cached")).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(refusal);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+    },
+  );
+
+  test.each(NOT_PLAIN_DATA)(
+    "acquireExecutionProfileProvider refuses by name, before the cache key and the dial, %s",
+    async (_case, build, refusal) => {
+      const error: unknown = await acquireExecutionProfileProvider(
+        build("fnd2-shape-profile"),
+        "agent-read-only",
+      ).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(refusal);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    },
+  );
+
+  test.each(NOT_PLAIN_DATA)(
+    "createDatabaseProvider refuses by name, before it logs a build, %s",
+    async (_case, build, refusal) => {
+      const log = spyOn(console, "log");
+      try {
+        await expect(createDatabaseProvider(build("fnd2-shape-direct"))).rejects.toThrow(refusal);
+        expect(log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"))).toEqual([]);
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+
   test("the caller's record keeps them", async () => {
     const cached = record("fnd2-keeps-cached");
     await getOrCreateProvider(cached);

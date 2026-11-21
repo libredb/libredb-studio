@@ -16,7 +16,7 @@ import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderO
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
-import { providerConnection } from "./provider-connection";
+import { assertTunnelRecordIsPlainData, providerConnection } from "./provider-connection";
 import { registerOwnerRemoval } from "./owner-removal";
 import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
 import { assertDatabaseType } from "./type-id";
@@ -217,6 +217,12 @@ export async function createDatabaseProvider(
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertOwnerPoolHonoured(connection, execution);
+  // Every provider is built from the connection `providerConnection` answers: the record with its `sshTunnel` reduced to
+  // the public fields, so no provider holds the tunnel's password, private key or passphrase (FND-2,
+  // docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider, acquireExecutionProfileProvider,
+  // withOneShotTunnel), it dials with those before it calls this function; a caller that builds an unconnected provider
+  // opens none. A tunnel or record that is not plain data is refused here, by name, before the log line below.
+  connection = providerConnection(connection);
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 
   // Explicit overrides (such as the connectivity probe) take precedence over saved settings.
@@ -227,13 +233,6 @@ export async function createDatabaseProvider(
   if (execution.owner !== undefined) {
     options = { ...options, pool: { ...options.pool, min: 0, max: execution.ownerPoolMax } };
   }
-
-  // Every provider is built from the connection `providerConnection` answers: the record with its `sshTunnel` reduced to
-  // the public fields, so no provider holds the tunnel's password, private key or passphrase (FND-2,
-  // docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider, acquireExecutionProfileProvider,
-  // withOneShotTunnel), it dials with those before it calls this function; a caller that builds an unconnected provider
-  // opens none. A tunnel or record that is not plain data is refused here, by name.
-  connection = providerConnection(connection);
 
   // No `default`: `assertDatabaseType` above refused every value that is not a type id, and the compiler holds this
   // switch exhaustive over the `DatabaseType` union, so a type id without a case fails the typecheck (TS2366) rather
@@ -678,6 +677,8 @@ export async function withOneShotTunnel<T>(
   assertDatabaseType(connection.type);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  // Before the copy below, which would hand createDatabaseProvider plain data: see assertTunnelRecordIsPlainData.
+  assertTunnelRecordIsPlainData(connection);
   if (!connection.sshTunnel?.enabled || !connection.host || !connection.port) {
     return await run(connection);
   }
@@ -1189,6 +1190,7 @@ export async function getOrCreateProvider(
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  assertTunnelRecordIsPlainData(connection);
   assertOwnerPoolHonoured(connection, execution);
   // The writable cache never holds a read-only handle, and its key frames no such mode for an
   // execution context: a readOnly reaching the provider from here would be served to every later
@@ -1604,6 +1606,7 @@ export async function acquireExecutionProfileProvider(
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  assertTunnelRecordIsPlainData(connection);
   assertOwnerPoolHonoured(connection, requester);
   // Refuses an unknown profile ahead of the cache key, which frames the profile.
   const execution = executionContextFor(profile, requester);

@@ -11,10 +11,10 @@ const PUBLIC_TUNNEL_FIELDS: readonly string[] = Object.entries(SSH_TUNNEL_FIELDS
   .map(([field]) => field);
 
 /**
- * Whether `value` is an object a copy keeps whole: its prototype is `Object.prototype` or null, and every own property,
- * string or symbol keyed, is an enumerable data property. An object spread copies exactly those, so for such an object
- * the copy holds every field the original answers, and for any other object (a class instance, a getter, a field
- * defined as not enumerable) it would silently hold fewer.
+ * Whether `value` is plain data, as parsed JSON is: its prototype is `Object.prototype` or null, and every own property,
+ * string or symbol keyed, is an enumerable data property. A copy of an object (an object spread, or the field-by-field
+ * copy of the tunnel below) loses a field defined on the prototype or as not enumerable, and reads an own getter once
+ * into a plain value; only for plain data does the copy answer every field exactly as the original does.
  */
 function isPlainData(value: unknown): value is object {
   if (value === null || typeof value !== "object") return false;
@@ -24,6 +24,37 @@ function isPlainData(value: unknown): value is object {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     return descriptor !== undefined && "value" in descriptor && descriptor.enumerable === true;
   });
+}
+
+/**
+ * Refuse a connection whose `sshTunnel` is present (neither `undefined` nor `null`) when that tunnel, or the record that
+ * carries it, is not plain data (`isPlainData`), with a `DatabaseConfigError` that names the field and never its value.
+ * A connection without a tunnel passes whatever its shape.
+ *
+ * WHY. Every path from a tunnelled record to a provider copies it: `providerConnection` copies the record and the
+ * tunnel's public fields, and the entry points that open the tunnel (`getOrCreateProvider`,
+ * `acquireExecutionProfileProvider` and `withOneShotTunnel` in `./factory`) build from a copy with the tunnel's local
+ * endpoint in it. A copy of anything but plain data can answer differently from the record core read (a field defined
+ * on the prototype or as not enumerable is lost, so a `readOnly` or an `ssl` would reach the provider as undefined), so
+ * such a record is refused rather than built from a different connection with no error.
+ *
+ * WHERE IT RUNS. In `providerConnection`, so every build checks it, and at each of those three entry points beside
+ * `assertReadOnlyHonoured`, ahead of the cache key and of `createSSHTunnel`, because their copy is made before
+ * `providerConnection` runs and would hand it plain data.
+ */
+export function assertTunnelRecordIsPlainData(connection: DatabaseConnection): void {
+  const tunnel: unknown = connection.sshTunnel;
+  if (tunnel === undefined || tunnel === null) return;
+  if (!isPlainData(tunnel)) {
+    throw new DatabaseConfigError(
+      "The connection's sshTunnel must be a plain object of data fields; no provider was built.",
+    );
+  }
+  if (!isPlainData(connection)) {
+    throw new DatabaseConfigError(
+      "A connection with an sshTunnel must be a plain object of data fields; no provider was built.",
+    );
+  }
 }
 
 /**
@@ -46,11 +77,11 @@ function isPlainData(value: unknown): value is object {
  * carried by the object spread.
  *
  * WHAT IS REFUSED. With `sshTunnel` absent (`undefined` or `null`) the record itself is returned, so a connection
- * without a tunnel is built exactly as it is passed. Any other `sshTunnel` must be plain data (`isPlainData`), and so
- * must the record that carries it, because the copy made here keeps only own enumerable data properties: a string, a
- * number, an array, a class instance or a getter would otherwise reach the provider as a different connection from the
- * one core read, with no error. Each is refused with a `DatabaseConfigError` that names the field and never its value.
- * It never writes to its argument.
+ * without a tunnel is built exactly as it is passed. Any other `sshTunnel` must be plain data, and so must the record
+ * that carries it (`assertTunnelRecordIsPlainData`): a copy loses a field defined on the prototype or as not enumerable
+ * and reads an own getter once, so only plain data reaches the provider exactly as core read it. A string, a number, an
+ * array, a class instance or a getter is refused with a `DatabaseConfigError` that names the field and never
+ * its value. It never writes to its argument.
  *
  * The provider keeps `sshTunnel` only until core owns the tunnel decisions those providers make from it; then the
  * field leaves the provider's view altogether.
@@ -58,16 +89,7 @@ function isPlainData(value: unknown): value is object {
 export function providerConnection<T extends DatabaseConnection>(connection: T): T {
   const tunnel: unknown = connection.sshTunnel;
   if (tunnel === undefined || tunnel === null) return connection;
-  if (!isPlainData(tunnel)) {
-    throw new DatabaseConfigError(
-      "The connection's sshTunnel must be a plain object of data fields; no provider was built.",
-    );
-  }
-  if (!isPlainData(connection)) {
-    throw new DatabaseConfigError(
-      "A connection with an sshTunnel must be a plain object of data fields; no provider was built.",
-    );
-  }
+  assertTunnelRecordIsPlainData(connection);
   const kept: Record<string, unknown> = {};
   for (const field of PUBLIC_TUNNEL_FIELDS) {
     if (Object.hasOwn(tunnel, field)) kept[field] = Reflect.get(tunnel, field);

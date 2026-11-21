@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { connectionFingerprint, tunnelRoute } from "@/lib/db/connection-fingerprint";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { providerConnection } from "@/lib/db/provider-connection";
+import { assertTunnelRecordIsPlainData, providerConnection } from "@/lib/db/provider-connection";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { LITERAL_SEED_FILE, TUNNEL_FAR_END, type WithLiteralSeedFile, type WithTunnelFarEnd } from "@/lib/types";
 
@@ -124,7 +124,7 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
     expectTunnelRefused(record({ sshTunnel }));
   });
 
-  test("refuses a tunnel whose public field is an accessor, which a copy of its data would drop", () => {
+  test("refuses a tunnel whose public field is an accessor: a copy drops a prototype getter and reads an own one once", () => {
     class Tunnel {
       host = "bastion.example";
       port = 22;
@@ -159,7 +159,7 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
   });
 
   test("refuses a record with a tunnel whose own fields a copy would drop, and hands it on as it is without one", () => {
-    // A copy keeps only own enumerable data properties, so `readOnly` would reach the provider as undefined.
+    // A copy loses a prototype getter, so `readOnly` would reach the provider as undefined.
     class Connection {
       id = "fnd2";
       name = "fnd2";
@@ -186,6 +186,27 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
     const accessor = record();
     Object.defineProperty(accessor, "readOnly", { get: () => true, enumerable: true });
     expectConnectionRefused(accessor);
+  });
+
+  test("assertTunnelRecordIsPlainData passes a record without a tunnel whatever its shape, and refuses as providerConnection does", () => {
+    class Connection {
+      type = "postgres" as const;
+      sshTunnel: unknown;
+      constructor(sshTunnel: unknown) {
+        this.sshTunnel = sshTunnel;
+      }
+    }
+    expect(() =>
+      assertTunnelRecordIsPlainData(new Connection(undefined) as unknown as DatabaseConnection),
+    ).not.toThrow();
+    expect(() => assertTunnelRecordIsPlainData(new Connection(null) as unknown as DatabaseConnection)).not.toThrow();
+    expect(() => assertTunnelRecordIsPlainData(record())).not.toThrow();
+    expect(() => assertTunnelRecordIsPlainData(record({ sshTunnel: "on" }))).toThrow(
+      "The connection's sshTunnel must be a plain object of data fields; no provider was built.",
+    );
+    expect(() =>
+      assertTunnelRecordIsPlainData(new Connection({ enabled: true }) as unknown as DatabaseConnection),
+    ).toThrow("A connection with an sshTunnel must be a plain object of data fields; no provider was built.");
   });
 
   test("accepts a frozen record and a record with no prototype", () => {
