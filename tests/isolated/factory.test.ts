@@ -4309,6 +4309,30 @@ describe("single-writer file reuse", () => {
     expect(findOpenSingleWriterProvider(underTest)).toBe(writable);
   });
 
+  /*
+   * The file identity is built with a template literal, so a value outside the union whose string form is
+   * `libredb` matches the open LibreDB handle's identity and reaches the engine's `READS_FILE_ACCESS_POSTURE` row.
+   * That row is read through the type-id check (FND-1), so the caller is refused by name instead of being lent the
+   * handle. The rows of `OUTSIDE_THE_UNION` cannot stand in here: its malformed values spell mysql, mongodb and redis,
+   * so they never match a LibreDB file and never reach the row.
+   */
+  const coercedToLibredb: readonly (readonly [string, unknown])[] = [
+    ['a String object of "libredb"', new String("libredb")],
+    ['the array ["libredb"]', ["libredb"]],
+    ['an object whose toString answers "libredb"', { toString: () => "libredb" }],
+  ];
+  test.each(coercedToLibredb)(
+    "%s on the file of an open LibreDB handle is refused by name, never lent it",
+    async (_label, value) => {
+      const held = libredbConn();
+      await getOrCreateProvider(held);
+
+      const coerced = { ...held, id: "coerced", type: value as DatabaseConnection["type"] };
+
+      expect(refusalThrownBy(() => findOpenSingleWriterProvider(coerced))).toEqual(refusalOf(value));
+    },
+  );
+
   test("an unresolved spelling of the same path is the same file", async () => {
     const held = libredbConn();
     const writable = await getOrCreateProvider(held);
