@@ -120,6 +120,15 @@ describe("ExecutionBudgetTracker.chargeExecution", () => {
     expect(() => tracker.chargeExecution(" ", { statements: 1, elapsedMs: 1 })).toThrow(BudgetAccountingError);
     expect(tracker.usage("run-1")).toEqual({ activeExecutions: 1, executedStatements: 0, totalElapsedMs: 0 });
   });
+
+  test("refuses a run whose execution already ended, charging nothing", () => {
+    const tracker = new ExecutionBudgetTracker();
+    tracker.beginExecution("run-1");
+    tracker.endExecution("run-1", { statements: 1, elapsedMs: 5 });
+
+    expect(() => tracker.chargeExecution("run-1", { statements: 1, elapsedMs: 1 })).toThrow(BudgetAccountingError);
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 0, executedStatements: 1, totalElapsedMs: 5 });
+  });
 });
 
 // ─── whenIdle ───────────────────────────────────────────────────────────────
