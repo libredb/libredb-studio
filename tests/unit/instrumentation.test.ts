@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { register } from "@/instrumentation";
+import { forgetEgressDecision } from "@/lib/db/egress-decision";
 import { logger } from "@/lib/logger";
 import { getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
 import { getSampleSeedState, resetSampleSeedStates, SAMPLES, unavailableSentence } from "@/lib/seed/samples";
@@ -36,6 +37,7 @@ const ENV_KEYS = [
   "GOVERNANCE_SOURCE",
   "KUBERNETES_ACCESS_REVIEW",
   "NODE_EXTRA_CA_CERTS",
+  "DB_HTTP_BLOCK_PRIVATE_HOSTS",
 ] as const;
 
 /** Sets NODE_ENV, or removes it for `undefined`; the env typings declare it read-only. */
@@ -75,6 +77,8 @@ describe("instrumentation register()", () => {
     // back in explicitly.
     process.env.LIBREDB_NO_BANNER = "1";
     resetSampleSeedStates();
+    // register() takes the egress decision once per process; forgotten here, each boot below decides as a new one.
+    forgetEgressDecision();
     // register() installs the uncaught-exception exit once per process; installed on a stand-in here first, its own
     // install attaches nothing, so no test in this file binds the real process.exit. The tests about that install
     // reset this one first.
@@ -106,6 +110,7 @@ describe("instrumentation register()", () => {
       }
       fs.rmSync(tmpDir, { recursive: true, force: true });
       resetSampleSeedStates();
+      forgetEgressDecision();
       resetUncaughtExceptionExit();
     }
   });
@@ -284,6 +289,86 @@ describe("instrumentation register()", () => {
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
     expect(output).not.toContain("Star the project");
+  });
+
+  test("hard-exits before seeding and the banner when DB_HTTP_BLOCK_PRIVATE_HOSTS is invalid", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "yes";
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample.libredb");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample-employees.db");
+    delete process.env.LIBREDB_NO_BANNER;
+
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    let banner = "";
+    let output = "";
+    try {
+      await register();
+      // Read the recorded calls before mockRestore(): bun clears them on restore.
+      banner = errorSpy.mock.calls.flat().join("\n");
+      output = log.mock.calls.flat().join("\n");
+      expect(info.mock.calls.filter((call) => call[1]?.route === "egress-decision")).toEqual([]);
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      log.mockRestore();
+      info.mockRestore();
+    }
+
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("DB_HTTP_BLOCK_PRIVATE_HOSTS is invalid");
+    expect(banner).toContain('Got "yes"');
+    // register() abandons the rest of boot: no sample is seeded and no welcome is printed.
+    expect(noSampleStarted()).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
+    expect(output).not.toContain("Star the project");
+  });
+
+  /** Boots with both samples disabled and answers the egress decision lines logged, in order. */
+  async function bootEgressLines(): Promise<unknown[][]> {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      await register();
+      return info.mock.calls.filter((call) => call[1]?.route === "egress-decision");
+    } finally {
+      info.mockRestore();
+    }
+  }
+
+  test("reports the egress decision once at boot, an unset variable as the documented default", async () => {
+    expect(await bootEgressLines()).toEqual([
+      [
+        "Private database destinations are reachable",
+        {
+          route: "egress-decision",
+          variable: "DB_HTTP_BLOCK_PRIVATE_HOSTS",
+          blocksPrivateHosts: false,
+          source: "default",
+        },
+      ],
+    ]);
+  });
+
+  test("reports a set DB_HTTP_BLOCK_PRIVATE_HOSTS as set", async () => {
+    process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
+    expect(await bootEgressLines()).toEqual([
+      [
+        "Private database destinations are blocked",
+        { route: "egress-decision", variable: "DB_HTTP_BLOCK_PRIVATE_HOSTS", blocksPrivateHosts: true, source: "set" },
+      ],
+    ]);
   });
 
   test("hard-exits before seeding and the banner when the governance preflight refuses the environment", async () => {

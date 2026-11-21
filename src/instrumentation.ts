@@ -34,6 +34,13 @@ export async function register(): Promise<void> {
   const { verifyExtraCaCertsAtBoot } = await import("@/lib/config/ca-bundle-preflight");
   if (!verifyExtraCaCertsAtBoot()) return;
 
+  // Egress preflight: DB_HTTP_BLOCK_PRIVATE_HOSTS is read once per process, and
+  // this is the first read, so the decision is taken and logged at boot, and a
+  // value outside the accepted spellings refuses the boot by name instead of
+  // failing at the first guarded connection.
+  const { verifyEgressDecisionAtBoot } = await import("@/lib/config/egress-preflight");
+  if (!verifyEgressDecisionAtBoot()) return;
+
   // Governance preflight (docs/GOVERNANCE.md#boot-checks): with
   // GOVERNANCE_SOURCE set, refuse an environment that contradicts governance
   // mode, such as a password, a seed file or a missing governance URL, before
