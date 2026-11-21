@@ -19,7 +19,7 @@ import { providerCacheKey, providerOwner } from "./provider-cache-key";
 import { assertTunnelRecordIsPlainData, providerConnection } from "./provider-connection";
 import { registerOwnerRemoval } from "./owner-removal";
 import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
-import { assertDatabaseType } from "./type-id";
+import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
@@ -132,7 +132,9 @@ function assertConnectionIdPresent(connection: DatabaseConnection): void {
  *
  * It reads the static map rather than `getCapabilities()` because it runs before a provider exists,
  * and `tests/unit/db/read-only-enforced-capability.test.ts` holds the map equal to the summary of every
- * provider's `writeReach`.
+ * provider's `writeReach`. The map's row is read through `typeIdRow` (FND-1), so a `readOnly: true` on a
+ * type outside the `DatabaseType` union is refused by name with `UnknownProviderError`, never read as an
+ * engine that does not enforce the mode.
  *
  * WHERE IT RUNS. Right after the type check (`assertDatabaseType`, FND-1), which is the first statement of
  * `createDatabaseProvider` and `withOneShotTunnel`, and of
@@ -152,7 +154,7 @@ export function assertReadOnlyHonoured(connection: DatabaseConnection): void {
   if (typeof readOnly !== "boolean") {
     throw new DatabaseConfigError("readOnly must be true or false.", connection.type);
   }
-  if (readOnly && READ_ONLY_ENFORCED[connection.type] !== true) {
+  if (readOnly && typeIdRow(READ_ONLY_ENFORCED, connection.type) !== true) {
     throw new DatabaseConfigError(
       `readOnly: true is refused for ${sanitize(connection.type)}: its provider does not enforce a read-only mode, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.`,
       connection.type,
@@ -825,10 +827,13 @@ export function findOpenSingleWriterProvider(
   for (const entry of providerCache.values()) {
     if (entry.singleWriterFile !== identity || !entry.provider.isConnected()) continue;
     // A handle of an engine that opens under a file-access posture is borrowable only by a caller of
-    // its own posture (the non-admin DuckDB file-access change). `READS_FILE_ACCESS_POSTURE` answers
-    // which engines, so this is not a `connection.type` branch (CLAUDE.md); today DuckDB and SQLite do, and
-    // of the two only DuckDB is a single-writer engine.
-    if (READS_FILE_ACCESS_POSTURE[connection.type] && (entry.allowExternalFileAccess === true) !== wantAccess) {
+    // its own posture (the non-admin DuckDB file-access change). `READS_FILE_ACCESS_POSTURE`, read through
+    // `typeIdRow`, answers which engines, so this is not a `connection.type` branch (CLAUDE.md); today DuckDB
+    // and SQLite do, and of the two only DuckDB is a single-writer engine.
+    if (
+      typeIdRow(READS_FILE_ACCESS_POSTURE, connection.type) &&
+      (entry.allowExternalFileAccess === true) !== wantAccess
+    ) {
       continue;
     }
     return entry.provider;

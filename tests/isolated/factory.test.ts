@@ -76,6 +76,7 @@ import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport"
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
 import { TrinoTransportError } from "@/lib/db/providers/sql/trino/transport";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../helpers/outside-the-union";
 import { markersReachableFrom } from "../helpers/reachable-markers";
 
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
@@ -4915,13 +4916,26 @@ describe("assertReadOnlyHonoured", () => {
   });
 
   test("the refusal names a type it does not know with its line breaks taken out", () => {
-    // The type arrives in the request body, and the factory strips a line break from every
-    // caller-supplied value it interpolates into a message, so a type cannot write a line of its own.
-    const error = thrownBy(() => assertReadOnlyHonoured(makeConnection("postgres\r\ninjected", { readOnly: true })));
+    // The type arrives in the request body. A type that is not a type id is refused by name before the
+    // engine's row is read (FND-1), and the sentence quotes it with its line breaks escaped, so a type
+    // cannot write a line of its own.
+    const type = "postgres\r\ninjected";
+    const error = thrownBy(() => assertReadOnlyHonoured(makeConnection(type, { readOnly: true })));
 
-    expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect((error as Error).message).toBe(unenforced("postgres  injected"));
+    expect(error).toBeInstanceOf(UnknownProviderError);
+    expect((error as Error).message).toBe(unknownTypeSentence(type));
+    expect((error as Error).message).toContain(String.raw`"postgres\r\ninjected"`);
+    expect((error as Error).message).not.toMatch(/[\r\n]/);
   });
+
+  test.each(OUTSIDE_THE_UNION)(
+    "readOnly: true on %s is refused by name before the engine's row is read",
+    (_label, value) => {
+      expect(
+        refusalThrownBy(() => assertReadOnlyHonoured(makeConnection(value as string, { readOnly: true }))),
+      ).toEqual(refusalOf(value));
+    },
+  );
 
   test("createDatabaseProvider refuses before it builds a provider", async () => {
     // The first thing the factory does after the check is log the provider it is creating, so a log
