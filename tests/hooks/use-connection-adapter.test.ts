@@ -817,7 +817,7 @@ describe("useConnectionAdapter and a host connection whose type names no provide
     const { result } = adapterOver([U, N]);
 
     expect(result.current.activeConnection).toBeNull();
-    expect(result.current.connections.map((c) => [c.id, c.type])).toEqual([
+    expect(result.current.connections.map((c): unknown[] => [c.id, c.type])).toEqual([
       ["u", "acmefoo"],
       ["n", undefined],
     ]);
@@ -922,7 +922,7 @@ describe("useConnectionAdapter and a host connection whose type names no provide
     // Synchronous, as the removal pins above: the move is committed during the render that retyped P1.
     expect(result.current.activeConnection?.id).toBe("p2");
     expect(result.current.connectionRefusal?.description).toBe(`DB One: ${ACME_SENTENCE}`);
-    expect(result.current.connections[0].type).toBe("acmefoo");
+    expect(result.current.connections[0].type as unknown).toBe("acmefoo");
   });
 
   test("and to no connection when none is left", () => {
