@@ -5,7 +5,8 @@
  * and then answers as each case says. Two kinds of failure are driven through it:
  *
  *  - a reply the parser cannot hold: an array header no JS array can take (`*4294967296`), or arrays nested deeper
- *    than the stack, answered to a command or to the first command of a connect;
+ *    than the stack, answered to a command, to the first command of a connect, or to the `SELECT` or the agent
+ *    read-only proof a connect sends after it;
  *  - on a TLS connection, one record the client cannot decrypt written under the TLS layer, then a reset, or one more
  *    client write, which Node reports as a second `error` on the same socket.
  *
@@ -18,6 +19,7 @@
 import net from "node:net";
 import tls from "node:tls";
 import { RedisProvider } from "@/lib/db/providers/keyvalue/redis";
+import type { ProviderExecutionContext } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 /** Every error that escaped a call instead of reaching its caller, in order. */
@@ -173,15 +175,26 @@ interface CaseReport {
   readonly escaped: string[];
 }
 
+/** What a case changes on the provider it opens: connection fields, and the execution context it is opened under. */
+interface Opening {
+  readonly fields?: Partial<DatabaseConnection>;
+  readonly execution?: ProviderExecutionContext;
+}
+
 async function runCase(
   name: string,
   secure: boolean,
   body: (provider: RedisProvider, peer: Peer) => Promise<{ call: string; next?: string }>,
+  opening: Opening = {},
 ): Promise<CaseReport> {
   escaped.length = 0;
   logged.length = 0;
   const peer = await startPeer(secure);
-  const provider = new RedisProvider(connection(peer.port, secure), { queryTimeout: 5_000 });
+  const provider = new RedisProvider(
+    { ...connection(peer.port, secure), ...opening.fields },
+    { queryTimeout: 5_000 },
+    opening.execution,
+  );
   try {
     const outcome = await body(provider, peer);
     // A second socket error lands after the call settles, so the case waits before it reads the record.
@@ -194,14 +207,19 @@ async function runCase(
   }
 }
 
-/** Answers the first `GET` with `reply`, once: ioredis does not resend a command its fatal-error path rejected. */
-function onGet(reply: string | Buffer): Answer {
+/** Answers the first command named `name` with `reply`, once, and every other command with the default answer. */
+function onFirst(name: string, reply: string | Buffer): Answer {
   let sent = false;
   return (command) => {
-    if (sent || (command[0] ?? "").toUpperCase() !== "GET") return undefined;
+    if (sent || (command[0] ?? "").toUpperCase() !== name) return undefined;
     sent = true;
     return reply;
   };
+}
+
+/** Answers the first `GET` with `reply`, once: ioredis does not resend a command its fatal-error path rejected. */
+function onGet(reply: string | Buffer): Answer {
+  return onFirst("GET", reply);
 }
 
 async function replyCase(name: string, reply: string | Buffer): Promise<CaseReport> {
@@ -212,6 +230,24 @@ async function replyCase(name: string, reply: string | Buffer): Promise<CaseRepo
     const next = await settle(4_000, () => provider.query("PING"));
     return { call, next };
   });
+}
+
+/**
+ * Answers a command `connect()` sends after the sign-in with `reply`: the `SELECT` of numbered database 1, or the
+ * `HELLO 2` that opens the agent read-only profile's proof.
+ */
+async function connectStepCase(name: string, step: "SELECT" | "HELLO", reply: string | Buffer): Promise<CaseReport> {
+  return runCase(
+    name,
+    false,
+    async (provider, peer) => {
+      peer.answer = onFirst(step, reply);
+      return { call: await settle(4_000, () => provider.connect()) };
+    },
+    step === "SELECT"
+      ? { fields: { database: "1" } }
+      : { fields: { user: "agent" }, execution: { readOnly: true, sendsStatements: true } },
+  );
 }
 
 /** Writes the unreadable record on the provider's idle connection, then `then` follows it. */
@@ -239,6 +275,12 @@ cases.push(
     return { call: await settle(4_000, () => provider.connect()) };
   }),
 );
+cases.push(await connectStepCase("oversized array header answering SELECT", "SELECT", OVERSIZED_ARRAY_HEADER));
+cases.push(await connectStepCase("deeply nested reply answering SELECT", "SELECT", DEEP_REPLY));
+cases.push(
+  await connectStepCase("oversized array header answering the read-only proof", "HELLO", OVERSIZED_ARRAY_HEADER),
+);
+cases.push(await connectStepCase("deeply nested reply answering the read-only proof", "HELLO", DEEP_REPLY));
 cases.push(await idleRecordCase("unreadable TLS record then reset", "reset"));
 cases.push(await idleRecordCase("unreadable TLS record then a command", "command"));
 cases.push(
