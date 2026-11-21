@@ -1479,6 +1479,7 @@ It carries a role reserved for the review, which the role filter never selects, 
 - This is the identity Rancher impersonates on a downstream cluster, the Rancher user id with its group principals, so for the same Secret the review never allows more than Rancher does, and denies a Secret Rancher grants only through `system:authenticated` or `system:cattle:authenticated` (below).
   A Rancher user with no role in the cluster gets no reviewed connection.
 - Every error, timeout, answer that is not 2xx and answer that is malformed, for another user or does not echo the asked attributes denies.
+  A `101` that switches the connection to another protocol, to the review or to the platform check below, denies at once as a network failure, and the next review asks again.
 - A session without an identity provider subject or a groups record is denied without a request.
 - Opening one the review denies answers with the same body as an id that does not exist: `404 CONNECTION_NOT_FOUND`.
   With the review on, so does a seed the caller's role may not see, which answers 403 otherwise; each miss is audited as `permission_denied` on the target `kubernetes-access/connection`.
@@ -1627,6 +1628,7 @@ With `NEXT_PUBLIC_AUTH_PROVIDER=openshift` ([OPENSHIFT.md](./OPENSHIFT.md)) the 
 - The token is read from the session's server-side record before every decision, cached or not, and an answer is kept per session and the uid of its user for `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS`, 15 by default in this mode, so two sessions never share an answer, a session handle reused for another user inherits none, and none outlives its session.
   It goes only to `OPENSHIFT_API_URL`, trusting `OPENSHIFT_API_CA_FILE` only, with no environment proxy and no redirect, and never into a log, a response, a URL, a cookie or storage.
 - Every error, timeout, answer that is not 2xx, and answer that is malformed or does not echo the asked attributes denies.
+  A `101` that switches the connection to another protocol denies at once as a network failure, and is never kept.
   A 403 means the token lacks `user:check-access`, which sign-in should have refused; it denies and is logged as an error.
 - A 401 means the API server no longer takes the token, for example after it was deleted or expired: the session's record ends, the rest of that list is denied without a request, and the session signs in again from its next request, through the OpenShift login page.
   The request that met the 401 keeps the uniform answers, a row omitted or a 404, so it tells nothing about which ids exist.
