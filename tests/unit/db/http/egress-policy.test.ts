@@ -6,13 +6,18 @@ import { httpOrigin } from "@/lib/db/http/endpoint";
 import { forgetEgressDecision } from "@/lib/db/egress-decision";
 import {
   assertPublicDnsAnswers,
+  assertPublicLiteralHost,
   BLOCKED_HOST,
+  EGRESS_DECISION_MISSING,
   guardedNodeOptions,
   httpTransportFetch,
   LOOPBACK_NETWORKS,
   publicAddressLookup,
+  requireEgressDecision,
+  socketEgress,
 } from "@/lib/db/http/egress-policy";
 import { nodeRequestJson } from "@/lib/db/providers/document/couchbase/http-transport";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
@@ -83,24 +88,25 @@ describe("opt-in HTTP database destination policy", () => {
   });
 
   test("passes the validating lookup to a fresh socket", () => {
-    setEgressFlag("on");
-    expect(guardedNodeOptions("db.example.com")).toEqual({ lookup: publicAddressLookup, agent: false });
-    expect(() => guardedNodeOptions("[::1]")).toThrow(DatabaseConfigError);
+    expect(guardedNodeOptions("db.example.com", BLOCKS_PRIVATE_HOSTS)).toEqual({
+      lookup: publicAddressLookup,
+      agent: false,
+    });
+    expect(() => guardedNodeOptions("[::1]", BLOCKS_PRIVATE_HOSTS)).toThrow(DatabaseConfigError);
   });
 
   test("guards the custom TLS request path too", () => {
-    setEgressFlag("true");
     expect(() =>
       nodeRequestJson(
         "https://169.254.169.254/query/service",
         { method: "GET", headers: {} },
         { rejectUnauthorized: true },
+        BLOCKS_PRIVATE_HOSTS,
       ),
     ).toThrow(DatabaseConfigError);
   });
 
   test("does not send either literal or DNS-alias loopback requests", async () => {
-    setEgressFlag("true");
     let hits = 0;
     const server = createServer((_request, response) => {
       hits += 1;
@@ -109,11 +115,15 @@ describe("opt-in HTTP database destination policy", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const port = (server.address() as AddressInfo).port;
     try {
-      expect(() => httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`)).toThrow(DatabaseConfigError);
-      await expect(httpTransportFetch(`http://localhost:${port}/api/v1/query`)).rejects.toThrow();
+      expect(() => httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`, {}, BLOCKS_PRIVATE_HOSTS)).toThrow(
+        DatabaseConfigError,
+      );
+      await expect(
+        httpTransportFetch(`http://localhost:${port}/api/v1/query`, {}, BLOCKS_PRIVATE_HOSTS),
+      ).rejects.toThrow();
       expect(hits).toBe(0);
-      setEgressFlag("false");
-      expect(await (await httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`)).text()).toBe("reached");
+      const reached = await httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`, {}, ALLOWS_PRIVATE_HOSTS);
+      expect(await reached.text()).toBe("reached");
       expect(hits).toBe(1);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
@@ -144,18 +154,63 @@ describe("LOOPBACK_NETWORKS", () => {
   });
 });
 
-describe("the decision the guard reads (FND-2 slice 2a)", () => {
-  test("the guard keeps the decision the process took: a value written after the first guarded call moves nothing until the decision is forgotten", () => {
+describe("the decision the interim readers read (FND-2 slice 2a)", () => {
+  test("the interim readers keep the decision the process took: a value written after the first guarded call moves nothing until the decision is forgotten", () => {
     setEgressFlag("true");
     expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
     // A direct write, not the helper, on purpose: the process decided at its first read, so the write moves nothing.
     process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
     expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
-    expect(guardedNodeOptions("db.example.com")).toEqual({ lookup: publicAddressLookup, agent: false });
-    // The third reader, the fetch path of couchbase, clickhouse, druid, libsql, search, trino and prometheus: its
-    // literal check throws synchronously, before any socket.
-    expect(() => httpTransportFetch("http://127.0.0.1:9/")).toThrow(BLOCKED_HOST);
+    // The other interim reader, the socket dials' rule, until slice 2b-2 hands it the decision too.
+    expect(() => socketEgress("127.0.0.1", { refusesLinkLocal: false })).toThrow(BLOCKED_HOST);
     forgetEgressDecision();
     expect(httpOrigin("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
+    expect(socketEgress("127.0.0.1", { refusesLinkLocal: false })).toBeUndefined();
+  });
+});
+
+describe("the guard decides by the decision it is handed (FND-2 slice 2b)", () => {
+  test("assertPublicLiteralHost, guardedNodeOptions and httpTransportFetch refuse 127.0.0.1 with a blocking decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", () => {
+    setEgressFlag(undefined);
+    expect(() => assertPublicLiteralHost("127.0.0.1", BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+    expect(() => guardedNodeOptions("[::1]", BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+    // Thrown synchronously, before any socket: the literal check runs before the request is built.
+    expect(() => httpTransportFetch("http://127.0.0.1:9/", {}, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+  });
+
+  test("and let it through with an allowing decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is true", async () => {
+    setEgressFlag("true");
+    expect(() => assertPublicLiteralHost("127.0.0.1", ALLOWS_PRIVATE_HOSTS)).not.toThrow();
+    expect(guardedNodeOptions("127.0.0.1", ALLOWS_PRIVATE_HOSTS)).toEqual({});
+    let hits = 0;
+    const server = createServer((_request, response) => {
+      hits += 1;
+      response.end("reached");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const reached = await httpTransportFetch(`http://127.0.0.1:${port}/`, {}, ALLOWS_PRIVATE_HOSTS);
+      expect(await reached.text()).toBe("reached");
+      expect(hits).toBe(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  test("requireEgressDecision answers the decision it is given", () => {
+    expect(requireEgressDecision(BLOCKS_PRIVATE_HOSTS)).toBe(BLOCKS_PRIVATE_HOSTS);
+    expect(requireEgressDecision(ALLOWS_PRIVATE_HOSTS)).toBe(ALLOWS_PRIVATE_HOSTS);
+  });
+
+  test("requireEgressDecision refuses an absent decision by name", () => {
+    let failure: unknown;
+    try {
+      requireEgressDecision(undefined);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(EGRESS_DECISION_MISSING);
   });
 });

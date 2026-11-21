@@ -63,7 +63,8 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type EgressDecision,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
@@ -75,6 +76,7 @@ import {
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import {
   assertReadOnlyBudget,
@@ -247,19 +249,26 @@ export class DruidProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /** The egress decision the factory built this provider with, handed to the transport the open builds. */
+  private readonly egress: EgressDecision | undefined;
+
   /**
    * `createTransport` is the test seam of the transport the open builds: the factory passes three arguments, so a
-   * real connection always builds the HTTP one.
+   * real connection always builds the HTTP one, with the egress decision the provider was built with; built without
+   * one, the HTTP transport is refused by name (`requireEgressDecision`) before any request.
    */
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
-    private readonly createTransport: (config: DatabaseConnection) => DruidTransport = (connection) =>
-      new DruidHttpTransport(connection),
+    execution: ProviderBuildContext = {},
+    private readonly createTransport: (
+      config: DatabaseConnection,
+      egress: EgressDecision | undefined,
+    ) => DruidTransport = (connection, egress) => new DruidHttpTransport(connection, requireEgressDecision(egress)),
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -392,7 +401,7 @@ export class DruidProvider extends SQLBaseProvider {
   }
 
   public async connect(): Promise<void> {
-    const transport = this.createTransport(this.config);
+    const transport = this.createTransport(this.config, this.egress);
 
     try {
       // The cheapest statement there is, sent here so a wrong port, a proxy in

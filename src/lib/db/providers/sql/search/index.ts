@@ -126,7 +126,7 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
@@ -137,6 +137,7 @@ import {
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { SearchHttpTransport } from "./http-transport";
@@ -847,15 +848,19 @@ abstract class SearchProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /** The egress decision the factory built this provider with, handed to the transport `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
+
   protected constructor(
     product: SearchProduct,
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
+    execution: ProviderBuildContext = {},
   ) {
     super(config, options);
     this.product = product;
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -1055,7 +1060,7 @@ abstract class SearchProvider extends SQLBaseProvider {
   }
 
   public async connect(): Promise<void> {
-    const transport = new SearchHttpTransport(this.product.dialect, this.config);
+    const transport = new SearchHttpTransport(this.product.dialect, this.config, requireEgressDecision(this.egress));
 
     try {
       await transport.query(CONNECT_PROBE_SQL, this.deadline());
@@ -2213,7 +2218,7 @@ abstract class SearchProvider extends SQLBaseProvider {
  * rather than ES|QL.
  */
 export class ElasticsearchProvider extends SearchProvider {
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderBuildContext = {}) {
     super(ELASTICSEARCH_PRODUCT, config, options, execution);
   }
 
@@ -2236,7 +2241,7 @@ export class ElasticsearchProvider extends SearchProvider {
  * branched on.
  */
 export class OpenSearchProvider extends SearchProvider {
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderBuildContext = {}) {
     super(OPENSEARCH_PRODUCT, config, options, execution);
   }
 

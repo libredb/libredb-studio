@@ -514,6 +514,11 @@ export async function createDatabaseProvider(
 
 The `connection` your constructor receives is the one `providerConnection` (`src/lib/db/provider-connection.ts`) builds: its `sshTunnel` holds no password, private key or passphrase, because Studio opens the tunnel itself ([what a provider receives of the tunnel](providers/README.md#ssh-tunnels-bastion-host-key-verification)).
 
+The third argument is the build context, `ProviderBuildContext` in `src/lib/db/types.ts`: the caller's execution context and `egress`, the egress decision core took from `DB_HTTP_BLOCK_PRIVATE_HOSTS`.
+A provider whose connections pass the shared egress guard keeps that context and, when it builds its transport or dial, hands `requireEgressDecision(context.egress)` from `src/lib/db/http/egress-policy.ts` to the guard as the last argument; built without a decision, it refuses by name and dials nothing.
+Such a provider also joins the engines of `tests/security/provider-egress-decision.test.ts`, which holds that the factory hands it the decision.
+A provider never reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and never imports `src/lib/db/egress-decision.ts`; `tests/unit/lib/db/provider-environment-scan.test.ts` holds it.
+
 ## Step 4: Add UI Configuration
 
 **Files:** `src/lib/db/connection-form.ts` and `src/lib/db-ui-config.ts`

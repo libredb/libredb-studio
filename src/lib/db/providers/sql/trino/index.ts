@@ -98,7 +98,8 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type EgressDecision,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
@@ -123,6 +124,7 @@ import {
   TRINO_CATALOG_LIST_STATEMENT,
   trinoAgentStatementRefusal,
 } from "./agent-boundary";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { TrinoHttpTransport } from "./http-transport";
 import { TRINO_CREATE_TABLE } from "./create-table";
 import {
@@ -381,21 +383,28 @@ export class TrinoProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /** The egress decision the factory built this provider with, handed to the transport the open builds. */
+  private readonly egress: EgressDecision | undefined;
+
   /**
    * `createTransport` is the test seam of the transport the open builds: the factory passes three arguments, so a real
-   * connection always builds the HTTP one.
+   * connection always builds the HTTP one, with the egress decision the provider was built with; built without one,
+   * the HTTP transport is refused by name (`requireEgressDecision`) before any request.
    */
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
-    private readonly createTransport: (dialect: TrinoDialect, config: DatabaseConnection) => TrinoTransport = (
-      dialect,
-      connection,
-    ) => new TrinoHttpTransport(dialect, connection),
+    execution: ProviderBuildContext = {},
+    private readonly createTransport: (
+      dialect: TrinoDialect,
+      config: DatabaseConnection,
+      egress: EgressDecision | undefined,
+    ) => TrinoTransport = (dialect, connection, egress) =>
+      new TrinoHttpTransport(dialect, connection, requireEgressDecision(egress)),
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -699,7 +708,7 @@ export class TrinoProvider extends SQLBaseProvider {
       // Constructed inside the guard because the constructor itself refuses one
       // configuration: a password over plain HTTP, which the coordinator rejects
       // with HTTP 401 even when authentication is switched off.
-      transport = this.createTransport(this.dialect, this.config);
+      transport = this.createTransport(this.dialect, this.config, this.egress);
       await transport.query(CONNECT_PROBE_SQL);
       // AFTER the probe, never instead of it: the probe is what proves the
       // coordinator answers, and this check only says more when it did.

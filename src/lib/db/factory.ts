@@ -8,6 +8,7 @@ import {
   type DatabaseProvider,
   type DatabaseConnection,
   type EditorExecutionContext,
+  type ProviderBuildContext,
   type ProviderOptions,
   type ProviderExecutionContext,
 } from "./types";
@@ -39,8 +40,9 @@ import * as path from "path";
  *   (./provider-connection): a copy whose `sshTunnel` holds only the fields `SSH_TUNNEL_FIELDS` classifies public, so
  *   the tunnel's password, private key and passphrase stay in the record the caller passed. An `sshTunnel` that is not
  *   plain data, or a connection carrying one that is not, is refused with a `DatabaseConfigError` before anything is
- *   built. The process's egress decision is taken first too (see assertEgressDecided): the first call of a process
- *   with no boot hook reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and keeps it, and an invalid value is refused on every call.
+ *   built. The process's egress decision is taken first too, where the other entry points call assertEgressDecided: the
+ *   first call of a process with no boot hook reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and keeps it, and an invalid value is
+ *   refused on every call.
  * @param options - Optional provider options (pooling, timeout, etc.)
  * @param execution - Server-injected execution context (#328, non-admin DuckDB file access). Never built
  *   from caller-supplied options. `acquireExecutionProfileProvider` passes the agent
@@ -57,6 +59,8 @@ import * as path from "path";
  *   `{ allowExternalFileAccess: true }` for the full editor reach. SQLite refuses only an explicit
  *   `false`, so called without a context it opens with the trusted reach. An `owner` makes the provider
  *   that user's own (docs/GOVERNANCE.md#per-user-providers): its pool opens with `min: 0` and `max: ownerPoolMax`.
+ *   A provider that takes a context is handed this one with the process's egress decision added, as
+ *   `ProviderBuildContext` (types.ts), so no provider reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` itself.
  * @returns Promise<DatabaseProvider> instance
  * @throws UnknownProviderError if the connection's type is absent or names no provider, before anything else is
  *   checked, logged or built (FND-1; see `assertDatabaseType` in ./type-id)
@@ -192,9 +196,10 @@ function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: Prov
  *
  * The factory is where a channel with no boot hook, the published package and the VS Code backend, takes the decision:
  * its first entry point call reads the variable, logs the decision and keeps it for the life of the process (FND-2,
- * LD9). On a standalone server the boot preflight took it already, so this reads the kept outcome. It runs in all four
- * entry points beside `assertTunnelRecordIsPlainData`, so `getOrCreateProvider` never dials a bastion for a server
- * whose setting it then refuses.
+ * LD9). On a standalone server the boot preflight took it already, so this reads the kept outcome. It runs in
+ * `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` beside
+ * `assertTunnelRecordIsPlainData`, so `getOrCreateProvider` never dials a bastion for a server whose setting it then
+ * refuses; `createDatabaseProvider` takes the decision itself at the same point, since it hands it to the provider.
  */
 function assertEgressDecided(): void {
   egressDecision();
@@ -235,13 +240,17 @@ export async function createDatabaseProvider(
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertOwnerPoolHonoured(connection, execution);
-  assertEgressDecided();
+  const egress = egressDecision();
   // Every provider is built from the connection `providerConnection` answers: the record with its `sshTunnel` reduced to
   // the public fields, so no provider holds the tunnel's password, private key or passphrase (FND-2,
   // docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider, acquireExecutionProfileProvider,
   // withOneShotTunnel), it dials with those before it calls this function; a caller that builds an unconnected provider
   // opens none. A tunnel or record that is not plain data is refused here, by name, before the log line below.
   connection = providerConnection(connection);
+  // What every provider that takes a context is handed: the caller's execution context and the process's egress
+  // decision, which a guarded provider hands its guard (FND-2, the provider plugins design section 0.1). One rule for
+  // every case below, and never a caller's `egress`: the decision is set here, last.
+  const context: ProviderBuildContext = { ...execution, egress };
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 
   // Explicit overrides (such as the connectivity probe) take precedence over saved settings.
@@ -260,42 +269,42 @@ export async function createDatabaseProvider(
     // SQL Databases - dynamically imported to reduce memory
     case "postgres": {
       const { PostgresProvider } = await import("./providers/sql/postgres");
-      return new PostgresProvider(connection, options, execution);
+      return new PostgresProvider(connection, options, context);
     }
 
     case "mysql": {
       const { MySQLProvider } = await import("./providers/sql/mysql");
-      return new MySQLProvider(connection, options, execution);
+      return new MySQLProvider(connection, options, context);
     }
 
     case "sqlite": {
       const { SQLiteProvider } = await import("./providers/sql/sqlite");
-      return new SQLiteProvider(connection, options, execution);
+      return new SQLiteProvider(connection, options, context);
     }
 
     case "duckdb": {
       const { DuckDBProvider } = await import("./providers/sql/duckdb");
-      return new DuckDBProvider(connection, options, execution);
+      return new DuckDBProvider(connection, options, context);
     }
 
     case "libsql": {
       const { LibSQLProvider } = await import("./providers/sql/libsql");
-      return new LibSQLProvider(connection, options, execution);
+      return new LibSQLProvider(connection, options, context);
     }
 
     case "oracle": {
       const { OracleProvider } = await import("./providers/sql/oracle/index");
-      return new OracleProvider(connection, options, execution);
+      return new OracleProvider(connection, options, context);
     }
 
     case "db2": {
       const { Db2Provider } = await import("./providers/sql/db2/index");
-      return new Db2Provider(connection, options, execution);
+      return new Db2Provider(connection, options, context);
     }
 
     case "mssql": {
       const { MSSQLProvider } = await import("./providers/sql/mssql");
-      return new MSSQLProvider(connection, options, execution);
+      return new MSSQLProvider(connection, options, context);
     }
 
     case "clickhouse": {
@@ -303,7 +312,7 @@ export async function createDatabaseProvider(
       // only at runtime, which the bundler cannot trace into a chunk. The execution context's `readOnly` and
       // `sendsStatements` together are what the open-time proof keys on.
       const { ClickHouseProvider } = await import("./providers/sql/clickhouse/index");
-      return new ClickHouseProvider(connection, options, execution);
+      return new ClickHouseProvider(connection, options, context);
     }
 
     case "druid": {
@@ -311,7 +320,7 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk.
       const { DruidProvider } = await import("./providers/sql/druid/index");
-      return new DruidProvider(connection, options, execution);
+      return new DruidProvider(connection, options, context);
     }
 
     case "trino": {
@@ -319,7 +328,7 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk.
       const { TrinoProvider } = await import("./providers/sql/trino/index");
-      return new TrinoProvider(connection, options, execution);
+      return new TrinoProvider(connection, options, context);
     }
 
     case "databend": {
@@ -353,7 +362,7 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk.
       const { CassandraProvider } = await import("./providers/sql/cassandra/index");
-      return new CassandraProvider(connection, options, execution);
+      return new CassandraProvider(connection, options, context);
     }
 
     // Search engines - two type-ids, ONE implementation module (issue #424 Phase 1).
@@ -362,12 +371,12 @@ export async function createDatabaseProvider(
     // cannot trace into a chunk.
     case "elasticsearch": {
       const { ElasticsearchProvider } = await import("./providers/sql/search/index");
-      return new ElasticsearchProvider(connection, options, execution);
+      return new ElasticsearchProvider(connection, options, context);
     }
 
     case "opensearch": {
       const { OpenSearchProvider } = await import("./providers/sql/search/index");
-      return new OpenSearchProvider(connection, options, execution);
+      return new OpenSearchProvider(connection, options, context);
     }
 
     // Document Databases - dynamically imported. The execution context reaches the
@@ -375,7 +384,7 @@ export async function createDatabaseProvider(
     // `sendsStatements` together are what the connect-time verification keys on (issue #1614).
     case "mongodb": {
       const { MongoDBProvider } = await import("./providers/document/mongodb");
-      return new MongoDBProvider(connection, options, execution);
+      return new MongoDBProvider(connection, options, context);
     }
 
     case "couchbase": {
@@ -383,34 +392,34 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk.
       const { CouchbaseProvider } = await import("./providers/document/couchbase/index");
-      return new CouchbaseProvider(connection, options, execution);
+      return new CouchbaseProvider(connection, options, context);
     }
 
     case "firestore": {
       // The explicit /index specifier keeps this dynamic import statically analysable. The execution context decides
       // whether the handle answers agent reads, and every surface of an agent-mode handle reads metadata only.
       const { FirestoreProvider } = await import("./providers/document/firestore/index");
-      return new FirestoreProvider(connection, options, execution);
+      return new FirestoreProvider(connection, options, context);
     }
 
     // Key-Value Stores - dynamically imported
     case "redis": {
       const { RedisProvider } = await import("./providers/keyvalue/redis");
-      return new RedisProvider(connection, options, execution);
+      return new RedisProvider(connection, options, context);
     }
 
     case "etcd": {
       // The explicit /index specifier keeps this dynamic import statically analysable. The
       // execution context rides along, so an execution profile opens it read-only (#1089 E6).
       const { EtcdProvider } = await import("./providers/keyvalue/etcd/index");
-      return new EtcdProvider(connection, options, execution);
+      return new EtcdProvider(connection, options, context);
     }
 
     case "oxia": {
       // The explicit /index specifier keeps this dynamic import statically analysable. The execution context rides
       // along, so a refusal names the read-only mode an execution profile set (O1).
       const { OxiaProvider } = await import("./providers/keyvalue/oxia/index");
-      return new OxiaProvider(connection, options, execution);
+      return new OxiaProvider(connection, options, context);
     }
 
     // Time-series stores - dynamically imported
@@ -419,7 +428,7 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk. The execution context decides whether the handle answers agent reads.
       const { PrometheusProvider } = await import("./providers/timeseries/prometheus/index");
-      return new PrometheusProvider(connection, options, execution);
+      return new PrometheusProvider(connection, options, context);
     }
 
     // Two type-ids served by one directory, one per query language (InfluxDB spec I2, I23). Both are read-only
@@ -428,13 +437,13 @@ export async function createDatabaseProvider(
     case "influxdb": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { InfluxDBProvider } = await import("./providers/timeseries/influxdb/index");
-      return new InfluxDBProvider(connection, options, execution);
+      return new InfluxDBProvider(connection, options, context);
     }
 
     case "influxdb3": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { InfluxDB3Provider } = await import("./providers/timeseries/influxdb/index");
-      return new InfluxDB3Provider(connection, options, execution);
+      return new InfluxDB3Provider(connection, options, context);
     }
 
     // Message logs - dynamically imported
@@ -443,7 +452,7 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk.
       const { KafkaProvider } = await import("./providers/stream/kafka/index");
-      return new KafkaProvider(connection, options, execution);
+      return new KafkaProvider(connection, options, context);
     }
 
     // Graph databases - dynamically imported
@@ -453,7 +462,7 @@ export async function createDatabaseProvider(
       // cannot trace into a chunk.
       const { Neo4jProvider } = await import("./providers/graph/neo4j/index");
       // The execution context decides whether the open proves the user reads only, for the agent read-only profile.
-      return new Neo4jProvider(connection, options, execution);
+      return new Neo4jProvider(connection, options, context);
     }
 
     // Vector databases - dynamically imported
@@ -461,21 +470,21 @@ export async function createDatabaseProvider(
       // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
       // rides along, so an execution profile opens it read-only (vector-family spec E8).
       const { MilvusProvider } = await import("./providers/vector/milvus/index");
-      return new MilvusProvider(connection, options, execution);
+      return new MilvusProvider(connection, options, context);
     }
 
     case "qdrant": {
       // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
       // rides along, so an execution profile opens it read-only, as etcd's does.
       const { QdrantProvider } = await import("./providers/vector/qdrant/index");
-      return new QdrantProvider(connection, options, execution);
+      return new QdrantProvider(connection, options, context);
     }
 
     case "weaviate": {
       // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
       // rides along, so an execution profile opens it read-only, as Qdrant's does.
       const { WeaviateProvider } = await import("./providers/vector/weaviate/index");
-      return new WeaviateProvider(connection, options, execution);
+      return new WeaviateProvider(connection, options, context);
     }
 
     // Object storage - dynamically imported
@@ -483,7 +492,7 @@ export async function createDatabaseProvider(
       // The explicit /index specifier keeps this dynamic import statically analysable. The execution context rides
       // along, so an execution profile opens it read-only, as Qdrant's does.
       const { S3Provider } = await import("./providers/objectstore/s3/index");
-      return new S3Provider(connection, options, execution);
+      return new S3Provider(connection, options, context);
     }
 
     // MQTT: a key-value provider beside the platforms, its Keys panel the whole surface and no query console
@@ -491,7 +500,7 @@ export async function createDatabaseProvider(
     case "mqtt": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { MqttProvider } = await import("./providers/keyvalue/mqtt/index");
-      return new MqttProvider(connection, options, execution);
+      return new MqttProvider(connection, options, context);
     }
 
     // RabbitMQ: the second member of the stream family, read-only whatever the flag says. It reads the execution
@@ -499,7 +508,7 @@ export async function createDatabaseProvider(
     case "rabbitmq": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { RabbitMQProvider } = await import("./providers/stream/rabbitmq/index");
-      return new RabbitMQProvider(connection, options, execution);
+      return new RabbitMQProvider(connection, options, context);
     }
 
     // OPC UA: an address space browsed level by level, read-only by its seam of eight read services. The execution
@@ -514,7 +523,7 @@ export async function createDatabaseProvider(
       // under Bun 1.4.2 it resolved to a zone-indexed link-local address
       // (`fe80::…%15`) and the error surfaced as an uncaught one. Constructing a provider must not
       // depend on that, so the import happens when a session is actually opened.
-      return new OpcuaProvider(connection, options, execution, async (read) => {
+      return new OpcuaProvider(connection, options, context, async (read) => {
         const { openLibrarySession } = await import("./providers/industrial/opcua/library");
         return openLibrarySession(read);
       });
@@ -526,7 +535,7 @@ export async function createDatabaseProvider(
     case "mtconnect": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { MTConnectProvider } = await import("./providers/industrial/mtconnect/index");
-      return new MTConnectProvider(connection, options, execution);
+      return new MTConnectProvider(connection, options, context);
     }
     // SNMP: an agent on a device, read over UDP by this repository's own client through the shared egress rule.
     // Read-only by construction: the outgoing valve parses every datagram and refuses any PDU that is not a Get,
@@ -534,7 +543,7 @@ export async function createDatabaseProvider(
     // The execution context decides whether the handle answers agent reads; an agent-mode handle refuses the console.
     case "snmp": {
       const { SnmpProvider } = await import("./providers/network/snmp/index");
-      return new SnmpProvider(connection, options, execution);
+      return new SnmpProvider(connection, options, context);
     }
 
     // Modbus TCP: a device or a gateway, read over a raw socket by this repository's own client through the shared
@@ -544,7 +553,7 @@ export async function createDatabaseProvider(
     case "modbus": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { ModbusProvider } = await import("./providers/industrial/modbus/index");
-      return new ModbusProvider(connection, options, execution);
+      return new ModbusProvider(connection, options, context);
     }
 
     // Platforms - dynamically imported
@@ -552,7 +561,7 @@ export async function createDatabaseProvider(
       // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
       // says; the execution context rides along, so `queryReadOnly` answers only under an agent profile.
       const { KubernetesProvider } = await import("./providers/platform/kubernetes/index");
-      return new KubernetesProvider(connection, options, {}, execution);
+      return new KubernetesProvider(connection, options, {}, context);
     }
 
     // Network devices - dynamically imported
@@ -563,7 +572,7 @@ export async function createDatabaseProvider(
     case "netconf": {
       // The explicit /index specifier keeps this import statically analysable; the context gates agent reads.
       const { NetconfProvider } = await import("./providers/network/netconf/index");
-      return new NetconfProvider(connection, options, execution);
+      return new NetconfProvider(connection, options, context);
     }
 
     // Sparkplug B (#1720), the third member of the `industrial/` family. Its own bounded MQTT session rather than the
@@ -572,7 +581,7 @@ export async function createDatabaseProvider(
     case "sparkplug": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { SparkplugProvider } = await import("./providers/industrial/sparkplug/index");
-      return new SparkplugProvider(connection, options, execution);
+      return new SparkplugProvider(connection, options, context);
     }
 
     // Embedded databases - dynamically imported
@@ -580,7 +589,7 @@ export async function createDatabaseProvider(
       // The execution context decides the open: an acquisition that sends statements opens the file through the
       // read-only adapter, with no writer lock, beside the editor's writer.
       const { LibreDBProvider } = await import("./providers/embedded/libredb");
-      return new LibreDBProvider(connection, options, execution);
+      return new LibreDBProvider(connection, options, context);
     }
   }
 }

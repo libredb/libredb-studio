@@ -26,7 +26,7 @@ import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import { describeFetchFailure, networkFailureKind } from "@/lib/db/http/fetch-failure";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import {
   type ClickHouseQueryOptions,
@@ -537,8 +537,11 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
   private readonly origin: HttpOrigin;
   private readonly database: string | undefined;
   private readonly authorization: string | undefined;
+  /** The egress decision the provider was built with, handed to the guarded fetch on every request. */
+  private readonly egress: EgressDecision;
 
-  constructor(config: DatabaseConnection) {
+  constructor(config: DatabaseConnection, egress: EgressDecision) {
+    this.egress = egress;
     const secure = config.ssl !== undefined && config.ssl.mode !== "disable";
     const port = config.port ?? (secure ? DEFAULT_TLS_PORT : DEFAULT_PORT);
     this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, port);
@@ -611,14 +614,18 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
     let response: Response;
     let text: string;
     try {
-      response = await httpTransportFetch(url, {
-        method: "POST",
-        headers: this.authorization ? { authorization: this.authorization } : {},
-        body: sql,
-        // A followed redirect would carry the credential to wherever it points.
-        redirect: "manual",
-        ...(signal ? { signal } : {}),
-      });
+      response = await httpTransportFetch(
+        url,
+        {
+          method: "POST",
+          headers: this.authorization ? { authorization: this.authorization } : {},
+          body: sql,
+          // A followed redirect would carry the credential to wherever it points.
+          redirect: "manual",
+          ...(signal ? { signal } : {}),
+        },
+        this.egress,
+      );
       text = maxBodyBytes === undefined ? await response.text() : await readCappedBody(response, maxBodyBytes);
     } catch (error) {
       if (error instanceof DatabaseConfigError || error instanceof ClickHouseBodyLimitError) throw error;

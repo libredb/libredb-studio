@@ -8,6 +8,7 @@ import { urlToHttpOptions } from "node:url";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { egressDecision } from "@/lib/db/egress-decision";
 import { DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
+import type { EgressDecision } from "@/lib/db/types";
 
 /** The guard's refusal of a non-public destination, worded for any transport the guard serves: it names no protocol. */
 export const BLOCKED_HOST = "Invalid host: this database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
@@ -68,9 +69,26 @@ function isBlocked(address: string, family: number): boolean {
   return blocked.check(address, family === 4 ? "ipv4" : "ipv6");
 }
 
-/** Block all non-public address forms before a socket can be opened. */
-export function assertPublicLiteralHost(host: string): void {
-  if (!egressDecision().blocksPrivateHosts) return;
+/**
+ * The refusal of a provider asked to build a guarded transport or dial with no egress decision: built outside the
+ * provider factory, which hands every provider it builds core's decision (`ProviderBuildContext` in `@/lib/db/types`).
+ */
+export const EGRESS_DECISION_MISSING =
+  "This provider was built without the egress decision Studio takes from DB_HTTP_BLOCK_PRIVATE_HOSTS, so it dials nothing";
+
+/**
+ * The decision a provider was built with, for the guard: `egress` itself, or, when the provider was built without one,
+ * a `DatabaseConfigError` with `EGRESS_DECISION_MISSING`. A provider calls it when it builds its transport or dial, never
+ * at construction, and there is no default decision.
+ */
+export function requireEgressDecision(egress: EgressDecision | undefined): EgressDecision {
+  if (egress === undefined) throw new DatabaseConfigError(EGRESS_DECISION_MISSING);
+  return egress;
+}
+
+/** Block all non-public address forms before a socket can be opened, when `egress` blocks private destinations. */
+export function assertPublicLiteralHost(host: string, egress: EgressDecision): void {
+  if (!egress.blocksPrivateHosts) return;
   const address = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const family = isIP(address);
   if (family !== 0 && isBlocked(address, family)) {
@@ -116,11 +134,17 @@ function checkedLookup(check: (addresses: readonly LookupAddress[]) => void): Lo
 /** The checked DNS answer is returned to the socket itself, preventing a second lookup/rebind. */
 export const publicAddressLookup: LookupFunction = checkedLookup(assertPublicDnsAnswers);
 
-/** Disable socket reuse so an earlier unguarded connection cannot bypass lookup. */
-export function guardedNodeOptions(hostname: string | null | undefined): Pick<RequestOptions, "lookup" | "agent"> {
-  if (!egressDecision().blocksPrivateHosts) return {};
+/**
+ * Disable socket reuse so an earlier unguarded connection cannot bypass lookup, when `egress` blocks private
+ * destinations; with an allowing decision the options are empty.
+ */
+export function guardedNodeOptions(
+  hostname: string | null | undefined,
+  egress: EgressDecision,
+): Pick<RequestOptions, "lookup" | "agent"> {
+  if (!egress.blocksPrivateHosts) return {};
   if (!hostname) throw new DatabaseConfigError(BLOCKED_HOST);
-  assertPublicLiteralHost(hostname);
+  assertPublicLiteralHost(hostname, egress);
   return { lookup: publicAddressLookup, agent: false };
 }
 
@@ -132,7 +156,8 @@ export const UNUSABLE_ANSWER = "Invalid host: the name did not resolve to a usab
  * The three sentences of the shared egress refusal. A provider that wraps its own failures passes a DatabaseConfigError
  * whose message is one of these through unchanged, so the user reads the guard's own words. The invalid-flag sentence,
  * `INVALID_EGRESS_SETTING` in `@/lib/db/egress-decision`, is not among them: it is a configuration fault of the server,
- * not a refused destination.
+ * not a refused destination. Nor is `EGRESS_DECISION_MISSING`: it names a provider built outside the factory, not a
+ * refused destination.
  */
 export const EGRESS_REFUSAL_SENTENCES: ReadonlySet<string> = new Set([BLOCKED_HOST, LINK_LOCAL_HOST, UNUSABLE_ANSWER]);
 
@@ -210,7 +235,9 @@ export const guardedLinkLocalRefusingLookup: LookupFunction = checkedLookup((add
  * with neither.
  */
 export function socketEgress(host: string, rules: { readonly refusesLinkLocal: boolean }): LookupFunction | undefined {
-  const { lookup: guardLookup } = guardedNodeOptions(host);
+  // An interim reader: it reads core's decision on the socket dials' behalf until FND-2 slice 2b-2 hands it the
+  // decision as an argument (tests/unit/lib/db/provider-environment-scan.test.ts lists it until then).
+  const { lookup: guardLookup } = guardedNodeOptions(host, egressDecision());
   if (!rules.refusesLinkLocal) return guardLookup;
   assertNotLinkLocalLiteral(host);
   return guardLookup === undefined ? linkLocalRefusingLookup : guardedLinkLocalRefusingLookup;
@@ -247,17 +274,18 @@ class SwitchedProtocolsError extends DatabaseError {
  * pin the address. The default path remains the transport's native fetch, including
  * its test injection point and normal local-network behavior. On the restricted path a
  * 101 that announces an upgrade rejects at once with SwitchedProtocolsError, as the
- * native fetch fails one at once.
+ * native fetch fails one at once. `egress` is the decision the calling provider was
+ * built with, and it decides which path a request takes.
  */
-export function httpTransportFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
-  if (!egressDecision().blocksPrivateHosts) return globalThis.fetch(input, init);
+export function httpTransportFetch(input: string | URL, init: RequestInit, egress: EgressDecision): Promise<Response> {
+  if (!egress.blocksPrivateHosts) return globalThis.fetch(input, init);
 
   const url = new URL(String(input));
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new DatabaseConfigError(BLOCKED_HOST);
   const target = urlToHttpOptions(url);
   const options: RequestOptions = {
     ...target,
-    ...guardedNodeOptions(target.hostname),
+    ...guardedNodeOptions(target.hostname, egress),
     method: init.method ?? "GET",
     headers: Object.fromEntries(new Headers(init.headers)),
     signal: init.signal ?? undefined,

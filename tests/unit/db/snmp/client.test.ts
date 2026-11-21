@@ -13,7 +13,6 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createSocket, type Socket } from "node:dgram";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import { openExchange, resolveTarget, SnmpTransportError } from "@/lib/db/providers/network/snmp/client";
@@ -29,6 +28,7 @@ import {
 import { decodeResponse, encodeRequest } from "@/lib/db/providers/network/snmp/message";
 import { MAX_VARBINDS_PER_REQUEST } from "@/lib/db/providers/network/snmp/statement";
 import { PDU_GET, PDU_SET } from "@/lib/db/providers/network/snmp/valve";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const SYS_DESCR = [1, 3, 6, 1, 2, 1, 1, 1, 0];
@@ -68,10 +68,13 @@ async function replayingAgent(onRequest?: (datagram: Uint8Array) => void): Promi
 
 describe("a target is resolved and checked before a socket exists", () => {
   test("a loopback literal passes and is used as itself", async () => {
-    expect(await resolveTarget("127.0.0.1", 161)).toMatchObject({ address: "127.0.0.1", port: 161 });
+    expect(await resolveTarget("127.0.0.1", 161, ALLOWS_PRIVATE_HOSTS)).toMatchObject({
+      address: "127.0.0.1",
+      port: 161,
+    });
   });
   test("a bracketed IPv6 literal loses its brackets", async () => {
-    expect((await resolveTarget("[::1]", 161)).address).toBe("::1");
+    expect((await resolveTarget("[::1]", 161, ALLOWS_PRIVATE_HOSTS)).address).toBe("::1");
   });
   test("a link-local address is refused whatever the flag says", async () => {
     // The type here is the SHARED guard's, not this provider's. Its refusals are
@@ -79,70 +82,50 @@ describe("a target is resolved and checked before a socket exists", () => {
     // being opened rather than while a read is being served, so it is a fact about the
     // connection's configuration. This provider's OWN refusals are QueryError, because those
     // happen during a read and have to reach the user as the reason a reading is unavailable.
-    await expect(resolveTarget("169.254.169.254", 161)).rejects.toThrow(DatabaseConfigError);
-    await expect(resolveTarget("169.254.169.254", 161)).rejects.toThrow(/link-local/);
+    await expect(resolveTarget("169.254.169.254", 161, ALLOWS_PRIVATE_HOSTS)).rejects.toThrow(DatabaseConfigError);
+    await expect(resolveTarget("169.254.169.254", 161, ALLOWS_PRIVATE_HOSTS)).rejects.toThrow(/link-local/);
   });
   test("a name that does not resolve is refused with its reason, not a hang", async () => {
-    await expect(resolveTarget("no-such-host.invalid", 161)).rejects.toThrow(SnmpTransportError);
+    await expect(resolveTarget("no-such-host.invalid", 161, ALLOWS_PRIVATE_HOSTS)).rejects.toThrow(SnmpTransportError);
   });
   test("a NAME whose answers are blocked is refused by the answer check", async () => {
     // Without this, every target in this file was a literal, so the DNS answer check was never
     // reached and deleting it changed nothing. `localhost` resolves to loopback, which the
-    // shared guard refuses while the flag is on.
-    const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-    const before = process.env[flag];
-    setEgressFlag("true");
+    // shared guard refuses under a blocking decision.
+    await expect(resolveTarget("localhost", 161, BLOCKS_PRIVATE_HOSTS)).rejects.toThrow(DatabaseConfigError);
+  });
+  // An invalid DB_HTTP_BLOCK_PRIVATE_HOSTS no longer reaches this function: it takes the decision as an argument, and
+  // createDatabaseProvider refuses such a value by name before a provider exists (the integration file's case).
+  test("the decision handed in decides, not DB_HTTP_BLOCK_PRIVATE_HOSTS: a blocking one refuses a loopback name and literal while the variable is unset", async () => {
+    const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+    setEgressFlag(undefined);
     try {
-      await expect(resolveTarget("localhost", 161)).rejects.toThrow(DatabaseConfigError);
+      await expect(resolveTarget("localhost", 161, BLOCKS_PRIVATE_HOSTS)).rejects.toThrow(BLOCKED_HOST);
+      await expect(resolveTarget("127.0.0.1", 161, BLOCKS_PRIVATE_HOSTS)).rejects.toThrow(BLOCKED_HOST);
     } finally {
       setEgressFlag(before);
     }
   });
-  test("a name is refused by name when DB_HTTP_BLOCK_PRIVATE_HOSTS is yes, as a literal is, before any socket", async () => {
-    const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-    setEgressFlag("yes");
-    try {
-      // A name that does not resolve too: the refusal is taken before any lookup, so no query leaves the machine.
-      const refusals = await Promise.all(
-        ["localhost", "127.0.0.1", "no-such-host.invalid"].map((host) =>
-          resolveTarget(host, 161).then(
-            () => null,
-            (error: unknown) => error,
-          ),
-        ),
-      );
-      for (const refusal of refusals) {
-        expect(refusal).toBeInstanceOf(DatabaseConfigError);
-        expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
-      }
-    } finally {
-      setEgressFlag(before);
-    }
-  });
-  test("the answer check keeps the decision the process took, as the shared guard does", async () => {
+  test("and an allowing one lets the same name and literal through while the variable is true", async () => {
     const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
     setEgressFlag("true");
     try {
-      await expect(resolveTarget("localhost", 161)).rejects.toThrow(BLOCKED_HOST);
-      // A direct write, not the helper, on purpose: the process decided at its first read, so the write moves nothing.
-      process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
-      await expect(resolveTarget("localhost", 161)).rejects.toThrow(BLOCKED_HOST);
-      forgetEgressDecision();
-      expect((await resolveTarget("localhost", 161)).address).toMatch(/^(127\.|::1)/);
+      expect((await resolveTarget("localhost", 161, ALLOWS_PRIVATE_HOSTS)).address).toMatch(/^(127\.|::1)/);
+      expect((await resolveTarget("127.0.0.1", 161, ALLOWS_PRIVATE_HOSTS)).address).toBe("127.0.0.1");
     } finally {
       setEgressFlag(before);
     }
   });
   test("and the same name passes while the flag is off, which is the default", async () => {
-    expect((await resolveTarget("localhost", 161)).address).toMatch(/^(127\.|::1)/);
+    expect((await resolveTarget("localhost", 161, ALLOWS_PRIVATE_HOSTS)).address).toMatch(/^(127\.|::1)/);
   });
   test("the name the user asked for is kept for the message", async () => {
-    expect((await resolveTarget("127.0.0.1", 161)).asked).toBe("127.0.0.1");
+    expect((await resolveTarget("127.0.0.1", 161, ALLOWS_PRIVATE_HOSTS)).asked).toBe("127.0.0.1");
   });
   test("a literal carries its address family, which picks the socket", async () => {
-    expect((await resolveTarget("127.0.0.1", 161)).family).toBe(4);
-    expect(await resolveTarget("::1", 161)).toMatchObject({ address: "::1", family: 6 });
-    expect(await resolveTarget("[::1]", 161)).toMatchObject({ address: "::1", family: 6 });
+    expect((await resolveTarget("127.0.0.1", 161, ALLOWS_PRIVATE_HOSTS)).family).toBe(4);
+    expect(await resolveTarget("::1", 161, ALLOWS_PRIVATE_HOSTS)).toMatchObject({ address: "::1", family: 6 });
+    expect(await resolveTarget("[::1]", 161, ALLOWS_PRIVATE_HOSTS)).toMatchObject({ address: "::1", family: 6 });
   });
   // Named in the title rather than returned early from the body, the way tests/unit/lib/auth-bootstrap.test.ts does it.
   // Windows' resolver answers ENOTFOUND for `127.1`, so there the name fails to resolve by name and nothing reaches a
@@ -152,15 +135,12 @@ describe("a target is resolved and checked before a socket exists", () => {
     async () => {
       // `127.1` is not an IP literal (`isIP` answers 0), but a resolver that reads the inet_aton shorthand answers
       // 127.0.0.1. It is resolved here, so the socket is connected to the address the checks saw.
-      expect(await resolveTarget("127.1", 161)).toMatchObject({ address: "127.0.0.1", family: 4, asked: "127.1" });
-      const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-      const before = process.env[flag];
-      setEgressFlag("true");
-      try {
-        await expect(resolveTarget("127.1", 161)).rejects.toThrow(DatabaseConfigError);
-      } finally {
-        setEgressFlag(before);
-      }
+      expect(await resolveTarget("127.1", 161, ALLOWS_PRIVATE_HOSTS)).toMatchObject({
+        address: "127.0.0.1",
+        family: 4,
+        asked: "127.1",
+      });
+      await expect(resolveTarget("127.1", 161, BLOCKS_PRIVATE_HOSTS)).rejects.toThrow(DatabaseConfigError);
     },
   );
 });
@@ -182,7 +162,7 @@ describe("an exchange that cannot be opened closes its socket", () => {
     // A udp4 socket cannot be connected to an IPv6 address, and the runtime reports that to the connect callback.
     const { socket, closed } = recordedSocket("udp4");
     const error = await openExchange({
-      target: await resolveTarget("::1", 161),
+      target: await resolveTarget("::1", 161, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 2000,
       createRawSocket: () => socket,
@@ -203,7 +183,7 @@ describe("a request goes out and its answer comes back", () => {
       seen = Uint8Array.from(datagram);
     });
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 2000,
     });
@@ -216,7 +196,7 @@ describe("a request goes out and its answer comes back", () => {
   test("the answer is matched to its own request-id", async () => {
     const port = await replayingAgent();
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 2000,
     });
@@ -230,7 +210,7 @@ describe("a request goes out and its answer comes back", () => {
     // waiter passed. Two ids and one answer prove the match is by id rather than by arrival.
     const port = await replayingAgent();
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 1500,
     });
@@ -260,7 +240,7 @@ describe("a request goes out and its answer comes back", () => {
     await new Promise<void>((resolve) => agent?.bind(0, "127.0.0.1", () => resolve()));
     const port = (agent.address() as { port: number }).port;
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 1500,
     });
@@ -291,7 +271,7 @@ describe("a request goes out and its answer comes back", () => {
     await new Promise<void>((resolve) => agent?.bind(0, "127.0.0.1", () => resolve()));
     const port = (agent.address() as { port: number }).port;
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 5_000,
     });
@@ -307,7 +287,7 @@ describe("a request goes out and its answer comes back", () => {
     await new Promise<void>((resolve) => silent.bind(0, "127.0.0.1", () => resolve()));
     const port = (silent.address() as { port: number }).port;
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 150,
     });
@@ -326,7 +306,7 @@ describe("the valve still stands between the client and the socket", () => {
   test("a write PDU never reaches the wire", async () => {
     const port = await replayingAgent();
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 500,
     });
@@ -441,7 +421,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     const seen: Uint8Array[] = [];
     const port = await v3Agent(seen);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 2000,
       v3: credentials,
@@ -456,7 +436,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     const seen: Uint8Array[] = [];
     const port = await v3Agent(seen);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 2000,
       v3: credentials,
@@ -493,7 +473,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     await new Promise<void>((resolve) => agent?.bind(0, "127.0.0.1", () => resolve()));
     const port = (agent.address() as { port: number }).port;
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 1000,
       v3: { userName: "u1", authPassphrase: PASS, level: "authNoPriv", hash: "sha1" },
@@ -517,7 +497,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     const seen: Uint8Array[] = [];
     const port = await v3Agent(seen);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 200,
       v3: { userName: "u1", authPassphrase: PASS, privacyPassphrase: PASS, level: "authPriv", hash: "sha1" },
@@ -533,7 +513,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
   test("the answer comes back matched to its own request id", async () => {
     const port = await v3Agent([]);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 2000,
       v3: credentials,
@@ -549,7 +529,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
    */
   test("an engine id that does not match the pin ends the connection", async () => {
     const port = await v3Agent([]);
-    const target = await resolveTarget("127.0.0.1", port);
+    const target = await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS);
     const { socket, closed } = recordedSocket("udp4");
     await expect(
       openExchange({
@@ -567,7 +547,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     const port = await v3Agent([]);
     const pin = Buffer.from(ENGINE).toString("hex");
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 2000,
       v3: { ...credentials, engineIdPin: pin },
@@ -584,7 +564,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
   test("a wrong passphrase ends in silence rather than in a trusted answer", async () => {
     const port = await v3Agent([]);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 300,
       v3: { ...credentials, authPassphrase: "authpass54321" },
@@ -603,7 +583,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     const seen: Uint8Array[] = [];
     const port = await v3Agent(seen, TIME + 500);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 2000,
       v3: credentials,
@@ -632,7 +612,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     const seen: Uint8Array[] = [];
     const port = await v3Agent(seen, TIME - 50);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 2000,
       v3: credentials,
@@ -651,7 +631,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
   test("a verified answer from far outside the window is refused, not read", async () => {
     const port = await v3Agent([], TIME + 10_000);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 250,
       v3: credentials,
@@ -753,7 +733,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     const seen: Uint8Array[] = [];
     const port = await resyncingAgent(seen, TIME + 9000);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 2000,
       v3: credentials,
@@ -766,7 +746,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     const seen: Uint8Array[] = [];
     const port = await resyncingAgent(seen, TIME + 9000);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 2000,
       v3: credentials,
@@ -827,7 +807,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     await new Promise<void>((resolve) => agent?.bind(0, "127.0.0.1", () => resolve()));
     const port = (agent.address() as { port: number }).port;
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 300,
       v3: credentials,
@@ -896,7 +876,7 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
     await new Promise<void>((resolve) => agent?.bind(0, "127.0.0.1", () => resolve()));
     const port = (agent.address() as { port: number }).port;
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "",
       deadlineMs: 300,
       v3: credentials,
@@ -929,7 +909,7 @@ describe("a v3 connection whose discovery is never answered", () => {
     try {
       await expect(
         openExchange({
-          target: await resolveTarget("127.0.0.1", port),
+          target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
           community: "",
           deadlineMs: 150,
           v3: { userName: "u1", authPassphrase: "authpass12345", level: "authNoPriv", hash: "sha1" },
@@ -955,7 +935,7 @@ describe("a socket error rather than silence", () => {
     await new Promise<void>((resolve) => dead.close(() => resolve()));
 
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", port),
+      target: await resolveTarget("127.0.0.1", port, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 400,
     });
@@ -1001,7 +981,7 @@ describe("a send the socket itself refuses", () => {
     const refused = Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
     const { socket } = fakeSocket((cb) => cb(refused));
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", 161),
+      target: await resolveTarget("127.0.0.1", 161, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 2000,
       createRawSocket: () => socket,
@@ -1020,7 +1000,7 @@ describe("a send the socket itself refuses", () => {
     // look at an agent that never heard anything.
     const { socket } = fakeSocket((cb) => cb(new Error("something went wrong")));
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", 161),
+      target: await resolveTarget("127.0.0.1", 161, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 2000,
       createRawSocket: () => socket,
@@ -1041,7 +1021,7 @@ describe("a send the socket itself refuses", () => {
      */
     const { socket, deliver } = fakeSocket(() => undefined);
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", 161),
+      target: await resolveTarget("127.0.0.1", 161, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 120,
       createRawSocket: () => socket,
@@ -1068,7 +1048,7 @@ describe("a send the socket itself refuses", () => {
       },
     });
     const exchange = await openExchange({
-      target: await resolveTarget("127.0.0.1", 161),
+      target: await resolveTarget("127.0.0.1", 161, ALLOWS_PRIVATE_HOSTS),
       community: "public",
       deadlineMs: 120,
       createRawSocket: () => socket,

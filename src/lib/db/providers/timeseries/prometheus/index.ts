@@ -60,7 +60,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -89,6 +89,7 @@ import {
   TSDB_TOP_METRICS,
 } from "./monitoring";
 import { type ObjectsTransport, PROMETHEUS_OBJECT_KINDS, PrometheusObjects } from "./objects";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { createSendRequest, type SendRequest, tlsMaterialFor } from "./request";
 import { MATRIX_SAMPLE_BUDGET, RESULT_BYTE_BUDGET, type ShapeLimits, shapeQueryResult } from "./results";
 import { type PrometheusQueryOptions, type PrometheusTransport, PrometheusTransportError } from "./transport";
@@ -103,7 +104,7 @@ export interface PrometheusProviderDeps {
    * src/lib/db/http/endpoint.ts (#1086), adapted to this port; unit tests inject their own.
    */
   readonly endpoint?: (config: DatabaseConnection, secure: boolean) => PrometheusEndpoint;
-  /** How a request leaves the process. Default: `createSendRequest(tlsMaterialFor(config.ssl))`. */
+  /** How a request leaves the process. Default: `createSendRequest(tlsMaterialFor(config.ssl), <the built decision>)`. */
   readonly send?: SendRequest;
   /** The clock the inventory window is read against. Default: `Date.now`, read at each call. */
   readonly now?: () => number;
@@ -215,7 +216,7 @@ export class PrometheusProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     deps: PrometheusProviderDeps = {},
   ) {
     super(config, options);
@@ -366,7 +367,8 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       const built = createHttpTransport(
         { user: this.config.user, password: this.config.password },
         {
-          send: this.deps.send ?? createSendRequest(tls),
+          // An injected sender is a test's; the real one follows the egress decision the factory built this provider with.
+          send: this.deps.send ?? createSendRequest(tls, requireEgressDecision(this.execution.egress)),
           endpoint: (this.deps.endpoint ?? sharedEndpoint)(this.config, tls !== null),
           requestTimeoutMs: this.queryTimeout,
           maxResponseBytes: RESPONSE_BYTE_CAP,

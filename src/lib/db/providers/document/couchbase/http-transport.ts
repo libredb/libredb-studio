@@ -37,7 +37,7 @@ import {
   type NodeTransportOptions,
   nodeTlsMaterial,
 } from "@/lib/db/http/node-transport";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import { quoteIdentifier } from "./keyspace";
@@ -141,6 +141,7 @@ export type SecureJsonRequest = (
   url: string,
   init: JsonRequestInit,
   tls: CouchbaseTlsMaterial,
+  egress: EgressDecision,
 ) => Promise<JsonResponse>;
 
 export type SrvResolver = (hostname: string) => Promise<SrvRecord[]>;
@@ -340,17 +341,21 @@ function buildTlsMaterial(ssl: SSLConfig | undefined): CouchbaseTlsMaterial | nu
 // Request paths
 // ============================================================================
 
-async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonResponse> {
+async function fetchJson(url: string, init: JsonRequestInit, egress: EgressDecision): Promise<JsonResponse> {
   let response: Response;
   let text: string;
   try {
     // A followed redirect would carry the credential to wherever it points.
-    response = await httpTransportFetch(url, {
-      method: init.method,
-      headers: init.headers,
-      body: init.body,
-      redirect: "manual",
-    });
+    response = await httpTransportFetch(
+      url,
+      {
+        method: init.method,
+        headers: init.headers,
+        body: init.body,
+        redirect: "manual",
+      },
+      egress,
+    );
     // Read under the cap and inside this try, so a body that passes the cap or stops mid-read is a named failure.
     text = await readBoundedText(response, COUCHBASE_RESPONSE_CAP_BYTES);
   } catch (error) {
@@ -370,14 +375,20 @@ async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonRespon
  * socket, and the call fails by name. An answer whose connection closes or resets before it is complete fails as a
  * network fault: node:http then emits no "end", only "close" on a message that is not complete. A 101 answer that
  * switches protocols fails as a network fault too, and its socket is destroyed. The body is decoded and parsed in a
- * promise continuation, so nothing in that step can throw out of an event handler.
+ * promise continuation, so nothing in that step can throw out of an event handler. `egress` is the decision the
+ * provider was built with, which the guard's options follow.
  */
-export function nodeRequestJson(url: string, init: JsonRequestInit, tls: CouchbaseTlsMaterial): Promise<JsonResponse> {
+export function nodeRequestJson(
+  url: string,
+  init: JsonRequestInit,
+  tls: CouchbaseTlsMaterial,
+  egress: EgressDecision,
+): Promise<JsonResponse> {
   const target = new URL(url);
   const options: HttpsRequestOptions = {
     protocol: target.protocol,
     hostname: target.hostname,
-    ...guardedNodeOptions(target.hostname),
+    ...guardedNodeOptions(target.hostname, egress),
     port: target.port,
     path: `${target.pathname}${target.search}`,
     method: init.method,
@@ -449,6 +460,8 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
   private readonly ssl: SSLConfig | undefined;
   /** `default:<bucket>`, or undefined when the connection pins no bucket. */
   private readonly queryContext: string | undefined;
+  /** The egress decision the provider was built with, handed to both request paths of `send`. */
+  private readonly egress: EgressDecision;
 
   // The in-flight promise is cached, not just its value: concurrent queries on a
   // fresh transport would otherwise each run their own discovery round-trip.
@@ -458,7 +471,8 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
   private readonly agentTransports = new Map<string, NodeTransport>();
   private agentQueryOrigin: HttpOrigin | null = null;
 
-  constructor(config: DatabaseConnection, deps: CouchbaseHttpTransportDeps = {}) {
+  constructor(config: DatabaseConnection, egress: EgressDecision, deps: CouchbaseHttpTransportDeps = {}) {
+    this.egress = egress;
     this.host = config.host ?? DEFAULT_HOST;
     this.explicitPort = config.port;
     this.tls = buildTlsMaterial(config.ssl);
@@ -599,7 +613,7 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
   }
 
   private send(url: string, init: JsonRequestInit): Promise<JsonResponse> {
-    return this.tls ? this.requestJson(url, init, this.tls) : fetchJson(url, init);
+    return this.tls ? this.requestJson(url, init, this.tls, this.egress) : fetchJson(url, init, this.egress);
   }
 
   /**

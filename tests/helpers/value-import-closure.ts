@@ -25,6 +25,31 @@ function moduleFileOf(specifier: string, from: string): string | undefined {
   );
 }
 
+const transpilers = { ts: new Bun.Transpiler({ loader: "ts" }), tsx: new Bun.Transpiler({ loader: "tsx" }) };
+
+/** The value import specifiers of one `.ts` or `.tsx` file (an absolute path), by the rules `valueImportClosure` states. */
+function valueSpecifiersOf(file: string): string[] {
+  const transpiler = file.endsWith(".tsx") ? transpilers.tsx : transpilers.ts;
+  return transpiler.scanImports(readFileSync(file, "utf8")).map(({ path }) => path);
+}
+
+/**
+ * The modules of this repository that `module` (a repository-relative `.ts` or `.tsx` path) imports by value directly,
+ * resolved by the rules `valueImportClosure` states, repository-relative and sorted. A bare specifier is not a module
+ * of this repository and is left out; an `@/` or relative specifier no file answers throws, naming it.
+ */
+export function valueImportsOf(module: string): string[] {
+  const file = join(REPO_ROOT, module);
+  const imported = new Set<string>();
+  for (const specifier of valueSpecifiersOf(file)) {
+    if (!specifier.startsWith("@/") && !specifier.startsWith(".")) continue;
+    const resolved = moduleFileOf(specifier, file);
+    if (resolved === undefined) throw new Error(`${module} imports ${specifier}, which no file answers`);
+    imported.add(repoRelative(resolved));
+  }
+  return [...imported].sort();
+}
+
 /**
  * Walks the VALUE imports of `entry` (a repository-relative path) through this repository's own source.
  *
@@ -34,7 +59,6 @@ function moduleFileOf(specifier: string, from: string): string | undefined {
  * followed, since what a package imports is the package's affair.
  */
 export function valueImportClosure(entry: string): ValueImportClosure {
-  const transpilers = { ts: new Bun.Transpiler({ loader: "ts" }), tsx: new Bun.Transpiler({ loader: "tsx" }) };
   const walked = new Set<string>();
   const pending = [join(REPO_ROOT, entry)];
   const packages = new Set<string>();
@@ -44,8 +68,7 @@ export function valueImportClosure(entry: string): ValueImportClosure {
     if (walked.has(file)) continue;
     walked.add(file);
     if (!/\.tsx?$/.test(file)) continue;
-    const transpiler = file.endsWith(".tsx") ? transpilers.tsx : transpilers.ts;
-    for (const { path: specifier } of transpiler.scanImports(readFileSync(file, "utf8"))) {
+    for (const specifier of valueSpecifiersOf(file)) {
       if (!specifier.startsWith("@/") && !specifier.startsWith(".")) {
         packages.add(specifier);
         continue;

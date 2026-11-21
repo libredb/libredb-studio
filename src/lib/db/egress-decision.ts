@@ -3,8 +3,7 @@
  * destinations, as `DB_HTTP_BLOCK_PRIVATE_HOSTS` sets it.
  *
  * Core owns the decision (FND-2, the provider plugins design section 0.1): this module is the only code that reads the
- * variable, and the shared egress guard (`./http/egress-policy`) and SNMP's name lookup read its decision, so no two
- * readers can disagree. The variable is parsed once per process and the outcome kept for the life of the process, so
+ * variable, and every guard decides by its decision, so no two readers can disagree. The variable is parsed once per process and the outcome kept for the life of the process, so
  * the line logged is the decision every guard keeps, and a change of the variable takes effect when Studio restarts.
  *
  * The spellings: trimmed and lower-cased, `true`, `on` and `1` block private destinations, and `false`, `off` and `0`
@@ -21,19 +20,19 @@
  * instrumentation, which takes the decision at boot, apart from the route handlers, so one server process holds this
  * module twice (src/lib/governance/keyring.ts does the same for the same reason).
  *
- * `forgetEgressDecision` is a test seam. Slice 2b of FND-2 passes the decision to providers as data.
+ * No provider reads the decision here: the provider factory hands it to every provider it builds, in the build context
+ * (`ProviderBuildContext` in `./types`), and the guard takes it as an argument. Until the later slices of FND-2 slice 2b
+ * convert them, two core modules read it on a provider's behalf: `socketEgress` in `./http/egress-policy` and
+ * `httpOrigin` in `./http/endpoint`. `tests/unit/lib/db/provider-environment-scan.test.ts` holds who imports this module.
+ *
+ * `forgetEgressDecision` is a test seam.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
+import type { EgressDecision } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 
 /** The refusal of a value outside the accepted spellings, on every read of the decision. */
 export const INVALID_EGRESS_SETTING = "Invalid DB_HTTP_BLOCK_PRIVATE_HOSTS: expected true or false";
-
-/** Which way the process decided, and whether that is the documented default (an unset, empty or blank variable). */
-export interface EgressDecision {
-  readonly blocksPrivateHosts: boolean;
-  readonly source: "default" | "set";
-}
 
 /** The kept outcome: the decision, or the value as written when it is none of the accepted spellings. */
 export type EgressSetting = EgressDecision | { readonly invalid: string };
@@ -71,7 +70,7 @@ export function egressSetting(): EgressSetting {
   return setting;
 }
 
-/** The decision every guard and the provider factory read: throws `INVALID_EGRESS_SETTING` for a refused setting, on every call. */
+/** The decision the provider factory and the interim readers take: throws `INVALID_EGRESS_SETTING` for a refused setting, on every call. */
 export function egressDecision(): EgressDecision {
   const setting = egressSetting();
   if ("invalid" in setting) throw new DatabaseConfigError(INVALID_EGRESS_SETTING);

@@ -2137,7 +2137,7 @@ Not fixed there: the path serves seven providers.
 
 ### D163. The Prometheus TLS path uses the global https agent while the egress guard is off
 
-`sendOverTls` (`src/lib/db/providers/timeseries/prometheus/request.ts`) builds its `node:https` request from `...tls` and `...guardedNodeOptions(hostname)`, and with `DB_HTTP_BLOCK_PRIVATE_HOSTS` off `guardedNodeOptions` (`src/lib/db/http/egress-policy.ts`) returns `{}`, so no `agent` is set and the process-wide global agent carries the request.
+`sendOverTls` (`src/lib/db/providers/timeseries/prometheus/request.ts`) builds its `node:https` request from `...tls` and `...guardedNodeOptions(hostname, egress)`, and with `DB_HTTP_BLOCK_PRIVATE_HOSTS` off `guardedNodeOptions` (`src/lib/db/http/egress-policy.ts`) returns `{}`, so no `agent` is set and the process-wide global agent carries the request.
 Measured 2026-10-03 for `http:` only, on Node 24.14.0, Node 26.10.0 and Bun 1.4.2: with `NODE_USE_ENV_PROXY=1` the global agent sends through `HTTP_PROXY`, while `agent: false` and an explicit agent never do.
 Whether an `https:` request through the global agent goes through a proxy under `NODE_USE_ENV_PROXY=1` was not measured.
 

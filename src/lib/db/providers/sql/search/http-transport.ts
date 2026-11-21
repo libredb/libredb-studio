@@ -74,7 +74,7 @@
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { measureRowBytes } from "../read-only-budget";
@@ -1784,9 +1784,12 @@ export class SearchHttpTransport implements SearchTransport {
   private readonly spec: SearchDialectSpec;
   private readonly origin: HttpOrigin;
   private readonly authorization: string | undefined;
+  /** The egress decision the provider was built with, handed to the guarded fetch on every request. */
+  private readonly egress: EgressDecision;
 
-  constructor(dialect: SearchDialectId, config: DatabaseConnection) {
+  constructor(dialect: SearchDialectId, config: DatabaseConnection, egress: EgressDecision) {
     this.dialect = dialect;
+    this.egress = egress;
     this.spec = DIALECTS[dialect];
     // `ssl` is a first-class connection field and independent of the form's
     // `connectionFields`, and an explicit `disable` has to turn TLS OFF as well as
@@ -2534,20 +2537,24 @@ export class SearchHttpTransport implements SearchTransport {
     let response: Response;
     let text: string;
     try {
-      response = await httpTransportFetch(url, {
-        method: body === undefined ? "GET" : "POST",
-        headers: {
-          // Sent on GETs too: harmless, and it keeps one header block for one
-          // request helper. A POST without it is refused with HTTP 406 on both
-          // products (measured).
-          "content-type": JSON_CONTENT_TYPE,
-          ...(this.authorization === undefined ? {} : { authorization: this.authorization }),
+      response = await httpTransportFetch(
+        url,
+        {
+          method: body === undefined ? "GET" : "POST",
+          headers: {
+            // Sent on GETs too: harmless, and it keeps one header block for one
+            // request helper. A POST without it is refused with HTTP 406 on both
+            // products (measured).
+            "content-type": JSON_CONTENT_TYPE,
+            ...(this.authorization === undefined ? {} : { authorization: this.authorization }),
+          },
+          ...(body === undefined ? {} : { body }),
+          // A followed redirect would carry the credential to wherever it points.
+          redirect: "manual",
+          ...(signal ? { signal } : {}),
         },
-        ...(body === undefined ? {} : { body }),
-        // A followed redirect would carry the credential to wherever it points.
-        redirect: "manual",
-        ...(signal ? { signal } : {}),
-      });
+        this.egress,
+      );
       text = bodyCap === undefined ? await response.text() : await readCappedText(response, bodyCap);
     } catch (error) {
       if (error instanceof DatabaseConfigError || error instanceof SearchBoundsError) throw error;

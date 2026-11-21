@@ -61,7 +61,7 @@ import {
   type ObjectDetailBatch,
   type ObjectSourceDocument,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
@@ -73,6 +73,7 @@ import {
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
@@ -540,11 +541,15 @@ export class ClickHouseProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
+  /** The egress decision the factory built this provider with, handed to the transport `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderBuildContext = {}) {
     super(config, options);
     this.validate();
     this.connection = resolveConnection(config);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
   }
 
   // ==========================================================================
@@ -713,7 +718,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
   }
 
   public async connect(): Promise<void> {
-    const transport = new ClickHouseHttpTransport(this.connection);
+    const transport = new ClickHouseHttpTransport(this.connection, requireEgressDecision(this.egress));
 
     try {
       // The `database` parameter is not checked when the connection is made -
