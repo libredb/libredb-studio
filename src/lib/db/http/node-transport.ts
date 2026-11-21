@@ -25,6 +25,7 @@
  *   `maxResponseBytes`, and so does `createNodeByteTransport` when no `truncateAt` is given.
  * - A deadline or a cancel destroys the socket; the signal's reason tells the two apart.
  * - Nothing is retried: an answer that never arrived is reported as lost, and the request is never sent again.
+ * - A 101 that announces an upgrade fails at once as a network failure, and the socket it switched is destroyed.
  * - No message carries a header, the key, a URL query string or a body: a failure names its kind, a runtime code, an
  *   origin or a number. A signer's own Error is the provider's text and is passed through as thrown.
  *
@@ -45,7 +46,7 @@
  *   signer is the only way to set it;
  * - admits a request again once every field has been read, and fails a request taken from the queue already cancelled
  *   before it is signed, so neither is sent;
- * - fails a 101 answer at once as a network failure and destroys the socket it switched;
+ * - fails a 101 answer without the upgrade headers at once as a network failure and destroys its socket;
  * - on a refused 3xx, carries its status and the selected headers in `TransportError.redirect`, still without
  *   following it;
  * - never reaches a link-local address or AWS's IPv6 instance metadata address (LINK_LOCAL_NETWORKS in
@@ -53,17 +54,17 @@
  *   and every socket is opened through a lookup that checks the address it dials, after the guard's own check when the
  *   flag is on.
  *
- * `createNodeTransport` takes three of these on request, the 101 refusal as `refusesUpgrade`, the link-local refusal
- * as `refusesLinkLocal` and the signer as `signer`, all off when absent, so a provider that does not ask keeps the
- * behaviour it had. A text signer is handed the method, Host, path, query and headers as above and also the exact
- * payload text written, "" for none; with a signer the transport sets Host itself, so the Host signed is the Host sent.
- * A signer's header values may be up to 8192 bytes on both transports, so a session token fits, while a request's own
- * stay at 1024. The text transport also takes `reportsUnreachable`, off when absent, which the byte transport does
- * not: a deadline that fires before the socket connected is then kind "unreachable", naming host, port and the seconds
- * waited. Its `jsonContentType` picks the type a JSON body is sent under: one of application/json (the default when
- * absent), application/x-amz-json-1.0 or application/x-amz-json-1.1, and any other value is refused when the transport
- * is built. Both transports
- * refuse a connection header named in two spellings, so none is dropped silently and a signer sees one set.
+ * `createNodeTransport` takes three of these on request, the refusal of a 101 without the upgrade headers as
+ * `refusesUpgrade`, the link-local refusal as `refusesLinkLocal` and the signer as `signer`, all off when absent, so a
+ * provider that does not ask keeps the behaviour it had. A text signer is handed the method, Host, path, query and
+ * headers as above and also the exact payload text written, "" for none; with a signer the transport sets Host itself,
+ * so the Host signed is the Host sent. A signer's header values may be up to 8192 bytes on both transports, so a
+ * session token fits, while a request's own stay at 1024. The text transport also takes `reportsUnreachable`, off when
+ * absent, which the byte transport does not: a deadline that fires before the socket connected is then kind
+ * "unreachable", naming host, port and the seconds waited. Its `jsonContentType` picks the type a JSON body is sent
+ * under: one of application/json (the default when absent), application/x-amz-json-1.0 or application/x-amz-json-1.1,
+ * and any other value is refused when the transport is built. Both transports refuse a connection header named in two
+ * spellings, so none is dropped silently and a signer sees one set.
  *
  * `nodeTlsMaterial` is the TLS mapping D37 counts, shared here so that a new REST provider takes it instead of
  * writing another copy.
@@ -121,8 +122,9 @@ export interface NodeTransportOptions {
    */
   readonly refusesLinkLocal?: boolean;
   /**
-   * Text transport only, off when absent: fail a 101 answer at once as a network failure and destroy its socket, as
-   * the byte transport does, rather than leave the request waiting for its deadline.
+   * Text transport only, off when absent: fail a 101 answer without Connection: upgrade and an Upgrade header as a
+   * network failure and destroy its socket, as the byte transport does, rather than return it as an answer of status
+   * 101. A 101 that announces an upgrade fails that way on every transport, asked or not.
    */
   readonly refusesUpgrade?: boolean;
   /**
@@ -1329,18 +1331,17 @@ interface Prepared {
  * write, so whatever throws there or in node:http fails this request alone and frees its slot. `answered` is handed the
  * answer, its status and the request that carried it once the answer's own errors are wired to the exchange.
  *
- * With `refusesUpgrade`, which the byte transport always sets and the text transport sets on request, a 101 answer
- * fails the request at once as a network failure and its socket is destroyed. node:http hands a 101 that carries
- * Connection: upgrade and an Upgrade header to the request's `upgrade` event, never to the response callback, so
- * without it the request never settles: it holds its slot until its deadline and is reported as a timeout. Any other
- * 101 reaches the response callback, where each factory that set it refuses it by its status.
+ * A 101 that announces an upgrade fails the request at once as a network failure and its socket is destroyed, on
+ * every transport. node:http hands a 101 that carries Connection: upgrade and an Upgrade header to the request's
+ * `upgrade` event, never to the response callback, so without the listener the request never settles: it holds its
+ * slot until its deadline and is reported as a timeout. Any other 101 reaches the response callback, where the byte
+ * transport, and the text transport built with `refusesUpgrade`, refuse it by its status.
  */
 function dispatch<T>(
   core: TransportCore,
   pending: Exchange<T>,
   prepare: () => Prepared,
   answered: (answer: IncomingMessage, status: number, outgoing: ClientRequest) => void,
-  refusesUpgrade = false,
 ): void {
   try {
     const { options, body } = prepare();
@@ -1352,13 +1353,11 @@ function dispatch<T>(
     });
     pending.sent(outgoing);
     outgoing.on("error", pending.failWith);
-    if (refusesUpgrade) {
-      outgoing.on("upgrade", (_answer: IncomingMessage, socket: Socket) => {
-        // The switched socket is handed over and no longer the request's, so destroying the request leaves it open.
-        socket.destroy();
-        pending.fail(new TransportError("network", SWITCHED_PROTOCOLS));
-      });
-    }
+    outgoing.on("upgrade", (_answer: IncomingMessage, socket: Socket) => {
+      // The switched socket is handed over and no longer the request's, so destroying the request leaves it open.
+      socket.destroy();
+      pending.fail(new TransportError("network", SWITCHED_PROTOCOLS));
+    });
     outgoing.end(body);
   } catch (error) {
     // node:http refuses some requests by throwing before anything is sent: a header value with a line feed.
@@ -1494,7 +1493,6 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
             });
           });
         },
-        refusesUpgrade,
       );
     });
 
@@ -1666,7 +1664,6 @@ export function createNodeByteTransport(options: NodeByteTransportOptions): Node
             pending.resolve(respond(false));
           });
         },
-        true,
       );
     });
 
