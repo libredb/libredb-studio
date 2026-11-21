@@ -36,6 +36,7 @@ import {
 } from "@/lib/db/providers/timeseries/prometheus/request";
 import type { SSLConfig } from "@/lib/types";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
+import { answerWithUpgrade } from "../../../helpers/upgrade-answer";
 
 const TLS = loadTlsFixtures();
 
@@ -463,6 +464,22 @@ describe.each(PATHS)("$name: a request and its answer", ({ scheme, send, refused
 
     expect(failure.reason).toBe("network");
     expect(failure.detail).toEqual({ code: "ECONNRESET" });
+  });
+
+  test("a 101 that switches protocols is a network failure at once, and the switched connection is closed", async () => {
+    let closed: Promise<void> = Promise.resolve();
+    const served = await serve(scheme, (_response, request) => {
+      closed = answerWithUpgrade(request.socket, "upgrade");
+    });
+
+    // Well past the moment the 101 arrives and inside the test's own timeout, so a request left waiting fails as a
+    // deadline rather than as a timed-out test.
+    const failure = await failureOf(send(outbound(served.origin, { signal: AbortSignal.timeout(3000) })));
+
+    expect(failure.reason).toBe("network");
+    // Bun's fetch adds its own code (UnrequestedUpgrade on 1.4.4) and Node's fetch another; node:https gives none.
+    expect(failure.message).toStartWith("The request failed before a complete response arrived");
+    await closeSeen(closed);
   });
 
   test("a refused connection is a network failure carrying the runtime's code, and nothing else", async () => {
