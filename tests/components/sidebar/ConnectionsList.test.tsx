@@ -56,6 +56,11 @@ mock.module("@/lib/db-ui-config", () => ({
   },
   getDBConfig: () => ({ icon: () => null, color: "text-hue-blue", label: "PostgreSQL", defaultPort: "5432" }),
   getDBColor: () => "text-hue-blue",
+  UNAVAILABLE_CONNECTION_ICON: (props: Record<string, unknown>) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const React = require("react");
+    return React.createElement("span", { ...props, "data-testid": "unavailable-icon" });
+  },
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
@@ -809,5 +814,74 @@ describe("ConnectionsList", () => {
         expect(queryAllByTestId(`drag-handle-${mockSQLiteConnection.id}`)).toHaveLength(1);
       });
     });
+  });
+});
+
+describe("ConnectionsList: built-in samples listed unavailable", () => {
+  const failed = {
+    seedId: "sqlite-embedded-sample",
+    name: "Sample (Employees)",
+    reason: "asset-missing" as const,
+    sentence: "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied.",
+  };
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("draws an unavailable sample with its reason and no action, after the connections and in an empty list", () => {
+    const onSelect = mock(() => {});
+    const onDelete = mock(() => {});
+    const view = render(
+      <ConnectionsList
+        connections={[mockPostgresConnection]}
+        activeConnection={null}
+        onSelectConnection={onSelect}
+        onDeleteConnection={onDelete}
+        unavailableSamples={[failed]}
+      />,
+    );
+
+    const row = view.getByTestId("unavailable-sample-sqlite-embedded-sample");
+    expect(row.textContent).toContain("Sample (Employees)");
+    const marker = view.getByTitle(failed.sentence);
+    expect(marker.textContent).toBe(`Unavailable: ${failed.sentence}`);
+    expect(row.contains(marker)).toBe(true);
+    expect(row.querySelector('[data-testid="unavailable-icon"]')).not.toBeNull();
+    // Not a control: no role, no focus stop, no button inside it.
+    expect(row.getAttribute("role")).toBeNull();
+    expect(row.getAttribute("tabindex")).toBeNull();
+    expect(row.querySelectorAll("button")).toHaveLength(0);
+    fireEvent.click(row);
+    expect(onSelect).not.toHaveBeenCalled();
+    // After the listed connections.
+    const listed = view.getByText(mockPostgresConnection.name);
+    expect(listed.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    cleanup();
+
+    const empty = render(
+      <ConnectionsList
+        connections={[]}
+        activeConnection={null}
+        onSelectConnection={onSelect}
+        onDeleteConnection={onDelete}
+        unavailableSamples={[failed]}
+      />,
+    );
+    expect(empty.queryByTestId("unavailable-sample-sqlite-embedded-sample")).not.toBeNull();
+    expect(empty.queryByText("No database connections established yet.")).not.toBeNull();
+  });
+
+  test("draws nothing extra without unavailable samples", () => {
+    const view = render(
+      <ConnectionsList
+        connections={[mockPostgresConnection]}
+        activeConnection={null}
+        onSelectConnection={mock(() => {})}
+        onDeleteConnection={mock(() => {})}
+      />,
+    );
+    expect(view.queryByText("Unavailable")).toBeNull();
+    expect(view.container.querySelector('[data-testid^="unavailable-sample-"]')).toBeNull();
   });
 });

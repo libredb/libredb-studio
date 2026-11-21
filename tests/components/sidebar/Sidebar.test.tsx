@@ -507,6 +507,14 @@ describe("Sidebar", () => {
     expect(capturedGroupProps.accessUnavailable).toBeUndefined();
   });
 
+  test("passes the unavailable built-in samples through to ConnectionsList", () => {
+    const unavailableSamples = [
+      { seedId: "sqlite-embedded-sample", name: "Sample (Employees)", reason: "asset-missing" as const, sentence: "x" },
+    ];
+    render(<Sidebar {...createDefaultProps({ unavailableSamples })} />);
+    expect(capturedGroupProps.unavailableSamples).toBe(unavailableSamples);
+  });
+
   test("passes the connection groups and every group callback through to ConnectionsList (#1170)", () => {
     const groupProps = {
       connectionGroups: [{ id: "g1", name: "Prod", collapsed: false, connectionIds: [] }],
