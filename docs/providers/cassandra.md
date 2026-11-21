@@ -16,7 +16,7 @@
 | **Status** | Implemented & shipped |
 | **Database type id** | `cassandra` |
 | **Family** | SQL (`src/lib/db/providers/sql/cassandra/`) |
-| **Driver** | [`cassandra-driver`](https://www.npmjs.com/package/cassandra-driver) 4.10.0 — Apache-2.0, pure JS (no `binding.gyp`, no `.node`, no postinstall) ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)) |
+| **Driver** | [`cassandra-driver`](https://www.npmjs.com/package/cassandra-driver) 4.10.0, Apache-2.0, pure JS (no `binding.gyp`, no `.node`, no postinstall) ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)); installed with one patch ([§3.10](#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver)) |
 | **Query language** | `sql` — CQL is SQL-*shaped*: no JOIN, no subquery, no OFFSET, no EXPLAIN ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | **Default port** | `9042` — the native protocol. Thrift (9160) is gone from 4.0 onwards; 7000/7001 are internode and 7199 is JMX |
 | **Connection pooling** | The driver's own, one session per connection: core 1 connection per local host, 2048 requests in flight per connection |
@@ -456,6 +456,31 @@ The provider holds a long-lived `Client` session ([`driver-transport.ts`](../../
 That is the same fact `supportsTransactions: false` reports to the editor toolbar.
 
 This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+
+### 3.10 A frame the driver cannot read fails the connection by name (patched driver)
+
+`cassandra-driver` reads each connection through three streams: one splits the bytes into frames, one parses each frame's body, one hands the result to the request that waits for it (`lib/connection.js`, `bindSocketListeners`).
+A stream that cannot read a frame reports it as an `error` event, and 4.10.0 attaches no listener for that event on any of the three.
+So a frame the driver cannot parse (an ERROR or AUTHENTICATE body shorter than it says, a header cut short, a response on a stream id the driver never allocated, an EVENT body shorter than it says) was thrown out of the stream's handler instead of reaching a caller, and the connection stayed open without reading anything more: the connect, or the request in flight and every later request on that connection, waited for the read timeout and then failed as a timeout.
+No public driver API reaches these streams, so Studio installs the driver with a patch, [`patches/cassandra-driver@4.10.0.patch`](../../patches/cassandra-driver@4.10.0.patch), listed in `patchedDependencies` in `package.json` and recorded in [`docs/TOOLCHAIN.md`](../TOOLCHAIN.md), "Patched dependencies".
+
+The patch gives the three streams one `error` listener, which destroys the connection's socket with a `DriverError` that names the host and the reading failure.
+That is the driver's own path for a socket error, so nothing new decides what happens next.
+One race needs a second change: when the failure arrives together with the node's refusal of the driver's first protocol version, the driver's version downgrade would reopen the same connection at the lower version after the connect had already failed this way, leaving a connection that no session owns and that a disconnect does not close.
+So the patch also marks a connect that has failed, and the downgrade does not reopen it: the connect fails by name and no connection is left open.
+
+| When the frame arrives | What the caller gets |
+|---|---|
+| Answering STARTUP, so during Test connection or connect | `ConnectionError`: `Failed to connect to Apache Cassandra: The connection to <host>:<port> failed while reading a response: <the parser's error>`, at once instead of after the read timeout |
+| Answering a request the driver sends itself later in the connect (such as OPTIONS or the `system.local` read), so during Test connection or connect | `ConnectionError`: `Failed to connect to Apache Cassandra: Socket was closed`, at once; the read failure is in the driver's `innerError`, which Studio does not show |
+| Answering a statement on an open connection | `QueryError`: `Socket was closed`, the driver's error for a request whose connection was lost, as for a reset; the connection is closed |
+| An EVENT pushed on an idle connection, with no request pending | Nothing reaches a caller; the connection is closed and replaced as below |
+
+After a connection is lost this way the driver replaces it as it does after any lost connection: the control connection reconnects at once and reads the topology again, and the host's pool dials again on the driver's default reconnection policy (`ExponentialReconnectionPolicy`, 1 s base, 10 min cap), which `cassandraClientOptions` does not change.
+A statement sent in the moment before the replacement is up fails with a `ConnectionError`: `All host(s) tried for query failed.` when the driver has already marked the host down, or `No connection available` when the host is still up with no open connection; nothing is retried by Studio.
+
+The cases run against a fake node on 127.0.0.1 ([`tests/helpers/cassandra-fake-peer.ts`](../../tests/helpers/cassandra-fake-peer.ts)), through the real provider and the real patched driver, under Bun and under Node, in the integration suite ([§10](#10-testing)).
+The patch is removed when a driver release listens on these streams itself; the test stays, and holds the release to the same behaviour.
 
 
 ---
@@ -1328,6 +1353,7 @@ A result set does not know which column is the real key, so the first one is cho
 | [`tests/unit/db/cassandra/agent-boundary.test.ts`](../../tests/unit/db/cassandra/agent-boundary.test.ts) | The agent profile's check of the role: every statement it sends, pinned by full text, and every refusal |
 | [`tests/live/cassandra-agent-boundary.ts`](../../tests/live/cassandra-agent-boundary.ts) | The agent profile's boundary against a live node ([§14.6](#146-boundary-record)); not in `bun run test` |
 | [`tests/unit/db/cassandra/seam-guard.test.ts`](../../tests/unit/db/cassandra/seam-guard.test.ts) | That the driver, its value classes and its per-statement knobs appear in code only in `driver-transport.ts` |
+| [`tests/helpers/cassandra-fake-peer.ts`](../../tests/helpers/cassandra-fake-peer.ts) | A fake node on 127.0.0.1 that answers one frame the driver cannot parse; the integration suite drives the real provider and the real patched driver through it under Bun and Node ([§3.10](#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver)) |
 
 The session stand-in **throws on an unknown statement** rather than answering empty: a provider whose
 CQL drifts has to fail there, not quietly report no rows.

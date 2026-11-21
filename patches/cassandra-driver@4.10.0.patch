@@ -1,0 +1,43 @@
+diff --git a/lib/connection.js b/lib/connection.js
+index af7b016dc207b0b94558fcbc0451b627921d5d23..68e7cef56d609b0c39e6dfaddad39a13bdcac8e1 100644
+--- a/lib/connection.js
++++ b/lib/connection.js
+@@ -157,6 +157,18 @@ class Connection extends events.EventEmitter {
+     resultEmitter.on('frameEnded', this.freeStreamId.bind(this));
+     resultEmitter.on('nodeEvent', this.handleNodeEvent.bind(this));
+ 
++    // A stream that fails to read a frame emits 'error'; fail the connection the way a socket error does,
++    // so pending requests are rejected and the socket is closed, instead of leaving the event unheard.
++    const onReadError = (err) => {
++      const error = new errors.DriverError(
++        `The connection to ${this.endpointFriendlyName} failed while reading a response: ${err}`);
++      error.innerError = err;
++      this.netClient.destroy(error);
++    };
++    this.protocol.on('error', onReadError);
++    this.parser.on('error', onReadError);
++    resultEmitter.on('error', onReadError);
++
+     this.netClient
+       .pipe(this.protocol)
+       .pipe(this.parser)
+@@ -276,6 +288,11 @@ class Connection extends events.EventEmitter {
+           // The host closed the connection, close the socket and start the connection flow again
+           setImmediate(function decreasingVersionClosing() {
+             self.close(function decreasingVersionOpening() {
++              if (self._openFailed) {
++                // open() has already called back with a failure (a frame that could not be read came with the
++                // version error): do not open a connection that nothing would own
++                return;
++              }
+               // Attempt to open with the correct protocol version
+               self.open(callback);
+             });
+@@ -302,6 +319,7 @@ class Connection extends events.EventEmitter {
+   }
+ 
+   errorConnecting(err, destroy, callback) {
++    this._openFailed = true;
+     this.log('warning', `There was an error when trying to connect to the host ${this.endpointFriendlyName}`, err);
+     if (destroy) {
+       //there is a TCP connection that should be killed.
