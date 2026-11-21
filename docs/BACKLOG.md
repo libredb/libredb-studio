@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D476, U17 · 349
+- [Drivers and connections](#drivers-and-connections) — D1-D479, U17 · 352
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U220 · 205
@@ -77,6 +77,9 @@ Those fixtures need shapes that stay unresolvable once `\` is understood before 
   Druid sees a `--` comment where the reader sees a string, and the limiter writes its bound inside that
   comment and reports the read as bounded. Druid SQL cannot write, so the cost is an unbounded read.
   Closing it needs a grammar fact that turns the untagged form off, a change to the shared reader.
+- **MariaDB executable comments.** MariaDB runs the text of `/*M! ... */` and `/*M!###### ... */`, where MySQL reads both as comments.
+  Measured 2026-11-21 on MariaDB 11.8.9: `/*M! DELETE FROM t */` and `/*M!100000 DELETE FROM t */` each emptied `t`, and `/*M! REPLACE INTO t VALUES (1, 'new', NULL) */` replaced row 1.
+  `isDangerousQuery(sql, "mysql")` answers false for all three, as for MySQL's `/*!40000 DELETE FROM t */`; MySQL 8.4.13 left the row in place for `/*M! DELETE FROM t */ SELECT 1`.
 
 ### S4. MSSQL: a parameterised page is still unrecognised
 
@@ -3312,8 +3315,12 @@ Found 2026-10-12 while designing the Snowflake provider.
 
 `SqlGrammar.confirmForms` and `confirmCodeForms` let a dialect name the destructive forms the shared keyword set misses, and only the Snowflake and Spark rows declare a full set; PostgreSQL's row declares only its `DO` block, MySQL's only `REPLACE`, `ON DUPLICATE KEY UPDATE`, `INSERT OVERWRITE`, `LOAD DATA ... REPLACE INTO TABLE` and MariaDB's `CREATE OR REPLACE TABLE` and `CREATE OR REPLACE TEMPORARY TABLE`, SQLite's only `REPLACE INTO` and `INSERT OR REPLACE`, DuckDB's only `INSERT OR REPLACE`, and Databend's only `REPLACE`.
 `MERGE` asks on every engine, as shared vocabulary; other engines' replace, call, unload and opaque-text forms still run unconfirmed; D246 covers Databend's, and the rest have no entry.
+Two replace forms on rows that already declare some are measured.
+MariaDB's `CREATE OR REPLACE DATABASE` and `CREATE OR REPLACE SCHEMA` each dropped the table the database held on 11.8.9, and both answer false on a `mysql` connection, where `DROP DATABASE` asks.
+DuckDB's `CREATE OR REPLACE TABLE` emptied a table holding `(1, 'a', 'keep-me')` with a column list and left only the selected row with `AS SELECT` on v1.5.5, and both answer false on a `duckdb` connection; `docs/providers/duckdb.md` already says the statement deletes every row.
 
 Found 2026-10-12 while designing the Snowflake provider; narrowed 2026-10-14 when `MERGE` joined the shared set and PostgreSQL's row named `DO`, and 2026-11-21 when the MySQL, SQLite, DuckDB and Databend rows named the INSERT, LOAD and REPLACE forms that overwrite rows and MariaDB's `CREATE OR REPLACE TABLE` in both forms.
+The MariaDB and DuckDB measurements were added 2026-11-21 from the review of those forms.
 
 **Done when:** every SQL engine's row declares its own confirmation forms, each form is pinned by `isDangerousQuery` for that engine, also behind comments, and each provider doc lists what its gate asks for.
 
@@ -3327,6 +3334,40 @@ A fact for the prefix has a cost to weigh: a form read at the operative keyword 
 Found 2026-11-21 in the review of the MySQL confirmation forms; the `DELETE` half predates them.
 
 **Done when:** each of the three statements above asks on a `mysql` connection, through a fact of the mysql grammar row, with a test per statement in `tests/components/QuerySafetyDialog.test.tsx`, and `docs/providers/mysql.md` 5.7 no longer names the gap.
+
+### D477. DuckDB's `EXPLAIN ANALYZE` runs the explained write with no confirmation
+
+DuckDB runs the statement an `EXPLAIN ANALYZE` explains.
+Measured 2026-11-21 on DuckDB v1.5.5 through `@duckdb/node-api` 1.5.5, against a table holding `(1, 'a', 'keep-me')`: `EXPLAIN ANALYZE DELETE FROM t` emptied it, and `EXPLAIN ANALYZE INSERT OR REPLACE INTO t VALUES (1, 'new', NULL)` left `(1, 'new', NULL)`.
+`isDangerousQuery(sql, "duckdb")` answers false for both, because only the PostgreSQL grammar row declares `explainExecutesWithAnalyze`, the fact that makes the gate read the explained statement; `EXPLAIN ANALYZE UPDATE t SET v = 'x'` asks only through the code-wide `UPDATE ... SET` reading.
+Studio's own DuckDB Explain action never sends the analyze form (`src/lib/explain/duckdb-json.ts`), so the gap is a statement typed in the editor.
+`docs/editor/query-optimization.md` says the fact is absent on every other row and does not say that DuckDB executes.
+In the same review MySQL 8.4.13 kept its rows under `EXPLAIN ANALYZE` of a multi-table `DELETE` and `UPDATE`, and Databend refused `EXPLAIN ANALYZE REPLACE`, so neither is in this class.
+
+Found 2026-11-21 in the review of DuckDB's `INSERT OR REPLACE` form; it predates that form.
+
+**Done when:** the DuckDB row declares `explainExecutesWithAnalyze`, once DuckDB's spellings of the option are checked against the reading the gate applies to PostgreSQL's, the two statements above ask on a `duckdb` connection with a test each in `tests/components/QuerySafetyDialog.test.tsx`, and `docs/providers/duckdb.md` states it.
+
+### D478. MariaDB's `ANALYZE` statement runs the analysed write with no confirmation
+
+MariaDB's `ANALYZE <statement>` runs the statement and reports its plan with the counts it measured.
+Measured 2026-11-21 on MariaDB 11.8.9: `ANALYZE DELETE FROM t WHERE id = 1` deleted the row.
+MariaDB connects through the `mysql` type id, and `isDangerousQuery` reads `ANALYZE` as the statement's keyword, so it answers false; `ANALYZE UPDATE t SET v = 'x'` asks only through the code-wide `UPDATE ... SET` reading.
+A fact for it has to leave `ANALYZE TABLE`, which only updates statistics, and `ANALYZE` of a `SELECT` unprompted.
+
+Found 2026-11-21 in the review of the MySQL confirmation forms; it predates them.
+
+**Done when:** an `ANALYZE` of a `DELETE`, `INSERT`, `REPLACE` or `UPDATE`, with or without `FORMAT=JSON`, asks on a `mysql` connection through a fact of the mysql grammar row, with a test per form in `tests/components/QuerySafetyDialog.test.tsx`, while `ANALYZE TABLE` and `ANALYZE SELECT` stay unprompted, and `docs/providers/mysql.md` 5.7 states it.
+
+### D479. MySQL's `CREATE EVENT ... DO` runs its write with no confirmation
+
+An event created with `ON SCHEDULE AT CURRENT_TIMESTAMP` runs its `DO` body within seconds when the event scheduler is on.
+Measured 2026-11-21 on MySQL 8.4.13, where `@@event_scheduler` was `ON` by default: `CREATE EVENT e1 ON SCHEDULE AT CURRENT_TIMESTAMP DO DELETE FROM probe.t` emptied the table, and `CREATE EVENT e2 ON SCHEDULE AT CURRENT_TIMESTAMP DO REPLACE INTO probe.t VALUES (1, 'new', NULL)` replaced row 1, each within four seconds.
+`isDangerousQuery(sql, "mysql")` answers false for both: the statement's keyword is `CREATE`, and neither the shared keyword set nor the mysql row's forms read the body after `DO`.
+
+Found 2026-11-21 in the review of the MySQL confirmation forms; it predates them.
+
+**Done when:** a `CREATE EVENT` whose `DO` body would ask on its own asks on a `mysql` connection, through a fact of the mysql grammar row, with a test per body in `tests/components/QuerySafetyDialog.test.tsx`, and `docs/providers/mysql.md` 5.7 states it.
 
 ### D332. The seed plaintext warning knows only `password`
 
