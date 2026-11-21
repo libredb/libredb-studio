@@ -486,6 +486,9 @@ const { details } = await provider.describeObjects(['public'], 'table');
 await provider.disconnect();
 ```
 
+`createDatabaseProvider` opens no SSH tunnel: wrap it in `withOneShotTunnel`, or use `getOrCreateProvider`, which opens one for a connection whose `sshTunnel` is enabled.
+The provider it returns is built from a copy of the connection whose `sshTunnel` holds no `password`, `privateKey` or `passphrase`; those stay in the record the caller passed, so `provider.config` is not that record whenever it carries an `sshTunnel` object.
+
 ### DuckDB file access and the execution context
 
 Both factories take a third argument, a server-side execution context.

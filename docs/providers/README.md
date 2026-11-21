@@ -222,6 +222,12 @@ connection's own SSL settings say nothing about the bastion.
 A Kafka connection refuses a tunnel: a Kafka client reaches every broker at the address that broker advertises, which a tunnel forwarding one address does not carry, so the dialog offers no SSH panel for it and the provider refuses a tunnelled connection ([kafka.md §4.5](./kafka.md#45-no-ssh-tunnel)).
 BigQuery, Firestore and Snowflake offer no SSH panel either: each reaches its vendor's own API hosts over TLS, and its provider doc says why a tunnel is not offered.
 
+**What a provider receives of the tunnel.**
+Studio opens the tunnel itself, with the connection's tunnel password, private key and passphrase, before it builds the provider.
+The provider receives the tunnel's outcome: the local endpoint in `host` and `port`, the far end under `TUNNEL_FAR_END`, and the tunnel's public fields in `sshTunnel` (`enabled`, `host`, `port`, `username`, `authMethod`, `hostKeyFingerprint`).
+It never receives the tunnel's password, private key or passphrase: `createDatabaseProvider` builds every provider from `providerConnection` in [`src/lib/db/provider-connection.ts`](../../src/lib/db/provider-connection.ts), which leaves them out ([SECURITY.md control 3.41](../SECURITY.md)).
+A provider that reads a tunnel credential therefore reads `undefined`.
+
 **The policy is trust-on-first-use (TOFU), pinned per connection.** Not "refuse anything unknown":
 requiring a pasted fingerprint before the first connection makes tunnelling unusable for someone
 reaching their own bastion, TOFU is what every SSH client does on first contact, and it is strictly
