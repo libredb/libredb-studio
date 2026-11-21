@@ -217,7 +217,15 @@ export function createGuardedSocketFactory(options: GuardedSocketOptions): {
           reject(new EgressRefusal("the client has not asked for a socket yet"));
           return;
         }
-        raw.connect(target.port, target.address, () => {
+        // A connect the runtime cannot make is reported to this callback, not as an `error`
+        // event: a udp4 socket asked for an IPv6 address answers EINVAL under Node and "Failed to
+        // connect socket" under Bun. It rejects here, and the socket stays unconnected, so a send
+        // after it is refused above rather than going out on a socket aimed nowhere.
+        raw.connect(target.port, target.address, (error?: Error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
           connected = true;
           resolve();
         });

@@ -1,5 +1,6 @@
 /**
- * The provider's socket follows the address the host resolved to.
+ * The provider's socket follows the address the host resolved to, and a connect that fails closes the socket it
+ * opened.
  *
  * An agent on IPv6 is reached over a udp6 socket: a udp4 socket cannot be connected to an IPv6 address, so before
  * this the connect failed for `::1`, `[::1]` and every name that resolves to IPv6. The agent here listens on `::1`,
@@ -57,6 +58,7 @@ mock.module("node:dgram", () => ({
 }));
 
 const { SnmpProvider } = await import("@/lib/db/providers/network/snmp");
+const { SnmpTransportError } = await import("@/lib/db/providers/network/snmp/client");
 const { startFakeAgent, text } = await import("../../../helpers/snmp-fake-agent");
 type FakeAgent = Awaited<ReturnType<typeof startFakeAgent>>;
 
@@ -118,5 +120,55 @@ describe("an agent on IPv6 is reached over a udp6 socket", () => {
     await provider.connect();
     expect((await provider.query("get sysDescr.0")).rowCount).toBe(1);
     expect(since(from).map((socket) => socket.type)).toEqual(["udp4"]);
+  });
+});
+
+describe("a connect that fails closes the socket it opened", () => {
+  test("a socket that cannot be connected to the agent's address fails the connect by name", async () => {
+    // A udp4 socket handed out for an IPv6 agent: the runtime reports the failed connect to the connect callback,
+    // which the provider now reads instead of going on to send on a socket that is not connected.
+    agent = await startFakeAgent(TREE, { address: "::1" });
+    fault = () => realDgram.createSocket("udp4");
+    const from = opened.length;
+    provider = new SnmpProvider(connection("::1", agent.port), { queryTimeout: 2000 });
+    const error = await provider.connect().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(SnmpTransportError);
+    expect(String((error as Error).message)).toContain(`could not connect a udp6 socket to ::1 port ${agent.port}`);
+    expect(agent.requests).toHaveLength(0);
+    expect(since(from)).toEqual([{ type: "udp6", closed: true }]);
+  });
+
+  test("a probe the socket fails to send fails the connect and closes the socket", async () => {
+    agent = await startFakeAgent(TREE);
+    fault = (type) => {
+      const socket = realDgram.createSocket(type);
+      socket.send = (() => {
+        throw Object.assign(new Error("the socket refused the send"), { code: "EFAKE" });
+      }) as Socket["send"];
+      return socket;
+    };
+    const from = opened.length;
+    provider = new SnmpProvider(connection("127.0.0.1", agent.port), { queryTimeout: 2000 });
+    const error = await provider.connect().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(String((error as Error).message)).toContain("the socket refused the send");
+    expect(since(from)).toEqual([{ type: "udp4", closed: true }]);
+  });
+
+  test("a probe nobody answers fails the connect and closes the socket", async () => {
+    agent = await startFakeAgent(TREE, { silentOn: () => true });
+    const from = opened.length;
+    provider = new SnmpProvider(connection("127.0.0.1", agent.port), { queryTimeout: 200 });
+    const error = await provider.connect().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(String((error as Error).message)).toContain("No SNMP agent answered");
+    expect(since(from)).toEqual([{ type: "udp4", closed: true }]);
   });
 });

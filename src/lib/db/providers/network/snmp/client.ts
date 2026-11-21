@@ -275,33 +275,46 @@ export async function openExchange(options: ExchangeOptions): Promise<Exchange> 
     }
     waiting.get(response.requestId)?.settle(response);
   });
-  await factory.start();
 
-  if (v3 !== undefined) {
-    engine = await discover(socket, target, deadlineMs, messageId, (listener) => {
-      awaitingDiscovery = listener;
+  // Until the exchange is returned, nothing but this function holds the socket, so every way out
+  // of the open below closes it: a connect the socket reports as failed, a discovery nobody
+  // answers, an engine that is not the pinned one.
+  try {
+    await factory.start().catch((error: unknown) => {
+      const reason = (error as NodeJS.ErrnoException).code ?? (error as Error).message;
+      throw new SnmpTransportError(
+        `could not connect a ${socketType} socket to ${target.address} port ${target.port}: ${reason}`,
+      );
     });
-    awaitingDiscovery = undefined;
-    messageId += 1;
-    if (v3.engineIdPin !== undefined) {
-      const found = Buffer.from(engine.engineId).toString("hex");
-      if (found !== v3.engineIdPin.toLowerCase()) {
-        socket.close();
-        throw new SnmpTransportError(
-          `the agent at ${target.address} answered with engine id ${found}, and this connection is pinned to ${v3.engineIdPin.toLowerCase()}`,
-        );
+
+    if (v3 !== undefined) {
+      engine = await discover(socket, target, deadlineMs, messageId, (listener) => {
+        awaitingDiscovery = listener;
+      });
+      awaitingDiscovery = undefined;
+      messageId += 1;
+      if (v3.engineIdPin !== undefined) {
+        const found = Buffer.from(engine.engineId).toString("hex");
+        if (found !== v3.engineIdPin.toLowerCase()) {
+          throw new SnmpTransportError(
+            `the agent at ${target.address} answered with engine id ${found}, and this connection is pinned to ${v3.engineIdPin.toLowerCase()}`,
+          );
+        }
       }
+      const engineId = Buffer.from(engine.engineId);
+      keys = {
+        localizedAuthKey: localizedKey(v3.authPassphrase, engineId, v3.hash),
+        localizedPrivKey:
+          v3.level === "authPriv" && v3.privacyPassphrase !== undefined
+            ? localizedKey(v3.privacyPassphrase, engineId, v3.hash)
+            : undefined,
+        hash: v3.hash,
+      };
+      clock = startClock(engine.engineBoots, engine.engineTime, Date.now());
     }
-    const engineId = Buffer.from(engine.engineId);
-    keys = {
-      localizedAuthKey: localizedKey(v3.authPassphrase, engineId, v3.hash),
-      localizedPrivKey:
-        v3.level === "authPriv" && v3.privacyPassphrase !== undefined
-          ? localizedKey(v3.privacyPassphrase, engineId, v3.hash)
-          : undefined,
-      hash: v3.hash,
-    };
-    clock = startClock(engine.engineBoots, engine.engineTime, Date.now());
+  } catch (error) {
+    socket.close();
+    throw error;
   }
 
   return {

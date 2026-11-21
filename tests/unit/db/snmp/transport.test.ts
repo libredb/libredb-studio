@@ -161,3 +161,22 @@ describe("a send before the socket is connected", () => {
     await expect(factory.start()).rejects.toThrow(/has not asked for a socket/);
   });
 });
+
+describe("a connect the socket reports as failed", () => {
+  test("rejects start with the socket's own error, and a send after it is refused", async () => {
+    // A udp4 socket cannot be connected to an IPv6 address. The runtime reports that to the connect callback, and a
+    // start that resolved anyway left the next send on a socket that was never connected.
+    const factory = createGuardedSocketFactory({
+      target: { address: "::1", port: PORT },
+      createRawSocket: () => dgram.createSocket("udp4"),
+    });
+    const fresh = factory.dgramModule.createSocket("udp6");
+    const error = await factory.start().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(await send((cb) => fresh.send(GET, 0, GET.length, PORT, "::1", cb))).toBe(EgressRefusal.name);
+    fresh.close();
+  });
+});

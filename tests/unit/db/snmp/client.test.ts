@@ -127,6 +127,37 @@ describe("a target is resolved and checked before a socket exists", () => {
   });
 });
 
+/** A real socket the exchange is handed, with a record of whether the exchange closed it. */
+function recordedSocket(type: "udp4" | "udp6"): { socket: Socket; closed: () => boolean } {
+  const socket = createSocket(type);
+  let closed = false;
+  const close = socket.close.bind(socket);
+  socket.close = ((callback?: () => void) => {
+    closed = true;
+    return close(callback);
+  }) as Socket["close"];
+  return { socket, closed: () => closed };
+}
+
+describe("an exchange that cannot be opened closes its socket", () => {
+  test("a socket that cannot be connected to the target fails the open by name", async () => {
+    // A udp4 socket cannot be connected to an IPv6 address, and the runtime reports that to the connect callback.
+    const { socket, closed } = recordedSocket("udp4");
+    const error = await openExchange({
+      target: await resolveTarget("::1", 161),
+      community: "public",
+      deadlineMs: 2000,
+      createRawSocket: () => socket,
+    }).then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(SnmpTransportError);
+    expect((error as Error).message).toMatch(/^could not connect a udp6 socket to ::1 port 161: \S/);
+    expect(closed()).toBe(true);
+  });
+});
+
 describe("a request goes out and its answer comes back", () => {
   test("the agent receives exactly the bytes the encoder built", async () => {
     let seen: Uint8Array | undefined;
@@ -481,14 +512,17 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
   test("an engine id that does not match the pin ends the connection", async () => {
     const port = await v3Agent([]);
     const target = await resolveTarget("127.0.0.1", port);
+    const { socket, closed } = recordedSocket("udp4");
     await expect(
       openExchange({
         target,
         community: "",
         deadlineMs: 2000,
         v3: { ...credentials, engineIdPin: "8000000001020304" },
+        createRawSocket: () => socket,
       }),
     ).rejects.toThrow(SnmpTransportError);
+    expect(closed()).toBe(true);
   });
 
   test("the pin accepts the engine it was written for", async () => {
@@ -853,6 +887,7 @@ describe("a v3 connection whose discovery is never answered", () => {
     const silent = createSocket("udp4");
     await new Promise<void>((resolve) => silent.bind(0, "127.0.0.1", () => resolve()));
     const port = (silent.address() as { port: number }).port;
+    const { socket, closed } = recordedSocket("udp4");
     try {
       await expect(
         openExchange({
@@ -860,8 +895,11 @@ describe("a v3 connection whose discovery is never answered", () => {
           community: "",
           deadlineMs: 150,
           v3: { userName: "u1", authPassphrase: "authpass12345", level: "authNoPriv", hash: "sha1" },
+          createRawSocket: () => socket,
         }),
       ).rejects.toThrow(/did not answer the discovery request/);
+      // Nothing else holds the socket once the open has failed, so the open closes it.
+      expect(closed()).toBe(true);
     } finally {
       silent.close();
     }

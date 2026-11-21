@@ -324,7 +324,13 @@ export class SnmpProvider extends BaseDatabaseProvider {
     // The sentence names BOTH possibilities on purpose. Over v2c a wrong community is answered
     // with silence, exactly like an absent agent, and this provider cannot tell them apart from
     // here. Claiming one of them would be inventing the half we did not measure.
-    const probe = await exchange.send(PDU_GET, nextRequestId(), [SYS_UPTIME], undefined);
+    //
+    // A probe that fails by throwing rather than by answering closes the exchange too: this
+    // provider keeps the exchange only once the probe was answered, so nothing else could close it.
+    const probe = await exchange.send(PDU_GET, nextRequestId(), [SYS_UPTIME], undefined).catch((error: unknown) => {
+      exchange.close();
+      throw error;
+    });
     if (!("varbinds" in probe)) {
       exchange.close();
       this.target = undefined;
