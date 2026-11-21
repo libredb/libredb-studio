@@ -676,12 +676,12 @@ const OWNED_HEADERS: ReadonlySet<string> = new Set([
 ]);
 const OWNED_HEADER_PREFIXES: readonly string[] = ["content-", "proxy-"];
 
-function isOwnedHeader(name: string): boolean {
+export function isOwnedHeader(name: string): boolean {
   return OWNED_HEADERS.has(name) || OWNED_HEADER_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
 /** An HTTP field name (RFC 9110 token) in lower case. */
-const HEADER_NAME = /^[a-z0-9!#$%&'*+.^_`|~-]+$/;
+export const HEADER_NAME = /^[a-z0-9!#$%&'*+.^_`|~-]+$/;
 /** Visible ASCII and space: no CR or LF to split a header, no control and nothing node:http would re-encode. */
 const HEADER_VALUE = /^[\x20-\x7e]*$/;
 const MAX_HEADER_VALUE_BYTES = 1024;
@@ -695,7 +695,7 @@ const MAX_SIGNATURE_VALUE_BYTES = 8192;
  * A header value a request, a signer or a byte transport's connection may send: a string of visible ASCII or space of
  * at most `limit` bytes, MAX_HEADER_VALUE_BYTES unless a signer's.
  */
-function isHeaderValue(value: unknown, limit = MAX_HEADER_VALUE_BYTES): value is string {
+export function isHeaderValue(value: unknown, limit = MAX_HEADER_VALUE_BYTES): value is string {
   return typeof value === "string" && value.length <= limit && HEADER_VALUE.test(value);
 }
 

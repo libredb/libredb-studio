@@ -17,6 +17,7 @@ import {
   type GoogleAuthLane,
   type GoogleTokenSourceDeps,
 } from "@/lib/db/auth/google/token-source";
+import { GOOGLE_STS_URL } from "@/lib/db/auth/google/external-account";
 import { AuthenticationError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { secretForms } from "@/lib/db/utils/server-text";
@@ -190,6 +191,7 @@ describe("google token source grants", () => {
           literalSeedFile: "literal seed file",
         },
       },
+      false,
     );
     const { seams, source } = sourceOf(hostile, () => tokenAnswer("sa-token"));
     await source.token(signal);
@@ -495,5 +497,269 @@ describe("google token source lanes", () => {
     expect(await second.token(signal)).toBe("second-token");
     expect(seams.lanes).toHaveLength(2);
     expect(FIXED_NOW).toBe(seams.now());
+  });
+});
+
+const SUBJECT = "eyJhbGciOiJSUzI1NiJ9.subject-token-of-alice.signature";
+const SUBJECT_URL = "https://tokens.example/subject/alice";
+const HEADER_SECRET = "pool-secret-header-value";
+const federated: GoogleCredentials = {
+  type: "external_account",
+  audience: "//iam.googleapis.com/projects/123456/locations/global/workloadIdentityPools/acme/providers/people",
+  subjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+  source: {
+    url: SUBJECT_URL,
+    origin: { scheme: "https", host: "tokens.example", port: 443 },
+    headers: { "x-pool": HEADER_SECRET },
+    format: { type: "text" },
+  },
+};
+const textAnswer = (text: string, status = 200) => ({ status, contentType: "text/plain", retryAfter: null, text });
+/** The subject endpoint answers `subject`; STS answers `sts`. */
+const exchangeOf =
+  (subject: ReturnType<typeof textAnswer>, sts: ReturnType<typeof jsonAnswer>): FakeAnswer<GoogleAuthLane> =>
+  (_request, lane) =>
+    lane === "subject" ? subject : sts;
+
+describe("google token source: an external account exchanges its subject token at STS", () => {
+  test("the exchange URL is Google's Security Token Service", () => {
+    expect(GOOGLE_STS_URL).toBe("https://sts.googleapis.com/v1/token");
+  });
+
+  test("one GET for the subject, then one form POST to STS for the scope", async () => {
+    const { seams, source } = sourceOf(federated, exchangeOf(textAnswer(`${SUBJECT}\n`), tokenAnswer("fed-token")));
+    expect(await source.token(signal)).toBe("fed-token");
+    expect(seams.lanes.map((lane) => lane.lane)).toEqual(["subject", "sts"]);
+    const [subject, sts] = seams.lanes;
+    expect(subject.requests).toHaveLength(1);
+    expect(subject.requests[0].method).toBe("GET");
+    expect(subject.requests[0].url).toBe(SUBJECT_URL);
+    expect(subject.requests[0].form).toBeUndefined();
+    expect(subject.requests[0].headers).toBeUndefined();
+    expect(subject.requests[0].maxResponseBytes).toBe(TOKEN_RESPONSE_BYTES);
+    expect(sts.requests).toHaveLength(1);
+    expect(sts.requests[0].method).toBe("POST");
+    expect(sts.requests[0].url).toBe(GOOGLE_STS_URL);
+    expect(sts.requests[0].body).toBeUndefined();
+    expect(sts.requests[0].maxResponseBytes).toBe(TOKEN_RESPONSE_BYTES);
+    expect(sts.requests[0].form).toEqual({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      audience: "//iam.googleapis.com/projects/123456/locations/global/workloadIdentityPools/acme/providers/people",
+      scope: SCOPE,
+      requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+      subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+      subject_token: SUBJECT,
+    });
+  });
+
+  test("both lanes are auth lanes: one socket, TLS to their own host, no link-local address, no upgrade", async () => {
+    const { seams, source } = sourceOf(federated, exchangeOf(textAnswer(SUBJECT), tokenAnswer("fed-token")));
+    await source.token(signal);
+    expect(seams.lanes[0].options).toEqual({
+      origin: { scheme: "https", host: "tokens.example", port: 443 },
+      tls: { rejectUnauthorized: true, identity: "tokens.example" },
+      maxSockets: 1,
+      headers: { "x-pool": HEADER_SECRET },
+      refusesLinkLocal: true,
+      refusesUpgrade: true,
+    });
+    expect(seams.lanes[1].options).toEqual({
+      origin: { scheme: "https", host: "sts.googleapis.com", port: 443 },
+      tls: { rejectUnauthorized: true, identity: "sts.googleapis.com" },
+      maxSockets: 1,
+      headers: {},
+      refusesLinkLocal: true,
+      refusesUpgrade: true,
+    });
+  });
+
+  test("a subject source on this machine is read over plain http, still refusing link-local addresses", async () => {
+    const local: GoogleCredentials = {
+      ...federated,
+      source: {
+        url: "http://127.0.0.1:8099/subject",
+        origin: { scheme: "http", host: "127.0.0.1", port: 8099 },
+        headers: {},
+        format: { type: "text" },
+      },
+    } as GoogleCredentials;
+    const { seams, source } = sourceOf(local, exchangeOf(textAnswer(SUBJECT), tokenAnswer("fed-token")));
+    expect(await source.token(signal)).toBe("fed-token");
+    expect(seams.lanes[0].options.tls).toBeNull();
+    expect(seams.lanes[0].options.refusesLinkLocal).toBe(true);
+  });
+
+  test("a json source hands over one string field of its answer", async () => {
+    const json: GoogleCredentials = {
+      ...federated,
+      source: { ...(federated as { source: object }).source, format: { type: "json", field: "id_token" } },
+    } as GoogleCredentials;
+    const answered = { status: 200, contentType: "application/json", retryAfter: null, text: "" };
+    const { seams, source } = sourceOf(
+      json,
+      exchangeOf({ ...answered, text: JSON.stringify({ id_token: SUBJECT, other: 1 }) }, tokenAnswer("fed-token")),
+    );
+    expect(await source.token(signal)).toBe("fed-token");
+    expect(seams.lanes[1].requests[0].form?.subject_token).toBe(SUBJECT);
+  });
+
+  test("the subject token is read again at every refresh and never kept", async () => {
+    let issued = 0;
+    const { seams, source } = sourceOf(federated, (_request, lane) =>
+      lane === "subject" ? textAnswer(`subject-token-number-${++issued}`) : tokenAnswer(`fed-${issued}`, 300),
+    );
+    expect(await source.token(signal)).toBe("fed-1");
+    expect(await source.token(signal)).toBe("fed-1");
+    seams.setClock(FIXED_NOW + 240_000);
+    expect(await source.token(signal)).toBe("fed-2");
+    expect(seams.lanes).toHaveLength(2);
+    expect(seams.lanes[0].requests).toHaveLength(2);
+    expect(seams.lanes[1].requests.map((request) => request.form?.subject_token)).toEqual([
+      "subject-token-number-1",
+      "subject-token-number-2",
+    ]);
+  });
+
+  test("a subject endpoint that does not answer 200 is refused by its status, and STS is never asked", async () => {
+    for (const status of [401, 404, 500]) {
+      const { seams, source } = sourceOf(federated, exchangeOf(textAnswer(SUBJECT, status), tokenAnswer("never")));
+      // oxlint-disable-next-line no-await-in-loop -- one status at a time, so a failure names it.
+      const error = await source.token(signal).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(AuthenticationError);
+      expect((error as AuthenticationError).provider).toBe("firestore");
+      expect((error as Error).message).toBe(S.subjectRefused(`HTTP ${status}`));
+      expect((error as Error).message).not.toContain(SUBJECT);
+      expect(seams.lanes.map((lane) => lane.lane)).toEqual(["subject"]);
+    }
+  });
+
+  test("an answer that holds no subject token is refused without quoting it, and STS is never asked", async () => {
+    const json: GoogleCredentials = {
+      ...federated,
+      source: { ...(federated as { source: object }).source, format: { type: "json", field: "id_token" } },
+    } as GoogleCredentials;
+    const cases: readonly (readonly [GoogleCredentials, string])[] = [
+      [federated, ""],
+      [federated, "   \n"],
+      [federated, "two tokens"],
+      [federated, "caf\u00e9-token"],
+      [federated, "x".repeat(16385)],
+      [json, JSON.stringify({ access_token: SUBJECT })],
+      [json, JSON.stringify({ id_token: 7 })],
+      [json, JSON.stringify([SUBJECT])],
+      [json, "<html>not json</html>"],
+    ];
+    for (const [credentials, text] of cases) {
+      const { seams, source } = sourceOf(credentials, exchangeOf(textAnswer(text), tokenAnswer("never")));
+      // oxlint-disable-next-line no-await-in-loop -- one answer at a time, so a failure names it.
+      const error = await source.token(signal).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(AuthenticationError);
+      expect((error as Error).message).toBe(S.subjectRefused(S.subjectMissing));
+      expect(seams.lanes.map((lane) => lane.lane)).toEqual(["subject"]);
+    }
+  });
+
+  test("a redirect the subject lane refuses reaches the caller as the transport's failure, and STS is never asked", async () => {
+    const redirect = new TransportError("redirect", "refused a 302 from tokens.example");
+    const { seams, source } = sourceOf(federated, (_request, lane) => {
+      if (lane === "subject") throw redirect;
+      return tokenAnswer("never");
+    });
+    await expect(source.token(signal)).rejects.toBe(redirect);
+    expect(seams.lanes.map((lane) => lane.lane)).toEqual(["subject"]);
+  });
+
+  test("an STS answer without a usable expires_in is refused, and nothing is cached", async () => {
+    for (const expires of [undefined, "3600", 0, -5, Number.POSITIVE_INFINITY]) {
+      const answers = [jsonAnswer({ access_token: "fed-token", expires_in: expires }), tokenAnswer("fed-2", 600)];
+      const { seams, source } = sourceOf(federated, (_request, lane) =>
+        lane === "subject" ? textAnswer(SUBJECT) : (answers.shift() ?? jsonAnswer({}, 500)),
+      );
+      // oxlint-disable-next-line no-await-in-loop -- one answer at a time, so a failure names it.
+      const error = await source.token(signal).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(AuthenticationError);
+      expect((error as Error).message).toBe(S.refused(S.stsWithoutExpiry));
+      // oxlint-disable-next-line no-await-in-loop -- the same source, after the refusal.
+      expect(await source.token(signal)).toBe("fed-2");
+      expect(seams.lanes[0].requests).toHaveLength(2);
+    }
+  });
+
+  test("an STS refusal is quoted, but never with the subject token or a subject header's value in it", async () => {
+    const quoted = sourceOf(
+      federated,
+      exchangeOf(
+        textAnswer(SUBJECT),
+        jsonAnswer({ error: "invalid_grant", error_description: "The audience does not match." }, 400),
+      ),
+    );
+    const plain = await quoted.source.token(signal).catch((caught: unknown) => caught);
+    expect((plain as Error).message).toBe(S.refused("The audience does not match."));
+    for (const echoed of [
+      SUBJECT,
+      Buffer.from(SUBJECT).toString("base64"),
+      HEADER_SECRET,
+      encodeURIComponent(HEADER_SECRET),
+    ]) {
+      const { source } = sourceOf(
+        federated,
+        exchangeOf(textAnswer(SUBJECT), jsonAnswer({ error_description: `bad token ${echoed} given` }, 400)),
+      );
+      // oxlint-disable-next-line no-await-in-loop -- one echoed form at a time, so a failure names it.
+      const error = await source.token(signal).catch((caught: unknown) => caught);
+      const message = (error as Error).message;
+      expect(message).toStartWith("Google token request failed: ");
+      expect(message).not.toContain(SUBJECT);
+      expect(message).not.toContain(HEADER_SECRET);
+      expect(message).not.toContain(echoed);
+    }
+    expect(googleCredentialSecrets(federated)).toEqual([HEADER_SECRET]);
+  });
+
+  test("close while the subject is being read aborts it, and STS is never asked", async () => {
+    const { seams, source } = sourceOf(federated, (_request, lane) =>
+      lane === "subject" ? new Promise(() => {}) : tokenAnswer("never"),
+    );
+    const call = source.token(signal).catch((caught: unknown) => caught);
+    await settle();
+    source.close();
+    expect(await call).toMatchObject({ kind: "aborted" });
+    expect(seams.lanes.map((lane) => lane.lane)).toEqual(["subject"]);
+    expect(seams.lanes[0].closed).toBe(1);
+  });
+
+  test("close landing between the subject's answer and the exchange opens no STS lane", async () => {
+    const clock = fakeClock();
+    const built: GoogleAuthLane[] = [];
+    const closer: { close(): void } = { close() {} };
+    const source = createGoogleTokenSource(federated, {
+      ...depsOf({ ...clock, ...fakeTransports() }),
+      createTransport: (_options, lane) => {
+        built.push(lane);
+        return {
+          // A thenable that settles and then closes the source in the same turn, before the strategy resumes.
+          request: () =>
+            ({
+              then(resolve: (response: ReturnType<typeof textAnswer>) => void) {
+                resolve(textAnswer(SUBJECT));
+                closer.close();
+              },
+            }) as unknown as Promise<ReturnType<typeof textAnswer>>,
+          close() {},
+        };
+      },
+    });
+    closer.close = () => source.close();
+    const refused = await source.token(signal).catch((caught: unknown) => caught);
+    expect(refused).toBeInstanceOf(TransportError);
+    expect(refused).toMatchObject({ kind: "aborted", message: S.closed });
+    expect(built).toEqual(["subject"]);
+  });
+
+  test("close closes both lanes", async () => {
+    const { seams, source } = sourceOf(federated, exchangeOf(textAnswer(SUBJECT), tokenAnswer("fed-token")));
+    await source.token(signal);
+    source.close();
+    expect(seams.lanes.map((lane) => lane.closed)).toEqual([1, 1]);
   });
 });

@@ -9,6 +9,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { acceptedKindSentences, GOOGLE_CREDENTIAL_SENTENCES as G } from "@/lib/db/auth/google/credentials";
+import { GOOGLE_EXTERNAL_ACCOUNT_SENTENCES as X, GOOGLE_STS_URL } from "@/lib/db/auth/google/external-account";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import {
@@ -25,7 +26,7 @@ import { LITERAL_SEED_FILE } from "@/lib/types";
 import { type FakeIoOptions, fakeIo } from "../../../helpers/auth-fakes";
 
 const OPT_IN = { BIGQUERY_SERVER_CREDENTIALS: "true" };
-const K = acceptedKindSentences(["service_account", "authorized_user", "access_token"]);
+const K = acceptedKindSentences(["service_account", "authorized_user", "external_account", "access_token"]);
 const PEM = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----\n";
 const key = { type: "service_account", client_email: "sa@p.iam.gserviceaccount.com", private_key: PEM };
 const KEY = JSON.stringify(key);
@@ -62,9 +63,14 @@ describe("bigquery credential policy pins", () => {
     );
   });
 
-  test("the rules accept exactly the three kinds and gate the server's identity on BigQuery's opt-in", () => {
+  test("the rules accept exactly the four kinds and gate the server's identity on BigQuery's opt-in", () => {
     expect(BIGQUERY_CREDENTIAL_RULES.provider).toBe("bigquery");
-    expect(BIGQUERY_CREDENTIAL_RULES.accepts).toEqual(["service_account", "authorized_user", "access_token"]);
+    expect(BIGQUERY_CREDENTIAL_RULES.accepts).toEqual([
+      "service_account",
+      "authorized_user",
+      "external_account",
+      "access_token",
+    ]);
     expect(BIGQUERY_CREDENTIAL_RULES.quotaProjectRefusal).toBe(projectIdRefusal);
     expect(BIGQUERY_CREDENTIAL_RULES.serverIdentity).toEqual({
       optIn: "BIGQUERY_SERVER_CREDENTIALS",
@@ -184,8 +190,8 @@ describe("bigquery credentials: the changes of the move to the shared Google aut
     expect(refusal(() => resolve("{nope", false)).message).toBe(K.notJson);
     expect(refusal(() => resolve("not a token", false)).message).toBe(K.notACredential);
     expect(refusal(() => resolve("short", false)).message).toBe(K.notACredential);
-    expect(refusal(() => resolve(JSON.stringify({ type: "external_account" }), false)).message).toBe(
-      K.unsupportedType("external_account"),
+    expect(refusal(() => resolve(JSON.stringify({ type: "aws_credentials" }), false)).message).toBe(
+      K.unsupportedType("aws_credentials"),
     );
     expect(refusal(() => resolve(JSON.stringify({ client_email: "x" }), false)).message).toBe(K.noType);
   });
@@ -268,6 +274,61 @@ describe("bigquery credentials: the changes of the move to the shared Google aut
       expect(error.message).toBe(K.unknownType);
       expect(error.message).not.toContain(type);
     }
+  });
+});
+
+describe("bigquery external-account credentials (workload identity federation)", () => {
+  const config = JSON.stringify({
+    type: "external_account",
+    audience: "//iam.googleapis.com/projects/123456/locations/global/workloadIdentityPools/acme/providers/people",
+    subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+    token_url: GOOGLE_STS_URL,
+    credential_source: { url: "https://tokens.example/subject/alice" },
+  });
+
+  test("a server-written connection resolves to it with no opt-in, and nothing of the server is read", () => {
+    const io = fakeIo({ env: {} });
+    expect(resolveBigQueryCredential({ password: config, managed: true }, io)).toEqual({
+      type: "external_account",
+      audience: "//iam.googleapis.com/projects/123456/locations/global/workloadIdentityPools/acme/providers/people",
+      subjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+      source: {
+        url: "https://tokens.example/subject/alice",
+        origin: { scheme: "https", host: "tokens.example", port: 443 },
+        headers: {},
+        format: { type: "text" },
+      },
+    });
+    expect(io.envReads).toEqual([]);
+    expect(io.fileReads).toEqual([]);
+  });
+
+  test("a connection a browser sent and a seed-file row read in literal mode are refused, opt-in or not", () => {
+    for (const env of [{}, OPT_IN]) {
+      const io = fakeIo({ env });
+      for (const connection of [
+        { password: config },
+        { password: config, managed: false },
+        { password: config, managed: true, [LITERAL_SEED_FILE]: true as const },
+      ]) {
+        const error = refusal(() => resolveBigQueryCredential(connection, io));
+        expect(error.message).toBe(X.serverWrittenOnly);
+        expect(error.provider).toBe("bigquery");
+      }
+      expect(io.envReads).toEqual([]);
+      expect(io.fileReads).toEqual([]);
+    }
+  });
+
+  test("a field that would change what is sent is refused, not ignored", () => {
+    const impersonating = JSON.stringify({
+      ...JSON.parse(config),
+      service_account_impersonation_url:
+        "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/x:generateAccessToken",
+    });
+    expect(refusal(() => resolve(impersonating, true)).message).toBe(
+      X.unreadField("service_account_impersonation_url"),
+    );
   });
 });
 

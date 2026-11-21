@@ -93,13 +93,30 @@ A request signer, such as a SigV4 one, signs what `src/lib/db/http/node-transpor
 | --- | --- | --- |
 | `service_account` | A service-account key JSON: non-empty `client_email` and a PKCS #8 PEM `private_key`; `private_key_id`, when present, becomes the assertion's `kid` | The private key, then the key id |
 | `authorized_user` | An authorized-user JSON: non-empty `client_id`, `client_secret` and `refresh_token`; `quota_project_id`, when present, must pass the provider's rule and is sent as `x-goog-user-project` | The client secret, then the refresh token |
+| `external_account` | An external-account JSON (Workload Identity Federation), on a server-written connection only ([External account](#external-account)) | The values of its subject headers, and the subject token of each refresh |
 | `access_token` | A bare token, or one after `Bearer `, of 20 URL-safe characters or more | The token |
 | `metadata` | Never pasted: the server's own identity through the metadata server | None |
 
 A pasted text is trimmed; JSON text loses its line feeds and carriage returns before it is parsed, as the browser's password input removes them.
-Every other field of a credential JSON is dropped, `token_uri`, `auth_uri` and `universe_domain` included, so no credential names an endpoint.
+Every other field of a service-account or authorized-user JSON is dropped, `token_uri`, `auth_uri` and `universe_domain` included, so neither names an endpoint.
+An external-account JSON is the one kind that names a URL of its own, and it is parsed as a closed world instead: a field that is not read is refused, not dropped.
 A kind the parser knows and the provider's rules do not list is refused as unsupported, before any of its fields is read.
-The refusal sentences word the accepted kinds in a fixed order (service account, authorized user, access token), so a provider's list order changes no sentence.
+The refusal sentences word the accepted kinds in a fixed order (service account, authorized user, external account, access token), so a provider's list order changes no sentence.
+
+### External account
+
+`google/external-account.ts` parses an external-account JSON, the file `gcloud iam workload-identity-pools create-cred-config` writes for a URL-sourced credential: Studio reads a subject token from a URL and exchanges it at Google's Security Token Service for an access token of the federated identity itself.
+
+- **Server-written connections only.** `parseGoogleCredentialText` takes `serverWritten`, which `resolveGoogleCredential` feeds from `isServerWritten(connection)`: `managed` exactly true and no `LITERAL_SEED_FILE` marker. A connection a browser sent, or a row of a seed file read in literal mode, is refused as soon as the type is read and admitted, before any other field is and before any request. There is no server opt-in: the credential is the operator's or the control plane's own text, not the server's identity.
+- **A closed world.** The fields read are `type`, `audience`, `subject_token_type`, `token_url` and `credential_source`, plus `universe_domain` and `token_info_url` at the fixed values gcloud writes (`googleapis.com`, `https://sts.googleapis.com/v1/introspect`). Any other field is refused by name, so `service_account_impersonation_url`, `client_id`, `client_secret`, `quota_project_id` and `workforce_pool_user_project` never change what is sent. A field name is quoted back only when it is shaped like one.
+- **One exchange URL.** `token_url` must be `https://sts.googleapis.com/v1/token`.
+- **A workload identity pool provider.** `audience` must be `//iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>`; a workforce pool is refused.
+- **An OIDC subject.** `subject_token_type` is `urn:ietf:params:oauth:token-type:jwt` or `urn:ietf:params:oauth:token-type:id_token`.
+- **One source, a URL.** `credential_source` holds `url`, and optionally `headers` and `format`; a file, an executable or a cloud metadata source is refused. The URL is `https`, or `http` only when its host is this machine, because the subject token is a credential; it carries no user, password or fragment.
+- **Headers the transport does not own.** A header name the transport or the connection sets (`authorization`, `host`, every `content-` and `proxy-` name and the rest of the transport's list) is refused, as is one name written twice in two cases; a value is single-line visible ASCII of at most 1024 bytes.
+- **Format.** Absent or `{"type":"text"}` reads the whole body; `{"type":"json","subject_token_field_name":"<field>"}` reads one string field.
+
+The server's own credentials file (`GOOGLE_APPLICATION_CREDENTIALS`, or gcloud's) is never read as an external-account JSON, whatever the provider lists and with the opt-in set: that credential is a connection's own text, written by the operator or the control plane, and never the server's identity.
 
 ### Server identity
 
@@ -117,15 +134,18 @@ The ADC file accepts the JSON kinds the provider lists; an access token is never
 | --- | --- |
 | `service_account` | A JWT-bearer grant: an RS256 assertion for the provider's scope, posted to `https://oauth2.googleapis.com/token` |
 | `authorized_user` | A refresh-token grant with no scope, posted to the same endpoint |
+| `external_account` | `GET` the subject URL with its headers, then a token-exchange grant for the provider's scope, posted to `https://sts.googleapis.com/v1/token` with the audience, the subject token and its type |
 | `metadata` | `GET /computeMetadata/v1/instance/service-accounts/default/token?scopes=<scope>` with `metadata-flavor: Google` |
 | `access_token` | None: the pasted token is returned as is, and `close()` does nothing |
 
 Each refreshing kind has one strategy in a typed table, so a kind without a strategy does not compile.
-A lane is built on the first refresh that needs it, at most one per kind, and a pasted access token builds none.
+A lane is built on the first refresh that needs it, at most one per kind (`token`, `metadata`, `sts`, `subject`), and a pasted access token builds none.
+An external account's `subject` and `sts` lanes are auth lanes like the others, built by `authLaneOptions`: one socket, TLS checked against the host when `https`, no `101` answer and no link-local address, so a redirect from the subject URL is refused by the transport and never followed.
+The subject token is read again at every refresh and never kept; only a `200` is read, and a subject refusal names the status or that the token was missing and never the answer, which may be the token.
 `quotaProjectHeaders` gives the `x-goog-user-project` header for the provider's own API requests; no token request carries it.
 A token is held by the shared refresh: cached and refreshed 60 seconds before it expires; concurrent callers share one refresh, which runs on its own 30-second deadline, so no caller's abort fails the others; a failed refresh caches nothing.
-An answer without a usable `expires_in` lives Google's documented one hour.
-A refusal reports `error_description`, then `error`, then `HTTP <status>`; a reason quoted from the server is withheld whole when it holds any form of the credential's secrets, and is then cut to 300 characters.
+An answer without a usable `expires_in` lives Google's documented one hour, except an STS answer, which is refused: an exchanged token ends with its subject, so there is no documented lifetime to assume.
+A refusal reports `error_description`, then `error`, then `HTTP <status>`; a reason quoted from the server is withheld whole when it holds any form of the credential's secrets, or of the subject token an STS answer may echo, and is then cut to 300 characters.
 `close()` aborts a refresh in flight, drops the token, closes every lane, and makes every later call fail as closed.
 
 ## AWS
