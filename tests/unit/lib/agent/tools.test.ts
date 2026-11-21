@@ -7500,4 +7500,34 @@ describe("a provider that answers past the run's budget", () => {
       message: `${TIME_BUDGET_PREFIX}: no answer within 300ms`,
     });
   });
+
+  test("a statement refused at the timeout keeps the run's execution slot until the provider's call settles", async () => {
+    let settle: (result: QueryResult) => void = () => {};
+    const late = new Promise<QueryResult>((resolve) => {
+      settle = resolve;
+    });
+    const answers = [() => late, async () => queryResult()];
+    const h = harness({ deadline: new AgentRunDeadline(300, frozenClock) }, () =>
+      (answers.shift() as () => Promise<QueryResult>)(),
+    );
+
+    const refused = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+    if (refused.kind !== "refused") throw new Error(`expected refused, got ${refused.kind}`);
+    expect(h.tracker.usage("run-1")).toMatchObject({ activeExecutions: 1, executedStatements: 1 });
+
+    // maxConcurrentExecutions is 1, and the first statement's provider call is still running.
+    const denied = await runReadQueryTool(h.context, { sql: "SELECT name FROM orders" });
+    expect(denied).toMatchObject({
+      kind: "refused",
+      refusal: { class: "policy-denied", reasonCode: "CONCURRENCY_BUDGET_EXCEEDED" },
+    });
+    expect(h.queryReadOnly).toHaveBeenCalledTimes(1);
+
+    settle(queryResult());
+    await late;
+    expect(h.tracker.usage("run-1")).toMatchObject({ activeExecutions: 0, executedStatements: 1 });
+
+    const completed = await runReadQueryTool(h.context, { sql: "SELECT total FROM orders" });
+    expect(completed).toMatchObject({ kind: "completed" });
+  });
 });

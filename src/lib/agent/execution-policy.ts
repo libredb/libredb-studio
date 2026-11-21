@@ -206,9 +206,9 @@ function workflowBudget(input: {
 }): AgentWorkflowBudget {
   const budgets: ExecutionBudget = Object.freeze({
     /**
-     * The run loop is sequential: one statement Studio waits on at a time. A statement
-     * Studio stopped waiting for at its timeout may still run at the engine
-     * (`runReadOnlyStatement`), so this counts the run's executions, not the engine's.
+     * The run loop is sequential: one statement at a time. Each statement counts until
+     * its provider call settles, also one Studio stopped waiting for at its timeout
+     * (`runReadOnlyStatement`, `executeAuditedOperation`).
      */
     maxConcurrentExecutions: 1,
     /** A whole drive — catalog reads, drafts, repairs, plan inspections, curated readings. */

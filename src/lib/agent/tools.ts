@@ -85,7 +85,12 @@ import {
   agentCuratedReadInput,
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
-import { actorLabel, executeAuditedOperation, refuseAuditedInput } from "@/lib/db/operations/execution";
+import {
+  type AuditedInvocation,
+  actorLabel,
+  executeAuditedOperation,
+  refuseAuditedInput,
+} from "@/lib/db/operations/execution";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
 import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
@@ -1413,6 +1418,7 @@ async function runStatement(
   validatedInput: unknown,
   budget: ExecutionBudget,
   phase: { statementSent: boolean },
+  holdUntilSettled: AuditedInvocation["holdUntilSettled"],
   argument: AgentStatementArgument,
   mode?: ReadOnlyStatementMode,
 ): Promise<QueryResult> {
@@ -1440,13 +1446,15 @@ async function runStatement(
   // without inspecting message text.
   phase.statementSent = true;
   // Through the one core call of the read-only path, which holds the provider's answer to the rows, bytes and time
-  // this run handed out, so an over-budget answer is refused before any of it is mapped or rendered.
+  // this run handed out, so an over-budget answer is refused before any of it is mapped or rendered. The provider's
+  // call keeps this execution counted until it settles, also when the time refusal answered the run first.
   return runReadOnlyStatement(provider, {
     type: context.connection.type,
     statement: sql,
     budget: readOnlyBudgetFor(context, budget),
     mode,
     wait: "statement-timeout",
+    holdUntilSettled,
   });
 }
 
@@ -1474,8 +1482,8 @@ export async function executeAgentOperation(
     ...(request.label === undefined ? {} : { label: request.label }),
     ...(request.target === undefined ? {} : { target: request.target }),
     ...(request.grounding === undefined ? {} : { grounding: request.grounding }),
-    invoke: (validatedInput, budget, phase) => {
-      const answered = runStatement(context, validatedInput, budget, phase, argument, request.mode);
+    invoke: (validatedInput, budget, phase, holdUntilSettled) => {
+      const answered = runStatement(context, validatedInput, budget, phase, holdUntilSettled, argument, request.mode);
       const { mapRows } = request;
       return mapRows === undefined ? answered : answered.then((result) => withMappedRows(result, mapRows));
     },
@@ -1544,6 +1552,7 @@ export interface AuditedAgentCall {
     validatedInput: unknown,
     budget: ExecutionBudget,
     phase: { statementSent: boolean },
+    holdUntilSettled: AuditedInvocation["holdUntilSettled"],
   ) => Promise<QueryResult>;
 }
 
@@ -1822,7 +1831,8 @@ export async function runAuditedAgentCall(
             artifacts: context.artifacts,
             clock: context.clock,
           },
-          ({ validatedInput, budget }) => call.invoke(validatedInput, budget, phase),
+          ({ validatedInput, budget, holdUntilSettled }) =>
+            call.invoke(validatedInput, budget, phase, holdUntilSettled),
         );
   } catch (error) {
     // A curated reading the run chose not to keep. First, because it is a decision

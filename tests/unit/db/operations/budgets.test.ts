@@ -97,6 +97,68 @@ describe("ExecutionBudgetTracker accounting", () => {
   });
 });
 
+// ─── chargeExecution ────────────────────────────────────────────────────────
+
+describe("ExecutionBudgetTracker.chargeExecution", () => {
+  test("charges a live execution's statements and time and keeps it live until its end", () => {
+    const tracker = new ExecutionBudgetTracker();
+    tracker.beginExecution("run-1");
+    tracker.chargeExecution("run-1", { statements: 1, elapsedMs: 300 });
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 1, executedStatements: 1, totalElapsedMs: 300 });
+    tracker.endExecution("run-1", { statements: 0, elapsedMs: 0 });
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 0, executedStatements: 1, totalElapsedMs: 300 });
+  });
+
+  test("refuses a run with no live execution, and corrupt outcome accounting, charging nothing", () => {
+    const tracker = new ExecutionBudgetTracker();
+    expect(() => tracker.chargeExecution("run-1", { statements: 1, elapsedMs: 1 })).toThrow(BudgetAccountingError);
+    tracker.beginExecution("run-1");
+    expect(() => tracker.chargeExecution("run-1", { statements: -1, elapsedMs: 1 })).toThrow(BudgetAccountingError);
+    expect(() => tracker.chargeExecution("run-1", { statements: 1, elapsedMs: Number.NaN })).toThrow(
+      BudgetAccountingError,
+    );
+    expect(() => tracker.chargeExecution(" ", { statements: 1, elapsedMs: 1 })).toThrow(BudgetAccountingError);
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 1, executedStatements: 0, totalElapsedMs: 0 });
+  });
+});
+
+// ─── whenIdle ───────────────────────────────────────────────────────────────
+
+describe("ExecutionBudgetTracker.whenIdle", () => {
+  test("resolves at once for a run with no live execution", async () => {
+    const tracker = new ExecutionBudgetTracker();
+    await tracker.whenIdle("run-1");
+    tracker.beginExecution("run-1");
+    tracker.endExecution("run-1", { statements: 1, elapsedMs: 1 });
+    await tracker.whenIdle("run-1");
+    expect(tracker.usage("run-1").activeExecutions).toBe(0);
+  });
+
+  test("resolves once the run's last live execution ends, and not before", async () => {
+    const tracker = new ExecutionBudgetTracker();
+    tracker.beginExecution("run-1");
+    tracker.beginExecution("run-1");
+    tracker.beginExecution("run-2");
+    const settled: string[] = [];
+    const first = tracker.whenIdle("run-1").then(() => settled.push("first"));
+    const second = tracker.whenIdle("run-1").then(() => settled.push("second"));
+
+    tracker.endExecution("run-1", { statements: 1, elapsedMs: 1 });
+    tracker.endExecution("run-2", { statements: 1, elapsedMs: 1 });
+    await Promise.resolve();
+    expect(settled).toEqual([]);
+
+    tracker.endExecution("run-1", { statements: 1, elapsedMs: 1 });
+    await Promise.all([first, second]);
+    expect(settled).toEqual(["first", "second"]);
+  });
+
+  test("refuses a blank run id", () => {
+    const tracker = new ExecutionBudgetTracker();
+    expect(() => tracker.whenIdle("")).toThrow(BudgetAccountingError);
+  });
+});
+
 // ─── endRun ─────────────────────────────────────────────────────────────────
 
 describe("ExecutionBudgetTracker.endRun", () => {

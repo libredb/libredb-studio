@@ -314,6 +314,134 @@ describe("executeAuditedOperation — provider failure", () => {
   });
 });
 
+/** A promise and the two functions that settle it, for a provider call a test settles by hand. */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void } {
+  let resolve: (value: T) => void = () => {};
+  let reject: (error: Error) => void = () => {};
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+/*
+  The callback can be answered before the provider call it made has settled: core's read-only statement timer
+  refuses the statement at its timeout while the provider's call runs on (`runReadOnlyStatement`). The execution
+  stays live, counted against maxConcurrentExecutions, until that call settles, and it is released exactly once on
+  every path.
+*/
+describe("executeAuditedOperation: a provider call the callback holds the execution for", () => {
+  const timeRefusal = new Error("Read-only execution exceeded the time budget: no answer within 50ms");
+
+  function setUp() {
+    const tracker = new ExecutionBudgetTracker();
+    const artifacts = new ExecutionArtifactStore({ ttlMs: 60_000, maxArtifacts: 8 });
+    const endExecution = spyOn(tracker, "endExecution");
+    const context = { runId: "run-1", tracker, artifacts, clock: stubClock(100, 160) };
+    return { tracker, artifacts, endExecution, context };
+  }
+
+  test("an answer in time releases the execution once, when the callback is answered", async () => {
+    const { tracker, endExecution, context } = setUp();
+
+    const outcome = await executeAuditedOperation(baseParams(), context, ({ holdUntilSettled }) => {
+      const call = Promise.resolve({ rows: [{ id: 1 }] });
+      holdUntilSettled(call);
+      return call;
+    });
+
+    expect(outcome.kind).toBe("executed");
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 0, executedStatements: 1, totalElapsedMs: 60 });
+    expect(endExecution).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failure in time releases the execution once, when the callback fails", async () => {
+    const { tracker, endExecution, context } = setUp();
+    const failure = new Error("connection reset by peer");
+
+    const error = await executeAuditedOperation(baseParams(), context, ({ holdUntilSettled }) => {
+      const call = Promise.reject(failure);
+      holdUntilSettled(call);
+      return call;
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBe(failure);
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 0, executedStatements: 1, totalElapsedMs: 60 });
+    expect(endExecution).toHaveBeenCalledTimes(1);
+  });
+
+  test("a time refusal charges the run at once and keeps the execution live until a late answer", async () => {
+    const { tracker, endExecution, context } = setUp();
+    const call = deferred<{ rows: { id: number }[] }>();
+
+    const error = await executeAuditedOperation(baseParams(), context, ({ holdUntilSettled }) => {
+      holdUntilSettled(call.promise);
+      return Promise.reject(timeRefusal);
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBe(timeRefusal);
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 1, executedStatements: 1, totalElapsedMs: 60 });
+    expect(endExecution).not.toHaveBeenCalled();
+
+    call.resolve({ rows: [{ id: 1 }] });
+    await call.promise;
+
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 0, executedStatements: 1, totalElapsedMs: 60 });
+    expect(endExecution).toHaveBeenCalledTimes(1);
+  });
+
+  test("a time refusal keeps the execution live until a late failure", async () => {
+    const { tracker, endExecution, context } = setUp();
+    const call = deferred<{ rows: unknown[] }>();
+
+    await executeAuditedOperation(baseParams(), context, ({ holdUntilSettled }) => {
+      holdUntilSettled(call.promise);
+      return Promise.reject(timeRefusal);
+    }).catch(() => undefined);
+
+    expect(tracker.usage("run-1").activeExecutions).toBe(1);
+
+    call.reject(new Error("canceling statement due to statement timeout"));
+    await call.promise.catch(() => undefined);
+
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 0, executedStatements: 1, totalElapsedMs: 60 });
+    expect(endExecution).toHaveBeenCalledTimes(1);
+  });
+
+  test("an answered callback whose held call is still running keeps the execution live until it settles", async () => {
+    const { tracker, endExecution, context } = setUp();
+    const call = deferred<{ rows: unknown[] }>();
+
+    const outcome = await executeAuditedOperation(baseParams(), context, async ({ holdUntilSettled }) => {
+      holdUntilSettled(call.promise);
+      return { rows: [] };
+    });
+
+    expect(outcome.kind).toBe("executed");
+    expect(tracker.usage("run-1").activeExecutions).toBe(1);
+
+    call.resolve({ rows: [] });
+    await call.promise;
+
+    expect(tracker.usage("run-1")).toEqual({ activeExecutions: 0, executedStatements: 1, totalElapsedMs: 60 });
+    expect(endExecution).toHaveBeenCalledTimes(1);
+  });
+
+  test("refuses a hold handed in after the execution ended", async () => {
+    const { tracker, context } = setUp();
+    let hold: ((call: PromiseLike<unknown>) => void) | undefined;
+
+    await executeAuditedOperation(baseParams(), context, async ({ holdUntilSettled }) => {
+      hold = holdUntilSettled;
+      return { rows: [] };
+    });
+
+    expect(() => hold?.(Promise.resolve())).toThrow("after the execution it belongs to ended");
+    expect(tracker.usage("run-1").activeExecutions).toBe(0);
+  });
+});
+
 describe("releaseExecutionRun", () => {
   test("drops the run's artifacts and its budget accounting together", async () => {
     const tracker = new ExecutionBudgetTracker();

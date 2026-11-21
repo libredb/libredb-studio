@@ -109,6 +109,18 @@ async function captureServiceError(fn: () => Promise<unknown>): Promise<AgentRun
   throw new Error("expected the service to refuse");
 }
 
+/** Settles once something waits on `tracker.whenIdle`, so a test acts while that wait is pending. */
+function whenTrackerWaits(tracker: ExecutionBudgetTracker): Promise<void> {
+  const whenIdle = tracker.whenIdle.bind(tracker);
+  return new Promise((reached) => {
+    spyOn(tracker, "whenIdle").mockImplementation((runId: string) => {
+      const idle = whenIdle(runId);
+      reached();
+      return idle;
+    });
+  });
+}
+
 afterEach(() => {
   while (dataDirs.length > 0) {
     const dir = dataDirs.pop();
@@ -484,21 +496,51 @@ describe("AgentRunService — finishing a run", () => {
     );
   });
 
-  test("refuses to end a run while one of its executions is live, and persists nothing", async () => {
-    // The accounting refuses to release a run with a statement in flight, and it
-    // refuses AFTER the ledger would have been written. So the check has to come
-    // first: a run recorded as finished whose budget and artifacts were never
-    // released is unrecoverable — `finish` then refuses it as already terminal,
-    // and its stream never closes.
+  test("waits to end a run until its live execution is released", async () => {
+    // A statement Studio stopped waiting for at its timeout keeps the run's execution live until the provider's call
+    // settles (`executeAuditedOperation`), so the run's end waits for that call, as it waits for every statement.
     const h = harness();
     const { runId } = await h.service.start(START_INPUT);
     await h.service.markRunning(runId);
     spendRunResources(h, runId);
     h.tracker.beginExecution(runId);
 
-    const error = await captureServiceError(() => h.service.finish(runId, "succeeded"));
+    const waiting = whenTrackerWaits(h.tracker);
+    let ended = false;
+    const finished = h.service.finish(runId, "succeeded").then((record) => {
+      ended = true;
+      return record;
+    });
+    await waiting;
+    expect(ended).toBe(false);
+    expect((await h.service.status(runId))?.record.status).toBe("running");
+    expect(h.artifacts.size).toBe(1);
 
-    expect(error.reasonCode).toBe("RUN_HAS_LIVE_EXECUTION");
+    h.tracker.endExecution(runId, { statements: 1, elapsedMs: 5 });
+    expect((await finished).status).toBe("succeeded");
+    expect(h.artifacts.size).toBe(0);
+  });
+
+  test("refuses to end a run when an execution begins while it waited, and persists nothing", async () => {
+    // The accounting refuses to release a run with a statement in flight, and it
+    // refuses AFTER the ledger would have been written. So the check has to come
+    // first: a run recorded as finished whose budget and artifacts were never
+    // released is unrecoverable — `finish` then refuses it as already terminal,
+    // and its stream never closes. Only a second writer on the run can begin an
+    // execution between the wait and the check (`docs/BACKLOG.md` B5).
+    const h = harness();
+    const { runId } = await h.service.start(START_INPUT);
+    await h.service.markRunning(runId);
+    spendRunResources(h, runId);
+    h.tracker.beginExecution(runId);
+
+    const waiting = whenTrackerWaits(h.tracker);
+    const error = captureServiceError(() => h.service.finish(runId, "succeeded"));
+    await waiting;
+    h.tracker.endExecution(runId, { statements: 1, elapsedMs: 5 });
+    h.tracker.beginExecution(runId);
+
+    expect((await error).reasonCode).toBe("RUN_HAS_LIVE_EXECUTION");
     expect((await h.service.status(runId))?.record.status).toBe("running");
     expect(h.artifacts.size).toBe(1);
 

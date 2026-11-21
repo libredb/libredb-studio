@@ -27,9 +27,10 @@
  *   sentence. The abandoned call is not cancelled. It runs on until the engine's own deadline ends it, where the
  *   engine has one, and to its end where it has none (DuckDB, Db2 LUW, Cassandra, Elasticsearch and OpenSearch, the
  *   engine table in `docs/MCP.md` "Limits"); on a provider that runs its statements on one connection, as DuckDB does,
- *   the run's next statement waits behind it and can itself be refused in the time sentence without having run. So a
- *   run can have more than one statement in flight at the engine: `maxConcurrentExecutions` counts the executions
- *   Studio waits on, not the engine's work. The abandoned call keeps a handler, so its late failure is never an
+ *   a later statement on that connection waits behind it and can itself be refused in the time sentence without
+ *   having run. The provider's call is handed to the caller's `holdUntilSettled` as soon as it is made, so an agent
+ *   run's `maxConcurrentExecutions` counts the statement until its provider call settles, whenever this function
+ *   answers. The abandoned call keeps a handler, so its late failure is never an
  *   unhandled rejection, and how it settled (answered or failed, the failure's class, and when) is written to the
  *   server log. A provider that runs a statement synchronously on the event loop (LibreDB, SQLite without its worker)
  *   returns its promise only once the statement has ended, so no timer bounds it, and its own check once the statement
@@ -67,6 +68,12 @@ export interface ReadOnlyStatementCall {
    * already races its own deadline over this call, so a second timer is not set.
    */
   readonly wait: "statement-timeout" | "caller-deadline";
+  /**
+   * Handed the provider's call as soon as it is made. A caller that accounts the call (an agent run's execution,
+   * `executeAuditedOperation`'s `holdUntilSettled`) keeps it counted until the call settles, which after a time
+   * refusal is later than this function's own answer.
+   */
+  readonly holdUntilSettled?: (call: PromiseLike<unknown>) => void;
 }
 
 /** Runs `call.statement` on the provider's read-only statement path and holds the answer to `call.budget`. */
@@ -83,6 +90,7 @@ export async function runReadOnlyStatement(
     );
   }
   const answered = provider.queryReadOnly(statement, budget, mode);
+  call.holdUntilSettled?.(answered);
   const result = call.wait === "statement-timeout" ? await withinStatementTimeout(answered, call) : await answered;
   // A plan's rows are the optimizer's operators, not data rows (SQL Server's SHOWPLAN answers one per operator), so an
   // estimating plan is held to the byte budget only, as SQL Server's provider holds it.

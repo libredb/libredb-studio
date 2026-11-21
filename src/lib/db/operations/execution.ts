@@ -32,7 +32,7 @@
 import { randomUUID } from "node:crypto";
 import { type AuditReason, emitAuditEvent } from "@/lib/audit";
 import type { ExecutionArtifactStore } from "./artifacts";
-import type { ExecutionBudget, ExecutionBudgetTracker } from "./budgets";
+import { BudgetAccountingError, type ExecutionBudget, type ExecutionBudgetTracker } from "./budgets";
 import type { ExecutionActor, PolicyDecision, PolicyDenyCode, PolicyEvaluationParams } from "./policy";
 import { evaluateOperation, isValidActor } from "./policy";
 
@@ -111,6 +111,56 @@ function elapsedSince(startedAtMs: number, clock: () => number): number {
   return Number.isFinite(elapsed) ? Math.max(0, elapsed) : 0;
 }
 
+/** What the invoke callback of `executeAuditedOperation` is handed. */
+export interface AuditedInvocation {
+  readonly validatedInput: unknown;
+  readonly budget: ExecutionBudget;
+  /**
+   * Keeps this execution live, counted against `maxConcurrentExecutions`, until `call` settles as well as the
+   * callback. Handed the provider's call the callback makes, so a callback answered before that call settles (core's
+   * read-only statement timer refusing it at its timeout, `runReadOnlyStatement`) leaves the execution counted for as
+   * long as the call runs.
+   */
+  readonly holdUntilSettled: (call: PromiseLike<unknown>) => void;
+}
+
+/**
+ * Ends one execution in the tracker exactly once. The execution's statement and time are charged when its callback
+ * is answered, so the run's charged total read then includes them; it is released then too, unless a call it holds
+ * is still running, in which case it is released, charging nothing more, once the last such call settles.
+ */
+function executionRelease(tracker: ExecutionBudgetTracker, runId: string) {
+  let running = 0;
+  let answered = false;
+  let ended = false;
+  return {
+    holdUntilSettled(call: PromiseLike<unknown>): void {
+      if (ended) {
+        throw new BudgetAccountingError(
+          `a provider call of run "${runId}" was held after the execution it belongs to ended`,
+        );
+      }
+      running += 1;
+      const settled = () => {
+        running -= 1;
+        if (running > 0 || !answered) return;
+        ended = true;
+        tracker.endExecution(runId, { statements: 0, elapsedMs: 0 });
+      };
+      call.then(settled, settled);
+    },
+    answer(elapsedMs: number): void {
+      answered = true;
+      if (running > 0) {
+        tracker.chargeExecution(runId, { statements: 1, elapsedMs });
+        return;
+      }
+      ended = true;
+      tracker.endExecution(runId, { statements: 1, elapsedMs });
+    },
+  };
+}
+
 function refusalReason(decision: RefusedDecision): AuditReason {
   return decision.kind === "deny" ? DENY_REASONS[decision.reasonCode] : "agent_approval_required";
 }
@@ -177,7 +227,7 @@ export function refuseAuditedInput(
 export async function executeAuditedOperation<T>(
   params: Omit<PolicyEvaluationParams, "usage">,
   context: AuditedExecutionContext<T>,
-  invoke: (execution: { readonly validatedInput: unknown; readonly budget: ExecutionBudget }) => Promise<T>,
+  invoke: (execution: AuditedInvocation) => Promise<T>,
 ): Promise<AuditedExecutionResult<T>> {
   const { runId, tracker, artifacts } = context;
   const clock = context.clock ?? Date.now;
@@ -213,6 +263,7 @@ export async function executeAuditedOperation<T>(
 
   const startedAtMs = clock();
   tracker.beginExecution(runId);
+  const release = executionRelease(tracker, runId);
 
   // The try covers the provider call ONLY. Everything after it is this module's
   // own bookkeeping, and a compensating release that also covered it would call
@@ -220,10 +271,14 @@ export async function executeAuditedOperation<T>(
   // replace whatever really went wrong and suppress the outcome event.
   let result: T;
   try {
-    result = await invoke({ validatedInput: decision.validatedInput, budget: decision.effectiveBudget });
+    result = await invoke({
+      validatedInput: decision.validatedInput,
+      budget: decision.effectiveBudget,
+      holdUntilSettled: release.holdUntilSettled,
+    });
   } catch (error) {
     const failedAfterMs = elapsedSince(startedAtMs, clock);
-    tracker.endExecution(runId, { statements: 1, elapsedMs: failedAfterMs });
+    release.answer(failedAfterMs);
     emitAuditEvent({
       type: "agent_operation",
       action,
@@ -241,7 +296,7 @@ export async function executeAuditedOperation<T>(
   // Accounting, then the audit line, then the artifact. The statement ran, so
   // the trail is recorded before this module's in-memory store gets a say: a
   // store that refuses the result must not also erase the record that it ran.
-  tracker.endExecution(runId, { statements: 1, elapsedMs });
+  release.answer(elapsedMs);
   emitAuditEvent({
     type: "agent_operation",
     action,

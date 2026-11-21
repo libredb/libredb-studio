@@ -237,6 +237,24 @@ describe("runReadOnlyStatement", () => {
     expect((error as QueryError).provider).toBe("duckdb");
   });
 
+  test("hands the provider's call to the caller's hold as soon as it is made, so a call it stopped waiting for stays held", async () => {
+    const call = new Promise<QueryResult>(() => {});
+    const { provider } = providerAnswering(() => call);
+    const holdUntilSettled = mock((_call: PromiseLike<unknown>) => {});
+    const error = await settled(
+      runReadOnlyStatement(provider, {
+        type: "duckdb",
+        statement: "SELECT 1",
+        budget: { ...budget, statementTimeoutMs: 5 },
+        wait: "statement-timeout",
+        holdUntilSettled,
+      }),
+    );
+    expect((error as QueryError).message.startsWith(TIME_BUDGET_PREFIX)).toBe(true);
+    expect(holdUntilSettled).toHaveBeenCalledTimes(1);
+    expect(holdUntilSettled.mock.calls[0][0]).toBe(call);
+  });
+
   test("keeps a rejection handler on a call it stopped waiting for, so its late failure is no unhandled rejection", async () => {
     let reject: (error: Error) => void = () => {};
     const late = new Promise<QueryResult>((_resolve, rejectLate) => {

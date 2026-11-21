@@ -1049,8 +1049,9 @@ Three properties are deliberate:
   whose absence it is reporting.
 
 Recording the ending is best effort and never replaces the error the caller sees: if the run ended
-between the throw and the recording, or still has an execution in flight, `finish` itself throws —
-that is logged, and the original failure is what propagates.
+between the throw and the recording, `finish` itself throws, which is logged, and the original
+failure is what propagates. An execution still in flight is waited for first, so the ending is
+recorded once it lands.
 
 ## The tool set
 
@@ -2089,9 +2090,9 @@ at least the longest deadline it wants to serve, and a stream cut mid-run has no
 
 | Bound | Value | Counts |
 | --- | --- | --- |
-| `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. Handed to the provider, and on the read-only statement path Studio also stops waiting at it and refuses the statement in the time sentence. The wait includes the provider's connection checkout, so the sentence can also stand for a statement still queued for a connection, or for a connection that did not open in time; how such a call settled later is written to the server log. Stopping the wait does not stop the statement: it runs on until the engine's own deadline ends it, or to its end on an engine with none (the engine table in [MCP Limits](./MCP.md#limits)), and on DuckDB, which runs a connection's statements one at a time, the run's next statement waits behind it. A provider that reads on Studio's own thread (LibreDB, SQLite without its worker) cannot be stopped by Studio's timer, and its own check once the statement returns is the bound there. |
+| `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. Handed to the provider, and on the read-only statement path Studio also stops waiting at it and refuses the statement in the time sentence. The wait includes the provider's connection checkout, so the sentence can also stand for a statement still queued for a connection, or for a connection that did not open in time; how such a call settled later is written to the server log. Stopping the wait does not stop the statement: it runs on until the engine's own deadline ends it, or to its end on an engine with none (the engine table in [MCP Limits](./MCP.md#limits)), and on DuckDB, which runs a connection's statements one at a time, a later statement on that connection waits behind it. A provider that reads on Studio's own thread (LibreDB, SQLite without its worker) cannot be stopped by Studio's timer, and its own check once the statement returns is the bound there. |
 | `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. The provider refuses past either, and on the read-only statement path (the model's statements, the composed catalog, plan and profile reads, and the hand-over) Studio checks the answer again, each row's UTF-8 JSON bytes summed, before the run keeps it (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`); an estimating plan is checked against the byte budget only, because its rows are the optimizer's operators. |
-| `maxConcurrentExecutions` | 1 | The loop is sequential, so the run waits on one statement at a time. It counts the executions Studio waits on: a statement Studio stopped waiting for at its timeout can still be running at the engine while the run goes on, up to the three repair attempts. A second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
+| `maxConcurrentExecutions` | 1 | The loop is sequential, so the run waits on one statement at a time. It counts each statement until its provider call settles: a statement Studio stopped waiting for at its timeout still counts while its provider call runs, so a next statement in that time is refused with `CONCURRENCY_BUDGET_EXCEEDED`, and the run's end waits for the call. A second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
 | One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
 | Repair attempts | 3 | Statements that failed **at the database**, and statements a provider's fence or the run read allowance refused before sending. |
 | Billed reads | 10,000 per run | Every budget-taking read the run hands a provider (statements, `readCatalogReadOnly`, the cluster readings), grounding and sampling statements included, on an engine that bills each read; carried across resumes; Firestore is the one engine that charges it. |
@@ -2185,7 +2186,7 @@ hide: **PostgreSQL preempts an overrunning statement (`SET LOCAL statement_timeo
 it by killing the child process that runs it.** An overrunning on-disk SQLite statement is killed
 mid-flight, so it stops at its timeout rather than running on; the in-memory database has no child
 to kill and is refused only once it returns. The rail states this where the meter is shown.
-Studio's own timer on the read-only statement path ends the wait, not the statement: the database time charged for a statement Studio stopped waiting for is the time it waited, while an engine with no deadline of its own (DuckDB among them) runs the statement on, and DuckDB's next statement on the run waits behind it.
+Studio's own timer on the read-only statement path ends the wait, not the statement: the database time charged for a statement Studio stopped waiting for is the time it waited, while an engine with no deadline of its own (DuckDB among them) runs the statement on, and a later statement on the same DuckDB connection waits behind it.
 
 **The repair loop is bounded twice, and the two bounds are different.** A statement that already
 failed is never admitted again — keyed on a canonical fingerprint built from the shared SQL span
