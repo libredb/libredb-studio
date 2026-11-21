@@ -164,9 +164,12 @@ default_tarball() {
 # channel that cannot run is an error).
 #
 # Every channel that starts a launcher drops any inherited SEED_ASSETS_DIR
-# (env -u), so it proves the value its launcher sets (docs/DISTRIBUTION.md,
-# "Built-in sample assets"); the docker channel passes only -e flags, so it
-# runs on the image's own value.
+# (env -u), so it runs on the value its launcher sets, and a wrong value fails
+# it (docs/DISTRIBUTION.md, "Built-in sample assets"); the docker channel passes
+# only -e flags, so it runs on the image's own value. A launcher that sets
+# nothing is not caught here yet: the server's <working directory>/seed-assets
+# fallback finds the same directory, since server.js changes into its payload.
+# Each launcher's own unit tests prove it sets the value.
 # ------------------------------------------------------------------------------
 RESULTS=()
 record() { RESULTS+=("$1: $2"); }
@@ -190,7 +193,7 @@ channel_tarball() {
   mkdir -p "$WORK/app" "$WORK/data"
   tar -xzf "$tarball" -C "$WORK/app" --strip-components=1
   # No launcher here: the script sets SEED_ASSETS_DIR itself, as a user running
-  # server.js directly does (docs/DISTRIBUTION.md, "Built-in sample assets").
+  # server.js directly would.
   (
     cd "$WORK/app" && exec env "${AUTH_ENV[@]}" \
       NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 \

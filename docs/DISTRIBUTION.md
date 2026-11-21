@@ -247,7 +247,7 @@ The VS Code extension does not run this server: its backend child runs no Next.j
 ## Built-in sample assets
 
 The two built-in samples are copied at boot from the `seed-assets` directory every payload ships beside `server.js` ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#built-in-sample-connections)).
-The server finds that directory through `SEED_ASSETS_DIR`, which every launcher sets to its own payload's directory as an absolute path.
+The server finds that directory through `SEED_ASSETS_DIR`, which every launcher sets to its own payload's `seed-assets` directory, as an absolute path.
 
 | Channel | What sets it | Where it points |
 |---|---|---|
@@ -1429,10 +1429,8 @@ bash scripts/build-standalone-payload.sh dist --smoke
 # -> dist/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz
 ```
 
-`--smoke` boots the packed payload with `node server.js` and `SEED_ASSETS_DIR` at its
-`seed-assets`, and requires `GET /api/db/health` to return 200 and both built-in samples
-copied. Run the result via the npx launcher:
-`npx @libredb/studio --archive dist/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz`.
+`--smoke` boots the packed payload with `node server.js` and `SEED_ASSETS_DIR` at its `seed-assets`, and requires `GET /api/db/health` to return 200 and both built-in samples copied.
+Run the result via the npx launcher: `npx @libredb/studio --archive dist/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz`.
 
 ## VS Code extension (Marketplace)
 
@@ -1571,8 +1569,10 @@ macOS, missing artifact) and prints a summary. Where each channel runs in CI:
 | snap | `release-artifacts.yml` snap job (amd64; runs before the store publish) |
 | homebrew | not in CI (linux runners) — run locally on macOS |
 
-The tarball channel has no launcher, so the script sets `SEED_ASSETS_DIR` itself, as a user running `server.js` directly does.
-Every other channel starts its launcher with no inherited `SEED_ASSETS_DIR`, so it proves the value its launcher sets ([Built-in sample assets](#built-in-sample-assets)).
+The next-dev row's servers get this checkout's `seed-assets` from `playwright.config.ts`, and the tarball channel, which has no launcher, gets it from the script, as a user running `server.js` directly would.
+Every channel the script starts through a launcher runs with no inherited `SEED_ASSETS_DIR`, so it runs on the value its launcher sets ([Built-in sample assets](#built-in-sample-assets)), and a wrong value fails it.
+A launcher that sets nothing is not caught here yet: the server still falls back to `<working directory>/seed-assets`, and `server.js` changes into its payload, so the fallback finds the same directory.
+Until that fallback is removed, each launcher's own unit tests are what prove it sets the value.
 
 ### First-release validation runbook
 
