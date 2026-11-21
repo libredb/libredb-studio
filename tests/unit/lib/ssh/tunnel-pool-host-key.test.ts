@@ -23,7 +23,7 @@ const OFFERED_HOST_KEY = Buffer.from("AAAAC3NzaC1lZDI1NTE5AAAAIAeWh7W0w/sZuTB3QN
 const OFFERED_FINGERPRINT = "SHA256:JvC53Gq2xdb+Oi2SId63klTWrE0XS4CrLWqTgOC7B9Y";
 const OTHER_FINGERPRINT = "SHA256:HNXfCNN9oifxQTL0zxPKCgu0TYROxoRatYNEXsmJUkc";
 
-const PHRASE = "SEED-CANARY-8e3f";
+const PHRASE = crypto.randomUUID();
 
 /** How many SSH clients the pool dialled, one per forward it opened or tried to open. */
 let dials = 0;

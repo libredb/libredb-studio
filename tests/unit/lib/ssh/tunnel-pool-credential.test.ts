@@ -20,19 +20,22 @@ import type { SSHTunnelConfig } from "@/lib/types";
  * This file mocks `ssh2` and `net` only, so what it drives is the real pool.
  */
 
-/** The phrase the fake bastion accepts, unless a test names another. */
-const FIRST_PHRASE = "SEED-CANARY-1f6a";
-const ROTATED_PHRASE = "SEED-CANARY-2b7c";
-const REFUSED_PHRASE = "SEED-CANARY-3d8e";
-const FIRST_PEM = "SEED-CANARY-pem-4e9f";
-const OTHER_PEM = "SEED-CANARY-pem-5a0b";
-const FIRST_UNLOCK = "SEED-CANARY-unlock-6c1d";
-const OTHER_UNLOCK = "SEED-CANARY-unlock-7d2e";
+/** The phrase the fake bastion accepts, unless a test names another. Every value is generated per run. */
+const FIRST_PHRASE = crypto.randomUUID();
+const ROTATED_PHRASE = crypto.randomUUID();
+const REFUSED_PHRASE = crypto.randomUUID();
+const FIRST_PEM = crypto.randomUUID();
+const OTHER_PEM = crypto.randomUUID();
+const FIRST_UNLOCK = crypto.randomUUID();
+const OTHER_UNLOCK = crypto.randomUUID();
 /** Two splits of one text, for the framing case: "ab" + "c" and "a" + "bc". */
-const SPLIT_AB = "SEED-ab";
-const SPLIT_C = "c";
-const SPLIT_A = "SEED-a";
-const SPLIT_BC = "bc";
+const SPLIT_HEAD = crypto.randomUUID();
+const SPLIT_MIDDLE = crypto.randomUUID();
+const SPLIT_TAIL = crypto.randomUUID();
+const SPLIT_AB = SPLIT_HEAD + SPLIT_MIDDLE;
+const SPLIT_C = SPLIT_TAIL;
+const SPLIT_A = SPLIT_HEAD;
+const SPLIT_BC = SPLIT_MIDDLE + SPLIT_TAIL;
 
 /** What each SSH client the pool dialled presented, in order. */
 const presented: Array<{ password?: unknown; privateKey?: unknown; passphrase?: unknown }> = [];
