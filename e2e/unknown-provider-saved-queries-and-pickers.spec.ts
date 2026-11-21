@@ -7,7 +7,8 @@
  * connection whose type is not text.
  *
  * Runs under playwright.config.ts's "chromium-unknown-provider" project, against the second server, for the reason
- * unknown-provider-connection.spec.ts does: each test reloads the studio, so it pays the hydration requests twice.
+ * unknown-provider-connection.spec.ts does: every test signs in and loads the studio, and the palette test reloads it
+ * and the monitoring test opens a second page, so they pay the hydration requests again.
  * That server keeps its storage in the browser, so what a test writes to `localStorage` is what the page reads.
  */
 import { expect, test, type Page } from "@playwright/test";
@@ -92,9 +93,10 @@ test.describe("a saved query or a picker entry whose type names no provider", ()
       buffer: Buffer.from(JSON.stringify([KNOWN_REPORT, ACME_REPORT])),
     });
 
-    const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Import finished with unavailable queries" });
-    await expect(toast).toBeVisible();
-    await expect(toast).toContainText(`${ACME_REPORT.name}: ${unknownTypeSentence(ACME_REPORT.connectionType)}`);
+    // The outcome is drawn in the Saved panel itself, so the npm StudioWorkspace, which mounts no toaster, shows it too.
+    const outcome = page.getByRole("status").filter({ hasText: "Not imported" });
+    await expect(outcome).toBeVisible();
+    await expect(outcome).toContainText(`${ACME_REPORT.name}: ${unknownTypeSentence(ACME_REPORT.connectionType)}`);
 
     const stored = (await storedSavedQueries(page)).map((query) => query.id);
     expect(stored).toContain(KNOWN_REPORT.id);
@@ -122,11 +124,13 @@ test.describe("a saved query or a picker entry whose type names no provider", ()
     await expect(page.locator(".monaco-editor .view-lines").first()).not.toContainText(ACME_STORED.query);
   });
 
-  test("the monitoring page opens on an available connection, marks the others unavailable and refuses a pick by name", async ({
+  test("the monitoring page opens on an available connection, says the saved one is unavailable, marks the others and refuses a pick by name", async ({
     page,
   }) => {
     await appendStored(page, CONNECTIONS_KEY, [UNKNOWN_CONNECTION, MALFORMED_CONNECTION]);
-    await page.evaluate(({ key, id }) => localStorage.setItem(key, id), {
+    // Written as the monitoring page starts loading, not from the editor's page: the editor can still be settling on its
+    // first connection there and would write that one over it.
+    await page.addInitScript(({ key, id }) => localStorage.setItem(key, id), {
       key: ACTIVE_KEY,
       id: UNKNOWN_CONNECTION.id,
     });
@@ -140,6 +144,12 @@ test.describe("a saved query or a picker entry whose type names no provider", ()
     await expect(connectionSelect).not.toContainText(UNKNOWN_CONNECTION.name);
     await expect(connectionSelect).not.toContainText(MALFORMED_CONNECTION.name);
     const selectedBefore = (await connectionSelect.textContent()) ?? "";
+    // The saved active connection is not replaced in silence: the page names it with its reason.
+    const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Connection unavailable" });
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText(`${UNKNOWN_CONNECTION.name}: ${unknownTypeSentence(UNKNOWN_CONNECTION.type)}`);
+    // That notice leaves on its own, so the one the refused pick below raises is the only one on the page.
+    await expect(toast).toHaveCount(0, { timeout: 15_000 });
 
     await connectionSelect.click();
     const unknownOption = page.getByRole("option").filter({ hasText: UNKNOWN_CONNECTION.name });
@@ -149,7 +159,6 @@ test.describe("a saved query or a picker entry whose type names no provider", ()
 
     await unknownOption.click();
 
-    const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Connection unavailable" });
     await expect(toast).toBeVisible();
     await expect(toast).toContainText(`${UNKNOWN_CONNECTION.name}: ${unknownTypeSentence(UNKNOWN_CONNECTION.type)}`);
     await expect(connectionSelect).toHaveText(selectedBefore);
