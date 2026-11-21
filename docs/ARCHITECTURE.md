@@ -340,6 +340,7 @@ On standalone boot it:
 
 A failure in the bootstrap step is logged and swallowed.
 A sample whose path cannot be checked, whose target is refused or whose copy fails is logged once, with its reason, and listed unavailable with that reason; boot never breaks.
+A copy that fails with an error the copy does not know is a defect: its sample is listed unavailable as `copy-failed` too, and the error is rethrown into the copies' promise, which nothing awaits, so it is the process's unhandled rejection that Next.js logs and the server keeps serving.
 The preflight in step 2 is the deliberate exception.
 
 ### 4.8. SQLite Driver Selection (`src/lib/db/providers/sql/sqlite-driver.ts`)

@@ -23,7 +23,7 @@ import { governanceEnabled } from "@/lib/governance/config";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import { logger } from "@/lib/logger";
 import type { DatabaseType } from "@/lib/types";
-import { copySampleAsset, errnoCode, messageOf, type SampleCopyError } from "./sample-copy";
+import { copySampleAsset, errnoCode, messageOf, SampleCopyError } from "./sample-copy";
 import type { ManagedConnection, SampleUnavailableReason } from "./types";
 
 /** One built-in sample. */
@@ -317,13 +317,17 @@ export function sampleConnection(type: DatabaseType, spec: SampleSpec, target: s
  * Start copying every enabled sample, for the boot hook. Synchronously, before it returns, it computes the admissions
  * (`sampleAdmissions`) and keeps them for the process, replacing what an earlier call kept, and sets each enabled
  * sample `failed` with its admission refusal, or `seeding`, so no request can see a sample idle while its copy is about
- * to start. The returned promise settles once every copy has, concurrently, and never rejects: the boot hook does not
- * wait for it.
+ * to start. The returned promise settles once every copy has, concurrently. The boot hook does not wait for it.
  *
  * Each outcome sets the state and logs exactly one line in one synchronous step, so a state that is no longer
  * `seeding` means its line has been written: info "Embedded sample copied", debug "Embedded sample already present"
  * (every boot after the first), or warn "Embedded sample unavailable" with the reason, the target and the seed assets
  * directory. A failure never stops boot.
+ *
+ * copySampleAsset rejects with a SampleCopyError for every failure it knows. Anything else is a defect: its sample is
+ * set `failed` with `copy-failed` and logged as above, so it never stays pending, and the error is rethrown, so the
+ * returned promise rejects with it (with an AggregateError of them, in table order, when several copies met one). The
+ * boot hook does not catch that rejection either: it surfaces as the process's unhandled rejection.
  */
 export function startSampleSeeding(): Promise<void> {
   const assets = seedAssetsDirectory();
@@ -366,24 +370,30 @@ export function startSampleSeeding(): Promise<void> {
             });
           }
         },
-        // copySampleAsset rejects with nothing but a SampleCopyError.
-        (error: SampleCopyError) => {
+        (error: unknown) => {
+          const known = error instanceof SampleCopyError;
+          const reason = known ? error.reason : "copy-failed";
           states.set(spec.seedId, {
             phase: "failed",
-            reason: error.reason,
-            sentence: unavailableSentence(error.reason, error.code),
+            reason,
+            sentence: unavailableSentence(reason, known ? error.code : undefined),
           });
           logger.warn("Embedded sample unavailable", {
             route: "instrumentation",
             seedId: spec.seedId,
-            reason: error.reason,
+            reason,
             target,
             assets,
-            error: error.message,
+            error: messageOf(error),
           });
+          if (!known) throw error;
         },
       ),
     );
   }
-  return Promise.all(copies).then(() => undefined);
+  return Promise.allSettled(copies).then((outcomes) => {
+    const defects = outcomes.flatMap((outcome) => (outcome.status === "rejected" ? [outcome.reason] : []));
+    if (defects.length === 1) throw defects[0];
+    if (defects.length > 1) throw new AggregateError(defects, "More than one embedded sample copy met a defect");
+  });
 }

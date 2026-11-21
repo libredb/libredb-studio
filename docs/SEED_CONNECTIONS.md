@@ -1822,7 +1822,7 @@ A sample whose copy fails, or whose target is refused, is logged once as the war
 | `asset-missing` | The sample's file is not in the seed assets directory |
 | `asset-unreadable` | The sample's file in the seed assets directory could not be read; the sentence names the error code, such as `EACCES` or `EIO` |
 | `digest-mismatch` | The file in the seed assets directory is not the one this release ships |
-| `copy-failed` | The copy into the data directory failed; the sentence names the error code, such as `EACCES` or `ENOSPC` |
+| `copy-failed` | The copy into the data directory failed; the sentence names the error code, such as `EACCES` or `ENOSPC`. Also a copy that failed with an error the copy does not know, a defect, which the server log shows again as an unhandled rejection |
 | `target-unreadable` | The sample's path could not be checked before any copy; the sentence names the error code, such as `EACCES`, `ENOTDIR` or `ELOOP` |
 | `target-reserved` | The sample's path, or one of its sidecar files, names one of the server's own storage files |
 | `target-conflict` | The sample's path is another sample's, or differs from it only in letter case, so only the first one is created |

@@ -75,8 +75,12 @@ export async function register(): Promise<void> {
   // once, for the life of the process, and every enabled sample is marked
   // seeding before this returns, so GET /api/connections/managed lists it in
   // pendingSeeds and the client polls until it appears. The copies are not
-  // awaited, and their promise never rejects: a failed copy is logged once and
-  // listed unavailable.
+  // awaited: a failed copy is logged once and listed unavailable. Their promise
+  // rejects only for a defect, an error a copy throws that is not a
+  // SampleCopyError; that sample is listed unavailable too, and the rejection,
+  // which nothing here catches, is the process's unhandled rejection: Next.js
+  // logs it and goes on serving, and under --unhandled-rejections=strict the
+  // uncaught-exception exit stops the server with code 70.
   // The sample service loads no engine code (tests/unit/seed/no-engine-imports.test.ts).
   const { startSampleSeeding } = await import("@/lib/seed/samples");
   void startSampleSeeding();
