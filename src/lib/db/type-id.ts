@@ -10,14 +10,16 @@
  * contract registry lookups (through `typeIdRow`) and the migration's dialect header, and the published
  * `QuerySafetyDialog`, `TestDataGenerator`, `QueryEditor` and `ResultsGrid`, the components that read a per-engine fact
  * with a type a host hands them. The capability tables are read through `typeIdRow` as well: `WRITE_REACH` by the
- * read-only marker and the connection form hook, `READ_ONLY_ENFORCED`, `READS_FILE_ACCESS_POSTURE` and
- * `SINGLE_WRITER_FILE` by the provider factory and the provider cache key, `CONNECTION_FORM` by `offersSslPanel`, and
- * the destructive vocabulary by its six readers. Other per-engine tables are still read by bare index, so a new
- * per-engine lookup is not covered by this module unless it calls it.
+ * read-only marker and the connection form hook, `READ_ONLY_ENFORCED` by the provider factory,
+ * `READS_FILE_ACCESS_POSTURE` by the provider factory and the provider cache key, `SINGLE_WRITER_FILE` by the provider
+ * cache key, `CONNECTION_FORM` by `offersSslPanel`, and the destructive vocabulary by its six readers. Other reads are
+ * still by bare index, of other per-engine tables and of some of these (the seed schema's `WRITE_REACH` refinement,
+ * the VS Code backend's `CONNECTION_FORM` reads), so a new per-engine lookup is not covered by this module unless it
+ * calls it.
  *
  * `compatibility.ts` never imports this module: the set below is built from `SHIPPED_DATABASE_TYPES` as this module
- * loads, so a value import back would throw a `ReferenceError` whenever `compatibility.ts` loads first. Its own tables
- * are therefore read from outside it, through `typeIdRow`, and never by an accessor inside it.
+ * loads, so a value import back would throw a `ReferenceError` whenever `compatibility.ts` loads first. So no checked
+ * accessor can live there: its tables are checked where they are read, through `typeIdRow`.
  *
  * The set is `SHIPPED_DATABASE_TYPES`, which the compiler holds to the union through an exhaustive Record, so this
  * module has no list of its own. Membership is a `Set` lookup, so a prototype key such as `"constructor"` is unknown
