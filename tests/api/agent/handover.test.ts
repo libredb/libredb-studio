@@ -25,7 +25,9 @@ import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-mode
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
 import { AGENT_HANDOVER_BUDGET, AGENT_HANDOVER_READ_ALLOWANCE } from "@/lib/agent/execution-policy";
+import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { filterByRoles } from "@/lib/seed/connection-filter";
@@ -411,6 +413,21 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
 
     expect(res.status).toBe(500);
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  test("refuses a replay whose provider answers more rows than the hand-over budget, and returns none of them", async () => {
+    // The provider's own code refuses past the budget it is handed; this fake does not, so what refuses here is the
+    // route holding the answer to the budget itself.
+    const rows = Array.from({ length: DEFAULT_QUERY_LIMIT + 1 }, (_, index) => ({ region: `region-${index}` }));
+    mockQueryReadOnly.mockResolvedValueOnce({ ...RESULT, rows, rowCount: rows.length } as never);
+
+    const res = await POST(request(), params());
+    const body = await parseResponseJSON<{ error: string; code: string; result?: unknown }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("QUERY_ERROR");
+    expect(body.error).toBe(rowBudgetSentence(DEFAULT_QUERY_LIMIT + 1, DEFAULT_QUERY_LIMIT));
+    expect(body.result).toBeUndefined();
   });
 
   test("a statement the engine refuses is reported as the error it is", async () => {

@@ -995,17 +995,21 @@ describe("planning mode runs no statement of the user's", () => {
     relation this database does not have.
   */
   test("an operations run whose inventory was truncated is not told it holds every table", async () => {
-    /** Wider than the pack can hold, so the omission line is reached. */
+    /**
+     * Wider than the pack can hold, so the omission line is reached, and no more rows than the run's budget takes, so
+     * the answer is one a provider keeping its budget could give.
+     */
+    const tables = AGENT_WORKFLOW_BUDGETS.operations.policy.budgets.maxResultRows;
     const wide = async (sql: string): Promise<QueryResult> =>
       sql.includes("information_schema.columns")
         ? queryResult({
-            rows: Array.from({ length: 300 }, (_unused, index) => ({
+            rows: Array.from({ length: tables }, (_unused, index) => ({
               table_schema: "public",
               table_name: `department_table_${index}`,
               columns: [{ name: "identifier_column", type: "character varying", nullable: "NO" }],
             })),
             fields: ["table_schema", "table_name", "columns"],
-            rowCount: 300,
+            rowCount: tables,
           })
         : queryResult({ rows: [], fields: [], rowCount: 0 });
 
@@ -2033,22 +2037,25 @@ describe("planning mode runs no statement of the user's", () => {
      * short-circuits to its empty-read branch and its omission notice is never rendered
      * at all — so an assertion that no tool is named certified a property
      * the code did not have. Found by review on #411.
+     *
+     * No more rows than the run's budget takes, so the answer is one a provider keeping its budget could give.
      */
+    const tables = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultRows;
     const wideCatalog = async (sql: string): Promise<QueryResult> => {
       if (sql.includes("information_schema.columns")) {
         return queryResult({
-          rows: Array.from({ length: 300 }, (_, index) => ({
+          rows: Array.from({ length: tables }, (_, index) => ({
             table_schema: "public",
             table_name: `department_table_${index}`,
             columns: [{ name: "identifier_column", type: "character varying", nullable: "NO" }],
           })),
           fields: ["table_schema", "table_name", "columns"],
-          rowCount: 300,
+          rowCount: tables,
         });
       }
       if (sql.includes("pg_constraint")) {
         return queryResult({
-          rows: Array.from({ length: 299 }, (_, index) => ({
+          rows: Array.from({ length: tables - 1 }, (_, index) => ({
             table_schema: "public",
             table_name: `department_table_${index}`,
             column_name: "identifier_column",
@@ -2064,7 +2071,7 @@ describe("planning mode runs no statement of the user's", () => {
             "referenced_table",
             "referenced_column",
           ],
-          rowCount: 299,
+          rowCount: tables - 1,
         });
       }
       return queryResult({ rows: [], fields: [], rowCount: 0 });

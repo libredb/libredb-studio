@@ -32,7 +32,7 @@
 import { randomUUID } from "node:crypto";
 import { type AuditReason, emitAuditEvent } from "@/lib/audit";
 import type { ExecutionArtifactStore } from "./artifacts";
-import type { ExecutionBudget, ExecutionBudgetTracker } from "./budgets";
+import { BudgetAccountingError, type ExecutionBudget, type ExecutionBudgetTracker } from "./budgets";
 import type { ExecutionActor, PolicyDecision, PolicyDenyCode, PolicyEvaluationParams } from "./policy";
 import { evaluateOperation, isValidActor } from "./policy";
 
@@ -111,8 +111,108 @@ function elapsedSince(startedAtMs: number, clock: () => number): number {
   return Number.isFinite(elapsed) ? Math.max(0, elapsed) : 0;
 }
 
+/** What the invoke callback of `executeAuditedOperation` is handed. */
+export interface AuditedInvocation {
+  readonly validatedInput: unknown;
+  readonly budget: ExecutionBudget;
+  /**
+   * Keeps this execution live, counted against `maxConcurrentExecutions`, until `call` settles as well as the
+   * callback. Handed the provider's call the callback makes, so a callback answered before that call settles (core's
+   * read-only statement timer refusing it at its timeout, `runReadOnlyStatement`) leaves the execution counted for as
+   * long as the call runs.
+   */
+  readonly holdUntilSettled: (call: PromiseLike<unknown>) => void;
+}
+
+/**
+ * Ends one execution in the tracker exactly once. The execution's statement and time are charged when its callback
+ * is answered, so the run's charged total read then includes them; it is released then too, unless a call it holds
+ * is still running, in which case it is released, charging nothing more, once the last such call settles.
+ */
+function executionRelease(tracker: ExecutionBudgetTracker, runId: string) {
+  let running = 0;
+  let answered = false;
+  let ended = false;
+  return {
+    holdUntilSettled(call: PromiseLike<unknown>): void {
+      if (ended) {
+        throw new BudgetAccountingError(
+          `a provider call of run "${runId}" was held after the execution it belongs to ended`,
+        );
+      }
+      const settled = () => {
+        running -= 1;
+        if (running > 0 || !answered) return;
+        ended = true;
+        tracker.endExecution(runId, { statements: 0, elapsedMs: 0 });
+      };
+      // Subscribed before it is counted, through `Promise.resolve`, which adopts any answer a provider gives: a hold is
+      // never counted without the handler that releases it.
+      Promise.resolve(call).then(settled, settled);
+      running += 1;
+    },
+    answer(elapsedMs: number): void {
+      answered = true;
+      if (running > 0) {
+        tracker.chargeExecution(runId, { statements: 1, elapsedMs });
+        return;
+      }
+      ended = true;
+      tracker.endExecution(runId, { statements: 1, elapsedMs });
+    },
+  };
+}
+
 function refusalReason(decision: RefusedDecision): AuditReason {
   return decision.kind === "deny" ? DENY_REASONS[decision.reasonCode] : "agent_approval_required";
+}
+
+/**
+ * The descriptor id a request resolves to, or `unresolved`. Resolved
+ * independently of the pipeline (resolution is pure and cheap): the decision
+ * carries an operation id only when it allows or requires approval, and a
+ * denial still has to name what was attempted.
+ */
+function auditedAction(params: Pick<PolicyEvaluationParams, "registry" | "request">): string {
+  const resolution = params.registry.resolve(params.request?.operationId as string);
+  return resolution.kind === "resolved" ? resolution.descriptor.id : UNRESOLVED_OPERATION;
+}
+
+/** The decision event of a refused request. Not wrapped in a try/catch, so a sink failure propagates. */
+function auditRefusedDecision(action: string, user: string, decision: RefusedDecision, correlationId: string): void {
+  emitAuditEvent({
+    type: "agent_operation",
+    action,
+    target: DECISION_TARGET,
+    user,
+    result: "failure",
+    reason: refusalReason(decision),
+    correlationId,
+  });
+}
+
+/**
+ * Refuses a request for an input the pipeline does not see, audited and answered exactly as the pipeline's own
+ * `INPUT_VALIDATION_FAILED` denial is, and before anything is begun, charged or invoked.
+ *
+ * The agent tool layer calls it for the one statement it sends that a descriptor's input does not carry: the
+ * operations-profile statistics read is audited under `db.schema.read`, whose input is empty, and the statement it
+ * sends is validated against the input contract a statement read applies (`readStatisticsForGrounding` in
+ * `src/lib/agent/tools.ts`). Validating it is the caller's; this function only makes its refusal the pipeline's, so an
+ * operator reads one denial however it was decided.
+ */
+export function refuseAuditedInput(
+  params: Omit<PolicyEvaluationParams, "usage">,
+): Extract<AuditedExecutionResult<never>, { kind: "denied" }> {
+  const correlationId = randomUUID();
+  const decision: RefusedDecision = {
+    kind: "deny",
+    reasonCode: "INPUT_VALIDATION_FAILED",
+    policyVersion: params.policy.version,
+    effectiveBudget: Object.freeze({ ...params.policy.budgets }),
+  };
+  auditRefusedDecision(auditedAction(params), actorLabel(params.actor), decision, correlationId);
+  return { kind: "denied", correlationId, decision };
 }
 
 /**
@@ -129,7 +229,7 @@ function refusalReason(decision: RefusedDecision): AuditReason {
 export async function executeAuditedOperation<T>(
   params: Omit<PolicyEvaluationParams, "usage">,
   context: AuditedExecutionContext<T>,
-  invoke: (execution: { readonly validatedInput: unknown; readonly budget: ExecutionBudget }) => Promise<T>,
+  invoke: (execution: AuditedInvocation) => Promise<T>,
 ): Promise<AuditedExecutionResult<T>> {
   const { runId, tracker, artifacts } = context;
   const clock = context.clock ?? Date.now;
@@ -146,23 +246,11 @@ export async function executeAuditedOperation<T>(
   const evaluation: PolicyEvaluationParams = { ...params, usage: tracker.usage(runId) };
   const decision = evaluateOperation(evaluation);
 
-  // Resolved independently of the pipeline (resolution is pure and cheap): the
-  // decision carries an operation id only when it allows or requires approval,
-  // and a denial still has to name what was attempted.
-  const resolution = params.registry.resolve(params.request?.operationId as string);
-  const action = resolution.kind === "resolved" ? resolution.descriptor.id : UNRESOLVED_OPERATION;
+  const action = auditedAction(params);
   const user = actorLabel(params.actor);
 
   if (decision.kind !== "allow") {
-    emitAuditEvent({
-      type: "agent_operation",
-      action,
-      target: DECISION_TARGET,
-      user,
-      result: "failure",
-      reason: refusalReason(decision),
-      correlationId,
-    });
+    auditRefusedDecision(action, user, decision, correlationId);
     return { kind: "denied", correlationId, decision };
   }
 
@@ -177,6 +265,7 @@ export async function executeAuditedOperation<T>(
 
   const startedAtMs = clock();
   tracker.beginExecution(runId);
+  const release = executionRelease(tracker, runId);
 
   // The try covers the provider call ONLY. Everything after it is this module's
   // own bookkeeping, and a compensating release that also covered it would call
@@ -184,10 +273,14 @@ export async function executeAuditedOperation<T>(
   // replace whatever really went wrong and suppress the outcome event.
   let result: T;
   try {
-    result = await invoke({ validatedInput: decision.validatedInput, budget: decision.effectiveBudget });
+    result = await invoke({
+      validatedInput: decision.validatedInput,
+      budget: decision.effectiveBudget,
+      holdUntilSettled: release.holdUntilSettled,
+    });
   } catch (error) {
     const failedAfterMs = elapsedSince(startedAtMs, clock);
-    tracker.endExecution(runId, { statements: 1, elapsedMs: failedAfterMs });
+    release.answer(failedAfterMs);
     emitAuditEvent({
       type: "agent_operation",
       action,
@@ -205,7 +298,7 @@ export async function executeAuditedOperation<T>(
   // Accounting, then the audit line, then the artifact. The statement ran, so
   // the trail is recorded before this module's in-memory store gets a say: a
   // store that refuses the result must not also erase the record that it ran.
-  tracker.endExecution(runId, { statements: 1, elapsedMs });
+  release.answer(elapsedMs);
   emitAuditEvent({
     type: "agent_operation",
     action,

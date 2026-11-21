@@ -29,8 +29,10 @@
  *   read on this path is going to be rendered into a prompt, so the cap that
  *   matters is the one that keeps a result affordable in tokens; the editor's
  *   own paging limits are irrelevant here. The caps refuse rather than truncate
- *   (the providers throw on an over-budget result), which is what lets a caller
- *   trust that a delivered result is complete.
+ *   (the providers throw on an over-budget result, and on the read-only statement
+ *   path, the model's statements, the composed catalog, plan and profile reads and
+ *   the hand-over, `runReadOnlyStatement` refuses one again in core), which is what
+ *   lets a caller trust that a delivered result is complete.
  */
 
 import type { ExecutionProfile } from "@/lib/db/factory";
@@ -203,7 +205,12 @@ function workflowBudget(input: {
   readonly maxTotalRunMs: number;
 }): AgentWorkflowBudget {
   const budgets: ExecutionBudget = Object.freeze({
-    /** The run loop is sequential: one statement in flight, so a run cannot fan out. */
+    /**
+     * The run loop is sequential: one statement at a time. On the read-only statement
+     * path a statement counts until its provider call settles, also one Studio stopped
+     * waiting for at its timeout (`runReadOnlyStatement`, `executeAuditedOperation`), and
+     * the run's next call waits for it (`runAuditedAgentCall`).
+     */
     maxConcurrentExecutions: 1,
     /** A whole drive — catalog reads, drafts, repairs, plan inspections, curated readings. */
     maxStatementsPerRun: input.maxStatementsPerRun,
@@ -290,10 +297,11 @@ function workflowBudget(input: {
  *
  *   What grounding actually costs, counted rather than rounded, because this record is
  *   what a `STATEMENT_BUDGET_EXCEEDED` is traced back to. A catalog capture is three
- *   statements on PostgreSQL and two on SQLite; `readSchemaStatistics` adds one on
- *   PostgreSQL and two on SQLite (it probes `sqlite_stat1` before reading it) and runs
- *   in PLAN mode only. So the worst case before the first turn is FOUR on either engine
- *   in plan mode, and three in agent mode — which is the mode where the reading ceiling
+ *   statements on PostgreSQL and two on SQLite, one on every other engine;
+ *   `readSchemaStatistics` adds one on PostgreSQL and SQL Server and two on SQLite and
+ *   libSQL (each probes `sqlite_stat1` before reading it) and runs in PLAN mode only.
+ *   So the worst case before the first turn is FOUR on PostgreSQL and SQLite in plan
+ *   mode (three on libSQL, two on SQL Server), and three in agent mode, which is the mode where the reading ceiling
  *   is what binds, so 18 − 3 leaves more than the twelve readings the row was sized for.
  *   Six rather than four is deliberate slack in a row nothing has yet been measured
  *   against: this is the workflow whose statements come from a closed set, so an

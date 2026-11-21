@@ -1,4 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { composeCatalogRead, composeStatisticsAvailabilityProbe } from "@/lib/agent/composed-sql";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -8,6 +10,7 @@ import {
   packSchemaStatistics,
   readSchemaStatistics,
 } from "@/lib/agent/schema-stats";
+import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { type AgentToolContext, readStatisticsForGrounding } from "@/lib/agent/tools";
 import type { AgentInventory, AgentInventoryObject, AgentRunMode } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
@@ -16,6 +19,7 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import { admitComposedStatement, agentQueryReadSqlInput } from "@/lib/db/operations/statement-guard";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
@@ -930,5 +934,43 @@ describe("packSchemaStatistics", () => {
       "rest nothing on how large a table is",
     );
     expect(packSchemaStatistics(TABLES, statistics)).toContain("do not write a statement whose correctness depends");
+  });
+});
+
+describe("the statistics read under the operations profile and the statement guard", () => {
+  /**
+   * Under the operations profile the statistics read sends its statements through `provider.query`, after the statement
+   * guard admits each one as `sql.query.read`'s input contract would. So every statement a shipped engine sends there
+   * has to be one the guard admits, or the read would be refused on an engine that reads statistics today. The engine
+   * set is computed from the registries: a SQL-family engine whose dialect reads statistics and supplies no catalog
+   * capture, which is the dialect that grounds under the operations profile in plan mode and in the operations workflow.
+   */
+  const engines = (Object.entries(AGENT_STATEMENT_LANGUAGE) as [DatabaseType, string | null][])
+    .filter(([, language]) => language === "sql")
+    .map(([type]) => type)
+    .filter((type) => {
+      const dialect = engineServerDialect(type);
+      return dialect.statistics !== "unsupported" && dialect.catalogCapture === "unsupported";
+    });
+
+  test("every statement the statistics read sends under the operations profile passes the statement guard", () => {
+    expect(engines.length).toBeGreaterThan(0);
+    for (const type of engines) {
+      const catalogRead = engineServerDialect(type).catalogRead;
+      if (catalogRead === "unsupported") throw new Error(`${type} reads statistics with no catalog read`);
+      const probe = composeStatisticsAvailabilityProbe(type);
+      if (probe !== null) {
+        expect({ type, admitted: agentQueryReadSqlInput.safeParse({ sql: probe }).success }).toEqual({
+          type,
+          admitted: true,
+        });
+      }
+      const estimates = composeCatalogRead(type, { kind: "statistics" });
+      const input =
+        catalogRead.commandShaped === true
+          ? { sql: estimates, composed: admitComposedStatement(estimates) }
+          : { sql: estimates };
+      expect({ type, admitted: agentQueryReadSqlInput.safeParse(input).success }).toEqual({ type, admitted: true });
+    }
   });
 });

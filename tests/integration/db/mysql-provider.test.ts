@@ -25,6 +25,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
+import { byteBudgetSentence, measureRowBytes } from "@/lib/db/providers/sql/read-only-budget";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { CATALOG_TYPE_RULES } from "@/lib/db/providers/sql/mysql";
@@ -9050,6 +9051,34 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill query 4242"))).toBe(true);
       expect(session.destroyed).toBe(true);
       expect(session.released).toBe(false);
+    });
+
+    test("bytes are measured on the keyed rows it serves, so it stops at the row core's re-check would refuse", async () => {
+      // The rows arrive as arrays (`rowsAsArray`) and are served keyed by column name, which adds the names to every
+      // row's JSON. Each array row here is 6 bytes and each served row 30, so an 80-byte budget passes all three
+      // arrays and is crossed by the third served row, at the sum `runReadOnlyStatement` refuses at.
+      const profiled = await profiledProvider();
+      const served = [
+        { customer_display_name: "c1" },
+        { customer_display_name: "c2" },
+        { customer_display_name: "c3" },
+      ];
+      expect(measureRowBytes(["c1"])).toBe(6);
+      mockExecuteFn = (sql: string) => {
+        if (sql.trim().toUpperCase().startsWith("SELECT")) {
+          return Promise.resolve([served, [{ name: "customer_display_name" }]]);
+        }
+        return profileDefault(sql);
+      };
+      const crossing = served.reduce((sum, row) => sum + measureRowBytes(row), 0);
+      expect(crossing).toBeGreaterThan(80);
+      expect(crossing - measureRowBytes(served[2])).toBeLessThanOrEqual(80);
+
+      await expect(
+        profiled.queryReadOnly("SELECT customer_display_name FROM t", budget({ maxResultBytes: 80 })),
+      ).rejects.toThrow(byteBudgetSentence(crossing, 80));
+      expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill query 4242"))).toBe(true);
+      expect(roSessions.at(-1)!.destroyed).toBe(true);
     });
   });
 

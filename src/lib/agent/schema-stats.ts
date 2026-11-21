@@ -136,8 +136,9 @@ const unavailable = (reasonCode: AgentStatisticsUnavailableCode): AgentSchemaSta
  * running the probe first is what lets it be reported as "no statistics" instead of
  * as a database error the model would try to repair.
  *
- * The cost is therefore ONE statement on PostgreSQL and TWO on SQLite, out of the
- * same per-run statement budget every other read is drawn from.
+ * The cost is therefore ONE statement on PostgreSQL and SQL Server and TWO on SQLite
+ * and libSQL, which probes the same way, out of the same per-run statement budget
+ * every other read is drawn from.
  */
 export async function readSchemaStatistics(context: AgentToolContext): Promise<AgentSchemaStatistics> {
   const dialect = context.connection.type;

@@ -2618,6 +2618,10 @@ then a second, idempotent destroy. The two
 layers are complementary: the variable stops the server's own production for a statement with no
 `LIMIT`, and the stream holds the line for one that carries a `LIMIT` past the budget.
 
+A row's bytes are the UTF-8 JSON of the row as it is served, keyed by its column names, so the agent and MCP byte budget counts every row's column names as well as its values.
+That is the measure Studio checks the answer against again on the agent, hand-over and MCP paths (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), so the stream stops on the same row that check would refuse.
+The names are not a rounding error: on MySQL 8.4.13, 200 rows of three named columns came to 4,531 bytes as bare values and 17,931 as served rows.
+
 The deadline has a server-side half and a provider-owned half, because the server-side half is
 DEFEATABLE BY THE STATEMENT ITSELF, measured, both engines, both ways:
 
@@ -2822,7 +2826,7 @@ everything after it, and each session's ORDERED event log is what the tests asse
 property that makes the transaction real rather than recorded. The refusal paths pinned beside it:
 a row past the budget (including a statement whose own `LIMIT 100000000` outranks
 `sql_select_limit` — refused on the row that crosses, killed, connection dropped), a byte past the
-byte budget, a deadline kill answered as the deadline (1317, 3024 and 1969 alike), a kill that lands while the query resolves, a deadline met while `disconnect()` waits on the read-only pool (still killed), a deadline or a row budget met after the main pool was let go or replaced by a reconnect (no KILL sent, the closed connection named, the statement's own error carried in the detail), a named lock that dies with the closed connection, a write the server refuses with the connection still closed, the principal and engine verified once at the first read rather than at open, a write-capable account that still opens, a column-level SELECT admitted, and a `flags=MULTI_STATEMENTS` connection string held to one statement.
+byte budget, measured on the keyed rows served, a deadline kill answered as the deadline (1317, 3024 and 1969 alike), a kill that lands while the query resolves, a deadline met while `disconnect()` waits on the read-only pool (still killed), a deadline or a row budget met after the main pool was let go or replaced by a reconnect (no KILL sent, the closed connection named, the statement's own error carried in the detail), a named lock that dies with the closed connection, a write the server refuses with the connection still closed, the principal and engine verified once at the first read rather than at open, a write-capable account that still opens, a column-level SELECT admitted, and a `flags=MULTI_STATEMENTS` connection string held to one statement.
 The model cannot say what the servers do, which is why
 [`tests/live/mysql-agent-profile.ts`](../../tests/live/mysql-agent-profile.ts) exists (§13.4).
 

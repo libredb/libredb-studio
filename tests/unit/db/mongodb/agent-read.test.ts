@@ -25,7 +25,9 @@ import {
 } from "@/lib/db/providers/document/mongodb/agent-read";
 import type { RevivedMongoReadEnvelope } from "@/lib/db/providers/document/mongodb/extended-json";
 import { serializeMongoDocument } from "@/lib/db/providers/document/mongodb/values";
-import { MAX_STATEMENT_TIMEOUT_MS } from "@/lib/db/providers/sql/read-only-budget";
+import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
+import { byteBudgetSentence, MAX_STATEMENT_TIMEOUT_MS, measureRowBytes } from "@/lib/db/providers/sql/read-only-budget";
+import type { DatabaseProvider, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "@/lib/db/types";
 import { AGENT_HANDOVER_BUDGET } from "@/lib/agent/execution-policy";
 import { rowBudgetIn } from "@/lib/agent/context-snapshot";
 import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
@@ -518,6 +520,38 @@ describe("the streamed read", () => {
     const { client } = fakeClient({ documents: [{ _id: 1, blob: new Binary(Buffer.alloc(220_000)) }] });
     const result = await read(client, FIND, "execute", { ...BUDGET, maxResultBytes: 262_144 });
     expect(result.rows).toEqual([{ _id: 1, blob: "<Binary: 220000 bytes>" }]);
+  });
+
+  test("a read whose BSON fits the byte budget but whose served rows do not is admitted here and refused by core", async () => {
+    // Every double quote is one BSON byte and two JSON bytes, so the served rows outgrow the BSON the provider counts.
+    const documents = Array.from({ length: 5 }, (_, i) => ({ i, quotes: '"'.repeat(1000) }));
+    const bson = documents.reduce((sum, document) => sum + BSON.calculateObjectSize(document), 0);
+    const budget = { ...BUDGET, maxResultBytes: bson + 100 };
+    const own = await read(fakeClient({ documents }).client, FIND, "execute", budget);
+    const served = own.rows.reduce((sum, row) => sum + measureRowBytes(row), 0);
+    expect(own.rows).toHaveLength(5);
+    expect(served).toBeGreaterThan(budget.maxResultBytes);
+
+    const provider = {
+      queryReadOnly: (sql: string, handed: ReadOnlyStatementBudget, mode?: ReadOnlyStatementMode) =>
+        readMongoForAgent(fakeClient({ documents }).client, "app", FIND, handed, mode ?? "execute", sql, FAST),
+    } as unknown as DatabaseProvider;
+    const error = await rejection(
+      runReadOnlyStatement(provider, {
+        type: "mongodb",
+        statement: statement(FIND as Doc),
+        budget,
+        wait: "statement-timeout",
+      }),
+    );
+    // The sentence names the sum at the row that crossed the budget.
+    let crossing = 0;
+    for (const row of own.rows) {
+      crossing += measureRowBytes(row);
+      if (crossing > budget.maxResultBytes) break;
+    }
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(byteBudgetSentence(crossing, budget.maxResultBytes));
   });
 
   test("a decoded row is the editor's row: the driver's default decode, then the same serializer", async () => {

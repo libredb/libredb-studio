@@ -721,13 +721,11 @@ What a grounded plan run is given, and where each part comes from:
   including the two free ones. That is deliberate: what the model may conclude must not depend on
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
-  is scanned and no value is read out of any row. A `statistics` reading is supplied by the engine overlays of those two and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and
-  nothing else, and #414 added no engine to them: on the other forty `readSchemaStatistics` answers
-  `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
-  so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
-  the two sentences the run is handed agree: the inventory is a record of what exists, and every
-  table's size is unknown rather than small. `AgentColumnProfile`'s "counts only" rule is
-  untouched. Statistics are **not** folded into the snapshot: an estimate is not schema, and the
+  is scanned and no value is read out of any row.
+  A `statistics` reading is supplied by the engine overlays of those two, libSQL (the same `sqlite_stat1`, after the same probe) and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and nothing else, and #414 added no engine to them: on the other thirty-nine `readSchemaStatistics` answers `DIALECT_HAS_NO_STATISTICS`, *"this engine does not hold statistics this run knows how to read"*.
+  So **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and the two sentences the run is handed agree: the inventory is a record of what exists, and every table's size is unknown rather than small.
+  `AgentColumnProfile`'s "counts only" rule is untouched.
+  Statistics are **not** folded into the snapshot: an estimate is not schema, and the
   snapshot's fingerprint is its identity, so an `ANALYZE` would otherwise change the identity of a
   schema nobody changed.
   They are read under the profile the inventory is read under (`readStatisticsForGrounding` in `src/lib/agent/tools.ts`), on a fresh capture and on a reused one alike.
@@ -848,9 +846,10 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 1. **A plan run costs statements now.** On PostgreSQL and SQLite grounding is catalog reads plus one
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
    because SQLite resolves table names at prepare time). On the other forty-one it is **one**, the
-   single `db.schema.read` call, except on SQL Server, which adds the one statistics read
-   its overlay's `statistics` supplies without a `catalogCapture`, audited as a `db.schema.read` too; the other forty hold no statistics this run
-   knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
+   single `db.schema.read` call, except on SQL Server and libSQL, whose overlays supply `statistics` without a `catalogCapture`.
+   SQL Server adds one statistics read and libSQL two, its `sqlite_stat1` availability probe first, each audited as a `db.schema.read` too and sent through `provider.query` only after the statement guard admits it as `sql.query.read`'s input contract would; a statement it refuses is audited as an input denial and never sent.
+   The other thirty-nine hold no statistics this run knows how to read.
+   Since #789 an engine that declares object kinds costs **one more**, the
    object-surface reading above; an engine that declares none is charged nothing extra, because a read
    that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,
    and they are audited the same way. The ledger-reuse path saves the schema reading and deliberately
@@ -1048,8 +1047,9 @@ Three properties are deliberate:
   whose absence it is reporting.
 
 Recording the ending is best effort and never replaces the error the caller sees: if the run ended
-between the throw and the recording, or still has an execution in flight, `finish` itself throws —
-that is logged, and the original failure is what propagates.
+between the throw and the recording, `finish` itself throws, which is logged, and the original
+failure is what propagates.
+An execution still in flight is waited for first, so the ending is recorded once it lands.
 
 ## The tool set
 
@@ -1057,6 +1057,8 @@ Four tools are the read class, and `agent` mode receives exactly these unless it
 otherwise. Three of them reach the database, each through `executeAuditedOperation` against a
 provider acquired under the agent read-only execution profile — never the shared writable connection
 cache.
+
+No agent tool reaches provider installation, update, removal, enablement, reload, trust or grants: every tool in every language and workflow drives a read operation or reaches no database, which `tests/unit/no-provider-management-tools.test.ts` holds.
 
 | Tool | Operation | What the model supplies |
 | --- | --- | --- |
@@ -1243,6 +1245,7 @@ The fence is the command reader the provider reads with too (`readMongoCommand` 
 It is defence in depth: the user is the boundary, and the reader is the one refusal of what the server lets a reader run, such as the JavaScript operators.
 A read past the row budget is refused, never cut, with advice that names what that operation narrows with: a filter or `"options": {"limit": N}` for `find`, a `$match` or a `$limit` stage for `aggregate`.
 The byte budget counts each document's BSON bytes before it is decoded, while a `distinct` answers one reply that is decoded whole first (D370).
+Studio then checks the served rows' UTF-8 JSON bytes against the same budget, so a read whose BSON fitted can still be refused once decoded ([The boundary, layer by layer](./providers/mongodb.md#the-boundary-layer-by-layer), item 7).
 
 **`inspect_schema` reads the provider's own catalog, under `mongo.schema.read`.**
 It lists the bound database's collections and views, or describes one: its fields and the indexes it declares (`readCatalogReadOnly` in `src/lib/db/providers/document/mongodb/index.ts`).
@@ -1778,6 +1781,8 @@ under a **third execution profile**, `agent-handover`:
 | Statement timeout | 10 s | none — spelled as 2 147 483 647 ms |
 | Bytes | 256 KiB | 64 MiB |
 
+The replay's rows and bytes are checked against this budget again by Studio, after the provider's own check and before the response is written, through the same `runReadOnlyStatement` the run's own read goes through.
+
 The agent's own profile is unchanged: what a MODEL may spend on a run and what a USER's replay may
 spend are different questions, and a shared row would have made a later change to one move the other.
 "No timeout" is an explicit ceiling rather than an absent field because `assertReadOnlyBudget` requires
@@ -2056,11 +2061,12 @@ twice, once broad and once narrowed to a schema.
 on purpose: a ceiling left at 12 would have paid for the inventory by silently costing the run a third
 of the readings it exists to take. Grounding's own cost is smaller than six. A catalog capture is
 three statements on PostgreSQL and two on SQLite, one on every other engine (#414: `db.schema.read`
-takes no selector and makes one call), and the statistics read — plan mode only, and PostgreSQL and
-SQLite only — adds one on PostgreSQL and two on SQLite (it probes `sqlite_stat1` before reading it), so
+takes no selector and makes one call), and the statistics read, plan mode only, adds one on PostgreSQL and two on SQLite (it probes `sqlite_stat1` before reading it), so
 the worst case before the first turn is four in plan mode and three in agent mode, which is the mode
 where the reading ceiling binds. `AGENT_WORKFLOW_BUDGETS` therefore did not move in #414: the path it
-added is the cheapest of the three. The remainder is deliberate slack in a row nothing has been measured against yet, and
+added is the cheapest of the three.
+The statistics read is also taken on libSQL, two statements with the same probe first, and on SQL Server, one statement.
+The remainder is deliberate slack in a row nothing has been measured against yet, and
 the wall clocks are the same slack in time: at a 10 s statement timeout, four catalog reads can be 40 s
 of database time on their own. `maxModelTurns` does not move, because grounding is the server's work
 before the first turn and costs no turn. The policy version moved with the figures, to `agent-read-only.operations.2`: a row whose
@@ -2082,9 +2088,9 @@ at least the longest deadline it wants to serve, and a stream cut mid-run has no
 
 | Bound | Value | Counts |
 | --- | --- | --- |
-| `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. |
-| `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. |
-| `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out — and a second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
+| `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. Handed to the provider, and on the read-only statement path Studio also stops waiting at it and refuses the statement in the time sentence. The wait includes the provider's connection checkout, so the sentence can also stand for a statement still queued for a connection, or for a connection that did not open in time; how such a call settled later is written to the server log. Stopping the wait does not stop the statement: it runs on until the engine's own deadline ends it, or to its end on an engine with none (the engine table in [MCP Limits](./MCP.md#limits)), and on DuckDB, which runs a connection's statements one at a time, a later statement on that connection waits behind it. A provider that reads on Studio's own thread (LibreDB, SQLite without its worker) cannot be stopped by Studio's timer, and its own check once the statement returns is the bound there. |
+| `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. The provider refuses past either, and on the read-only statement path (the model's statements, the composed catalog, plan and profile reads, and the hand-over) Studio checks the answer again, each row's UTF-8 JSON bytes summed, before the run keeps it (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`); an estimating plan is checked against the byte budget only, because its rows are the optimizer's operators. |
+| `maxConcurrentExecutions` | 1 | The loop is sequential, so the run waits on one statement at a time. On the read-only statement path (the model's statements and the composed catalog, plan and profile reads) it counts each statement until its provider call settles: a statement Studio stopped waiting for at its timeout still counts while its provider call runs, so the run's next call waits for that call, within the time the run has left, and the run's end waits for it too. A second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
 | One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
 | Repair attempts | 3 | Statements that failed **at the database**, and statements a provider's fence or the run read allowance refused before sending. |
 | Billed reads | 10,000 per run | Every budget-taking read the run hands a provider (statements, `readCatalogReadOnly`, the cluster readings), grounding and sampling statements included, on an engine that bills each read; carried across resumes; Firestore is the one engine that charges it. |
@@ -2178,6 +2184,7 @@ hide: **PostgreSQL preempts an overrunning statement (`SET LOCAL statement_timeo
 it by killing the child process that runs it.** An overrunning on-disk SQLite statement is killed
 mid-flight, so it stops at its timeout rather than running on; the in-memory database has no child
 to kill and is refused only once it returns. The rail states this where the meter is shown.
+Studio's own timer on the read-only statement path ends the wait, not the statement: the database time charged for a statement Studio stopped waiting for is the time it waited, while an engine with no deadline of its own (DuckDB among them) runs the statement on, and a later statement on the same DuckDB connection waits behind it.
 
 **The repair loop is bounded twice, and the two bounds are different.** A statement that already
 failed is never admitted again — keyed on a canonical fingerprint built from the shared SQL span
@@ -3273,6 +3280,7 @@ the role's own grants are the whole boundary (A3).
 - **B169**: on Couchbase a user-defined function call the agent user may not run is answered as "Error evaluating projection", because the server keeps the missing role only in the error's structured reason, so neither agent mode nor MCP's `run_read_query` names the role the call needed.
 - **B170**: OPC UA proves its read roots on every agent and MCP read, with nothing held between reads, so a read of one value repeats the walk down from the roots; a cache keyed by seed id, identity and root list waits for a fixture where the walk dominates a read.
 - **B171**: an OPC UA operator cannot exclude one node beneath a read root, so a vendor identity or credential node that no prune table names is answered inside a declared root until the roots are moved below it.
+- **B172**: an operational reading and the plan-mode statistics read are held to the byte budget by the length of their JSON text, not its UTF-8 bytes, so a reading of text outside ASCII can pass at up to three times the budget, and a bigint cell in one fails the call instead of being measured.
 - **B146**: database assessment opens on every engine with a catalog read, an engine with no table profile composition included, where its verdict can never be met: measured on OpenSearch 3.8.0, the run ends with "No table was profiled", and Elasticsearch, Oracle and Db2 open it by the same requirement.
 
 **What machine redaction leaves unmasked on Kubernetes.**

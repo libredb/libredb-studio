@@ -15,6 +15,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import {
   connectionFieldHint,
   DB_UI_CONFIG,
@@ -2028,8 +2029,15 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
   const ids = SHIPPED_DATABASE_TYPES.length;
   /** Ids grounded through their own provider: every id but the two that supply a catalogCapture, postgres and sqlite. */
   const provided = ids - 2;
-  /** Ids with no statistics this run reads: every id but the three that supply statistics, postgres, sqlite and mssql. */
-  const noStatistics = ids - 3;
+  /**
+   * Ids with no statistics this run knows how to read: those whose server dialect answers its statistics reading
+   * `"unsupported"`, which is where `readSchemaStatistics` returns `DIALECT_HAS_NO_STATISTICS`.
+   * Read from the overlays rather than counted by hand, because a hand count of three (postgres, sqlite and mssql)
+   * stayed behind when libSQL's overlay gained a statistics reading.
+   */
+  const noStatistics = SHIPPED_DATABASE_TYPES.filter(
+    (type) => engineServerDialect(type).statistics === "unsupported",
+  ).length;
 
   test("61. AGENT.md", () => {
     const agent = read("docs/AGENT.md");
@@ -2039,7 +2047,8 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
     expect(prose).toContain("including every engine where an agent run cannot read anything at all");
     expect(prose).toContain(`on the other ${word(noStatistics)} \`readSchemaStatistics\` answers`);
     expect(prose).toContain(`On the other ${word(provided)} it is **one**`);
-    expect(prose).toContain(`the other ${word(noStatistics)} hold no statistics this run`);
+    // Matched from "other", since the sentence that says it opens with "The" now that it stands on its own line.
+    expect(prose).toContain(`other ${word(noStatistics)} hold no statistics this run`);
     expect(prose).toContain(`so all ${word(ids)} ids pass it`);
     expect(prose).toContain(`Collapsing the other ${word(provided)} onto the composed one`);
     // The engines composed SQL serves are named by the resolver that answers them, never counted (#1821).

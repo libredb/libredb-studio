@@ -1510,6 +1510,8 @@ Measured on 2026-10-17 against PostgreSQL holding the same data, with one local 
    A `distinct` answers one reply, which the server holds to 16 MiB, and the driver decodes it whole before either budget is read, because it decodes a command's reply even when asked for it raw: `raw` keeps only embedded documents as bytes, and the reply and its `values` list are decoded (driver 7.7.0, measured against 9.0.4, 8.3.11 and 7.0.43).
    Decoded, a reply of many small values near that cap costs about ten times its size, well past the 64 MiB ceiling: on 9.0.4 under the same limit, a 14.8 MiB reply of 780,000 small documents grew resident memory by about 145 MiB, and a 14.4 MiB reply of 900,000 short strings by about 175 MiB, before the row refusal.
    It is refused past the row budget before any row is built, then on the row whose BSON size carries the total past the byte budget.
+   After the BSON budget on the wire, Studio checks the served rows' UTF-8 JSON bytes against the same budget on the agent, hand-over and MCP paths (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), so a read whose decoded rows outgrow the budget is refused with the shared byte sentence, although its BSON fitted.
+   So on those paths a read is held to both measures: the BSON the server sends, then the UTF-8 JSON of the rows as served, each row's bytes summed (`tests/unit/db/mongodb/agent-read.test.ts`).
 8. **The bound database**, as issue #1614 settled.
    A run reads the database its connection is bound to (`getDatabaseName()`: the connection's database, or a connection string's path).
    A command whose `database` names another is refused before anything is sent, naming the bound one; one naming the bound database is read there.

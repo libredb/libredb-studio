@@ -10,6 +10,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
+import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
@@ -49,6 +50,9 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
  *    another database approved.
  *  - **A run answers once** (`ANSWER_ALREADY_RECORDED` in `tools.ts`), so "the
  *    answer" is unambiguous and needs no id in the path.
+ *
+ * The replay goes through `runReadOnlyStatement`, the one core call of a provider's read-only path, so its rows and
+ * bytes are held to the hand-over budget again before the response is written, whatever the provider does.
  *
  * What it does NOT do is record a ledger event. The run may already have finished,
  * and a finished ledger does not accept appends; the replay is the editor's action on
@@ -118,9 +122,16 @@ export async function POST(req: Request, context?: HandoverParams) {
     }
 
     // A read allowance of this request's own: the run has ended, and the replay is the editor's read, not the run's.
-    const result = await provider.queryReadOnly(answer.sql, {
-      ...AGENT_HANDOVER_BUDGET,
-      readAllowance: new RunReadAllowance(AGENT_HANDOVER_READ_ALLOWANCE, { scope: "call" }),
+    // Through the one core call of the read-only path, which holds the answer to the hand-over budget before any of
+    // it is written into the response, and stops waiting at the budget's timeout, the ceiling stated beside it.
+    const result = await runReadOnlyStatement(provider, {
+      type: connection.type,
+      statement: answer.sql,
+      budget: {
+        ...AGENT_HANDOVER_BUDGET,
+        readAllowance: new RunReadAllowance(AGENT_HANDOVER_READ_ALLOWANCE, { scope: "call" }),
+      },
+      wait: "statement-timeout",
     });
     logger.info("Agent hand-over replayed in the editor", {
       route: ROUTE,

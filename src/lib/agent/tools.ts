@@ -8,7 +8,11 @@
  * composed, and no provider method reached outside a registered operation: a reach
  * that skipped this module would be a defect by the milestone's own constraint, not a
  * shortcut. The one `provider.query()` is `readStatisticsForGrounding` under the
- * operations profile, which sends a statement it composes itself.
+ * operations profile, which sends a statement it composes itself, and only after the
+ * statement guard admits it as `sql.query.read`'s input contract would. Every
+ * `queryReadOnly` call goes through `runReadOnlyStatement`
+ * (`src/lib/db/operations/read-only-statement.ts`), which holds the provider's answer to
+ * the row, byte and time budget this layer handed out.
  *
  * Four properties are load-bearing, and each is asserted rather than asserted-in-prose:
  *
@@ -81,10 +85,20 @@ import {
   agentCuratedReadInput,
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
-import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/execution";
+import {
+  type AuditedInvocation,
+  actorLabel,
+  executeAuditedOperation,
+  refuseAuditedInput,
+} from "@/lib/db/operations/execution";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
-import { admitComposedStatement, type ComposedStatementAdmission } from "@/lib/db/operations/statement-guard";
+import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
+import {
+  admitComposedStatement,
+  agentQueryReadSqlInput,
+  type ComposedStatementAdmission,
+} from "@/lib/db/operations/statement-guard";
 import type {
   Container,
   DatabaseObject,
@@ -1393,12 +1407,18 @@ function isStatementFailure(error: unknown): error is DatabaseError {
  * should not be "fixed" by acquiring earlier: acquiring before the decision would
  * open a pool for every denied call, which is exactly what the spy-provider
  * invariant exists to forbid.
+ *
+ * The statement goes through `runReadOnlyStatement`, which refuses an answer past the
+ * run's row or byte budget and stops waiting at its statement timeout, in the sentences
+ * the providers raise, so an over-budget answer is a repairable database error that
+ * reaches neither a row mapper nor the model.
  */
 async function runStatement(
   context: AgentToolContext,
   validatedInput: unknown,
   budget: ExecutionBudget,
   phase: { statementSent: boolean },
+  holdUntilSettled: AuditedInvocation["holdUntilSettled"],
   argument: AgentStatementArgument,
   mode?: ReadOnlyStatementMode,
 ): Promise<QueryResult> {
@@ -1425,7 +1445,17 @@ async function runStatement(
   // separates a wrong agent credential from `permission denied for table secrets`
   // without inspecting message text.
   phase.statementSent = true;
-  return provider.queryReadOnly(sql, readOnlyBudgetFor(context, budget), mode);
+  // Through the one core call of the read-only path, which holds the provider's answer to the rows, bytes and time
+  // this run handed out, so an over-budget answer is refused before any of it is mapped or rendered. The provider's
+  // call keeps this execution counted until it settles, also when the time refusal answered the run first.
+  return runReadOnlyStatement(provider, {
+    type: context.connection.type,
+    statement: sql,
+    budget: readOnlyBudgetFor(context, budget),
+    mode,
+    wait: "statement-timeout",
+    holdUntilSettled,
+  });
 }
 
 /**
@@ -1452,8 +1482,8 @@ export async function executeAgentOperation(
     ...(request.label === undefined ? {} : { label: request.label }),
     ...(request.target === undefined ? {} : { target: request.target }),
     ...(request.grounding === undefined ? {} : { grounding: request.grounding }),
-    invoke: (validatedInput, budget, phase) => {
-      const answered = runStatement(context, validatedInput, budget, phase, argument, request.mode);
+    invoke: (validatedInput, budget, phase, holdUntilSettled) => {
+      const answered = runStatement(context, validatedInput, budget, phase, holdUntilSettled, argument, request.mode);
       const { mapRows } = request;
       return mapRows === undefined ? answered : answered.then((result) => withMappedRows(result, mapRows));
     },
@@ -1510,10 +1540,19 @@ export interface AuditedAgentCall {
   readonly target?: { readonly catalog?: string; readonly schema?: string };
   /** The server's own grounding read. See `AgentOperationRequest.grounding`. */
   readonly grounding?: boolean;
+  /**
+   * A statement this call sends that its descriptor's input does not carry, set by the operations-profile statistics
+   * read alone: it is audited under `db.schema.read`, whose input is empty, and sends a composed statement through
+   * `provider.query`. The statement is validated with `agentQueryReadSqlInput`, the input contract `sql.query.read`
+   * applies, before the pipeline is consulted, and a refusal is the pipeline's own input denial (`refuseAuditedInput`):
+   * audited, answered and recorded in the repair ledger as one, with nothing acquired, charged or sent.
+   */
+  readonly guardedStatement?: { readonly sql: string; readonly composed?: ComposedStatementAdmission };
   readonly invoke: (
     validatedInput: unknown,
     budget: ExecutionBudget,
     phase: { statementSent: boolean },
+    holdUntilSettled: AuditedInvocation["holdUntilSettled"],
   ) => Promise<QueryResult>;
 }
 
@@ -1668,12 +1707,36 @@ function otherStatementAdvice(
   return languageServerPack(language).catalogAdvice?.(message, engine);
 }
 
+/** Whether the statement guard refuses a call's guarded statement; a call with none has nothing to refuse. */
+function guardRefuses(statement: AuditedAgentCall["guardedStatement"]): boolean {
+  if (statement === undefined) return false;
+  const input = statement.composed === undefined ? { sql: statement.sql } : statement;
+  return !agentQueryReadSqlInput.safeParse(input).success;
+}
+
 /**
  * The key `call` is held under in the run's repair ledger. A statement fingerprint is a bare digest, so the prefix puts
  * a call carrying the server's admission where no model statement can land.
  */
 function repairLedgerKey(call: AuditedAgentCall, statementFingerprint: string): string {
   return call.composedByServer === true ? `composed:${statementFingerprint}` : statementFingerprint;
+}
+
+/**
+ * Settles once the run has no live execution, or once the time the run has left has passed, whichever comes first.
+ * A run's execution outlives the call that made it only while a provider call it holds still runs.
+ */
+async function untilRunIdle(context: AgentToolContext): Promise<void> {
+  if (context.tracker.usage(context.runId).activeExecutions === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outOfTime = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, context.deadline.remainingMs());
+  });
+  try {
+    await Promise.race([context.tracker.whenIdle(context.runId), outOfTime]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function runAuditedAgentCall(
@@ -1693,6 +1756,12 @@ export async function runAuditedAgentCall(
   if (!repairAdmission.admitted) return unavailable(repairAdmission.reasonCode);
 
   const actor: ExecutionActor = { sessionId: context.actor.sessionId, role: context.actor.role, mode: "agent" };
+
+  // A statement this run stopped waiting for at its timeout keeps the run's one execution live until its provider call
+  // settles (`holdUntilSettled` in `executeAuditedOperation`). The loop is sequential, so the next call waits for that
+  // call, as a run waits on its statement, within the time the run has left; the deadline admission below then reads
+  // what the wait cost.
+  await untilRunIdle(context);
 
   // The ceilings this run is bounded by, chosen by its OWN persisted workflow. Read
   // once here so that the deadline admission, the clamp and the denial text a model
@@ -1760,29 +1829,34 @@ export async function runAuditedAgentCall(
   */
   const chargedBeforeMs = context.tracker.usage(context.runId).totalElapsedMs;
 
+  const evaluation = {
+    registry: context.registry,
+    policy,
+    actor,
+    scope: context.scope,
+    request: {
+      operationId: call.operationId,
+      target: { connectionId: context.scope.connectionId, ...call.target },
+      input: call.input,
+    },
+    capabilities: context.capabilities,
+  };
+
   let outcome: Awaited<ReturnType<typeof executeAuditedOperation<QueryResult>>>;
   try {
-    outcome = await executeAuditedOperation<QueryResult>(
-      {
-        registry: context.registry,
-        policy,
-        actor,
-        scope: context.scope,
-        request: {
-          operationId: call.operationId,
-          target: { connectionId: context.scope.connectionId, ...call.target },
-          input: call.input,
-        },
-        capabilities: context.capabilities,
-      },
-      {
-        runId: context.runId,
-        tracker: context.tracker,
-        artifacts: context.artifacts,
-        clock: context.clock,
-      },
-      ({ validatedInput, budget }) => call.invoke(validatedInput, budget, phase),
-    );
+    outcome = guardRefuses(call.guardedStatement)
+      ? refuseAuditedInput(evaluation)
+      : await executeAuditedOperation<QueryResult>(
+          evaluation,
+          {
+            runId: context.runId,
+            tracker: context.tracker,
+            artifacts: context.artifacts,
+            clock: context.clock,
+          },
+          ({ validatedInput, budget, holdUntilSettled }) =>
+            call.invoke(validatedInput, budget, phase, holdUntilSettled),
+        );
   } catch (error) {
     // A curated reading the run chose not to keep. First, because it is a decision
     // this layer made about a call that DID happen — not an environment failure and
@@ -2984,8 +3058,10 @@ export type AgentStatisticsStatement = "availability" | "estimates";
  * it is the curated family `readObjectInventoryForGrounding` belongs to, and audited the same way, under the
  * `db.schema.read` descriptor with an empty input: the statement is composed HERE from the dialect's own composers,
  * the caller names only which of the two it wants, and no text from a caller or a model reaches the engine. It is sent
- * through `provider.query`, because the operations profile opens no read-only statement path, and it is bounded the
- * way the curated reads are: a result over the run's row or byte budget is refused rather than cut, and a read that
+ * through `provider.query`, because the operations profile opens no read-only statement path, after the statement
+ * guard admits it as `sql.query.read`'s input contract admits the same statement on the execution profile (a refusal
+ * is the pipeline's audited input denial, and nothing is acquired or sent), and it is bounded the way the curated
+ * reads are: a result over the run's row or byte budget is refused rather than cut, and a read that
  * outlasts the time the call was granted is refused as a timeout, which `readSchemaStatistics` reports like any other
  * read that did not complete.
  */
@@ -3001,10 +3077,18 @@ export async function readStatisticsForGrounding(
   }
   const sql =
     statement === "availability" ? availabilityProbe(dialect) : composeCatalogRead(dialect, { kind: "statistics" });
+  // The estimates are the dialect's catalog read, so they carry the admission `readCatalog` gives that read; the probe
+  // is validated plain, as `readStatementForGrounding` sends it. Supplied: `readSchemaStatistics` asks only where the
+  // composer serves this dialect.
+  const admission =
+    statement === "estimates"
+      ? catalogReadAdmission((engineServerDialect(dialect).catalogRead as AgentCatalogRead).commandShaped, sql)
+      : {};
   return runAuditedAgentCall(context, {
     operationId: "db.schema.read",
     fingerprintSource: `statistics:${statement}:${context.connection.id}`,
     input: {},
+    guardedStatement: { sql, ...admission },
     label: statement === "availability" ? STATISTICS_AVAILABILITY_LABEL : CATALOG_LABELS.statistics,
     grounding: true,
     invoke: async (_validatedInput, budget, phase) => {
@@ -3047,6 +3131,18 @@ function availabilityProbe(dialect: DatabaseConnection["type"]): string {
   return probe;
 }
 
+/**
+ * The admission a composed catalog read carries: minted here, right after composing, and only where the overlay
+ * declares its catalog statement a command. The fence then admits this one statement by identity, and a retry's
+ * rewrite, which is another statement, meets the fence unchanged.
+ */
+function catalogReadAdmission(
+  commandShaped: boolean | undefined,
+  sql: string,
+): { readonly composed?: ComposedStatementAdmission } {
+  return commandShaped === true ? { composed: admitComposedStatement(sql) } : {};
+}
+
 async function readCatalog(
   context: AgentToolContext,
   selectorSchema: z.ZodType<{ kind?: AgentCatalogKind; schema?: string; table?: string }>,
@@ -3072,10 +3168,8 @@ async function readCatalog(
     grounding,
     label: CATALOG_LABELS[selector.kind ?? "columns"],
     ...(mapRows === undefined ? {} : { mapRows }),
-    // Minted here, right after composing, and only where the overlay declares its catalog statement a command: the
-    // fence then admits this one statement by identity, and a retry's rewrite, which is another statement, meets the
-    // fence unchanged.
-    ...(commandShaped === true ? { composed: admitComposedStatement(sql) } : {}),
+    // Minted right after composing, where the overlay declares its catalog statement a command (`catalogReadAdmission`).
+    ...catalogReadAdmission(commandShaped, sql),
     // Declared, so a scope carrying a schema allowlist bounds which schema may be
     // inspected. A raw read cannot declare its schema, which is why an allowlist
     // denies one, and it is not worked around here.

@@ -304,8 +304,9 @@ describe("the result cap", () => {
     const provider = { getCapabilities: () => ({}), queryReadOnly };
     const result = await direct({ connection_id: "seed:fake", command: JSON.parse(find) }, fakeContext(provider));
     expect(result).toEqual({ isError: true, content: [{ type: "text", text: RUN_MONGO_COMMAND_ARM.rowOverCap }] });
-    // Sent as written: an arm that does not page never asks the provider to prepare it.
-    expect(queryReadOnly).toHaveBeenCalledWith(find, expect.objectContaining({ maxResultRows: 1_000 }));
+    // Sent as written: an arm that does not page never asks the provider to prepare it. The third argument is the
+    // mode, which the one core call of the read-only path always passes and MCP leaves unset.
+    expect(queryReadOnly).toHaveBeenCalledWith(find, expect.objectContaining({ maxResultRows: 1_000 }), undefined);
   });
 
   test("a result cut at 32 KiB names the rows that fitted and pages with skip, not with the limit it has", async () => {
