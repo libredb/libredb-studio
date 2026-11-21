@@ -8,6 +8,8 @@ import { DatabaseType } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { quoteLiteral, temporalLiteral } from "@/lib/sql/values";
 import { sqlWritingFor } from "@/lib/db/sql-writing";
+import { typeIdRefusal } from "@/lib/db/type-id";
+import { unavailableConnectionNotice } from "@/lib/connection-availability";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { quoteIdentifier, quoteObjectPath, requestAddress } from "@/lib/query-generators";
@@ -22,6 +24,12 @@ interface TestDataGeneratorProps {
    */
   tablePath: readonly string[];
   tableSchema: DetailedObject | null;
+  /**
+   * The type id of the connection the rows are written for, as a plain string because this dialog is published.
+   * Omitted, the statement is written as with no connection open. A value that is not exactly a type id, the empty
+   * string and `null` included, is refused by name (FND-1): the dialog draws the Connection unavailable notice in place
+   * of the statement and offers neither Copy nor Execute.
+   */
   databaseType?: string;
   /**
    * The connected provider's declaration. It replaced a bare `queryLanguage` string because
@@ -398,6 +406,11 @@ export function TestDataGenerator({
   const target = capabilities === undefined ? objectPathLabel(tablePath) : quoteObjectPath(tablePath, capabilities);
   const [rowCount, setRowCount] = useState(10);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Why `databaseType` is refused, or null for a type id and for no type at all (FND-1). The statement checks it
+  // before any writing rule is read, so a refused value never reaches a per-engine table.
+  const typeRefusal = databaseType === undefined ? null : typeIdRefusal(databaseType);
+  // This dialog takes no connection name, so the notice names "This connection".
+  const refusalNotice = typeRefusal === null ? null : unavailableConnectionNotice({}, typeRefusal.sentence);
 
   const columnConfigs = useMemo(() => {
     if (!tableSchema?.columns) return [];
@@ -421,7 +434,7 @@ export function TestDataGenerator({
   const foreignKeyNames = columnConfigs.filter((c) => c.faker.generator === "foreignKey").map((c) => c.name);
 
   const generatedQuery = useMemo(() => {
-    if (!tableSchema?.columns || columnConfigs.length === 0) return "";
+    if (typeRefusal !== null || !tableSchema?.columns || columnConfigs.length === 0) return "";
 
     // Filter out the columns the engine or the user fills in
     const cols = columnConfigs.filter((c) => !LEFT_OUT_GENERATORS.has(c.faker.generator));
@@ -524,7 +537,17 @@ export function TestDataGenerator({
     }
     return `INSERT INTO ${target} (${colNames})\nVALUES\n  ${rows.join(",\n  ")};`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tableSchema, columnConfigs, rowCount, queryLanguage, target, tablePathKey, databaseType, refreshKey]);
+  }, [
+    tableSchema,
+    columnConfigs,
+    rowCount,
+    queryLanguage,
+    target,
+    tablePathKey,
+    databaseType,
+    refreshKey,
+    typeRefusal,
+  ]);
 
   if (!isOpen) return null;
 
@@ -606,9 +629,18 @@ export function TestDataGenerator({
 
         {/* Preview */}
         <div className="flex-1 overflow-auto relative">
-          <pre className="p-5 text-xs font-mono text-hue-blue-alt whitespace-pre-wrap leading-relaxed">
-            {generatedQuery}
-          </pre>
+          {refusalNotice === null ? (
+            <pre className="p-5 text-xs font-mono text-hue-blue-alt whitespace-pre-wrap leading-relaxed">
+              {generatedQuery}
+            </pre>
+          ) : (
+            <div className="p-5">
+              <span className="text-xs font-medium text-warning">{refusalNotice.title}</span>
+              <p data-testid="test-data-refusal" className="text-xs text-fg-tertiary mt-0.5 break-words">
+                {refusalNotice.description}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Actions */}
@@ -621,22 +653,26 @@ export function TestDataGenerator({
               `CopyButton` rather than a local `copied` flag (B43): the flag flipped in the
               same statement that started the write, which reads "Copied!" over an empty
               clipboard wherever `navigator.clipboard` is absent — plain HTTP off loopback,
-              which several distribution channels are.
+              which several distribution channels are. A refused type offers neither: there is no statement.
             */}
-            <CopyButton
-              text={generatedQuery}
-              testId="test-data-copy"
-              className="gap-1.5 px-3 py-1.5 rounded-lg bg-fill text-xs font-medium hover:bg-fill-strong"
-            />
-            <button
-              onClick={() => {
-                onExecuteQuery(generatedQuery);
-                onClose();
-              }}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-warning-solid hover:bg-warning-solid-hover text-white text-xs font-medium transition-colors"
-            >
-              <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Execute
-            </button>
+            {refusalNotice === null && (
+              <>
+                <CopyButton
+                  text={generatedQuery}
+                  testId="test-data-copy"
+                  className="gap-1.5 px-3 py-1.5 rounded-lg bg-fill text-xs font-medium hover:bg-fill-strong"
+                />
+                <button
+                  onClick={() => {
+                    onExecuteQuery(generatedQuery);
+                    onClose();
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-warning-solid hover:bg-warning-solid-hover text-white text-xs font-medium transition-colors"
+                >
+                  <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Execute
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

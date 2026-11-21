@@ -18,6 +18,8 @@ import { cn } from "@/lib/utils";
 import { vocabularySendsToModel, vocabularyTypedConfirmation } from "@/lib/db/destructive-commands";
 import { typedConfirmationExpected } from "@/lib/editor/statement-analysis";
 import { hasUnreadableRun } from "@/lib/sql/dangerous-query";
+import { typeIdRefusal } from "@/lib/db/type-id";
+import { unavailableConnectionNotice } from "@/lib/connection-availability";
 import type { DatabaseType } from "@/lib/types";
 
 // The gate lives in `@/lib/sql/dangerous-query` so the VS Code extension's child, which bundles no component, asks
@@ -42,6 +44,12 @@ interface QuerySafetyDialogProps {
   isOpen: boolean;
   query: string;
   schemaContext: string;
+  /**
+   * The type id of the connection the statement is about to run on, as a plain string because this dialog is
+   * published. Omitted, the statement is read as with no connection open. A value that is not exactly a type id, the
+   * empty string and `null` included, is refused by name (FND-1): the dialog draws the Connection unavailable notice in
+   * place of the analysis, sends nothing to be analysed and keeps Execute disabled.
+   */
   databaseType?: string;
   /**
    * The name of the connection the statement is about to run on, which a typed confirmation of the connection asks
@@ -166,6 +174,11 @@ export function QuerySafetyDialog({
   // Radix hands focus back only to an AlertDialogTrigger, and the editor opens this dialog without
   // one, so the dialog keeps what had focus when it opened and puts focus back there on close.
   const returnFocus = useReturnFocus();
+  // Why `databaseType` is refused, or null for a type id and for no type at all (FND-1). Every reader below checks it
+  // first, so a refused value never reaches a grammar or a vocabulary table.
+  const typeRefusal = databaseType === undefined ? null : typeIdRefusal(databaseType);
+  const refusalNotice =
+    typeRefusal === null ? null : unavailableConnectionNotice({ name: connectionName }, typeRefusal.sentence);
 
   /**
    * Whether the client-side reading that opened this dialog could not resolve part
@@ -175,8 +188,8 @@ export function QuerySafetyDialog({
    * and the dialect, both of which this component already has, and a new required
    * prop would be a breaking change for the published package. `databaseType`
    * arrives as a plain string from the host application, and a value that is not one
-   * of the types this project knows resolves to the compatibility default - the
-   * same answer a dialect-less call gets everywhere else in `src/lib/sql`.
+   * of the types this project knows is refused before the gate reads it (FND-1), so
+   * only a type id or no type at all reaches it.
    *
    * Memoised because the analysis stream re-renders this component per chunk while
    * the query text does not change, and the scan is linear in that text.
@@ -185,24 +198,27 @@ export function QuerySafetyDialog({
    * false where the text is not SQL, which this notice must never call unreadable.
    */
   const unreadableRun = useMemo(
-    () => hasUnreadableRun(query, databaseType as DatabaseType | undefined),
-    [query, databaseType],
+    () => typeRefusal === null && hasUnreadableRun(query, databaseType as DatabaseType | undefined),
+    [query, databaseType, typeRefusal],
   );
 
   // What this engine's vocabulary asks the person to type before the statement runs, read from the table the gate
   // that opened this dialog read, so the two cannot disagree about a statement (#1089, section 5.5).
   const typedAsk = useMemo(
-    () => vocabularyTypedConfirmation(databaseType as DatabaseType | undefined, query),
-    [query, databaseType],
+    () =>
+      typeRefusal === null ? vocabularyTypedConfirmation(databaseType as DatabaseType | undefined, query) : undefined,
+    [query, databaseType, typeRefusal],
   );
   // Undefined where the ask is the connection's name and there is none to type, answered with MISSING_CONNECTION_NAME.
   const typedExpected = typedAsk === undefined ? undefined : typedConfirmationExpected(typedAsk, connectionName);
   // Proceed waits for the analysis and for an exact match, and a refusal in place of the field is never a match,
   // whatever was typed before it replaced the field. The wait for the analysis is bounded: Skip ends it at once and
   // QUERY_SAFETY_ANALYSIS_TIMEOUT_MS ends it anyway, so a slow or hung model can no longer hold every write back.
-  const proceedBlocked = isAnalyzing || (typedAsk !== undefined && (typedExpected === undefined || !typedMatches));
-  // False keeps the statement on this device (#1089, E10).
-  const sendsToModel = vocabularySendsToModel(databaseType as DatabaseType | undefined);
+  // A refused type never proceeds.
+  const proceedBlocked =
+    typeRefusal !== null || isAnalyzing || (typedAsk !== undefined && (typedExpected === undefined || !typedMatches));
+  // False keeps the statement on this device (#1089, E10), and a refused type sends nothing either.
+  const sendsToModel = typeRefusal === null && vocabularySendsToModel(databaseType as DatabaseType | undefined);
 
   // Declared above the effect that calls it: react-compiler
   // (react-hooks/immutability) rejects reading a `const` binding from a position
@@ -335,6 +351,11 @@ export function QuerySafetyDialog({
 
   const risk = analysis ? RISK_CONFIG[analysis.riskLevel] || RISK_CONFIG.medium : null;
   const RiskIcon = risk?.icon || ShieldAlert;
+  const statementPreview = (
+    <pre className="text-xs font-mono text-fg-tertiary whitespace-pre-wrap max-h-24 overflow-auto">
+      {query.length > 300 ? query.substring(0, 300) + "..." : query}
+    </pre>
+  );
 
   return (
     <AlertDialog
@@ -363,128 +384,149 @@ export function QuerySafetyDialog({
         </div>
 
         <div className="px-5 py-3 bg-surface border-b border-hairline">
-          <AlertDialogDescription asChild>
-            <pre className="text-xs font-mono text-fg-tertiary whitespace-pre-wrap max-h-24 overflow-auto">
-              {query.length > 300 ? query.substring(0, 300) + "..." : query}
-            </pre>
-          </AlertDialogDescription>
+          {refusalNotice === null ? (
+            <AlertDialogDescription asChild>{statementPreview}</AlertDialogDescription>
+          ) : (
+            statementPreview
+          )}
         </div>
 
-        <div className="px-5 py-4 max-h-80 overflow-auto">
-          {/*
+        {/*
+          Drawn in place of the analysis for a refused type (FND-1), and the dialog's accessible description while it
+          is, as the connection dialog's refusal is: the statement above stays on screen as plain text.
+        */}
+        {refusalNotice !== null ? (
+          <div className="px-5 py-4">
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning-tint/10 border border-warning-tint/20">
+              <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-warning" />
+              <div>
+                <span className="text-xs font-medium text-warning">{refusalNotice.title}</span>
+                <AlertDialogDescription
+                  data-testid="query-safety-refusal"
+                  className="text-xs text-fg-tertiary mt-0.5 break-words"
+                >
+                  {refusalNotice.description}
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="px-5 py-4 max-h-80 overflow-auto">
+            {/*
             Said before the analysis and kept beside it: the reason this dialog
             opened is the client-side reading, and a risk verdict produced from text
             whose reading stopped early may not describe what the statement does.
           */}
-          {unreadableRun && (
-            <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-warning-tint/10 border border-warning-tint/20">
-              <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-warning" />
-              <div>
-                <span className="text-xs font-medium text-warning">Part of this statement could not be read</span>
-                <p className="text-xs text-fg-tertiary mt-0.5">
-                  A quoted, commented or bracketed run in it never closes (or its closing quote sits behind a backslash,
-                  or a comment holds a lone carriage return, which dialects read differently), so nothing written after
-                  that point could be checked. It may hide a write, which is why you are being asked.
-                </p>
+            {unreadableRun && (
+              <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-warning-tint/10 border border-warning-tint/20">
+                <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-warning" />
+                <div>
+                  <span className="text-xs font-medium text-warning">Part of this statement could not be read</span>
+                  <p className="text-xs text-fg-tertiary mt-0.5">
+                    A quoted, commented or bracketed run in it never closes (or its closing quote sits behind a
+                    backslash, or a comment holds a lone carriage return, which dialects read differently), so nothing
+                    written after that point could be checked. It may hide a write, which is why you are being asked.
+                  </p>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {!sendsToModel && <p className="mb-3 text-xs text-fg-tertiary">{LOCAL_CLASSIFICATION}</p>}
+            {!sendsToModel && <p className="mb-3 text-xs text-fg-tertiary">{LOCAL_CLASSIFICATION}</p>}
 
-          {isAnalyzing && (
-            <div className="flex items-center justify-center gap-2 py-8 text-fg-muted">
-              <LoaderCircle strokeWidth={1.5} className="w-5 h-5 animate-spin" />
-              <span className="text-xs">Analyzing query safety...</span>
-            </div>
-          )}
+            {isAnalyzing && (
+              <div className="flex items-center justify-center gap-2 py-8 text-fg-muted">
+                <LoaderCircle strokeWidth={1.5} className="w-5 h-5 animate-spin" />
+                <span className="text-xs">Analyzing query safety...</span>
+              </div>
+            )}
 
-          {/*
+            {/*
             A live region (an output is role="status") mounted for as long as the dialog is, so a screen reader
             hears why the Execute button just became usable: a region inserted together with its text is often
             not announced at all.
           */}
-          <output className="block">
-            {stopped && (
-              <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-warning-tint/10 border border-warning-tint/20">
-                <Info strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-warning" />
-                <div>
-                  <span className="text-xs font-medium text-warning">{ANALYSIS_STOPPED_NOTICE[stopped].title}</span>
-                  <p className="text-xs text-fg-tertiary mt-0.5">{ANALYSIS_STOPPED_NOTICE[stopped].detail}</p>
+            <output className="block">
+              {stopped && (
+                <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-warning-tint/10 border border-warning-tint/20">
+                  <Info strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-warning" />
+                  <div>
+                    <span className="text-xs font-medium text-warning">{ANALYSIS_STOPPED_NOTICE[stopped].title}</span>
+                    <p className="text-xs text-fg-tertiary mt-0.5">{ANALYSIS_STOPPED_NOTICE[stopped].detail}</p>
+                  </div>
                 </div>
+              )}
+            </output>
+
+            {error && (
+              <div className="bg-danger-tint/10 border border-danger-tint/20 rounded-lg p-3 text-xs text-danger">
+                {error}
               </div>
             )}
-          </output>
 
-          {error && (
-            <div className="bg-danger-tint/10 border border-danger-tint/20 rounded-lg p-3 text-xs text-danger">
-              {error}
-            </div>
-          )}
-
-          {analysis && risk && (
-            <div className="space-y-3">
-              <div className={cn("flex items-center gap-2 px-3 py-2 rounded-lg", risk.bg, "border", risk.border)}>
-                <RiskIcon className={cn("w-5 h-5", risk.color)} />
-                <div>
-                  <span className={cn("text-xs font-medium", risk.color)}>{risk.label}</span>
-                  <p className="text-xs text-fg-tertiary mt-0.5">{analysis.summary}</p>
+            {analysis && risk && (
+              <div className="space-y-3">
+                <div className={cn("flex items-center gap-2 px-3 py-2 rounded-lg", risk.bg, "border", risk.border)}>
+                  <RiskIcon className={cn("w-5 h-5", risk.color)} />
+                  <div>
+                    <span className={cn("text-xs font-medium", risk.color)}>{risk.label}</span>
+                    <p className="text-xs text-fg-tertiary mt-0.5">{analysis.summary}</p>
+                  </div>
                 </div>
+
+                {analysis.warnings?.length > 0 && (
+                  <div className="space-y-2">
+                    {analysis.warnings.map((w, i) => (
+                      <div
+                        key={i}
+                        className={cn(
+                          "px-3 py-2 rounded-lg border text-xs",
+                          w.severity === "critical"
+                            ? "bg-danger-tint/5 border-danger-tint/20"
+                            : w.severity === "warning"
+                              ? "bg-warning-tint/5 border-warning-tint/20"
+                              : "bg-brand-tint/5 border-brand-tint/20",
+                        )}
+                      >
+                        <p className="font-medium text-fg-secondary">{w.message}</p>
+                        <p className="text-fg-muted mt-0.5">{w.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {analysis.affectedRows && analysis.affectedRows !== "none" && (
+                  <div className="text-xs">
+                    <span className="text-fg-muted">Affected rows: </span>
+                    <span className="text-fg-secondary font-mono">{analysis.affectedRows}</span>
+                  </div>
+                )}
+
+                {analysis.cascadeEffects && analysis.cascadeEffects !== "none" && (
+                  <div className="text-xs">
+                    <span className="text-fg-muted">Cascade effects: </span>
+                    <span className="text-fg-secondary">{analysis.cascadeEffects}</span>
+                  </div>
+                )}
+
+                {analysis.recommendation && (
+                  <div className="bg-surface rounded-lg p-3 border border-hairline">
+                    <p className="text-xs font-medium text-fg-muted mb-1">Recommendation</p>
+                    <p className="text-xs text-fg-secondary">{analysis.recommendation}</p>
+                  </div>
+                )}
               </div>
+            )}
 
-              {analysis.warnings?.length > 0 && (
-                <div className="space-y-2">
-                  {analysis.warnings.map((w, i) => (
-                    <div
-                      key={i}
-                      className={cn(
-                        "px-3 py-2 rounded-lg border text-xs",
-                        w.severity === "critical"
-                          ? "bg-danger-tint/5 border-danger-tint/20"
-                          : w.severity === "warning"
-                            ? "bg-warning-tint/5 border-warning-tint/20"
-                            : "bg-brand-tint/5 border-brand-tint/20",
-                      )}
-                    >
-                      <p className="font-medium text-fg-secondary">{w.message}</p>
-                      <p className="text-fg-muted mt-0.5">{w.detail}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {analysis.affectedRows && analysis.affectedRows !== "none" && (
-                <div className="text-xs">
-                  <span className="text-fg-muted">Affected rows: </span>
-                  <span className="text-fg-secondary font-mono">{analysis.affectedRows}</span>
-                </div>
-              )}
-
-              {analysis.cascadeEffects && analysis.cascadeEffects !== "none" && (
-                <div className="text-xs">
-                  <span className="text-fg-muted">Cascade effects: </span>
-                  <span className="text-fg-secondary">{analysis.cascadeEffects}</span>
-                </div>
-              )}
-
-              {analysis.recommendation && (
-                <div className="bg-surface rounded-lg p-3 border border-hairline">
-                  <p className="text-xs font-medium text-fg-muted mb-1">Recommendation</p>
-                  <p className="text-xs text-fg-secondary">{analysis.recommendation}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {!isAnalyzing && !analysis && rawResponse && !error && (
-            <div className="text-xs text-fg-tertiary whitespace-pre-wrap">{rawResponse}</div>
-          )}
-          {!isAnalyzing && !analysis && !rawResponse && !error && (
-            <p className="text-xs text-fg-tertiary">
-              This statement may change data, database objects, or permissions. Review the query before proceeding.
-            </p>
-          )}
-        </div>
+            {!isAnalyzing && !analysis && rawResponse && !error && (
+              <div className="text-xs text-fg-tertiary whitespace-pre-wrap">{rawResponse}</div>
+            )}
+            {!isAnalyzing && !analysis && !rawResponse && !error && (
+              <p className="text-xs text-fg-tertiary">
+                This statement may change data, database objects, or permissions. Review the query before proceeding.
+              </p>
+            )}
+          </div>
+        )}
 
         {/*
           The typed confirmation the vocabulary asks for (#1089, section 5.5), right above the Proceed button it holds
