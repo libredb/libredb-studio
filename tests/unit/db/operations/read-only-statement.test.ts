@@ -107,7 +107,7 @@ describe("runReadOnlyStatement", () => {
   });
 
   test("counts a bigint cell as its decimal text", async () => {
-    const row = { n: 12345678901234567890n };
+    const row = { n: BigInt("12345678901234567890") };
     const bytes = Buffer.byteLength(JSON.stringify({ n: "12345678901234567890" }));
     const { provider } = providerAnswering(async () => answer([row]));
     const admitted = await runReadOnlyStatement(provider, {

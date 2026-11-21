@@ -44,7 +44,6 @@ type AgentToolContext = Parameters<typeof readStatisticsForGrounding>[0];
 const capabilities: ProviderCapabilities = {
   queryLanguage: "sql",
   supportsExplain: true,
-  explainFormat: "mssql-xml",
   supportsExternalQueryLimiting: true,
   supportsInlineRowEdit: true,
   supportsMaintenance: false,
