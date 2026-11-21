@@ -76,6 +76,7 @@ import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport"
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
 import { TrinoTransportError } from "@/lib/db/providers/sql/trino/transport";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
+import { markersReachableFrom } from "../helpers/reachable-markers";
 
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
 const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
@@ -5561,6 +5562,207 @@ describe("a tunnelled provider fingerprints the far end (X23)", () => {
       return await connectionFingerprint(effective);
     });
     expect(seen).toBe(await connectionFingerprint(stored));
+  });
+});
+
+// ============================================================================
+// The SSH tunnel's secret fields stay in core (FND-2, docs/SECURITY.md 3.41)
+// ----------------------------------------------------------------------------
+// Core dials the bastion with the record's tunnel password, private key and
+// passphrase, and builds the provider from a copy of the connection whose
+// `sshTunnel` holds only the public fields. Each entry point is driven here.
+// ============================================================================
+
+describe("the SSH tunnel's secret fields stay in core (FND-2)", () => {
+  const TUNNEL_MARKER_ONE = "not-a-real-tunnel-marker-7f3a";
+  const TUNNEL_MARKER_TWO = "not-a-real-tunnel-marker-91c2";
+  const TUNNEL_MARKER_THREE = "not-a-real-tunnel-marker-5d0e";
+
+  /** A tunnelled PostgreSQL record with a marker in each tunnel field the classification calls secret. */
+  function record(id: string, overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
+    return makeConnection("postgres", {
+      id,
+      host: "db.internal",
+      port: 5432,
+      database: "app",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.internal",
+        port: 22,
+        username: "jump",
+        authMethod: "privateKey",
+        password: TUNNEL_MARKER_ONE,
+        privateKey: TUNNEL_MARKER_TWO,
+        passphrase: TUNNEL_MARKER_THREE,
+      },
+      ...overrides,
+    });
+  }
+
+  /** The tunnel a provider is built with, written out by hand. */
+  const PROVIDER_TUNNEL = {
+    enabled: true,
+    host: "bastion.internal",
+    port: 22,
+    username: "jump",
+    authMethod: "privateKey",
+  };
+
+  function expectWithoutTunnelSecrets(provider: DatabaseProvider): void {
+    expect(provider.config.host).toBe("127.0.0.1");
+    const tunnel: Record<string, unknown> = { ...provider.config.sshTunnel };
+    expect(tunnel).toEqual(PROVIDER_TUNNEL);
+    // The whole provider, not only its config: options and the execution context reach it too.
+    expect(markersReachableFrom(provider, [TUNNEL_MARKER_ONE, TUNNEL_MARKER_TWO, TUNNEL_MARKER_THREE])).toEqual([]);
+  }
+
+  function expectRecordKeepsThem(stored: DatabaseConnection): void {
+    expect(stored.sshTunnel?.password).toBe(TUNNEL_MARKER_ONE);
+    expect(stored.sshTunnel?.privateKey).toBe(TUNNEL_MARKER_TWO);
+    expect(stored.sshTunnel?.passphrase).toBe(TUNNEL_MARKER_THREE);
+  }
+
+  test("getOrCreateProvider dials the tunnel with the record's secret fields and builds the provider without them", async () => {
+    const stored = record("fnd2-cached");
+    const provider = await getOrCreateProvider(stored);
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+    // Core dials with the record's own tunnel object, the three secret fields in it.
+    expect(mockCreateSSHTunnel.mock.calls[0]?.[1]).toBe(stored.sshTunnel);
+    expectRecordKeepsThem(stored);
+    expectWithoutTunnelSecrets(provider);
+  });
+
+  test("acquireExecutionProfileProvider builds its provider without them", async () => {
+    const stored = record("fnd2-profile", { agentUser: "agent_ro", agentPassword: STAND_IN_AGENT_PASSWORD });
+    const provider = await acquireExecutionProfileProvider(stored, "agent-read-only");
+    expect(mockCreateSSHTunnel.mock.calls[0]?.[1]).toBe(stored.sshTunnel);
+    expect(provider.config.user).toBe("agent_ro");
+    expectWithoutTunnelSecrets(provider);
+  });
+
+  test("a provider built inside withOneShotTunnel holds none of them", async () => {
+    const stored = record("fnd2-one-shot");
+    const provider = await withOneShotTunnel(stored, async (effective) => {
+      // The callback is core code and still receives the record's whole tunnel (plan Q1).
+      expect(effective.sshTunnel).toBe(stored.sshTunnel);
+      return await createDatabaseProvider(effective);
+    });
+    expect(mockCreateSSHTunnel.mock.calls[0]?.[1]).toBe(stored.sshTunnel);
+    expectWithoutTunnelSecrets(provider);
+  });
+
+  const CONNECTION_REFUSAL =
+    "A connection with an sshTunnel must be a plain object of data fields; no provider was built.";
+  const TUNNEL_REFUSAL = "The connection's sshTunnel must be a plain object of data fields; no provider was built.";
+
+  /** A tunnel whose `enabled` is a prototype getter, which a copy of the tunnel would lose. */
+  class GetterTunnel {
+    host = "bastion.internal";
+    port = 22;
+    username = "jump";
+    password = TUNNEL_MARKER_ONE;
+    get enabled(): boolean {
+      return true;
+    }
+  }
+
+  /**
+   * Tunnelled records that are not plain data, each with the refusal that names it. An entry point that opens the tunnel
+   * builds from a copy of the record, and a copy loses a field defined on the prototype or as not enumerable.
+   */
+  const NOT_PLAIN_DATA: Array<[string, (id: string) => DatabaseConnection, string]> = [
+    [
+      "a record whose database is not enumerable",
+      (id) => {
+        const hidden = record(id);
+        Object.defineProperty(hidden, "database", { value: "app", enumerable: false });
+        return hidden;
+      },
+      CONNECTION_REFUSAL,
+    ],
+    [
+      "a record whose password is a prototype getter",
+      (id) => {
+        const withoutPassword = record(id);
+        delete withoutPassword.password;
+        const prototype = {
+          get password(): string {
+            return "stand-in-database-value";
+          },
+        };
+        return Object.assign(Object.create(prototype) as DatabaseConnection, withoutPassword);
+      },
+      CONNECTION_REFUSAL,
+    ],
+    [
+      "a tunnel whose enabled is a prototype getter",
+      (id) => record(id, { sshTunnel: new GetterTunnel() as unknown as DatabaseConnection["sshTunnel"] }),
+      TUNNEL_REFUSAL,
+    ],
+    [
+      "a tunnel that is a string",
+      (id) => record(id, { sshTunnel: "on" as unknown as DatabaseConnection["sshTunnel"] }),
+      TUNNEL_REFUSAL,
+    ],
+  ];
+
+  test.each(NOT_PLAIN_DATA)("withOneShotTunnel refuses by name, before it dials, %s", async (_case, build, refusal) => {
+    const run = mock(async (effective: DatabaseConnection) => await createDatabaseProvider(effective));
+    const error: unknown = await withOneShotTunnel(build("fnd2-shape-one-shot"), run).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(refusal);
+    expect(run).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test.each(NOT_PLAIN_DATA)(
+    "getOrCreateProvider refuses by name, before the cache key and the dial, %s",
+    async (_case, build, refusal) => {
+      const error: unknown = await getOrCreateProvider(build("fnd2-shape-cached")).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(refusal);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+    },
+  );
+
+  test.each(NOT_PLAIN_DATA)(
+    "acquireExecutionProfileProvider refuses by name, before the cache key and the dial, %s",
+    async (_case, build, refusal) => {
+      const error: unknown = await acquireExecutionProfileProvider(
+        build("fnd2-shape-profile"),
+        "agent-read-only",
+      ).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(refusal);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    },
+  );
+
+  test.each(NOT_PLAIN_DATA)(
+    "createDatabaseProvider refuses by name, before it logs a build, %s",
+    async (_case, build, refusal) => {
+      const log = spyOn(console, "log");
+      try {
+        await expect(createDatabaseProvider(build("fnd2-shape-direct"))).rejects.toThrow(refusal);
+        expect(log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"))).toEqual([]);
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+
+  test("the caller's record keeps them", async () => {
+    const cached = record("fnd2-keeps-cached");
+    await getOrCreateProvider(cached);
+    expectRecordKeepsThem(cached);
+    const profiled = record("fnd2-keeps-profile", { agentUser: "agent_ro", agentPassword: STAND_IN_AGENT_PASSWORD });
+    await acquireExecutionProfileProvider(profiled, "agent-read-only");
+    expectRecordKeepsThem(profiled);
+    const oneShot = record("fnd2-keeps-one-shot");
+    await withOneShotTunnel(oneShot, async (effective) => await createDatabaseProvider(effective));
+    expectRecordKeepsThem(oneShot);
   });
 });
 

@@ -512,6 +512,8 @@ export async function createDatabaseProvider(
 
 > **Important:** Use dynamic `import()` to keep the initial bundle small.
 
+The `connection` your constructor receives is the one `providerConnection` (`src/lib/db/provider-connection.ts`) builds: its `sshTunnel` holds no password, private key or passphrase, because Studio opens the tunnel itself ([what a provider receives of the tunnel](providers/README.md#ssh-tunnels-bastion-host-key-verification)).
+
 ## Step 4: Add UI Configuration
 
 **Files:** `src/lib/db/connection-form.ts` and `src/lib/db-ui-config.ts`
