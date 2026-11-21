@@ -256,16 +256,28 @@ async function connectToTheFixture(page: Page): Promise<void> {
  * sized for one real session and not for five fresh logins in three minutes. The same hazard is
  * documented on playwright.config.ts's `chromium-offline-editor` project for the same reason.
  *
+ * The refusal can land one read earlier, on the connection's metadata, and then no tree is drawn at
+ * all: the sidebar draws "This connection could not be read / Too many requests. Try again in 60
+ * seconds." with a Try again of its own (`sidebar-provider-retry` in
+ * src/components/sidebar/Sidebar.tsx). MEASURED on 2026-11-21 with the main server's query bucket set
+ * to 6: a helper that pressed only `tree-retry` pressed nothing and waited out its 120 s.
+ *
  * Pressing the button the product itself offers, rather than reaching past the UI: this is what the
  * reader in front of that message does, and the wait is bounded so a tree that never arrives still
- * fails the test.
+ * fails the test. A refused request spends nothing, so pressing again on each poll costs no budget.
  */
 async function waitForTheObjectTree(page: Page): Promise<void> {
   const app = page.getByRole("treeitem", { name: "app", exact: true });
+  // The sidebar draws the tree only once the metadata has been read, so at most one of each pair is on screen.
+  const failure = page.getByTestId("sidebar-provider-failure").or(page.getByTestId("tree-failure"));
+  const retry = page.getByTestId("sidebar-provider-retry").or(page.getByTestId("tree-retry"));
   await expect(async () => {
     if (await app.isVisible()) return;
-    const retry = page.getByTestId("tree-retry");
-    if (await retry.isVisible()) await retry.click();
+    if (await retry.isVisible()) {
+      // Recorded in the report, so a GREEN run still says a read was refused and which one.
+      test.info().annotations.push({ type: "rate-limited", description: (await failure.textContent()) ?? "" });
+      await retry.click();
+    }
     throw new Error("the object tree has not been read yet");
   }).toPass({ timeout: 120_000, intervals: [2_000, 5_000, 10_000, 15_000] });
 }
