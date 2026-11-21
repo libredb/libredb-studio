@@ -65,8 +65,8 @@ RUN node scripts/copy-monaco.mjs && npx next build
 # to run against anything that is not an assembled payload, and the asserts below
 # are what turn an over-eager future entry into a failed build rather than a
 # provider failing at runtime. `seed-assets/` is not on the list and is COPYed
-# explicitly below in any case; nothing else under /app is read at runtime
-# (src/lib/seed/samples.ts is the only `process.cwd()` reader).
+# explicitly below in any case, where SEED_ASSETS_DIR names it for the server;
+# nothing else under /app is read at runtime.
 #
 # HERE rather than in the runner: an `rm` after a COPY deletes the files in a
 # later layer while leaving every byte of them in the layer the COPY created.
@@ -227,11 +227,12 @@ COPY --from=builder /usr/src/app/node_modules/oracledb ./node_modules/oracledb
 # tarball does not carry (keep scripts/build-standalone-payload.sh in sync).
 COPY --from=builder /usr/src/app/THIRD_PARTY_NOTICES.txt ./THIRD_PARTY_NOTICES.txt
 
-# Vendored sample database templates (the SQLite employees sample). Read at
-# runtime via fs relative to process.cwd() (/app), so output file tracing
-# never sees them — copy explicitly (keep scripts/build-standalone-payload.sh
-# in sync).
+# The built-in samples' committed assets (src/lib/seed/samples.ts). Output file
+# tracing never sees them, so they are copied explicitly (keep
+# scripts/build-standalone-payload.sh in sync), and SEED_ASSETS_DIR names them
+# for the server, so finding them does not depend on the working directory.
 COPY --from=builder /usr/src/app/seed-assets ./seed-assets
+ENV SEED_ASSETS_DIR=/app/seed-assets
 
 # Create non-root user for security
 #

@@ -273,11 +273,12 @@ COPY --chown=nextjs:nodejs --from=builder /usr/src/app/node_modules/detect-libc 
 # tarball does not carry (keep scripts/build-standalone-payload.sh in sync).
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/THIRD_PARTY_NOTICES.txt ./THIRD_PARTY_NOTICES.txt
 
-# Vendored sample database templates (the SQLite employees sample). Read at
-# runtime via fs relative to process.cwd() (/app), so output file tracing
-# never sees them — copy explicitly (keep scripts/build-standalone-payload.sh
-# in sync).
+# The built-in samples' committed assets (src/lib/seed/samples.ts). Output file
+# tracing never sees them, so they are copied explicitly (keep
+# scripts/build-standalone-payload.sh in sync), and SEED_ASSETS_DIR names them
+# for the server, so finding them does not depend on the working directory.
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/seed-assets ./seed-assets
+ENV SEED_ASSETS_DIR=/app/seed-assets
 
 # Group 0 with the owner's bits on the two paths the app writes at run time, so
 # an arbitrary UID whose only group is 0 can write them, which is how
