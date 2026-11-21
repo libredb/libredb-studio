@@ -19,7 +19,12 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { lookup as dnsLookup } from "node:dns";
 import { createServer, type Server as TcpServer, type Socket } from "node:net";
 import { Server as SshServer, utils } from "ssh2";
-import { nodeSocketPort, nodeSshPort, transportOf } from "@/lib/db/providers/network/netconf/node-ports";
+import {
+  nodeSocketPort,
+  nodeSshPort,
+  transportOf,
+  type ChannelLike,
+} from "@/lib/db/providers/network/netconf/node-ports";
 
 const HELLO = '<?xml version="1.0"?><hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"/>';
 const USER = "ro-pass";
@@ -175,9 +180,12 @@ describe("the transport over a channel", () => {
     let handler: ((chunk: Buffer) => void) | undefined;
     const channel = {
       write: () => true,
-      on: (_e: "data", h: (chunk: Buffer) => void) => void (handler = h),
+      on: ((e: "data" | "error", h: (chunk: Buffer) => void) => {
+        if (e === "data") handler = h;
+      }) as ChannelLike["on"],
       once: () => true,
       end: () => true,
+      stderr: { on: () => true },
     };
     const client = { once: () => true, end: () => true };
     const seen: string[] = [];

@@ -36,6 +36,7 @@ const transport: Transport = {
   write: () => {},
   onData: () => {},
   onClose: () => {},
+  onError: () => {},
   close: () => {},
 };
 
@@ -52,6 +53,11 @@ function ports(
     hostKey?: Buffer;
     subsystemError?: unknown;
     connectError?: unknown;
+    /**
+     * ssh2 reading the connection's credential before it takes the socket, and throwing from
+     * `connect()` itself when it cannot: "Cannot parse privateKey" is thrown, not emitted.
+     */
+    connectThrows?: unknown;
     /** The socket itself refusing, which is what an address with nobody on it does. */
     socketError?: unknown;
     /** A SECOND library error after the dial has already settled, which a real server sends. */
@@ -81,6 +87,7 @@ function ports(
   const ssh: SshPort = {
     connect: (options) => {
       seen.connects.push(options);
+      if (over.connectThrows !== undefined) throw over.connectThrows;
       let ready: (() => void) | null = null;
       let failed: ((error: unknown) => void) | null = null;
       queueMicrotask(() => {
@@ -249,7 +256,7 @@ test("a refused login carries one sentence and no detail", async () => {
 
 test("a key that cannot be opened is a configuration error, not an authentication failure", async () => {
   const { ssh, socket } = ports({
-    connectError: new Error("Cannot parse privateKey: OpenSSH key integrity check failed -- bad passphrase?"),
+    connectThrows: new Error("Cannot parse privateKey: OpenSSH key integrity check failed -- bad passphrase?"),
   });
   let caught: unknown;
   try {
@@ -258,6 +265,23 @@ test("a key that cannot be opened is a configuration error, not an authenticatio
     caught = error;
   }
   expectBe((caught as DialError).failure.kind, "configuration");
+});
+
+test("a key ssh2 cannot read is a configuration error with its own sentence, and the session is never reached", async () => {
+  const { ssh, socket, seen } = ports({ connectThrows: new Error("Cannot parse privateKey: Unsupported key format") });
+  let caught: unknown;
+  try {
+    await dialNetconf(config(), ssh, socket);
+  } catch (error) {
+    caught = error;
+  }
+  expectTruthy(caught instanceof DialError, "the dial did not fail by name");
+  expectBe((caught as DialError).failure.kind, "configuration");
+  expectBe(
+    (caught as DialError).failure.message,
+    "this private key cannot be read: check that the whole file was pasted",
+  );
+  expectEqual(seen.subsystems, []);
 });
 
 test("a device with no netconf subsystem is refused with a sentence that says so", async () => {

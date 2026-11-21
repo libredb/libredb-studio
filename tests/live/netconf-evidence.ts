@@ -167,6 +167,7 @@ function recordingTransport(inner: Transport, capture: Capture): Transport {
       });
     },
     onClose: (handler) => inner.onClose(handler),
+    onError: (handler) => inner.onError(handler),
     close: () => inner.close(),
   };
 }

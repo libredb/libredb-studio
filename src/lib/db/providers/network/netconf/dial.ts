@@ -153,7 +153,7 @@ export async function dialNetconf(config: DialConfig, ssh: SshPort, socket: Sock
       reject(new DialError(failure));
     };
     const fail = (error: unknown): void => failWith(classifyLoginFailure(error));
-    const session = (client = ssh.connect({
+    const options: SshConnectOptions = {
       sock: connected,
       username: config.username,
       readyTimeout: config.readyMs,
@@ -180,7 +180,17 @@ export async function dialNetconf(config: DialConfig, ssh: SshPort, socket: Sock
         });
         return false;
       },
-    }));
+    };
+    // ssh2 reads the connection's private key inside `connect()` and throws when it cannot, before
+    // it takes the socket. That throw is a failure of this dial like any other, so it is classified
+    // here rather than raised past it, and the port has closed the socket it was handed.
+    let session: SshSession;
+    try {
+      session = client = ssh.connect(options);
+    } catch (error) {
+      fail(error);
+      return;
+    }
     session.onError(fail);
     session.onReady(() => {
       session.subsystem(NETCONF_SUBSYSTEM, (error, transport) => {

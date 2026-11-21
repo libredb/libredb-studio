@@ -1,8 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createServer, type Server as TcpServer, type Socket } from "node:net";
 import path from "node:path";
+import { Server as SshServer, utils, type Connection, type ServerChannel } from "ssh2";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import { NetconfProvider } from "@/lib/db/providers/network/netconf/index";
-import { openNetconfReader } from "@/lib/db/providers/network/netconf/open";
+import { NETCONF_SESSION_LIMITS, openNetconfReader } from "@/lib/db/providers/network/netconf/open";
 import { netconfXmlPort } from "@/lib/db/providers/network/netconf/xml";
 import type { SocketPort, SshPort } from "@/lib/db/providers/network/netconf/dial";
 import type { Transport } from "@/lib/db/providers/network/netconf/session";
@@ -100,6 +103,7 @@ function replay(capture: Capture = CAPTURE): Replay {
       for (const chunk of capture.hello) queueMicrotask(() => onData?.(chunk));
     },
     onClose: () => {},
+    onError: () => {},
     close: () => void (closes.count += 1),
   };
 
@@ -257,4 +261,325 @@ describe("what the provider refuses, with the device on the other end", () => {
       /reads a device and does not write to it/,
     );
   });
+});
+
+/**
+ * A session that ends closes its connection to the device, over a real SSH connection.
+ *
+ * The device is `ssh2`'s own `Server` on loopback, and Studio's side is the provider as it runs:
+ * the real socket, the real SSH client and the real channel. The device counts its open SSH
+ * connections, so each case reads the answer where it matters, on the device. A connection a case
+ * leaves open is ended after it, so a failure is reported by the case that caused it and not by
+ * every case after it.
+ */
+type DeviceMode =
+  | "normal"
+  | "no-session-id"
+  | "bad-base"
+  | "no-hello"
+  | "close-before-hello"
+  | "hello-then-close"
+  | "framing-fault-after-open"
+  | "channel-close-after-open"
+  | "error-stream-fails-before-hello"
+  | "error-stream-fails-with-the-subsystem";
+
+const NC = 'xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"';
+const DEVICE_HELLOS: Partial<Record<DeviceMode, string>> = {
+  "no-session-id": `<hello ${NC}><capabilities><capability>urn:ietf:params:netconf:base:1.1</capability></capabilities></hello>]]>]]>`,
+  "bad-base": `<hello ${NC}><capabilities><capability>urn:ietf:params:netconf:base:9.9</capability></capabilities><session-id>7</session-id></hello>]]>]]>`,
+};
+/** Not a credential: the device accepts any, and the connection shape needs one. */
+const DEVICE_LOGIN = "SEED-CANARY-netconf-device";
+
+let mode: DeviceMode = "normal";
+let device: SshServer;
+let devicePort = 0;
+let devicePin = "";
+let openConnections = 0;
+const deviceClients = new Set<Connection>();
+const channels: ServerChannel[] = [];
+let allClosed: (() => void)[] = [];
+
+/** The device's open SSH connections once they have all closed, or after `ms` if some did not. */
+const openAfter = (ms: number): Promise<number> =>
+  new Promise((resolve) => {
+    if (openConnections === 0) {
+      resolve(0);
+      return;
+    }
+    const timer = setTimeout(() => resolve(openConnections), ms);
+    allClosed.push(() => {
+      clearTimeout(timer);
+      resolve(0);
+    });
+  });
+
+/** ssh2's own wire, which a device uses to send what its public channel API does not. */
+interface ChannelWire {
+  readonly outgoing: { readonly id: number };
+  readonly _client: { readonly _protocol: { channelExtData(id: number, data: Buffer, type: number): void } };
+}
+const STDERR_DATA = 1;
+
+/**
+ * The channel's end, and then data on its error stream, which fails the client's error stream: a
+ * stream that has ended cannot take more data.
+ */
+function failErrorStream(channel: ServerChannel): void {
+  channel.eof();
+  const wire = channel as unknown as ChannelWire;
+  wire._client._protocol.channelExtData(wire.outgoing.id, Buffer.from("after the end"), STDERR_DATA);
+}
+
+function serve(channel: ServerChannel): void {
+  channels.push(channel);
+  if (mode === "no-hello") return;
+  if (mode === "error-stream-fails-before-hello") {
+    failErrorStream(channel);
+    return;
+  }
+  if (mode === "close-before-hello") {
+    channel.exit(0);
+    channel.end();
+    channel.close();
+    return;
+  }
+  channel.write(DEVICE_HELLOS[mode] ?? CAPTURE.hello.join(""));
+  if (mode === "hello-then-close") {
+    // The hello and the end of the channel in one burst, as an OpenSSH subsystem that exits.
+    channel.exit(0);
+    channel.end();
+    channel.close();
+    return;
+  }
+  let inbound = "";
+  let helloSeen = false;
+  let requests = 0;
+  channel.on("data", (chunk: Buffer) => {
+    inbound += chunk.toString("utf8");
+    if (!helloSeen) {
+      const end = inbound.indexOf("]]>]]>");
+      if (end < 0) return;
+      helloSeen = true;
+      inbound = inbound.slice(end + "]]>]]>".length);
+    }
+    for (let end = inbound.indexOf("\n##\n"); end >= 0; end = inbound.indexOf("\n##\n")) {
+      const request = inbound.slice(0, end);
+      inbound = inbound.slice(end + "\n##\n".length);
+      requests += 1;
+      const id = /message-id="([^"]*)"/.exec(request)?.[1] ?? "";
+      if (request.includes("<close-session/>")) {
+        const ok = `<rpc-reply ${NC} message-id="${id}"><ok/></rpc-reply>`;
+        channel.write(`\n#${Buffer.byteLength(ok)}\n${ok}\n##\n`);
+      } else if (mode === "framing-fault-after-open" && requests > 2) {
+        channel.write("\n#zz\n");
+      } else {
+        // The open's two requests, answered with the device's recorded replies, ids and all.
+        channel.write((CAPTURE.exchanges[requests]?.chunks ?? []).join(""));
+      }
+    }
+  });
+}
+
+beforeAll(async () => {
+  // ECDSA for the reason `netconf-node-ports.test.ts` gives: ssh2's own ed25519 keys fail its own
+  // parser a few times in a thousand.
+  const key = utils.generateKeyPairSync("ecdsa", { bits: 256 });
+  devicePin = fingerprintOf((utils.parseKey(key.public) as { getPublicSSH(): Buffer }).getPublicSSH());
+  device = new SshServer({ hostKeys: [key.private] }, (client) => {
+    openConnections += 1;
+    deviceClients.add(client);
+    client.on("error", () => {});
+    client.on("close", () => {
+      deviceClients.delete(client);
+      openConnections -= 1;
+      if (openConnections > 0) return;
+      const waiting = allClosed;
+      allClosed = [];
+      for (const wake of waiting) wake();
+    });
+    client.on("authentication", (ctx) => ctx.accept());
+    client.on("ready", () => {
+      client.on("session", (accept) => {
+        accept().on("subsystem", (acceptSubsystem) => {
+          if (mode !== "error-stream-fails-with-the-subsystem") {
+            serve(acceptSubsystem());
+            return;
+          }
+          // The subsystem's confirmation, the channel's end and the error stream's data in one
+          // write, so the client reads all three before the dial has handed the channel on.
+          const sock = (client as unknown as { _sock: Socket })._sock;
+          sock.cork();
+          failErrorStream(acceptSubsystem());
+          process.nextTick(() => sock.uncork());
+        });
+      });
+    });
+  });
+  await new Promise<void>((resolve) => device.listen(0, "127.0.0.1", resolve));
+  devicePort = (device.address() as { port: number }).port;
+});
+
+afterEach(async () => {
+  for (const client of deviceClients) client.end();
+  await openAfter(2000);
+});
+
+afterAll(() => {
+  (device as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+  device.close();
+});
+
+function deviceProvider(helloMs = NETCONF_SESSION_LIMITS.helloMs): NetconfProvider {
+  const config = connection({ port: devicePort, hostKeyFingerprint: devicePin, password: DEVICE_LOGIN });
+  return new NetconfProvider(config, {}, {}, async (c) =>
+    openNetconfReader(c, { xml: netconfXmlPort, limits: { ...NETCONF_SESSION_LIMITS, helloMs } }),
+  );
+}
+
+describe("a session that ends closes its connection to the device", () => {
+  test("the control: an open session holds one connection, and disconnect() closes it", async () => {
+    mode = "normal";
+    const provider = deviceProvider();
+    await provider.connect();
+    expect(openConnections).toBe(1);
+    await provider.disconnect();
+    expect(await openAfter(2000)).toBe(0);
+  });
+
+  const failedOpens: { mode: DeviceMode; sentence: RegExp; helloMs?: number }[] = [
+    { mode: "no-session-id", sentence: /carried no session-id/ },
+    { mode: "bad-base", sentence: /offered no NETCONF base version this client speaks/ },
+    { mode: "no-hello", sentence: /no hello within the deadline/, helloMs: 300 },
+    { mode: "close-before-hello", sentence: /the device closed this session/ },
+    { mode: "hello-then-close", sentence: /the device closed this session/ },
+    {
+      mode: "error-stream-fails-before-hello",
+      sentence: /the channel to the device failed \(stream\.push\(\) after EOF\), so the session was ended/,
+      helloMs: 3000,
+    },
+    {
+      mode: "error-stream-fails-with-the-subsystem",
+      sentence: /the channel to the device failed \(stream\.push\(\) after EOF\), so the session was ended/,
+      helloMs: 3000,
+    },
+  ];
+  for (const failed of failedOpens) {
+    test(`${failed.mode}: the open fails by name and the connection is closed before disconnect()`, async () => {
+      mode = failed.mode;
+      const provider = deviceProvider(failed.helloMs);
+      const failure = await provider.connect().catch((e: unknown) => e);
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toMatch(failed.sentence);
+      expect(await openAfter(2000)).toBe(0);
+      await provider.disconnect();
+      expect(openConnections).toBe(0);
+    }, 10_000);
+  }
+
+  test("a framing fault after the open ends the session, and its connection is closed with it", async () => {
+    mode = "framing-fault-after-open";
+    const provider = deviceProvider();
+    await provider.connect();
+    const failure = await provider
+      .query(JSON.stringify({ datastore: "running", path: "/ietf-interfaces:interfaces" }))
+      .catch((e: unknown) => e);
+    expect((failure as Error).message).toMatch(/broke the NETCONF framing rules \(chunk-header-malformed\)/);
+    expect(await openAfter(2000)).toBe(0);
+    await provider.disconnect();
+    expect(openConnections).toBe(0);
+  }, 10_000);
+
+  test("a channel the device closes after the open ends the session, and its connection is closed with it", async () => {
+    mode = "channel-close-after-open";
+    const provider = deviceProvider();
+    await provider.connect();
+    expect(openConnections).toBe(1);
+    channels.at(-1)?.close();
+    expect(await openAfter(2000)).toBe(0);
+    await provider.disconnect();
+    expect(openConnections).toBe(0);
+  }, 10_000);
+
+  test("an error stream that fails after the open ends the session by name, and its connection is closed with it", async () => {
+    mode = "normal";
+    const provider = deviceProvider();
+    await provider.connect();
+    expect(openConnections).toBe(1);
+    const channel = channels.at(-1);
+    if (channel === undefined) throw new Error("the device opened no channel");
+    failErrorStream(channel);
+    expect(await openAfter(2000)).toBe(0);
+    const failure = await provider
+      .query(JSON.stringify({ datastore: "running", path: "/ietf-interfaces:interfaces" }))
+      .catch((e: unknown) => e);
+    expect((failure as Error).message).toMatch(/the channel to the device failed \(stream\.push\(\) after EOF\)/);
+    await provider.disconnect();
+    expect(openConnections).toBe(0);
+  }, 10_000);
+});
+
+/**
+ * A private key ssh2 cannot read fails the connect as a configuration error, and the socket dialled
+ * for it is closed. ssh2 throws that failure from `connect()` before it takes the socket, so the
+ * socket is the port's to close. The peer is a plain TCP listener that counts its open sockets:
+ * nothing past the socket is reached.
+ */
+describe("a key that cannot be read", () => {
+  const KEY_CANARY = "SEED-CANARY-not-a-private-key";
+  let listener: TcpServer;
+  let listenerPort = 0;
+  const sockets = new Set<Socket>();
+  let socketClosed: (() => void) | null = null;
+
+  beforeAll(async () => {
+    listener = createServer((socket) => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("close", () => {
+        sockets.delete(socket);
+        socketClosed?.();
+      });
+    });
+    await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    listenerPort = (listener.address() as { port: number }).port;
+  });
+
+  afterAll(() => {
+    for (const socket of sockets) socket.destroy();
+    listener.close();
+  });
+
+  /** The listener's open sockets once they have all closed, or after `ms` if some did not. */
+  const socketsAfter = (ms: number): Promise<number> =>
+    new Promise((resolve) => {
+      if (sockets.size === 0) {
+        resolve(0);
+        return;
+      }
+      const timer = setTimeout(() => resolve(sockets.size), ms);
+      socketClosed = () => {
+        if (sockets.size > 0) return;
+        clearTimeout(timer);
+        resolve(0);
+      };
+    });
+
+  test("the connect fails as a configuration error, and the socket dialled for it is closed", async () => {
+    const config = connection({
+      port: listenerPort,
+      hostKeyFingerprint: devicePin,
+      password: undefined,
+      privateKey: KEY_CANARY,
+    });
+    const provider = new NetconfProvider(config, {}, {}, async (c) =>
+      openNetconfReader(c, { xml: netconfXmlPort, limits: NETCONF_SESSION_LIMITS }),
+    );
+    const failure = await provider.connect().catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toMatch(/this private key cannot be read/);
+    expect(await socketsAfter(2000)).toBe(0);
+    await provider.disconnect();
+  }, 10_000);
 });
