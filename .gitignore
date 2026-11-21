@@ -135,6 +135,9 @@ data-e2e-unknown-seed/
 # against the working directory, so running an agent locally writes run ledgers here.
 .workflow-data/
 *.libredb
+# The committed LibreDB sample, built by scripts/generate-libredb-sample.mjs and held by
+# tests/unit/seed/libredb-sample-asset.test.ts; the rule above would leave it out of the repository.
+!seed-assets/libredb/sample.libredb
 # The default target of `bun docker/libredb-init/01-object-fixture.ts`, which the fixture
 # module documents as a hand-run for a durable file (#789). `*.libredb` covers the database
 # but not the directory or the `.lock` sidecar beside it, so the documented run left an
