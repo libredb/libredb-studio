@@ -91,7 +91,8 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  *   before the provider is constructed, so with a tunnel enabled the bastion, and not the record's
  *   own `host`, decides which machine the sealed statement reaches. Only the four route values are
  *   framed, by `tunnelRoute` above. Live under the day-one editable set: any of the three engines
- *   can carry one.
+ *   can carry one. The provider side frames the same route because `providerConnection`
+ *   (`src/lib/db/provider-connection.ts`) keeps the public tunnel fields, the route among them.
  * - `instanceName` is a MSSQL NAMED INSTANCE, set by `MSSQLProvider.buildConfig()` in
  *   `src/lib/db/providers/sql/mssql.ts` and resolved by the SQL Server Browser to a different
  *   server process, typically on a port that is not the one in the record.

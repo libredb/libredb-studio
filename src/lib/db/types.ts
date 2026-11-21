@@ -2175,7 +2175,10 @@ export interface DatabaseProvider {
   /** Database type identifier */
   readonly type: DatabaseType;
 
-  /** Connection configuration */
+  /**
+   * The connection this provider was built from, as `providerConnection` (./provider-connection) hands it to a provider:
+   * the caller's record with its `sshTunnel` reduced to the fields `SSH_TUNNEL_FIELDS` classifies public.
+   */
   readonly config: DatabaseConnection;
 
   /**

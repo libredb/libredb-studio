@@ -5564,6 +5564,107 @@ describe("a tunnelled provider fingerprints the far end (X23)", () => {
   });
 });
 
+// ============================================================================
+// The SSH tunnel's secret fields stay in core (FND-2, docs/SECURITY.md 3.41)
+// ----------------------------------------------------------------------------
+// Core dials the bastion with the record's tunnel password, private key and
+// passphrase, and builds the provider from a copy of the connection whose
+// `sshTunnel` holds only the public fields. Each entry point is driven here.
+// ============================================================================
+
+describe("the SSH tunnel's secret fields stay in core (FND-2)", () => {
+  const TUNNEL_MARKER_ONE = "not-a-real-tunnel-marker-7f3a";
+  const TUNNEL_MARKER_TWO = "not-a-real-tunnel-marker-91c2";
+  const TUNNEL_MARKER_THREE = "not-a-real-tunnel-marker-5d0e";
+
+  /** A tunnelled PostgreSQL record with a marker in each tunnel field the classification calls secret. */
+  function record(id: string, overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
+    return makeConnection("postgres", {
+      id,
+      host: "db.internal",
+      port: 5432,
+      database: "app",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.internal",
+        port: 22,
+        username: "jump",
+        authMethod: "privateKey",
+        password: TUNNEL_MARKER_ONE,
+        privateKey: TUNNEL_MARKER_TWO,
+        passphrase: TUNNEL_MARKER_THREE,
+      },
+      ...overrides,
+    });
+  }
+
+  /** The tunnel a provider is built with, written out by hand. */
+  const PROVIDER_TUNNEL = {
+    enabled: true,
+    host: "bastion.internal",
+    port: 22,
+    username: "jump",
+    authMethod: "privateKey",
+  };
+
+  function expectWithoutTunnelSecrets(provider: DatabaseProvider): void {
+    expect(provider.config.host).toBe("127.0.0.1");
+    const tunnel: Record<string, unknown> = { ...provider.config.sshTunnel };
+    expect(tunnel).toEqual(PROVIDER_TUNNEL);
+    const text = JSON.stringify(provider.config);
+    for (const marker of [TUNNEL_MARKER_ONE, TUNNEL_MARKER_TWO, TUNNEL_MARKER_THREE]) {
+      expect(text).not.toContain(marker);
+    }
+  }
+
+  function expectRecordKeepsThem(stored: DatabaseConnection): void {
+    expect(stored.sshTunnel?.password).toBe(TUNNEL_MARKER_ONE);
+    expect(stored.sshTunnel?.privateKey).toBe(TUNNEL_MARKER_TWO);
+    expect(stored.sshTunnel?.passphrase).toBe(TUNNEL_MARKER_THREE);
+  }
+
+  test("getOrCreateProvider dials the tunnel with the record's secret fields and builds the provider without them", async () => {
+    const stored = record("fnd2-cached");
+    const provider = await getOrCreateProvider(stored);
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+    // Core dials with the record's own tunnel object, the three secret fields in it.
+    expect(mockCreateSSHTunnel.mock.calls[0]?.[1]).toBe(stored.sshTunnel);
+    expectRecordKeepsThem(stored);
+    expectWithoutTunnelSecrets(provider);
+  });
+
+  test("acquireExecutionProfileProvider builds its provider without them", async () => {
+    const stored = record("fnd2-profile", { agentUser: "agent_ro", agentPassword: STAND_IN_AGENT_PASSWORD });
+    const provider = await acquireExecutionProfileProvider(stored, "agent-read-only");
+    expect(mockCreateSSHTunnel.mock.calls[0]?.[1]).toBe(stored.sshTunnel);
+    expect(provider.config.user).toBe("agent_ro");
+    expectWithoutTunnelSecrets(provider);
+  });
+
+  test("a provider built inside withOneShotTunnel holds none of them", async () => {
+    const stored = record("fnd2-one-shot");
+    const provider = await withOneShotTunnel(stored, async (effective) => {
+      // The callback is core code and still receives the record's whole tunnel (plan Q1).
+      expect(effective.sshTunnel).toBe(stored.sshTunnel);
+      return await createDatabaseProvider(effective);
+    });
+    expect(mockCreateSSHTunnel.mock.calls[0]?.[1]).toBe(stored.sshTunnel);
+    expectWithoutTunnelSecrets(provider);
+  });
+
+  test("the caller's record keeps them", async () => {
+    const cached = record("fnd2-keeps-cached");
+    await getOrCreateProvider(cached);
+    expectRecordKeepsThem(cached);
+    const profiled = record("fnd2-keeps-profile", { agentUser: "agent_ro", agentPassword: STAND_IN_AGENT_PASSWORD });
+    await acquireExecutionProfileProvider(profiled, "agent-read-only");
+    expectRecordKeepsThem(profiled);
+    const oneShot = record("fnd2-keeps-one-shot");
+    await withOneShotTunnel(oneShot, async (effective) => await createDatabaseProvider(effective));
+    expectRecordKeepsThem(oneShot);
+  });
+});
+
 test("a denied SQLite caller cannot borrow a cached administrator handle", async () => {
   const connection = makeConnection("sqlite", { database: ":memory:" });
   const trusted = await getOrCreateProvider(connection, {}, { allowExternalFileAccess: true });

@@ -294,6 +294,11 @@ export interface SSLConfig {
   rejectUnauthorized?: boolean;
 }
 
+/**
+ * An SSH tunnel to the database through a bastion. Core reads the secret fields (`password`, `privateKey`,
+ * `passphrase`) to open the tunnel, and a provider is built with only the public ones (`providerConnection` in
+ * `src/lib/db/provider-connection.ts`).
+ */
 export interface SSHTunnelConfig {
   enabled: boolean;
   host: string;
