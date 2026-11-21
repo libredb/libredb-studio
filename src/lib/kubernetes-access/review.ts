@@ -151,8 +151,9 @@ export interface ServiceAccountCall {
 /**
  * Sends one request of the ServiceAccount backend under the API URL's path, with the pod's token and the CA file as
  * the only trust, and collects the answer, up to the size cap and the deadline. A redirect is an answer, never
- * followed. Each request is a fresh one with `agent: false`, so no global agent and no environment proxy can carry the
- * pod token. Never throws: a failure on the way is a failed outcome.
+ * followed, and a 101 that switches the connection to another protocol fails as `network` at once. Each request is a
+ * fresh one with `agent: false`, so no global agent and no environment proxy can carry the pod token. Never throws: a
+ * failure on the way is a failed outcome.
  */
 export function serviceAccountCall(call: ServiceAccountCall): Promise<RawAnswer | FailedReview> {
   const { url, token, ca, body } = call;
@@ -202,6 +203,13 @@ export function serviceAccountCall(call: ServiceAccountCall): Promise<RawAnswer 
         },
       );
       outgoing.on("error", (error) => settle(transportFailure(error, signal)));
+      // node:http hands a 101 that announces an upgrade (Connection: upgrade and an Upgrade header) to this event, never
+      // to the response callback, and without a listener it emits no error either, so the call would never settle. The
+      // switched socket is no longer the request's, so it is destroyed here.
+      outgoing.on("upgrade", (_answer, socket) => {
+        socket.destroy();
+        settle(failed("network"));
+      });
       outgoing.end(body);
     } catch (error) {
       settle(transportFailure(error, signal));

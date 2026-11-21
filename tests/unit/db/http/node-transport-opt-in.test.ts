@@ -1,7 +1,8 @@
 /**
  * The text transport's opt-in refusals. Each is off when absent, so a provider that does not ask keeps the behaviour
- * it had, and each, when asked, is the byte transport's rule. A name the resolver answers with a link-local address is
- * refused at the lookup in egress-policy-link-local.test.ts, the file that owns the resolver stand-in.
+ * it had, and each, when asked, is the byte transport's rule. A 101 that announces an upgrade is refused whether
+ * `refusesUpgrade` is asked or not. A name the resolver answers with a link-local address is refused at the lookup in
+ * egress-policy-link-local.test.ts, the file that owns the resolver stand-in.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
@@ -164,11 +165,20 @@ describe("refusesUpgrade", () => {
     expect((await transport.request(get(origin, "/switch"))).status).toBe(101);
   });
 
-  test("absent, a 101 with upgrade headers waits for the deadline, as it always did", async () => {
+  test("absent, a 101 with upgrade headers still fails at once as a network failure, closes its socket and frees its slot", async () => {
     const listener = await upgradeListener(["connection: upgrade", "upgrade: websocket"]);
     const origin = httpOrigin("http", "127.0.0.1", listener.port);
     const transport = build({ origin, tls: null, maxSockets: 1, headers: {} });
-    expect((await failure(() => transport.request(get(origin, "/switch", 300)))).kind).toBe("timeout");
+    const started = Date.now();
+    const error = await failure(() => transport.request(get(origin, "/switch")));
+    expect({ name: error.name, kind: error.kind, message: error.message }).toEqual({
+      name: "TransportError",
+      kind: "network",
+      message: SWITCHED,
+    });
+    expect(Date.now() - started).toBeLessThan(1000);
+    await eventually(() => listener.open() === 0, "the switched socket to close");
+    expect((await transport.request(get(origin, "/next"))).text).toBe("ok");
   });
 
   test.each([["false"], [0], [null]])("set to %p, which is not true or false, is refused by name", (value) => {

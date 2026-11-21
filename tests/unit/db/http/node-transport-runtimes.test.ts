@@ -43,6 +43,7 @@ import {
   streamingAnswer,
 } from "../../../helpers/node-transport-fixtures";
 import { howItFailed } from "../../../helpers/spawn-outcome";
+import { answerWithUpgrade } from "../../../helpers/upgrade-answer";
 
 interface Deps {
   readonly createNodeTransport: typeof createNodeTransport;
@@ -68,7 +69,8 @@ type PortName =
   | "guarded"
   | "silent"
   | "cut"
-  | "corrupt";
+  | "corrupt"
+  | "upgrading";
 
 interface Plan {
   readonly ports: Readonly<Record<PortName, number>>;
@@ -392,8 +394,14 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   } finally {
     delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
   }
-  // Read while every kept transport is still open: the cap, the encoding refusal, the redirect and both stops must
-  // have destroyed their sockets themselves.
+  // A text transport built without refusesUpgrade, against a peer that answers an h2c upgrade and keeps its socket:
+  // node:http has handed the switched socket over, so only the transport's own destroy closes it, which the socket
+  // count below reads.
+  await record("text: a 101 with connection: upgrade and an upgrade header", () =>
+    once("http", "127.0.0.1", ports.upgrading, null, "/upgrade", { keep: true }),
+  );
+  // Read while every kept transport is still open: the cap, the encoding refusal, the redirect, both stops and the
+  // upgrade must have destroyed their sockets themselves.
   await new Promise((resolve) => setTimeout(resolve, 300));
   await record("open sockets on the stopped listeners", () => once("http", "127.0.0.1", ports.plain, null, "/open"));
   const duringCases = globalCalls;
@@ -630,6 +638,7 @@ let bomb: Listener;
 let holding: Listener;
 let guarded: Listener;
 let silent: Listener;
+let upgrading: Listener;
 let cutServer: ReturnType<typeof createTcpServer>;
 const cutSockets = new Set<Socket>();
 let corruptServer: ReturnType<typeof createTcpServer>;
@@ -780,6 +789,7 @@ beforeAll(async () => {
             bomb: bomb.open(),
             holding: holding.open(),
             redirecting: redirecting.open(),
+            upgrading: upgrading.open(),
           })
         : '{"result":"plain"}';
     jsonAnswer(200, text)(request, response, body);
@@ -814,6 +824,10 @@ beforeAll(async () => {
   });
   guarded = await httpListener(jsonAnswer(200, "{}"));
   silent = await silentListener();
+  // Writes the 101 below the server's own response, which is never sent, and keeps the socket open.
+  upgrading = await httpListener((request) => {
+    void answerWithUpgrade(request.socket, "upgrade");
+  });
   const cutPort = await cutListener();
   const corruptPort = await corruptListener(certificates.local);
   const bytePort = await byteListener();
@@ -835,6 +849,7 @@ beforeAll(async () => {
       silent: silent.port,
       cut: cutPort,
       corrupt: corruptPort,
+      upgrading: upgrading.port,
     },
     ca: certificates.ca,
     rogueCa: certificates.rogueCa,
@@ -1094,6 +1109,13 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
     errorName: "DatabaseConfigError",
     message: BLOCKED,
   },
+  "text: a 101 with connection: upgrade and an upgrade header": {
+    ok: false,
+    errorName: "TransportError",
+    kind: "network",
+    message:
+      "The server switched the connection to another protocol, and this transport reads HTTP only, so the response was not read",
+  },
   "open sockets on the stopped listeners": OK,
 };
 
@@ -1304,9 +1326,9 @@ for (const [label, binary] of RUNTIMES) {
       expect(servername(farAddress, run?.from.farAddress, "/far-address")).toBe(false);
     });
 
-    test("the cap, the encoding refusal, the redirect and both stops destroyed their sockets while their transports stayed open", () => {
+    test("the cap, the encoding refusal, the redirect, both stops and the upgrade destroyed their sockets while their transports stayed open", () => {
       const text = run?.report.outcomes["open sockets on the stopped listeners"]?.text ?? "null";
-      expect(JSON.parse(text)).toEqual({ big: 0, bomb: 0, holding: 0, redirecting: 0 });
+      expect(JSON.parse(text)).toEqual({ big: 0, bomb: 0, holding: 0, redirecting: 0, upgrading: 0 });
     });
 
     test.each(Object.keys(BYTE_EXPECTED))("%s", (name) => {

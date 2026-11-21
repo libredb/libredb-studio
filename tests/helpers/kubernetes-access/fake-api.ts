@@ -17,6 +17,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadTlsFixtures } from "../tls-fixtures";
+import { answerWithUpgrade, type UpgradeAnswer } from "../upgrade-answer";
 
 /** A rule the fake answers allowed for: a user or a group, and the exact resource attributes. */
 export interface ReviewGrant {
@@ -54,10 +55,16 @@ export interface ScriptedAnswer {
 }
 
 /**
- * What the next requests get: an answer from the grants, a scripted status and body, no answer at all, or a choice
- * between a scripted answer and the grants made per review.
+ * What the next requests get: an answer from the grants, a scripted status and body, no answer at all, a 101 that
+ * announces an upgrade (tests/helpers/upgrade-answer.ts), or a choice between a scripted answer and the grants made
+ * per review.
  */
-export type FakeAnswer = "grants" | "hang" | ScriptedAnswer | ((body: ReviewBody) => ScriptedAnswer | "grants");
+export type FakeAnswer =
+  | "grants"
+  | "hang"
+  | UpgradeAnswer
+  | ScriptedAnswer
+  | ((body: ReviewBody) => ScriptedAnswer | "grants");
 
 export const REVIEW_PATH = "/apis/authorization.k8s.io/v1/subjectaccessreviews";
 export const PLATFORM_PATH = "/apis/config.openshift.io/v1";
@@ -89,8 +96,10 @@ export class FakeKubernetesApi {
   open = 0;
   maxOpen = 0;
   readonly seen: SeenReview[] = [];
-  /** What the platform check gets: 404 by default, or a scripted answer, or no answer at all. */
-  platformAnswer: ScriptedAnswer | "hang" = NOT_FOUND;
+  /** What the platform check gets: 404 by default, or a scripted answer, no answer at all, or an upgrade 101. */
+  platformAnswer: ScriptedAnswer | "hang" | UpgradeAnswer = NOT_FOUND;
+  /** One promise per socket an upgrade answer was written on, resolved once that socket has closed. */
+  readonly upgradedSockets: Promise<void>[] = [];
   /** The platform checks received, recorded apart from the reviews. */
   readonly platformChecks: { readonly path: string; readonly authorization: string | undefined }[] = [];
   private readonly saved = new Map<string, string | undefined>();
@@ -142,6 +151,7 @@ export class FakeKubernetesApi {
     this.seen.length = 0;
     this.platformAnswer = NOT_FOUND;
     this.platformChecks.length = 0;
+    this.upgradedSockets.length = 0;
     this.setToken(FAKE_TOKEN);
     writeFileSync(this.caPath, this.ca);
   }
@@ -195,6 +205,10 @@ export async function startFakeKubernetesApi(): Promise<FakeKubernetesApi> {
         fake.platformChecks.push({ path: request.url ?? "", authorization: request.headers.authorization });
         const platform = fake.platformAnswer;
         if (platform === "hang") return;
+        if (platform === "upgrade" || platform === "upgrade-close") {
+          fake.upgradedSockets.push(answerWithUpgrade(request.socket, platform));
+          return;
+        }
         response.writeHead(platform.status, { "content-type": "application/json" });
         response.end(platform.body);
         return;
@@ -215,6 +229,10 @@ export async function startFakeKubernetesApi(): Promise<FakeKubernetesApi> {
       });
       const answer = typeof fake.answer === "function" ? fake.answer(body) : fake.answer;
       if (answer === "hang") return;
+      if (answer === "upgrade" || answer === "upgrade-close") {
+        fake.upgradedSockets.push(answerWithUpgrade(request.socket, answer));
+        return;
+      }
       fake.open += 1;
       fake.maxOpen = Math.max(fake.maxOpen, fake.open);
       const reply = () => {

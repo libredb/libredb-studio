@@ -377,6 +377,7 @@ The three verifying modes come out the same, because Node checks the server name
 `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey` reach the request as `ca`, `cert` and `key`, an empty field is left out, and `ssl.rejectUnauthorized` overrides the mode's default either way.
 Each case is exercised by a real handshake against a local `node:https` server in `tests/unit/db/prometheus/request.test.ts`.
 `tests/unit/db/prometheus/provider.test.ts` repeats four of them through the provider's own composition, with nothing injected, so the panel is proven to reach that request function.
+`tests/unit/db/prometheus/upgrade-runtimes.test.ts` runs the TLS path against a `101` that announces an upgrade under Bun and again under Node, where only the path's own destroy closes the switched connection.
 
 ### 4.5 No connection string
 
@@ -655,6 +656,7 @@ Mapped from the envelope's `errorType`, not from the HTTP status, as Druid and T
 | any 3xx | `ConnectionError` naming the status and the `Location` origin |
 | TLS handshake or verification failure | `ConnectionError` carrying the Node error code |
 | refused connection, reset, DNS failure | `ConnectionError` |
+| a `101 Switching Protocols` that announces an upgrade (`Connection: Upgrade` and an `Upgrade` header) | `ConnectionError`, at once rather than at the deadline, on both paths; on the TLS path the switched connection is closed |
 | a `400` whose whole body is `unsupported path requested: "<the path>"` and a newline, for the path the request was sent to, the answer VictoriaMetrics gives a path it does not serve | `QueryError` saying the server does not serve that path |
 | a body that is not the API envelope (a proxy's HTML page, a 502, or the plain-text 503 the server's own ready gate, `testReady` in `web/web.go`, answers while it starts up or shuts down) | `ConnectionError` naming the path and the status and the sources such an answer can have, without choosing one and without quoting the body |
 | a response past `RESPONSE_BYTE_CAP` | `QueryError` naming the cap |
@@ -672,7 +674,7 @@ An `errorType` this build does not know is carried verbatim as the transport err
 | File | Owns |
 |---|---|
 | [`tests/integration/db/prometheus-provider.test.ts`](../../tests/integration/db/prometheus-provider.test.ts) | The provider end to end through the real composition; `globalThis.fetch` is replaced per test and restored in `afterEach`, with payloads captured from the live server |
-| `tests/unit/db/prometheus/` | One file per module: `promql`, `transport`, `results`, `request` (real TLS handshakes against a local `node:https` server), `concurrency`, `http-transport` (every endpoint's exact URL), `monitoring`, `errors`, `objects`, `provider`, `provider-endpoint` (the endpoint the real composition builds, against a local server), `seam-guard`, and `provider-doc` (this document against the constants) |
+| `tests/unit/db/prometheus/` | One file per module: `promql`, `transport`, `results`, `request` (real TLS handshakes against a local `node:https` server), `upgrade-runtimes` (a `101` that switches protocols, under Bun and Node), `concurrency`, `http-transport` (every endpoint's exact URL), `monitoring`, `errors`, `objects`, `provider`, `provider-endpoint` (the endpoint the real composition builds, against a local server), `seam-guard`, and `provider-doc` (this document against the constants) |
 | `tests/unit/editor/promql-language.test.ts` | The editor's tokenizer, its word lists pinned to the lexer and function tables captured at the tag |
 | [`e2e/prometheus-provider.spec.ts`](../../e2e/prometheus-provider.spec.ts) | The connection dialog: the driver is selectable, `9090` is the default, no Database box renders, the password field's label and hint |
 

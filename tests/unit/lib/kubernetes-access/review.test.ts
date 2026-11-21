@@ -306,6 +306,18 @@ describe("the answer", () => {
     expect(api.seen[0].body.spec?.groups).toEqual(subject.groups);
   });
 
+  test.each(["upgrade", "upgrade-close"] as const)(
+    "an API server that answers a 101 announcing an upgrade (%s) fails as network at once, and the socket is closed",
+    async (answer) => {
+      api.answer = answer;
+      const started = Date.now();
+      expect(await requestAccessReview(DEV_A, SECRET)).toEqual({ kind: "failed", reason: "network" });
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(api.seen).toHaveLength(1);
+      await Promise.all(api.upgradedSockets);
+    },
+  );
+
   test("an API server that does not answer within the deadline fails", async () => {
     api.answer = "hang";
     const started = Date.now();

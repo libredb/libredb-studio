@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D469, U17 · 347
+- [Drivers and connections](#drivers-and-connections) — D1-D469, U17 · 345
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 187
@@ -2725,17 +2725,6 @@ Found 2026-10-10 by the adversarial review of the S3 byte transport; pre-existin
 
 **Done when:** the text transport fails a request taken from the queue with its signal already aborted before it is handed to the Agent, with the same kind and message as today, and a node-transport test with four requests on one signal under `maxSockets: 1` asserts that the listener accepts one connection.
 
-### D259. A 101 answer never settles a text transport request
-
-node:http hands a `101 Switching Protocols` answer to the request's `upgrade` event, never to the response callback, and `createNodeTransport` in `src/lib/db/http/node-transport.ts` has no `upgrade` listener, so the request holds its socket slot until its deadline and is reported as a timeout, or forever without one.
-Measured 2026-10-10 on Bun 1.4.2 and Node 24.14 against a raw listener that answers every request with a 101: a GET with a 1.5 s deadline failed as `timeout` after 1501 ms.
-`createNodeByteTransport` refuses a 101 at once as a network failure and destroys the switched socket.
-A text transport built with `refusesUpgrade: true` refuses it the same way; the default is unchanged, so this entry covers every text transport that does not ask.
-
-Found 2026-10-10 by the adversarial review of the S3 byte transport; pre-existing in the text transport.
-
-**Done when:** the text transport fails a 101 answer at once as a `network` failure and destroys its socket, with a node-transport test that asserts the failure arrives well before the deadline and that the next request under `maxSockets: 1` completes.
-
 ### D260. A request that fails in flight frees its slot while the Agent still counts its socket
 
 When a request fails after its socket was opened, by a cancel, a deadline or the byte cap, the shared queue in `src/lib/db/http/node-transport.ts` frees its slot at once, but the Agent counts the destroyed socket against `maxSockets` until it has closed, so the next queued request goes to the Agent's own queue, where Node dials a socket even for a request cancelled there.
@@ -4559,9 +4548,10 @@ Found 2026-11-15 while moving BigQuery onto the shared Google auth, as the half 
 
 **Done when:** one module outside every provider directory holds the bearer lane pool, the three providers use it, and their lane tests pass unchanged.
 
-### D464. BigQuery's API lanes do not refuse link-local addresses or upgrades
+### D464. BigQuery's API lanes do not refuse link-local addresses or a 101 without the upgrade headers
 
 The API transports in `src/lib/db/providers/sql/bigquery/transport.ts` are built with `maxSockets` 8 and no `refusesLinkLocal` or `refusesUpgrade`, while every auth lane of `src/lib/db/auth` refuses upgrades and every auth lane but the metadata one refuses link-local addresses.
+Every text transport fails a `101` that announces an upgrade at once; without `refusesUpgrade` a `101` without the upgrade headers comes back as an answer of status 101.
 The API origin is `bigquery.googleapis.com`, or the operator's `BIGQUERY_EMULATOR_HOST`.
 `refusesLinkLocal` leaves loopback and private addresses reachable, so the only open question for the emulator lane is whether an emulator at a link-local address must stay reachable; Firestore answered no and sets both flags on its emulator lane too.
 
@@ -4599,18 +4589,6 @@ Found 2026-11-21 by the review of the Couchbase answer bounds change.
 Not fixed there: failing every 2xx whose body is not JSON changes how each Couchbase read is interpreted, which is the maintainer's decision.
 
 **Done when:** a Couchbase 2xx whose body is not JSON fails by name as a retriable `CouchbaseError` that reads as a `ConnectionError`, or the decision to keep reading it as empty is recorded in `docs/providers/couchbase.md` section 4.5, and a test drives both paths against a local listener that cuts a close-delimited answer.
-
-### D468. The guarded plaintext adapter never settles a 101 answer
-
-`httpTransportFetch` in `src/lib/db/http/egress-policy.ts`, the adapter every `fetch`-based provider transport uses when `DB_HTTP_BLOCK_PRIVATE_HOSTS` is set, sends its request through `node:http` with no `upgrade` listener.
-node:http hands a `101 Switching Protocols` answer with Connection: upgrade and an Upgrade header to that event, never to the response callback, so the returned promise never settles.
-Measured 2026-11-21 on Node 24.22.1 with a Couchbase plaintext query against a local listener that answers a 101 and then closes: still pending after 8 s, where the unguarded `fetch` fails at once with `UND_ERR_SOCKET`.
-D259 is the same gap in `createNodeTransport`; Couchbase's TLS path refuses a 101 since the answer bounds change.
-The adapter serves seven provider transports, so the fix is outside any one provider.
-
-Found 2026-11-21 by the review of the Couchbase answer bounds change.
-
-**Done when:** `httpTransportFetch` rejects a 101 answer at once as a network failure and destroys its socket, with a test against a local listener that answers a 101 and closes, and one that keeps the socket open.
 
 ### D469. The first concurrent opens of a fresh SQLite sample can fail with "database is locked", and the ERD then waits forever
 

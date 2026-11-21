@@ -318,6 +318,22 @@ describe("self reviews, with the signed-in user's own token", () => {
     }
   });
 
+  test("a 101 announcing an upgrade denies at once, is never kept, and the next ask goes out again", async () => {
+    cluster.script(SELF_REVIEW_PATH, "upgrade");
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      expect(await accessReviewVerdict(H, ORDERS)).toBe("denied");
+      expect(warn.mock.calls[0][1]).toEqual({ route: "kubernetes-access", reason: "network", heldBack: 0 });
+    } finally {
+      warn.mockRestore();
+    }
+    await Promise.all(cluster.upgradedSockets);
+    cluster.script(SELF_REVIEW_PATH, () => undefined);
+    cluster.grants = [ORDERS_SELF_GRANT];
+    expect(await accessReviewVerdict(H, ORDERS)).toBe("allowed");
+    expect(cluster.selfReviews()).toHaveLength(2);
+  });
+
   test("a 403 denies, is never kept, and is logged at error level once a minute", async () => {
     cluster.script(SELF_REVIEW_PATH, { status: 403, body: "{}" });
     const error = spyOn(logger, "error").mockImplementation(() => {});

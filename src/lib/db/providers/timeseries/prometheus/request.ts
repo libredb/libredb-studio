@@ -26,6 +26,8 @@
  *   deadline (`AbortSignal.timeout`) from a cancellation.
  * - A TLS failure stays a failure carrying the runtime's code, and nothing is retried over
  *   plain HTTP (#1085 S8).
+ * - A 101 that announces an upgrade fails at once as a network failure, and the switched
+ *   connection is closed.
  * - A failure message is made of a status, a code, an origin or a number, never of a header
  *   value, a response body or the runtime's own message: `fetch` quoted a header value it
  *   refused (measured on bun 1.4.2), and these messages reach the log and the client.
@@ -35,6 +37,7 @@
  */
 import type { ClientRequest, IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
+import type { Socket } from "node:net";
 import { urlToHttpOptions } from "node:url";
 import { rejectRedirect } from "@/lib/db/http/endpoint";
 import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
@@ -319,6 +322,13 @@ function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<Inboun
         },
       );
       clientRequest.on("error", failWith);
+      // node:https hands a 101 that announces an upgrade (Connection: upgrade and an Upgrade header) to this event,
+      // never to the response callback, and without a listener emits no error either, so the request would wait for
+      // its deadline. The switched socket is no longer the request's, so it is destroyed here.
+      clientRequest.on("upgrade", (_answer: IncomingMessage, socket: Socket) => {
+        socket.destroy();
+        fail(new RequestFailure("network", NETWORK_FAILURE));
+      });
       request.signal.addEventListener("abort", onAbort, { once: true });
       clientRequest.end(request.body);
     } catch (error) {

@@ -558,7 +558,8 @@ With `DB_HTTP_BLOCK_PRIVATE_HOSTS` set, a plaintext answer cut short reads `... 
 An answer with neither a length nor chunking ends where its connection closes, so a cut there cannot be told from the end; a body that is then not JSON reads as an empty result (`docs/BACKLOG.md` D467).
 
 A `101 Switching Protocols` answer fails as a `ConnectionError` reading `Couchbase request failed: the server switched protocols instead of answering`, on the TLS path, and its socket is closed.
-On the plaintext path the runtime's `fetch` fails it as a closed connection, ending in `(UND_ERR_SOCKET)`; with `DB_HTTP_BLOCK_PRIVATE_HOSTS` set, the guarded adapter does not yet refuse it (`docs/BACKLOG.md` D468).
+On the plaintext path the runtime's `fetch` fails it as a closed connection, ending in `(UND_ERR_SOCKET)`.
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` set, the guarded adapter fails a 101 that announces an upgrade at once and closes its socket, reading `Couchbase request failed: The server switched the connection to another protocol instead of answering, so no answer was read`.
 
 ### Connection string
 

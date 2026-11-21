@@ -239,9 +239,23 @@ class AnswerDecodingError extends DatabaseError {
 }
 
 /**
+ * A 101 that switched the connection to another protocol, which no HTTP database transport reads. Not a
+ * DatabaseConfigError, so each caller wraps it as its own network failure.
+ */
+class SwitchedProtocolsError extends DatabaseError {
+  constructor() {
+    super("The server switched the connection to another protocol instead of answering, so no answer was read");
+    this.name = "SwitchedProtocolsError";
+    Object.setPrototypeOf(this, SwitchedProtocolsError.prototype);
+  }
+}
+
+/**
  * The restricted mode uses Node's request socket so its DNS lookup can validate and
  * pin the address. The default path remains the transport's native fetch, including
- * its test injection point and normal local-network behavior.
+ * its test injection point and normal local-network behavior. On the restricted path a
+ * 101 that announces an upgrade rejects at once with SwitchedProtocolsError, as the
+ * native fetch fails one at once.
  */
 export function httpTransportFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
   if (!blockPrivateHttpHosts()) return globalThis.fetch(input, init);
@@ -317,6 +331,13 @@ export function httpTransportFetch(input: string | URL, init: RequestInit = {}):
       }
     });
     request.on("error", reject);
+    // node:http hands a 101 that announces an upgrade (Connection: upgrade and an Upgrade header) to this event, never
+    // to the response callback, and without a listener it emits no error either, so the promise would never settle.
+    // The switched socket is no longer the request's, so it is destroyed here.
+    request.on("upgrade", (_answer, socket) => {
+      socket.destroy();
+      reject(new SwitchedProtocolsError());
+    });
     // Every current HTTP database transport sends only a string body, if any.
     if (init.body !== undefined && init.body !== null && typeof init.body !== "string") {
       request.destroy();
