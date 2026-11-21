@@ -499,9 +499,9 @@ export class DuckDBProvider extends SQLBaseProvider {
       // single-writer borrow split DuckDB handles by posture because of it, through
       // `READS_FILE_ACCESS_POSTURE`, never a `connection.type` branch.
       readsFileAccessPosture: true,
-      // Declared explicitly rather than left to `query-generators.ts`'s port
-      // heuristics: `defaultPort: null` is shared with sqlite, and two engines behind
-      // one null port is the collision that forced this field for the search engines.
+      // Declared explicitly rather than left to the query generators' default: DuckDB
+      // has no row of its own in `SQL_ENGINE_GENERATORS`, and the declaration pins its
+      // quoting against a later edit of that default.
       identifierQuoting: "double",
       // Only what a live probe accepted. `REINDEX` is a parser error on this engine,
       // and `PRAGMA integrity_check` and `PRAGMA optimize` are both "Pragma Function

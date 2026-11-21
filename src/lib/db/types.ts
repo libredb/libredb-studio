@@ -1523,22 +1523,18 @@ export interface ProviderCapabilities {
   supportsConnectionString: boolean;
   defaultPort: number | null;
   /**
-   * How this engine quotes an identifier, when the port cannot say.
+   * How this engine quotes an identifier in what the query generators write, where it is not the default.
    *
-   * `src/lib/db/query-generators/index.ts` has always derived the dialect from
-   * `defaultPort`, which worked only because every engine had a distinct one. That
-   * assumption broke with #424 Phase 1: Elasticsearch and OpenSearch BOTH ship on
-   * 9200 and they disagree about the quote character, so one port had to answer for
-   * two dialects. The consequence was measured, and it is the worst kind: on
-   * OpenSearch 3.8.0 a double-quoted identifier is a STRING LITERAL, so
-   * `SELECT customer FROM probe_orders WHERE "customer" = 'acme'` answers HTTP 200
-   * with `total: 0` - a generated query silently returning no rows instead of
-   * failing. Backticks return the row.
+   * The generators answer in this order: a query language that spells names its own way, this declaration, the
+   * engine's own row in `SQL_ENGINE_GENERATORS` under the connection's type id, and the default, under which an
+   * unquoted name folds to lower case.
+   * Elasticsearch and OpenSearch share one provider and disagree about the quote character, which is why the search
+   * provider declares it per product: on OpenSearch 3.8.0 a double-quoted identifier is a STRING LITERAL, so
+   * `SELECT customer FROM probe_orders WHERE "customer" = 'acme'` answers HTTP 200 with `total: 0`, a generated query
+   * silently returning no rows instead of failing; backticks return the row.
    *
-   * Absent means "keep deriving it from the port", so no existing provider changes
-   * and nothing about the old behaviour moves. A provider sets this when the port
-   * is not a faithful proxy for its dialect - which is any engine that shares a
-   * default port with a differently-quoting one.
+   * Absent means the engine's row under its type id, or the default where it has none; the declared `defaultPort` is
+   * not read.
    *
    * `"double"` and `"backtick"` quote only a name that would not round-trip bare;
    * `"double-always"` quotes every name. InfluxDB 3 declares it: its read policy

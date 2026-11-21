@@ -1,6 +1,6 @@
 /**
- * The SQL engines' own generator forms are read by the connection's type id, never by the port its declaration names
- * (FND-1). `SQL_ENGINE_GENERATORS` holds one row per SQL engine that writes forms of its own, read through
+ * The SQL engines' own generator forms are read by the connection's type id, never by the `defaultPort` a declaration
+ * names (FND-1). `SQL_ENGINE_GENERATORS` holds one row per SQL engine that writes forms of its own, read through
  * `typeIdRow`, and each of the seven generator functions reads the type it is handed once, as it is called, so a value
  * outside the `DatabaseType` union is refused by name whatever the declaration says.
  */

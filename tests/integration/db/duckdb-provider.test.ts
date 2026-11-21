@@ -231,9 +231,9 @@ describe("DuckDBProvider capabilities", () => {
     expect(pageTwo.wasLimited).toBe(true);
   });
 
-  test("declares double-quote identifier quoting rather than relying on the null-port heuristic", () => {
-    // `defaultPort: null` is shared with sqlite, and query-generators.ts derives the
-    // dialect from the port unless the capability is declared.
+  test("declares double-quote identifier quoting rather than relying on the generators' default", () => {
+    // DuckDB has no row of its own in `SQL_ENGINE_GENERATORS`, so the declaration is
+    // what pins its quoting against a later edit of the default.
     expect(capabilities.identifierQuoting).toBe("double");
   });
 

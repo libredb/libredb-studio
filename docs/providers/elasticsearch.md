@@ -1653,7 +1653,7 @@ refusal are the same value and cannot drift apart.
 | `maintenanceOperations` | `[]` | Consequence of the above |
 | `supportsConnectionString` | **`false`** | No URI convention, and `http(s)://` is ClickHouse's ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | `defaultPort` | `9200` | Both schemes ([§4.3](#43-tls)) |
-| `identifierQuoting` | **`double`** | Declared because the port cannot say: the fork ships on 9200 too and quotes differently, and a wrong guess there returns **no rows** rather than an error ([opensearch.md §5.4](./opensearch.md#54-dialect-traps-a-user-will-hit)) |
+| `identifierQuoting` | **`double`** | Declared per product by the shared search provider: the fork quotes differently, and a wrong guess there returns **no rows** rather than an error ([opensearch.md §5.4](./opensearch.md#54-dialect-traps-a-user-will-hit)) |
 | `statementTerminator` | **`none`** | This grammar has no `;`, and the generated statement of the day, `SELECT * FROM probe_orders LIMIT 50;`, was refused — the schema tree's first click. #816 later took the bound out of that statement too, leaving the terminator as the reason ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | `containerLevels` | **`[]`** | An index is not inside anything, and both products' own SQL surfaces say so ([§6](#the-object-surface-789)) |
 | `objectKinds` | `index`, `alias`, `stream`, `pipeline`, `template` | The five objects a search cluster publishes over REST; `index` is the only one that accepts row writes ([§6](#the-object-surface-789)) |

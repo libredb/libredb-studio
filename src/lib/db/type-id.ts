@@ -7,7 +7,8 @@
  *
  * The provider factory, `resolveConnection`, the `db-ui-config` lookups, the Studio connection lists, the connection
  * hook, the embedded workspace's connection adapter and the connection form hook ask this module first; so do the five
- * contract registry lookups (through `typeIdRow`) and the migration's dialect header, and the published
+ * contract registry lookups and the query generators' SQL engine rows (through `typeIdRow`) and the migration's dialect
+ * header, and the published
  * `QuerySafetyDialog`, `TestDataGenerator`, `QueryEditor` and `ResultsGrid`, the components that read a per-engine fact
  * with a type a host hands them. The capability tables are read through `typeIdRow` as well: `WRITE_REACH` by the
  * read-only marker and the connection form hook, `READ_ONLY_ENFORCED` by the provider factory,

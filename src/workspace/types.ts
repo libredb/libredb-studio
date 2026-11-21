@@ -56,6 +56,8 @@ export interface WorkspaceConnection {
    * its `onQueryExecute` really applies a positive `offset`, and a control that re-fetches
    * page one is worse than none. Declare it `true` once your implementation pages, and
    * report `pagination.hasMore` honestly: the control also requires `hasMore: true`.
+   *
+   * The SQL forms a tree click and Generate Query write follow `type`; the `defaultPort` declared here does not choose them.
    */
   capabilities?: ProviderCapabilities;
   /** This provider's UI wording, as `getLabels()` reports it. See `capabilities`. */

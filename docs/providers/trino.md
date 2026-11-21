@@ -483,9 +483,8 @@ Where the statement ends comes from `lib/sql/statement-end` — the same reader 
 (#280), which scans spans rather than matching `/;\s*$/` and refuses to cut a text whose literal or
 comment never closes.
 
-`identifierQuoting: "double"` is declared explicitly for the neighbouring reason (#424 Phase 1's
-lesson): the generators otherwise derive the quote character from `defaultPort`, and `8080` is a
-generic HTTP port that says nothing about a dialect. Trino quotes with `"`, and a backtick is not a
+`identifierQuoting: "double"` is declared explicitly, so a later edit of the generators' default cannot move Trino's quoting: Trino has no row of its own in `SQL_ENGINE_GENERATORS`.
+Trino quotes with `"`, and a backtick is not a
 quote character in its grammar at all.
 
 ### 3.14 `endOpenQueryTransaction()` is not implemented, and the honest reason is that nobody has measured it yet
@@ -1734,7 +1733,7 @@ are undeclared.
 | `maintenanceOperations` | `["kill"]` | The only operation the engine itself can promise ([§8](#8-maintenance)) |
 | `supportsConnectionString` | `false` | The shared parser does not accept `jdbc:trino://` ([§4.2](#42-there-is-no-connection-string--yet)) |
 | `defaultPort` | `8080` | Same under TLS ([§4.3](#43-tls-and-the-password-rule)) |
-| `identifierQuoting` | `"double"` | Declared, not derived from a generic port ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
+| `identifierQuoting` | `"double"` | Declared, so it does not follow a later edit of the generators' default ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
 | `statementTerminator` | `"none"` | `SELECT 1;` is a syntax error ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
 | `containerLevels` | `catalog`, then `schema` | Labelled Catalog and Schema: a catalog is a named connector configuration, not a database ([two container levels](#two-container-levels-and-a-catalog-is-not-a-database)) |
 | `containerPathShapes` | `"prefixes"` | `[catalog]` and `[catalog, schema]` both address a container, because a catalog alone is a real address ([container shapes](#container-shapes-and-the-derivations-behind-them)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider directly (#1147) |
