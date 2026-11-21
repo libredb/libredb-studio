@@ -215,8 +215,9 @@ export function loopbackPlaintextEnv(hostname, current) {
 
 /**
  * The seed assets directory the launcher hands the server (docs/DISTRIBUTION.md, "Built-in sample assets"): the
- * payload's own `seed-assets`, unless the operator set a value, which resolvePathVariables has already made absolute.
- * An empty or whitespace-only value counts as unset. The value is always absolute: server.js changes into its own
+ * payload's own `seed-assets`, unless the operator set a value. A value under the exact name SEED_ASSETS_DIR has
+ * already been made absolute by resolvePathVariables; on Windows, where environment names ignore letter case, a value
+ * under the name in another letter case is passed on as given. An empty or whitespace-only value counts as unset. The value is always absolute: server.js changes into its own
  * directory before it reads SEED_ASSETS_DIR, so a relative payload directory (a relative HOME) is resolved here
  * against the launcher's working directory, the same directory spawn resolves the server's cwd against.
  *

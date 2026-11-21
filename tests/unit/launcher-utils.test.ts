@@ -31,7 +31,7 @@ import {
   URL_PATH_VARIABLES,
   OTHER_PROGRAM_PATH_VARIABLES,
 } from "../../bin/lib/launcher-utils.mjs";
-import { describeIf, missingUnixTool, resolveUnixTool } from "../helpers/posix-tools";
+import { describeIf, missingUnixTool, resolveUnixTool, testIf } from "../helpers/posix-tools";
 import { howItFailed } from "../helpers/spawn-outcome";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-utils-test-"));
@@ -1144,4 +1144,15 @@ describe("launcher seed assets directory", () => {
     // realpath: on macOS the temp directory is a symlink, and process.cwd() reports its target.
     expect(output).toContain(`SEED_ASSETS=${path.join(fs.realpathSync(invokedFrom), "my-assets")}\n`);
   });
+
+  // Only Windows reads environment names without letter case, and only there does spawn keep one of two names
+  // differing in case: a plain-object read of SEED_ASSETS_DIR would miss this value, and the default would win.
+  testIf(
+    process.platform === "win32" ? null : "letter case in environment names: only Windows ignores it",
+    "keeps an operator's seed_assets_dir in another letter case",
+    () => {
+      const own = path.join(tempDir, "operator-seed-assets-lowercase");
+      expect(launch({ seed_assets_dir: own }).output).toContain(`SEED_ASSETS=${own}\n`);
+    },
+  );
 });

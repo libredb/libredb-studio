@@ -1569,7 +1569,7 @@ macOS, missing artifact) and prints a summary. Where each channel runs in CI:
 | snap | `release-artifacts.yml` snap job (amd64; runs before the store publish) |
 | homebrew | not in CI (linux runners) — run locally on macOS |
 
-The next-dev row's servers get this checkout's `seed-assets` from `playwright.config.ts`, and the tarball channel, which has no launcher, gets it from the script, as a user running `server.js` directly would.
+The next-dev row's servers get this checkout's `seed-assets` from `playwright.config.ts`, the tarball channel, which has no launcher, gets it from the script, as a user running `server.js` directly would, and the docker channel runs on the image's `ENV`.
 Every channel the script starts through a launcher runs with no inherited `SEED_ASSETS_DIR`, so it runs on the value its launcher sets ([Built-in sample assets](#built-in-sample-assets)), and a wrong value fails it.
 A launcher that sets nothing is not caught here yet: the server still falls back to `<working directory>/seed-assets`, and `server.js` changes into its payload, so the fallback finds the same directory.
 Until that fallback is removed, each launcher's own unit tests are what prove it sets the value.
