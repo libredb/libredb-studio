@@ -486,8 +486,12 @@ const { details } = await provider.describeObjects(['public'], 'table');
 await provider.disconnect();
 ```
 
-`createDatabaseProvider` opens no SSH tunnel: wrap it in `withOneShotTunnel`, or use `getOrCreateProvider`, which opens one for a connection whose `sshTunnel` is enabled.
-The provider it returns is built from a copy of the connection whose `sshTunnel` holds no `password`, `privateKey` or `passphrase`; those stay in the record the caller passed, so `provider.config` is not that record whenever it carries an `sshTunnel` object.
+`createDatabaseProvider` opens no SSH tunnel.
+To reach a database through one, build, connect, use and disconnect the provider inside the callback of `withOneShotTunnel`, which closes its tunnel when the callback returns, or use `getOrCreateProvider`, which opens one for the provider it caches.
+Both open a tunnel only for a connection whose `sshTunnel` is enabled and which names a `host` and a `port`; a connection-string record passes through without a tunnel, and its driver dials the string's host directly.
+Without either, a provider whose `sshTunnel.enabled` is true connects, on most engines, to the record's own `host` and `port` with no error.
+The provider `createDatabaseProvider` returns is built from a copy of the connection whose `sshTunnel` holds no `password`, `privateKey` or `passphrase`; those stay in the record the caller passed, so `provider.config` is not that record whenever it carries an `sshTunnel` object.
+Because that copy keeps only own enumerable data fields, a connection with an `sshTunnel`, and the tunnel itself, must be a plain data object, as parsed JSON is: a non-object `sshTunnel`, a class instance, a getter or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built.
 
 ### DuckDB file access and the execution context
 

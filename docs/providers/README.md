@@ -223,9 +223,11 @@ A Kafka connection refuses a tunnel: a Kafka client reaches every broker at the 
 BigQuery, Firestore and Snowflake offer no SSH panel either: each reaches its vendor's own API hosts over TLS, and its provider doc says why a tunnel is not offered.
 
 **What a provider receives of the tunnel.**
-Studio opens the tunnel itself, with the connection's tunnel password, private key and passphrase, before it builds the provider.
-The provider receives the tunnel's outcome: the local endpoint in `host` and `port`, the far end under `TUNNEL_FAR_END`, and the tunnel's public fields in `sshTunnel` (`enabled`, `host`, `port`, `username`, `authMethod`, `hostKeyFingerprint`).
-It never receives the tunnel's password, private key or passphrase: `createDatabaseProvider` builds every provider from `providerConnection` in [`src/lib/db/provider-connection.ts`](../../src/lib/db/provider-connection.ts), which leaves them out ([SECURITY.md control 3.41](../SECURITY.md)).
+Studio, not the provider, dials the tunnel.
+On the paths that connect through one, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` in [`src/lib/db/factory.ts`](../../src/lib/db/factory.ts), core opens it before it builds the provider, for a connection whose `sshTunnel` is enabled and which names a `host` and a `port`.
+A provider built on those paths receives the tunnel's outcome: the local endpoint in `host` and `port`, the far end under `TUNNEL_FAR_END`, and the tunnel's public fields in `sshTunnel` (`enabled`, `host`, `port`, `username`, `authMethod`, `hostKeyFingerprint`).
+A provider built by `createDatabaseProvider` directly, as Studio does for a provider it never connects and as an embedder may, has no tunnel opened for it: it can see `sshTunnel.enabled: true` with no `TUNNEL_FAR_END`, which means no tunnel was opened and `host` and `port` are the database's own, so a provider that dials must refuse that connection rather than connect.
+On every path the provider never receives the tunnel's password, private key or passphrase: `createDatabaseProvider` builds every provider from `providerConnection` in [`src/lib/db/provider-connection.ts`](../../src/lib/db/provider-connection.ts), which leaves them out ([SECURITY.md control 3.41](../SECURITY.md)).
 A provider that reads a tunnel credential therefore reads `undefined`.
 
 **The policy is trust-on-first-use (TOFU), pinned per connection.** Not "refuse anything unknown":
