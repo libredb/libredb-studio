@@ -45,6 +45,7 @@ import {
 } from "@/lib/db/providers/sql/trino/transport";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // ============================================================================
 // Harness
@@ -99,7 +100,7 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 }
 
 function makeTransport(overrides: Partial<DatabaseConnection> = {}): TrinoHttpTransport {
-  return new TrinoHttpTransport(TRINO_DIALECT, makeConnection(overrides));
+  return new TrinoHttpTransport(TRINO_DIALECT, makeConnection(overrides), ALLOWS_PRIVATE_HOSTS);
 }
 
 function firstCall(): FetchCall {
@@ -496,12 +497,16 @@ describe("TrinoHttpTransport request", () => {
   });
 
   test("defaults the host and the port from the descriptor", async () => {
-    await new TrinoHttpTransport(TRINO_DIALECT, {
-      id: "trino-2",
-      name: "Trino",
-      type: TRINO,
-      createdAt: new Date(),
-    }).query("SELECT 1");
+    await new TrinoHttpTransport(
+      TRINO_DIALECT,
+      {
+        id: "trino-2",
+        name: "Trino",
+        type: TRINO,
+        createdAt: new Date(),
+      },
+      ALLOWS_PRIVATE_HOSTS,
+    ).query("SELECT 1");
 
     expect(firstCall().url).toBe("http://localhost:8080/v1/statement");
   });

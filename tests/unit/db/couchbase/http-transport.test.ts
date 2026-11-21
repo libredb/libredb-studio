@@ -22,6 +22,7 @@ import {
   type CouchbaseTlsMaterial,
   type JsonRequestInit,
 } from "@/lib/db/providers/document/couchbase/http-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // ============================================================================
 // Helpers
@@ -75,7 +76,7 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 }
 
 function makeTransport(overrides: Partial<DatabaseConnection> = {}, deps: CouchbaseHttpTransportDeps = {}) {
-  return new CouchbaseHttpTransport(makeConnection(overrides), deps);
+  return new CouchbaseHttpTransport(makeConnection(overrides), ALLOWS_PRIVATE_HOSTS, deps);
 }
 
 function successPayload(overrides: Record<string, unknown> = {}) {
@@ -913,7 +914,7 @@ describe("nodeRequestJson", () => {
     });
 
     try {
-      const response = await nodeRequestJson(`${server.url}/pools/default?x=1`, GET_INIT, NO_TLS);
+      const response = await nodeRequestJson(`${server.url}/pools/default?x=1`, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS);
 
       expect(response.httpCode).toBe(200);
       expect(response.payload).toEqual({ ok: true });
@@ -940,6 +941,7 @@ describe("nodeRequestJson", () => {
         `${server.url}/query/service`,
         { method: "POST", headers: { "content-type": "application/json" }, body: '{"statement":"SELECT 1"}' },
         NO_TLS,
+        ALLOWS_PRIVATE_HOSTS,
       );
 
       expect(response.httpCode).toBe(201);
@@ -957,7 +959,7 @@ describe("nodeRequestJson", () => {
     });
 
     try {
-      const response = await nodeRequestJson(server.url, GET_INIT, NO_TLS);
+      const response = await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS);
 
       expect(response.httpCode).toBe(500);
       expect(response.payload).toBeNull();
@@ -984,6 +986,7 @@ describe("nodeRequestJson", () => {
         `${redirecting.url}/pools/default`,
         { method: "GET", headers: { authorization: "Basic c2VjcmV0" } },
         NO_TLS,
+        ALLOWS_PRIVATE_HOSTS,
       );
 
       expect(response.httpCode).toBe(307);
@@ -999,7 +1002,9 @@ describe("nodeRequestJson", () => {
     const deadUrl = server.url;
     await server.close();
 
-    const error = (await nodeRequestJson(deadUrl, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+    const error = (await nodeRequestJson(deadUrl, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS).catch(
+      (e: unknown) => e,
+    )) as CouchbaseError;
 
     expect(error).toBeInstanceOf(CouchbaseError);
     expect(error.code).toBe(0);
@@ -1095,7 +1100,7 @@ describe("nodeRequestJson answer bounds", () => {
     const server = await startServer(listener);
 
     try {
-      const response = await nodeRequestJson(server.url, GET_INIT, NO_TLS);
+      const response = await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS);
 
       expect(response).toEqual({ httpCode: 200, payload: { ok: true } });
     } finally {
@@ -1107,7 +1112,9 @@ describe("nodeRequestJson answer bounds", () => {
     const { outcome, listener } = streamingListener(COUCHBASE_RESPONSE_CAP_BYTES * 4);
     const server = await startServer(listener);
 
-    const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+    const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS).catch(
+      (e: unknown) => e,
+    )) as CouchbaseError;
     // Waits for the server side of the socket to close, so the outcome below is final.
     await server.close();
 
@@ -1126,7 +1133,9 @@ describe("nodeRequestJson answer bounds", () => {
     const server = await startServer(cutListener(how));
 
     try {
-      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS).catch(
+        (e: unknown) => e,
+      )) as CouchbaseError;
 
       expect(error).toBeInstanceOf(CouchbaseError);
       expect(error.message).toBe("Couchbase request failed: the server ended the answer before it was complete");
@@ -1141,7 +1150,9 @@ describe("nodeRequestJson answer bounds", () => {
     const server = await startServer(cutListener("reset"));
 
     try {
-      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS).catch(
+        (e: unknown) => e,
+      )) as CouchbaseError;
 
       expect(error).toBeInstanceOf(CouchbaseError);
       expect(error.message).toStartWith("Couchbase request failed: ");
@@ -1160,7 +1171,9 @@ describe("nodeRequestJson answer bounds", () => {
     const server = await startSwitchingServer(how);
 
     try {
-      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS).catch(
+        (e: unknown) => e,
+      )) as CouchbaseError;
 
       expect(error).toBeInstanceOf(CouchbaseError);
       expect(error.message).toBe("Couchbase request failed: the server switched protocols instead of answering");

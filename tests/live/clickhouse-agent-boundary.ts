@@ -56,6 +56,7 @@ import { ClickHouseHttpTransport } from "@/lib/db/providers/sql/clickhouse/http-
 import { ClickHouseTransportError } from "@/lib/db/providers/sql/clickhouse/transport";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const PREFIX = "libredb_lb_";
 const DB = `${PREFIX}data`;
@@ -97,7 +98,7 @@ function connection(user: string, password: string, database = DB): DatabaseConn
   };
 }
 
-const adminTransport = new ClickHouseHttpTransport(connection(ADMIN.user, ADMIN.password, "default"));
+const adminTransport = new ClickHouseHttpTransport(connection(ADMIN.user, ADMIN.password, "default"), egressDecision());
 
 async function admin(sql: string): Promise<void> {
   await adminTransport.query(sql, { timeoutMs: 30_000 });
@@ -106,7 +107,10 @@ async function admin(sql: string): Promise<void> {
 /** The server's code for `sql` sent as `user` with `settings`, or null when it answered. */
 async function codeOf(user: string, password: string, sql: string, settings: Record<string, string | number>) {
   try {
-    await new ClickHouseHttpTransport(connection(user, password)).query(sql, { settings, timeoutMs: 30_000 });
+    await new ClickHouseHttpTransport(connection(user, password), egressDecision()).query(sql, {
+      settings,
+      timeoutMs: 30_000,
+    });
     return null;
   } catch (error) {
     if (error instanceof ClickHouseTransportError) return error.code;
@@ -352,7 +356,7 @@ async function main(): Promise<void> {
   );
   await nondefault.disconnect();
   await executableFunction(true);
-  const called = await new ClickHouseHttpTransport(connection(ro, SEEDED_PASSWORD))
+  const called = await new ClickHouseHttpTransport(connection(ro, SEEDED_PASSWORD), egressDecision())
     .query(`SELECT ${UDF}('agent') AS echoed`, { settings: agentRequestSettings(BUDGET), timeoutMs: 30_000 })
     .then((answer) => JSON.stringify(answer.rows))
     .catch((error: Error) => error.message.slice(0, 120));

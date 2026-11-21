@@ -1,6 +1,6 @@
 /**
- * The guarded adapter's answer to a 101 that announces an upgrade (`httpTransportFetch` with
- * DB_HTTP_BLOCK_PRIVATE_HOSTS on, src/lib/db/http/egress-policy.ts).
+ * The guarded adapter's answer to a 101 that announces an upgrade (`httpTransportFetch` handed a decision that
+ * blocks private destinations, src/lib/db/http/egress-policy.ts).
  *
  * The guard refuses every local address by design, so `node:http`'s request is wrapped to dial the local peer in place
  * of the public name the guard checked; the request, the socket and the 101 are otherwise node:http's own. The runner
@@ -10,7 +10,7 @@ import { afterAll, afterEach, beforeAll, expect, mock, test } from "bun:test";
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import { type AddressInfo, createServer, type Server, type Socket } from "node:net";
 import { answerWithUpgrade, type UpgradeAnswer } from "../../../helpers/upgrade-answer";
-import { setEgressFlag } from "../../../helpers/egress-flag";
+import { BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const realHttp = { ...(await import("node:http")) };
 mock.module("node:http", () => ({
@@ -21,9 +21,7 @@ mock.module("node:http", () => ({
 
 const { httpTransportFetch } = await import("@/lib/db/http/egress-policy");
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const SWITCHED = "The server switched the connection to another protocol instead of answering, so no answer was read";
-const original = process.env[FLAG];
 
 /** How the peer answers the next request, and one promise per switched socket, resolved once it has closed. */
 let answer: UpgradeAnswer | "ok" = "ok";
@@ -55,27 +53,28 @@ afterAll(async () => {
 });
 
 afterEach(() => {
-  setEgressFlag(original);
   answer = "ok";
   upgradedSockets.length = 0;
 });
 
 test("the wrapped dial reaches the local peer through the guarded path", async () => {
-  setEgressFlag("true");
-  const response = await httpTransportFetch(`http://db.example.com:${port}/query`);
+  const response = await httpTransportFetch(`http://db.example.com:${port}/query`, {}, BLOCKS_PRIVATE_HOSTS);
   expect([response.status, await response.text()]).toEqual([200, "ok"]);
 });
 
 test.each(["upgrade", "upgrade-close"] as const)(
   "a 101 that announces an upgrade (%s) rejects at once by name, and the switched socket is closed",
   async (upgrade) => {
-    setEgressFlag("true");
     answer = upgrade;
     const started = Date.now();
     // A plain await, so a call that never settles fails by the test's own timeout.
     let failure: unknown;
     try {
-      await httpTransportFetch(`http://db.example.com:${port}/query`, { method: "POST", body: "{}" });
+      await httpTransportFetch(
+        `http://db.example.com:${port}/query`,
+        { method: "POST", body: "{}" },
+        BLOCKS_PRIVATE_HOSTS,
+      );
     } catch (error) {
       failure = error;
     }

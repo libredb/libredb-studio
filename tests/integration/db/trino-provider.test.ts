@@ -100,6 +100,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { isSourcePartUnavailable, kindHasColumns } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 const CATALOG = "tpch";
 const ORIGIN = "http://trino.test:8080";
@@ -553,7 +554,7 @@ function sentAnything(match: string): boolean {
 }
 
 async function connectProvider(overrides: Partial<DatabaseConnection> = {}): Promise<TrinoProvider> {
-  const provider = new TrinoProvider(makeConnection(overrides));
+  const provider = new TrinoProvider(makeConnection(overrides), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 }
@@ -582,7 +583,7 @@ describe("TrinoProvider metadata", () => {
   // query id the Sessions panel lists - neither a table nor a whole database. So no
   // maintenance control is offered anywhere, which is what the two `false`s say.
   test("declares its one maintenance operation as neither per-table nor global", () => {
-    const caps = new TrinoProvider(makeConnection()).getCapabilities();
+    const caps = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     expect(caps.maintenanceOperationSpecs).toEqual({
       kill: { label: "Terminate Query", perEntity: false, global: false },
@@ -591,11 +592,13 @@ describe("TrinoProvider metadata", () => {
     // "Reclaim Space" and "Table Statistics" name nothing this engine can run, and
     // both stay unshown because the operations behind them are undeclared - not
     // because the wording is redirected anywhere.
-    expect(new TrinoProvider(makeConnection()).getLabels().vacuumActionOperation).toBeUndefined();
+    expect(
+      new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels().vacuumActionOperation,
+    ).toBeUndefined();
     expect(caps.maintenanceOperations).toEqual(["kill"]);
   });
   test("declares SQL on port 8080, with double-quoted identifiers and no statement terminator", () => {
-    const capabilities = new TrinoProvider(makeConnection()).getCapabilities();
+    const capabilities = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     expect(capabilities.queryLanguage).toBe("sql");
     expect(capabilities.defaultPort).toBe(8080);
@@ -605,14 +608,14 @@ describe("TrinoProvider metadata", () => {
   });
 
   test("declares the Create Table form's Trino grammar, the one exported constant", () => {
-    const capabilities = new TrinoProvider(makeConnection()).getCapabilities();
+    const capabilities = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     // No primary key and no sequence in any catalog, so the spec offers neither auto-increment nor constraints (#1822).
     expect(capabilities.createTable).toBe(TRINO_CREATE_TABLE);
   });
 
   test("declares no foreign keys and no inline row edit, because it declares no keys at all", () => {
-    const capabilities = new TrinoProvider(makeConnection()).getCapabilities();
+    const capabilities = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     expect(capabilities.declaresForeignKeys).toBe(false);
     expect(capabilities.supportsInlineRowEdit).toBe(false);
@@ -628,14 +631,14 @@ describe("TrinoProvider metadata", () => {
   });
 
   test("offers exactly one maintenance operation, and it is one the engine itself performs", () => {
-    const capabilities = new TrinoProvider(makeConnection()).getCapabilities();
+    const capabilities = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     expect(capabilities.supportsMaintenance).toBe(true);
     expect(capabilities.maintenanceOperations).toEqual(["kill"]);
   });
 
   test("explains through the JSON form, and offers no connection string", () => {
-    const capabilities = new TrinoProvider(makeConnection()).getCapabilities();
+    const capabilities = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     // The format is the plan-only one. Measured on 476, that distinction is the whole
     // decision: `EXPLAIN (FORMAT JSON) INSERT INTO memory.default.probe VALUES (42)`
@@ -649,7 +652,10 @@ describe("TrinoProvider metadata", () => {
   });
 
   test("refreshes the tree on DDL and not on an insert", () => {
-    const pattern = new RegExp(new TrinoProvider(makeConnection()).getCapabilities().schemaRefreshPattern, "i");
+    const pattern = new RegExp(
+      new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().schemaRefreshPattern,
+      "i",
+    );
 
     expect(pattern.test("CREATE TABLE memory.default.t (id integer)")).toBe(true);
     expect(pattern.test("DROP TABLE memory.default.t")).toBe(true);
@@ -657,7 +663,7 @@ describe("TrinoProvider metadata", () => {
   });
 
   test("keeps the inherited table and row nouns, and rewrites only the maintenance copy", () => {
-    const labels = new TrinoProvider(makeConnection()).getLabels();
+    const labels = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels();
 
     expect(labels.entityName).toBe("Table");
     expect(labels.rowNamePlural).toBe("rows");
@@ -669,7 +675,11 @@ describe("TrinoProvider metadata", () => {
   // PostgreSQL extension. `getSlowQueries()` reads system.runtime.queries, which is the
   // coordinator's own bounded history rather than a persisted store.
   test("names system.runtime.queries, not a Postgres extension, as where query stats come from", () => {
-    const { slowQueriesEmptyState } = new TrinoProvider(makeConnection()).getLabels();
+    const { slowQueriesEmptyState } = new TrinoProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getLabels();
 
     expect(slowQueriesEmptyState).toContain("system.runtime.queries");
     expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
@@ -682,11 +692,15 @@ describe("TrinoProvider metadata", () => {
 
 describe("TrinoProvider validation", () => {
   test("requires a host", () => {
-    expect(() => new TrinoProvider(makeConnection({ host: undefined }))).toThrow(DatabaseConfigError);
+    expect(() => new TrinoProvider(makeConnection({ host: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS })).toThrow(
+      DatabaseConfigError,
+    );
   });
 
   test("does not require a catalog, because a fully qualified statement needs none", () => {
-    expect(() => new TrinoProvider(makeConnection({ database: undefined }))).not.toThrow();
+    expect(
+      () => new TrinoProvider(makeConnection({ database: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS }),
+    ).not.toThrow();
   });
 });
 
@@ -721,7 +735,7 @@ describe("TrinoProvider lifecycle", () => {
   test("connect carries a warning naming a pinned catalog the cluster does not have", async () => {
     // SELECT 1 proves the coordinator answers and needs no catalog, so this check is
     // the only place the connection form can learn the pinned one is not on the cluster.
-    const provider = new TrinoProvider(makeConnection({ database: "nosuchcat" }));
+    const provider = new TrinoProvider(makeConnection({ database: "nosuchcat" }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await provider.connect();
 
     const warnings = provider.connectWarnings();
@@ -806,20 +820,20 @@ describe("TrinoProvider lifecycle", () => {
 
   test("reports an unreachable coordinator as a connection failure", async () => {
     networkFailure = new TypeError("fetch failed");
-    const provider = new TrinoProvider(makeConnection());
+    const provider = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
   });
 
   test("reports a refused credential as an authentication failure, not a connectivity one", async () => {
     denyEverything();
-    const provider = new TrinoProvider(makeConnection());
+    const provider = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
   });
 
   test("refuses a password over plain HTTP, which the coordinator rejects even with auth disabled", async () => {
-    const provider = new TrinoProvider(makeConnection({ password: "secret" }));
+    const provider = new TrinoProvider(makeConnection({ password: "secret" }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toThrow("plain HTTP");
     expect(sentSql).toEqual([]);
@@ -1187,7 +1201,7 @@ describe("TrinoProvider error mapping", () => {
 
 describe("TrinoProvider query preparation", () => {
   test("appends a bound to an unbounded SELECT", () => {
-    const provider = new TrinoProvider(makeConnection());
+    const provider = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.prepareQuery("SELECT * FROM tpch.tiny.nation", { limit: 50 }).query).toBe(
       "SELECT * FROM tpch.tiny.nation LIMIT 50",
@@ -1195,7 +1209,7 @@ describe("TrinoProvider query preparation", () => {
   });
 
   test("puts OFFSET before LIMIT, which is the only order Trino's grammar has", () => {
-    const provider = new TrinoProvider(makeConnection());
+    const provider = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     const prepared = provider.prepareQuery("SELECT * FROM tpch.tiny.nation", { limit: 50, offset: 100 });
 
     expect(prepared.query).toBe("SELECT * FROM tpch.tiny.nation OFFSET 100 LIMIT 50");
@@ -1203,7 +1217,7 @@ describe("TrinoProvider query preparation", () => {
   });
 
   test("transposes the bound it appended and not an identical pair inside the statement", () => {
-    const provider = new TrinoProvider(makeConnection());
+    const provider = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     const prepared = provider.prepareQuery("SELECT * FROM (SELECT 1) t /* LIMIT 50 OFFSET 100 */", {
       limit: 50,
       offset: 100,
@@ -1213,13 +1227,13 @@ describe("TrinoProvider query preparation", () => {
   });
 
   test("leaves a statement the limiter did not touch exactly as the user wrote it", () => {
-    const provider = new TrinoProvider(makeConnection());
+    const provider = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.prepareQuery("SHOW CATALOGS", { limit: 50, offset: 100 }).query).toBe("SHOW CATALOGS");
   });
 
   test("leaves a statement that already carries its own bound alone", () => {
-    const provider = new TrinoProvider(makeConnection());
+    const provider = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     const prepared = provider.prepareQuery("SELECT * FROM tpch.tiny.nation OFFSET 1 LIMIT 3", { limit: 50 });
 
     expect(prepared.wasLimited).toBe(false);
@@ -1983,7 +1997,7 @@ async function objectProvider(overrides: Partial<DatabaseConnection> = {}): Prom
 
 describe("object surface", () => {
   test("declares the kinds Trino has, at two container levels", () => {
-    const capabilities = new TrinoProvider(makeConnection()).getCapabilities();
+    const capabilities = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     const kinds = capabilities.objectKinds ?? [];
 
     expect(kinds.map((kind) => kind.id).sort()).toEqual(["function", "materialized_view", "table", "view"]);
@@ -2020,7 +2034,8 @@ describe("object surface", () => {
    * `materialized_view` read `information_schema.columns`.
    */
   test("declares hasColumns on the relation kinds only, and describeObject agrees", async () => {
-    const kinds = new TrinoProvider(makeConnection()).getCapabilities().objectKinds ?? [];
+    const kinds =
+      new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().objectKinds ?? [];
 
     expect(
       kinds
@@ -2142,7 +2157,7 @@ describe("Trino object containers, listings and detail", () => {
 
   test("a parent is a tree cursor, so a catalog lists its schemas even when only exact addresses are declared", async () => {
     const provider = await objectProvider();
-    const real = new TrinoProvider(makeConnection()).getCapabilities();
+    const real = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     // `containerPathShapes` governs the paths an object read ADDRESSES. A listing parent is
     // not one: `[catalog]` is where the tree is, so an address check would refuse it here.
     spyOn(provider, "getCapabilities").mockReturnValue({ ...real, containerPathShapes: "exact" });
@@ -2454,7 +2469,7 @@ describe("Trino object containers, listings and detail", () => {
 
   test("a relation kind with no information_schema table_type behind it is refused by name", async () => {
     const provider = await objectProvider();
-    const real = new TrinoProvider(makeConnection()).getCapabilities();
+    const real = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     // A DECLARATION defect rather than an engine one: `table_type` answers `BASE TABLE` and
     // `VIEW` and nothing else, so a relation kind outside that vocabulary would draw a
     // folder no statement can fill. Saying so names what is missing.
@@ -2789,7 +2804,7 @@ describe("Trino object paths are derived from the declaration, never from a posi
 
   /** The real declaration, with `containerLevels` replaced and nothing else. */
   function withLevels(provider: TrinoProvider, containerLevels: ProviderCapabilities["containerLevels"]): void {
-    const real = new TrinoProvider(makeConnection()).getCapabilities();
+    const real = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     spyOn(provider, "getCapabilities").mockReturnValue({ ...real, containerLevels });
   }
 
@@ -2929,7 +2944,7 @@ describe("Trino object paths are derived from the declaration, never from a posi
 
   test("a kind declaring attachedTo is refused, because Trino holds no attached object", async () => {
     const provider = await connectProvider();
-    const real = new TrinoProvider(makeConnection()).getCapabilities();
+    const real = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     spyOn(provider, "getCapabilities").mockReturnValue({
       ...real,
       objectKinds: [
@@ -2995,7 +3010,8 @@ describe("Trino object source", () => {
   ];
 
   test("declares source on exactly the kinds that have a definition text", () => {
-    const kinds = new TrinoProvider(makeConnection()).getCapabilities().objectKinds ?? [];
+    const kinds =
+      new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().objectKinds ?? [];
     const declared = kinds
       .filter((kind) => kind.hasSource === true)
       .map((kind) => [kind.id, kind.sourceLanguage] as const)
@@ -3025,7 +3041,9 @@ describe("Trino object source", () => {
    * entry fails here by name rather than going unread.
    */
   test("the fixture holds an object of every source-bearing kind", () => {
-    const declared = (new TrinoProvider(makeConnection()).getCapabilities().objectKinds ?? [])
+    const declared = (
+      new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().objectKinds ?? []
+    )
       .filter((kind) => kind.hasSource === true)
       .map((kind) => kind.id)
       .sort();
@@ -3969,7 +3987,7 @@ async function applyWithTrinoError(fault: Record<string, unknown> | Error): Prom
 
 describe("Trino object edit: the declaration and the affordance", () => {
   test("declares acceptsSourceEdits on exactly one kind", () => {
-    const provider = new TrinoProvider(makeConnection());
+    const provider = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     const kinds = provider.getCapabilities().objectKinds ?? [];
     expect(kinds.filter((kind) => kind.acceptsSourceEdits === true).map((kind) => kind.id)).toEqual(["function"]);
     // `view` is DEFERRED and not refused: MEASURED on 476, `CREATE OR REPLACE VIEW` works and a
@@ -5109,7 +5127,7 @@ describe("endOpenQueryTransaction()", () => {
   ] as const;
 
   test("is not implemented, and the doc names WHICH absence that is", () => {
-    const provider: DatabaseProvider = new TrinoProvider(makeConnection());
+    const provider: DatabaseProvider = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
 
@@ -5265,7 +5283,12 @@ describe("queryReadOnly", () => {
   }
 
   async function opened(recorded = coordinator(), execution: ProviderExecutionContext = AGENT) {
-    const provider = new TrinoProvider(makeConnection(), {}, execution, () => recorded.transport);
+    const provider = new TrinoProvider(
+      makeConnection(),
+      {},
+      { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+      () => recorded.transport,
+    );
     await provider.connect();
     return provider;
   }
@@ -5301,7 +5324,12 @@ describe("queryReadOnly", () => {
   test("an open under the profile on a connection that pins the system catalog is refused before anything is sent", async () => {
     for (const database of ["system", "SYSTEM"]) {
       const recorded = coordinator();
-      const provider = new TrinoProvider(makeConnection({ database }), {}, AGENT, () => recorded.transport);
+      const provider = new TrinoProvider(
+        makeConnection({ database }),
+        {},
+        { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
+        () => recorded.transport,
+      );
 
       const error = await provider.connect().catch((caught: unknown) => caught);
 
@@ -5315,7 +5343,12 @@ describe("queryReadOnly", () => {
     }
     // The editor and the operations profile send no agent statement, so they open on it as before.
     const recorded = coordinator();
-    const editor = new TrinoProvider(makeConnection({ database: "system" }), {}, {}, () => recorded.transport);
+    const editor = new TrinoProvider(
+      makeConnection({ database: "system" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      () => recorded.transport,
+    );
     await editor.connect();
     expect(editor.isConnected()).toBe(true);
   });
@@ -5335,7 +5368,12 @@ describe("queryReadOnly", () => {
       refused("INVALID_FUNCTION_ARGUMENT", "line 1:43: Unexpected argument name: LIBREDB_NO_SUCH_ARGUMENT"),
     );
     const recorded = coordinator(replies);
-    const provider = new TrinoProvider(makeConnection(), {}, AGENT, () => recorded.transport);
+    const provider = new TrinoProvider(
+      makeConnection(),
+      {},
+      { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
+      () => recorded.transport,
+    );
 
     const error = await provider.connect().catch((caught: unknown) => caught);
 
@@ -5673,7 +5711,7 @@ describe("queryReadOnly", () => {
 
   test("the factory's three arguments build the HTTP transport, which opens a real transaction for the proof", async () => {
     // Through the replaced fetch: no scripted transport, so the proof's first request is the transaction's opening.
-    const provider = new TrinoProvider(makeConnection(), {}, AGENT);
+    const provider = new TrinoProvider(makeConnection(), {}, { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS });
     const error = await provider.connect().catch((caught: unknown) => caught);
 
     // The fetch harness answers START TRANSACTION READ ONLY without a started transaction header, which the transport

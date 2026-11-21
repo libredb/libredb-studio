@@ -23,6 +23,7 @@ import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/ind
 import { createSendRequest, type SendRequest } from "@/lib/db/providers/timeseries/prometheus/request";
 import type { DatabaseProvider, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -52,7 +53,7 @@ interface SentRecord {
 }
 
 const sent: SentRecord[] = [];
-const real = createSendRequest(null);
+const real = createSendRequest(null, egressDecision());
 const send: SendRequest = (request) => {
   sent.push({ method: request.method, path: request.url.pathname });
   return real(request);

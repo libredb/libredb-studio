@@ -45,6 +45,7 @@ import type { ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const PREFIX = "libredb_lm_";
 const DATA = `${PREFIX}data`;
@@ -90,7 +91,7 @@ function seed(name: string, port: number, credential: { user?: string; password?
   } as ManagedConnection;
 }
 
-const writable = new LibSQLHranaTransport(seed("rw", JWT_PORT, { password: RW }));
+const writable = new LibSQLHranaTransport(seed("rw", JWT_PORT, { password: RW }), egressDecision());
 
 async function write(sql: string): Promise<void> {
   await writable.execute(sql, { timeoutMs: 30_000 });

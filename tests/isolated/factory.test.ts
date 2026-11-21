@@ -67,7 +67,7 @@ import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import { removeOwnerProviders } from "@/lib/db/owner-removal";
-import { forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
+import { egressDecision, forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import { logger } from "@/lib/logger";
 import { encryptSecret } from "@/lib/storage/encryption";
 import { projectSeedConnection } from "@/lib/seed/connection-filter";
@@ -3366,10 +3366,12 @@ describe("acquireExecutionProfileProvider", () => {
       const readOnly = await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
       const handover = await acquireExecutionProfileProvider(pgConn(), "agent-handover");
 
+      // The factory adds the process's egress decision to every context it hands a provider (FND-2 slice 2b).
+      const egress = egressDecision();
       expect(constructed.mock.calls.map((call) => (call as unknown[])[2])).toEqual([
-        { readOnly: true, sendsStatements: false, allowExternalFileAccess: false },
-        { readOnly: true, sendsStatements: true, allowExternalFileAccess: false },
-        { readOnly: true, sendsStatements: true, allowExternalFileAccess: false },
+        { readOnly: true, sendsStatements: false, allowExternalFileAccess: false, egress },
+        { readOnly: true, sendsStatements: true, allowExternalFileAccess: false, egress },
+        { readOnly: true, sendsStatements: true, allowExternalFileAccess: false, egress },
       ]);
       // The profile is framed into the profiled cache key and decides the flag, so a provider opened without the
       // proof a statement needs is never the one a statement-sending profile is handed.

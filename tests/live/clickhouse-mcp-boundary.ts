@@ -40,6 +40,7 @@ import type { ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const PREFIX = "libredb_lm_";
 const DB = `${PREFIX}data`;
@@ -84,7 +85,7 @@ function seed(user: string, password: string, database = DB): ManagedConnection 
   } as ManagedConnection;
 }
 
-const adminTransport = new ClickHouseHttpTransport(seed(ADMIN.user, ADMIN.password, "default"));
+const adminTransport = new ClickHouseHttpTransport(seed(ADMIN.user, ADMIN.password, "default"), egressDecision());
 
 async function admin(sql: string): Promise<void> {
   await adminTransport.query(sql, { timeoutMs: 30_000 });
@@ -93,7 +94,10 @@ async function admin(sql: string): Promise<void> {
 /** The server's code for `sql` sent as `user` with `settings`, or null when it answered. */
 async function codeOf(user: string, password: string, sql: string, settings: Record<string, string | number>) {
   try {
-    await new ClickHouseHttpTransport(seed(user, password)).query(sql, { settings, timeoutMs: 30_000 });
+    await new ClickHouseHttpTransport(seed(user, password), egressDecision()).query(sql, {
+      settings,
+      timeoutMs: 30_000,
+    });
     return null;
   } catch (error) {
     if (error instanceof ClickHouseTransportError) return error.code;

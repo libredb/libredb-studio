@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 import { Readable, type Transform } from "node:stream";
 import { brotliCompressSync, deflateSync, gzipSync } from "node:zlib";
-import { setEgressFlag } from "../../../helpers/egress-flag";
+import { BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // The test runner starts a process per file, keeping these built-in module mocks isolated.
 const realDns = { ...(await import("node:dns")) };
@@ -78,11 +78,8 @@ mock.module("node:zlib", () => ({
 }));
 
 const { httpTransportFetch, publicAddressLookup } = await import("@/lib/db/http/egress-policy");
-const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const original = process.env[flag];
 
 afterEach(() => {
-  setEgressFlag(original);
   requests.length = 0;
   lookups.length = 0;
   lastIncoming = undefined;
@@ -125,13 +122,16 @@ test.each([
   ["deflate", deflateSync],
   ["br", brotliCompressSync],
 ] as const)("decodes %s responses from the pinned request", async (encoding, compress) => {
-  setEgressFlag("true");
   reply = {
     body: compress(Buffer.from("decoded")),
     headers: { "content-encoding": encoding, "content-length": "100", "x-multiple": ["one", "two"] },
   };
 
-  const response = await httpTransportFetch("https://8.8.8.8/query", { method: "POST", body: "query" });
+  const response = await httpTransportFetch(
+    "https://8.8.8.8/query",
+    { method: "POST", body: "query" },
+    BLOCKS_PRIVATE_HOSTS,
+  );
 
   expect(await response.text()).toBe("decoded");
   expect(response.headers.get("x-multiple")).toBe("one, two");
@@ -145,8 +145,7 @@ test.each([
 });
 
 test("preserves an empty response for HEAD", async () => {
-  setEgressFlag("true");
-  const response = await httpTransportFetch("http://8.8.8.8/query", { method: "HEAD" });
+  const response = await httpTransportFetch("http://8.8.8.8/query", { method: "HEAD" }, BLOCKS_PRIVATE_HOSTS);
   expect(response.body).toBeNull();
   expect(requests[0].protocol).toBe("http:");
 });
@@ -182,7 +181,6 @@ test.each([
 ] as const)(
   "hands a %i answer to %s naming %s on without a body, and no stream fails after it",
   async (statusCode, method, encoding) => {
-    setEgressFlag("true");
     reply = {
       body: Buffer.alloc(0),
       headers: { "content-encoding": encoding, "content-length": "0", etag: '"v1"' },
@@ -190,7 +188,7 @@ test.each([
     };
     const uncaught = recordUncaught();
     try {
-      const response = await httpTransportFetch("https://8.8.8.8/query", { method });
+      const response = await httpTransportFetch("https://8.8.8.8/query", { method }, BLOCKS_PRIVATE_HOSTS);
       await settle();
 
       expect(response.status).toBe(statusCode);
@@ -214,11 +212,10 @@ test.each([
   ["deflate", Buffer.from("not deflate"), "incorrect header check (Z_DATA_ERROR)"],
   ["br", Buffer.from("not brotli"), "Decompression failed (ERR__ERROR_FORMAT_PADDING_2)"],
 ] as const)("fails the read of a %s body that does not decode with a named error", async (encoding, body, reason) => {
-  setEgressFlag("true");
   reply = { body, headers: { "content-encoding": encoding } };
   const uncaught = recordUncaught();
   try {
-    const response = await httpTransportFetch("https://8.8.8.8/query");
+    const response = await httpTransportFetch("https://8.8.8.8/query", {}, BLOCKS_PRIVATE_HOSTS);
     const failure = await response.text().then(
       () => undefined,
       (error: unknown) => error,
@@ -239,13 +236,12 @@ test.each([
 });
 
 test("fails the read with the connection's own error when it fails mid-body", async () => {
-  setEgressFlag("true");
   reply = {
     body: gzipSync(Buffer.from("partial")).subarray(0, 12),
     headers: { "content-encoding": "gzip" },
     open: true,
   };
-  const response = await httpTransportFetch("https://8.8.8.8/query");
+  const response = await httpTransportFetch("https://8.8.8.8/query", {}, BLOCKS_PRIVATE_HOSTS);
   const reading = response.text();
   const cut = Object.assign(new Error("aborted"), { code: "ECONNRESET" });
   // Node's own client listens on a real message too, so a failure nobody forwards leaves the read waiting.
@@ -255,13 +251,12 @@ test("fails the read with the connection's own error when it fails mid-body", as
 });
 
 test("closes the connection when the reader cancels a decoded body", async () => {
-  setEgressFlag("true");
   reply = {
     body: gzipSync(Buffer.from("partial")).subarray(0, 12),
     headers: { "content-encoding": "gzip" },
     open: true,
   };
-  const response = await httpTransportFetch("https://8.8.8.8/query");
+  const response = await httpTransportFetch("https://8.8.8.8/query", {}, BLOCKS_PRIVATE_HOSTS);
   await response.body?.cancel();
   await settle();
   expect(lastIncoming?.destroyed).toBe(true);
@@ -270,13 +265,16 @@ test("closes the connection when the reader cancels a decoded body", async () =>
 });
 
 test("passes headers and an abort signal to the socket and returns a non-200 status", async () => {
-  setEgressFlag("true");
   reply = { body: Buffer.from("unavailable"), headers: { "retry-after": "5" }, statusCode: 503 };
   const controller = new AbortController();
-  const response = await httpTransportFetch("http://8.8.8.8/query", {
-    headers: { authorization: "Basic test" },
-    signal: controller.signal,
-  });
+  const response = await httpTransportFetch(
+    "http://8.8.8.8/query",
+    {
+      headers: { authorization: "Basic test" },
+      signal: controller.signal,
+    },
+    BLOCKS_PRIVATE_HOSTS,
+  );
   expect(requests[0].options.headers).toEqual({ authorization: "Basic test" });
   expect(requests[0].options.signal).toBe(controller.signal);
   expect(response.status).toBe(503);
@@ -285,16 +283,14 @@ test("passes headers and an abort signal to the socket and returns a non-200 sta
 });
 
 test("destroys the incoming stream when its headers are invalid", async () => {
-  setEgressFlag("true");
   reply.headers = { "x-invalid": "line one\nline two" };
-  await expect(httpTransportFetch("http://8.8.8.8/query")).rejects.toThrow();
+  await expect(httpTransportFetch("http://8.8.8.8/query", {}, BLOCKS_PRIVATE_HOSTS)).rejects.toThrow();
   expect(lastIncoming?.destroyed).toBe(true);
 });
 
 test("rejects a non-string request body before sending it", async () => {
-  setEgressFlag("true");
-  await expect(httpTransportFetch("http://8.8.8.8/query", { body: new Blob(["binary"]) })).rejects.toThrow(
-    "HTTP database request body must be a string",
-  );
+  await expect(
+    httpTransportFetch("http://8.8.8.8/query", { body: new Blob(["binary"]) }, BLOCKS_PRIVATE_HOSTS),
+  ).rejects.toThrow("HTTP database request body must be a string");
   expect(requests).toHaveLength(0);
 });

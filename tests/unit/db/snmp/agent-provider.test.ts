@@ -20,6 +20,7 @@ import { SNMP_AGENT_WITHHELD as W } from "@/lib/db/providers/network/snmp/agent-
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { type FakeAgent, octets, startFakeAgent, text, ticks } from "../../../helpers/snmp-fake-agent";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const READ_ONLY: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
 const OPERATIONS: ProviderExecutionContext = { readOnly: true };
@@ -67,7 +68,11 @@ async function connected(
   options: Parameters<typeof startFakeAgent>[1] = {},
 ): Promise<{ provider: SnmpProvider; agent: FakeAgent }> {
   agent = await startFakeAgent(TREE, options);
-  provider = new SnmpProvider(connection(agent.port), { queryTimeout: 1_000 }, execution);
+  provider = new SnmpProvider(
+    connection(agent.port),
+    { queryTimeout: 1_000 },
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+  );
   await provider.connect();
   return { provider, agent };
 }
@@ -90,7 +95,7 @@ describe("queryReadOnly answers only on the agent read-only profile", () => {
   });
 
   test("a handle that never connected refuses it", async () => {
-    const unopened = new SnmpProvider(connection(9), {}, READ_ONLY);
+    const unopened = new SnmpProvider(connection(9), {}, { ...READ_ONLY, egress: ALLOWS_PRIVATE_HOSTS });
     await expect(unopened.queryReadOnly("get sysDescr.0", BUDGET)).rejects.toThrow(DatabaseConfigError);
   });
 
@@ -329,7 +334,7 @@ describe("the other surfaces of an agent-mode handle", () => {
   });
 
   test("a reading on an agent-mode handle that never connected says so first", async () => {
-    const unopened = new SnmpProvider(connection(9), {}, OPERATIONS);
+    const unopened = new SnmpProvider(connection(9), {}, { ...OPERATIONS, egress: ALLOWS_PRIVATE_HOSTS });
     await expect(unopened.getOverview()).rejects.toThrow(DatabaseConfigError);
     await expect(unopened.getStorageStats()).rejects.toThrow("`connect` comes before a reading");
   });

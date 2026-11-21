@@ -43,6 +43,7 @@ import { readFileSync } from "node:fs";
 import { SnmpProvider } from "../../src/lib/db/providers/network/snmp/index";
 import type { DatabaseConnection } from "../../src/lib/types";
 import { FIXTURE_COMMUNITY } from "../fixtures/snmp/identity";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const IS_BUN = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
 const RUNTIME = IS_BUN
@@ -103,7 +104,7 @@ async function withProvider<T>(
   over: Partial<Record<string, unknown>>,
   run: (p: SnmpProvider) => Promise<T>,
 ): Promise<T> {
-  const provider = new SnmpProvider(connection(over), {});
+  const provider = new SnmpProvider(connection(over), {}, { egress: egressDecision() });
   await provider.connect();
   try {
     return await run(provider);

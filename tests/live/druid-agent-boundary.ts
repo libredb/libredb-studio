@@ -54,6 +54,7 @@ import {
 import { DruidHttpTransport } from "@/lib/db/providers/sql/druid/http-transport";
 import type { DatabaseProvider, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const PREFIX = "libredb_lb_";
 const DATA = `${PREFIX}data`;
@@ -419,7 +420,7 @@ const SCOPE_STATEMENTS: readonly { readonly sql: string; readonly planShows: boo
 /** The planner's answer to EXPLAIN PLAN FOR `sql`, asked raw as `user`, read by the provider's planner check. */
 async function plannerCheck(user: string, password: string, sql: string): Promise<string | null | Error> {
   try {
-    const answer = await new DruidHttpTransport(connection(user, password)).agentQuery(
+    const answer = await new DruidHttpTransport(connection(user, password), egressDecision()).agentQuery(
       druidAgentExplainStatement(sql),
       {
         queryId: randomUUID(),

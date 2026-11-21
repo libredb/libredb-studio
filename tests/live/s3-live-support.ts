@@ -14,7 +14,7 @@
  *   console                 the refusal parseS3Command answers for the step's command, with the connection's context
  *   keys                    the refusal readS3KeyScanRequest throws for the step's page options and cursor
  *   egress:link-local:<h>   the refusal assertNotLinkLocalLiteral throws for host <h>
- *   egress:blocked:<h>      the refusal assertPublicLiteralHost throws for <h> with DB_HTTP_BLOCK_PRIVATE_HOSTS on
+ *   egress:blocked:<h>      the refusal assertPublicLiteralHost throws for <h> under a decision that blocks private hosts
  *   endpoint:host:<h>       the refusal validateHost throws for <h>
  *   server:<json>           the message toProviderError gives an S3ServerError built from the measured answer <json>
  *   notice:<id>             the preview sentence <id> of S3_PREVIEW_SENTENCES, its placeholders matching any text
@@ -43,7 +43,8 @@ import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-
 import { s3Signer } from "@/lib/db/providers/objectstore/s3/sigv4";
 import type { DatabaseProvider, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
-import { setEgressFlag, withEgressFlag } from "../helpers/egress-flag";
+import { BLOCKS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
+import { withEgressFlag } from "../helpers/egress-flag";
 import type { ObjectSurfaceExpectation } from "../helpers/object-surface-conformance";
 import { normalizeMessage, type S3FixtureSecret } from "../helpers/s3-evidence-scrub";
 import {
@@ -1618,16 +1619,10 @@ export function resolveS3Sentence(ref: string, context: S3SentenceContext): S3Re
   if (ref.startsWith("endpoint:host:"))
     return { text: thrown(() => validateHost(ref.slice(14)), "validateHost"), anyNumber: false };
   if (ref.startsWith("egress:blocked:")) {
-    const previous = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-    setEgressFlag("true");
-    try {
-      return {
-        text: thrown(() => assertPublicLiteralHost(ref.slice(15)), "assertPublicLiteralHost"),
-        anyNumber: false,
-      };
-    } finally {
-      setEgressFlag(previous);
-    }
+    return {
+      text: thrown(() => assertPublicLiteralHost(ref.slice(15), BLOCKS_PRIVATE_HOSTS), "assertPublicLiteralHost"),
+      anyNumber: false,
+    };
   }
   if (ref.startsWith("notice:")) {
     const template = (S3_PREVIEW_SENTENCES as Readonly<Record<string, string>>)[ref.slice(7)];

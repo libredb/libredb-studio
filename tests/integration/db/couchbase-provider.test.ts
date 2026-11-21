@@ -45,6 +45,7 @@ import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { loadTlsFixtures } from "../../helpers/tls-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 // ============================================================================
 // Connection
@@ -281,7 +282,7 @@ function bodyOf(match: string): Record<string, unknown> {
 }
 
 async function connectProvider(overrides: Partial<DatabaseConnection> = {}): Promise<CouchbaseProvider> {
-  const provider = new CouchbaseProvider(makeConnection(overrides));
+  const provider = new CouchbaseProvider(makeConnection(overrides), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 }
@@ -313,7 +314,11 @@ afterEach(() => {
 
 describe("CouchbaseProvider metadata", () => {
   test("declares the capabilities issue #262 specifies", () => {
-    const capabilities = new CouchbaseProvider(makeConnection()).getCapabilities();
+    const capabilities = new CouchbaseProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
 
     expect(capabilities).toEqual({
       queryLanguage: "sql",
@@ -356,18 +361,24 @@ describe("CouchbaseProvider metadata", () => {
     // emitted `WHERE __id = '<key>'` filters on a field no document has, so it
     // matches nothing. Addressing a document needs `META(d).id` or `USE KEYS`, which
     // is per-dialect statement building - deferred to issue #279.
-    expect(new CouchbaseProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+    expect(
+      new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .supportsInlineRowEdit,
+    ).toBe(false);
   });
 
   test("declares declaresForeignKeys false because SQL++ has no referential constraint", () => {
     // Collections are schemaless and the columns this provider reports are inferred
     // from a document sample, so `getSchema()`'s empty `foreignKeys` is not "none
     // were declared here" but "none can be declared at all" (#414).
-    expect(new CouchbaseProvider(makeConnection()).getCapabilities().declaresForeignKeys).toBe(false);
+    expect(
+      new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .declaresForeignKeys,
+    ).toBe(false);
   });
 
   test("labels collections and documents", () => {
-    const labels = new CouchbaseProvider(makeConnection()).getLabels();
+    const labels = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels();
 
     expect(labels.entityName).toBe("Collection");
     expect(labels.entityNamePlural).toBe("Collections");
@@ -381,7 +392,7 @@ describe("CouchbaseProvider metadata", () => {
   // `reindex` is `BUILD INDEX` over the DEFERRED GSI indexes of one keyspace
   // (`buildDeferredIndexes()`), so none of those three strings described it (#464).
   test("names the deferred GSI build, not a table reindex, in the global reindex card", () => {
-    const labels = new CouchbaseProvider(makeConnection()).getLabels();
+    const labels = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels();
 
     expect(labels.reindexGlobalLabel).toBe("Build Indexes");
     expect(labels.reindexGlobalTitle).toContain("GSI");
@@ -393,7 +404,11 @@ describe("CouchbaseProvider metadata", () => {
   // PostgreSQL extension. `getSlowQueries()` reads system:completed_requests, which
   // keeps only requests over the query service's threshold.
   test("names system:completed_requests, not a Postgres extension, as the source of query stats", () => {
-    const { slowQueriesEmptyState } = new CouchbaseProvider(makeConnection()).getLabels();
+    const { slowQueriesEmptyState } = new CouchbaseProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getLabels();
 
     expect(slowQueriesEmptyState).toContain("system:completed_requests");
     expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
@@ -406,11 +421,15 @@ describe("CouchbaseProvider metadata", () => {
 
 describe("CouchbaseProvider validation", () => {
   test("requires a host or a connection string", () => {
-    expect(() => new CouchbaseProvider(makeConnection({ host: undefined }))).toThrow(DatabaseConfigError);
+    expect(
+      () => new CouchbaseProvider(makeConnection({ host: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS }),
+    ).toThrow(DatabaseConfigError);
   });
 
   test("requires a bucket in the database field", () => {
-    expect(() => new CouchbaseProvider(makeConnection({ database: undefined }))).toThrow(/bucket/i);
+    expect(
+      () => new CouchbaseProvider(makeConnection({ database: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS }),
+    ).toThrow(/bucket/i);
   });
 
   test("refuses a bucket the cluster does not have, naming it", async () => {
@@ -418,7 +437,11 @@ describe("CouchbaseProvider validation", () => {
     // the user got wrong surfaces: the management API answers it with 404 and the
     // connect that would have saved it is refused with the name instead.
     stubManage("/pools/default/buckets/nosuchbucket", {}, 404);
-    const provider = new CouchbaseProvider(makeConnection({ database: "nosuchbucket" }));
+    const provider = new CouchbaseProvider(
+      makeConnection({ database: "nosuchbucket" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     const attempted = provider.connect();
     await expect(attempted).rejects.toThrow(DatabaseConfigError);
@@ -439,7 +462,7 @@ describe("CouchbaseProvider validation", () => {
 
   test.each([undefined, ""])("uses the URI bucket when database is %s", async (database) => {
     const config = makeConnection({ host: undefined, database, connectionString: "couchbase://localhost/travel" });
-    const provider = new CouchbaseProvider(config);
+    const provider = new CouchbaseProvider(config, {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await provider.connect();
     await provider.getStorageStats();
     await provider.query("SELECT 1");
@@ -462,7 +485,12 @@ describe("CouchbaseProvider validation", () => {
 
   test("accepts a bucket path with the secure Couchbase scheme", () => {
     expect(
-      () => new CouchbaseProvider(makeConnection({ database: "", connectionString: "couchbases://localhost/travel" })),
+      () =>
+        new CouchbaseProvider(
+          makeConnection({ database: "", connectionString: "couchbases://localhost/travel" }),
+          {},
+          { egress: ALLOWS_PRIVATE_HOSTS },
+        ),
     ).not.toThrow();
   });
 
@@ -495,12 +523,22 @@ describe("CouchbaseProvider validation", () => {
   test.each([undefined, "couchbase://localhost", "couchbase://localhost/", "not a url", "file:travel"])(
     "rejects a missing or malformed URI bucket (%s) with a configuration error",
     (connectionString) => {
-      expect(() => new CouchbaseProvider(makeConnection({ database: undefined, connectionString }))).toThrow(
-        DatabaseConfigError,
-      );
-      expect(() => new CouchbaseProvider(makeConnection({ database: undefined, connectionString }))).toThrow(
-        /URL path or.*database/,
-      );
+      expect(
+        () =>
+          new CouchbaseProvider(
+            makeConnection({ database: undefined, connectionString }),
+            {},
+            { egress: ALLOWS_PRIVATE_HOSTS },
+          ),
+      ).toThrow(DatabaseConfigError);
+      expect(
+        () =>
+          new CouchbaseProvider(
+            makeConnection({ database: undefined, connectionString }),
+            {},
+            { egress: ALLOWS_PRIVATE_HOSTS },
+          ),
+      ).toThrow(/URL path or.*database/);
     },
   );
 
@@ -536,7 +574,7 @@ describe("CouchbaseProvider lifecycle", () => {
 
   test("connect maps rejected credentials to an AuthenticationError", async () => {
     stubManage("/pools/default", {}, 401);
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
     expect(provider.isConnected()).toBe(false);
@@ -544,7 +582,7 @@ describe("CouchbaseProvider lifecycle", () => {
 
   test("connect maps an unreachable cluster to a ConnectionError", async () => {
     networkFailure = new Error("connect ECONNREFUSED 127.0.0.1:8091");
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
     expect(provider.isConnected()).toBe(false);
@@ -560,7 +598,7 @@ describe("CouchbaseProvider lifecycle", () => {
   });
 
   test("query before connect is refused", async () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.query("SELECT 1")).rejects.toBeInstanceOf(DatabaseConfigError);
   });
@@ -903,7 +941,11 @@ describe("CouchbaseProvider answer bounds", () => {
   }
 
   function tlsProvider(port: number): CouchbaseProvider {
-    return new CouchbaseProvider(makeConnection({ port, ssl: { mode: "verify-ca", caCert: TLS.ca } }));
+    return new CouchbaseProvider(
+      makeConnection({ port, ssl: { mode: "verify-ca", caCert: TLS.ca } }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
   }
 
   test("a TLS cluster whose pools answer passes the cap fails Test Connection, naming the cap", async () => {
@@ -1427,7 +1469,7 @@ describe("CouchbaseProvider maintenance", () => {
 
 describe("CouchbaseProvider query preparation", () => {
   test("applies the external row limit to a SELECT", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const prepared = provider.prepareQuery("SELECT * FROM `travel`.`inventory`.`hotel`", { limit: 25 });
 
@@ -1439,7 +1481,7 @@ describe("CouchbaseProvider query preparation", () => {
   // Couchbase delegates to the shared limiter, so a comment-led SELECT is bounded
   // through the same fix rather than through anything of this provider's own (#275).
   test("applies the external row limit to a comment-led SELECT", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const prepared = provider.prepareQuery("/* annotated */ SELECT * FROM `travel`.`inventory`.`hotel`", {
       limit: 25,
@@ -1452,7 +1494,7 @@ describe("CouchbaseProvider query preparation", () => {
   // Same inheritance for the trailing edge (#280): the bound has to land before a
   // closing comment, and a backtick-quoted path must not be mistaken for one.
   test("puts the bound before a trailing comment", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const prepared = provider.prepareQuery("SELECT * FROM `travel`.`inventory`.`hotel` -- daily check", {
       limit: 25,
@@ -1466,7 +1508,7 @@ describe("CouchbaseProvider query preparation", () => {
   // holding a backslash-escaped quote end where Couchbase ends them, and the bound is written after them. The
   // compatibility default read both as unterminated and left the read unbounded.
   test("bounds a read whose subscript key or literal the default could not close", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     for (const query of [
       "SELECT h.reviews[0]['a]b'] FROM `travel`.`inventory`.`hotel` AS h",
@@ -1481,7 +1523,7 @@ describe("CouchbaseProvider query preparation", () => {
   });
 
   test("keeps a SQL++ bound written after its OFFSET", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const query = "SELECT * FROM `travel`.`inventory`.`hotel` OFFSET 5 LIMIT 10";
     const prepared = provider.prepareQuery(query, { limit: 25 });
@@ -1491,7 +1533,7 @@ describe("CouchbaseProvider query preparation", () => {
   });
 
   test("leaves a mutation untouched", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const prepared = provider.prepareQuery("DELETE FROM `travel`.`_default`.`airline`");
 
@@ -2613,7 +2655,7 @@ describe("endOpenQueryTransaction()", () => {
   ] as const;
 
   test("is not implemented, and the doc names WHICH absence that is", () => {
-    const provider: DatabaseProvider = new CouchbaseProvider(makeConnection());
+    const provider: DatabaseProvider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
 
@@ -2724,7 +2766,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
     const provider = new CouchbaseProvider(
       makeConnection({ user: "agent_ro" }),
       {},
-      execution,
+      { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
       nodeTransports(cluster),
     );
     await provider.connect();
@@ -2792,7 +2834,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
     const provider = new CouchbaseProvider(
       makeConnection({ user: "agent_ro" }),
       {},
-      AGENT_PROFILE,
+      { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS },
       nodeTransports(cluster),
     );
     const failure = await provider.connect().catch((error: unknown) => error);
@@ -2988,7 +3030,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
         const provider = new CouchbaseProvider(
           makeConnection({ user: "agent_ro" }),
           {},
-          executionContextFor(profile),
+          { ...executionContextFor(profile), egress: ALLOWS_PRIVATE_HOSTS },
           nodeTransports(cluster),
         );
         await provider.connect();

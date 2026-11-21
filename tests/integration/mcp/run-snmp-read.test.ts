@@ -26,6 +26,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import { type FakeAgent, integer, startFakeAgent, text, ticks } from "../../helpers/snmp-fake-agent";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 pinMcpTestEnvironment();
 
@@ -290,7 +291,7 @@ describe("a refusal", () => {
 
   test("a provider not opened under the agent read-only profile refuses the read, and asks the agent nothing for it", async () => {
     spyOn(McpConnectionContext.prototype, "acquire").mockImplementation(async (connection: ManagedConnection) => {
-      const provider = new SnmpProvider(connection as DatabaseConnection, {}, {});
+      const provider = new SnmpProvider(connection as DatabaseConnection, {}, { egress: ALLOWS_PRIVATE_HOSTS });
       await provider.connect();
       return provider;
     });

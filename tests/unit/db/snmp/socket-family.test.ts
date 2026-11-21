@@ -16,6 +16,7 @@ import type { LookupAddress } from "node:dns";
 import type { Socket, SocketType } from "node:dgram";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const realDns = { ...(await import("node:dns")) };
 const realDgram = { ...(await import("node:dgram")) };
@@ -106,7 +107,11 @@ describe("an agent on IPv6 is reached over a udp6 socket", () => {
     test(`${host} answers a get`, async () => {
       agent = await startFakeAgent(TREE, { address: "::1" });
       const from = opened.length;
-      provider = new SnmpProvider(connection(host, agent.port, consent), { queryTimeout: 2000 });
+      provider = new SnmpProvider(
+        connection(host, agent.port, consent),
+        { queryTimeout: 2000 },
+        { egress: ALLOWS_PRIVATE_HOSTS },
+      );
       await provider.connect();
       const result = await provider.query("get sysDescr.0");
       expect(result.rows).toEqual([{ object: "1.3.6.1.2.1.1.1.0", value: "an agent on IPv6", type: "text" }]);
@@ -119,7 +124,11 @@ describe("an agent on IPv6 is reached over a udp6 socket", () => {
   test("an agent on IPv4 is still reached over a udp4 socket", async () => {
     agent = await startFakeAgent(TREE);
     const from = opened.length;
-    provider = new SnmpProvider(connection("127.0.0.1", agent.port), { queryTimeout: 2000 });
+    provider = new SnmpProvider(
+      connection("127.0.0.1", agent.port),
+      { queryTimeout: 2000 },
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     await provider.connect();
     expect((await provider.query("get sysDescr.0")).rowCount).toBe(1);
     expect(since(from).map((socket) => socket.type)).toEqual(["udp4"]);
@@ -133,7 +142,11 @@ describe("a connect that fails closes the socket it opened", () => {
     agent = await startFakeAgent(TREE, { address: "::1" });
     fault = () => realDgram.createSocket("udp4");
     const from = opened.length;
-    provider = new SnmpProvider(connection("::1", agent.port), { queryTimeout: 2000 });
+    provider = new SnmpProvider(
+      connection("::1", agent.port),
+      { queryTimeout: 2000 },
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     const error = await provider.connect().then(
       () => undefined,
       (failure: unknown) => failure,
@@ -160,7 +173,11 @@ describe("a connect that fails closes the socket it opened", () => {
       return socket;
     };
     const from = opened.length;
-    provider = new SnmpProvider(connection("::1", 161), { queryTimeout: 2000 }, READ_ONLY);
+    provider = new SnmpProvider(
+      connection("::1", 161),
+      { queryTimeout: 2000 },
+      { ...READ_ONLY, egress: ALLOWS_PRIVATE_HOSTS },
+    );
     const error = await provider.connect().then(
       () => undefined,
       (failure: unknown) => failure,
@@ -183,7 +200,11 @@ describe("a connect that fails closes the socket it opened", () => {
       return socket;
     };
     const from = opened.length;
-    provider = new SnmpProvider(connection("127.0.0.1", agent.port), { queryTimeout: 2000 }, READ_ONLY);
+    provider = new SnmpProvider(
+      connection("127.0.0.1", agent.port),
+      { queryTimeout: 2000 },
+      { ...READ_ONLY, egress: ALLOWS_PRIVATE_HOSTS },
+    );
     const error = await provider.connect().then(
       () => undefined,
       (failure: unknown) => failure,
@@ -196,7 +217,11 @@ describe("a connect that fails closes the socket it opened", () => {
   test("a probe nobody answers fails the connect and closes the socket", async () => {
     agent = await startFakeAgent(TREE, { silentOn: () => true });
     const from = opened.length;
-    provider = new SnmpProvider(connection("127.0.0.1", agent.port), { queryTimeout: 200 });
+    provider = new SnmpProvider(
+      connection("127.0.0.1", agent.port),
+      { queryTimeout: 200 },
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     const error = await provider.connect().then(
       () => undefined,
       (failure: unknown) => failure,

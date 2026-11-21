@@ -9,6 +9,7 @@ import type { Exchange, ExchangeOptions } from "@/lib/db/providers/network/snmp/
 import { StatementError } from "@/lib/db/providers/network/snmp/statement";
 import type { DatabaseConnection } from "@/lib/types";
 import { type FakeAgent, startFakeAgent, text } from "../../../helpers/snmp-fake-agent";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const real = await import("@/lib/db/providers/network/snmp/client");
 const realOpen = real.openExchange;
@@ -59,7 +60,7 @@ describe("each agent read closes the exchange it opened", () => {
     const provider = new SnmpProvider(
       connection(agent.port),
       { queryTimeout: 1_000 },
-      { readOnly: true, sendsStatements: true },
+      { readOnly: true, sendsStatements: true, egress: ALLOWS_PRIVATE_HOSTS },
     );
     await provider.connect();
     const before = { opened, closed };
