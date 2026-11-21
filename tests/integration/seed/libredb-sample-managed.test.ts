@@ -123,6 +123,8 @@ describe("getManagedConnections — embedded sample", () => {
     useTempSamplePath();
     process.env.SQLITE_EMBEDDED_SAMPLE = "false";
     process.env.LIBREDB_ENABLED_PROVIDERS = "sqlite";
+    // The committed assets are named, so only the sample's being off can keep its file from being copied.
+    process.env.SEED_ASSETS_DIR = path.resolve(import.meta.dir, "../../../seed-assets");
     await startSampleSeeding();
     // The exclusive create fails with EEXIST if the seeding wrote a file there. A file put there by hand is not
     // listed either: the factory could never open it.

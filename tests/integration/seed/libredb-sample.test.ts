@@ -101,10 +101,10 @@ describe("the LibreDB sample", () => {
   test("the copy opens with all three lenses, and leaves no lock beside it once closed", async () => {
     const spec = libredbRow();
     process.env.SEED_ASSETS_DIR = path.join(ROOT, "seed-assets");
+    const asset = sampleAssetPath(spec);
+    if (asset === null) throw new Error("SEED_ASSETS_DIR is set above, so the sample has an asset path");
     const file = tmpPath();
-    expect(await copySampleAsset({ asset: sampleAssetPath(spec), sha256: spec.sha256, bytes: spec.bytes }, file)).toBe(
-      "copied",
-    );
+    expect(await copySampleAsset({ asset, sha256: spec.sha256, bytes: spec.bytes }, file)).toBe("copied");
     expect(fs.readdirSync(path.dirname(file))).toEqual(["sample.libredb"]);
 
     const db = open({ path: file });

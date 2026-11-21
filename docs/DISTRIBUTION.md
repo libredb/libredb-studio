@@ -270,6 +270,8 @@ So a shutdown Studio owns takes 20 s at most.
 Studio's handler does not close the HTTP server: until its exit the server accepts new connections and serves their requests, and a request that opens a provider after the close leaves it open until the exit.
 Requests still in flight are not drained either: a request that uses a provider fails once the providers close, and the exit ends the rest.
 A second SIGTERM or SIGINT during the shutdown starts nothing, does not cut it and does not change its exit code; npx delivers every Ctrl+C twice, once from the terminal and once from the launcher.
+In a source checkout, `bun dev` and `bun start` deliver it twice too, since `scripts/next-with-seed-assets.mjs` forwards SIGINT and SIGTERM to the Next.js CLI, which the terminal's Ctrl+C has already reached.
+On Windows that forward is not a second signal: Node.js ends the Next.js CLI at once, so a Ctrl+C under `bun dev` or `bun start` cuts the shutdown part way.
 Next.js's own handler ignores a repeated signal too, so under neither handler does a second Ctrl+C force the exit.
 
 | Code | Meaning |
@@ -318,7 +320,7 @@ The npm package and the VS Code extension's backend child run no Next.js server:
 ## Built-in sample assets
 
 The two built-in samples are copied at boot from the `seed-assets` directory every payload ships beside `server.js` ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#built-in-sample-connections)).
-The server finds that directory through `SEED_ASSETS_DIR`, which every launcher sets to its own payload's `seed-assets` directory, as an absolute path.
+The server finds that directory only through `SEED_ASSETS_DIR`, which every launcher sets to its own payload's `seed-assets` directory, as an absolute path.
 
 | Channel | What sets it | Where it points |
 |---|---|---|
@@ -332,7 +334,17 @@ The server finds that directory through `SEED_ASSETS_DIR`, which every launcher 
 
 Every launcher but the desktop app keeps a value the operator set, and an empty value counts as unset.
 The desktop app sets it on every start, as it does its storage path.
-When nothing sets it, the server reads `<working directory>/seed-assets`.
+In a source checkout, `bun dev` and `bun start` run Next.js through `scripts/next-with-seed-assets.mjs`.
+A `SEED_ASSETS_DIR` set in the shell, or in a `.env` file Next.js loads for the command, is kept, and Next.js reads it as it would without the launcher.
+Otherwise the launcher sets it to the checkout's own `seed-assets`, found from the script's location.
+The launcher learns this from Next.js's own loader, `@next/env`, run on the working directory for that command, so a file Next.js does not load for it, or cannot read, sets nothing, and Next.js still reports a file it cannot read.
+The launcher reads each of those files once before Next.js does, so a `.env` that is a named pipe has to serve every read.
+An inspector set in `NODE_OPTIONS`, such as `--inspect` or `--inspect-brk`, is taken by the launcher, which starts first.
+Under `bun start` the server then has no inspector, and under `bun dev` its server gets the next port, as before the launcher.
+Debug the server with `bun start --inspect` or `bun run dev --inspect`.
+A `server.js` that no launcher starts, such as the standalone tarball extracted and run by hand, needs it set by whoever starts it, for example from the extracted directory: `SEED_ASSETS_DIR="$PWD/seed-assets" node server.js`.
+The server never takes the directory from its working directory: with `SEED_ASSETS_DIR` unset or blank it starts as usual, and every enabled, admitted sample whose file is not at its target yet is listed unavailable as `asset-directory-unset` and logged once.
+A relative value is resolved against the server's working directory, as every other path setting is.
 A sample whose assets are not where it points is listed unavailable with its reason, and boot continues ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
 
 ## Release artifact naming
@@ -1642,8 +1654,8 @@ macOS, missing artifact) and prints a summary. Where each channel runs in CI:
 
 The next-dev row's servers get this checkout's `seed-assets` from `playwright.config.ts`, the tarball channel, which has no launcher, gets it from the script, as a user running `server.js` directly would, and the docker channel runs on the image's `ENV`.
 Every channel the script starts through a launcher runs with no inherited `SEED_ASSETS_DIR`, so it runs on the value its launcher sets ([Built-in sample assets](#built-in-sample-assets)), and a wrong value fails it.
-A launcher that sets nothing is not caught here yet: the server still falls back to `<working directory>/seed-assets`, and `server.js` changes into its payload, so the fallback finds the same directory.
-Until that fallback is removed, each launcher's own unit tests are what prove it sets the value.
+A launcher that sets nothing fails it as well: the server never takes the assets from its working directory, so both samples are listed unavailable as `asset-directory-unset`, never as connections, and the spec's two query tests fail on them; its sidebar test still passes, since an Unavailable row shows the sample's name.
+The default `scripts/next-with-seed-assets.mjs` sets for `bun dev` and `bun start` when neither the shell nor a `.env` file sets one is not exercised here, since `playwright.config.ts` sets the variable; that launcher's own unit test proves it.
 
 ### First-release validation runbook
 

@@ -4,7 +4,16 @@
  * copies every enabled, admitted sample and logs each outcome once.
  */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { REFUSES_DENIED_FILE_ACCESS } from "@/lib/db/compatibility";
@@ -449,15 +458,47 @@ describe("targets and their admission", () => {
 });
 
 describe("the seed assets directory", () => {
-  test("reads the seed assets directory from SEED_ASSETS_DIR, else the working directory's seed-assets", () => {
+  test("reads the seed assets directory from SEED_ASSETS_DIR, and has none when it is unset or blank, whatever the working directory holds", () => {
+    // The working directory holds a seed-assets directory, so a fallback to it could not pass unnoticed.
+    expect(existsSync(path.join(process.cwd(), "seed-assets"))).toBe(true);
     process.env.SEED_ASSETS_DIR = "/opt/studio/seed-assets";
     expect(seedAssetsDirectory()).toBe(path.resolve("/opt/studio/seed-assets"));
+    expect(sampleAssetPath(row("libredb"))).toBe(
+      path.join(path.resolve("/opt/studio/seed-assets"), "libredb", "sample.libredb"),
+    );
     process.env.SEED_ASSETS_DIR = "  relative/assets ";
     expect(seedAssetsDirectory()).toBe(path.resolve(process.cwd(), "relative/assets"));
-    process.env.SEED_ASSETS_DIR = "   ";
-    expect(seedAssetsDirectory()).toBe(path.join(process.cwd(), "seed-assets"));
-    delete process.env.SEED_ASSETS_DIR;
-    expect(seedAssetsDirectory()).toBe(path.join(process.cwd(), "seed-assets"));
+    for (const value of [undefined, "", "   "]) {
+      if (value === undefined) delete process.env.SEED_ASSETS_DIR;
+      else process.env.SEED_ASSETS_DIR = value;
+      expect(seedAssetsDirectory()).toBeNull();
+      for (const spec of SAMPLES.values()) expect(sampleAssetPath(spec)).toBeNull();
+    }
+  });
+
+  test("resolves a relative SEED_ASSETS_DIR against the working directory, as every other path setting is, and copies both samples from it", async () => {
+    // The runner starts this file in the checkout root, so the test moves to another directory: a value resolved
+    // against the checkout or the module's location would then name a directory that does not exist. That directory
+    // is inside the checkout, so the relative value stays relative on Windows, where the temp directory can be on
+    // another drive, and keeps its meaning on macOS, where the temp directory is under a link.
+    const workingDirectory = path.join(ROOT, "tests");
+    const relative = path.relative(workingDirectory, path.join(ROOT, "seed-assets"));
+    expect(relative).not.toBe("");
+    expect(path.isAbsolute(relative)).toBe(false);
+    process.env.SEED_ASSETS_DIR = relative;
+    const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    const before = process.cwd();
+    process.chdir(workingDirectory);
+    try {
+      await startSampleSeeding();
+      expect(getSampleSeedState("sqlite-embedded-sample")).toEqual({ phase: "done" });
+      expect(getSampleSeedState("libredb-embedded-sample")).toEqual({ phase: "done" });
+      expect(readdirSync(dataDir).sort()).toEqual(["sample-employees.db", "sample.libredb"]);
+    } finally {
+      process.chdir(before);
+      info.mockRestore();
+    }
   });
 });
 
@@ -494,6 +535,9 @@ describe("the seed state and the connection record", () => {
   });
 
   test("every reason has a sentence that names no path, and a failure names its code when it has one", () => {
+    expect(unavailableSentence("asset-directory-unset")).toBe(
+      "No seed assets directory is set (SEED_ASSETS_DIR), so this sample was not copied. Start the server through its launcher, or set SEED_ASSETS_DIR to the seed-assets directory of this release.",
+    );
     expect(unavailableSentence("asset-missing")).toBe(
       "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied. The server log names the path.",
     );
@@ -607,6 +651,84 @@ describe("startSampleSeeding", () => {
       expect(String(context?.error)).toContain("employee.db");
     } finally {
       warn.mockRestore();
+    }
+  });
+
+  test.each([
+    ["unset", undefined],
+    ["empty", ""],
+    ["whitespace only", "   "],
+  ])(
+    "with SEED_ASSETS_DIR %s, every enabled sample is failed as asset-directory-unset, logged once each, nothing is copied, and seeding resolves",
+    async (_label, value) => {
+      if (value === undefined) delete process.env.SEED_ASSETS_DIR;
+      else process.env.SEED_ASSETS_DIR = value;
+      const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        await startSampleSeeding();
+        for (const seedId of ["sqlite-embedded-sample", "libredb-embedded-sample"]) {
+          expect(getSampleSeedState(seedId)).toEqual({
+            phase: "failed",
+            reason: "asset-directory-unset",
+            sentence: unavailableSentence("asset-directory-unset"),
+          });
+        }
+        // The two copies settle in either order.
+        const lines = warn.mock.calls
+          .map(([message, context]) => ({
+            message,
+            seedId: context?.seedId,
+            reason: context?.reason,
+            assets: context?.assets,
+            target: context?.target,
+          }))
+          .sort((a, b) => String(a.seedId).localeCompare(String(b.seedId)));
+        expect(lines).toEqual([
+          {
+            message: "Embedded sample unavailable",
+            seedId: "libredb-embedded-sample",
+            reason: "asset-directory-unset",
+            assets: null,
+            target: sampleTarget(row("libredb")),
+          },
+          {
+            message: "Embedded sample unavailable",
+            seedId: "sqlite-embedded-sample",
+            reason: "asset-directory-unset",
+            assets: null,
+            target: sampleTarget(row("sqlite")),
+          },
+        ]);
+        for (const [, context] of warn.mock.calls) expect(String(context?.error)).toContain("SEED_ASSETS_DIR");
+        expect(readdirSync(dataDir)).toEqual([]);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
+  test("a sample whose file is in place stays done with SEED_ASSETS_DIR unset, and nothing warns", async () => {
+    delete process.env.SEED_ASSETS_DIR;
+    const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");
+    writeFileSync(path.join(dataDir, "sample-employees.db"), "the user's edits");
+    writeFileSync(path.join(dataDir, "sample.libredb"), "the user's edits");
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const debug = spyOn(logger, "debug").mockImplementation(() => {});
+    try {
+      await startSampleSeeding();
+      expect(getSampleSeedState("sqlite-embedded-sample")).toEqual({ phase: "done" });
+      expect(getSampleSeedState("libredb-embedded-sample")).toEqual({ phase: "done" });
+      expect(warn).not.toHaveBeenCalled();
+      expect(debug.mock.calls.map(([message, context]) => `${message}: ${context?.seedId}`).sort()).toEqual([
+        "Embedded sample already present: libredb-embedded-sample",
+        "Embedded sample already present: sqlite-embedded-sample",
+      ]);
+      expect(readFileSync(path.join(dataDir, "sample-employees.db"), "utf8")).toBe("the user's edits");
+      expect(readFileSync(path.join(dataDir, "sample.libredb"), "utf8")).toBe("the user's edits");
+    } finally {
+      warn.mockRestore();
+      debug.mockRestore();
     }
   });
 

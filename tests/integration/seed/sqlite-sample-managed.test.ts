@@ -90,18 +90,26 @@ describe("getManagedConnections: sqlite embedded sample", () => {
     const file = useTempSamplePath();
     process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
     process.env.LIBREDB_ENABLED_PROVIDERS = "libredb";
-    await startSampleSeeding();
-    expect(fs.existsSync(file)).toBe(false);
-    writeSampleFile(file);
-    expect((await getManagedConnections(["admin"])).find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
-    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
-    expect(getPendingSeeds()).toEqual([]);
-    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, {
-      phase: "failed",
-      reason: "copy-failed",
-      sentence: unavailableSentence("copy-failed"),
-    });
-    expect(getUnavailableSamples(["admin"])).toEqual([]);
+    // The committed assets are named, so only the sample's being off can keep its file from being copied.
+    const savedAssets = process.env.SEED_ASSETS_DIR;
+    process.env.SEED_ASSETS_DIR = path.resolve(import.meta.dir, "../../../seed-assets");
+    try {
+      await startSampleSeeding();
+      expect(fs.existsSync(file)).toBe(false);
+      writeSampleFile(file);
+      expect((await getManagedConnections(["admin"])).find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
+      setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
+      expect(getPendingSeeds()).toEqual([]);
+      setSampleSeedState(SQLITE_SAMPLE_SEED_ID, {
+        phase: "failed",
+        reason: "copy-failed",
+        sentence: unavailableSentence("copy-failed"),
+      });
+      expect(getUnavailableSamples(["admin"])).toEqual([]);
+    } finally {
+      if (savedAssets === undefined) delete process.env.SEED_ASSETS_DIR;
+      else process.env.SEED_ASSETS_DIR = savedAssets;
+    }
   });
 
   test("a target that names the storage database is refused, never listed although the file exists, and unavailable", async () => {

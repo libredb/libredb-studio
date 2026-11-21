@@ -130,19 +130,21 @@ export function sampleTarget(spec: SampleSpec): string {
 }
 
 /**
- * The seed assets directory: `SEED_ASSETS_DIR`, trimmed, resolved against the working directory when relative; else
- * `<working directory>/seed-assets`, where every channel ships the directory beside server.js (the standalone server
- * runs from its own directory, and `next dev` and `next start` from the repository root).
+ * The seed assets directory: `SEED_ASSETS_DIR`, trimmed, resolved against the working directory when relative, as every
+ * other path setting is; null when it is unset or blank. Every launcher sets it to its payload's own `seed-assets` as an
+ * absolute path, and `bun dev` and `bun start` to the checkout's (docs/DISTRIBUTION.md, "Built-in sample assets"). The
+ * server never takes it from its working directory: with none, a sample whose file is not in place yet is listed
+ * unavailable as `asset-directory-unset`.
  */
-export function seedAssetsDirectory(): string {
+export function seedAssetsDirectory(): string | null {
   const configured = (process.env.SEED_ASSETS_DIR ?? "").trim();
-  if (configured !== "") return path.resolve(configured);
-  return path.join(process.cwd(), "seed-assets");
+  return configured === "" ? null : path.resolve(configured);
 }
 
-/** The sample's asset file in the seed assets directory. */
-export function sampleAssetPath(spec: SampleSpec): string {
-  return path.join(seedAssetsDirectory(), ...spec.asset.split("/"));
+/** The sample's asset file in the seed assets directory, or null when there is no seed assets directory. */
+export function sampleAssetPath(spec: SampleSpec): string | null {
+  const directory = seedAssetsDirectory();
+  return directory === null ? null : path.join(directory, ...spec.asset.split("/"));
 }
 
 /** Why an enabled sample's target is refused before any copy, or null when it is admitted. */
@@ -232,6 +234,8 @@ function withCode(code: string | undefined): string {
 /** The sentence a client shows for an unavailable sample: it names no path and no secret, and says where to look. */
 export function unavailableSentence(reason: SampleUnavailableReason, code?: string): string {
   switch (reason) {
+    case "asset-directory-unset":
+      return "No seed assets directory is set (SEED_ASSETS_DIR), so this sample was not copied. Start the server through its launcher, or set SEED_ASSETS_DIR to the seed-assets directory of this release.";
     case "asset-missing":
       return "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied. The server log names the path.";
     case "asset-unreadable":
@@ -364,7 +368,7 @@ export function sampleConnection(type: DatabaseType, spec: SampleSpec, target: s
  * Each outcome sets the state and logs exactly one line in one synchronous step, so a state that is no longer
  * `seeding` means its line has been written: info "Embedded sample copied", debug "Embedded sample already present"
  * (every boot after the first), or warn "Embedded sample unavailable" with the reason, the target and the seed assets
- * directory. A failure never stops boot.
+ * directory (null when none is set). A failure never stops boot.
  *
  * copySampleAsset rejects with a SampleCopyError for every failure it knows. Anything else is a defect: its sample is
  * set `failed` with `copy-defect` and logged as above, so it never stays pending, and the error is rethrown, so the
@@ -396,7 +400,8 @@ export function startSampleSeeding(): Promise<void> {
     }
     states.set(spec.seedId, { phase: "seeding" });
     const started = Date.now();
-    const pinned = { asset: sampleAssetPath(spec), sha256: spec.sha256, bytes: spec.bytes };
+    const asset = sampleAssetPath(spec);
+    const pinned = asset === null ? null : { asset, sha256: spec.sha256, bytes: spec.bytes };
     copies.push(
       copySampleAsset(pinned, target).then(
         (outcome) => {

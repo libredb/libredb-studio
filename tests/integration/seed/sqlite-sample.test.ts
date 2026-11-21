@@ -33,10 +33,10 @@ function tmpPath(): string {
 async function seededSample(): Promise<string> {
   const spec = sqliteRow();
   process.env.SEED_ASSETS_DIR = path.join(ROOT, "seed-assets");
+  const asset = sampleAssetPath(spec);
+  if (asset === null) throw new Error("SEED_ASSETS_DIR is set above, so the sample has an asset path");
   const file = tmpPath();
-  expect(await copySampleAsset({ asset: sampleAssetPath(spec), sha256: spec.sha256, bytes: spec.bytes }, file)).toBe(
-    "copied",
-  );
+  expect(await copySampleAsset({ asset, sha256: spec.sha256, bytes: spec.bytes }, file)).toBe("copied");
   return file;
 }
 

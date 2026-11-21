@@ -6,7 +6,8 @@
  * Every sample the environment enables must have its path override set, so a seeding test never copies into the
  * repository's ./data: an enabled sample without one is an error naming its variable, before anything is copied. A
  * sample whose file the test put there is left as it is ("already present"); one without a file gets the committed
- * asset.
+ * asset when the test sets SEED_ASSETS_DIR to the seed-assets directory, and fails as asset-directory-unset when it
+ * is unset.
  */
 import { SAMPLES, sampleEnabled, startSampleSeeding } from "@/lib/seed/samples";
 

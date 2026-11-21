@@ -27,8 +27,9 @@
  *   did not close completely (`closeCachesAtShutdown` in src/lib/db/factory.ts). A step that rejects is logged and
  *   counts as incomplete; the exit runs anyway.
  * - Repeated signals start nothing, do not cut the run and do not change the code; the first is logged. `npx` delivers
- *   every Ctrl+C twice, once from the terminal and once from the launcher's forward, so a second signal must not force
- *   the exit.
+ *   every Ctrl+C twice, once from the terminal and once from the launcher's forward, and so do `bun dev` and
+ *   `bun start` through scripts/next-with-seed-assets.mjs, so a second signal must not force the exit. On Windows that
+ *   launcher's forward ends the Next.js CLI at once instead, which no handler here can prevent.
  * - Installed once per process by `register()` at boot, right after the uncaught-exception exit: the installation is
  *   recorded in a global under a registered symbol, as src/lib/uncaught-exception.ts does, so another `register()`
  *   call or another bundled copy of this module attaches nothing. It never imports the provider factory: each bundle

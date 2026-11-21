@@ -1781,7 +1781,8 @@ An operator's own seed connections are listed before both.
 ### How a sample is created
 
 Each sample is a committed file in the seed assets directory, `SEED_ASSETS_DIR`.
-Every launcher sets it to the `seed-assets` directory its payload ships beside `server.js` ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)), and when nothing sets it the server reads `<working directory>/seed-assets`.
+Every launcher sets it to the `seed-assets` directory its payload ships beside `server.js`, and in a source checkout `bun dev` and `bun start` set it to the checkout's own ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)).
+The server never takes it from its working directory: with `SEED_ASSETS_DIR` unset or blank, an enabled, admitted sample whose file is not at its target yet is listed unavailable as `asset-directory-unset`, and one whose file is already there is listed as usual.
 Each file is the output of a committed script, held by a test that reruns it, and the sample table pins its size and SHA-256 digest; `seed-assets/README.md` lists them.
 At boot, `src/lib/seed/sample-copy.ts` copies each enabled sample's file into the data directory and opens no database:
 
@@ -1816,12 +1817,13 @@ A change to any of these variables, or to a `_PATH` override, takes effect at th
 
 ### A sample that could not be created
 
-A sample whose copy fails, or whose target is refused, is logged once as the warning `Embedded sample unavailable` with its reason, the target path and the seed assets directory, and boot continues.
+A sample whose copy fails, or whose target is refused, is logged once as the warning `Embedded sample unavailable` with its reason, the target path and the seed assets directory (`null` when `SEED_ASSETS_DIR` is unset or blank), and boot continues.
 So is a sample whose file a request finds lost after boot.
 `GET /api/connections/managed` then answers it in `unavailableSamples`, for the roles the sample is offered to, with one of these reasons and a sentence that names no path:
 
 | Reason | What happened |
 |--------|---------------|
+| `asset-directory-unset` | `SEED_ASSETS_DIR` is unset or blank, so the server has no seed assets directory to copy the sample from; it never uses its working directory instead |
 | `asset-missing` | The sample's file is not in the seed assets directory |
 | `asset-unreadable` | The sample's file in the seed assets directory could not be read; the sentence names the error code, such as `EACCES` or `EIO` |
 | `digest-mismatch` | The file in the seed assets directory is not the one this release ships |
@@ -1843,7 +1845,7 @@ This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own
 | `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Override the LibreDB sample file's location |
 | `SQLITE_EMBEDDED_SAMPLE` | `true` | Set to `false` (exact match) to disable the SQLite sample |
 | `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Override the SQLite sample file's location |
-| `SEED_ASSETS_DIR` | Set by every launcher to its payload's `seed-assets` ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)); `<working directory>/seed-assets` when nothing sets it | The directory both samples are copied from; a relative value is resolved against the working directory |
+| `SEED_ASSETS_DIR` | None: every launcher sets it to its payload's `seed-assets`, and `bun dev` and `bun start` to the checkout's ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)) | The directory both samples are copied from; a relative value is resolved against the working directory. Unset or blank, a sample not yet copied is listed unavailable as `asset-directory-unset`, and the working directory is never used instead |
 
 `SEED_ASSETS_DIR` replaces `SQLITE_EMBEDDED_SAMPLE_TEMPLATE`, which is no longer read.
 
@@ -1871,8 +1873,10 @@ Correct the type, or run a Studio that has the provider; until then no route ope
 The built-in sample could not be created at boot, or its file was lost after boot ([A sample that could not be created](#a-sample-that-could-not-be-created)).
 Hover the marker for the reason, and find the warning `Embedded sample unavailable` in the server log, which names the path:
 
+- `asset-directory-unset`: the server was started with `SEED_ASSETS_DIR` unset or blank, so it has no seed assets directory, and it never uses its working directory instead.
+  Start it through its launcher, which sets it ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)); when you start `server.js` yourself, set `SEED_ASSETS_DIR` to the `seed-assets` directory beside it, then restart.
 - `asset-missing`: the seed assets directory does not hold the sample's file.
-  Point `SEED_ASSETS_DIR` at the `seed-assets` directory of this release, or start the server from the directory that holds it.
+  Point `SEED_ASSETS_DIR` at the `seed-assets` directory of this release, then restart.
 - `asset-unreadable`: the server could not read the sample's file in the seed assets directory.
   Give the server read access to `SEED_ASSETS_DIR` and the files in it (`EACCES`), or check the volume it is on (`EIO`), then restart.
 - `digest-mismatch`: the file there is not this release's.
@@ -1891,7 +1895,7 @@ Hover the marker for the reason, and find the warning `Embedded sample unavailab
   Two paths that differ only in Unicode normalization form, such as a precomposed `ü` against a `u` followed by a combining diaeresis (NFC against NFD), conflict on every OS too, because on macOS they name one file.
   Give each sample its own.
 - `target-lost`: the sample's file was in place, and a later request could not find it (`ENOENT`) or could not check its path (`EACCES`, `ENOTDIR`).
-  Give the server back access to the path, or restart it, which copies a removed sample again.
+  Give the server back access to the path, or restart it, which copies a removed sample again when `SEED_ASSETS_DIR` is set; without it the sample is listed as `asset-directory-unset`.
 
 A restart retries the copy and reads the variables again; a sample whose file exists is never copied again.
 
