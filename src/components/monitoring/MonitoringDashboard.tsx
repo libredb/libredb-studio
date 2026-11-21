@@ -35,6 +35,10 @@ import { TablesTab } from "./tabs/TablesTab";
 import { StorageTab } from "./tabs/StorageTab";
 import { PoolTab } from "./tabs/PoolTab";
 import { withConnectedMaintenance } from "@/lib/db/types";
+import { typeIdRefusal } from "@/lib/db/type-id";
+import { ConnectionTypeLabel } from "@/components/connection-type-label";
+import { defaultConnection, unavailableConnectionNotice } from "@/lib/connection-availability";
+import { useToast } from "@/hooks/use-toast";
 
 interface MonitoringDashboardProps {
   isEmbedded?: boolean;
@@ -54,15 +58,15 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
   // Load connections (user + managed seed connections)
   const { connections: allConns } = useAllConnections();
 
-  // Derived, not stored: an explicit pick wins, otherwise the saved active
-  // connection, otherwise the first one. Resolving against the current list on
-  // every render also means a connection that disappears from it stops being
-  // selected, instead of leaving a dead object behind.
+  // Derived, not stored: an explicit pick wins, otherwise `defaultConnection`: the saved
+  // active connection, otherwise the first one, skipping any whose type names no provider
+  // (FND-1). Resolving against the current list on every render also means a connection
+  // that disappears from it stops being selected, instead of leaving a dead object behind.
+  // A pick that a later list names no provider for stays picked, drawn as unavailable, and
+  // the server refuses its reads by name: the page does not switch by itself.
   const selectedConnection = useMemo(
     () =>
-      chosenId !== null
-        ? (allConns.find((c) => c.id === chosenId) ?? null)
-        : (allConns.find((c) => c.id === savedId) ?? allConns[0] ?? null),
+      chosenId !== null ? (allConns.find((c) => c.id === chosenId) ?? null) : defaultConnection(allConns, savedId),
     [allConns, chosenId, savedId],
   );
 
@@ -127,7 +131,17 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
   const billedComputeNoteId = useId();
   const resumesBilledCompute = metadata?.capabilities.resumesBilledCompute === true;
 
+  const { toast } = useToast();
+
+  // A pick of a connection whose type names no provider is refused by name and changes
+  // nothing, with the notice the editor raises for the same pick (FND-1).
   const handleConnectionChange = (connectionId: string) => {
+    const picked = allConns.find((c) => c.id === connectionId);
+    const refusal = picked === undefined ? null : typeIdRefusal(picked.type);
+    if (picked !== undefined && refusal !== null) {
+      toast({ ...unavailableConnectionNotice(picked, refusal.sentence), variant: "destructive" });
+      return;
+    }
     setChosenId(connectionId);
   };
 
@@ -224,7 +238,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                   <div className="flex items-center gap-2">
                     <Database strokeWidth={1.5} className="h-4 w-4 flex-shrink-0" />
                     <span className="truncate">{selectedConnection.name}</span>
-                    <span className="text-xs text-muted-foreground hidden sm:inline">({selectedConnection.type})</span>
+                    <ConnectionTypeLabel type={selectedConnection.type} className="hidden sm:inline" />
                   </div>
                 ) : (
                   "Select connection"
@@ -237,7 +251,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                   <div className="flex items-center gap-2">
                     <Database strokeWidth={1.5} className="h-4 w-4" />
                     <span>{conn.name}</span>
-                    <span className="text-xs text-muted-foreground">({conn.type})</span>
+                    <ConnectionTypeLabel type={conn.type} />
                   </div>
                 </SelectItem>
               ))}

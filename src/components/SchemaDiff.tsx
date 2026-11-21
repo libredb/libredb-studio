@@ -35,6 +35,8 @@ import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";
 import type { SchemaDiff as SchemaDiffType, TableDiff } from "@/lib/schema-diff/types";
 import { SnapshotTimeline } from "@/components/SnapshotTimeline";
+import { UnavailableTypeMarker } from "@/components/connection-type-label";
+import { assertDatabaseType } from "@/lib/db/type-id";
 
 interface SchemaDiffProps {
   schema: readonly DetailedObject[];
@@ -182,7 +184,14 @@ interface LiveRead {
   readonly scopes?: { readonly names: readonly string[]; readonly selected: string | null };
 }
 
+/**
+ * The read the docblock above `readPayload` describes. A connection whose type names no provider is refused first,
+ * before any request (FND-1), so a pick of it in the target list fails by name on the panel's own failure line.
+ *
+ * @throws {UnknownProviderError} When `conn.type` is absent, not text, or names no provider.
+ */
 async function readLiveSchema(conn: DatabaseConnection, requested?: DiffScope): Promise<LiveRead> {
+  assertDatabaseType(conn.type);
   const payload = readPayload(conn);
   const post = (path: string, body: unknown) =>
     appFetch(path, {
@@ -1122,6 +1131,7 @@ export function SchemaDiff({ schema, connection }: SchemaDiffProps) {
                       <SelectItem key={`conn:${c.id}`} value={`conn:${c.id}`} className="text-xs">
                         <div className="flex items-center gap-1">
                           <Database strokeWidth={1.5} className="w-3 h-3 text-hue-blue" /> {c.name}
+                          <UnavailableTypeMarker type={c.type} />
                           {c.environment === "production" && (
                             <TriangleAlert strokeWidth={1.5} className="w-3 h-3 text-danger" />
                           )}

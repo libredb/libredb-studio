@@ -7,6 +7,8 @@
  * kept as stored. The sentences that say why come from `typeIdRefusal` in `@/lib/db/type-id`; this module only names
  * the record they refuse.
  */
+import { isDatabaseType } from "@/lib/db/type-id";
+import type { DatabaseConnection } from "@/lib/types";
 
 /** A notice's title and the line under it, as `useToast` and sonner take them. */
 interface UnavailableNotice {
@@ -16,6 +18,34 @@ interface UnavailableNotice {
 
 function noticeName(name: unknown, fallback: string): string {
   return typeof name === "string" && name !== "" ? name : fallback;
+}
+
+/**
+ * The connection a picker shows by itself, before or without a pick: the one `savedId` names while it is listed and a
+ * provider can open it, otherwise the first listed one a provider can open, otherwise null. A picker never opens on a
+ * connection whose type names no provider; it lists that connection as unavailable.
+ */
+export function defaultConnection(
+  list: readonly DatabaseConnection[],
+  savedId: string | null,
+): DatabaseConnection | null {
+  const available = list.filter((connection) => isDatabaseType(connection.type));
+  return available.find((connection) => connection.id === savedId) ?? available[0] ?? null;
+}
+
+/**
+ * The notice that refuses a pick of a connection whose type names no provider: its name, or "This connection" for a
+ * record whose name is missing, empty or not text, and the refusal's `sentence`. The editor's connection hook and the
+ * pickers outside the editor raise the same notice.
+ */
+export function unavailableConnectionNotice(
+  connection: { readonly name?: unknown },
+  sentence: string,
+): UnavailableNotice {
+  return {
+    title: "Connection unavailable",
+    description: `${noticeName(connection.name, "This connection")}: ${sentence}`,
+  };
 }
 
 /**

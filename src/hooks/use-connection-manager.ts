@@ -14,6 +14,7 @@ import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
 import { startManagedListRefresh } from "@/lib/connection-refresh";
 import { isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
+import { unavailableConnectionNotice } from "@/lib/connection-availability";
 import {
   connectionAllowed,
   connectionsUnderPolicy,
@@ -483,17 +484,13 @@ export function useConnectionManager(storageReady = false) {
 
   /**
    * Says that `connection` cannot be opened and why, in the refusal's own sentence (FND-1). The same toast answers a
-   * pick from any list, a link that names the connection and a saved active id that names it. A record with no name
-   * is called "This connection", as the delete dialog calls it.
+   * pick from any list, a link that names the connection and a saved active id that names it. Its wording is
+   * `unavailableConnectionNotice`'s, which also calls a record with no name "This connection", as the delete dialog
+   * calls it.
    */
   const refuseUnavailable = useCallback(
     (connection: DatabaseConnection, sentence: string) => {
-      const name = typeof connection.name === "string" && connection.name !== "" ? connection.name : "This connection";
-      toast({
-        title: "Connection unavailable",
-        description: `${name}: ${sentence}`,
-        variant: "destructive",
-      });
+      toast({ ...unavailableConnectionNotice(connection, sentence), variant: "destructive" });
     },
     [toast],
   );
