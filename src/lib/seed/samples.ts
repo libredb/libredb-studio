@@ -1,11 +1,13 @@
 /**
  * The built-in sample databases: a core-owned Studio feature, one row per engine that ships a sample.
  *
- * At boot (src/instrumentation.ts) `startSampleSeeding` copies each enabled sample's committed, digest-pinned asset
- * from the seed assets directory into the data directory, asynchronously, and opens no database: the copy is
- * src/lib/seed/sample-copy.ts. The managed connections route lists a sample once its file exists, lists its seed id in
- * `pendingSeeds` while it copies, and lists it unavailable, with a named reason, when its copy failed or its target was
- * refused (src/lib/seed/index.ts composes those listings with the role filter, at request time).
+ * At boot (src/instrumentation.ts) `startSampleSeeding` decides once which samples are enabled, what each one's target
+ * is and whether it is admitted, keeps that decision for the process, and copies each admitted sample's committed,
+ * digest-pinned asset from the seed assets directory into the data directory, asynchronously, opening no database:
+ * the copy is src/lib/seed/sample-copy.ts. The managed connections route lists a sample once its file exists, lists its
+ * seed id in `pendingSeeds` while it copies, and lists it unavailable, with a named reason, when its copy failed or its
+ * target was refused (src/lib/seed/index.ts composes those listings from the kept decision with the role filter, at
+ * request time).
  *
  * This module is loaded by the boot hook, so it imports no engine code and nothing that reaches it: not the role
  * filter (./connection-filter brings in the provider connection-string rows), and from ./types and @/lib/types only
@@ -91,13 +93,15 @@ export const SAMPLES: ReadonlyMap<DatabaseType, SampleSpec> = new Map<DatabaseTy
 ]);
 
 /**
- * Whether a sample is on, one rule for every row, read on every call. Off under governance whatever its switch says
- * (docs/GOVERNANCE.md). Off when `LIBREDB_ENABLED_PROVIDERS` does not let the provider factory open its engine: the
- * factory would refuse every open of it, so the sample could never open; the list is the factory's own reading, and a
- * value the factory refuses as a whole leaves every sample off. Otherwise its switch decides: only the exact value
- * `false` turns it off, except that with the Kubernetes access review on, a sample offered to any role but admin is on
- * only for the exact value `true`, because it is listed to every signed-in person and names no Secret, so no review
- * gates it, and an install that promises people only the databases the review allows must not list it unasked.
+ * Whether a sample is on, one rule for every row. The listings read it once, at boot, through the admissions
+ * `startSampleSeeding` keeps, so what a process offers has one source for its whole life, `LIBREDB_ENABLED_PROVIDERS`
+ * included. Off under governance whatever its switch says (docs/GOVERNANCE.md). Off when `LIBREDB_ENABLED_PROVIDERS`
+ * does not let the provider factory open its engine: the factory would refuse every open of it, so the sample could
+ * never open; the list is the factory's own reading, and a value the factory refuses as a whole leaves every sample
+ * off. Otherwise its switch decides: only the exact value `false` turns it off, except that with the Kubernetes access
+ * review on, a sample offered to any role but admin is on only for the exact value `true`, because it is listed to
+ * every signed-in person and names no Secret, so no review gates it, and an install that promises people only the
+ * databases the review allows must not list it unasked.
  */
 export function sampleEnabled(type: DatabaseType, spec: SampleSpec): boolean {
   if (governanceEnabled()) return false;
@@ -178,11 +182,13 @@ function targetFamily(target: string): string[] {
 }
 
 /**
- * The enabled samples, in table order, each with its target and admission, computed on every call; it never throws. A
- * sample whose target's path cannot be checked (an error other than ENOENT, such as EACCES, ENOTDIR or ELOOP, from
- * resolving it or checking its family) is refused `target-unreadable` with that error; a sample any of whose family
- * names one of the server's own storage files (`isReservedStoragePath`) is refused `target-reserved`; a sample whose
- * family shares a file with an earlier admitted sample's is refused `target-conflict`. A refused sample claims nothing.
+ * The enabled samples, in table order, each with its target and admission, computed from the environment and the
+ * filesystem as they are now; it never throws. `startSampleSeeding` computes it once, at boot, and keeps it, and the
+ * listings read what it kept (`seededSampleAdmissions`). A sample whose target's path cannot be checked (an error other
+ * than ENOENT, such as EACCES, ENOTDIR or ELOOP, from resolving it or checking its family) is refused
+ * `target-unreadable` with that error; a sample any of whose family names one of the server's own storage files
+ * (`isReservedStoragePath`) is refused `target-reserved`; a sample whose family shares a file with an earlier admitted
+ * sample's is refused `target-conflict`. A refused sample claims nothing.
  *
  * Two family members that differ only in letter case are one file for that comparison, on every OS: `canonicalPath`
  * keeps the case it is given, and on macOS and Windows the two spellings name one file, so a configuration that
@@ -248,41 +254,59 @@ export type SampleSeedState =
   | { readonly phase: "done" }
   | { readonly phase: "failed"; readonly reason: SampleUnavailableReason; readonly sentence: string };
 
+/** What `startSampleSeeding` decided for this process: the admissions it computed, and each sample's seed state. */
+interface SampleSeeding {
+  readonly admissions: readonly SampleAdmission[];
+  readonly states: Map<string, SampleSeedState>;
+}
+
 /**
  * Kept on globalThis under a Symbol.for key, because Next.js bundles instrumentation apart from the route handlers: a
  * module-level variable would be one per bundle, and the route would never see what boot wrote.
  */
-const SEED_STATES_KEY = Symbol.for("libredb-studio.sample-seed-states");
+const SAMPLE_SEEDING_KEY = Symbol.for("libredb-studio.sample-seeding");
 
-type SeedStatesHolder = { [SEED_STATES_KEY]?: Map<string, SampleSeedState> };
+type SampleSeedingHolder = { [SAMPLE_SEEDING_KEY]?: SampleSeeding };
 
-function seedStates(): Map<string, SampleSeedState> {
-  const holder = globalThis as SeedStatesHolder;
-  holder[SEED_STATES_KEY] ??= new Map();
-  return holder[SEED_STATES_KEY];
+/**
+ * This process's seeding, or, in a process that never ran `startSampleSeeding`, one with no admission: such a process
+ * offers no sample at all, whatever files exist. No production process lists samples without seeding: every server
+ * channel runs register(), and neither the published @libredb/studio surface nor the VS Code extension's backend
+ * reaches this module.
+ */
+function seeding(): SampleSeeding {
+  const holder = globalThis as SampleSeedingHolder;
+  holder[SAMPLE_SEEDING_KEY] ??= { admissions: [], states: new Map() };
+  return holder[SAMPLE_SEEDING_KEY];
+}
+
+/** The admissions `startSampleSeeding` computed for this process, in table order; none before it runs. */
+export function seededSampleAdmissions(): readonly SampleAdmission[] {
+  return seeding().admissions;
 }
 
 export function getSampleSeedState(seedId: string): SampleSeedState | undefined {
-  return seedStates().get(seedId);
+  return seeding().states.get(seedId);
 }
 
 /** The service's own writer; a test sets a state to observe a sample in flight. */
 export function setSampleSeedState(seedId: string, state: SampleSeedState): void {
-  seedStates().set(seedId, state);
+  seeding().states.set(seedId, state);
 }
 
+/** Forget this process's seeding, its admissions and its states, as a process that never seeded. */
 export function resetSampleSeedStates(): void {
-  seedStates().clear();
+  delete (globalThis as SampleSeedingHolder)[SAMPLE_SEEDING_KEY];
 }
 
 /** The listed connection of a sample whose file exists: editable, unmanaged, at its target, created at the epoch. */
-export function sampleConnection(type: DatabaseType, spec: SampleSpec): ManagedConnection {
+export function sampleConnection(type: DatabaseType, spec: SampleSpec, target: string): ManagedConnection {
   return {
     id: `seed:${spec.seedId}`,
     seedId: spec.seedId,
     name: spec.name,
     type,
-    database: sampleTarget(spec),
+    database: target,
     managed: false,
     roles: [...spec.roles],
     createdAt: new Date(0),
@@ -290,9 +314,10 @@ export function sampleConnection(type: DatabaseType, spec: SampleSpec): ManagedC
 }
 
 /**
- * Start copying every enabled sample, for the boot hook. Synchronously, before it returns, each enabled sample is set
- * `failed` with its admission refusal, or `seeding`, so no request can see a sample idle while its copy is about to
- * start. The returned promise settles once every copy has, concurrently, and never rejects: the boot hook does not
+ * Start copying every enabled sample, for the boot hook. Synchronously, before it returns, it computes the admissions
+ * (`sampleAdmissions`) and keeps them for the process, replacing what an earlier call kept, and sets each enabled
+ * sample `failed` with its admission refusal, or `seeding`, so no request can see a sample idle while its copy is about
+ * to start. The returned promise settles once every copy has, concurrently, and never rejects: the boot hook does not
  * wait for it.
  *
  * Each outcome sets the state and logs exactly one line in one synchronous step, so a state that is no longer
@@ -302,10 +327,13 @@ export function sampleConnection(type: DatabaseType, spec: SampleSpec): ManagedC
  */
 export function startSampleSeeding(): Promise<void> {
   const assets = seedAssetsDirectory();
+  const admissions = sampleAdmissions();
+  const states = new Map<string, SampleSeedState>();
+  (globalThis as SampleSeedingHolder)[SAMPLE_SEEDING_KEY] = { admissions, states };
   const copies: Promise<void>[] = [];
-  for (const { spec, target, refusal, failure } of sampleAdmissions()) {
+  for (const { spec, target, refusal, failure } of admissions) {
     if (refusal !== null) {
-      setSampleSeedState(spec.seedId, {
+      states.set(spec.seedId, {
         phase: "failed",
         reason: refusal,
         sentence: unavailableSentence(refusal, failure?.code),
@@ -320,13 +348,13 @@ export function startSampleSeeding(): Promise<void> {
       });
       continue;
     }
-    setSampleSeedState(spec.seedId, { phase: "seeding" });
+    states.set(spec.seedId, { phase: "seeding" });
     const started = Date.now();
     const pinned = { asset: sampleAssetPath(spec), sha256: spec.sha256, bytes: spec.bytes };
     copies.push(
       copySampleAsset(pinned, target).then(
         (outcome) => {
-          setSampleSeedState(spec.seedId, { phase: "done" });
+          states.set(spec.seedId, { phase: "done" });
           if (outcome === "present") {
             logger.debug("Embedded sample already present", { route: "instrumentation", seedId: spec.seedId, target });
           } else {
@@ -340,7 +368,7 @@ export function startSampleSeeding(): Promise<void> {
         },
         // copySampleAsset rejects with nothing but a SampleCopyError.
         (error: SampleCopyError) => {
-          setSampleSeedState(spec.seedId, {
+          states.set(spec.seedId, {
             phase: "failed",
             reason: error.reason,
             sentence: unavailableSentence(error.reason, error.code),

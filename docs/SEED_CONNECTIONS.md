@@ -1796,7 +1796,7 @@ The SQLite sample is committed in WAL journal mode, so the first opens of a fres
 
 ### Who sees a sample
 
-`getManagedConnections()` appends each sample to the managed-connections list once its file exists (`managed: false`).
+`getManagedConnections()` appends each sample boot admitted to the managed-connections list once its file exists (`managed: false`); whether the file exists is checked on every request.
 The SQLite sample is offered only to administrators (`roles: ["admin"]`), because its engine cannot confine statement-level file access; the LibreDB sample is offered to all roles (`roles: ["*"]`).
 Both behave like other unmanaged seeds: editable, and if deleted they go to the dismissed list rather than reappearing.
 Neither sample is ever visible to an MCP client, because neither carries `mcp: true`.
@@ -1808,6 +1808,9 @@ One rule decides whether a sample is on, for both:
 - Otherwise its switch decides: only the exact value `false` turns it off.
 - With the [Kubernetes access review](#kubernetes-access-review) on, the LibreDB sample is off unless `LIBREDB_EMBEDDED_SAMPLE` is exactly `true`: it is offered to all roles and names no Secret, so no review gates it, and an operator who wants every signed-in person to see it opts in.
   The SQLite sample keeps its own default there, because it is offered only to administrators, and with the review on only the review makes an administrator.
+
+The server applies this rule, and decides each sample's path and whether it is admitted, once, at boot, and keeps that decision until it stops.
+A change to any of these variables, or to a path, takes effect at the next restart.
 
 ### A sample that could not be created
 
@@ -1879,7 +1882,7 @@ Hover the marker for the reason, and find the warning `Embedded sample unavailab
   Two paths that differ only in letter case conflict on every OS, because on macOS and Windows they name one file.
   Give each sample its own.
 
-A restart retries the copy; a sample whose file exists is never copied again.
+A restart retries the copy and reads the variables again; a sample whose file exists is never copied again.
 
 ### "Access denied" error when querying
 

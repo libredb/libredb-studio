@@ -9,9 +9,9 @@ import { KUBERNETES_REVIEWED_ROLE } from "./roles";
 import {
   getSampleSeedState,
   type SampleAdmission,
-  sampleAdmissions,
   sampleConnection,
   sampleConsidered,
+  seededSampleAdmissions,
 } from "./samples";
 import type { OperatorEntry, OperatorUnavailableEntry } from "./sources/types";
 import { LITERAL_SEED_FILE } from "@/lib/types";
@@ -149,7 +149,7 @@ export async function getSeedListing(roles: string[]): Promise<SeedListing> {
   // The built-in samples, in the order of SAMPLES (src/lib/seed/samples.ts, whose docblock says why SQLite leads).
   const after = offeredSamples(roles)
     .filter(({ refusal, target }) => refusal === null && fs.existsSync(target))
-    .map(({ type, spec }) => sampleConnection(type, spec));
+    .map(({ type, spec, target }) => sampleConnection(type, spec, target));
 
   return { before, pendingReview: reviewed ? kubernetes : [], after };
 }
@@ -165,28 +165,29 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
 }
 
 /**
- * The enabled samples a listing for these roles considers, in table order, each with its target and admission: in a
- * test run only a sample whose path override is set (`sampleConsidered`), and only one these roles are offered.
+ * The enabled samples a listing for these roles considers, in table order, each with its target and admission, as boot
+ * computed them (`seededSampleAdmissions`, none in a process that never seeded): in a test run only a sample whose path
+ * override is set (`sampleConsidered`), and only one these roles are offered.
  */
 function offeredSamples(roles: string[]): SampleAdmission[] {
-  return sampleAdmissions().filter(({ spec }) => sampleConsidered(spec) && rolesMatch([...spec.roles], roles));
+  return seededSampleAdmissions().filter(({ spec }) => sampleConsidered(spec) && rolesMatch([...spec.roles], roles));
 }
 
 /**
- * Seed ids of the enabled samples whose copy is still in flight, in table order, so clients poll until each appears or
- * its copy ends. Empty when nothing is seeding: embedded in platform, instrumentation never runs, no state is set, and
- * clients never poll. Empty under governance too, where every sample is off.
+ * Seed ids of the samples boot enabled whose copy is still in flight, in table order, so clients poll until each
+ * appears or its copy ends. Empty when nothing is seeding, and in a process that never seeded, where clients never
+ * poll. Empty under governance too, where boot enables no sample.
  */
 export function getPendingSeeds(): string[] {
-  return sampleAdmissions()
+  return seededSampleAdmissions()
     .filter(({ spec }) => getSampleSeedState(spec.seedId)?.phase === "seeding")
     .map(({ spec }) => spec.seedId);
 }
 
 /**
- * The enabled samples offered to these roles that have no file and whose copy failed or whose target was refused, in
- * table order, each with its reason and the sentence a client shows. Never a connection, so no picker, route or MCP
- * tool can reach one. Empty under governance, where every sample is off.
+ * The samples boot enabled, offered to these roles, that have no file and whose copy failed or whose target was
+ * refused, in table order, each with its reason and the sentence a client shows. Never a connection, so no picker,
+ * route or MCP tool can reach one. Empty under governance, where boot enables no sample.
  */
 export function getUnavailableSamples(roles: string[]): UnavailableSample[] {
   return offeredSamples(roles).flatMap(({ spec, target, refusal }): UnavailableSample[] => {

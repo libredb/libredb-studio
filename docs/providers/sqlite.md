@@ -516,6 +516,7 @@ So the published sample needs no switch to WAL on its first opens ([§3.2](#32-p
 The seed copies bytes and opens nothing: [`src/lib/seed/sample-copy.ts`](../../src/lib/seed/sample-copy.ts) checks the copy against the size and SHA-256 digest the sample table pins, flushes it, and renames it into place, never over an existing file.
 
 The sample is neither seeded nor listed when `LIBREDB_ENABLED_PROVIDERS` is set and does not name `sqlite`, because the factory refuses every open of a type that list leaves out.
+The server reads that list, the variables below and the sample's path once, at boot; a change takes effect at the next restart.
 
 The copy runs asynchronously, like the LibreDB sample's: boot never waits on it, and while it is in flight the managed-connections API reports the seed id in `pendingSeeds` and the client polls (1s, up to 30 attempts) so the connection appears in the sidebar without a page refresh.
 A copy that fails is logged once and listed unavailable with its reason, such as `asset-missing` or `copy-failed` ([`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).

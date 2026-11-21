@@ -71,10 +71,12 @@ export async function register(): Promise<void> {
   const { startAgentResumeSweep } = await import("@/lib/agent/resume-sweep");
   startAgentResumeSweep();
 
-  // Built-in samples: every enabled sample is marked seeding before this
-  // returns, so GET /api/connections/managed lists it in pendingSeeds and the
-  // client polls until it appears. The copies are not awaited, and their
-  // promise never rejects: a failed copy is logged once and listed unavailable.
+  // Built-in samples: which samples are enabled and admitted is decided here,
+  // once, for the life of the process, and every enabled sample is marked
+  // seeding before this returns, so GET /api/connections/managed lists it in
+  // pendingSeeds and the client polls until it appears. The copies are not
+  // awaited, and their promise never rejects: a failed copy is logged once and
+  // listed unavailable.
   // The sample service loads no engine code (tests/unit/seed/no-engine-imports.test.ts).
   const { startSampleSeeding } = await import("@/lib/seed/samples");
   void startSampleSeeding();

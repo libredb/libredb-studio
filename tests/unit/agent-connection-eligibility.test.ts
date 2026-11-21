@@ -274,8 +274,11 @@ describe("the connections a default deployment ships", () => {
   beforeAll(async () => {
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = "/tmp/libredb-eligibility-sample.libredb";
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = "/tmp/libredb-eligibility-sample.db";
-    const { SAMPLES, sampleConnection } = await import("@/lib/seed/samples");
-    builders = [...SAMPLES].map(([type, spec]) => ({ seedId: spec.seedId, build: () => sampleConnection(type, spec) }));
+    const { SAMPLES, sampleConnection, sampleTarget } = await import("@/lib/seed/samples");
+    builders = [...SAMPLES].map(([type, spec]) => ({
+      seedId: spec.seedId,
+      build: () => sampleConnection(type, spec, sampleTarget(spec)),
+    }));
   });
 
   test("both built-in samples can start a run", () => {

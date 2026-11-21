@@ -3,7 +3,14 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { getManagedConnections, getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
-import { resetSampleSeedStates, setSampleSeedState, startSampleSeeding, unavailableSentence } from "@/lib/seed/samples";
+import {
+  getSampleSeedState,
+  resetSampleSeedStates,
+  setSampleSeedState,
+  startSampleSeeding,
+  unavailableSentence,
+} from "@/lib/seed/samples";
+import { seedSamples } from "../../helpers/sample-seeding";
 
 const SAMPLE_SEED_ID = "libredb-embedded-sample";
 const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
@@ -45,9 +52,15 @@ function useTempSamplePath(): void {
 }
 
 describe("getManagedConnections — embedded sample", () => {
+  beforeEach(() => {
+    // These cases are about the LibreDB sample alone.
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+  });
+
   test("includes the sample when enabled and the file exists", async () => {
     useTempSamplePath();
     fs.writeFileSync(file, ""); // file exists
+    await seedSamples();
     const conns = await getManagedConnections(["*"]);
     const sample = conns.find((c) => c.seedId === SAMPLE_SEED_ID);
     expect(sample).toBeDefined();
@@ -57,7 +70,11 @@ describe("getManagedConnections — embedded sample", () => {
   });
 
   test("excludes the sample when the file is absent", async () => {
-    useTempSamplePath(); // env points at a path, but no file created
+    useTempSamplePath();
+    fs.writeFileSync(file, "");
+    await seedSamples();
+    // Admitted at boot, but the listing checks the file on every request.
+    fs.rmSync(file);
     const conns = await getManagedConnections(["*"]);
     expect(conns.find((c) => c.seedId === SAMPLE_SEED_ID)).toBeUndefined();
   });
@@ -66,6 +83,7 @@ describe("getManagedConnections — embedded sample", () => {
     useTempSamplePath();
     fs.writeFileSync(file, "");
     process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    await seedSamples();
     const conns = await getManagedConnections(["*"]);
     expect(conns.find((c) => c.seedId === SAMPLE_SEED_ID)).toBeUndefined();
   });
@@ -75,6 +93,7 @@ describe("getManagedConnections — embedded sample", () => {
     useTempSamplePath();
     fs.writeFileSync(file, "");
     process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    await seedSamples();
     for (const roles of [["*"], ["user"], ["admin"]]) {
       const conns = await getManagedConnections(roles);
       expect(conns.find((c) => c.seedId === SAMPLE_SEED_ID)).toBeUndefined();
@@ -86,6 +105,7 @@ describe("getManagedConnections — embedded sample", () => {
     fs.writeFileSync(file, "");
     process.env.KUBERNETES_ACCESS_REVIEW = "on";
     process.env.LIBREDB_EMBEDDED_SAMPLE = "true";
+    await seedSamples();
     const conns = await getManagedConnections(["user"]);
     expect(conns.find((c) => c.seedId === SAMPLE_SEED_ID)).toBeDefined();
   });
@@ -110,10 +130,73 @@ describe("getManagedConnections — embedded sample", () => {
   });
 });
 
-describe("both samples while they copy, and after a copy fails", () => {
-  test("both samples are pending while they copy", () => {
-    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(tempDir(), "sample-employees.db");
+describe("the samples a listing offers are the ones boot admitted", () => {
+  test("a process that never started seeding offers no sample, even when both files exist", async () => {
+    const sqliteFile = path.join(tempDir(), "sample-employees.db");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = sqliteFile;
     useTempSamplePath();
+    fs.writeFileSync(sqliteFile, "");
+    fs.writeFileSync(file, "");
+    setSampleSeedState(SAMPLE_SEED_ID, { phase: "seeding" });
+
+    expect((await getManagedConnections(["admin"])).filter((c) => c.seedId.endsWith("-embedded-sample"))).toEqual([]);
+    expect(getPendingSeeds()).toEqual([]);
+    expect(getUnavailableSamples(["admin"])).toEqual([]);
+  });
+
+  test("a change to the environment after seeding changes neither what is listed nor where, nor what is pending", async () => {
+    const sqliteFile = path.join(tempDir(), "sample-employees.db");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = sqliteFile;
+    useTempSamplePath();
+    fs.writeFileSync(sqliteFile, "");
+    fs.writeFileSync(file, "");
+    await startSampleSeeding();
+
+    const elsewhere = path.join(tempDir(), "elsewhere.libredb");
+    fs.writeFileSync(elsewhere, "");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = elsewhere;
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres";
+
+    const listed = (await getManagedConnections(["admin"]))
+      .filter((c) => c.seedId.endsWith("-embedded-sample"))
+      .map((c) => [c.seedId, c.database]);
+    expect(listed).toEqual([
+      [SQLITE_SAMPLE_SEED_ID, sqliteFile],
+      [SAMPLE_SEED_ID, file],
+    ]);
+    setSampleSeedState(SAMPLE_SEED_ID, { phase: "seeding" });
+    expect(getPendingSeeds()).toEqual([SAMPLE_SEED_ID]);
+  });
+
+  test("a sample boot found unavailable stays unavailable after the environment changes", async () => {
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    useTempSamplePath();
+    process.env.SEED_ASSETS_DIR = tempDir(); // empty: the asset is missing
+    await startSampleSeeding();
+
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+
+    expect(getUnavailableSamples(["user"])).toEqual([
+      {
+        seedId: SAMPLE_SEED_ID,
+        name: "Sample (LibreDB)",
+        reason: "asset-missing",
+        sentence: unavailableSentence("asset-missing"),
+      },
+    ]);
+  });
+});
+
+describe("both samples while they copy, and after a copy fails", () => {
+  test("both samples are pending while they copy", async () => {
+    const sqliteFile = path.join(tempDir(), "sample-employees.db");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = sqliteFile;
+    useTempSamplePath();
+    fs.writeFileSync(sqliteFile, "");
+    fs.writeFileSync(file, "");
+    await seedSamples();
     setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
     setSampleSeedState(SAMPLE_SEED_ID, { phase: "seeding" });
     expect(getPendingSeeds()).toEqual([SQLITE_SAMPLE_SEED_ID, SAMPLE_SEED_ID]);
@@ -144,8 +227,10 @@ describe("both samples while they copy, and after a copy fails", () => {
   });
 
   test("a sample whose file exists is listed, not unavailable, whatever its state says", async () => {
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
     useTempSamplePath();
     fs.writeFileSync(file, "");
+    await seedSamples();
     setSampleSeedState(SAMPLE_SEED_ID, {
       phase: "failed",
       reason: "copy-failed",
@@ -155,13 +240,19 @@ describe("both samples while they copy, and after a copy fails", () => {
     expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toContain(SAMPLE_SEED_ID);
   });
 
-  test("in a test run a sample without its path override is never unavailable", () => {
-    setSampleSeedState(SAMPLE_SEED_ID, {
-      phase: "failed",
-      reason: "asset-missing",
-      sentence: unavailableSentence("asset-missing"),
-    });
-    expect(getUnavailableSamples(["admin"])).toEqual([]);
+  test("in a test run a sample without its path override is never unavailable", async () => {
+    // Seeded into a data directory of this test's own from an empty assets directory, so both copies fail.
+    const savedStorage = process.env.STORAGE_SQLITE_PATH;
+    process.env.STORAGE_SQLITE_PATH = path.join(tempDir(), "libredb-storage.db");
+    process.env.SEED_ASSETS_DIR = tempDir();
+    try {
+      await startSampleSeeding();
+      expect(getSampleSeedState(SAMPLE_SEED_ID)?.phase).toBe("failed");
+      expect(getUnavailableSamples(["admin"])).toEqual([]);
+    } finally {
+      if (savedStorage === undefined) delete process.env.STORAGE_SQLITE_PATH;
+      else process.env.STORAGE_SQLITE_PATH = savedStorage;
+    }
   });
 
   test("a target refused at admission is never listed although its file exists, and is listed unavailable", async () => {

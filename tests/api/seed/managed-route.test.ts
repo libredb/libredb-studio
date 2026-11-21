@@ -25,6 +25,7 @@ import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { getSession } from "@/lib/auth";
 import { resetSampleSeedStates, setSampleSeedState, unavailableSentence } from "@/lib/seed/samples";
+import { seedSamples } from "../../helpers/sample-seeding";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
@@ -411,15 +412,22 @@ describe("GET /api/connections/managed", () => {
   });
 
   it("pendingSeeds lists both samples while they copy", async () => {
-    setSampleSeedState("sqlite-embedded-sample", { phase: "seeding" });
-    setSampleSeedState("libredb-embedded-sample", { phase: "seeding" });
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-pending-samples-"));
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample-employees.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample.libredb");
     try {
+      await seedSamples();
+      setSampleSeedState("sqlite-embedded-sample", { phase: "seeding" });
+      setSampleSeedState("libredb-embedded-sample", { phase: "seeding" });
       const res = await GET();
       const data = await res.json();
       expect(data.pendingSeeds).toEqual(["sqlite-embedded-sample", "libredb-embedded-sample"]);
       expect(data.unavailableSamples).toEqual([]);
     } finally {
       resetSampleSeedStates();
+      delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+      delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -427,27 +435,25 @@ describe("GET /api/connections/managed", () => {
     const dir = mkdtempSync(path.join(tmpdir(), "libredb-unavailable-samples-"));
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample-employees.db");
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample.libredb");
-    const failed = {
-      phase: "failed",
-      reason: "asset-missing",
-      sentence: unavailableSentence("asset-missing"),
-    } as const;
-    setSampleSeedState("sqlite-embedded-sample", failed);
-    setSampleSeedState("libredb-embedded-sample", failed);
+    // An empty assets directory: both copies fail as asset-missing.
+    const assets = mkdtempSync(path.join(tmpdir(), "libredb-no-assets-"));
+    process.env.SEED_ASSETS_DIR = assets;
+    const sentence = unavailableSentence("asset-missing");
     try {
+      await seedSamples();
       const admin = await (await GET()).json();
       expect(admin.unavailableSamples).toEqual([
         {
           seedId: "sqlite-embedded-sample",
           name: "Sample (Employees)",
           reason: "asset-missing",
-          sentence: failed.sentence,
+          sentence,
         },
         {
           seedId: "libredb-embedded-sample",
           name: "Sample (LibreDB)",
           reason: "asset-missing",
-          sentence: failed.sentence,
+          sentence,
         },
       ]);
       expect(admin.connections.map((c: { seedId: string }) => c.seedId)).not.toContain("sqlite-embedded-sample");
@@ -459,7 +465,9 @@ describe("GET /api/connections/managed", () => {
       resetSampleSeedStates();
       delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
       delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+      delete process.env.SEED_ASSETS_DIR;
       rmSync(dir, { recursive: true, force: true });
+      rmSync(assets, { recursive: true, force: true });
     }
   });
 
@@ -468,12 +476,9 @@ describe("GET /api/connections/managed", () => {
     const blocker = path.join(dir, "a-regular-file");
     writeFileSync(blocker, "");
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
-    setSampleSeedState("sqlite-embedded-sample", {
-      phase: "failed",
-      reason: "target-unreadable",
-      sentence: unavailableSentence("target-unreadable", "ENOTDIR"),
-    });
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
     try {
+      await seedSamples();
       const admin = await GET();
       expect(admin.status).toBe(200);
       const adminData = await admin.json();
@@ -489,6 +494,7 @@ describe("GET /api/connections/managed", () => {
     } finally {
       resetSampleSeedStates();
       delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+      delete process.env.LIBREDB_EMBEDDED_SAMPLE;
       rmSync(dir, { recursive: true, force: true });
     }
   });

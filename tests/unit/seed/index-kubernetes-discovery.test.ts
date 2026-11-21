@@ -29,6 +29,7 @@ import {
 } from "@/lib/seed/kubernetes-discovery-loader";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
+import { resetSampleSeedStates } from "@/lib/seed/samples";
 import { LITERAL_SEED_FILE } from "@/lib/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import {
@@ -38,6 +39,7 @@ import {
   writeKubernetesDiscoveryExport,
   type KubernetesDiscoveryExportFixture,
 } from "../../helpers/kubernetes-discovery-fixture";
+import { seedSamples } from "../../helpers/sample-seeding";
 
 const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
 const SAMPLE_SEED_ID = "libredb-embedded-sample";
@@ -116,6 +118,7 @@ describe("seed/index with the Kubernetes discovery source", () => {
     resetCache();
     resetDiscoveryCache();
     resetKubernetesDiscoveryCache();
+    resetSampleSeedStates();
   });
 
   it("lists the seed file, then CapRover, then Kubernetes", async () => {
@@ -212,6 +215,7 @@ describe("seed/index with the Kubernetes discovery source", () => {
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbSample;
     // The review holds the LibreDB sample unless it is asked for, so it is asked for, to fill every section.
     process.env.LIBREDB_EMBEDDED_SAMPLE = "true";
+    await seedSamples();
     // Control: with the review off the admin role's list holds every section in this order.
     expect(seedIds(await getManagedConnections(["admin"]))).toEqual([
       "file-pg",
@@ -222,6 +226,8 @@ describe("seed/index with the Kubernetes discovery source", () => {
     ]);
 
     process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    // A server reads the review switch at boot, so it boots again with the review on.
+    await seedSamples();
     const { before, pendingReview, after } = await getSeedListing(["admin"]);
     expect([seedIds(before), seedIds(pendingReview), seedIds(after)]).toEqual([
       ["file-pg", "caprover-pg"],

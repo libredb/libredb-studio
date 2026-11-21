@@ -20,6 +20,7 @@ import {
   SAMPLES,
   sampleTarget,
   seedAssetsDirectory,
+  seededSampleAdmissions,
   setSampleSeedState,
   startSampleSeeding,
   unavailableSentence,
@@ -374,14 +375,15 @@ describe("the seed state and the connection record", () => {
     expect(getSampleSeedState("libredb-embedded-sample")).toBeUndefined();
   });
 
-  test("the connection record is today's: editable, unmanaged, at the target, created at the epoch", () => {
+  test("the connection record is today's: editable, unmanaged, at the admitted target, created at the epoch", () => {
     for (const [type, spec] of SAMPLES) {
-      expect(sampleConnection(type, spec)).toEqual({
+      const target = path.join(temporaryDirectory(), spec.fileName);
+      expect(sampleConnection(type, spec, target)).toEqual({
         id: `seed:${spec.seedId}`,
         seedId: spec.seedId,
         name: spec.name,
         type,
-        database: sampleTarget(spec),
+        database: target,
         managed: false,
         roles: [...spec.roles],
         createdAt: new Date(0),
@@ -545,6 +547,23 @@ describe("startSampleSeeding", () => {
       warn.mockRestore();
       info.mockRestore();
     }
+  });
+
+  test("keeps the admissions it computed for the process, replacing an earlier call's, until a reset", async () => {
+    const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");
+    writeFileSync(path.join(dataDir, "sample-employees.db"), "");
+    writeFileSync(path.join(dataDir, "sample.libredb"), "");
+    expect(seededSampleAdmissions()).toEqual([]);
+    await startSampleSeeding();
+    expect(seededSampleAdmissions()).toEqual(sampleAdmissions());
+    // Read from the environment as it was: a later change is not seen until the next call.
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    expect(seededSampleAdmissions().map(({ type }) => type)).toEqual(["sqlite", "libredb"]);
+    await startSampleSeeding();
+    expect(seededSampleAdmissions().map(({ type }) => type)).toEqual(["libredb"]);
+    expect(getSampleSeedState("sqlite-embedded-sample")).toBeUndefined();
+    resetSampleSeedStates();
+    expect(seededSampleAdmissions()).toEqual([]);
   });
 
   test("seeds nothing when no row is enabled", async () => {

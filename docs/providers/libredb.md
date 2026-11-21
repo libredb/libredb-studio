@@ -358,6 +358,7 @@ The sample is the committed file [`seed-assets/libredb/sample.libredb`](../../se
 At boot the sample service ([`src/lib/seed/samples.ts`](../../src/lib/seed/samples.ts)) copies it to `<data dir>/sample.libredb`, asynchronously, checked against the size and SHA-256 digest the sample table pins, and never over an existing file; no engine is opened.
 While the copy is in flight the managed-connections API lists the seed id in `pendingSeeds`, and a copy that fails is logged once and listed unavailable with its reason ([`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
 The sample is not offered when `LIBREDB_ENABLED_PROVIDERS` is set and leaves out `libredb`, because the factory refuses every open of a type that list leaves out.
+The server reads that list, the variables below and the sample's path once, at boot; a change takes effect at the next restart.
 An engine or format bump that changes the built bytes fails `tests/unit/seed/libredb-sample-asset.test.ts`; the fix is to rerun the script and update the pin in the sample table.
 
 The sample connection is fully editable and deletable. Once deleted it stays gone — Studio tracks
