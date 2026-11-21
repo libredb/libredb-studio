@@ -1628,14 +1628,16 @@ export class RedisProvider extends BaseDatabaseProvider {
       // refused before any socket.
       const agentUser = this.readOnlyProfile ? redisAgentUser(this.config.user) : undefined;
       const client = await this.openClient(this.sessionDatabase()).catch((error: unknown) => {
-        // A SELECT the server did not answer leaves `openClient` as the client's own error, such as a reply the driver
-        // could not read (docs/providers/redis.md section 4.6); here that is a connect that failed.
+        // A SELECT the driver rejected without a reply leaves `openClient` as the client's own error, such as a reply
+        // it could not read or a closed connection (docs/providers/redis.md section 4.6); here that is a connect that
+        // failed.
         throw error instanceof DatabaseError ? error : connectFailure(error, host, port);
       });
       if (agentUser !== undefined) {
         await proveRedisReadOnly(pipelineRoundTrip(client), agentUser).catch((error: unknown) => {
           client.disconnect();
-          // The proof's verdicts are its own; a round trip the server did not answer is a connect that failed.
+          // The proof's verdicts are its own; a round trip the driver rejected without a reply is a connect that
+          // failed.
           throw error instanceof ExecutionProfileError ? error : connectFailure(error, host, port);
         });
       }
@@ -1646,8 +1648,8 @@ export class RedisProvider extends BaseDatabaseProvider {
       // Every failure here is typed by the time it arrives, so it leaves as it is: `sessionDatabase` raises a
       // DatabaseConfigError, the profile's user check and the proof an ExecutionProfileError, `openClient` turns a
       // refused connect into `connectFailure`'s AuthenticationError or ConnectionError and a refused SELECT into a
-      // QueryError, a SELECT or a proof round trip the server did not answer is a ConnectionError above, and the
-      // ioredis constructor itself opens nothing (`lazyConnect`).
+      // QueryError, a SELECT or a proof round trip the driver rejected without a reply (one it could not read, a closed
+      // connection) is a ConnectionError above, and the ioredis constructor itself opens nothing (`lazyConnect`).
       throw error;
     }
   }
