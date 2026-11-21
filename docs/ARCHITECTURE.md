@@ -343,7 +343,7 @@ On standalone boot it then:
    4. the governance preflight (`src/lib/governance/preflight.ts`, [GOVERNANCE.md](GOVERNANCE.md#boot-checks)), which with `GOVERNANCE_SOURCE` set refuses an environment that contradicts governance mode, and checks nothing while governance is off;
    5. the Kubernetes access review preflight (`src/lib/kubernetes-access/preflight.ts`, [SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#kubernetes-access-review)), which with `KUBERNETES_ACCESS_REVIEW` on refuses an environment that contradicts the review, and checks nothing while it is off.
 
-   These are the steps that intentionally stop boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling such a failure there would restart the pod forever and hide the actionable error behind a green check; refusing to start costs nothing because a server with such a setting cannot work as configured, a too-short secret, for one, can sign no session at all.
+   These steps, and the `NEXT_MANUAL_SIG_HANDLE` refusal above, are the ones that intentionally stop boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling such a failure there would restart the pod forever and hide the actionable error behind a green check; refusing to start costs nothing because a server with such a setting cannot work as configured, a too-short secret, for one, can sign no session at all.
 3. **Starts copying the built-in samples, asynchronously** (`src/lib/seed/samples.ts`, `src/lib/seed/sample-copy.ts`).
    Which samples are enabled, where each one's file goes and whether that path is admitted are decided here, once, and kept for the life of the process; every listing reads that decision, and checks only whether the file exists on each request; a file lost after boot is listed unavailable as `target-lost` and logged once.
    Every enabled sample, "Sample (Employees)" and "Sample (LibreDB)", has its committed, digest-pinned file in the seed assets directory (`SEED_ASSETS_DIR`, by default `<working directory>/seed-assets`) copied to the data directory, never over an existing file, and no database is opened.
@@ -353,7 +353,7 @@ On standalone boot it then:
 A failure in the bootstrap step is logged and swallowed.
 A sample whose path cannot be checked, whose target is refused or whose copy fails is logged once, with its reason, and listed unavailable with that reason; boot never breaks.
 A copy that fails with an error the copy does not know is a defect: its sample is listed unavailable as `copy-defect`, and the error is rethrown into the copies' promise, which nothing awaits, so it is the process's unhandled rejection that Next.js logs and the server keeps serving.
-The preflights in step 2 are the deliberate exception.
+The preflights in step 2, and the `NEXT_MANUAL_SIG_HANDLE` refusal before them, are the deliberate exceptions.
 
 ### 4.8. SQLite Driver Selection (`src/lib/db/providers/sql/sqlite-driver.ts`)
 
