@@ -274,6 +274,9 @@ Three deliberate limits, so nobody reads more into this than it does:
   fingerprint is not written back. So today's protection is the process-scoped memory above - a key
   that changes within a server's lifetime is refused, and a restart trusts afresh. Tracked as D34.
 
+**One forward per connection, bastion, far end and credential.** Studio pools each open tunnel forward and hands it to every provider of the same connection that asks for the same bastion route and far end, and a forward is shared only by calls that present the credential it was opened with.
+A changed credential (another password, private key or passphrase) opens its own forward; the forward opened with the old credential keeps serving the provider opened on it until the connection is closed or the idle sweep takes it.
+
 The fingerprint is stored and displayed **in the clear**, on purpose. It is public key material: it
 authenticates the bastion to Studio, grants no access, unlocks nothing, and it has to be readable for
 the comparison above to be possible at all. `src/lib/storage/secret-fields.ts` classifies it

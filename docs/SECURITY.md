@@ -540,8 +540,9 @@ tunnelled record to the tunnel's loopback endpoint before the driver opens, so i
 alongside that rewrite and the seal hashes the far end, never the ephemeral local port, which is a
 property of this process and not of the server. The far end is read back off the tunnel and is never
 the address the factory asked for, and the tunnel pool keys a forward by connection id, by that far
-end and by the same four bastion fields this seal frames, so the only forward a provider can be
-handed is one opened to the address it seals THROUGH the bastion its record names. Measured against a
+end, by the same four bastion fields this seal frames and by a digest of the tunnel credential, so
+the only forward a provider can be handed is one opened to the address it seals THROUGH the bastion
+its record names, with the credential its record presents. Measured against a
 live bastion in both directions on 2026-09-15: with the far end alone in the key, a record edited to
 name a bastion that does not resolve was served the forward already open through the real one,
 reached the old machine, and sealed a digest the route recomputed to the same value; with the route
@@ -554,6 +555,9 @@ against the real module, so this list is a measured floor rather than a design i
 
 Concurrent connects through one forward share one SSH connection: a connect that arrives while that forward is still being dialled is handed the forward the dial opens, or the error it fails with.
 A connect whose provider does not open releases the forward rather than closing it, and the pool closes it only when no other connect is still using it and no provider opened on it, so one connect's failure never closes the forward a sibling connects or serves through.
+A forward is shared only by calls that present the credential it was opened with: the tunnel's auth method, password, private key and passphrase, compared as a SHA-256 digest.
+A changed credential opens its own forward.
+The forward opened with the old credential is not closed by the change: it ends with the connection's own teardown (removing the connection's providers, or the idle sweep), on the last release of a forward no provider opened on, or when its SSH session ends.
 
 **What the round trip carried, on PostgreSQL: guarded on both sides, and neither guard is a
 parser.** The day-one PostgreSQL unit is a multi-statement simple query, so every statement the
