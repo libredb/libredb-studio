@@ -605,6 +605,31 @@ describe("readSchemaStatistics: the profile it reads under", () => {
 
     expect(await readSchemaStatistics(context)).toEqual({ kind: "unavailable", reasonCode: "STATISTICS_READ_REFUSED" });
   });
+
+  test("a read refused at the time it was granted counts against the run's concurrency until its provider call settles, and the run's next call waits for it", async () => {
+    let settle: () => void = () => {};
+    const late = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const statistics = answerSqlite(true);
+    const answers = [(sql: string) => late.then(() => statistics(sql)), statistics];
+    const h = harness("libsql", (sql) => (answers.shift() as (sql: string) => Promise<QueryResult>)(sql));
+    const context = { ...h.context, deadline: new AgentRunDeadline(250, frozenClock) };
+
+    const probe = await readStatisticsForGrounding(context, "availability");
+    expect(probe.kind).toBe("refused");
+    expect(context.tracker.usage(context.runId)).toMatchObject({ activeExecutions: 1, executedStatements: 1 });
+
+    // maxConcurrentExecutions is 1 and the probe's provider call is still running, so the next read waits for it.
+    const next = readStatisticsForGrounding(context, "estimates");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.statements()).toHaveLength(1);
+
+    settle();
+    expect(await next).toMatchObject({ kind: "completed" });
+    expect(h.statements()).toHaveLength(2);
+    expect(context.tracker.usage(context.runId)).toMatchObject({ activeExecutions: 0, executedStatements: 2 });
+  });
 });
 
 describe("readStatisticsForGrounding", () => {
