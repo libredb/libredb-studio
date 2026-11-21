@@ -159,6 +159,7 @@ import {
 } from "./objects";
 import { comparePaths } from "@/lib/db/object-path";
 import { readCount, toQueryResult } from "./values";
+import { unicodeSpaceRefusal } from "./statement-shape";
 import { createMissingDirectories } from "@/lib/db/utils/create-directory";
 import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 import { logger } from "@/lib/logger";
@@ -796,8 +797,15 @@ export class DuckDBProvider extends SQLBaseProvider {
     return readLeadingKeyword(sql, resolveSqlGrammar("duckdb"))?.keyword;
   }
 
+  /**
+   * One statement on the connection. A Unicode space DuckDB reads as a space and Studio's reader does not is refused
+   * before the engine reads the statement (`unicodeSpaceRefusal`), so the statement that runs is the one the
+   * confirmation gate and the row limiter read.
+   */
   public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     this.ensureConnected();
+    const refusal = unicodeSpaceRefusal(sql);
+    if (refusal !== undefined) throw new QueryError(refusal, "duckdb", sql);
 
     return this.trackQuery(async () => {
       if (queryId) this.runningQueryIds.add(queryId);

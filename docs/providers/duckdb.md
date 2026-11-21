@@ -691,6 +691,7 @@ columnTypes? }`.
 - **`rowCount`** is the row count for a read and `result.rowsChanged` for a write; the synthetic
   `Count` column is not surfaced (§3.4).
 - **Cancellation** calls `interrupt()` on the connection (§3.9).
+- **A Unicode space at a code position is refused** before the engine reads the statement, with the sentence in §10: DuckDB reads U+00A0, U+2000 to U+200B, U+202F, U+205F, U+2060, U+3000 and U+FEFF between two code words as a space and Studio's span reader does not ([SQL grammar](#sql-grammar)).
 
 ### Result column names
 
@@ -808,6 +809,8 @@ Block comments nest: `/* a /* b */ still */ SELECT 1` runs.
 `SELECT q'[x]' AS a` is `Catalog Error: Type with name q does not exist!`, and `SELECT 1 AS a // note` is `Parser Error: syntax error at or near "//"`.
 The confirmation gate asks before `INSERT OR REPLACE` (`confirmForms`), as it asks before `UPDATE` and `DELETE`: measured on v1.5.5 against a table holding `(1, 'a', 'keep-me')`, `INSERT OR REPLACE` of key 1 left `(1, 'new', NULL)`, and with a column list or `BY NAME` it overwrote the listed columns and kept the others.
 `INSERT ... ON CONFLICT ... DO UPDATE SET` overwrote the row too, and asks through the gate's shared `UPDATE ... SET` reading rather than a form of this row.
+DuckDB reads U+00A0, U+2000 to U+200B, U+202F, U+205F, U+2060, U+3000 and U+FEFF as a space between two code words, measured one by one on v1.5.5 (`INSERT<U+00A0>OR<U+00A0>REPLACE` replaced the row), and Studio's span reader does not, so the gate read no form there and did not ask.
+So the provider refuses such a character at a code position before the engine reads the statement (`unicodeSpaceRefusal` in `statement-shape.ts`), the same refusal the Spark provider makes, and the statement that runs is the one the gate and the row limiter read; inside a string, a dollar string, a quoted name or a comment the character is kept.
 `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, a plain `INSERT` and `INSERT ... BY NAME` or `BY POSITION` kept the row, refusing a duplicate key with a Constraint Error where they do not skip it, so none of them asks; `REPLACE INTO` and `INSERT OR ROLLBACK`, `OR ABORT` and `OR FAIL` are Parser Errors on DuckDB.
 The update-target reader takes `PIVOT`, `UNPIVOT`, `UNNEST`, `SUMMARIZE`, `DESCRIBE` and `SHOW` as words that open a query here alone: on DuckDB 1.5.5 `(PIVOT orders ON k USING max(note))` is a scalar subquery that answers with another table's value, and asking about them on every engine cost PostgreSQL a refusal for `coalesce(show, '')`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
@@ -1426,6 +1429,7 @@ message do not accidentally select an unrelated shared classification.
 | `INTERRUPT Error` | `QueryCancelledError` | `Query was cancelled` |
 | Conflicting file lock | `ConnectionError` | `DuckDB file <path> is locked by <process>. DuckDB admits one operating-system process per database file, in read-only mode too, so the other process has to release it first. Engine message: <engine message>` |
 | A write in the editor on a file opened read-only because this process cannot write it (§3.15) | `QueryError` | `DuckDB database <path> is open read-only because this process cannot write the file or its directory: <engine message>` |
+| A Unicode space outside a string, a quoted name and a comment, refused before the engine reads the statement (§5) | `QueryError` | `This statement holds a non-breaking or other Unicode space outside a string. DuckDB reads it as a space and Studio's editor does not, so the confirmation prompt and the row limit could read the statement differently; replace it with an ordinary space.` |
 | A `Permission Error` on an editor handle opened with file access denied (§3.16) | `QueryError` | `File and network access is off on this DuckDB connection: the handle was opened with external access denied, which Studio does for every role but admin and for any connection a non-admin role can use, and which an embedder overrides by passing { allowExternalFileAccess: true }: <engine message>` |
 | `Parser Error`, `Binder Error`, `Catalog Error`, `Conversion Error`, `Invalid Input Error`, `Constraint Error`, `Out of Range Error`, `Not implemented Error`, `Permission Error`, `Serialization Error`, `TransactionContext Error` | `QueryError` | The engine message, with the query attached when one is available |
 | Anything else | shared database error | `mapDatabaseError()` classifies the error using the common provider rules |

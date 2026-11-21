@@ -55,6 +55,7 @@ import {
 } from "@/lib/db/providers/sql/duckdb/objects";
 import { openDuckDBClient } from "@/lib/db/providers/sql/duckdb/client";
 import { DUCKDB_CREATE_TABLE } from "@/lib/db/providers/sql/duckdb/create-table";
+import { DUCKDB_UNICODE_SPACE_SENTENCE } from "@/lib/db/providers/sql/duckdb/statement-shape";
 import {
   ConnectionError,
   DatabaseConfigError,
@@ -1118,6 +1119,31 @@ describe("query()", () => {
     const result = await provider.query("SELECT ?::INTEGER AS a, ?::VARCHAR AS b", [7, "x"]);
 
     expect(result.rows).toEqual([{ a: 7, b: "x" }]);
+  });
+
+  // Measured on 1.5.5: DuckDB reads U+00A0, U+3000 and U+200B between INSERT, OR and REPLACE as spaces and replaced the
+  // row, while the confirmation gate read no INSERT OR REPLACE there and did not ask.
+  test.each([
+    "INSERT\u00A0OR\u00A0REPLACE INTO t VALUES (1, 'new', NULL)",
+    "INSERT OR\u3000REPLACE INTO t VALUES (1, 'new', NULL)",
+    "INSERT\u200BOR REPLACE INTO t VALUES (1, 'new', NULL)",
+  ])("a Unicode space DuckDB reads as a space is refused before the engine runs %j", async (sql) => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+    await provider.query("CREATE TABLE t (id INTEGER PRIMARY KEY, v VARCHAR, note VARCHAR)");
+    await provider.query("INSERT INTO t VALUES (1, 'a', 'keep-me')");
+
+    await expect(provider.query(sql)).rejects.toThrow(QueryError);
+    await expect(provider.query(sql)).rejects.toThrow(DUCKDB_UNICODE_SPACE_SENTENCE);
+
+    expect((await provider.query("SELECT * FROM t")).rows).toEqual([{ id: 1, v: "a", note: "keep-me" }]);
+  });
+
+  test("a Unicode space inside a string is the string's own, and the statement runs", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+
+    expect((await provider.query("SELECT 'a\u00A0b' AS s")).rows).toEqual([{ s: "a\u00A0b" }]);
   });
 
   test("a syntax error is a QueryError carrying DuckDB's own sentence", async () => {
