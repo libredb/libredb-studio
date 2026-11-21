@@ -263,6 +263,23 @@ describe("targets and their admission", () => {
     ]);
   });
 
+  test("two targets equal ignoring letter case are one target on every OS, so the second is target-conflict", () => {
+    // On macOS and Windows the two spellings name one file; the comparison is the same on every OS, so this runs on Linux.
+    const data = temporaryDirectory();
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(data, "Shared.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(data, "shared.DB");
+    expect(sampleAdmissions().map(({ type, refusal }) => ({ type, refusal }))).toEqual([
+      { type: "sqlite", refusal: null },
+      { type: "libredb", refusal: "target-conflict" },
+    ]);
+    // A sidecar spelled in another case, and a directory that does not exist yet spelled in another case.
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(data, "SHARED.db-WAL");
+    expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(data, "Sub", "one.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(data, "sub", "one.db");
+    expect(sampleAdmissions().map(({ refusal }) => refusal)).toEqual([null, "target-conflict"]);
+  });
+
   test.skipIf(process.platform === "win32")(
     "a dangling symlink target claims both the link path and its target, so a sidecar of either is target-conflict (POSIX)",
     () => {

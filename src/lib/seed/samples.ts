@@ -184,8 +184,9 @@ function targetFamily(target: string): string[] {
  * names one of the server's own storage files (`isReservedStoragePath`) is refused `target-reserved`; a sample whose
  * family shares a file with an earlier admitted sample's is refused `target-conflict`. A refused sample claims nothing.
  *
- * `canonicalPath` does not fold letter case: on a case-insensitive filesystem, two spellings that differ only in case
- * are two targets, whether the file exists or not.
+ * Two family members that differ only in letter case are one file for that comparison, on every OS: `canonicalPath`
+ * keeps the case it is given, and on macOS and Windows the two spellings name one file, so a configuration that
+ * conflicts there conflicts on Linux too. Only letter case is folded (`toLowerCase`), not Unicode normalization.
  */
 export function sampleAdmissions(): SampleAdmission[] {
   const claimed = new Set<string>();
@@ -203,10 +204,11 @@ export function sampleAdmissions(): SampleAdmission[] {
       admissions.push({ type, spec, target, refusal: "target-unreadable", failure });
       continue;
     }
+    const keys = family.map((file) => file.toLowerCase());
     let refusal: SampleAdmissionRefusal | null = null;
     if (reserved) refusal = "target-reserved";
-    else if (family.some((file) => claimed.has(file))) refusal = "target-conflict";
-    else for (const file of family) claimed.add(file);
+    else if (keys.some((key) => claimed.has(key))) refusal = "target-conflict";
+    else for (const key of keys) claimed.add(key);
     admissions.push({ type, spec, target, refusal });
   }
   return admissions;

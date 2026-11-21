@@ -1822,7 +1822,7 @@ A sample whose copy fails, or whose target is refused, is logged once as the war
 | `copy-failed` | The copy into the data directory failed; the sentence names the error code, such as `EACCES` or `ENOSPC` |
 | `target-unreadable` | The sample's path could not be checked before any copy; the sentence names the error code, such as `EACCES`, `ENOTDIR` or `ELOOP` |
 | `target-reserved` | The sample's path, or one of its sidecar files, names one of the server's own storage files |
-| `target-conflict` | The sample's path is another sample's, so only the first one is created |
+| `target-conflict` | The sample's path is another sample's, or differs from it only in letter case, so only the first one is created |
 
 The sidebar shows each one as a row with the Unavailable marker, whose title is the sentence, and no action.
 It is never a connection: no picker, route or MCP tool can reach a sample that has no file.
@@ -1876,6 +1876,7 @@ Hover the marker for the reason, and find the warning `Embedded sample unavailab
 - `target-reserved`: a `_PATH` override names the storage database, a sidecar of it or the bootstrap credentials file.
   Point it elsewhere.
 - `target-conflict`: a `_PATH` override names another sample's file, its default one included, or a sidecar of it.
+  Two paths that differ only in letter case conflict on every OS, because on macOS and Windows they name one file.
   Give each sample its own.
 
 A restart retries the copy; a sample whose file exists is never copied again.
