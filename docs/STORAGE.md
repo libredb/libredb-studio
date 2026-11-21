@@ -514,11 +514,14 @@ An operator's seed entry whose type names no provider is listed and shown the sa
 In the npm package, the embedded `StudioWorkspace` lists a host connection whose `type` names no provider in that version of the package, has none, or is not text, with the same **Unavailable** marker, and never opens it by itself: it opens on the first connection a provider can open, or on none.
 A pick of it is refused with the same **Connection unavailable** notice, drawn on a line at the top of the workspace, since the embedded shell shows no toasts, and the workspace keeps its connection.
 The line about a pick is withdrawn when the host lists that connection under a type a provider can open, or drops it.
-When the host's list gives the open connection such a type, the workspace closes it, opens no other connection in its place, and says why on the same line; it opens the same connection again, and withdraws the line, when the host gives the type back.
-When no connection is open and the host's list holds one of these connections, the line names the first of them, so the reason is drawn below the mobile breakpoint too, where the workspace draws no sidebar and no marker.
+When the host's list gives the open connection such a type, the workspace closes it, opens no other connection in its place, and says why on the same line, in place of a line about an earlier pick; it opens the same connection again, and withdraws the line, when the host gives the type back.
+Otherwise, when no connection is open and the host's list holds one of these connections, the line names the first of them, so the reason is drawn below the mobile breakpoint too, where the workspace draws no sidebar and no marker.
+Below the mobile breakpoint the workspace draws no connection picker, so after a retype of the open connection the reader cannot open another listed connection there: a host that wants the workspace to move on drops the retyped connection from its list, and the workspace then opens the first connection a provider can open.
 While no connection is open, RUN is disabled and Save is not offered.
 A statement confirmed in the safety dialog runs only on the connection it was confirmed for: when the host's list has closed or replaced that connection by the time Proceed is pressed, nothing is run and the tab says why.
-A Save Query dialog saves the query under the type of the connection it was opened for.
+A Save Query dialog saves the text it was opened on, under the type of the connection it was opened for.
+An import run while no connection is open imports nothing, and the import dialog stays open and says why.
+A statement the Test Data dialog sends while no connection is open is not run, and the tab says why.
 The published `ConnectionModal`, handed such a connection to edit, shows the same notice in place of its form when it opens and offers only Close, so nothing is tested or saved under another type.
 Handed such a connection while closed, it draws nothing and does not fail.
 
