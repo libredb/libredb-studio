@@ -2785,6 +2785,72 @@ describe("teardown of an owned provider", () => {
     }
   });
 
+  test("the close the factory registers for the shutdown names an owned provider whose rollback or disconnect timed out or failed, and a profiled one whose close failed", async () => {
+    const postgres = (id: string) => makeConnection("postgres", { id });
+    const rollbackHangs = await getOrCreateProvider(postgres("seed:rollback-hangs"), {}, owned("alice-subject"));
+    const disconnectHangs = await getOrCreateProvider(postgres("seed:disconnect-hangs"), {}, owned("alice-subject"));
+    const disconnectFails = await getOrCreateProvider(postgres("seed:disconnect-fails"), {}, owned("alice-subject"));
+    const closes = await getOrCreateProvider(postgres("seed:fine"), {}, owned("alice-subject"));
+    const profiledOwned = await acquireExecutionProfileProvider(
+      postgres("seed:profiled-owned"),
+      "agent-read-only",
+      {},
+      owned("alice-subject"),
+    );
+    const profiledShared = await acquireExecutionProfileProvider(postgres("seed:profiled-shared"), "agent-read-only");
+    const events: string[] = [];
+    openTransaction(rollbackHangs, events, hangs);
+    recordDisconnect(rollbackHangs, events);
+    recordDisconnect(disconnectHangs, events, hangs);
+    recordDisconnect(disconnectFails, events, async () => {
+      throw new Error("pool already ended");
+    });
+    recordDisconnect(closes, events);
+    recordDisconnect(profiledOwned, events, async () => {
+      throw new Error("pool already ended");
+    });
+    const failure = new Error("disconnect failed");
+    profiledShared.disconnect = () => Promise.reject(failure);
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+
+    resetShutdownHooks();
+    try {
+      jest.useFakeTimers();
+      let outcome: unknown;
+      const run = closeProviderCaches().then((result) => {
+        outcome = result;
+      });
+      await settle();
+      // The rollback is given up at 5 s, and the hanging disconnect at 10 s, inside the 15 s the closes may take.
+      jest.advanceTimersByTime(5_000);
+      await settle();
+      jest.advanceTimersByTime(5_000);
+      await run;
+
+      expect(outcome).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message:
+            "Providers not closed: seed:rollback-hangs, seed:disconnect-hangs, seed:disconnect-fails, seed:profiled-owned, seed:profiled-shared",
+        }),
+        { route: "shutdown" },
+      );
+      expect(consoleError).toHaveBeenCalledWith(
+        "[DB] Error disconnecting profiled provider",
+        "seed:profiled-shared",
+        failure,
+      );
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      resetShutdownHooks();
+      error.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
   test("the factory registers its owner-scoped removal, so the governance loader reaches this cache from another bundle", async () => {
     const conn = makeConnection("postgres", { id: "seed:orders" });
     const alice = await getOrCreateProvider(conn, {}, owned("alice-subject"));

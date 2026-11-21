@@ -50,6 +50,7 @@ const STUDIO_OWNS_SIGTERM = "Received SIGTERM: running the shutdown hooks, then 
 const STUDIO_OWNS_SIGINT = "Received SIGINT: running the shutdown hooks, then closing the providers, then exiting";
 const NEXT_OWNS_SIGTERM = "Received SIGTERM: running the shutdown hooks; Next.js's handler ends the process";
 const COMPLETE = "Shutdown complete, exiting with 0";
+const NEXT_EXIT_AFTER_SIGTERM = "Exiting with 143 after SIGTERM";
 
 interface Ended {
   code: number | null;
@@ -215,11 +216,12 @@ const CASES: { name: string; run: () => Promise<{ problems: string[]; output: st
       ]),
   },
   {
-    name: "L2 NEXT_MANUAL_SIG_HANDLE unset, SIGTERM: Next.js's handler exits with 143 after Studio's start line",
+    name: "L2 NEXT_MANUAL_SIG_HANDLE unset, SIGTERM: Next.js's handler exits with 143 between Studio's start and exit lines",
     run: () =>
       signalCase({}, "SIGTERM", (ended, output) => [
         ...(ended.code === 143 && ended.signal === null ? [] : [`expected exit code 143, got ${describeEnd(ended)}`]),
         ...(output.includes(NEXT_OWNS_SIGTERM) ? [] : ["Studio's start line naming Next.js as the owner is missing"]),
+        ...(output.includes(NEXT_EXIT_AFTER_SIGTERM) ? [] : ["Studio's exit line is missing"]),
       ]),
   },
   {

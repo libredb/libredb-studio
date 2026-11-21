@@ -391,6 +391,8 @@ describe("installShutdownHandler", () => {
     onShutdown("slow", () => new Promise<void>(() => {}));
     const proc = shutdownStandIn();
     installShutdownHandler(proc, "nextjs");
+    // The hook never settles, so the hooks' deadline is armed: on fake timers, so it does not fire in a later case.
+    jest.useFakeTimers();
 
     proc.signal("SIGINT");
     await settle();
