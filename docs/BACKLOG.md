@@ -4548,7 +4548,7 @@ Found 2026-11-15 while moving BigQuery onto the shared Google auth, as the half 
 
 **Done when:** one module outside every provider directory holds the bearer lane pool, the three providers use it, and their lane tests pass unchanged.
 
-### D464. BigQuery's API lanes do not refuse link-local addresses or upgrades
+### D464. BigQuery's API lanes do not refuse link-local addresses or a 101 without the upgrade headers
 
 The API transports in `src/lib/db/providers/sql/bigquery/transport.ts` are built with `maxSockets` 8 and no `refusesLinkLocal` or `refusesUpgrade`, while every auth lane of `src/lib/db/auth` refuses upgrades and every auth lane but the metadata one refuses link-local addresses.
 Every text transport fails a `101` that announces an upgrade at once; without `refusesUpgrade` a `101` without the upgrade headers comes back as an answer of status 101.

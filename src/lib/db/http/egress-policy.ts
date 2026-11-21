@@ -240,7 +240,7 @@ class AnswerDecodingError extends DatabaseError {
 
 /**
  * A 101 that switched the connection to another protocol, which no HTTP database transport reads. Not a
- * DatabaseConfigError, so every caller reports it as its own network failure, with this message.
+ * DatabaseConfigError, so each caller wraps it as its own network failure.
  */
 class SwitchedProtocolsError extends DatabaseError {
   constructor() {
