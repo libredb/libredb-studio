@@ -183,5 +183,27 @@ describe("typeIdRow", () => {
   test.each(OUTSIDE_THE_UNION)("refuses %s by name before it reads the table", (_label, value) => {
     expect(refusalThrownBy(() => typeIdRow(TOTAL, value))).toEqual(refusalOf(value));
     expect(refusalThrownBy(() => typeIdRow(PARTIAL, value))).toEqual(refusalOf(value));
+    const { table, reads } = recordingTable();
+    expect(refusalThrownBy(() => typeIdRow(table, value))).toEqual(refusalOf(value));
+    expect(reads).toEqual([]);
+  });
+
+  test("a recording table sees the read of a type id's row", () => {
+    const { table, reads } = recordingTable();
+    expect(typeIdRow(table, "postgres")).toBe("row of postgres");
+    expect(reads).toEqual(["postgres"]);
   });
 });
+
+/** The total table behind a proxy that records every key read from it, so a test can see whether the table was read. */
+function recordingTable(): { table: Readonly<Record<DatabaseType, string>>; reads: PropertyKey[] } {
+  const reads: PropertyKey[] = [];
+  const rows: Record<string, string> = Object.fromEntries(SHIPPED_DATABASE_TYPES.map((id) => [id, `row of ${id}`]));
+  const table = new Proxy(rows, {
+    get(target, key, receiver) {
+      reads.push(key);
+      return Reflect.get(target, key, receiver);
+    },
+  }) as Record<DatabaseType, string>;
+  return { table, reads };
+}

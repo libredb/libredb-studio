@@ -3658,12 +3658,21 @@ describe("QueryEditor and a databaseType outside DatabaseType (FND-1)", () => {
   test("a host that re-renders it with such a value gets the named error at its boundary, and nothing is formatted or registered with it", () => {
     const warn = spyOn(logger, "warn");
     try {
-      const { rerender, queryByTestId } = render(editorUnder({ databaseType: "postgres" }));
+      mockSqlFormat.mockClear();
+      const { rerender, queryByTestId, queryByText } = render(
+        editorUnder({ databaseType: "postgres", value: "select 1" }),
+      );
       expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
       expect(caught).toHaveLength(0);
-      rerender(editorUnder({ databaseType: "acmefoo" as DatabaseType }));
+      // The control: under a type id Format runs the formatter once and nothing is logged.
+      fireEvent.click(queryByText("Format")!);
+      expect(mockSqlFormat).toHaveBeenCalledTimes(1);
+      rerender(editorUnder({ databaseType: "acmefoo" as DatabaseType, value: "select 1" }));
       expect(caughtRefusal()).toEqual(refusalOf("acmefoo"));
       expect(queryByTestId("mock-monaco-editor")).toBeNull();
+      // The refused render never commits, so no Format control holds a handler that could read the refused value.
+      expect(queryByText("Format")).toBeNull();
+      expect(mockSqlFormat).toHaveBeenCalledTimes(1);
       const registeredTypes = mockRegisterSQLCompletionProvider.mock.calls.map((call) => call[2]);
       expect(registeredTypes).toEqual(["postgres"]);
       const warnings = warn.mock.calls.map((call) => call[0]);

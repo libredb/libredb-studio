@@ -3445,6 +3445,34 @@ describe("ResultsGrid and a databaseType outside DatabaseType (FND-1)", () => {
     expect(queryByTestId("page-offer")).toBeNull();
   });
 
+  // With no paging offer the result-order reader never runs, so the check at the top of render is the only place a
+  // refusal can come from.
+  test.each(ROWS)("refuses %s by name as it renders a result with no paging offer", (_label, value) => {
+    const { queryByTestId } = render(
+      React.createElement(
+        RecordingBoundary,
+        { onCaught: (error: unknown) => caught.push(error) },
+        React.createElement(ResultsGrid, { result: mockResult, databaseType: value as DatabaseType }),
+      ),
+    );
+    expect(caught).toHaveLength(1);
+    expect(caught[0]).toBeInstanceOf(UnknownProviderError);
+    expect(shapeOfRefusal(caught[0] as UnknownProviderError)).toEqual(refusalOf(value));
+    expect(queryByTestId("boundary-caught")).not.toBeNull();
+  });
+
+  test("a type id renders a result with no paging offer", () => {
+    const { queryByTestId } = render(
+      React.createElement(
+        RecordingBoundary,
+        { onCaught: (error: unknown) => caught.push(error) },
+        React.createElement(ResultsGrid, { result: mockResult, databaseType: "postgres" }),
+      ),
+    );
+    expect(caught).toHaveLength(0);
+    expect(queryByTestId("boundary-caught")).toBeNull();
+  });
+
   test("a type id renders the grid and reads its order", () => {
     const { queryByTestId } = render(gridUnder("postgres"));
     expect(caught).toHaveLength(0);

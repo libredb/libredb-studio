@@ -999,7 +999,8 @@ describe("QuerySafetyDialog", () => {
 
   // A vocabulary that asks for a typed value, or keeps its statements from the analysis (#1089, section 5.5 and
   // E10). These tests install a row of their own under the stand-in type id, trino, which ships no row
-  // (tests/helpers/stand-in-vocabulary.ts), so each rule is pinned apart from any engine's grammar; etcd's row,
+  // (tests/helpers/stand-in-vocabulary.ts), so each rule is pinned apart from any shipped vocabulary row, and the
+  // texts are read under Trino's grammar; etcd's row,
   // the one shipped row that declares both fields, is pinned with its own commands in the describe after this one.
   describe("a vocabulary's typed confirmation and its safety-analysis switch", () => {
     const MISSING_NAME =
@@ -2538,6 +2539,216 @@ describe("QuerySafetyDialog and a column the engine only inferred from sampled d
   });
 });
 
+// A host hands this published dialog the connection's type as a plain string (FND-1, Q2). A value that is not a type
+// id, the empty string and null included, is refused by name in place of the analysis: nothing is read under another
+// engine's grammar or the SQL defaults, nothing is sent to be analysed, and Execute stays disabled. An omitted
+// databaseType is no connection, as before.
+describe("QuerySafetyDialog and a databaseType outside the union (FND-1)", () => {
+  // An unterminated quote, which a SQL reading would call unreadable, so the test sees that notice is not drawn.
+  const QUERY = "DELETE FROM employee WHERE name = 'x";
+  let originalFetch: typeof globalThis.fetch;
+  let fetchMock: ReturnType<typeof mock>;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchMock = mock(async () => createStreamResponse({ chunks: ["Plain text analysis output"] }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    cleanup();
+  });
+
+  test.each(OUTSIDE_THE_UNION)(
+    "draws the refusal for %s in place of the analysis, and sends nothing",
+    (_label, value) => {
+      const onAnalyzeSafety = mock(async () => {
+        throw new Error("no analysis is asked for a refused type");
+      });
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query={QUERY}
+          schemaContext=""
+          databaseType={value as string}
+          connectionName="Acme"
+          onClose={() => {}}
+          onProceed={() => {}}
+          onAnalyzeSafety={onAnalyzeSafety}
+        />,
+      );
+      const dialog = screen.getByRole("alertdialog", { name: "Query Safety Check" });
+      expect(screen.getByTestId("query-safety-refusal").textContent).toBe(`Acme: ${refusalOf(value).message}`);
+      expect(within(dialog).queryByText("Connection unavailable")).not.toBeNull();
+      expect(within(dialog).getByRole("button", { name: "Execute Query" }).hasAttribute("disabled")).toBe(true);
+      expect(within(dialog).queryByText("Part of this statement could not be read")).toBeNull();
+      expect(within(dialog).queryByText(/not sent to an AI provider/)).toBeNull();
+      expect(within(dialog).queryByText("Analyzing query safety...")).toBeNull();
+      expect(within(dialog).queryByText(/Review the query before proceeding/)).toBeNull();
+      expect(within(dialog).queryByRole("textbox")).toBeNull();
+      expect(onAnalyzeSafety).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([
+    ["no connection name", undefined],
+    ["an empty connection name", ""],
+  ])("names This connection when the caller gives %s", (_label, connectionName) => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext=""
+        databaseType="acmefoo"
+        connectionName={connectionName}
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("query-safety-refusal").textContent).toBe(
+      `This connection: ${refusalOf("acmefoo").message}`,
+    );
+    // With no onAnalyzeSafety the dialog would post to the safety route, so this is where sending nothing shows.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // etcd's row is the one shipped row that asks for a typed value, and its table is read by index, so a value that
+  // converts to "etcd" is the one that would draw the field if the refusal did not come first.
+  test.each([
+    ['a String object of "etcd"', new String("etcd")],
+    ['the array ["etcd"]', ["etcd"]],
+  ])("draws no typed confirmation for %s, whose conversion names etcd", (_label, value) => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="del /App/ --prefix"
+        schemaContext=""
+        databaseType={value as unknown as string}
+        connectionName="Acme"
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("query-safety-refusal").textContent).toBe(`Acme: ${refusalOf(value).message}`);
+    expect(screen.queryByLabelText("Type /App/ to confirm")).toBeNull();
+    expect(screen.getByRole("button", { name: "Execute Query" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  test("its accessible description is the refusal, as the connection dialog's is", () => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext=""
+        databaseType="constructor"
+        connectionName="Acme"
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    const dialog = screen.getByRole("alertdialog", { name: "Query Safety Check" });
+    const describedBy = dialog.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)?.textContent).toBe(`Acme: ${refusalOf("constructor").message}`);
+    // The statement stays on screen as plain text.
+    expect(within(dialog).queryByText(QUERY)).not.toBeNull();
+  });
+
+  test("Cancel closes it, and nothing is run", () => {
+    const onClose = mock(() => {});
+    const onProceed = mock(() => {});
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext=""
+        databaseType=""
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    const dialog = screen.getByRole("alertdialog", { name: "Query Safety Check" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Execute Query" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onProceed).not.toHaveBeenCalled();
+  });
+
+  test("a closed dialog handed such a value renders nothing and does not throw", () => {
+    const { container } = render(
+      <QuerySafetyDialog
+        isOpen={false}
+        query={QUERY}
+        schemaContext=""
+        databaseType="__proto__"
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    expect(container.textContent).toBe("");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("a host that swaps the type for one outside the union while the analysis runs stops it and draws the refusal", async () => {
+    const signals: AbortSignal[] = [];
+    const onAnalyzeSafety = mock(
+      ({ signal }: { query: string; schemaContext: string; signal?: AbortSignal }) =>
+        new Promise<never>((_resolve, reject) => {
+          signals.push(signal!);
+          signal!.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    const view = (databaseType: string) => (
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext=""
+        databaseType={databaseType}
+        connectionName="Acme"
+        onClose={() => {}}
+        onProceed={() => {}}
+        onAnalyzeSafety={onAnalyzeSafety}
+      />
+    );
+    const { rerender } = render(view("postgres"));
+    expect(onAnalyzeSafety).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Analyzing query safety...")).not.toBeNull();
+    rerender(view("acmefoo"));
+    expect(signals[0].aborted).toBe(true);
+    expect(screen.getByTestId("query-safety-refusal").textContent).toBe(`Acme: ${refusalOf("acmefoo").message}`);
+    expect(screen.getByRole("button", { name: "Execute Query" }).hasAttribute("disabled")).toBe(true);
+    expect(onAnalyzeSafety).toHaveBeenCalledTimes(1);
+  });
+
+  test("a type id is analysed as before", async () => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext=""
+        databaseType="postgres"
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId("query-safety-refusal")).toBeNull();
+    expect(screen.queryByText("Part of this statement could not be read")).not.toBeNull();
+  });
+
+  test("an omitted databaseType is read as no connection, as before", async () => {
+    render(<QuerySafetyDialog isOpen query={QUERY} schemaContext="" onClose={() => {}} onProceed={() => {}} />);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId("query-safety-refusal")).toBeNull();
+  });
+});
+
 describe("Snowflake's confirmation forms", () => {
   const FORMS = [
     "CREATE OR REPLACE TABLE t AS SELECT 1",
@@ -3128,191 +3339,5 @@ describe("a PostgreSQL DO block asks", () => {
   test("MySQL's DO, which evaluates expressions, is not read as a block", () => {
     expect(isDangerousQuery("DO SLEEP(1)", "mysql")).toBe(false);
     expect(isDangerousQuery("DO 'x'", "mysql")).toBe(false);
-  });
-});
-
-// A host hands this published dialog the connection's type as a plain string (FND-1, Q2). A value that is not a type
-// id, the empty string and null included, is refused by name in place of the analysis: nothing is read under another
-// engine's grammar or the SQL defaults, nothing is sent to be analysed, and Execute stays disabled. An omitted
-// databaseType is no connection, as before.
-describe("QuerySafetyDialog and a databaseType outside the union (FND-1)", () => {
-  // An unterminated quote, which a SQL reading would call unreadable, so the test sees that notice is not drawn.
-  const QUERY = "DELETE FROM employee WHERE name = 'x";
-  let originalFetch: typeof globalThis.fetch;
-  let fetchMock: ReturnType<typeof mock>;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-    fetchMock = mock(async () => createStreamResponse({ chunks: ["Plain text analysis output"] }));
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-    cleanup();
-  });
-
-  test.each(OUTSIDE_THE_UNION)(
-    "draws the refusal for %s in place of the analysis, and sends nothing",
-    (_label, value) => {
-      const onAnalyzeSafety = mock(async () => {
-        throw new Error("no analysis is asked for a refused type");
-      });
-      render(
-        <QuerySafetyDialog
-          isOpen
-          query={QUERY}
-          schemaContext=""
-          databaseType={value as string}
-          connectionName="Acme"
-          onClose={() => {}}
-          onProceed={() => {}}
-          onAnalyzeSafety={onAnalyzeSafety}
-        />,
-      );
-      const dialog = screen.getByRole("alertdialog", { name: "Query Safety Check" });
-      expect(screen.getByTestId("query-safety-refusal").textContent).toBe(`Acme: ${refusalOf(value).message}`);
-      expect(within(dialog).queryByText("Connection unavailable")).not.toBeNull();
-      expect(within(dialog).getByRole("button", { name: "Execute Query" }).hasAttribute("disabled")).toBe(true);
-      expect(within(dialog).queryByText("Part of this statement could not be read")).toBeNull();
-      expect(within(dialog).queryByText(/not sent to an AI provider/)).toBeNull();
-      expect(within(dialog).queryByText("Analyzing query safety...")).toBeNull();
-      expect(within(dialog).queryByText(/Review the query before proceeding/)).toBeNull();
-      expect(within(dialog).queryByRole("textbox")).toBeNull();
-      expect(onAnalyzeSafety).not.toHaveBeenCalled();
-      expect(fetchMock).not.toHaveBeenCalled();
-    },
-  );
-
-  test.each([
-    ["no connection name", undefined],
-    ["an empty connection name", ""],
-  ])("names This connection when the caller gives %s", (_label, connectionName) => {
-    render(
-      <QuerySafetyDialog
-        isOpen
-        query={QUERY}
-        schemaContext=""
-        databaseType="acmefoo"
-        connectionName={connectionName}
-        onClose={() => {}}
-        onProceed={() => {}}
-      />,
-    );
-    expect(screen.getByTestId("query-safety-refusal").textContent).toBe(
-      `This connection: ${refusalOf("acmefoo").message}`,
-    );
-  });
-
-  test("its accessible description is the refusal, as the connection dialog's is", () => {
-    render(
-      <QuerySafetyDialog
-        isOpen
-        query={QUERY}
-        schemaContext=""
-        databaseType="constructor"
-        connectionName="Acme"
-        onClose={() => {}}
-        onProceed={() => {}}
-      />,
-    );
-    const dialog = screen.getByRole("alertdialog", { name: "Query Safety Check" });
-    const describedBy = dialog.getAttribute("aria-describedby");
-    expect(describedBy).toBeTruthy();
-    expect(document.getElementById(describedBy!)?.textContent).toBe(`Acme: ${refusalOf("constructor").message}`);
-    // The statement stays on screen as plain text.
-    expect(within(dialog).queryByText(QUERY)).not.toBeNull();
-  });
-
-  test("Cancel closes it, and nothing is run", () => {
-    const onClose = mock(() => {});
-    const onProceed = mock(() => {});
-    render(
-      <QuerySafetyDialog
-        isOpen
-        query={QUERY}
-        schemaContext=""
-        databaseType=""
-        onClose={onClose}
-        onProceed={onProceed}
-      />,
-    );
-    const dialog = screen.getByRole("alertdialog", { name: "Query Safety Check" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Execute Query" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(onProceed).not.toHaveBeenCalled();
-  });
-
-  test("a closed dialog handed such a value renders nothing and does not throw", () => {
-    const { container } = render(
-      <QuerySafetyDialog
-        isOpen={false}
-        query={QUERY}
-        schemaContext=""
-        databaseType="__proto__"
-        onClose={() => {}}
-        onProceed={() => {}}
-      />,
-    );
-    expect(container.textContent).toBe("");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  test("a host that swaps the type for one outside the union while the analysis runs stops it and draws the refusal", async () => {
-    const signals: AbortSignal[] = [];
-    const onAnalyzeSafety = mock(
-      ({ signal }: { query: string; schemaContext: string; signal?: AbortSignal }) =>
-        new Promise<never>((_resolve, reject) => {
-          signals.push(signal!);
-          signal!.addEventListener("abort", () => reject(new Error("aborted")));
-        }),
-    );
-    const view = (databaseType: string) => (
-      <QuerySafetyDialog
-        isOpen
-        query={QUERY}
-        schemaContext=""
-        databaseType={databaseType}
-        connectionName="Acme"
-        onClose={() => {}}
-        onProceed={() => {}}
-        onAnalyzeSafety={onAnalyzeSafety}
-      />
-    );
-    const { rerender } = render(view("postgres"));
-    expect(onAnalyzeSafety).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText("Analyzing query safety...")).not.toBeNull();
-    rerender(view("acmefoo"));
-    expect(signals[0].aborted).toBe(true);
-    expect(screen.getByTestId("query-safety-refusal").textContent).toBe(`Acme: ${refusalOf("acmefoo").message}`);
-    expect(screen.getByRole("button", { name: "Execute Query" }).hasAttribute("disabled")).toBe(true);
-    expect(onAnalyzeSafety).toHaveBeenCalledTimes(1);
-  });
-
-  test("a type id is analysed as before", async () => {
-    render(
-      <QuerySafetyDialog
-        isOpen
-        query={QUERY}
-        schemaContext=""
-        databaseType="postgres"
-        onClose={() => {}}
-        onProceed={() => {}}
-      />,
-    );
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-    expect(screen.queryByTestId("query-safety-refusal")).toBeNull();
-    expect(screen.queryByText("Part of this statement could not be read")).not.toBeNull();
-  });
-
-  test("an omitted databaseType is read as no connection, as before", async () => {
-    render(<QuerySafetyDialog isOpen query={QUERY} schemaContext="" onClose={() => {}} onProceed={() => {}} />);
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-    expect(screen.queryByTestId("query-safety-refusal")).toBeNull();
   });
 });

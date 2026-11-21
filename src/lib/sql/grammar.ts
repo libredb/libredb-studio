@@ -451,7 +451,7 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * Whether this dialect's query text is SQL - the question BEFORE which SQL grammar
  * to read it under. Each engine's module states it as `readsSqlText`, with the reason.
  *
- * `resolveSqlGrammar` has an answer for every input, so without this a Mongo
+ * `resolveSqlGrammar` has an answer for every type id, so without this a Mongo
  * document or a Redis command is simply read as SQL under the compatibility
  * grammar. For a reader that only ever declines to act, that costs nothing. For the
  * confirmation gate it cost a false prompt on ordinary reads: the escaped quote in

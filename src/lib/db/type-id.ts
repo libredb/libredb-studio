@@ -7,8 +7,9 @@
  *
  * The provider factory, `resolveConnection`, the `db-ui-config` lookups, the Studio connection lists, the connection
  * hook, the embedded workspace's connection adapter and the connection form hook ask this module first; so do the five
- * contract registry lookups (through `typeIdRow`) and the migration's dialect header, and the four published components
- * that take a connection's type from a host. Not every per-engine read does yet: the capability tables (`WRITE_REACH`,
+ * contract registry lookups (through `typeIdRow`) and the migration's dialect header, and the published
+ * `QuerySafetyDialog`, `TestDataGenerator`, `QueryEditor` and `ResultsGrid`, the components that read a per-engine fact
+ * with a type a host hands them. Not every per-engine read does yet: the capability tables (`WRITE_REACH`,
  * the `CONNECTION_FORM` helpers such as `offersSslPanel`, the destructive vocabulary and their neighbours) are still
  * read by bare index, so a new per-engine lookup is not covered by this module unless it calls it.
  *
