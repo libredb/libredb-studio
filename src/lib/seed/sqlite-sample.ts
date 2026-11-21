@@ -89,14 +89,15 @@ async function fileExists(p: string): Promise<boolean> {
  *
  * The copy is switched to WAL journal mode before the rename publishes it.
  * The template is in rollback-journal mode, and every writable open runs
- * `PRAGMA journal_mode = WAL`, which on such a file needs an exclusive lock
- * that SQLite does not wait for, with or without a busy timeout. The first
- * page load opens the sample from several routes at once, so most of those
- * opens failed with "database is locked", and none did on a copy already in
- * WAL mode (docs/providers/sqlite.md, "PRAGMAs on connect"). The switch is
- * made here by the provider's own open sequence, once, on a temp file no other
- * connection can see yet; a template that is not a SQLite database is refused
- * by that open rather than published.
+ * `PRAGMA journal_mode = WAL`. Two opens making that switch at once fail with
+ * "database is locked" whatever the busy timeout: each holds a read lock when
+ * it asks for the write lock the switch needs, and SQLite refuses that upgrade
+ * instead of waiting. The first page load opens the sample from several routes
+ * at once, so most of those opens failed; a file already in WAL mode has no
+ * switch to make (docs/providers/sqlite.md, "PRAGMAs on connect"). The switch
+ * is made here by the provider's own open sequence, once, on a temp file no
+ * other connection can see yet; a template that is not a SQLite database is
+ * refused by that open rather than published.
  *
  * Genuinely asynchronous (fs.promises throughout): instrumentation.ts
  * fire-and-forgets this, and only real await points make that true — with

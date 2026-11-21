@@ -175,10 +175,12 @@ describe("sqlite-sample", () => {
     expect(fs.existsSync(`${file}.${process.pid}.seeding`)).toBe(false);
   });
 
-  // The template is in rollback-journal mode, and every writable open switches the file to WAL,
-  // which needs an exclusive lock SQLite does not wait for. So the first opens of a fresh copy, made
-  // by several routes at once, failed with "database is locked". The seed switches its private copy
-  // once, before the rename publishes it, so no open of the published sample has a switch to make.
+  // The template is in rollback-journal mode, and every writable open switches the file to WAL.
+  // Two opens making that switch at once fail with "database is locked" whatever the busy timeout,
+  // because SQLite refuses the read lock's upgrade to the write lock the switch needs instead of
+  // waiting, so the first opens of a fresh copy, made by several routes at once, failed. The seed
+  // switches its private copy once, before the rename publishes it, so no open of the published
+  // sample has a switch to make, and the open's busy bound covers the WAL recovery of its first open.
   test("seedSqliteSampleFile: publishes the sample already in WAL journal mode, with no sidecar left beside it", async () => {
     const file = tmpPath();
     expect(formatVersions(resolveSqliteSampleTemplatePath())).toEqual([1, 1]);

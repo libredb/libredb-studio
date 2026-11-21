@@ -138,6 +138,15 @@ export function deserializeCell(value: unknown): unknown {
   return value;
 }
 
+/**
+ * How long an open waits for another connection's lock, in milliseconds, before it fails with
+ * "database is locked". It covers the open's PRAGMAs only and is set back to 0 after them, so a
+ * statement still fails at once on another writer's lock. Without it the open failed at once when
+ * it met another connection's WAL recovery, a last close's checkpoint, or a reader of a file still
+ * under a rollback journal (docs/providers/sqlite.md, "PRAGMAs on connect").
+ */
+export const SQLITE_OPEN_BUSY_TIMEOUT_MS = 2000;
+
 // ============================================================================
 // The child's program
 // ============================================================================
@@ -196,6 +205,7 @@ const WORKER_BOOTSTRAP = [
   '    var node = require("node:sqlite");',
   "    db = new node.DatabaseSync(payload.dbPath, { readOnly: payload.readonly === true, readBigInts: true });",
   "  }",
+  `  db.exec("PRAGMA busy_timeout = ${SQLITE_OPEN_BUSY_TIMEOUT_MS}");`,
   "  if (payload.queryOnly) {",
   '    db.exec("PRAGMA query_only = true");',
   '    var readback = allRows("PRAGMA query_only", []);',
@@ -213,6 +223,7 @@ const WORKER_BOOTSTRAP = [
   "    // The agent read-only profile skips this read, exactly as connectReadOnly did.",
   '    allRows("PRAGMA journal_mode", []);',
   "  }",
+  '  db.exec("PRAGMA busy_timeout = 0");',
   "}",
   "function query(sql, params) {",
   "  var stmt = db.prepare(sql);",

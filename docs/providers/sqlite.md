@@ -185,10 +185,18 @@ different open sequence entirely — `journal_mode = WAL` is itself a write and 
 handle ([§12.1](#121-where-the-boundary-is)). So does an existing file this process cannot write
 ([§3.7](#37-a-database-file-this-process-cannot-write)).
 
-The switch to WAL is a write that needs an exclusive lock on a file still under a rollback journal, and SQLite does not wait for it: while any other connection holds the file, the open fails at once with `Failed to open SQLite database: database is locked`, and a busy timeout does not change that (measured 2026-11-21 on `bun:sqlite` and `node:sqlite`: four processes running this open sequence at once on a fresh rollback-journal copy lost at least one open in every trial; with `busy_timeout = 5000` set first, 29 of 60 opens on `node:sqlite` and 35 of 60 on `bun:sqlite` still failed, each within 5 ms of its start).
-On a file already in WAL mode the pragma has nothing to switch, and four or eight processes opened it every time (0 of 1,520 opens failed, on both drivers, with and without a busy timeout).
-So the first opens of a rollback-journal file, made by several requests at once, can fail; the embedded sample is published in WAL mode for that reason ([§4.1](#41-embedded-sample-database-standalone-mode)).
-`tests/integration/db/sqlite-provider.test.ts` pins both answers beside a reader that holds the file.
+The open sets `PRAGMA busy_timeout = 2000` before these pragmas and `PRAGMA busy_timeout = 0` after them, on the worker and on the in-process path alike (`SQLITE_OPEN_BUSY_TIMEOUT_MS` in [`sqlite-worker.ts`](../../src/lib/db/providers/sql/sqlite-worker.ts)).
+So the open waits up to two seconds for another connection's lock, and a statement after it still fails at once on another writer's lock instead of waiting.
+Without that bound the open failed at once with `Failed to open SQLite database: database is locked` whenever it met another connection's lock: the WAL-index recovery that the first open of a WAL-mode file with no `-shm` runs, the checkpoint a last close runs, or a reader of a file still under a rollback journal, where the switch to WAL needs every reader gone.
+Measured 2026-11-21 on `node:sqlite`: eight processes running this open sequence at once on a fresh WAL-mode copy of the sample with no sidecar lost 4 of 1,200 opens at `journal_mode` under CPU load, and none with `busy_timeout = 5000`; eight processes each opening and at once closing a WAL-mode copy lost 15 of 1,200, and none with it.
+Beside a reader of a rollback-journal file the switch with a busy timeout waited for the reader and then succeeded (a reader held 300 ms, then 1,000 ms).
+A lock held past the bound still fails the open with that error, once the bound is spent.
+
+One case no busy timeout covers: several connections switching the same rollback-journal file to WAL at once.
+Each holds a read lock when it asks for the write lock the switch needs, and SQLite refuses that upgrade at once instead of waiting, since neither could go on.
+Four processes running this open sequence at once on a fresh rollback-journal copy lost at least one open in every trial, and with `busy_timeout = 5000` set first, 29 of 60 opens on `node:sqlite` and 35 of 60 on `bun:sqlite` still failed, each within 5 ms of its start.
+So the first opens of a rollback-journal file, made by several requests at once, can fail; a file already in WAL mode has no switch to make, and the embedded sample is published in WAL mode for that reason ([§4.1](#41-embedded-sample-database-standalone-mode)).
+`tests/integration/db/sqlite-provider.test.ts` pins the bound in "the open's busy bound": an open waits for a reader of a rollback-journal file and for an exclusive lock on a WAL-mode file, each let go within the bound, fails once a reader holds past it, and leaves `busy_timeout` at 0.
 
 `disconnect()` closes with `close(true)`, and the argument is load-bearing. Bare `close()` on
 `bun:sqlite` is `sqlite3_close_v2`: with any statement still unfinalized the connection becomes a
