@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useId, useState, useMemo } from "react";
+import React, { useEffect, useId, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
@@ -37,7 +37,12 @@ import { PoolTab } from "./tabs/PoolTab";
 import { withConnectedMaintenance } from "@/lib/db/types";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import { ConnectionTypeLabel } from "@/components/connection-type-label";
-import { defaultConnection, unavailableConnectionNotice } from "@/lib/connection-availability";
+import {
+  savedConnectionNotice,
+  shownConnection,
+  unavailableConnectionNotice,
+  type UnavailableNotice,
+} from "@/lib/connection-availability";
 import { useToast } from "@/hooks/use-toast";
 
 interface MonitoringDashboardProps {
@@ -58,17 +63,33 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
   // Load connections (user + managed seed connections)
   const { connections: allConns } = useAllConnections();
 
-  // Derived, not stored: an explicit pick wins, otherwise `defaultConnection`: the saved
-  // active connection, otherwise the first one, skipping any whose type names no provider
-  // (FND-1). Resolving against the current list on every render also means a connection
-  // that disappears from it stops being selected, instead of leaving a dead object behind.
-  // A pick that a later list names no provider for stays picked, drawn as unavailable, and
-  // the server refuses its reads by name: the page does not switch by itself.
+  // The id of the connection the page opened on without a pick. It is held while that connection is listed, whatever
+  // its type, as a pick is; only a connection that leaves the list is replaced (FND-1).
+  const [shownId, setShownId] = useState<string | null>(null);
+
+  // Derived, not stored: an explicit pick wins, otherwise `shownConnection`: the connection
+  // the page opened on, otherwise `defaultConnection`, the saved active connection, otherwise
+  // the first one, skipping any whose type names no provider (FND-1). Resolving against the
+  // current list on every render also means a picked connection that disappears from it stops
+  // being selected, instead of leaving a dead object behind. A connection that a later list
+  // names no provider for stays selected, picked or not, and its refusal is drawn in place of
+  // the tabs: the page does not switch by itself.
   const selectedConnection = useMemo(
     () =>
-      chosenId !== null ? (allConns.find((c) => c.id === chosenId) ?? null) : defaultConnection(allConns, savedId),
-    [allConns, chosenId, savedId],
+      chosenId !== null
+        ? (allConns.find((c) => c.id === chosenId) ?? null)
+        : shownConnection(allConns, shownId, savedId),
+    [allConns, chosenId, shownId, savedId],
   );
+  // Adjusting state during render, as SavedQueries does for its refresh trigger: the id recorded is the one drawn.
+  if (chosenId === null && selectedConnection !== null && selectedConnection.id !== shownId) {
+    setShownId(selectedConnection.id);
+  }
+  const selectedRefusal = selectedConnection === null ? null : typeIdRefusal(selectedConnection.type);
+  // The saved active connection, when the first list names no provider for its type, is not replaced in silence: the
+  // notice is decided once, on the first list, and raised by the effect below (FND-1).
+  const [savedNotice, setSavedNotice] = useState<UnavailableNotice | null | undefined>(undefined);
+  if (savedNotice === undefined && allConns.length > 0) setSavedNotice(savedConnectionNotice(allConns, savedId));
 
   // Memoize options to prevent infinite re-renders
   const monitoringOptions = useMemo(
@@ -132,6 +153,11 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
   const resumesBilledCompute = metadata?.capabilities.resumesBilledCompute === true;
 
   const { toast } = useToast();
+
+  // The id makes a second run of this effect, as React's development mode does, replace the notice instead of adding one.
+  useEffect(() => {
+    if (savedNotice) toast({ ...savedNotice, variant: "destructive", id: "saved-connection-unavailable" });
+  }, [savedNotice, toast]);
 
   // A pick of a connection whose type names no provider is refused by name and changes
   // nothing, with the notice the editor raises for the same pick (FND-1).
@@ -278,6 +304,12 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
           <Button variant="outline" onClick={() => router.push("/")}>
             Manage Connections
           </Button>
+        </div>
+      ) : selectedRefusal !== null ? (
+        <div className="flex flex-col items-center justify-center flex-1 gap-4 text-muted-foreground">
+          <Database strokeWidth={1.5} className="h-12 w-12" />
+          <h2 className="text-lg font-medium">Connection Unavailable</h2>
+          <p className="text-xs">{selectedRefusal.sentence}</p>
         </div>
       ) : (catalogsError ?? error) && !data ? (
         <div className="flex flex-col items-center justify-center flex-1 gap-4 text-destructive">

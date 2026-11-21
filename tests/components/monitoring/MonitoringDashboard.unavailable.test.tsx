@@ -134,11 +134,38 @@ describe("the monitoring dashboard and a connection whose type names no provider
     expect(handed(monitoredConnections)).toContain("p");
   });
 
-  test("never opens on it when it is the editor's saved active connection", () => {
-    const { connectionTrigger } = renderDashboard([P, U], "u");
+  test("never opens on it when it is the editor's saved active connection, and says so once", () => {
+    const { connectionTrigger, rerender } = renderDashboard([P, U], "u");
 
     expect(connectionTrigger().textContent).toContain("Orders");
     expect(handed(metadataConnections)).not.toContain("u");
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+    expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+      description: `Acme: ${unknownTypeSentence("acmefoo")}`,
+      id: "saved-connection-unavailable",
+    });
+
+    listedConnections = [P, U, P2];
+    rerender(<MonitoringDashboard />);
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+  });
+
+  test("says nothing about a saved active connection that is available or not listed", () => {
+    renderDashboard([P, U], "p");
+    cleanup();
+    renderDashboard([P, U], "gone");
+
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("says so when the saved active connection is unavailable and nothing else can be opened", () => {
+    const { getByText } = renderDashboard([U], "u");
+
+    expect(getByText("No Connection Selected")).toBeTruthy();
+    expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+      description: `Acme: ${unknownTypeSentence("acmefoo")}`,
+      id: "saved-connection-unavailable",
+    });
   });
 
   test("lists it as Unavailable, with the reason, and renders a type that is not text", () => {
@@ -192,5 +219,56 @@ describe("the monitoring dashboard and a connection whose type names no provider
     expect(trigger.textContent).toContain("Billing");
     expect(trigger.textContent).not.toContain("(acmefoo)");
     expect(within(trigger).getByTitle(unknownTypeSentence("acmefoo")).textContent).toContain("Unavailable");
+  });
+
+  test("the connection it opened on stays shown when a later list names no provider for its type", () => {
+    const { connectionTrigger, rerender, getByText, queryByTitle } = renderDashboard([P2, P], "p");
+    expect(connectionTrigger().textContent).toContain("Orders");
+    expect(queryByTitle("Overview")).not.toBeNull();
+
+    listedConnections = [P2, { ...P, type: "acmefoo" } as unknown as DatabaseConnection];
+    rerender(<MonitoringDashboard />);
+
+    const trigger = connectionTrigger();
+    expect(trigger.textContent).toContain("Orders");
+    expect(within(trigger).getByTitle(unknownTypeSentence("acmefoo")).textContent).toContain("Unavailable");
+    expect(handed(monitoredConnections)).not.toContain("p2");
+    expect(handed(metadataConnections)).not.toContain("p2");
+    // The refusal is drawn in place of the tabs, so nothing read before it is shown as current.
+    expect(getByText("Connection Unavailable")).toBeTruthy();
+    expect(getByText(unknownTypeSentence("acmefoo"))).toBeTruthy();
+    expect(queryByTitle("Overview")).toBeNull();
+  });
+
+  test("the first connection it opened on, with no saved one, stays shown when a later list names no provider for it", () => {
+    const { connectionTrigger, rerender } = renderDashboard([P, P2]);
+    expect(connectionTrigger().textContent).toContain("Orders");
+
+    listedConnections = [{ ...P, type: "acmefoo" } as unknown as DatabaseConnection, P2];
+    rerender(<MonitoringDashboard />);
+
+    expect(connectionTrigger().textContent).toContain("Orders");
+    expect(handed(monitoredConnections)).not.toContain("p2");
+  });
+
+  test("the connection it opened on falls to an available one when it leaves the list", () => {
+    const { connectionTrigger, rerender } = renderDashboard([P, P2], "p");
+    expect(connectionTrigger().textContent).toContain("Orders");
+
+    listedConnections = [U, P2];
+    rerender(<MonitoringDashboard />);
+
+    expect(connectionTrigger().textContent).toContain("Billing");
+    expect(handed(monitoredConnections)).not.toContain("u");
+  });
+
+  test("the trigger draws the Unavailable marker at every width, and the type of an available one only from sm up", () => {
+    const { connectionTrigger, rerender } = renderDashboard([P, P2], "p");
+    expect(within(connectionTrigger()).getByText("(postgres)").className).toContain("hidden");
+
+    listedConnections = [{ ...P, type: "acmefoo" } as unknown as DatabaseConnection, P2];
+    rerender(<MonitoringDashboard />);
+
+    expect(within(connectionTrigger()).getByTitle(unknownTypeSentence("acmefoo")).className).not.toContain("hidden");
   });
 });

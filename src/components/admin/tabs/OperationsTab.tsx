@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -69,7 +69,12 @@ import { sessionActivityFigure } from "@/lib/session-activity";
 import { CatalogSelect } from "@/components/catalog-select";
 import { ConnectionTypeLabel } from "@/components/connection-type-label";
 import { typeIdRefusal } from "@/lib/db/type-id";
-import { defaultConnection, unavailableConnectionNotice } from "@/lib/connection-availability";
+import {
+  savedConnectionNotice,
+  shownConnection,
+  unavailableConnectionNotice,
+  type UnavailableNotice,
+} from "@/lib/connection-availability";
 import { useToast } from "@/hooks/use-toast";
 
 /**
@@ -286,17 +291,21 @@ export function OperationsTab() {
   // hooks that take `selectedConnection` as an argument, because the derivation has
   // to happen before they run.
   const { connections } = useAllConnections();
-  // The stored active connection is read once, at mount, and seeds the default; only the
-  // operator's pick is state, as on the monitoring dashboard.
+  // The stored active connection is read once, at mount, and seeds the default.
   const [savedId] = useState(() => storage.getActiveConnectionId());
-  const [chosenId, setChosenId] = useState<string | null>(null);
-  // An explicit pick wins while it is listed, otherwise `defaultConnection`, which skips any
-  // connection whose type names no provider (FND-1). A pick that a later list names no
-  // provider for stays picked, drawn as unavailable, and the server refuses its reads by
-  // name: the tab never moves the maintenance target to another database by itself.
-  const selectedConnection =
-    (chosenId === null ? undefined : connections.find((c) => c.id === chosenId)) ??
-    defaultConnection(connections, savedId);
+  // The id of the connection the tab shows, whether the operator picked it or the tab opened on it. It is held while
+  // that connection is listed, whatever its type: a later list that names no provider for it draws it as unavailable
+  // with the refusal (FND-1), so the tab never moves the maintenance target to another database by itself. Only a
+  // connection that leaves the list is replaced, by `defaultConnection`, which skips any whose type names no provider.
+  const [shownId, setShownId] = useState<string | null>(null);
+  const selectedConnection = shownConnection(connections, shownId, savedId);
+  // Adjusting state during render, as SavedQueries does for its refresh trigger: the id recorded is the one drawn.
+  if (selectedConnection !== null && selectedConnection.id !== shownId) setShownId(selectedConnection.id);
+  const selectedRefusal = selectedConnection === null ? null : typeIdRefusal(selectedConnection.type);
+  // The saved active connection, when the first list names no provider for its type, is not replaced in silence: the
+  // notice is decided once, on the first list, and raised by the effect below (FND-1).
+  const [savedNotice, setSavedNotice] = useState<UnavailableNotice | null | undefined>(undefined);
+  if (savedNotice === undefined && connections.length > 0) setSavedNotice(savedConnectionNotice(connections, savedId));
   const [operationLog, setOperationLog] = useState<OperationLogEntry[]>([]);
   const [confirmKill, setConfirmKill] = useState<ActiveSessionDetails | null>(null);
   const confirmKillReturnFocus = useReturnFocus();
@@ -491,6 +500,11 @@ export function OperationsTab() {
 
   const { toast } = useToast();
 
+  // The id makes a second run of this effect, as React's development mode does, replace the notice instead of adding one.
+  useEffect(() => {
+    if (savedNotice) toast({ ...savedNotice, variant: "destructive", id: "saved-connection-unavailable" });
+  }, [savedNotice, toast]);
+
   const handleConnectionChange = (id: string) => {
     const conn = connections.find((c) => c.id === id);
     // A pick of a connection whose type names no provider is refused by name and changes
@@ -500,7 +514,7 @@ export function OperationsTab() {
       toast({ ...unavailableConnectionNotice(conn, refusal.sentence), variant: "destructive" });
       return;
     }
-    if (conn) setChosenId(conn.id);
+    if (conn) setShownId(conn.id);
     // A database picked for one connection is not a database of the next.
     setPickedCatalog(null);
   };
@@ -696,33 +710,38 @@ export function OperationsTab() {
     }
   };
 
-  // The connection selector, drawn above the sections and above the state that says no connection can be selected.
+  // The connection picker, drawn above the sections, and alone above the states that draw no section: no connection can
+  // be selected, or the one shown names no provider. Refresh and the database select act on a connection that can be
+  // read, so they are drawn only with the sections.
+  const connectionPicker = (
+    <Select value={selectedConnection?.id || ""} onValueChange={handleConnectionChange}>
+      <SelectTrigger className="w-full sm:w-[280px] bg-panel border-hairline-strong text-fg-secondary">
+        <SelectValue placeholder="Select connection">
+          {selectedConnection && (
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4 flex-shrink-0" />
+              <span className="truncate">{selectedConnection.name}</span>
+              <ConnectionTypeLabel type={selectedConnection.type} className="text-fg-muted hidden sm:inline" />
+            </div>
+          )}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {connections.map((conn) => (
+          <SelectItem key={conn.id} value={conn.id}>
+            <div className="flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              <span>{conn.name}</span>
+              <ConnectionTypeLabel type={conn.type} />
+            </div>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
   const connectionSelector = (
     <div className="flex items-center justify-between">
-      <Select value={selectedConnection?.id || ""} onValueChange={handleConnectionChange}>
-        <SelectTrigger className="w-full sm:w-[280px] bg-panel border-hairline-strong text-fg-secondary">
-          <SelectValue placeholder="Select connection">
-            {selectedConnection && (
-              <div className="flex items-center gap-2">
-                <Database className="h-4 w-4 flex-shrink-0" />
-                <span className="truncate">{selectedConnection.name}</span>
-                <ConnectionTypeLabel type={selectedConnection.type} className="text-fg-muted hidden sm:inline" />
-              </div>
-            )}
-          </SelectValue>
-        </SelectTrigger>
-        <SelectContent>
-          {connections.map((conn) => (
-            <SelectItem key={conn.id} value={conn.id}>
-              <div className="flex items-center gap-2">
-                <Database className="h-4 w-4" />
-                <span>{conn.name}</span>
-                <ConnectionTypeLabel type={conn.type} />
-              </div>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {connectionPicker}
       <CatalogSelect
         catalogs={catalogs}
         value={catalog}
@@ -753,16 +772,31 @@ export function OperationsTab() {
     );
   }
 
-  // Connections are listed, and a provider can open none of them (FND-1): the selector lists them as unavailable, and no
+  // Connections are listed, and a provider can open none of them (FND-1): the picker lists them as unavailable, and no
   // section is drawn for a connection that was never read.
   if (selectedConnection === null) {
     return (
       <div className="space-y-6">
-        {connectionSelector}
+        <div className="flex items-center">{connectionPicker}</div>
         <div className="flex flex-col items-center justify-center p-12 text-center">
           <Database className="h-12 w-12 text-fg-faint mb-4" />
           <h3 className="text-lg font-semibold text-fg-secondary mb-2">No Connection Selected</h3>
-          <p className="text-fg-muted text-sm">Select a database connection to run operations on.</p>
+          <p className="text-fg-muted text-sm">No listed connection can be opened in this Studio.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // The connection shown names no provider since a later list (FND-1): its refusal is drawn in place of the sections,
+  // so no data read before it, and no action, is offered for it.
+  if (selectedRefusal !== null) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center">{connectionPicker}</div>
+        <div className="flex flex-col items-center justify-center p-12 text-center">
+          <Database className="h-12 w-12 text-fg-faint mb-4" />
+          <h3 className="text-lg font-semibold text-fg-secondary mb-2">Connection Unavailable</h3>
+          <p className="text-fg-muted text-sm">{selectedRefusal.sentence}</p>
         </div>
       </div>
     );

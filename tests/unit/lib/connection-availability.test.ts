@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   defaultConnection,
+  savedConnectionNotice,
+  shownConnection,
   unavailableConnectionNotice,
   unavailableSavedQueryNotice,
 } from "@/lib/connection-availability";
@@ -48,6 +50,36 @@ describe("defaultConnection (FND-1)", () => {
     expect(defaultConnection([], null)).toBeNull();
     expect(defaultConnection([], "pg")).toBeNull();
     expect(defaultConnection([unknown, absent, malformed], "u")).toBeNull();
+  });
+});
+
+describe("shownConnection (FND-1)", () => {
+  test("answers the shown connection while it is listed, whatever its type", () => {
+    const shownNowUnknown = { ...postgres, type: "acmefoo" } as unknown as DatabaseConnection;
+    expect(shownConnection([mysql, shownNowUnknown], "pg", "my")).toBe(shownNowUnknown);
+    expect(shownConnection([mysql, postgres], "pg", "my")).toBe(postgres);
+  });
+
+  test("answers defaultConnection when nothing is shown yet or the shown connection left the list", () => {
+    expect(shownConnection([unknown, postgres, mysql], null, "my")).toBe(mysql);
+    expect(shownConnection([unknown, postgres, mysql], "gone", "my")).toBe(mysql);
+    expect(shownConnection([unknown, postgres], "gone", null)).toBe(postgres);
+    expect(shownConnection([unknown], "gone", null)).toBeNull();
+  });
+});
+
+describe("savedConnectionNotice (FND-1)", () => {
+  test("names a listed saved connection whose type names no provider", () => {
+    expect(savedConnectionNotice([postgres, unknown], "u")).toEqual({
+      title: "Connection unavailable",
+      description: `Acme: ${SENTENCE}`,
+    });
+  });
+
+  test("answers null for an available saved connection, one that is not listed, and no saved id", () => {
+    expect(savedConnectionNotice([postgres, unknown], "pg")).toBeNull();
+    expect(savedConnectionNotice([postgres, unknown], "gone")).toBeNull();
+    expect(savedConnectionNotice([postgres, unknown], null)).toBeNull();
   });
 });
 

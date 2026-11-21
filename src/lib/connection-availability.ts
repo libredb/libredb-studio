@@ -7,11 +7,11 @@
  * kept as stored. The sentences that say why come from `typeIdRefusal` in `@/lib/db/type-id`; this module only names
  * the record they refuse.
  */
-import { isDatabaseType } from "@/lib/db/type-id";
+import { isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
 import type { DatabaseConnection } from "@/lib/types";
 
 /** A notice's title and the line under it, as `useToast` and sonner take them. */
-interface UnavailableNotice {
+export interface UnavailableNotice {
   readonly title: string;
   readonly description: string;
 }
@@ -31,6 +31,34 @@ export function defaultConnection(
 ): DatabaseConnection | null {
   const available = list.filter((connection) => isDatabaseType(connection.type));
   return available.find((connection) => connection.id === savedId) ?? available[0] ?? null;
+}
+
+/**
+ * The connection a picker shows without a pick: the one it already shows, `shownId`, while it is listed, whatever its
+ * type, otherwise `defaultConnection`. A picker records the id of what this returns, so a later list that names no
+ * provider for that connection's type draws it as unavailable instead of moving the page to another database; only a
+ * connection that leaves the list is replaced.
+ */
+export function shownConnection(
+  list: readonly DatabaseConnection[],
+  shownId: string | null,
+  savedId: string | null,
+): DatabaseConnection | null {
+  return list.find((connection) => connection.id === shownId) ?? defaultConnection(list, savedId);
+}
+
+/**
+ * The notice a picker raises when it opens on a list in which `savedId` names a connection whose type names no
+ * provider, so the saved active connection is not replaced in silence; null when `savedId` names no listed connection
+ * or one a provider can open.
+ */
+export function savedConnectionNotice(
+  list: readonly DatabaseConnection[],
+  savedId: string | null,
+): UnavailableNotice | null {
+  const saved = list.find((connection) => connection.id === savedId);
+  const refusal = saved === undefined ? null : typeIdRefusal(saved.type);
+  return saved === undefined || refusal === null ? null : unavailableConnectionNotice(saved, refusal.sentence);
 }
 
 /**

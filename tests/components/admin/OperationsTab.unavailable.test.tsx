@@ -105,11 +105,28 @@ describe("the Operations tab and a connection whose type names no provider (FND-
     expect(handed(monitoredConnections)).toContain("p");
   });
 
-  test("never opens on it when it is the editor's saved active connection", () => {
-    const { connectionTrigger } = renderTab([P, U], "u");
+  test("never opens on it when it is the editor's saved active connection, and says so once", () => {
+    const { connectionTrigger, rerender } = renderTab([P, U], "u");
 
     expect(connectionTrigger().textContent).toContain("Orders");
     expect(handed(metadataConnections)).not.toContain("u");
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+    expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+      description: `Acme: ${unknownTypeSentence("acmefoo")}`,
+      id: "saved-connection-unavailable",
+    });
+
+    listedConnections = [P, U, P2];
+    rerender(<OperationsTab />);
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+  });
+
+  test("says nothing about a saved active connection that is available or not listed", () => {
+    renderTab([P, U], "p");
+    cleanup();
+    renderTab([P, U], "gone");
+
+    expect(mockToastError).not.toHaveBeenCalled();
   });
 
   test("lists it as Unavailable, with the reason, and renders a type that is not text", () => {
@@ -142,11 +159,14 @@ describe("the Operations tab and a connection whose type names no provider (FND-
   });
 
   test("with no available connection nothing is selected and no section is drawn", () => {
-    const { getByText, queryByText, connectionTrigger } = renderTab([U, N]);
+    const { getByText, queryByText, queryAllByRole, connectionTrigger } = renderTab([U, N]);
 
     expect(getByText("No Connection Selected")).toBeTruthy();
-    expect(getByText("Select a database connection to run operations on.")).toBeTruthy();
+    expect(getByText("No listed connection can be opened in this Studio.")).toBeTruthy();
     expect(connectionTrigger().textContent).toBe("Select connection");
+    // Refresh and the database select act on a selected connection, so they are not drawn without one.
+    expect(queryByText("Refresh")).toBeNull();
+    expect(queryAllByRole("combobox")).toHaveLength(1);
     expect(queryByText(/^Tables/)).toBeNull();
     expect(queryByText(/^Sessions/)).toBeNull();
     expect(handed(metadataConnections).every((id) => id === null)).toBe(true);
@@ -166,5 +186,73 @@ describe("the Operations tab and a connection whose type names no provider (FND-
     expect(trigger.textContent).toContain("Billing");
     expect(trigger.textContent).not.toContain("(acmefoo)");
     expect(within(trigger).getByTitle(unknownTypeSentence("acmefoo")).textContent).toContain("Unavailable");
+  });
+
+  test("the connection it opened on stays shown when a later list names no provider for its type", () => {
+    const { connectionTrigger, rerender, getByText, queryByText } = renderTab([P2, P], "p");
+    expect(connectionTrigger().textContent).toContain("Orders");
+
+    listedConnections = [P2, { ...P, type: "acmefoo" } as unknown as DatabaseConnection];
+    rerender(<OperationsTab />);
+
+    const trigger = connectionTrigger();
+    expect(trigger.textContent).toContain("Orders");
+    expect(within(trigger).getByTitle(unknownTypeSentence("acmefoo")).textContent).toContain("Unavailable");
+    expect(handed(monitoredConnections)).not.toContain("p2");
+    expect(handed(metadataConnections)).not.toContain("p2");
+    // The refusal is drawn in place of the sections, so nothing read before it is shown as current.
+    expect(getByText("Connection Unavailable")).toBeTruthy();
+    expect(getByText(unknownTypeSentence("acmefoo"))).toBeTruthy();
+    expect(queryByText(/^Sessions/)).toBeNull();
+    expect(queryByText("Refresh")).toBeNull();
+  });
+
+  test("the first connection it opened on, with no saved one, stays shown when a later list names no provider for it", () => {
+    const { connectionTrigger, rerender } = renderTab([P, P2]);
+    expect(connectionTrigger().textContent).toContain("Orders");
+
+    listedConnections = [{ ...P, type: "acmefoo" } as unknown as DatabaseConnection, P2];
+    rerender(<OperationsTab />);
+
+    expect(connectionTrigger().textContent).toContain("Orders");
+    expect(handed(monitoredConnections)).not.toContain("p2");
+  });
+
+  test("a picked connection that leaves the list falls to an available one, never to an unavailable one", () => {
+    const { openConnections, getByRole, connectionTrigger, rerender } = renderTab([P, P2]);
+    openConnections();
+    fireEvent.keyDown(getByRole("option", { name: /^Billing/ }), { key: "Enter" });
+    expect(connectionTrigger().textContent).toContain("Billing");
+
+    listedConnections = [U, P];
+    rerender(<OperationsTab />);
+
+    expect(connectionTrigger().textContent).toContain("Orders");
+    expect(handed(monitoredConnections)).not.toContain("u");
+    expect(handed(metadataConnections)).not.toContain("u");
+  });
+
+  test("a picked connection that leaves the list falls to the saved active connection while it is available", () => {
+    const S: DatabaseConnection = { ...P, id: "s", name: "Sales" };
+    const { openConnections, getByRole, connectionTrigger, rerender } = renderTab([P, S, P2], "s");
+    expect(connectionTrigger().textContent).toContain("Sales");
+    openConnections();
+    fireEvent.keyDown(getByRole("option", { name: /^Billing/ }), { key: "Enter" });
+    expect(connectionTrigger().textContent).toContain("Billing");
+
+    listedConnections = [U, P, S];
+    rerender(<OperationsTab />);
+
+    expect(connectionTrigger().textContent).toContain("Sales");
+  });
+
+  test("the trigger draws the Unavailable marker at every width, and the type of an available one only from sm up", () => {
+    const { connectionTrigger, rerender } = renderTab([P, P2], "p");
+    expect(within(connectionTrigger()).getByText("(postgres)").className).toContain("hidden");
+
+    listedConnections = [{ ...P, type: "acmefoo" } as unknown as DatabaseConnection, P2];
+    rerender(<OperationsTab />);
+
+    expect(within(connectionTrigger()).getByTitle(unknownTypeSentence("acmefoo")).className).not.toContain("hidden");
   });
 });
