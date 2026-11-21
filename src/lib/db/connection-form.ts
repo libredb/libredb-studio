@@ -27,6 +27,7 @@ import {
   snowflakeHostHint,
   snowflakeHostIdentity,
 } from "@/lib/db/providers/sql/snowflake/account-host";
+import { typeIdRow } from "@/lib/db/type-id";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 /** What the connection dialog reads for one engine, apart from the icon and colour `DB_UI_CONFIG` adds. */
@@ -1431,9 +1432,14 @@ export const CONNECTION_PICKER_ORDER: readonly DatabaseType[] = Object.freeze([
   "weaviate",
 ]);
 
-/** Whether the dialog offers the SSL / TLS panel: false only where the entry declares `showSslPanel: false`. */
+/**
+ * Whether the dialog offers the SSL / TLS panel: false only where the entry declares `showSslPanel: false`. The entry is
+ * read through `typeIdRow` (FND-1), so a type outside the `DatabaseType` union is refused by name.
+ *
+ * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
+ */
 export function offersSslPanel(type: DatabaseType): boolean {
-  return CONNECTION_FORM[type].showSslPanel !== false;
+  return typeIdRow(CONNECTION_FORM, type).showSslPanel !== false;
 }
 
 /**

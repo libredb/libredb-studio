@@ -38,7 +38,7 @@ import { databendNotAppliedNotice, parseConnectionString } from "@/lib/connectio
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { parseHostUri, tlsModeAfterScheme, type HostUriResult } from "@/lib/connection-host-uri";
 import { newLocalId } from "@/lib/ids";
-import { typeIdRefusal } from "@/lib/db/type-id";
+import { typeIdRefusal, typeIdRow } from "@/lib/db/type-id";
 import { WRITE_REACH } from "@/lib/db/compatibility";
 import type { WriteReach } from "@/lib/db/write-reach";
 import { credentialWarningFor } from "@/lib/db/credential-warnings";
@@ -1020,7 +1020,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // the box's state, the factory refuses `readOnly: true` where a path is open, and where Studio has no write
       // path the field changes no write. Written only when true, like the no-scan choice: `false` and absent are one
       // mode.
-      ...(readOnly && WRITE_REACH[type] === "guarded" ? { readOnly: true } : {}),
+      ...(readOnly && typeIdRow(WRITE_REACH, type) === "guarded" ? { readOnly: true } : {}),
       // Only for an engine that takes it, and only while no TLS is chosen, which is the only state the
       // box is drawn in (#786): consent left over from a type switch or a TLS mode is not sent.
       ...(allowInsecureAuth && addressedFields.has("allowInsecureAuth") && sslMode === "disable"
@@ -1465,7 +1465,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   });
   // The refusal of the Host box's address, drawn under the box as well as in the result banner; an edit clears both.
   const hostError = testResult !== null && testResult === hostRefusal ? testResult.message : undefined;
-  const readOnlyShown = readOnlyControl(WRITE_REACH[type], editConnection);
+  const readOnlyShown = readOnlyControl(typeIdRow(WRITE_REACH, type), editConnection);
   // The warning reads the credential `buildConnection` would send: a user left in state by another engine is not
   // this engine's, so it does not count where this engine takes no user name. It blocks nothing.
   const credentialWarning = credentialWarningFor(type, {

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { connectionIdentity } from "@/lib/agent/context-snapshot";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
-import { providerCacheKey } from "@/lib/db/provider-cache-key";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { providerCacheKey, providerOwner } from "@/lib/db/provider-cache-key";
 import {
   CONNECTION_FIELDS,
   type FieldClass,
@@ -9,7 +10,8 @@ import {
   SSH_TUNNEL_FIELDS,
   SSL_FIELDS,
 } from "@/lib/storage/connection-secrets";
-import { type DatabaseConnection, LITERAL_SEED_FILE, type WithLiteralSeedFile } from "@/lib/types";
+import { type DatabaseConnection, type DatabaseType, LITERAL_SEED_FILE, type WithLiteralSeedFile } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy, shapeOfRefusal } from "../../../helpers/outside-the-union";
 
 /**
  * The read-only mode in the provider cache key, and in nothing else (#1089).
@@ -397,6 +399,44 @@ describe("providerCacheKey frames the owner of a per-user provider", () => {
         );
       }
     }
+  });
+});
+
+describe("a type outside the union is refused by name, never read as another engine's row (FND-1)", () => {
+  const typed = (value: unknown): DatabaseConnection => ({ ...base, type: value as DatabaseType });
+
+  /** The shape of the `UnknownProviderError` `call` rejects with, or "returned" when it settles with a key. */
+  const refusalRejectedBy = async (call: () => Promise<unknown>) => {
+    try {
+      await call();
+    } catch (error) {
+      if (error instanceof UnknownProviderError) return shapeOfRefusal(error);
+      throw error;
+    }
+    return "returned";
+  };
+
+  test.each(OUTSIDE_THE_UNION)("providerOwner refuses %s", (_label, value) => {
+    expect(refusalThrownBy(() => providerOwner(typed(value), "alice-subject"))).toEqual(refusalOf(value));
+  });
+
+  /** Each value outside the union under each file-access posture a caller can pass. */
+  const underEachPosture = OUTSIDE_THE_UNION.flatMap(([label, value]) =>
+    [undefined, true, false].map((posture) => [label, value, posture] as const),
+  );
+
+  test.each(underEachPosture)(
+    "providerCacheKey refuses %s with posture %s before it frames anything",
+    async (_label, value, posture) => {
+      expect(await refusalRejectedBy(() => providerCacheKey(typed(value), posture, "alice-subject"))).toEqual(
+        refusalOf(value),
+      );
+    },
+  );
+
+  test("a type id keeps its owner and its key", async () => {
+    expect(providerOwner(base, "alice-subject")).toBe("alice-subject");
+    expect(await refusalRejectedBy(() => providerCacheKey(base, false, "alice-subject"))).toBe("returned");
   });
 });
 

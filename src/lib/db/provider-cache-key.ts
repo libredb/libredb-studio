@@ -1,5 +1,6 @@
 import { connectionFingerprint } from "./connection-fingerprint";
 import { READS_FILE_ACCESS_POSTURE, SINGLE_WRITER_FILE } from "./compatibility";
+import { typeIdRow } from "./type-id";
 import {
   type DatabaseConnection,
   LITERAL_SEED_FILE,
@@ -86,12 +87,21 @@ import {
  *
  * WHAT IT DOES NOT CATCH, stated as a limit rather than left to be found: the same limit
  * `connectionFingerprint` states, a different server answering on the same host and port.
+ *
+ * A TYPE OUTSIDE THE UNION frames nothing: the engine's rows are read through `typeIdRow` (FND-1) before either
+ * digest, so such a type is refused by name with `UnknownProviderError`, never read as an engine that keeps its owner
+ * or one that reads a file-access posture.
+ *
+ * @throws {UnknownProviderError} When the connection's type is absent, not text, or names no provider.
  */
 export async function providerCacheKey(
   connection: DatabaseConnection & WithTunnelFarEnd & WithLiteralSeedFile,
   allowExternalFileAccess?: boolean,
   owner?: string,
 ): Promise<string> {
+  // Read before either digest, so a type outside the union is refused by name before anything is framed.
+  const readsPosture = typeIdRow(READS_FILE_ACCESS_POSTURE, connection.type);
+  const keyedOwner = providerOwner(connection, owner);
   const [server, credentials] = await Promise.all([connectionFingerprint(connection), credentialDigest(connection)]);
   const mode = connection.readOnly === true ? "read-only" : "read-write";
   const parts = [connection.id, server, credentials, mode];
@@ -101,11 +111,10 @@ export async function providerCacheKey(
   // on the same connection, so its key carries this extra segment (the non-admin DuckDB file-access
   // change), on the profiled key too, which always passes a definite posture. The
   // engine is read from `READS_FILE_ACCESS_POSTURE`, not a `connection.type` branch (CLAUDE.md).
-  if (READS_FILE_ACCESS_POSTURE[connection.type] && allowExternalFileAccess === false) {
+  if (readsPosture && allowExternalFileAccess === false) {
     parts.push(`${connection.type}-deny-file-access`);
   }
   // Last, and only when there is one: without an owner the key is byte-identical to before owners existed.
-  const keyedOwner = providerOwner(connection, owner);
   if (keyedOwner !== undefined) parts.push(`owner:${keyedOwner}`);
   // Length-framed like the two digests it joins: an id ending in a digit must not be able to
   // answer the same key as a shorter id followed by a longer fingerprint.
@@ -122,10 +131,14 @@ export async function providerCacheKey(
  * exists, not a `connection.type` branch (CLAUDE.md). Governance admits no engine that opens a local file
  * (`OPENS_LOCAL_FILE`), so Studio never names an owner here; an embedder of the factory that does gets the one
  * shared handle. The key and the factory both ask this, so the entry the factory records and the key it is cached
- * under always name the same owner.
+ * under always name the same owner. The row is read through `typeIdRow` (FND-1), so a type outside the
+ * `DatabaseType` union is refused by name rather than read as an engine that keeps the owner, or, for a prototype
+ * key, as one that drops it.
+ *
+ * @throws {UnknownProviderError} When the connection's type is absent, not text, or names no provider.
  */
 export function providerOwner(connection: DatabaseConnection, owner: string | undefined): string | undefined {
-  return SINGLE_WRITER_FILE[connection.type] ? undefined : owner;
+  return typeIdRow(SINGLE_WRITER_FILE, connection.type) ? undefined : owner;
 }
 
 /**

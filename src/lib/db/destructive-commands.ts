@@ -21,6 +21,7 @@ import { PROMETHEUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/timeseries
 import { MILVUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/milvus/destructive";
 import { QDRANT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/qdrant/destructive";
 import { WEAVIATE_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/weaviate/destructive";
+import { typeIdRow } from "@/lib/db/type-id";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 
@@ -79,9 +80,12 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
  * before it reads the text as SQL at all.
  *
  * False for every type with no row, and for no type at all: the SQL half reads those.
+ * Any other value that is not a type id is refused by name (`typeIdRow`, FND-1).
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function vocabularyDecidesAlone(databaseType?: DatabaseType): boolean {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   return facts?.decidesAlone === true;
 }
 
@@ -89,10 +93,13 @@ export function vocabularyDecidesAlone(databaseType?: DatabaseType): boolean {
  * Whether this query, on a type whose text is not SQL, asks for a confirmation.
  *
  * False for every type with no row - including no type at all, which is the reading a
- * caller without a connection gets and the one the SQL half already covers.
+ * caller without a connection gets and the one the SQL half already covers. Any other
+ * value that is not a type id is refused by name (`typeIdRow`, FND-1).
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function isDestructiveNonSqlQuery(query: string, databaseType?: DatabaseType): boolean {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   if (facts === undefined) return false;
 
   const named = facts.read(query);
@@ -105,13 +112,16 @@ export function isDestructiveNonSqlQuery(query: string, databaseType?: DatabaseT
  * confirmation (#1089, section 5.5).
  *
  * Undefined for every type with no row, including no type at all, and for every row that declares no
- * `typedConfirmation`. The text reaches the row as it was written.
+ * `typedConfirmation`. Any other value that is not a type id is refused by name (`typeIdRow`, FND-1). The text
+ * reaches the row as it was written.
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function vocabularyTypedConfirmation(
   databaseType: DatabaseType | undefined,
   text: string,
 ): TypedConfirmationAsk | undefined {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   return facts?.typedConfirmation?.(text);
 }
 
@@ -119,10 +129,13 @@ export function vocabularyTypedConfirmation(
  * Whether the confirmation gate may post this type's statements to the AI safety analysis (#1089, E10).
  *
  * True for every type with no row, including no type at all, and for every row that does not declare
- * `safetyAnalysis: false`, which is what the gate did for every engine before the field existed.
+ * `safetyAnalysis: false`, which is what the gate did for every engine before the field existed. Any other value that
+ * is not a type id is refused by name (`typeIdRow`, FND-1), never answered true.
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function vocabularySendsToModel(databaseType?: DatabaseType): boolean {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   return facts?.safetyAnalysis !== false;
 }
 
@@ -151,10 +164,13 @@ function utf8Bytes(text: string): number {
 /**
  * The console text bound this connection type declares, in UTF-8 bytes, or undefined where it declares none.
  *
- * Undefined for every type with no row, including no type at all, and for every row that declares no bound.
+ * Undefined for every type with no row, including no type at all, and for every row that declares no bound. Any other
+ * value that is not a type id is refused by name (`typeIdRow`, FND-1).
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function consoleTextByteLimit(databaseType?: DatabaseType): number | undefined {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   return facts?.maxTextBytes;
 }
 
@@ -169,10 +185,13 @@ export function consoleTextOverLimit(text: string, limit: number): string | unde
  * Why this connection type's editor refuses this statement, or undefined to send it.
  *
  * The bound first, so a row's own verdict never reads an oversize text; then the row's `refuse`. Undefined for
- * every type with no row, including no type at all, and for every row that declares neither field.
+ * every type with no row, including no type at all, and for every row that declares neither field. Any other value
+ * that is not a type id is refused by name (`typeIdRow`, FND-1).
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function statementRefusal(query: string, databaseType?: DatabaseType): string | undefined {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   if (facts === undefined) return undefined;
   if (facts.maxTextBytes !== undefined) {
     const over = consoleTextOverLimit(query, facts.maxTextBytes);

@@ -13,7 +13,10 @@
 //   the page is the query route's body, which may carry a key QueryResult does not name. No size bound applies to a
 //   page, so a 10 MB cell arrives.
 // - grid.databaseType is a non-empty string of at most 64 characters: the guard cannot list the DatabaseType union
-//   without importing a value, and the grid only passes it through. grid.commitKeyword is non-empty, at most 32.
+//   without importing a value. ResultsGrid refuses a value outside the union by name as it renders, and
+//   GridErrorBoundary (webview/results-app.tsx) then shows its display-failed notice and reports the error to the
+//   host; not reachable today, since the host builds GridContext from a resolved connection's DatabaseType.
+//   grid.commitKeyword is non-empty, at most 32.
 // - Each failure kind is held to its own keys.
 // A refusal throws ResultsProtocolError naming the dotted path of the first field that failed.
 import type { ProviderCapabilities } from "@/lib/db/types";

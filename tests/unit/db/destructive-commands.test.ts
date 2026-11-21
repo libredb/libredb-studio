@@ -34,6 +34,7 @@ import { QDRANT_CONSOLE } from "@/lib/db/providers/vector/qdrant/routes";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { readsSqlText } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../helpers/outside-the-union";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 
 // The facts behind the confirmation gate for the engines whose query text is not
@@ -1030,6 +1031,53 @@ describe("the firestore row", () => {
     const over = `${READ} // ${"x".repeat(65536)}`.slice(0, 65537);
     expect(statementRefusal(over, "firestore")).toBe(
       "The statement is 65537 bytes in UTF-8, over the 65536-byte limit for this connection type. Shorten it to run it.",
+    );
+  });
+});
+
+describe("a type outside the union (FND-1)", () => {
+  // Each reader reads the row through the type-id check: `undefined` keeps the no-connection reading its docblock
+  // states, a type id reads its row or none, and anything else is refused by name, so a prototype key never reaches an
+  // `Object.prototype` member and a value that only spells a type id through coercion never reads that type's row.
+  const READERS: readonly (readonly [string, (databaseType: DatabaseType | undefined) => unknown])[] = [
+    ["vocabularyDecidesAlone", (type) => vocabularyDecidesAlone(type)],
+    ["isDestructiveNonSqlQuery", (type) => isDestructiveNonSqlQuery("FLUSHALL", type)],
+    ["vocabularyTypedConfirmation", (type) => vocabularyTypedConfirmation(type, "del /App/ --prefix")],
+    ["vocabularySendsToModel", (type) => vocabularySendsToModel(type)],
+    ["consoleTextByteLimit", (type) => consoleTextByteLimit(type)],
+    ["statementRefusal", (type) => statementRefusal("FLUSHALL", type)],
+  ];
+  const ROWS = READERS.flatMap(([reader, read]) =>
+    OUTSIDE_THE_UNION.map(([label, value]) => [reader, label, read, value] as const),
+  );
+
+  test.each(ROWS)("%s refuses %s by name", (_reader, _label, read, value) => {
+    expect(refusalThrownBy(() => read(value as DatabaseType))).toEqual(refusalOf(value));
+  });
+
+  test("with no type at all, each keeps the no-connection reading", () => {
+    expect(READERS.map(([reader, read]) => [reader, read(undefined)])).toEqual([
+      ["vocabularyDecidesAlone", false],
+      ["isDestructiveNonSqlQuery", false],
+      ["vocabularyTypedConfirmation", undefined],
+      ["vocabularySendsToModel", true],
+      ["consoleTextByteLimit", undefined],
+      ["statementRefusal", undefined],
+    ]);
+  });
+
+  test("a type id with no row reads none, and one with a row reads it", () => {
+    expect(READERS.map(([reader, read]) => [reader, read("postgres")])).toEqual([
+      ["vocabularyDecidesAlone", false],
+      ["isDestructiveNonSqlQuery", false],
+      ["vocabularyTypedConfirmation", undefined],
+      ["vocabularySendsToModel", true],
+      ["consoleTextByteLimit", undefined],
+      ["statementRefusal", undefined],
+    ]);
+    expect(isDestructiveNonSqlQuery("FLUSHALL", "redis")).toBe(true);
+    expect(vocabularyTypedConfirmation("etcd", "del /App/ --prefix")).toEqual(
+      etcdTypedConfirmation("del /App/ --prefix"),
     );
   });
 });
