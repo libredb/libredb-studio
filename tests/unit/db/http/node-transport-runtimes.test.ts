@@ -8,9 +8,10 @@
  * Both children run one bundle that Bun.build({ target: "node" }) makes of node-transport.ts and endpoint.ts around the
  * text of `runCases`, as tests/unit/db/etcd/tls-handshake.test.ts runs its adapter, against listeners this file starts.
  * Each child starts with HTTP_PROXY, HTTPS_PROXY, their lower-case forms, ALL_PROXY and NODE_USE_ENV_PROXY=1 naming a
- * counting listener, because Node reads NODE_USE_ENV_PROXY only when it starts. After its cases each child sends one
- * control request through the global agent: the counting listener must see exactly that one, which proves the
- * variables were live, and the spy on the global agents must count exactly that one, which proves the spy watches.
+ * proxy listener, because Node reads NODE_USE_ENV_PROXY only when it starts. After its cases each child sends one
+ * control request through the global agent: the proxy listener, which counts HTTP request lines rather than TCP
+ * connects, must see exactly that one, which proves the variables were live, and the spy on the global agents must
+ * count exactly that one, which proves the spy watches.
  *
  * The byte transport's cases run after that control request (runByteCases). Each child starts from an unbundled
  * entry.mjs that answers the name metadata.test with 169.254.169.254 before the bundle loads, so the byte transport's
@@ -32,13 +33,14 @@ import { httpOrigin as parentHttpOrigin, originHost } from "@/lib/db/http/endpoi
 import type { createNodeTransport, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import {
   closeAll,
-  countingListener,
   gzipOfZeros,
   httpListener,
   httpsListener,
   jsonAnswer,
   type Listener,
   makeCertificates,
+  type ProxyListener,
+  proxyListener,
   silentListener,
   streamingAnswer,
 } from "../../../helpers/node-transport-fixtures";
@@ -625,7 +627,7 @@ const PROXY_VARIABLES = new Set([
   "DB_HTTP_BLOCK_PRIVATE_HOSTS",
 ]);
 
-let proxy: Listener;
+let proxy: ProxyListener;
 let target: Listener;
 let plain: Listener;
 let slow: Listener;
@@ -779,7 +781,7 @@ async function byteListener(): Promise<number> {
 beforeAll(async () => {
   const certificates = makeCertificates();
   const bombBody = await gzipOfZeros(1024 * MIB);
-  proxy = await countingListener();
+  proxy = await proxyListener();
   target = await httpListener(jsonAnswer(200, "{}"));
   plain = await httpListener((request, response, body) => {
     const text =
@@ -936,7 +938,6 @@ function childEnvironment(): Record<string, string> {
 }
 
 interface Counts {
-  readonly proxy: number;
   readonly target: number;
   readonly slow: number;
   readonly guarded: number;
@@ -944,7 +945,6 @@ interface Counts {
 }
 
 const counts = (): Counts => ({
-  proxy: proxy.accepted(),
   target: target.accepted(),
   slow: slow.accepted(),
   guarded: guarded.accepted(),
@@ -956,6 +956,7 @@ interface ChildRun {
   readonly delta: Counts;
   /** Index into each listener's `seen` where this child's requests start. */
   readonly from: {
+    readonly proxy: number;
     readonly plain: number;
     readonly secure: number;
     readonly farName: number;
@@ -969,6 +970,7 @@ interface ChildRun {
 async function runChild(binary: string): Promise<ChildRun> {
   const before = counts();
   const from = {
+    proxy: proxy.requests.length,
     plain: plain.seen.length,
     secure: secure.seen.length,
     farName: farName.seen.length,
@@ -994,7 +996,6 @@ async function runChild(binary: string): Promise<ChildRun> {
   return {
     report: JSON.parse(line) as Report,
     delta: {
-      proxy: after.proxy - before.proxy,
       target: after.target - before.target,
       slow: after.slow - before.slow,
       guarded: after.guarded - before.guarded,
@@ -1283,8 +1284,8 @@ for (const [label, binary] of RUNTIMES) {
 
     test.each(Object.keys(EXPECTED))("%s", (name) => expectCase(run?.report, name));
 
-    test("the proxy variables named a counting listener that saw only the control request", () => {
-      expect(run?.delta.proxy).toBe(1);
+    test("the proxy variables named a proxy listener that received only the control request", () => {
+      expect(proxy.requests.slice(run?.from.proxy)).toEqual([`GET http://127.0.0.1:${plain.port}/control HTTP/1.1`]);
       expect(plain.seen.slice(run?.from.plain).map(({ url }) => url)).not.toContain("/control");
     });
 
