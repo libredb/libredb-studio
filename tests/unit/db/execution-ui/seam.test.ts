@@ -1,6 +1,6 @@
 /**
  * The seam around each engine's execution UI module: an engine module reads only the registry's leaves (`types`,
- * `shared`, and a type-only `@/lib/types`), never the registry index, the no-connection or unknown-type spec, the
+ * `shared`, and a type-only `@/lib/types`), never the registry index, the no-connection spec, the
  * explain request, another engine's module, a hook or a component, so one engine's commit keyword or consent deadline
  * can never reach another's output. `shared.ts` reads at most `types`, `explain-request.ts` reads only the default
  * connection type, a leaf that loads nothing at run time, and every module loads in a fresh process on its own.
@@ -133,7 +133,6 @@ describe("the engine execution UI modules", () => {
       "@/lib/db/execution-ui/index",
       "@/lib/db/execution-ui",
       "@/lib/db/execution-ui/no-connection",
-      "@/lib/db/execution-ui/unknown-type",
       "@/lib/db/execution-ui/explain-request",
       "./no-connection",
       "@/hooks/use-query-execution",
@@ -160,8 +159,8 @@ describe("the engine execution UI modules", () => {
     expect(importFacts(leaf, readFileSync(leaf, "utf8")).every(({ typeOnly }) => typeOnly)).toBe(true);
   });
 
-  test("no engine module imports the no-connection or unknown-type spec", () => {
-    const targets = new Set([join(REGISTRY, "no-connection.ts"), join(REGISTRY, "unknown-type.ts")]);
+  test("no engine module imports the no-connection spec", () => {
+    const targets = new Set([join(REGISTRY, "no-connection.ts")]);
     const found = MODULES.flatMap(({ id, path }) =>
       importFacts(path, readFileSync(path, "utf8"))
         .filter(({ specifier }) => targets.has(resolveLocal(path, specifier) ?? ""))

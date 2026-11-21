@@ -3,10 +3,9 @@
  * kind the generator writes, rendered per key with the clock frozen so the
  * `-- Migration generated at` line is stable.
  *
- * The keys are every engine id, then three that are not an engine: `no-connection` (the
- * schema diff panel with no connection open, which today renders as postgres),
- * `constructor` (an inherited Object property name, which a lookup keyed by a plain
- * object would find) and `not-an-engine` (an unknown id).
+ * The keys are every engine id, then the one that is not an engine: `no-connection` (the
+ * schema diff panel with no connection open, which renders as postgres). Every other value
+ * outside the type-id union is refused by name (FND-1), which the registry census pins.
  */
 import { setSystemTime } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -16,12 +15,7 @@ import type { DatabaseType } from "@/lib/types";
 
 export const FROZEN_NOW = "2026-10-19T12:00:00.000Z";
 
-export const GOLDEN_KEYS: readonly string[] = [
-  ...[...EXTERNAL_DATABASE_TYPES, "libredb"].sort(),
-  "no-connection",
-  "constructor",
-  "not-an-engine",
-];
+export const GOLDEN_KEYS: readonly string[] = [...[...EXTERNAL_DATABASE_TYPES, "libredb"].sort(), "no-connection"];
 
 export const FULL_DIFF: SchemaDiff = {
   hasChanges: true,

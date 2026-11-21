@@ -116,14 +116,6 @@ export const unquoteDoubleAndBackslash: Unescape = (literal) =>
 export const unquoteBackslash: Unescape = (literal) =>
   readQuoted(literal, { nPrefix: false, doubles: false, backslashes: true });
 
-/**
- * What a string outside the union gets today: a doubled quote is one quote, a backslash is
- * data, and no prefix is read. It reads exactly as `unquoteStandard` does, and is named
- * apart so the unknown-type answer does not move when the standard one does.
- */
-export const unquoteDoublingOnly: Unescape = (literal) =>
-  readQuoted(literal, { nPrefix: false, doubles: true, backslashes: false });
-
 // Each identifier form doubles (or escapes) its own closing quote character, so a name
 // holding it cannot end the quoted span and leave the rest to be parsed as statement text.
 

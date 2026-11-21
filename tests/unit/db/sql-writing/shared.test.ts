@@ -43,7 +43,6 @@ import {
   STANDARD_TYPE_VOCABULARY,
   unquoteBackslash,
   unquoteDoubleAndBackslash,
-  unquoteDoublingOnly,
   unquoteStandard,
   unquoteUnicode,
   unwrappedType,
@@ -115,11 +114,6 @@ describe("SQL writing shared building blocks", () => {
       }
     });
   }
-
-  test("unquoteDoublingOnly reads a doubled quote and not a backslash escape", () => {
-    expect(unquoteDoublingOnly("'a''b'")).toBe("a'b");
-    expect(unquoteDoublingOnly("'a\\'b'")).toBeUndefined();
-  });
 
   test("the inline edit type-name sets hold today's words", () => {
     expect([...INSTANT_TYPE_NAMES].sort()).toEqual([

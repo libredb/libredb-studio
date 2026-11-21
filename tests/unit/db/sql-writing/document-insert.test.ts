@@ -31,9 +31,8 @@ describe("insertDocuments", () => {
     expect(text).toContain('\n  "collection": "users"');
   });
 
-  test("is declared by neither named spec", () => {
+  test("is not declared by the no-connection spec", () => {
     expect(sqlWritingFor(undefined).insertDocuments).toBeUndefined();
-    expect(sqlWritingFor("not-an-engine").insertDocuments).toBeUndefined();
   });
 
   test("is declared by every engine whose console text is JSON and that offers test data generation", async () => {

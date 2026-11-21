@@ -8,6 +8,7 @@ import {
   resolveSqlGrammar,
 } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
+import { refusalOf, refusalThrownBy } from "../../helpers/outside-the-union";
 
 /**
  * The one place a database type becomes a set of grammar facts (#292).
@@ -82,16 +83,17 @@ describe("resolveSqlGrammar", () => {
   });
 
   /**
-   * A string that is not a database type at all gets the default too, prototype
-   * keys included. The packaged confirmation dialog resolves its own grammar from an
-   * optional prop a HOST application fills in as a plain string (#297), so this
-   * lookup is reached with text nothing in this repo validated; a bare index would
-   * answer `Object.prototype.constructor` for one of these - not a grammar.
+   * A string that is not a database type at all is refused by name, prototype keys
+   * included (FND-1). A bare index would answer `Object.prototype.constructor` for one
+   * of these - not a grammar - and the compatibility default would read the text under
+   * rules no engine of the connection declared. The packaged confirmation dialog takes
+   * its type from a host as a plain string (#297) and refuses such a value at its own
+   * boundary before it reads a grammar.
    */
   test.each(["constructor", "toString", "hasOwnProperty", "not-a-database"])(
-    "resolves %p to the compatibility default rather than a prototype value",
+    "refuses %p by name rather than answering a prototype value or the default",
     (key) => {
-      expect(resolveSqlGrammar(key as DatabaseType)).toBe(DEFAULT_SQL_GRAMMAR);
+      expect(refusalThrownBy(() => resolveSqlGrammar(key as DatabaseType))).toEqual(refusalOf(key));
     },
   );
 
@@ -850,21 +852,22 @@ describe("readsSqlText", () => {
 
   test("a call that names no dialect is read as SQL", () => {
     // The compatibility default once more. A caller that named nothing was reading
-    // SQL before this question existed, and the published dialog takes the type as
-    // a plain string from a host application - an unrecognised one must not turn
-    // the SQL checks off.
+    // SQL before this question existed. An unrecognised type is not "nothing": it is
+    // refused by name (FND-1) rather than read as SQL or not.
     expect(readsSqlText()).toBe(true);
-    expect(readsSqlText("not-a-database" as DatabaseType)).toBe(true);
+    expect(refusalThrownBy(() => readsSqlText("not-a-database" as DatabaseType))).toEqual(refusalOf("not-a-database"));
   });
 
   // A host calling from plain JavaScript can pass a value that is not a string but converts to a non-SQL type id.
-  // Such a value was never a member of the non-SQL set, so it reads as SQL, while `resolveSqlGrammar` keeps the row
-  // its property key names.
+  // Such a value is not text, so it is refused as malformed (FND-1) rather than read under the row its property key
+  // names or as SQL.
   test.each<[string, unknown]>([
     ["a String object", new String("mongodb")],
     ["an array", ["mongodb"]],
     ["an object with toString", { toString: () => "redis" }],
-  ])("%s naming a non-SQL type is read as SQL", (_label, value) => {
-    expect(readsSqlText(value as DatabaseType)).toBe(true);
+  ])("%s naming a non-SQL type is refused as not text", (_label, value) => {
+    const refusal = refusalThrownBy(() => readsSqlText(value as DatabaseType));
+    expect(refusal).toEqual(refusalOf(value));
+    expect(refusal).toMatchObject({ reason: "malformed" });
   });
 });

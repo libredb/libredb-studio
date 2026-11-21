@@ -84,8 +84,8 @@ export function resolveSpecifier(specifier: string, fromPath: string): string | 
   throw new Error(`${specifier} imported by ${fromPath} resolves to no file`);
 }
 
-/** `POSTGRES_SQL_GRAMMAR` is `postgres`; the two named non-engine specs are not engines. */
-const NOT_ENGINES = new Set(["NO_CONNECTION_SQL_GRAMMAR", "UNKNOWN_TYPE_SQL_GRAMMAR"]);
+/** `POSTGRES_SQL_GRAMMAR` is `postgres`; the named no-connection spec is not an engine. */
+const NOT_ENGINES = new Set(["NO_CONNECTION_SQL_GRAMMAR"]);
 
 /** Every engine module the registry imports, one per `<ID>_SQL_GRAMMAR` binding. */
 export function engineModules(): EngineModule[] {

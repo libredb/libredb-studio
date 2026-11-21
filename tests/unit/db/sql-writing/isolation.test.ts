@@ -39,8 +39,7 @@ const FIXTURES = join(import.meta.dir, "fixtures.ts");
 const GROUPS = separatingGroups(ENGINE_MODULES.map(({ id }) => id));
 const BOUND_EDIT = "INLINE_EDIT_SENTINEL";
 
-const keyOf = (key: string): string | undefined =>
-  key === "no-connection" ? undefined : key === "empty-string" ? "" : key;
+const keyOf = (key: string): string | undefined => (key === "no-connection" ? undefined : key);
 
 function mockFor(engine: EngineModule, index: number): string {
   return `

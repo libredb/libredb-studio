@@ -6,7 +6,7 @@
  */
 
 import type * as Monaco from "monaco-editor";
-import { sqlGrammarForExactType } from "@/lib/db/sql-grammar";
+import { sqlGrammarFor } from "@/lib/db/sql-grammar";
 import { extractAliases, resolveAlias } from "@/lib/sql";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan, type SqlSpanKind } from "@/lib/sql/spans";
@@ -422,7 +422,7 @@ export function registerSQLCompletionProvider(
   databaseType?: DatabaseType,
 ): Monaco.IDisposable {
   const grammar = resolveSqlGrammar(databaseType);
-  const { completion } = sqlGrammarForExactType(databaseType);
+  const { completion } = sqlGrammarFor(databaseType);
   // The shared lists, then the dialect's own words (SF-042); the same lists on every dialect that declares none.
   const dialect = dialectItems(grammar);
   const keywordItems = [...KEYWORD_ITEMS, ...dialect.keywords];

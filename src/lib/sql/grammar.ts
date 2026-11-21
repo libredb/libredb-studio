@@ -30,7 +30,7 @@
  *    implied. Never read one dialect's rule off another's behaviour.
  */
 
-import { sqlGrammarFor, sqlGrammarForExactType } from "@/lib/db/sql-grammar";
+import { sqlGrammarFor } from "@/lib/db/sql-grammar";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -438,7 +438,10 @@ export { DEFAULT_SQL_GRAMMAR } from "@/lib/db/sql-grammar/shared";
  * live, since a comment is what a `;` can hide inside and `/api/db/multi-query` runs every fragment the splitter
  * returns. The full probe text for every row is quoted on the constants and in `grammar.test.ts`.
  *
- * An absent type and a string that is no type id both get the compatibility default (`sqlGrammarFor`).
+ * An absent type gets the compatibility default; any other value that is not a type id, a `String` object included, is
+ * refused with `UnknownProviderError` (`sqlGrammarFor`).
+ *
+ * @throws {UnknownProviderError} When `type` is defined and not a type id.
  */
 export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
   return sqlGrammarFor(type).grammar;
@@ -458,16 +461,16 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * about text that reads fine. An operator who learns to click the confirmation away
  * is the one thing that gate cannot survive.
  *
- * Unknown and absent both answer true, which keeps every existing caller and any
- * host application passing an unrecognised string on today's reading rather than
- * silently switching the SQL checks off.
+ * An absent type gets the compatibility default and reads as SQL, which keeps every
+ * existing caller that names no dialect on today's reading. Any other value that is
+ * not a type id, a `String` object such as `new String("mongodb")` from a host
+ * calling in plain JavaScript included, is refused with `UnknownProviderError`
+ * (`sqlGrammarFor`) rather than read as SQL or under the row its conversion names.
  *
- * A value that is not a string answers the unknown-type fact as well, as it did when the non-SQL types were a set
- * compared by identity: a host calling from plain JavaScript with `new String("mongodb")` was read as SQL, and
- * `sqlGrammarFor`'s property-key lookup would otherwise convert it to the mongodb row (`sqlGrammarForExactType`).
+ * @throws {UnknownProviderError} When `type` is defined and not a type id.
  */
 export function readsSqlText(type?: DatabaseType): boolean {
-  return sqlGrammarForExactType(type).readsSqlText;
+  return sqlGrammarFor(type).readsSqlText;
 }
 
 /**

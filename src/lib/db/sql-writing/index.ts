@@ -44,7 +44,7 @@ import { QDRANT_SQL_WRITING } from "@/lib/db/providers/vector/qdrant/sql-writing
 import { WEAVIATE_SQL_WRITING } from "@/lib/db/providers/vector/weaviate/sql-writing";
 import { NO_CONNECTION_SQL_WRITING } from "./no-connection";
 import type { SqlWritingSpec } from "./types";
-import { UNKNOWN_TYPE_SQL_WRITING } from "./unknown-type";
+import { typeIdRow } from "@/lib/db/type-id";
 
 /**
  * Each engine's SQL writing rules, one row per type id, each declared in the module beside
@@ -101,17 +101,14 @@ export const SQL_WRITING: Readonly<Record<DatabaseType, SqlWritingSpec>> = Objec
 });
 
 /**
- * The rules for `type`: its row for a member of the union, the no-connection spec for
- * `undefined`, and the unknown-type spec for any other string.
+ * The rules for `type`: the no-connection spec for `undefined`, and its row for a type id, read through `typeIdRow`,
+ * so any other value is refused by name and `"constructor"` or `"__proto__"` is never read off the prototype as if it
+ * were a row.
  *
- * The empty string, and the `null` an untyped JS caller can pass, also mean no connection:
- * every writer tested `dialect ? ... : "standard"` before this contract, and a published
- * component's `databaseType?: string` can still hand either one over.
- *
- * `Object.hasOwn` is the membership test, so `"constructor"` or `"__proto__"` is not read
- * off the prototype as if it were a row.
+ * @throws {UnknownProviderError} When `type` is defined and not a type id: a string that names no provider, `""`,
+ * `null`, or a value that is not text.
  */
 export function sqlWritingFor(type: string | undefined): SqlWritingSpec {
-  if (!type) return NO_CONNECTION_SQL_WRITING;
-  return Object.hasOwn(SQL_WRITING, type) ? SQL_WRITING[type as DatabaseType] : UNKNOWN_TYPE_SQL_WRITING;
+  if (type === undefined) return NO_CONNECTION_SQL_WRITING;
+  return typeIdRow(SQL_WRITING, type);
 }

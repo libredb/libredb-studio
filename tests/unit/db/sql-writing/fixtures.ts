@@ -8,13 +8,10 @@
  * cannot move another engine's output. The inline edit lines come next, from
  * `renderInlineEditGolden`, and the SQL export lines last, from `renderExportGolden`.
  *
- * Four keys are not engines. `no-connection` is the generator that has no connection
- * to name a dialect, so it renders `undefined`. `empty-string` renders `""`, which a
- * published component's `databaseType?: string` can carry and which every writer read as
- * no connection before the contract. `constructor` and `not-an-engine` reach
- * the functions as raw strings, the way `QuerySafetyDialog` can hand one over through
- * its `databaseType?: string`: today `constructor` resolves to an `Object.prototype`
- * member in a plain lookup table, and the golden pins whatever that answers.
+ * One key is not an engine. `no-connection` is the generator that has no connection
+ * to name a dialect, so it renders `undefined`. Every other value outside the type-id
+ * union, the empty string included, is refused by name (FND-1), which the registry
+ * census pins.
  */
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { quoteIdentifier } from "@/lib/sql/identifier";
@@ -23,14 +20,7 @@ import type { DatabaseType } from "@/lib/types";
 import { renderExportGolden } from "./export-fixtures";
 import { renderInlineEditGolden } from "./inline-edit-fixtures";
 
-export const GOLDEN_KEYS: readonly string[] = Object.freeze([
-  ...EXTERNAL_DATABASE_TYPES,
-  "libredb",
-  "no-connection",
-  "empty-string",
-  "constructor",
-  "not-an-engine",
-]);
+export const GOLDEN_KEYS: readonly string[] = Object.freeze([...EXTERNAL_DATABASE_TYPES, "libredb", "no-connection"]);
 
 /** The trailing backslash, the lone quote, NUL, newline and a non-Latin-1 name are the escape edges. */
 export const LITERAL_VALUES = ["", "it's", "a\\b", "a\\", "'", "a\\'b", "Müşteri", "x\u0000y", "line\nbreak"];

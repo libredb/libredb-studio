@@ -44,7 +44,7 @@ import { TRINO_EXECUTION_UI } from "@/lib/db/providers/sql/trino/execution-ui";
 import type { DatabaseType } from "@/lib/types";
 import { NO_CONNECTION_EXECUTION_UI } from "./no-connection";
 import type { ExecutionUiSpec } from "./types";
-import { UNKNOWN_TYPE_EXECUTION_UI } from "./unknown-type";
+import { typeIdRow } from "@/lib/db/type-id";
 
 /**
  * Each engine's execution UI facts, one row per type id, each declared beside its provider. A missing id is a
@@ -97,11 +97,14 @@ export const EXECUTION_UI: Readonly<Record<DatabaseType, ExecutionUiSpec>> = Obj
 });
 
 /**
- * The spec for a connection's type: `NO_CONNECTION_EXECUTION_UI` without one, the engine's row for a shipped id,
- * otherwise `UNKNOWN_TYPE_EXECUTION_UI`. `Object.hasOwn`, so `"constructor"` or `"__proto__"` never reaches an
- * Object.prototype member.
+ * The spec for a connection's type: `NO_CONNECTION_EXECUTION_UI` without one, and the engine's row for a type id,
+ * read through `typeIdRow`, so any other value is refused by name and a prototype key never reaches an
+ * `Object.prototype` member.
+ *
+ * @throws {UnknownProviderError} When `type` is defined and not a type id: a string that names no provider, `""`,
+ * `null`, or a value that is not text.
  */
 export function executionUiFor(type: string | undefined): ExecutionUiSpec {
   if (type === undefined) return NO_CONNECTION_EXECUTION_UI;
-  return Object.hasOwn(EXECUTION_UI, type) ? EXECUTION_UI[type as DatabaseType] : UNKNOWN_TYPE_EXECUTION_UI;
+  return typeIdRow(EXECUTION_UI, type);
 }

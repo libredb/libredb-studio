@@ -12,8 +12,11 @@ import {
   MALFORMED_TYPE_SENTENCE,
   quoteTypeId,
   typeIdRefusal,
+  typeIdRow,
   unknownTypeSentence,
 } from "@/lib/db/type-id";
+import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 
 describe("isDatabaseType and typeIdRefusal", () => {
   test("every shipped type id is a type id", () => {
@@ -158,5 +161,27 @@ describe("assertDatabaseType", () => {
 
   test("a type id returns", () => {
     expect(() => assertDatabaseType("postgres")).not.toThrow();
+  });
+});
+
+describe("typeIdRow", () => {
+  // A total table, one row per type id, and a partial one, as the per-engine tables a caller hands the reader are.
+  const TOTAL: Readonly<Record<DatabaseType, string>> = Object.fromEntries(
+    SHIPPED_DATABASE_TYPES.map((id) => [id, `row of ${id}`]),
+  ) as Record<DatabaseType, string>;
+  const PARTIAL: Readonly<Partial<Record<DatabaseType, string>>> = { postgres: "row of postgres" };
+
+  test("reads a type id's row of a total table", () => {
+    for (const id of SHIPPED_DATABASE_TYPES) expect(typeIdRow(TOTAL, id)).toBe(`row of ${id}`);
+  });
+
+  test("reads a type id's row of a partial table, and undefined where it has none", () => {
+    expect(typeIdRow(PARTIAL, "postgres")).toBe("row of postgres");
+    expect(typeIdRow(PARTIAL, "mysql")).toBeUndefined();
+  });
+
+  test.each(OUTSIDE_THE_UNION)("refuses %s by name before it reads the table", (_label, value) => {
+    expect(refusalThrownBy(() => typeIdRow(TOTAL, value))).toEqual(refusalOf(value));
+    expect(refusalThrownBy(() => typeIdRow(PARTIAL, value))).toEqual(refusalOf(value));
   });
 });
