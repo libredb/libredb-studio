@@ -242,9 +242,8 @@ one. It can be **bounded**, as Redis's scan of 1000 keys is, so it is what the
 inspection found and not proof that nothing else exists, and the plan is told so. And on the document
 engines it works out a collection's fields from a **sample of your own documents**: no value from
 them is kept, but the existence of a field there is derived from your data rather than read from a
-catalog. The **estimated statistics** below are PostgreSQL's, SQLite's and SQL Server's alone; on the other
-forty the plan is told that this engine holds none it knows how to read, which means it has an
-inventory and no sizes — the ordinary case now rather than a rare one.
+catalog.
+The **estimated statistics** below are PostgreSQL's, SQLite's, libSQL's and SQL Server's alone; on the other thirty-nine the plan is told that this engine holds none it knows how to read, which means it has an inventory and no sizes — the ordinary case now rather than a rare one.
 
 On an engine that speaks no SQL, a Plan run is asked for one statement or command **in that engine's
 own language** — a MongoDB aggregation rather than a SELECT — still in a block tagged with the

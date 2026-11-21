@@ -721,9 +721,8 @@ What a grounded plan run is given, and where each part comes from:
   including the two free ones. That is deliberate: what the model may conclude must not depend on
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
-  is scanned and no value is read out of any row. A `statistics` reading is supplied by the engine overlays of those two and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and
-  nothing else, and #414 added no engine to them: on the other forty `readSchemaStatistics` answers
-  `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
+  is scanned and no value is read out of any row.
+  A `statistics` reading is supplied by the engine overlays of those two, libSQL (the same `sqlite_stat1`, after the same probe) and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and nothing else, and #414 added no engine to them: on the other thirty-nine `readSchemaStatistics` answers `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
   so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
   the two sentences the run is handed agree: the inventory is a record of what exists, and every
   table's size is unknown rather than small. `AgentColumnProfile`'s "counts only" rule is
