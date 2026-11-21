@@ -40,7 +40,7 @@ import type {
 } from "./client";
 import { OPCUA_PKI_ROOT_ENV } from "./pki";
 import type { OpcuaConnectionOptions } from "./connection";
-import { errorForStatus, messageOf } from "./errors";
+import { errorForStatus, messageOf, OpcuaUnansweredError } from "./errors";
 import { effectiveTokenPolicy, pinRefusal, plaintextIdentityRefusal } from "./security";
 
 /**
@@ -309,6 +309,17 @@ export async function openReadOnlySession(
       // list names the directory the reader has to act in (`errors.ts`).
       if (code !== undefined) throw errorForStatus(code, options.pkiRoot);
       /*
+       * NO ANSWER AT ALL IS ITS OWN FACT, and the session pool acts on it. A secure channel can break in a way the
+       * library does not report, and a request with no answer is the only sign of it that reaches Studio. The pool
+       * replaces the session on this class, and `library.ts` closes it without waiting for an answer to its
+       * CloseSession.
+       */
+      if (LIBRARY_TRANSACTION_TIMEOUT.test(message))
+        throw new OpcuaUnansweredError(
+          `${what} got no answer from the server: ${message}. The session it was sent on is closed without waiting ` +
+            "for the server any longer, and a new session is opened for the next request.",
+        );
+      /*
        * A THROW WITH NOTHING IN IT STILL HAS TO SAY SOMETHING. Measured: a node id the library
        * rejected while building the request threw an Error whose `message` was the empty string,
        * and this line answered the reader "A read failed: " with nothing after the colon. Where the
@@ -440,6 +451,14 @@ export async function openReadOnlySession(
     },
   };
 }
+
+/**
+ * How the library reports a request it stopped waiting for: `Transaction has timed out ( timeout = 15000 ms , request
+ * = ReadRequest)`. It carries no status code, since no answer arrived to carry one, so the library's own words are
+ * what is matched, at the start of the message only; `tests/integration/db/opcua-server.test.ts` holds this to the
+ * library by making a real request go unanswered.
+ */
+const LIBRARY_TRANSACTION_TIMEOUT = /^Transaction has timed out\b/;
 
 /** The client's own message ceiling, named here so a bridge can set it on the transport. */
 export const OPCUA_TRANSPORT_SETTINGS = Object.freeze({

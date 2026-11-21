@@ -125,6 +125,36 @@ async function certificateStore(root: string): Promise<OPCUACertificateManager> 
   return manager;
 }
 
+/** One dial: the client and the certificate store built for it alone, which are let go together. */
+interface Dial {
+  readonly client: OPCUAClient;
+  readonly store: OPCUACertificateManager;
+}
+
+/**
+ * Dispose a store this module built, which closes its folder watchers.
+ *
+ * THE CLIENT'S DISCONNECT DOES NOT DO IT. The client counts itself as a holder of the store it is handed, and its
+ * disconnect only gives that count back: the dispose that closes the watchers runs at a count of zero, and nothing
+ * else calls it. A dial that failed to connect does not even give the count back, since its disconnect returns
+ * before reaching the store. So Studio disposes the store once the client is disconnected. Each store here is built
+ * for one client and is let go only once that client is disconnected or was never built, so no holder is left and
+ * the count is set to zero rather than trusted.
+ */
+async function releaseStore(store: OPCUACertificateManager): Promise<void> {
+  store.referenceCounter = 0;
+  await store.dispose();
+}
+
+/** Disconnect a dial's client, then release its store, whether or not the disconnect succeeded. */
+async function hangUp(dial: Dial): Promise<void> {
+  try {
+    await dial.client.disconnect();
+  } finally {
+    await releaseStore(dial.store);
+  }
+}
+
 /**
  * A client for one dial, in one security mode and one policy.
  *
@@ -136,26 +166,32 @@ async function certificateStore(root: string): Promise<OPCUACertificateManager> 
  * `BadSecurityChecksFailed` because the unsecured channel presents no certificate to verify. So
  * the first dial is None+None, and the session's dial carries the policy of the endpoint chosen.
  */
-async function clientFor(
-  options: OpcuaConnectionOptions,
-  mode: MessageSecurityMode,
-  policyUri: string,
-): Promise<OPCUAClient> {
-  return OPCUAClient.create({
-    applicationName: "LibreDB Studio",
-    clientCertificateManager: await certificateStore(options.pkiRoot),
-    ...(options.clientCertificatePath === undefined ? {} : { certificateFile: options.clientCertificatePath }),
-    ...(options.clientPrivateKeyPath === undefined ? {} : { privateKeyFile: options.clientPrivateKeyPath }),
-    securityMode: mode,
-    securityPolicy: policyUri,
-    // False, and the endpoint is never taken from GetEndpoints either (O-S7): true fails the connect
-    // whenever the server advertises a URL other than the typed one, which is every OPC PLC and
-    // every Milo behind a port map.
-    endpointMustExist: false,
-    transportSettings: OPCUA_TRANSPORT_SETTINGS,
-    // One dial, no retry loop: a refusal is a sentence for the reader rather than a reconnect.
-    connectionStrategy: { maxRetry: 0 },
-  });
+async function clientFor(options: OpcuaConnectionOptions, mode: MessageSecurityMode, policyUri: string): Promise<Dial> {
+  const store = await certificateStore(options.pkiRoot);
+  try {
+    const client = OPCUAClient.create({
+      applicationName: "LibreDB Studio",
+      clientCertificateManager: store,
+      ...(options.clientCertificatePath === undefined ? {} : { certificateFile: options.clientCertificatePath }),
+      ...(options.clientPrivateKeyPath === undefined ? {} : { privateKeyFile: options.clientPrivateKeyPath }),
+      securityMode: mode,
+      securityPolicy: policyUri,
+      // False, and the endpoint is never taken from GetEndpoints either (O-S7): true fails the connect
+      // whenever the server advertises a URL other than the typed one, which is every OPC PLC and
+      // every Milo behind a port map.
+      endpointMustExist: false,
+      transportSettings: OPCUA_TRANSPORT_SETTINGS,
+      // One dial, no retry loop: a refusal is a sentence for the reader rather than a reconnect.
+      connectionStrategy: { maxRetry: 0 },
+      // A disconnect never sends CloseSession of its own: a session's `close` below sends it where the channel can
+      // still carry it, and the library would otherwise send it again on a channel that drops its answers.
+      keepPendingSessionsOnDisconnect: true,
+    });
+    return { client, store };
+  } catch (error) {
+    await releaseStore(store);
+    throw error;
+  }
 }
 
 /** One identity token for ActivateSession, from the fields the dialog filled. */
@@ -182,10 +218,10 @@ export const OPCUA_LIBRARY_BRIDGE: OpcuaLibraryBridge = {
     // it cannot be secured by one. Measured: None with the connection's own policy answered
     // BadSecurityChecksFailed, and the server logged BadCertificateInvalid, "the sender's
     // certificate was not specified".
-    const client = await clientFor(options, MessageSecurityMode.None, OPCUA_POLICY_NONE);
+    const dial = await clientFor(options, MessageSecurityMode.None, OPCUA_POLICY_NONE);
     try {
-      await client.connect(options.endpointUrl);
-      const endpoints = await client.getEndpoints();
+      await dial.client.connect(options.endpointUrl);
+      const endpoints = await dial.client.getEndpoints();
       // oxlint-disable-next-line no-map-spread -- each answer is a NEW object in this provider's own shape, never a library object with fields added to it.
       return endpoints.map((endpoint) => ({
         // Recorded and never dialled: OPC PLC advertises its own container name here.
@@ -206,7 +242,7 @@ export const OPCUA_LIBRARY_BRIDGE: OpcuaLibraryBridge = {
         })),
       }));
     } finally {
-      await client.disconnect().catch(() => undefined);
+      await hangUp(dial).catch(() => undefined);
     }
   },
 
@@ -215,21 +251,33 @@ export const OPCUA_LIBRARY_BRIDGE: OpcuaLibraryBridge = {
    *
    * The returned object is the narrow `LibrarySession` and nothing else, so even inside this file a
    * later edit cannot reach `write`, `call` or `createSubscription2` without widening that interface
-   * first. Its `close` closes the session AND disconnects the client: a session closed with the
-   * channel left open holds a socket the server counts.
+   * first. Its `close` closes the session AND disconnects the client, then releases the client's certificate
+   * store: a session closed with the channel left open holds a socket the server counts.
    */
   openSession: async (options) => {
     // The policy of the endpoint the session chose, which `session.ts` resolved from GetEndpoints:
     // a mode without its policy matches no endpoint (see `clientFor`).
-    const client = await clientFor(options, SECURITY_MODES[options.mode], options.policyUri ?? OPCUA_POLICY_NONE);
-    await client.connect(options.endpointUrl);
+    const dial = await clientFor(options, SECURITY_MODES[options.mode], options.policyUri ?? OPCUA_POLICY_NONE);
     let session: ClientSession;
+    // The connect inside the try as well: a dial that reached no server still holds the store built for it.
     try {
-      session = await client.createSession(identityOf(options));
+      await dial.client.connect(options.endpointUrl);
+      session = await dial.client.createSession(identityOf(options));
     } catch (error) {
-      await client.disconnect().catch(() => undefined);
+      await hangUp(dial).catch(() => undefined);
       throw error;
     }
+    /*
+     * A CHANNEL THAT LEFT A REQUEST UNANSWERED IS NOT WAITED ON TO CLOSE THE SESSION. Its answers may be late or
+     * never come, so waiting for the CloseSession answer could cost a whole transaction timeout before the disconnect
+     * runs. The CloseSession is still sent, since a request still reaches the server, and the server ends the session
+     * on it rather than keeping it until its own session timeout. The library announces each request it stopped
+     * waiting for, before the caller sees the failure, so `close` reads this.
+     */
+    let unanswered = false;
+    dial.client.on("timed_out_request", () => {
+      unanswered = true;
+    });
     return {
       browse: async (nodesToBrowse) => client_browse(session, nodesToBrowse),
       // The library takes a continuation point only as a Buffer and throws on the Uint8Array this provider carries,
@@ -271,9 +319,13 @@ export const OPCUA_LIBRARY_BRIDGE: OpcuaLibraryBridge = {
       },
       close: async (deleteSubscriptions) => {
         try {
-          await session.close(deleteSubscriptions ?? true);
+          const closing = session.close(deleteSubscriptions ?? true);
+          // Sent either way; its answer is not waited for on a channel that left a request unanswered, and the
+          // channel is closed below, which ends the wait for it.
+          if (unanswered) void closing.catch(() => undefined);
+          else await closing;
         } finally {
-          await client.disconnect();
+          await hangUp(dial);
         }
       },
     };

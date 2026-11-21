@@ -332,6 +332,12 @@ the endpoint of a server that was listening. A connection may also supply its ow
 key, which is what a mounted secret is for: two replicas sharing one key present **one** identity
 for a server administrator to trust once.
 
+**Each dial releases its certificate store.**
+Every dial (the GetEndpoints dial, each session, and each agent read's own session) builds a certificate manager over this root, and the manager watches the `trusted`, `rejected` and `issuers` folders.
+The library's client counts itself as a holder of the manager and its disconnect only gives that count back, so Studio disposes the manager itself.
+`library.ts` disposes each manager once its client is disconnected, or once a client that could not connect or could not be built is given up, on every path out of the dial.
+[`tests/integration/db/opcua-server.test.ts`](../../tests/integration/db/opcua-server.test.ts) holds each of those paths to the library's own registry of live managers.
+
 ### 4.5 The certificate pin
 
 Without a pin, any certificate the trust list accepts is accepted — and the library's default trust
@@ -1026,6 +1032,16 @@ stale answer is reported rather than retried. `BadSessionClosed`, `BadServerNotC
 `BadConnectionClosed` count as the same fact; `BadTimeout` does not, because a server that was slow
 once is still the same session.
 
+**A session whose channel broke is replaced, and the request that found out says so.**
+A secure channel can fail in a way the library does not report, and the only sign that reaches Studio is a request with no answer within the library's 15 s transaction timeout.
+That carries no status code, so it is reported in its own words: _A read got no answer from the server: Transaction has timed out ( timeout = 15000 ms , request = ReadRequest). The session it was sent on is closed without waiting for the server any longer, and a new session is opened for the next request._
+That is what happens: the pool sends CloseSession for that session without waiting for its answer, closes the channel, opens a new session before reporting, and the connection stays open throughout.
+The request itself is not run again, since it has already waited out a timeout; the next request is answered on the new session.
+A new session that cannot be opened is reported in its own words instead, and the connection then reads as closed.
+An answer slower than the transaction timeout looks the same from the client, so it is treated as no answer and costs one session replacement; the old session is still closed on the server.
+A second request already waiting on the same session fails when its channel is closed, with `A read failed: Transaction has been canceled because client channel  is being closed` (the library's words, the channel's empty name included).
+A disconnect made while the unanswered request is still waiting waits out the rest of the transaction timeout, and a request after it is refused as a closed connection.
+
 **A closed connection is a typed refusal, and a provider can be connected again.** Pressing a key
 after Disconnect used to answer HTTP 500 `INTERNAL_ERROR`; it is now a 400 that says to connect
 again — and connecting again works, which it did not: the pool latches closed on purpose, so
@@ -1059,7 +1075,7 @@ dropped on the seeded path — are in sections 6.4 and 4.1.
 ### 11.2 The integration suite
 
 [`tests/integration/db/opcua-provider.test.ts`](../../tests/integration/db/opcua-provider.test.ts) —
-22 tests over a **recorded server**. Every answer replayed there was captured from OPC PLC 2.15.10,
+24 tests over a **recorded server**. Every answer replayed there was captured from OPC PLC 2.15.10,
 pinned by digest, by [`tests/live/opcua-evidence.ts`](../../tests/live/opcua-evidence.ts), which
 drives this provider's own library bridge against it;
 [`tests/fixtures/opcua/README.md`](../../tests/fixtures/opcua/README.md) lists each file and the
@@ -1073,12 +1089,17 @@ that handed out the point answers `BadContinuationPointInvalid`.
 
 ### 11.3 The in-process server, and the dialog
 
-[`tests/integration/db/opcua-server.test.ts`](../../tests/integration/db/opcua-server.test.ts) — 20
+[`tests/integration/db/opcua-server.test.ts`](../../tests/integration/db/opcua-server.test.ts) — 26
 tests against a **real server in this process**: `node-opcua-server` 2.187.18, a devDependency, is
 started on a loopback port in `beforeAll` with a two-node address space of its own. It needs no
 container, and it is where the library really runs: GetEndpoints, the secure channel, CreateSession,
 the encoder and the status codes are all the library's. It adds a third stack to the
 operational-limits measurement, publishing **0** for both continuation-point counts.
+
+Two of its describes hold the dial's own lifecycle to the library.
+`each dial releases its certificate store` reads the library's registry of live certificate managers before and after each path out of a dial: a connect, read and disconnect, a closed port, a failed session connect, a session the server refuses, and a client the library refuses to build.
+`a session whose channel broke` puts a proxy in front of the server that rewrites one answer, and lowers the library's transaction timeout statics (`ClientSecureChannelLayer.minTransactionTimeout` and `defaultTransactionTimeout`) to 2 s for that describe only, restoring them after.
+It asserts that the unanswered request is reported by name, that the next request is answered at once on a new session, that the server ends the old session, and that disconnect does not wait.
 
 [`tests/components/ConnectionModal-opcua.test.tsx`](../../tests/components/ConnectionModal-opcua.test.tsx)
 — 9 tests that render the real dialog. They read each hint from the declaration it is drawn from

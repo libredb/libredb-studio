@@ -27,6 +27,7 @@ import type {
   OpcuaReadOnlyClient,
   OpcuaServerLimits,
 } from "@/lib/db/providers/industrial/opcua/client";
+import { OpcuaUnansweredError } from "@/lib/db/providers/industrial/opcua/errors";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -453,5 +454,54 @@ describe("the connection's refusals happen before a socket exists", () => {
       LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki",
     });
     await expect(provider.connect()).rejects.toBeInstanceOf(QueryError);
+  });
+});
+
+/**
+ * A SESSION WHOSE CHANNEL BROKE IS REPLACED, and the request that found out says so by name.
+ *
+ * The replay stands in for the library at the seam, so the first session here fails its read the way `session.ts`
+ * reports a request that got no answer; the in-process server suite drives a broken channel through the real
+ * library.
+ */
+describe("a session whose channel broke", () => {
+  test("is replaced: the unanswered read is reported by name, and the next read is answered on a new session", async () => {
+    const calls = fresh();
+    let opened = 0;
+    const provider = new OpcuaProvider(
+      connection(),
+      {},
+      {},
+      async () => {
+        opened += 1;
+        const client = recordedClient(calls);
+        if (opened > 1) return client;
+        return {
+          ...client,
+          read: async () => {
+            throw new OpcuaUnansweredError(
+              "A read got no answer from the server: Transaction has timed out ( timeout = 15000 ms , request = ReadRequest).",
+            );
+          },
+        };
+      },
+      { LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki" },
+    );
+    await provider.connect();
+    const failure = await provider.query('{ "read": ["ns=3;s=FastUInt1"] }').then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(OpcuaUnansweredError);
+    expect(String((failure as Error).message)).toMatch(/^A read got no answer from the server/);
+    // The connection stays open, on a new session, with the old one closed.
+    expect(provider.isConnected()).toBe(true);
+    expect(opened).toBe(2);
+    expect(calls.closed).toBe(1);
+    const result = await provider.query('{ "read": ["ns=3;s=FastUInt1"] }');
+    expect(result.rows[0]?.statusCode).toBe("Good");
+    expect(opened).toBe(2);
+    await provider.disconnect();
+    expect(calls.closed).toBe(2);
   });
 });
