@@ -12,17 +12,20 @@
  * Next.js reads the process environment before any .env file and skips a key already there, so a SEED_ASSETS_DIR
  * assigned in a .env file would be dropped without a word once this launcher sets the default. So when the caller set
  * none, `dev` and `start` first look in the working directory, the project directory Next.js loads .env files from
- * when it is given no directory argument, as under `bun dev` and `bun start`, at the files Next.js reads for that command, in its documented load order: `.env.$(NODE_ENV).local`, `.env.local`
- * (not when NODE_ENV is test), `.env.$(NODE_ENV)` and `.env`, where NODE_ENV is test when the caller set it so, and
- * otherwise development for `dev` and production for `start`. A line of one of them that assigns SEED_ASSETS_DIR, in
- * any form Next.js's parser reads, is an error, exit 1, naming the file: export the value in the shell instead. The
- * check matches the assignment and never reads the value, and any other command runs with no check.
+ * when it is given no directory argument, as under `bun dev` and `bun start`, at the files Next.js reads for that
+ * command, in its documented load order: `.env.$(NODE_ENV).local`, `.env.local` (not when NODE_ENV is test),
+ * `.env.$(NODE_ENV)` and `.env`, where NODE_ENV is test when the caller set it so, and otherwise development for `dev`
+ * and production for `start`. A path that is neither a file nor a FIFO, such as the directory `python -m venv .env`
+ * makes, is skipped, as Next.js skips it. A line of one of them that assigns SEED_ASSETS_DIR, in any form Next.js's
+ * parser reads, is an error, exit 1, naming the file: export the value in the shell instead. A file that cannot be
+ * read is an error too, exit 1, naming it. The check matches the assignment and never reads the value, and any other
+ * command runs with no check. The test file holds this list to the files @next/env's loadEnvConfig loads.
  *
- * Every argument is passed to the Next.js CLI unchanged. The CLI is the `next` binary this checkout installs, found
- * through the `bin` field of next's package.json and run with this Node.js, so no shell and no PATH lookup is involved
- * on any OS. Node.js looks for that package.json in the checkout's node_modules, then in every parent directory's,
- * then through NODE_PATH and its global folders; a package.json it finds outside the checkout's node_modules is
- * refused, never run, so a missing Next.js CLI, wherever another one is installed, is an error, exit 1.
+ * Every argument is passed to the Next.js CLI unchanged. The CLI is the `next` binary this checkout installs, read
+ * from the `bin` field of the checkout's own node_modules/next/package.json and run with this Node.js, so no shell, no
+ * PATH lookup and no Node.js package lookup is involved on any OS: a next installed only in a parent directory,
+ * through NODE_PATH or in a global folder is never run, and a missing one is an error, exit 1. A node_modules/next that
+ * is a link, as `bun link` makes, is followed.
  *
  * SIGINT and SIGTERM are forwarded to the Next.js CLI; this process exits with its exit code, or ends itself with the
  * signal that ended it. On Windows, Node.js forwards a signal by ending the process at once: the console delivers a
@@ -30,15 +33,15 @@
  * `bun start` as under `bun dev`, cutting in-flight requests and the closes of its pools.
  *
  * An inspector set in NODE_OPTIONS, such as --inspect or --inspect-brk, is taken by this process, which starts first,
- * not by the server: the server's own attempt reports the port in use, and --inspect-brk waits for a debugger on this
- * process before anything is spawned. Debug the server with `bun start --inspect` or `bun run dev --inspect`, which
- * reach the Next.js CLI as arguments.
+ * and --inspect-brk waits for a debugger on this process before anything is spawned. The Next.js CLI's own attempt
+ * then reports the port in use. Under `bun start` the server is that process, so it has no inspector; under `bun dev`
+ * the CLI gives the server it forks the next port, as before this launcher. Debug the server with
+ * `bun start --inspect` or `bun run dev --inspect`, which reach the Next.js CLI as arguments.
  *
  * Tested by tests/unit/next-with-seed-assets.test.ts, which spawns it.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { createRequire } from "node:module";
+import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { seedAssetsEnv } from "../bin/lib/launcher-utils.mjs";
@@ -46,19 +49,9 @@ import { seedAssetsEnv } from "../bin/lib/launcher-utils.mjs";
 const CHECKOUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM"];
 
-/**
- * The Next.js CLI this checkout installs; throws when next is not installed, is found only outside the checkout's
- * node_modules, or declares no `next` binary.
- */
+/** The Next.js CLI this checkout installs; throws when next is not installed or declares no `next` binary. */
 function nextCli() {
-  const manifest = createRequire(import.meta.url).resolve("next/package.json");
-  // Node.js reports the package.json at its real path, so the checkout's node_modules is compared at its own, which
-  // keeps a node_modules that is a link to another directory inside.
-  const modules = path.join(CHECKOUT, "node_modules");
-  const inside = existsSync(modules) ? path.relative(realpathSync(modules), manifest) : "..";
-  if (inside === "" || inside.startsWith("..") || path.isAbsolute(inside)) {
-    throw new Error(`${manifest} is outside ${modules}`);
-  }
+  const manifest = path.join(CHECKOUT, "node_modules", "next", "package.json");
   const { bin } = JSON.parse(readFileSync(manifest, "utf8"));
   const relative = typeof bin === "string" ? bin : bin?.next;
   if (typeof relative !== "string") throw new Error(`${manifest} declares no next binary`);
@@ -91,10 +84,14 @@ if (seedAssets.SEED_ASSETS_DIR !== undefined) {
     const file = path.join(process.cwd(), name);
     let content;
     try {
+      const stats = statSync(file, { throwIfNoEntry: false });
+      if (stats === undefined || (!stats.isFile() && !stats.isFIFO())) continue;
       content = readFileSync(file, "utf8");
     } catch (error) {
-      if (error?.code === "ENOENT") continue;
-      throw error;
+      console.error(
+        `Cannot read ${file} to check it for SEED_ASSETS_DIR: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(1);
     }
     if (SEED_ASSETS_ASSIGNMENT.test(content)) {
       console.error(

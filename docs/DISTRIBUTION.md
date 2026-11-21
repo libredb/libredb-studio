@@ -335,7 +335,10 @@ The desktop app sets it on every start, as it does its storage path.
 In a source checkout, `bun dev` and `bun start` run Next.js through `scripts/next-with-seed-assets.mjs`, which sets it to the checkout's own `seed-assets`, found from the script's location, unless the caller set a value.
 Next.js reads the process environment before any `.env` file and skips a key already there, so a `SEED_ASSETS_DIR` in a `.env` file would be dropped once the launcher sets its default.
 So when the caller set none, the launcher refuses to start, exit 1, if a `.env` file Next.js reads for that command in the working directory assigns it (`.env.local`, `.env` and the `.env.development` or `.env.production` pair, with their `.local` forms), and names the file: export the value in the shell instead.
-An inspector set in `NODE_OPTIONS`, such as `--inspect` or `--inspect-brk`, is taken by the launcher, which starts first, not by the server, so debug the server with `bun start --inspect` or `bun run dev --inspect`.
+A path among them that is not a file, such as the directory `python -m venv .env` makes, is skipped, as Next.js skips it, and a file the launcher cannot read stops it, exit 1, naming the file.
+An inspector set in `NODE_OPTIONS`, such as `--inspect` or `--inspect-brk`, is taken by the launcher, which starts first.
+Under `bun start` the server then has no inspector, and under `bun dev` its server gets the next port, as before the launcher.
+Debug the server with `bun start --inspect` or `bun run dev --inspect`.
 A `server.js` that no launcher starts, such as the standalone tarball extracted and run by hand, needs it set by whoever starts it, for example from the extracted directory: `SEED_ASSETS_DIR="$PWD/seed-assets" node server.js`.
 The server never takes the directory from its working directory: with `SEED_ASSETS_DIR` unset or blank it starts as usual, and every enabled, admitted sample whose file is not at its target yet is listed unavailable as `asset-directory-unset` and logged once.
 A relative value is resolved against the server's working directory, as every other path setting is.

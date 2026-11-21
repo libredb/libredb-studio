@@ -10,13 +10,16 @@
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { testIf } from "../helpers/posix-tools";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const LAUNCHER = path.join("scripts", "next-with-seed-assets.mjs");
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "next-with-seed-assets-"));
+// At its real path, so the fixture paths, a child's working directory and the paths Node.js reports share one
+// spelling: on Windows os.tmpdir() answers the 8.3 form of the user profile, and on macOS a path under /var.
+const tempDir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "next-with-seed-assets-")));
 afterAll(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
 /**
@@ -195,17 +198,25 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
     expect(result.stderr).toContain("Cannot find this checkout's Next.js CLI (run bun install)");
   });
 
-  test("refuses, with exit code 1, a Next.js CLI that Node.js finds in a parent directory's node_modules, and never runs it", () => {
+  test("fails with exit code 1 on a next installed only in a parent directory's node_modules, names the checkout's own, and never runs the other", () => {
     const outer = fs.mkdtempSync(path.join(tempDir, "outer-"));
     const marker = path.join(outer, "ran");
-    const manifest = strayNext(path.join(outer, "node_modules"), marker);
+    strayNext(path.join(outer, "node_modules"), marker);
     const root = checkout({ withNext: false, parent: outer });
     const result = run(root, ["dev"], {}, root);
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("Cannot find this checkout's Next.js CLI (run bun install)");
-    expect(result.stderr).toContain(`${real(manifest)} is outside ${real(root)}${path.sep}node_modules`);
+    expect(result.stderr).toContain(path.join(root, "node_modules", "next", "package.json"));
     expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  test("runs the Next.js CLI of a checkout whose node_modules/next is a link to a build outside the checkout, as bun link makes", () => {
+    const root = checkout();
+    const moved = fs.mkdtempSync(path.join(tempDir, "next-build-"));
+    fs.renameSync(path.join(root, "node_modules", "next"), path.join(moved, "next"));
+    fs.symlinkSync(path.join(moved, "next"), path.join(root, "node_modules", "next"), "junction");
+    expect(report(run(root, ["dev"])).argv).toEqual(["dev"]);
   });
 
   test("runs the Next.js CLI of a checkout whose node_modules is a link to another directory", () => {
@@ -294,6 +305,69 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(`SEED_ASSETS_DIR is assigned in ${path.join(real(testLocal), ".env.test.local")}`);
   });
+
+  test.each([
+    ["dev", "development", {}],
+    ["start", "production", {}],
+    ["dev", "test", { NODE_ENV: "test" }],
+  ] as const)(
+    "%s in %s mode refuses a SEED_ASSETS_DIR in exactly the .env files @next/env loads for it",
+    (command, _mode, overrides) => {
+      const names = [".env", ".env.local"];
+      for (const mode of ["development", "production", "test"]) names.push(`.env.${mode}`, `.env.${mode}.local`);
+      const all = withEnvFile(names[0], "SEED_ASSETS_DIR=/from/the/file\n");
+      for (const name of names.slice(1)) fs.writeFileSync(path.join(all, name), "SEED_ASSETS_DIR=/from/the/file\n");
+      // Next.js's own loader, asked in a child with the NODE_ENV the launcher's child gets, which files it loads.
+      const nextEnv = createRequire(path.join(ROOT, "node_modules", "next", "package.json")).resolve("@next/env");
+      const ask = Bun.spawnSync(
+        [
+          node(),
+          "-e",
+          `const { loadEnvConfig } = require(${JSON.stringify(nextEnv)});` +
+            `const log = { info() {}, error(m) { throw new Error(m); } };` +
+            `const { loadedEnvFiles } = loadEnvConfig(${JSON.stringify(all)}, ${command === "dev"}, log, true);` +
+            "console.log(JSON.stringify(loadedEnvFiles.map((file) => file.path)));",
+        ],
+        { cwd: tempDir, env: envWith(overrides), stdout: "pipe", stderr: "pipe" },
+      );
+      expect(ask.stderr.toString()).toBe("");
+      const loaded = JSON.parse(ask.stdout.toString()) as string[];
+      expect(loaded.length).toBeGreaterThan(0);
+      for (const name of names) {
+        const cwd = withEnvFile(name, "SEED_ASSETS_DIR=/from/the/file\n");
+        const result = run(checkout(), [command], overrides, cwd);
+        expect([name, result.exitCode]).toEqual([name, loaded.includes(name) ? 1 : 0]);
+      }
+    },
+  );
+
+  test("skips a .env that is a directory, as Next.js does, such as the one python -m venv .env makes", () => {
+    const root = checkout();
+    const cwd = fs.mkdtempSync(path.join(tempDir, "env-"));
+    fs.mkdirSync(path.join(cwd, ".env"));
+    const { seedAssets } = report(run(root, ["dev"], {}, cwd));
+    expect(real(seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "fails with exit code 1 and one line naming a .env file it cannot read",
+    () => {
+      const cwd = withEnvFile(".env.local", "OTHER_SETTING=1\n");
+      const file = path.join(cwd, ".env.local");
+      fs.chmodSync(file, 0o000);
+      try {
+        const result = run(checkout(), ["dev"], {}, cwd);
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).toBe("");
+        expect(result.stderr.trim().split("\n")).toEqual([
+          expect.stringContaining(`Cannot read ${file} to check it for SEED_ASSETS_DIR:`),
+        ]);
+        expect(result.stderr).toContain("EACCES");
+      } finally {
+        fs.chmodSync(file, 0o600);
+      }
+    },
+  );
 
   test("keeps a SEED_ASSETS_DIR the caller exported over one in a .env file, as Next.js does", () => {
     const own = path.join(tempDir, "own-assets");

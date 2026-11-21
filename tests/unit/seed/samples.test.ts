@@ -478,8 +478,10 @@ describe("the seed assets directory", () => {
 
   test("resolves a relative SEED_ASSETS_DIR against the working directory, as every other path setting is, and copies both samples from it", async () => {
     // The runner starts this file in the checkout root, so the test moves to another directory: a value resolved
-    // against the checkout or the module's location would then name a directory that does not exist.
-    const workingDirectory = temporaryDirectory();
+    // against the checkout or the module's location would then name a directory that does not exist. That directory
+    // is inside the checkout, so the relative value stays relative on Windows, where the temp directory can be on
+    // another drive, and keeps its meaning on macOS, where the temp directory is under a link.
+    const workingDirectory = path.join(ROOT, "tests");
     const relative = path.relative(workingDirectory, path.join(ROOT, "seed-assets"));
     expect(relative).not.toBe("");
     expect(path.isAbsolute(relative)).toBe(false);
