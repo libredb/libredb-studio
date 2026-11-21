@@ -13,7 +13,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createSocket, type Socket } from "node:dgram";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import { openExchange, resolveTarget, SnmpTransportError } from "@/lib/db/providers/network/snmp/client";
 import { writeInteger, writeOctetString, writeOid, writeSequence } from "@/lib/db/providers/network/snmp/ber";
 import { localizedKey } from "@/lib/db/providers/network/snmp/usm";
@@ -92,6 +94,30 @@ describe("a target is resolved and checked before a socket exists", () => {
     setEgressFlag("true");
     try {
       await expect(resolveTarget("localhost", 161)).rejects.toThrow(DatabaseConfigError);
+    } finally {
+      setEgressFlag(before);
+    }
+  });
+  test("a name is refused by name when DB_HTTP_BLOCK_PRIVATE_HOSTS is yes, as a literal is, before any socket", async () => {
+    const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+    setEgressFlag("yes");
+    try {
+      await expect(resolveTarget("localhost", 161)).rejects.toThrow(new DatabaseConfigError(INVALID_EGRESS_SETTING));
+      await expect(resolveTarget("127.0.0.1", 161)).rejects.toThrow(new DatabaseConfigError(INVALID_EGRESS_SETTING));
+    } finally {
+      setEgressFlag(before);
+    }
+  });
+  test("the answer check keeps the decision the process took, as the shared guard does", async () => {
+    const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+    setEgressFlag("true");
+    try {
+      await expect(resolveTarget("localhost", 161)).rejects.toThrow(BLOCKED_HOST);
+      // A direct write, not the helper, on purpose: the process decided at its first read, so the write moves nothing.
+      process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
+      await expect(resolveTarget("localhost", 161)).rejects.toThrow(BLOCKED_HOST);
+      forgetEgressDecision();
+      expect((await resolveTarget("localhost", 161)).address).toMatch(/^(127\.|::1)/);
     } finally {
       setEgressFlag(before);
     }

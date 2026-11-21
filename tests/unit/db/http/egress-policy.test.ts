@@ -3,8 +3,10 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpOrigin } from "@/lib/db/http/endpoint";
+import { forgetEgressDecision } from "@/lib/db/egress-decision";
 import {
   assertPublicDnsAnswers,
+  BLOCKED_HOST,
   guardedNodeOptions,
   httpTransportFetch,
   LOOPBACK_NETWORKS,
@@ -139,5 +141,18 @@ describe("LOOPBACK_NETWORKS", () => {
     for (const [network] of LOOPBACK_NETWORKS) {
       for (const host of PROBES[network]) expect(() => httpOrigin("http", host, 8080)).toThrow(DatabaseConfigError);
     }
+  });
+});
+
+describe("the decision the guard reads (FND-2 slice 2a)", () => {
+  test("the guard keeps the decision the process took: a value written after the first guarded call moves nothing until the decision is forgotten", () => {
+    setEgressFlag("true");
+    expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
+    // A direct write, not the helper, on purpose: the process decided at its first read, so the write moves nothing.
+    process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
+    expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
+    expect(guardedNodeOptions("db.example.com")).toEqual({ lookup: publicAddressLookup, agent: false });
+    forgetEgressDecision();
+    expect(httpOrigin("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
   });
 });
