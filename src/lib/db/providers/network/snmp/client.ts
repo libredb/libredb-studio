@@ -82,6 +82,10 @@ export interface ResolvedTarget extends GuardedTarget {
  * name and the socket is connected to the address the checks saw.
  */
 export async function resolveTarget(host: string, port: number): Promise<ResolvedTarget> {
+  // Core's one decision (`@/lib/db/egress-decision`), read before anything else, as the shared
+  // transport reads it before it dials: an invalid DB_HTTP_BLOCK_PRIVATE_HOSTS is refused by name
+  // for every host form, before any lookup leaves the machine.
+  const { blocksPrivateHosts } = egressDecision();
   const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const family = isIP(bare);
   if (family === 4 || family === 6) {
@@ -105,9 +109,8 @@ export async function resolveTarget(host: string, port: number): Promise<Resolve
   // only installs it when the decision blocks them (`guardedNodeOptions`). Calling it
   // unconditionally here refused every agent reached by name on a local network with the flag
   // off, which is the common case; a test with a name rather than a literal is what found it.
-  // Both checks read core's one decision (`@/lib/db/egress-decision`), so they cannot disagree,
-  // an invalid DB_HTTP_BLOCK_PRIVATE_HOSTS included: it is refused by name here as for a literal.
-  if (egressDecision().blocksPrivateHosts) assertPublicDnsAnswers(answers);
+  // Both checks read core's one decision, so they cannot disagree.
+  if (blocksPrivateHosts) assertPublicDnsAnswers(answers);
   // The link-local refusal is not flag-dependent anywhere, so it runs either way. It also refuses
   // an answer set with no usable address, or an answer whose family does not match its address,
   // so the family below is the address's own.

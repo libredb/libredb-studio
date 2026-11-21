@@ -102,8 +102,15 @@ describe("a target is resolved and checked before a socket exists", () => {
     const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
     setEgressFlag("yes");
     try {
-      await expect(resolveTarget("localhost", 161)).rejects.toThrow(new DatabaseConfigError(INVALID_EGRESS_SETTING));
-      await expect(resolveTarget("127.0.0.1", 161)).rejects.toThrow(new DatabaseConfigError(INVALID_EGRESS_SETTING));
+      // A name that does not resolve too: the refusal is taken before any lookup, so no query leaves the machine.
+      for (const host of ["localhost", "127.0.0.1", "no-such-host.invalid"]) {
+        const refusal = await resolveTarget(host, 161).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        expect(refusal).toBeInstanceOf(DatabaseConfigError);
+        expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
+      }
     } finally {
       setEgressFlag(before);
     }
