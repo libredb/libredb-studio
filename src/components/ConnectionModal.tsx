@@ -54,6 +54,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { WireCompatibilityHint } from "@/components/WireCompatibilityHint";
 import { ConnectionImportPanel } from "@/components/ConnectionImportPanel";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
+import { unavailableConnectionNotice } from "@/lib/connection-availability";
 
 /**
  * What each SSL mode actually does, in the panel where it is chosen.
@@ -117,6 +118,11 @@ interface ConnectionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConnect: (conn: DatabaseConnection) => void;
+  /**
+   * The connection to edit. A host may hand any record it holds: one whose type names no provider in this package,
+   * has no type, or has a type that is not text is refused by name in place of the form, open or closed, and nothing
+   * is tested or saved for it.
+   */
   editConnection?: DatabaseConnection | null;
   /** Optional API adapter: when provided, bypasses the built-in /api/db/test-connection fetch. */
   onTestConnection?: (
@@ -222,6 +228,7 @@ export function ConnectionModal({
     dbTypes,
     readOnlyControl,
     credentialWarning,
+    editRefusal,
   } = useConnectionForm({
     isOpen,
     onClose,
@@ -229,6 +236,13 @@ export function ConnectionModal({
     editConnection,
     onTestConnection,
   });
+
+  /**
+   * The notice that refuses an edit target whose type names no provider (FND-1), in the wording the shells' pickers
+   * use; null for every other target and in create mode.
+   */
+  const editNotice =
+    editRefusal === null ? null : unavailableConnectionNotice({ name: editConnection?.name }, editRefusal.sentence);
 
   // What an engine DECLARES for a connection field wins over this dialog's own words (#1085): an
   // engine that names a field differently says so on `DatabaseUIConfig` instead of growing an
@@ -1239,6 +1253,31 @@ export function ConnectionModal({
     </>
   );
 
+  // Drawn in place of the form for a refused edit target: the notice and one Close, so nothing can be tested or saved,
+  // and the record is never rebound to the picker's default engine.
+  const body =
+    editNotice === null ? (
+      formContent
+    ) : (
+      <div className="flex flex-col gap-4 p-6">
+        <div className="flex items-start gap-3">
+          <TriangleAlert strokeWidth={1.5} className="w-4 h-4 mt-0.5 shrink-0 text-warning" />
+          <div className="min-w-0 space-y-1">
+            <h2 className="text-sm font-medium text-fg">{editNotice.title}</h2>
+            <p data-testid="connection-edit-refusal" className="text-xs leading-relaxed text-fg-muted break-words">
+              {editNotice.description}
+            </p>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <Button variant="outline" onClick={onClose} className="text-xs font-medium">
+            Close
+          </Button>
+        </div>
+      </div>
+    );
+  const description = editNotice?.description ?? "Configure database connection parameters.";
+
   if (isMobile) {
     return (
       <Drawer
@@ -1250,9 +1289,9 @@ export function ConnectionModal({
         <DrawerContent className="max-h-[95dvh] bg-surface border-hairline text-fg p-0 flex flex-col">
           <DrawerHeader className="sr-only">
             <DrawerTitle>{isEditMode ? "Edit Connection" : "New Connection"}</DrawerTitle>
-            <DrawerDescription>Configure database connection parameters.</DrawerDescription>
+            <DrawerDescription>{description}</DrawerDescription>
           </DrawerHeader>
-          {formContent}
+          {body}
         </DrawerContent>
       </Drawer>
     );
@@ -1265,8 +1304,8 @@ export function ConnectionModal({
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">{isEditMode ? "Edit Connection" : "New Connection"}</DialogTitle>
-        <DialogDescription className="sr-only">Configure database connection parameters.</DialogDescription>
-        {formContent}
+        <DialogDescription className="sr-only">{description}</DialogDescription>
+        {body}
       </DialogContent>
     </Dialog>
   );
