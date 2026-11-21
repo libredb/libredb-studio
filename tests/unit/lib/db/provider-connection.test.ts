@@ -7,6 +7,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { connectionFingerprint, tunnelRoute } from "@/lib/db/connection-fingerprint";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import { providerConnection } from "@/lib/db/provider-connection";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { LITERAL_SEED_FILE, TUNNEL_FAR_END, type WithLiteralSeedFile, type WithTunnelFarEnd } from "@/lib/types";
@@ -48,6 +49,35 @@ function record(overrides: Record<string, unknown> = {}): MarkedConnection {
   } as MarkedConnection;
 }
 
+/** `providerConnection` refuses `given` by naming its `sshTunnel`, and quotes none of the tunnel's values. */
+function expectTunnelRefused(given: DatabaseConnection): void {
+  const refusal = refusalOf(given);
+  expect(refusal.message).toBe(
+    "The connection's sshTunnel must be a plain object of data fields; no provider was built.",
+  );
+}
+
+/** `providerConnection` refuses `given` by naming the connection, and quotes none of its values. */
+function expectConnectionRefused(given: unknown): void {
+  const refusal = refusalOf(given as DatabaseConnection);
+  expect(refusal.message).toBe(
+    "A connection with an sshTunnel must be a plain object of data fields; no provider was built.",
+  );
+}
+
+function refusalOf(given: DatabaseConnection): DatabaseConfigError {
+  let caught: unknown;
+  try {
+    providerConnection(given);
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(DatabaseConfigError);
+  const refusal = caught as DatabaseConfigError;
+  expect(refusal.message).not.toContain(TUNNEL_MARKER_ONE);
+  return refusal;
+}
+
 describe("providerConnection, the connection a provider is built from (FND-2)", () => {
   test("leaves out every tunnel field the classification calls secret and keeps every public one as the record holds it", () => {
     expect(providerConnection(record()).sshTunnel).toEqual({
@@ -79,13 +109,91 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
     expect({ ...projected.sshTunnel }).toEqual({ enabled: false });
   });
 
-  test.each([[undefined], [null], ["yes"], [["x"]], [5]])(
-    "hands on a record whose sshTunnel is %p as the same object",
-    (sshTunnel) => {
-      const given = record({ sshTunnel });
-      expect(providerConnection(given)).toBe(given);
-    },
-  );
+  test.each([[undefined], [null]])("hands on a record whose sshTunnel is %p as the same object", (sshTunnel) => {
+    const given = record({ sshTunnel });
+    expect(providerConnection(given)).toBe(given);
+  });
+
+  test.each([
+    ["a string", "on"],
+    ["a number", 5],
+    ["a boolean", true],
+    ["an array", [{ enabled: true, host: "bastion.example", port: 22, password: TUNNEL_MARKER_ONE }]],
+    ["a function", () => TUNNEL_MARKER_ONE],
+  ])("refuses by name a record whose sshTunnel is %s, never quoting it", (_case, sshTunnel) => {
+    expectTunnelRefused(record({ sshTunnel }));
+  });
+
+  test("refuses a tunnel whose public field is an accessor, which a copy of its data would drop", () => {
+    class Tunnel {
+      host = "bastion.example";
+      port = 22;
+      username = "jump";
+      password = TUNNEL_MARKER_ONE;
+      get enabled(): boolean {
+        return true;
+      }
+    }
+    expectTunnelRefused(record({ sshTunnel: new Tunnel() }));
+    const ownGetter = { host: "bastion.example", password: TUNNEL_MARKER_ONE };
+    Object.defineProperty(ownGetter, "enabled", { get: () => true, enumerable: true });
+    expectTunnelRefused(record({ sshTunnel: ownGetter }));
+  });
+
+  test("refuses a tunnel with a field that is not enumerable", () => {
+    const tunnel = { enabled: true, host: "bastion.example", password: TUNNEL_MARKER_ONE };
+    Object.defineProperty(tunnel, "port", { value: 22, enumerable: false });
+    expectTunnelRefused(record({ sshTunnel: tunnel }));
+  });
+
+  test("accepts a tunnel with no prototype and keeps its public fields", () => {
+    const tunnel = Object.assign(Object.create(null) as Record<string, unknown>, {
+      enabled: true,
+      host: "bastion.example",
+      password: TUNNEL_MARKER_ONE,
+    });
+    expect({ ...providerConnection(record({ sshTunnel: tunnel })).sshTunnel }).toEqual({
+      enabled: true,
+      host: "bastion.example",
+    });
+  });
+
+  test("refuses a record with a tunnel whose own fields a copy would drop, and hands it on as it is without one", () => {
+    // A copy keeps only own enumerable data properties, so `readOnly` would reach the provider as undefined.
+    class Connection {
+      id = "fnd2";
+      name = "fnd2";
+      type = "etcd" as const;
+      host = "etcd.internal";
+      port = 2379;
+      createdAt = new Date(0);
+      sshTunnel: unknown;
+      constructor(sshTunnel: unknown) {
+        this.sshTunnel = sshTunnel;
+      }
+      get readOnly(): boolean {
+        return true;
+      }
+    }
+    expectConnectionRefused(new Connection({ enabled: false, host: "bastion.example", password: TUNNEL_MARKER_ONE }));
+    const withoutTunnel = new Connection(undefined) as unknown as DatabaseConnection;
+    expect(providerConnection(withoutTunnel)).toBe(withoutTunnel);
+
+    const hidden = record();
+    Object.defineProperty(hidden, "readOnly", { value: true, enumerable: false });
+    expectConnectionRefused(hidden);
+
+    const accessor = record();
+    Object.defineProperty(accessor, "readOnly", { get: () => true, enumerable: true });
+    expectConnectionRefused(accessor);
+  });
+
+  test("accepts a frozen record and a record with no prototype", () => {
+    const frozen = Object.freeze(record());
+    expect(providerConnection(frozen).sshTunnel?.password).toBeUndefined();
+    const bare = Object.assign(Object.create(null) as MarkedConnection, record());
+    expect(providerConnection(bare).password).toBe(DATABASE_MARKER);
+  });
 
   test("keeps the far end and the literal seed marker", () => {
     const farEnd = { host: "db.internal", port: 5432 };

@@ -76,6 +76,7 @@ import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport"
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
 import { TrinoTransportError } from "@/lib/db/providers/sql/trino/transport";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
+import { markersReachableFrom } from "../helpers/reachable-markers";
 
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
 const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
@@ -5611,10 +5612,8 @@ describe("the SSH tunnel's secret fields stay in core (FND-2)", () => {
     expect(provider.config.host).toBe("127.0.0.1");
     const tunnel: Record<string, unknown> = { ...provider.config.sshTunnel };
     expect(tunnel).toEqual(PROVIDER_TUNNEL);
-    const text = JSON.stringify(provider.config);
-    for (const marker of [TUNNEL_MARKER_ONE, TUNNEL_MARKER_TWO, TUNNEL_MARKER_THREE]) {
-      expect(text).not.toContain(marker);
-    }
+    // The whole provider, not only its config: options and the execution context reach it too.
+    expect(markersReachableFrom(provider, [TUNNEL_MARKER_ONE, TUNNEL_MARKER_TWO, TUNNEL_MARKER_THREE])).toEqual([]);
   }
 
   function expectRecordKeepsThem(stored: DatabaseConnection): void {

@@ -27,6 +27,7 @@ import {
   type WithTunnelFarEnd,
 } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../helpers/census-connection";
+import { markersReachableFrom } from "../helpers/reachable-markers";
 
 const TUNNEL_MARKER_ONE = "not-a-real-tunnel-marker-7f3a";
 const TUNNEL_MARKER_TWO = "not-a-real-tunnel-marker-91c2";
@@ -86,47 +87,6 @@ function tunnelledRecord(type: DatabaseType): MarkedConnection {
   return record;
 }
 
-/**
- * The property path of every place a marker is reachable from `root`.
- *
- * It walks own data properties, string and symbol keyed, through their descriptors so that no getter runs; the keys and
- * values of a Map and the values of a Set; and the bytes of a typed array or DataView read as latin1. A visited set stops
- * it at a cycle.
- */
-function markersReachableFrom(root: unknown): string[] {
-  const hits: string[] = [];
-  const seen = new WeakSet<object>();
-  const visit = (value: unknown, path: string): void => {
-    if (typeof value === "string") {
-      if (MARKERS.some((marker) => value.includes(marker))) hits.push(path);
-      return;
-    }
-    if (value === null || typeof value !== "object") return;
-    if (seen.has(value)) return;
-    seen.add(value);
-    if (ArrayBuffer.isView(value)) {
-      const text = Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("latin1");
-      if (MARKERS.some((marker) => text.includes(marker))) hits.push(`${path} (bytes)`);
-      return;
-    }
-    if (value instanceof Map) {
-      for (const [key, entry] of value) {
-        visit(key, `${path} (map key)`);
-        visit(entry, `${path} (map value)`);
-      }
-    }
-    if (value instanceof Set) {
-      for (const entry of value) visit(entry, `${path} (set value)`);
-    }
-    for (const key of Reflect.ownKeys(value)) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (descriptor !== undefined && "value" in descriptor) visit(descriptor.value, `${path}.${String(key)}`);
-    }
-  };
-  visit(root, "provider");
-  return hits;
-}
-
 type MarkedConnection = DatabaseConnection & WithTunnelFarEnd & WithLiteralSeedFile;
 
 /** The provider's connection, typed with the two core-only markers a spread carries. */
@@ -135,7 +95,7 @@ const configOf = (provider: DatabaseProvider): MarkedConnection => provider.conf
 /** Everything the census holds of one provider built from `record`. */
 async function expectBuiltWithoutTunnelSecrets(record: MarkedConnection, enabled: boolean): Promise<DatabaseProvider> {
   const provider = await createDatabaseProvider(record);
-  expect(markersReachableFrom(provider)).toEqual([]);
+  expect(markersReachableFrom(provider, MARKERS)).toEqual([]);
   const tunnel: Record<string, unknown> = { ...provider.config.sshTunnel };
   expect(tunnel).toEqual(expectedProviderTunnel(enabled));
   expect(configOf(provider)[LITERAL_SEED_FILE]).toBe(true);
@@ -160,6 +120,46 @@ describe("no provider holds the SSH tunnel's secret fields (FND-2)", () => {
     expect(configOf(provider)[TUNNEL_FAR_END]).toEqual(FAR_END);
     expect(provider.config.host).toBe("127.0.0.1");
     expect(provider.config.port).toBe(40000);
+  });
+
+  // Neither shape opens a tunnel in core, which reads its `enabled` as absent, so a provider built from it would connect
+  // straight to the record's own address; the array would also carry its password to the provider.
+  const notPlainTunnels: ReadonlyArray<[string, unknown]> = [
+    ["a string", "on"],
+    ["an array", [tunnelWithMarkers(true)]],
+  ];
+  test.each(SHIPPED_DATABASE_TYPES.flatMap((type) => notPlainTunnels.map(([shape, value]) => [type, shape, value])))(
+    "%s is refused by name, with nothing built, when its sshTunnel is %s",
+    async (type, _shape, sshTunnel) => {
+      const record = { ...CENSUS_CONNECTION[type as DatabaseType], sshTunnel } as unknown as DatabaseConnection;
+      await expect(createDatabaseProvider(record)).rejects.toThrow(
+        "The connection's sshTunnel must be a plain object of data fields; no provider was built.",
+      );
+    },
+  );
+
+  test("a tunnel whose enabled is a getter is refused rather than built without it", async () => {
+    class Tunnel {
+      host = "bastion.example";
+      port = 22;
+      username = "jump";
+      password = TUNNEL_MARKER_ONE;
+      get enabled(): boolean {
+        return true;
+      }
+    }
+    const record = { ...CENSUS_CONNECTION.kafka, sshTunnel: new Tunnel() } as unknown as DatabaseConnection;
+    await expect(createDatabaseProvider(record)).rejects.toThrow(
+      "The connection's sshTunnel must be a plain object of data fields; no provider was built.",
+    );
+  });
+
+  test("a connection whose readOnly a copy would drop is refused rather than built writable", async () => {
+    const record: DatabaseConnection = { ...CENSUS_CONNECTION.etcd, sshTunnel: tunnelWithMarkers(false) };
+    Object.defineProperty(record, "readOnly", { value: true, enumerable: false });
+    await expect(createDatabaseProvider(record)).rejects.toThrow(
+      "A connection with an sshTunnel must be a plain object of data fields; no provider was built.",
+    );
   });
 
   test("the census plants a marker in every field the classification calls secret", () => {

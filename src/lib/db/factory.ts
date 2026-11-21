@@ -36,7 +36,9 @@ import * as path from "path";
  *
  * @param connection - Database connection configuration. The provider is built from `providerConnection(connection)`
  *   (./provider-connection): a copy whose `sshTunnel` holds only the fields `SSH_TUNNEL_FIELDS` classifies public, so
- *   the tunnel's password, private key and passphrase stay in the record the caller passed.
+ *   the tunnel's password, private key and passphrase stay in the record the caller passed. An `sshTunnel` that is not
+ *   plain data, or a connection carrying one that is not, is refused with a `DatabaseConfigError` before anything is
+ *   built.
  * @param options - Optional provider options (pooling, timeout, etc.)
  * @param execution - Server-injected execution context (#328, non-admin DuckDB file access). Never built
  *   from caller-supplied options. `acquireExecutionProfileProvider` passes the agent
@@ -228,7 +230,9 @@ export async function createDatabaseProvider(
 
   // Every provider is built from the connection `providerConnection` answers: the record with its `sshTunnel` reduced to
   // the public fields, so no provider holds the tunnel's password, private key or passphrase (FND-2,
-  // docs/SECURITY.md 3.41). Core dials the tunnel with those before it calls this function.
+  // docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider, acquireExecutionProfileProvider,
+  // withOneShotTunnel), it dials with those before it calls this function; a caller that builds an unconnected provider
+  // opens none. A tunnel or record that is not plain data is refused here, by name.
   connection = providerConnection(connection);
 
   // No `default`: `assertDatabaseType` above refused every value that is not a type id, and the compiler holds this
