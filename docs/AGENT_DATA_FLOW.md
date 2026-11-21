@@ -665,7 +665,7 @@ server's own instruction:
 | Feature | Route | What the browser sends | Call site |
 | --- | --- | --- | --- |
 | Visual EXPLAIN's AI explanation | `POST /api/ai/explain` | `query`, `explainPlan`, `schemaContext`, `databaseType` | `src/components/VisualExplain.tsx` |
-| Query safety dialog | `POST /api/ai/query-safety` | `query`, a filtered `schemaContext`, `databaseType`; nothing at all for an etcd, Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3-compatible object storage or Kubernetes statement (`vocabularySendsToModel`, `src/lib/db/destructive-commands.ts`) | `src/components/QuerySafetyDialog.tsx` |
+| Query safety dialog | `POST /api/ai/query-safety` | `query`, a filtered `schemaContext`, `databaseType`; nothing at all for an etcd, Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3-compatible object storage or Kubernetes statement (`vocabularySendsToModel`, `src/lib/db/destructive-commands.ts`), or for a `databaseType` that names no provider, which the dialog refuses in place of the analysis | `src/components/QuerySafetyDialog.tsx` |
 | Database documentation | `POST /api/ai/describe-schema` | A schema string built from table names, row counts and column definitions | `generateAiDocs` in `src/components/DatabaseDocs.tsx` |
 | Data Profiler's AI summary | `POST /api/ai/describe-schema` | Per column: null percent, distinct count, **`min=` and `max=`**, masked where the grid would mask the column | `DataProfiler` in `src/components/DataProfiler.tsx` |
 

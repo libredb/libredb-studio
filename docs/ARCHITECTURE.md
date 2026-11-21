@@ -224,18 +224,18 @@ A dialect is one record in each, and no reader branches on its name: `tests/unit
 How a generated statement spells a literal, a name and a bind follows the same rule beside `QUERY_DIALECTS`, keyed by type id rather than by dialect.
 `src/lib/db/sql-writing/` holds the `SqlWritingSpec` contract (`types.ts`), the building blocks more than one engine spells alike (`shared.ts`), and `SQL_WRITING` (`index.ts`), a `Record` over `DatabaseType` the compiler holds complete.
 Each row is declared in a module beside its provider, which imports only the contract, the building blocks, the engine-neutral export helpers (`export-shared.ts`) and, where it has one, its own `typed-literals` sibling, so one engine's rules cannot reach another's.
-`quoteLiteral`, `unquoteLiteral`, `temporalLiteral` and `positionalPlaceholder` (`src/lib/sql/values.ts`) and `quoteIdentifier` (`src/lib/sql/identifier.ts`) read the row through `sqlWritingFor`, which gives a missing connection and a string outside the union their own named specs.
+`quoteLiteral`, `unquoteLiteral`, `temporalLiteral` and `positionalPlaceholder` (`src/lib/sql/values.ts`) and `quoteIdentifier` (`src/lib/sql/identifier.ts`) read the row through `sqlWritingFor`, which gives a missing connection its own named spec and refuses any other value that is not a type id with `UnknownProviderError`.
 `useInlineEditing` (`src/hooks/use-inline-editing.ts`) reads the row's `inlineEdit` the same way: the type names that make a key column an instant, a 64-bit float or an exact decimal, and the `boundEdit` that wraps an edit's bind where the engine needs one.
 `buildResultExport` (`src/lib/export/result-export.ts`) and `typedLiteral` (`src/lib/export/typed-literals.ts`) read the row's `export` field the same way: the CREATE TABLE types, the type vocabulary that classifies a declared type, and the literals an exported INSERT writes.
 The golden files under `tests/unit/db/sql-writing/golden/` pin every engine's output.
 
 The schema-diff migration text follows it too, through `MIGRATION_DDL` in `src/lib/db/migration-ddl/`, a `Record<DatabaseType, MigrationDdlSpec>` the compiler holds complete beside `QUERY_DIALECTS`.
 Each row is a module beside its provider (`<family>/<id>-migration-ddl.ts`, or `migration-ddl.ts` inside a provider directory) that either refuses the whole diff with one line or writes every statement kind through its own function, sharing PostgreSQL's spelling by importing a named building block from `shared.ts`.
-`generateMigrationSQL` reads a connection's row through `migrationDdlFor`, which answers a spec of its own for no connection and for a type outside the union, and names no type id itself.
+`generateMigrationSQL` reads a connection's row through `migrationDdlFor`, which answers a spec of its own for no connection, refuses a value outside the union with `UnknownProviderError`, and names no type id itself.
 
 How each engine's statement text is read sits in a registry of the same kind beside `QUERY_DIALECTS`: `SQL_GRAMMAR` in `src/lib/db/sql-grammar/`, a `Record<DatabaseType, SqlGrammarSpec>` the compiler holds total.
 Each row is a module beside its engine's provider that states the grammar facts the statement splitter, the row limiter and the confirmation gate read, whether the text is SQL at all (`readsSqlText`), what a redacted query event keeps, the words the update-target reader adds, and how completion quotes a name.
-`sqlGrammarFor()` answers a missing type with `NO_CONNECTION_SQL_GRAMMAR` and an unknown one with `UNKNOWN_TYPE_SQL_GRAMMAR`, so no reader of these facts names a type id.
+`sqlGrammarFor()` answers a missing type with `NO_CONNECTION_SQL_GRAMMAR` and refuses a value outside the union with `UnknownProviderError`, so no reader of these facts names a type id or reads another engine's facts.
 
 ### 4.2. Authentication Flow
 

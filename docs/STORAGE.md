@@ -524,6 +524,10 @@ An import run while no connection is open imports nothing, and the import dialog
 A statement the Test Data dialog sends while no connection is open is not run, and the tab says why.
 The published `ConnectionModal`, handed such a connection to edit, shows the same notice in place of its form when it opens and offers only Close, so nothing is tested or saved under another type.
 Handed such a connection while closed, it draws nothing and does not fail.
+The published `QuerySafetyDialog` and `TestDataGenerator` take the connection's type as a plain `databaseType` string.
+Handed one that names no provider in that version of the package, an empty string, `null`, or a value that is not text, they draw the same **Connection unavailable** notice in place of the safety analysis or the generated statement: the safety dialog sends nothing to be analysed and keeps Execute disabled, and the test data dialog offers neither Copy nor Execute.
+Without a `databaseType` both read the statement as they do with no connection open.
+The published `QueryEditor` and `ResultsGrid` type `databaseType` as one of the package's type ids, and handed any other value they throw an error named `UnknownProviderError`, with the same sentence, while they render, before they read anything with it, so the host's error boundary receives it.
 
 ## Saved queries whose type this Studio has no provider for
 
