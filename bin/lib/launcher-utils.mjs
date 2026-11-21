@@ -214,6 +214,23 @@ export function loopbackPlaintextEnv(hostname, current) {
 }
 
 /**
+ * The seed assets directory the launcher hands the server (docs/DISTRIBUTION.md, "Built-in sample assets"): the
+ * payload's own `seed-assets`, unless the operator set a value. A value under the exact name SEED_ASSETS_DIR has
+ * already been made absolute by resolvePathVariables; on Windows, where environment names ignore letter case, a value
+ * under the name in another letter case is passed on as given. An empty or whitespace-only value counts as unset. The value is always absolute: server.js changes into its own
+ * directory before it reads SEED_ASSETS_DIR, so a relative payload directory (a relative HOME) is resolved here
+ * against the launcher's working directory, the same directory spawn resolves the server's cwd against.
+ *
+ * @param {string} payloadDir the payload directory server.js runs from, absolute or relative to the launcher's cwd
+ * @param {unknown} current the variable's value in the launcher's environment
+ * @returns {Record<string, string>}
+ */
+export function seedAssetsEnv(payloadDir, current) {
+  if (envText(current) !== "") return {};
+  return { SEED_ASSETS_DIR: path.resolve(payloadDir, "seed-assets") };
+}
+
+/**
  * Platform/arch pairs the release workflow builds standalone payloads for
  * (must mirror the build jobs in .github/workflows/release-artifacts.yml).
  */

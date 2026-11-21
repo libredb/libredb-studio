@@ -162,6 +162,14 @@ default_tarball() {
 # Channels. Each returns 0 (pass) or fails the script; SKIPs return 0 after
 # recording the skip (only meaningful under 'all'; a directly requested
 # channel that cannot run is an error).
+#
+# Every channel that starts a launcher drops any inherited SEED_ASSETS_DIR
+# (env -u), so it runs on the value its launcher sets, and a wrong value fails
+# it (docs/DISTRIBUTION.md, "Built-in sample assets"); the docker channel passes
+# only -e flags, so it runs on the image's own value. A launcher that sets
+# nothing is not caught here yet: the server's <working directory>/seed-assets
+# fallback finds the same directory, since server.js changes into its payload.
+# Each launcher's own unit tests prove it sets the value.
 # ------------------------------------------------------------------------------
 RESULTS=()
 record() { RESULTS+=("$1: $2"); }
@@ -184,11 +192,14 @@ channel_tarball() {
   log tarball "extracting $(basename "$tarball")"
   mkdir -p "$WORK/app" "$WORK/data"
   tar -xzf "$tarball" -C "$WORK/app" --strip-components=1
+  # No launcher here: the script sets SEED_ASSETS_DIR itself, as a user running
+  # server.js directly would.
   (
     cd "$WORK/app" && exec env "${AUTH_ENV[@]}" \
       NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 \
       HOSTNAME=127.0.0.1 PORT="$port" \
       STORAGE_PROVIDER=sqlite STORAGE_SQLITE_PATH="$WORK/data/storage.db" \
+      SEED_ASSETS_DIR="$WORK/app/seed-assets" \
       node server.js
   ) >"$WORK/server.log" 2>&1 &
   SERVER_PID=$!
@@ -205,7 +216,7 @@ channel_npx() {
   WORK=$(mktemp -d)
   local port=$((BASE_PORT + 1)) base="http://127.0.0.1:$((BASE_PORT + 1))"
   log npx "booting via bin/studio.js --archive"
-  env "${AUTH_ENV[@]}" "HOME=$WORK" \
+  env -u SEED_ASSETS_DIR "${AUTH_ENV[@]}" "HOME=$WORK" \
     STORAGE_PROVIDER=sqlite STORAGE_SQLITE_PATH="$WORK/data/storage.db" \
     node "$ROOT_DIR/bin/studio.js" --archive "$tarball" --port "$port" --host 127.0.0.1 \
     >"$WORK/server.log" 2>&1 &
@@ -254,7 +265,7 @@ run_extracted_linux_tree() { # <channel> <tree-root> <port>
   local home="$tree/usr/lib/libredb-studio"
   [ -f "$home/server.js" ] || { echo "FAIL [$channel]: extracted package lacks $home/server.js" >&2; exit 1; }
   mkdir -p "$WORK/data"
-  env "${AUTH_ENV[@]}" \
+  env -u SEED_ASSETS_DIR "${AUTH_ENV[@]}" \
     LIBREDB_STUDIO_HOME="$home" \
     NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 \
     PORT="$port" \
@@ -279,7 +290,7 @@ channel_deb() {
     DEB_INSTALLED=true
     mkdir -p "$WORK/data"
     sudo chmod 777 "$WORK" "$WORK/data"
-    sudo env "${AUTH_ENV[@]}" \
+    sudo env -u SEED_ASSETS_DIR "${AUTH_ENV[@]}" \
       PORT="$port" HOSTNAME=127.0.0.1 \
       STORAGE_PROVIDER=sqlite STORAGE_SQLITE_PATH="$WORK/data/storage.db" \
       libredb-studio >"$WORK/server.log" 2>&1 &
@@ -345,7 +356,7 @@ channel_snap() {
   # the calling environment for vars the snap does not pin).
   sudo snap stop libredb-studio >/dev/null 2>&1 || true
   sudo rm -f /var/snap/libredb-studio/current/sample-employees.db /var/snap/libredb-studio/current/libredb-storage.db 2>/dev/null || true
-  sudo env "${AUTH_ENV[@]}" snap run libredb-studio >"$WORK/server.log" 2>&1 &
+  sudo env -u SEED_ASSETS_DIR "${AUTH_ENV[@]}" snap run libredb-studio >"$WORK/server.log" 2>&1 &
   SERVER_PID=$!
   SERVER_SUDO=true
   wait_health snap "http://127.0.0.1:3000" "$WORK/server.log"
@@ -365,7 +376,7 @@ channel_homebrew() {
   log homebrew "installing formula $(basename "$formula")"
   brew install --formula "$formula"
   BREW_INSTALLED=true
-  env "${AUTH_ENV[@]}" \
+  env -u SEED_ASSETS_DIR "${AUTH_ENV[@]}" \
     PORT="$port" \
     STORAGE_PROVIDER=sqlite STORAGE_SQLITE_PATH="$WORK/data/storage.db" \
     libredb-studio >"$WORK/server.log" 2>&1 &

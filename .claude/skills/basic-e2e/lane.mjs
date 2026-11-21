@@ -236,6 +236,8 @@ async function startStudio(seedPath) {
     WORKFLOW_LOCAL_DATA_DIR: join(data, "workflow"),
     LIBREDB_EMBEDDED_SAMPLE_PATH: join(data, "sample.libredb"),
     SQLITE_EMBEDDED_SAMPLE_PATH: join(data, "sample-employees.db"),
+    // The built-in samples' assets of the build under test (docs/DISTRIBUTION.md, "Built-in sample assets").
+    SEED_ASSETS_DIR: join(BUILD, "seed-assets"),
     SEED_CONFIG_PATH: seedPath,
     BE2E_AGENT_PASSWORD: SECRETS.agent,
   };

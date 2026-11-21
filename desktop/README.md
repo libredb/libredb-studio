@@ -36,7 +36,8 @@ desktop/
    `node server.js` from the bundled payload with `STORAGE_PROVIDER=sqlite` and
    `STORAGE_SQLITE_PATH` inside the per-user data directory
    (`$XDG_DATA_HOME/org.libredb.Studio` on Linux, `~/.var/app/org.libredb.Studio/data/...`
-   inside Flatpak).
+   inside Flatpak), and `SEED_ASSETS_DIR` at the payload's `seed-assets` directory, which holds
+   the built-in samples' assets ([DISTRIBUTION.md](../docs/DISTRIBUTION.md#built-in-sample-assets)).
 3. It polls `GET /api/db/health` until it answers 200 (30 s budget).
 4. It reads the admin password the server's zero-config first run (#109) wrote to
    `auth-bootstrap.json` in that data directory and navigates the webview to `/`.

@@ -55,6 +55,7 @@ import {
   resolveCacheDir,
   resolveLedgerDir,
   resolvePathVariables,
+  seedAssetsEnv,
   sha256File,
 } from "./lib/launcher-utils.mjs";
 
@@ -338,6 +339,12 @@ function startServer(payloadDir, port, host) {
   // per-user directory keeps one history across folders and upgrades; an operator
   // who sets the variable keeps whatever they set.
   if (!env.WORKFLOW_LOCAL_DATA_DIR) env.WORKFLOW_LOCAL_DATA_DIR = resolveLedgerDir(os.homedir());
+  // The built-in samples' assets ship in the payload, and the server reads them from SEED_ASSETS_DIR
+  // (docs/DISTRIBUTION.md, "Built-in sample assets"), unless the operator set a directory of their own.
+  // Presence is read from process.env, which is case-insensitive on Windows: env is a plain-object copy
+  // that keeps each key's own case, so a seed_assets_dir there would miss env.SEED_ASSETS_DIR, and
+  // spawn on Windows keeps only the first of two keys differing in case, which would be the default.
+  Object.assign(env, seedAssetsEnv(payloadDir, process.env.SEED_ASSETS_DIR));
   // The MCP endpoint's canonical address (#246), which every token is bound to: derived from the
   // address and port this server is about to take, unless the operator set one, such as a public
   // address behind a reverse proxy.

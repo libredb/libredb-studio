@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { typeIdRefusal } from "@/lib/db/type-id";
+import { SAMPLES } from "@/lib/seed/samples";
+import basePathConfig from "../../playwright.base-path.config";
 import config from "../../playwright.config";
 
 // Every spec signs in as the same shared account, and the server keeps one "query" rate-limit
@@ -232,6 +235,37 @@ describe("every server waits for the one cold build with a budget sized for a CI
         command: server.command,
         timeout: 300_000,
       });
+    }
+  });
+});
+
+// The built-in samples' assets are read from SEED_ASSETS_DIR (docs/DISTRIBUTION.md, "Built-in sample
+// assets"), so every Studio server an e2e suite starts names this checkout's own directory, and a value a
+// developer exported never changes what a suite checks (Playwright puts a webServer's env over the caller's).
+describe("every Studio server the e2e suites start names this checkout's seed assets directory", () => {
+  const checkoutSeedAssets = path.resolve(import.meta.dir, "../../seed-assets");
+  const studioServers = (suite: typeof config, name: string) =>
+    (Array.isArray(suite.webServer) ? suite.webServer : suite.webServer ? [suite.webServer] : [])
+      .filter((server) => /\bbun start\b/.test(server.command ?? ""))
+      .map((server) => ({ label: `${name} ${server.url}`, server }));
+  const servers = [...studioServers(config, "main"), ...studioServers(basePathConfig, "base-path")];
+
+  test("the main and base-path suites each start at least one Studio server", () => {
+    expect(studioServers(config, "main").length).toBeGreaterThan(0);
+    expect(studioServers(basePathConfig, "base-path").length).toBeGreaterThan(0);
+  });
+
+  test.each(servers.map(({ label, server }) => [label, server] as const))(
+    "%s sets SEED_ASSETS_DIR to the checkout's seed-assets",
+    (_label, server) => {
+      expect(server.env?.SEED_ASSETS_DIR).toBe(checkoutSeedAssets);
+    },
+  );
+
+  test("that directory holds every asset the sample table pins", () => {
+    expect(SAMPLES.size).toBeGreaterThan(0);
+    for (const spec of SAMPLES.values()) {
+      expect(existsSync(path.join(checkoutSeedAssets, spec.asset))).toBe(true);
     }
   });
 });

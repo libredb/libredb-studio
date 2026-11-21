@@ -26,8 +26,10 @@
 #                                      pruned to the addons this target loads
 #   - THIRD_PARTY_NOTICES.txt       -> notices for the crates compiled into
 #                                      db2-node's addons
-#   - seed-assets/                  -> vendored sample DB templates (fs-read
-#                                      at runtime, not seen by file tracing)
+#   - seed-assets/                  -> the built-in samples' assets (read at
+#                                      runtime from SEED_ASSETS_DIR, which
+#                                      every launcher sets; not seen by file
+#                                      tracing)
 #   - data/                         -> default SQLite storage directory
 #
 # Usage: scripts/build-standalone-payload.sh <output-dir> [--smoke]
@@ -289,9 +291,11 @@ fi
 # root, next to LICENSE (prune-standalone-payload.sh keeps both).
 cp THIRD_PARTY_NOTICES.txt "$PAYLOAD_DIR/THIRD_PARTY_NOTICES.txt"
 
-# The built-in sample assets (seed-assets/): read at runtime relative to the
-# payload root, so output file tracing never includes them: copy explicitly
-# (mirrors the Dockerfile runner stage COPY). Every asset the sample table
+# The built-in sample assets (seed-assets/): read at runtime from
+# SEED_ASSETS_DIR, which every launcher sets to this directory of its payload
+# (docs/DISTRIBUTION.md, "Built-in sample assets"), so output file tracing
+# never includes them: copy explicitly (mirrors the Dockerfile runner stage
+# COPY). Every asset the sample table
 # (src/lib/seed/samples.ts) pins must be here.
 for asset in seed-assets/sqlite/employee.db seed-assets/libredb/sample.libredb; do
   if [ ! -f "$asset" ]; then
@@ -323,11 +327,13 @@ if [ "$RUN_SMOKE" = "true" ]; then
   mkdir -p "$SMOKE_DIR" "$STORAGE_DIR"
   # The native node.exe on Windows cannot resolve Git Bash's POSIX-style
   # mktemp paths (/tmp/... would land on the current drive root), so every
-  # path handed to node goes through cygpath there; NODE_STORAGE_DIR stays
-  # the plain POSIX path everywhere else.
+  # path handed to node goes through cygpath there; NODE_STORAGE_DIR and
+  # NODE_SEED_ASSETS_DIR stay the plain POSIX paths everywhere else.
   NODE_STORAGE_DIR="$STORAGE_DIR"
+  NODE_SEED_ASSETS_DIR="$SMOKE_DIR/seed-assets"
   if [ "$OS" = "win32" ]; then
     NODE_STORAGE_DIR="$(cygpath -w "$STORAGE_DIR")"
+    NODE_SEED_ASSETS_DIR="$(cygpath -w "$SMOKE_DIR/seed-assets")"
     # Flat zip: nothing to strip. Use the System32 bsdtar explicitly - it
     # reads zip natively, while Git Bash's own `tar` is GNU tar (no zip).
     # Env-var casing differs between shells (SystemRoot vs SYSTEMROOT).
@@ -362,6 +368,7 @@ if [ "$RUN_SMOKE" = "true" ]; then
       PORT="$PORT" \
       STORAGE_PROVIDER=sqlite \
       STORAGE_SQLITE_PATH="$NODE_STORAGE_DIR/storage.db" \
+      SEED_ASSETS_DIR="$NODE_SEED_ASSETS_DIR" \
       node server.js
   ) >"$STAGE_DIR/server.log" 2>&1 &
   SERVER_PID=$!

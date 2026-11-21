@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 import { LAUNCH_E2E_ENV } from "./e2e/helpers/launch-token";
 
@@ -35,6 +36,11 @@ const unknownSeedPort = Number(process.env.E2E_UNKNOWN_SEED_PORT ?? 3015);
 // GitHub runners: the build's first output came 65 to 114 s after the command started in ten runs of main, and
 // two runs were stopped at the earlier 120 s before the build finished.
 const SERVER_START_TIMEOUT_MS = 300_000;
+
+// The built-in samples' assets, which the server reads from SEED_ASSETS_DIR (docs/DISTRIBUTION.md, "Built-in sample
+// assets"): every Studio server below names this checkout's own directory, so a value the caller exported never changes
+// what the suite checks.
+const seedAssetsEnv = { SEED_ASSETS_DIR: path.join(__dirname, "seed-assets") };
 
 const testCredentials = {
   JWT_SECRET: "test-jwt-secret-for-e2e-tests-32ch",
@@ -304,7 +310,7 @@ export default defineConfig({
       url: `http://localhost:${port}`,
       reuseExistingServer: !process.env.CI,
       timeout: SERVER_START_TIMEOUT_MS,
-      env: { PORT: String(port), RATE_LIMIT_QUERY_MAX: "10000", ...testCredentials },
+      env: { PORT: String(port), RATE_LIMIT_QUERY_MAX: "10000", ...seedAssetsEnv, ...testCredentials },
     },
     {
       // Reuses the SAME build output as the server above - it only ever needs to wait for that
@@ -332,6 +338,7 @@ export default defineConfig({
         PORT: String(offlinePort),
         STORAGE_SQLITE_PATH: "./data-e2e-offline/libredb-storage.db",
         RATE_LIMIT_QUERY_MAX: "10000",
+        ...seedAssetsEnv,
         ...testCredentials,
       },
     },
@@ -355,6 +362,7 @@ export default defineConfig({
         // cases of passkey.spec.ts share one client budget; the defaults (5 and 10) would refuse them.
         RATE_LIMIT_LOGIN_MAX: "100",
         RATE_LIMIT_PASSKEY_MAX: "100",
+        ...seedAssetsEnv,
         ...testCredentials,
       },
     },
@@ -377,6 +385,7 @@ export default defineConfig({
         // provokes shares one client budget with every retry.
         RATE_LIMIT_LOGIN_MAX: "100",
         ...LAUNCH_E2E_ENV,
+        ...seedAssetsEnv,
         ...testCredentials,
       },
     },
@@ -395,6 +404,7 @@ export default defineConfig({
         LIBREDB_EMBEDDED_SAMPLE: "false",
         SQLITE_EMBEDDED_SAMPLE: "false",
         FIRESTORE_EMULATOR_HOST: `127.0.0.1:${firestoreStubPort}`,
+        ...seedAssetsEnv,
         ...testCredentials,
       },
     },
@@ -413,6 +423,7 @@ export default defineConfig({
         RATE_LIMIT_QUERY_MAX: "10000",
         LIBREDB_EMBEDDED_SAMPLE: "false",
         SQLITE_EMBEDDED_SAMPLE: "false",
+        ...seedAssetsEnv,
         ...testCredentials,
       },
     },

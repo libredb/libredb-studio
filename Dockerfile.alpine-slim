@@ -205,7 +205,9 @@ COPY --chown=nextjs:nodejs --from=builder /usr/src/app/.next/standalone ./
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/.next/static ./.next/static
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/node_modules/@libredb/libredb ./node_modules/@libredb/libredb
+# The built-in samples' assets, which SEED_ASSETS_DIR names for the server.
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/seed-assets ./seed-assets
+ENV SEED_ASSETS_DIR=/app/seed-assets
 # Notices for the Rust crates compiled into db2-node's addons, which its npm
 # tarball does not carry (keep scripts/build-standalone-payload.sh in sync).
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/THIRD_PARTY_NOTICES.txt ./THIRD_PARTY_NOTICES.txt

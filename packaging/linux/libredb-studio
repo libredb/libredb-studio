@@ -19,6 +19,14 @@
 set -eu
 
 LIBREDB_STUDIO_HOME="${LIBREDB_STUDIO_HOME:-/usr/lib/libredb-studio}"
+# server.js changes into its own directory before it reads SEED_ASSETS_DIR, so a
+# relative home would hand it a path it resolves against the payload instead of
+# the caller's directory. Resolve it once here; under set -eu a home that does
+# not exist stops the wrapper with cd's own error.
+case "$LIBREDB_STUDIO_HOME" in
+  /*) ;;
+  *) LIBREDB_STUDIO_HOME="$(CDPATH= cd -- "$LIBREDB_STUDIO_HOME" && pwd -P)" ;;
+esac
 
 # Local-first bind (issue #134): a direct run must not leak whatever HOSTNAME
 # the calling shell happens to have - Docker exports HOSTNAME=<container-id>
@@ -37,6 +45,13 @@ fi
 if [ -z "${STORAGE_SQLITE_PATH:-}" ]; then
   STORAGE_SQLITE_PATH="${XDG_STATE_HOME:-${HOME:-/root}/.local/state}/libredb-studio/libredb-storage.db"
   export STORAGE_SQLITE_PATH
+fi
+
+# The built-in samples' assets ship in the payload; the server reads them from
+# SEED_ASSETS_DIR (docs/DISTRIBUTION.md, "Built-in sample assets").
+if [ -z "${SEED_ASSETS_DIR:-}" ]; then
+  SEED_ASSETS_DIR="$LIBREDB_STUDIO_HOME/seed-assets"
+  export SEED_ASSETS_DIR
 fi
 
 exec "$LIBREDB_STUDIO_HOME/node/bin/node" "$LIBREDB_STUDIO_HOME/server.js" "$@"

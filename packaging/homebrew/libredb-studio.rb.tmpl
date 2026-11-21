@@ -80,6 +80,11 @@ class LibredbStudio < Formula
       if [ -z "${STORAGE_SQLITE_PATH:-}" ]; then
         export STORAGE_SQLITE_PATH="#{var}/libredb-studio/libredb-storage.db"
       fi
+      # The built-in samples' assets ship in the payload (libexec/seed-assets);
+      # the server reads them from SEED_ASSETS_DIR.
+      if [ -z "${SEED_ASSETS_DIR:-}" ]; then
+        export SEED_ASSETS_DIR="#{libexec}/seed-assets"
+      fi
       exec "#{Formula["node@24"].opt_bin}/node" "#{libexec}/server.js" "$@"
     SCRIPT
     (bin/"libredb-studio").chmod 0755

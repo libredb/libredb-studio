@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 const prefix = "/~/libredb";
@@ -37,6 +38,9 @@ export default defineConfig({
         STORAGE_SQLITE_PATH: "./data-e2e-base-path/libredb-storage.db",
         PASSKEY_ORIGIN: `http://localhost:${proxyPort}`,
         NEXT_TELEMETRY_DISABLED: "1",
+        // The checkout's own built-in sample assets (docs/DISTRIBUTION.md, "Built-in sample assets"), whatever the
+        // caller exported.
+        SEED_ASSETS_DIR: path.join(__dirname, "seed-assets"),
       },
     },
     {

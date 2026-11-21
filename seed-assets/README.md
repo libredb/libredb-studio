@@ -5,7 +5,7 @@ On a standalone install each one is copied into the data directory at boot and a
 
 This directory ships inside every distribution payload (Docker image, standalone tarball, npx, deb/rpm, snap, Homebrew) as a top-level `seed-assets/` directory next to `server.js`.
 It is copied explicitly by the `Dockerfile` and `scripts/build-standalone-payload.sh`, because Next.js output file tracing cannot see runtime `fs` reads.
-The server reads it from `SEED_ASSETS_DIR`, by default `<working directory>/seed-assets`.
+The server reads it from `SEED_ASSETS_DIR`, which every launcher sets to this directory in its payload ([`docs/DISTRIBUTION.md`, "Built-in sample assets"](../docs/DISTRIBUTION.md#built-in-sample-assets)); when nothing sets it, the server reads `<working directory>/seed-assets`.
 
 | Asset | Sample connection | Made by | Attribution |
 |-------|-------------------|---------|-------------|

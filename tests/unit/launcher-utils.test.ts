@@ -26,11 +26,12 @@ import {
   resolveCacheDir,
   resolveLedgerDir,
   resolvePathVariables,
+  seedAssetsEnv,
   sha256File,
   URL_PATH_VARIABLES,
   OTHER_PROGRAM_PATH_VARIABLES,
 } from "../../bin/lib/launcher-utils.mjs";
-import { describeIf, missingUnixTool, resolveUnixTool } from "../helpers/posix-tools";
+import { describeIf, missingUnixTool, resolveUnixTool, testIf } from "../helpers/posix-tools";
 import { howItFailed } from "../helpers/spawn-outcome";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-utils-test-"));
@@ -724,6 +725,32 @@ describe("resolvePathVariables", () => {
   });
 });
 
+describe("seedAssetsEnv", () => {
+  const payloadDir = path.join(tempDir, "payload");
+
+  test("points the server at the payload's seed-assets when the operator set none", () => {
+    expect(seedAssetsEnv(payloadDir, undefined)).toEqual({ SEED_ASSETS_DIR: path.join(payloadDir, "seed-assets") });
+  });
+
+  test("treats an empty or whitespace-only value as unset", () => {
+    for (const current of ["", "   ", "\t\n"]) {
+      expect(seedAssetsEnv(payloadDir, current)).toEqual({ SEED_ASSETS_DIR: path.join(payloadDir, "seed-assets") });
+    }
+  });
+
+  test("keeps the operator's own value", () => {
+    expect(seedAssetsEnv(payloadDir, path.join(tempDir, "own-assets"))).toEqual({});
+  });
+
+  test("hands an absolute path when the payload directory is relative", () => {
+    // A relative HOME gives a relative payload directory, and server.js changes into it before it reads
+    // SEED_ASSETS_DIR, so the value is resolved here against the launcher's directory, as spawn resolves cwd.
+    expect(seedAssetsEnv(path.join("rel-home", "payload"), undefined)).toEqual({
+      SEED_ASSETS_DIR: path.resolve("rel-home", "payload", "seed-assets"),
+    });
+  });
+});
+
 describe("resolveBindAddress (issue #813)", () => {
   /*
     Named rather than numbered, because the rows move: the pair carrying the issue
@@ -1041,4 +1068,91 @@ describe("launcher path variables", () => {
     expect(output).toContain(`SEED=${path.join(fs.realpathSync(invokedFrom), "seed-connections.yaml")}\n`);
     expect(output).toContain("BASE=/tools/libredb\n");
   });
+});
+
+/**
+ * The seed assets directory the launcher hands the server (docs/DISTRIBUTION.md, "Built-in sample
+ * assets"), read back from a real launcher process on the harness of `launcher MCP URL` above: the
+ * stub payload prints what it was given.
+ */
+describe("launcher seed assets directory", () => {
+  /**
+   * With `relativeHome`, os.homedir() reports the fixture home by its bare name and the launcher runs from
+   * the home's parent directory, as with a relative HOME on POSIX, where os.homedir() returns HOME as given.
+   */
+  function launch(
+    overrides: Record<string, string> = {},
+    cwd?: string,
+    { relativeHome = false } = {},
+  ): { output: string; payload: string } {
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
+    expect(assessNodeRuntime(ambient).message).toBeNull();
+
+    const home = fs.mkdtempSync(path.join(tempDir, "seed-assets-"));
+    if (relativeHome) cwd = path.dirname(home);
+    const root = path.resolve(import.meta.dir, "../..");
+    const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+    const payload = path.join(home, ".libredb-studio", version, "payload");
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(path.join(payload, "server.js"), 'console.log("SEED_ASSETS=" + process.env.SEED_ASSETS_DIR);');
+    const preload = path.join(home, "home-fixture.mjs");
+    fs.writeFileSync(
+      preload,
+      'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
+        `os.homedir = () => ${JSON.stringify(relativeHome ? path.basename(home) : home)}; syncBuiltinESMExports();`,
+    );
+    const env = { ...process.env };
+    for (const name of ["PORT", "LIBREDB_STUDIO_ARCHIVE", "LIBREDB_BIND", "HOSTNAME", "SEED_ASSETS_DIR"])
+      delete env[name];
+    Object.assign(env, overrides);
+    const run = Bun.spawnSync([node!, "--import", pathToFileURL(preload).href, path.join(root, "bin/studio.js")], {
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.exitCode, `launcher stderr: ${run.stderr.toString()}`).toBe(0);
+    return { output: run.stdout.toString(), payload };
+  }
+
+  test("hands the server the payload's seed-assets when the operator set none", () => {
+    const { output, payload } = launch();
+    expect(output).toContain(`SEED_ASSETS=${path.join(payload, "seed-assets")}\n`);
+  });
+
+  test("hands an absolute seed-assets path when the home directory is relative", () => {
+    const { output, payload } = launch({}, undefined, { relativeHome: true });
+    // realpath: on macOS the temp directory is a symlink, and process.cwd() reports its target.
+    expect(output).toContain(`SEED_ASSETS=${path.join(fs.realpathSync(payload), "seed-assets")}\n`);
+  });
+
+  test("treats a whitespace-only SEED_ASSETS_DIR as unset", () => {
+    const { output, payload } = launch({ SEED_ASSETS_DIR: "   " });
+    expect(output).toContain(`SEED_ASSETS=${path.join(payload, "seed-assets")}\n`);
+  });
+
+  test("leaves an operator's absolute SEED_ASSETS_DIR untouched", () => {
+    const own = path.join(tempDir, "operator-seed-assets");
+    expect(launch({ SEED_ASSETS_DIR: own }).output).toContain(`SEED_ASSETS=${own}\n`);
+  });
+
+  test("resolves an operator's relative SEED_ASSETS_DIR against the directory the launcher was run from", () => {
+    const invokedFrom = fs.mkdtempSync(path.join(tempDir, "invoked-"));
+    const { output } = launch({ SEED_ASSETS_DIR: "./my-assets" }, invokedFrom);
+    // realpath: on macOS the temp directory is a symlink, and process.cwd() reports its target.
+    expect(output).toContain(`SEED_ASSETS=${path.join(fs.realpathSync(invokedFrom), "my-assets")}\n`);
+  });
+
+  // Only Windows reads environment names without letter case, and only there does spawn keep one of two names
+  // differing in case: a plain-object read of SEED_ASSETS_DIR would miss this value, and the default would win.
+  testIf(
+    process.platform === "win32" ? null : "letter case in environment names: only Windows ignores it",
+    "keeps an operator's seed_assets_dir in another letter case",
+    () => {
+      const own = path.join(tempDir, "operator-seed-assets-lowercase");
+      expect(launch({ seed_assets_dir: own }).output).toContain(`SEED_ASSETS=${own}\n`);
+    },
+  );
 });

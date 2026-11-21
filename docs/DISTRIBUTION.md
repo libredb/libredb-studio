@@ -244,6 +244,26 @@ How each channel brings the server back after code 70:
 Platforms not listed here apply their own policy to a container that exits with a non-zero code.
 The VS Code extension does not run this server: its backend child runs no Next.js, keeps Node.js's own handling of an uncaught exception, and is restarted by the extension ([VSCODE_EXTENSION.md](VSCODE_EXTENSION.md)).
 
+## Built-in sample assets
+
+The two built-in samples are copied at boot from the `seed-assets` directory every payload ships beside `server.js` ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#built-in-sample-connections)).
+The server finds that directory through `SEED_ASSETS_DIR`, which every launcher sets to its own payload's `seed-assets` directory, as an absolute path.
+
+| Channel | What sets it | Where it points |
+|---|---|---|
+| Docker image, all three variants, and the Helm chart, the OpenShift operator and every catalog or template that runs it | The image's `ENV` | `/app/seed-assets` |
+| npx | `bin/studio.js` | `~/.libredb-studio/<version>/payload/seed-assets`, or `payload-local` in place of `payload` with `--archive` |
+| Homebrew, run directly and under `brew services` | The `libredb-studio` wrapper | The installed keg's `libexec/seed-assets` |
+| .deb, .rpm and AUR, under systemd and run directly | `/usr/bin/libredb-studio` | `/usr/lib/libredb-studio/seed-assets`, that is `$LIBREDB_STUDIO_HOME/seed-assets` |
+| Snap | Its launcher | `$SNAP/seed-assets` |
+| Windows (winget, Chocolatey, Scoop, portable zip) | `libredb-studio.exe` | The `seed-assets` directory beside it |
+| Desktop app (AppImage, Debian package, FlatPark) | The shell | The bundled payload's `seed-assets`, `/usr/lib/libredb-studio-desktop/payload/seed-assets` in the Debian package |
+
+Every launcher but the desktop app keeps a value the operator set, and an empty value counts as unset.
+The desktop app sets it on every start, as it does its storage path.
+When nothing sets it, the server reads `<working directory>/seed-assets`.
+A sample whose assets are not where it points is listed unavailable with its reason, and boot continues ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
+
 ## Release artifact naming
 
 Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Each release ships:
@@ -1409,9 +1429,8 @@ bash scripts/build-standalone-payload.sh dist --smoke
 # -> dist/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz
 ```
 
-`--smoke` boots the packed payload with `node server.js` and requires
-`GET /api/db/health` to return 200. Run the result via the npx launcher:
-`npx @libredb/studio --archive dist/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz`.
+`--smoke` boots the packed payload with `node server.js` and `SEED_ASSETS_DIR` at its `seed-assets`, and requires `GET /api/db/health` to return 200 and both built-in samples copied.
+Run the result via the npx launcher: `npx @libredb/studio --archive dist/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz`.
 
 ## VS Code extension (Marketplace)
 
@@ -1549,6 +1568,11 @@ macOS, missing artifact) and prints a summary. Where each channel runs in CI:
 | deb, rpm | `release-artifacts.yml` linux-packages job (amd64; alongside the zero-config smoke) |
 | snap | `release-artifacts.yml` snap job (amd64; runs before the store publish) |
 | homebrew | not in CI (linux runners) — run locally on macOS |
+
+The next-dev row's servers get this checkout's `seed-assets` from `playwright.config.ts`, the tarball channel, which has no launcher, gets it from the script, as a user running `server.js` directly would, and the docker channel runs on the image's `ENV`.
+Every channel the script starts through a launcher runs with no inherited `SEED_ASSETS_DIR`, so it runs on the value its launcher sets ([Built-in sample assets](#built-in-sample-assets)), and a wrong value fails it.
+A launcher that sets nothing is not caught here yet: the server still falls back to `<working directory>/seed-assets`, and `server.js` changes into its payload, so the fallback finds the same directory.
+Until that fallback is removed, each launcher's own unit tests are what prove it sets the value.
 
 ### First-release validation runbook
 
