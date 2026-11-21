@@ -15,7 +15,8 @@
  *    of the answer to its read;
  *  - in a numbered database, a reset or the same header in place of the answer to the `SELECT` ioredis sends itself
  *    to select that database again on the connection that follows a reset;
- *  - in a numbered database, a command sent after the connection that follows a reset opens and before it is ready.
+ *  - in a numbered database, a command sent after the connection that follows a reset opens and before it is ready,
+ *    and that connection's `SELECT` of the database refused by the server.
  *
  * Each case records what the caller got, what the next command got, the `[Redis]` warnings the provider logged, and
  * every error that escaped a call instead of reaching its caller (uncaughtException, unhandledRejection). The test runs this file twice, under Bun and, bundled
@@ -604,5 +605,30 @@ cases.push(
     { fields: { database: "1" } },
   ),
 );
+cases.push(
+  await runCase(
+    "the server refuses the reconnect's SELECT of database 1",
+    false,
+    async (provider, peer) => {
+      await provider.connect();
+      // Every command after the first connection, but the SELECT the server refuses, that ran in database 0.
+      const ran: string[] = [];
+      peer.answer = (command, connection) => {
+        if (peer.connections.indexOf(connection) === 0) return undefined;
+        const verb = (command[0] ?? "").toUpperCase();
+        if (verb === "SELECT") return "-ERR DB index is out of range\r\n";
+        if (verb === "SET" || verb === "GET") ran.push(verb);
+        return undefined;
+      };
+      peer.connections[0].raw.resetAndDestroy();
+      await untilLogged(4_000);
+      const call = await settle(4_000, () => provider.query("SET k v"));
+      const next = await settle(4_000, () => provider.query("GET k"));
+      return { call, next, delivered: ran.length };
+    },
+    { fields: { database: "1" } },
+  ),
+);
+
 console.log(JSON.stringify({ runtime: typeof Bun === "undefined" ? "node" : "bun", cases }));
 process.exit(0);

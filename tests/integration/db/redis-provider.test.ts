@@ -430,6 +430,9 @@ let scanPages: string[] | null = null;
  */
 const scanArgv: Array<{ cursor: string | number; args: (string | number)[] }> = [];
 
+/** When set, called as `SCAN` reaches the server, before it answers: a test's way to act while a read is in flight. */
+let beforeScan: (() => void) | null = null;
+
 /**
  * The keys the walk tests page through, in the order the mock's scan answers them.
  *
@@ -625,6 +628,7 @@ mock.module("ioredis", () => {
     }
 
     async info() {
+      if (this._state.disconnected) throw new Error("Connection is closed.");
       if (infoRefusal !== null) throw new Error(infoRefusal);
       return infoOverride ?? MOCK_INFO_STRING;
     }
@@ -667,6 +671,8 @@ mock.module("ioredis", () => {
     }
 
     async scan(cursor: string | number, ...args: (string | number)[]): Promise<[string, string[]]> {
+      beforeScan?.();
+      if (this._state.disconnected) throw new Error("Connection is closed.");
       scanCalls += 1;
       scanArgv.push({ cursor, args });
       if (scanRefusal !== null) throw new Error(scanRefusal);
@@ -750,6 +756,8 @@ mock.module("ioredis", () => {
 
     /** The server's canned answer to one command, before the driver decodes it. */
     private async answer(command: string, ...args: string[]): Promise<unknown> {
+      // A closed client fails every command without sending it, with ioredis's own sentence.
+      if (this._state.disconnected) throw new Error("Connection is closed.");
       const cmd = command.toUpperCase();
       capturedCalls.push({ command: cmd, args });
       // Simulate a Redis-side error (e.g. unknown command / wrong arity)
@@ -1135,6 +1143,109 @@ describe("RedisProvider", () => {
         connectFailure = [replyError("WRONGPASS invalid username-password pair or user is disabled.")];
         await expect(provider.countObjects(["0"])).rejects.toBeInstanceOf(AuthenticationError);
       });
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // A reconnect's SELECT of the database, refused by the server
+  // --------------------------------------------------------------------------
+
+  /*
+   * ioredis sends the SELECT of the `db` option itself on every connection, and a refusal of it is only an `error`
+   * event: the connection goes on in database 0. After the connect, the server can refuse it on a reconnect when its ACL
+   * or its database count changed in between, so the provider closes that client, and every command on it fails with the
+   * refusal instead of running in database 0 (docs/providers/redis.md section 4.6).
+   */
+  describe("a reconnect's SELECT of the database refused by the server", () => {
+    /** The error event ioredis emits for its own SELECT the server refused, carrying the command it answered. */
+    const refusedSelect = (message: string, database: number): Error =>
+      Object.assign(replyError(message), { command: { name: "select", args: [String(database)] } });
+
+    afterEach(() => {
+      beforeScan = null;
+    });
+
+    test("closes the session's connection, and every later command fails with the refusal, sending nothing", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "1" });
+      errorListeners.length = 0;
+      openedClients.length = 0;
+      await provider.connect();
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        errorListeners[0][0](refusedSelect("ERR DB index is out of range", 1));
+        expect(warn.mock.calls).toEqual([["[Redis] ERR DB index is out of range", { provider: "redis" }]]);
+      } finally {
+        warn.mockRestore();
+      }
+      expect(openedClients).toEqual([{ database: 1, disconnected: true }]);
+
+      capturedCalls.length = 0;
+      const refusal = "Redis refused database 1 after a reconnect: ERR DB index is out of range";
+      const failureOf = (command: string): Promise<Error> =>
+        provider.query(command).then(
+          () => new Error("query() resolved"),
+          (failure: Error) => failure,
+        );
+      const write = await failureOf("SET k v");
+      expect(write).toBeInstanceOf(QueryError);
+      expect(write.message).toBe(refusal);
+      const read = await failureOf("GET k");
+      expect(read).toBeInstanceOf(QueryError);
+      expect(read.message).toBe(refusal);
+      // The reads the provider makes for itself on the session's connection fail with it too.
+      await expect(provider.getOverview()).rejects.toThrow(refusal);
+      await expect(provider.listContainers()).rejects.toThrow(refusal);
+      expect(capturedCalls).toEqual([]);
+    });
+
+    test("fails an object read whose own connection's SELECT is refused on a reconnect with the refusal", async () => {
+      await provider.connect();
+      scanCalls = 0;
+      beforeScan = () => errorListeners[errorListeners.length - 1][0](refusedSelect("ERR DB index is out of range", 1));
+      const error = await provider.scanKeysPage({ cursor: "0", count: 10, database: 1 }).then(
+        () => new Error("scanKeysPage() resolved"),
+        (failure: Error) => failure,
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Redis refused database 1 after a reconnect: ERR DB index is out of range");
+      expect(scanCalls).toBe(0);
+    });
+
+    test("on an agent-mode handle, names the command refused and never the ACL user", async () => {
+      const agent = new RedisProvider({ ...baseConfig, database: "1" }, {}, { readOnly: true, sendsStatements: false });
+      errorListeners.length = 0;
+      await agent.connect();
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        errorListeners[0][0](
+          refusedSelect("NOPERM User agent_reader has no permissions to run the 'select' command", 1),
+        );
+      } finally {
+        warn.mockRestore();
+      }
+      await expect(agent.getOverview()).rejects.toThrow(
+        "Redis refused database 1 after a reconnect: the connection's ACL user does not hold the 'select' command it needs (NOPERM).",
+      );
+      await agent.disconnect();
+    });
+
+    test("a reset, or a refusal of any other command, is only logged and the connection keeps serving", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "1" });
+      errorListeners.length = 0;
+      openedClients.length = 0;
+      await provider.connect();
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        errorListeners[0][0](Object.assign(new Error("Connection is closed."), { command: { name: "select" } }));
+        errorListeners[0][0](
+          Object.assign(replyError("NOAUTH Authentication required."), { command: { name: "auth", args: [] } }),
+        );
+        expect(warn).toHaveBeenCalledTimes(2);
+      } finally {
+        warn.mockRestore();
+      }
+      expect(openedClients).toEqual([{ database: 1, disconnected: false }]);
+      expect((await provider.query("GET k")).rows).toEqual([{ result: "hello-world" }]);
     });
   });
 

@@ -608,6 +608,13 @@ A reset before the ready check leaves that `SELECT` unsettled with the rest of t
 ioredis can also send a `SELECT` of its own once a connection is ready, when a command it queued was recorded in another database; the patch gives that one the same handler, so a close or the fatal-error path fails it as an `error` event instead of a rejection nobody handles.
 Since `openClient()` gives every connection that reconnects its `db` option, Studio's connections do not reach that path.
 
+The server can also refuse that `SELECT`, when the user's ACL or the server's database count changed between two connections.
+ioredis then goes on in database 0, and a command sent after it would run there.
+So `openClient()` closes the client as soon as the server refuses that `SELECT` after the connect, and ioredis writes none of the commands it queued.
+Every command on that client, the one waiting and every later one, fails with a `QueryError` (400) that names the refusal, *"Redis refused database 1 after a reconnect: ERR DB index is out of range"*, instead of running in database 0.
+On an agent-mode handle a `NOPERM` reply names the command and never the ACL user, as for the `SELECT` of `connect()`.
+The refusal is logged as `[Redis] <reply>`.
+The session's commands keep failing with it until the connection is opened again, for example by disconnecting and connecting, which sends the `SELECT` of `connect()` again: that connect then opens the database, or is refused as *"Redis refused database 1: ..."*.
 What the user sees:
 
 | When the reset arrives | What the user sees |
@@ -618,9 +625,10 @@ What the user sees:
 | While a read the provider makes for itself on the shared connection waits: the database list's `CONFIG GET`, the overview's `INFO` and `DBSIZE`, the performance and storage panels' `INFO`, or the transaction check's `PING` or `DISCARD` | `QueryError` (400), *"Redis error: Connection is closed."*; the monitoring page shows the message on the panel it belongs to |
 | While the session list's `CLIENT LIST` or the slow log's `SLOWLOG GET` waits | an empty list with no error, as for any failure of those two reads ([§7](#7-monitoring--health)) |
 | While the `SELECT` ioredis sends itself on the connection that follows a reset waits | nothing until the next command, which is answered in the same database; the error is logged |
+| When the server refuses the `SELECT` ioredis sends itself on the connection that follows a reset | `QueryError` (400), *"Redis refused database 1 after a reconnect: "* and the server's reply, for the command waiting and every later one on that connection, which is closed: none of them runs in database 0; the refusal is logged |
 | While the agent's one-command connection waits for its answer | the driver's own error, *"Connection is closed."*; that connection ends instead of reconnecting, so it never sent a command again |
 
-[`redis-driver.test.ts`](../../tests/integration/db/redis-driver.test.ts) holds the editor command, the ready check, the `SELECT` and the read-only proof, an object read's `SELECT` and `SCAN`, the idle connection, a reset that follows the record, a command sent while the client reconnects after the record or after a reset, a reset while an editor command or an object read waits, a reset or an unreadable reply in place of the answer to the `SELECT` ioredis sends itself after a reset, and a command sent in a numbered database after the next connection opens and before it is ready, on Bun and on Node, and [`redis-nested-reply-live.ts`](../../tests/live/redis-nested-reply-live.ts) holds a nested reply from a real server ([§11.2](#112-coverage)).
+[`redis-driver.test.ts`](../../tests/integration/db/redis-driver.test.ts) holds the editor command, the ready check, the `SELECT` and the read-only proof, an object read's `SELECT` and `SCAN`, the idle connection, a reset that follows the record, a command sent while the client reconnects after the record or after a reset, a reset while an editor command or an object read waits, a reset or an unreadable reply in place of the answer to the `SELECT` ioredis sends itself after a reset, a command sent in a numbered database after the next connection opens and before it is ready, and that `SELECT` refused by the server, on Bun and on Node, and [`redis-nested-reply-live.ts`](../../tests/live/redis-nested-reply-live.ts) holds a nested reply from a real server ([§11.2](#112-coverage)).
 An application that embeds `@libredb/studio` installs ioredis itself, unpatched, unless it applies the same patch.
 
 ### Connection string
@@ -2034,6 +2042,7 @@ The provider raises the shared error classes from
 | An object read's own command failed by the server or the driver | `QueryError` - *"Redis error: …"*; on an agent-mode handle a server refusal is *"Redis refused the read: …"*, naming the command and never the ACL user |
 | A read the provider makes for itself on the shared connection (the database list, the overview, the performance and storage panels, the transaction check) failed by the server or the driver | `QueryError` - *"Redis error: …"* ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
 | A reset while a command waits | `QueryError` - *"Redis error: Connection is closed."*, and the command is not sent again on the reconnected connection; during the `SELECT` of `connect()` or of an object read's own connection, `ConnectionError`, *"Failed to connect to Redis: Connection is closed."*; on the session list and the slow log, an empty list; on the agent's one-command connection, the driver's own error ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
+| The server refuses the `SELECT` of the connection's database on a reconnect (its ACL or its database count changed) | `QueryError` - *"Redis refused database N after a reconnect: …"* for every command on that connection, which is closed so none runs in database 0; on an agent-mode handle a `NOPERM` names the command and never the ACL user ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
 | A TLS record the client cannot decrypt, while a command waits | `QueryError` - *"Redis error: "* and the TLS error, at once, and the connection reconnects; during `connect()`, `ConnectionError`; on the agent's one-command connection, the driver's own error ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) |
 
 All `QueryError`s carry the `QUERY_ERROR` API code and surface to the client as `400 Bad Request`.
@@ -2085,7 +2094,7 @@ Each case checks what the caller got and that no error escaped a call, and each 
 The cases with the record on an idle connection or in place of a command's answer also check what was logged.
 The cases with a command in flight or sent while the client reconnects check how many times the peer received it: once, after the record and after a reset alike.
 The cases that fail the `SELECT` ioredis sends itself after a reset check that the next command runs in the same database.
-In database 1, one case sends a command after the next connection opens and before it is ready and checks that it runs in database 1.
+In database 1, one case sends a command after the next connection opens and before it is ready and checks that it runs in database 1, and one has the server refuse that connection's `SELECT` and checks that the command waiting and the next one fail with the refusal and that the peer received neither.
 CI runs it in the suite on Node 24 and again on the Node release the image ships.
 [`tests/live/redis-nested-reply-live.ts`](../../tests/live/redis-nested-reply-live.ts) reads a deeply nested reply from a real redis 8.10.2 under Bun and Node, in the Functional Smoke job.
 

@@ -310,6 +310,18 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
     }
   });
 
+  test("a reconnect whose SELECT of the database is refused fails the next commands by name, and none of them runs", () => {
+    const refusal = "QueryError: Redis refused database 1 after a reconnect: ERR DB index is out of range";
+    for (const report of reports) {
+      const refused = find(report, "the server refuses the reconnect's SELECT of database 1");
+      expect(refused.logged).toContain("[Redis] ERR DB index is out of range");
+      expect(refused.call).toBe(refusal);
+      expect(refused.next).toBe(refusal);
+      expect(refused.delivered).toBe(0);
+      expect(refused.escaped).toEqual([]);
+    }
+  });
+
   test("a reset while an object read waits fails the read with the editor's named error, once", () => {
     for (const report of reports) {
       const read = find(report, "reset while an object read waits");

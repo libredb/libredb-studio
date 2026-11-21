@@ -1100,11 +1100,20 @@ function connectFailure(cause: unknown, host: string | undefined, port: number):
 }
 
 /**
- * A command the driver or the server failed, worded as the editor words its own: `"Redis error: "` and the message.
- * A reset while the command waited is one such failure, since ioredis does not send it again (`redisOptions()`).
+ * Per client, why it was closed when the server refused the `SELECT` that puts a reconnect in the client's database:
+ * the message of the QueryError every command on it then fails with. Set by `openClient`'s `error` listener.
  */
-function redisError(cause: unknown): QueryError {
-  return new QueryError(`Redis error: ${cause instanceof Error ? cause.message : String(cause)}`, "redis");
+const refusedDatabases = new WeakMap<Redis, string>();
+
+/**
+ * A command the driver or the server failed on `client`, worded as the editor words its own: `"Redis error: "` and the
+ * message. A reset while the command waited is one such failure, since ioredis does not send it again
+ * (`redisOptions()`). On a client `openClient` closed because a reconnect's `SELECT` of its database was refused, every
+ * command fails with "Connection is closed.", so the refusal is the error instead (docs/providers/redis.md section 4.6).
+ */
+function redisError(client: Redis | null, cause: unknown): QueryError {
+  const refusal = client === null ? undefined : refusedDatabases.get(client);
+  return new QueryError(refusal ?? `Redis error: ${cause instanceof Error ? cause.message : String(cause)}`, "redis");
 }
 
 /**
@@ -1580,7 +1589,11 @@ export class RedisProvider extends BaseDatabaseProvider {
    * that it logs the message as a warning, so a dropped socket and the reconnects that follow stay
    * visible to an operator; without any listener ioredis printed every event as
    * "[ioredis] Unhandled error event" (#1356). The message only, never the error: a `ReplyError`
-   * carries the command it answered, which for `AUTH` holds the password.
+   * carries the command it answered, which for `AUTH` holds the password. One event also closes the
+   * client: the server refusing the `SELECT` ioredis sends for `db` on a reconnect, as it does
+   * when its ACL or its database count changed in between. The connection would go on in database
+   * 0, so it is closed at once, and every command on it fails with the refusal (`redisError`)
+   * instead of running there.
    */
   private async openClient(db: number, commandTimeout?: number): Promise<Redis> {
     const client = new Redis({
@@ -1590,8 +1603,18 @@ export class RedisProvider extends BaseDatabaseProvider {
     let connecting = true;
     let firstError: Error | undefined;
     client.on("error", (error: Error) => {
-      if (connecting) firstError ??= error;
-      else logger.warn(`[Redis] ${error.message}`, { provider: "redis" });
+      if (connecting) {
+        firstError ??= error;
+        return;
+      }
+      logger.warn(`[Redis] ${error.message}`, { provider: "redis" });
+      // After the connect, the only SELECT whose refusal is an event is the one ioredis sends for `db` on a reconnect,
+      // before the ready check; closing the client now fails the commands it queued instead of sending them.
+      if (isServerErrorReply(error) && (error as Error & { command?: { name: string } }).command?.name === "select") {
+        const reason = this.agentProfile ? agentRefusalReason(error) : error.message;
+        refusedDatabases.set(client, `Redis refused database ${db} after a reconnect: ${reason}`);
+        client.disconnect();
+      }
     });
     try {
       await client
@@ -1818,7 +1841,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       // The queue is gone either way, which is what "rolled-back" reports. Anything else is
       // a real failure - an ACL that refuses the `DISCARD`, a dead socket - and is raised:
       // the transaction is still open and this must not report it as ended.
-      if (!message.includes(NO_TRANSACTION_MARKER)) throw redisError(error);
+      if (!message.includes(NO_TRANSACTION_MARKER)) throw redisError(this.client, error);
     }
 
     return "rolled-back";
@@ -1875,7 +1898,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       const result = await (this.client as any).callBuffer(command, ...args);
       return this.formatResult(command, args, decodeReply(result));
     } catch (error) {
-      throw new QueryError(`Redis error: ${error instanceof Error ? error.message : String(error)}`, "redis");
+      throw redisError(this.client, error);
     }
   }
 
@@ -2032,7 +2055,7 @@ export class RedisProvider extends BaseDatabaseProvider {
     try {
       return await command();
     } catch (error) {
-      throw redisError(error);
+      throw redisError(this.client, error);
     }
   }
 
@@ -2061,7 +2084,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       if (this.agentProfile && isServerErrorReply(error)) {
         throw new QueryError(`Redis refused the read: ${agentRefusalReason(error as Error)}`, "redis");
       }
-      throw redisError(error);
+      throw redisError(client, error);
     } finally {
       client.disconnect();
     }
@@ -2101,7 +2124,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       reply = await (this.client as any).call("CONFIG", "GET", "databases");
     } catch (error) {
       if (isRefusedCommandReply(error)) return this.sessionDatabaseAlone();
-      throw redisError(error);
+      throw redisError(this.client, error);
     }
     const count = parseDatabaseCount(reply);
     const session = this.sessionDatabase();
