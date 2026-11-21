@@ -500,8 +500,9 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
 });
 
 // The two fields a row declares for the dialog rather than for the gate's yes or no (#1089, section 5.5 and E10).
-// These tests install a row of their own under a key no DatabaseType spells, and remove it after each test, so each
-// rule is pinned apart from any engine's grammar. etcd's row, the one shipped row that declares both fields, is
+// These tests install a row of their own under the stand-in type id, trino, which ships no row, and remove it after
+// each test, so each rule is pinned apart from any shipped vocabulary row; the readers tested here hand the text to
+// the row as written, so no grammar reads it. etcd's row, the one shipped row that declares both fields, is
 // pinned as well: its typed confirmation with its own commands in describe("the etcd row") below, and its
 // safetyAnalysis: false by the etcd test of describe("vocabularySendsToModel").
 
@@ -670,7 +671,8 @@ describe("the etcd row", () => {
 /**
  * The editor's refusal: a statement a row's `refuse` or `maxTextBytes` refuses is never sent
  * and never stored. The first test below holds which shipped rows declare both fields and that Redis's declares a
- * refusal alone; every other rule here is driven by the stand-in row, so it is pinned apart from any engine's grammar.
+ * refusal alone; every other rule here is driven by the stand-in row, so it is pinned apart from any shipped vocabulary
+ * row, and the readers tested here hand the text to the row as written, so no grammar reads it.
  * An engine's own row is pinned in its describe block below, Weaviate's in tests/unit/db/weaviate/routes.test.ts,
  * S3's in tests/unit/db/s3/provider-doc.test.ts and Redis's beside its reader in describe("isDestructiveNonSqlQuery").
  */

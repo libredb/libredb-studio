@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState, useRef, useCallback, useEffect } from "react";
 import { QueryResult, type DatabaseType } from "@/lib/types";
+import { assertDatabaseType } from "@/lib/db/type-id";
 import {
   type CellSelectionRange,
   type ColumnDef,
@@ -178,7 +179,12 @@ interface ResultsGridProps {
    * the surface cannot name the statement, and then nothing is claimed either way.
    */
   resultQuery?: string;
-  /** The dialect `resultQuery` is read under; `#` and `[…]` mean different things (#292). */
+  /**
+   * The dialect `resultQuery` is read under; `#` and `[…]` mean different things (#292).
+   * A value outside `DatabaseType`, which only a caller outside TypeScript's checks can pass, is refused by name as
+   * the grid renders: it throws `UnknownProviderError` before any hook or reader runs with it, so the host's error
+   * boundary receives it.
+   */
   databaseType?: DatabaseType;
   maskingEnabled?: boolean;
   onToggleMasking?: () => void;
@@ -254,6 +260,9 @@ export function ResultsGrid({
   onDiscardChanges,
   onApplyChanges,
 }: ResultsGridProps) {
+  // Before every hook and reader, so a refused value never reaches the result-order reader (FND-1). The throw is the
+  // same on every render that has the value, so the hook order never changes.
+  if (databaseType !== undefined) assertDatabaseType(databaseType);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [editingCell, setEditingCell] = useState<{ rowIndex: number; columnId: string } | null>(null);
   const [editValue, setEditValue] = useState<string>("");

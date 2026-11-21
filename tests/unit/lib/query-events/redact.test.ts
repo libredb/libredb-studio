@@ -5,6 +5,7 @@ import path from "node:path";
 import { redactUriCredentials } from "@/lib/audit";
 import { maskCredentials, redactStatement } from "@/lib/query-events/redact";
 import type { DatabaseType } from "@/lib/types";
+import { refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 
 /**
  * What a query event keeps of a statement (docs/GOVERNANCE.md#query-events): `redacted` capture stores
@@ -85,8 +86,13 @@ describe("redactStatement", () => {
     expect(VECTORS.some((vector) => vector.engine === "redis")).toBe(true);
   });
 
-  test("an engine id Studio does not know keeps nothing", () => {
-    expect(redactStatement("SELECT 'secret'", "constructor" as DatabaseType).statement).toBe("?");
+  // Server side the statement is redacted only after `resolveConnection` admitted the type, so an engine id Studio does
+  // not know never reaches here from a request; a caller that hands one anyway is refused by name (FND-1).
+  test("an engine id Studio does not know is refused by name, and the refusal repeats none of the statement", () => {
+    const literal = crypto.randomUUID();
+    const refusal = refusalThrownBy(() => redactStatement(`SELECT '${literal}'`, "constructor" as DatabaseType));
+    expect(refusal).toEqual(refusalOf("constructor"));
+    expect(JSON.stringify(refusal)).not.toContain(literal);
   });
 
   test("a number ends where the span reader opens a literal, so no text of the literal is kept", () => {

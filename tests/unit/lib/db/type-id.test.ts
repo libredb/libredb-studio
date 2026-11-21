@@ -12,8 +12,11 @@ import {
   MALFORMED_TYPE_SENTENCE,
   quoteTypeId,
   typeIdRefusal,
+  typeIdRow,
   unknownTypeSentence,
 } from "@/lib/db/type-id";
+import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 
 describe("isDatabaseType and typeIdRefusal", () => {
   test("every shipped type id is a type id", () => {
@@ -160,3 +163,47 @@ describe("assertDatabaseType", () => {
     expect(() => assertDatabaseType("postgres")).not.toThrow();
   });
 });
+
+describe("typeIdRow", () => {
+  // A total table, one row per type id, and a partial one, as the per-engine tables a caller hands the reader are.
+  const TOTAL: Readonly<Record<DatabaseType, string>> = Object.fromEntries(
+    SHIPPED_DATABASE_TYPES.map((id) => [id, `row of ${id}`]),
+  ) as Record<DatabaseType, string>;
+  const PARTIAL: Readonly<Partial<Record<DatabaseType, string>>> = { postgres: "row of postgres" };
+
+  test("reads a type id's row of a total table", () => {
+    for (const id of SHIPPED_DATABASE_TYPES) expect(typeIdRow(TOTAL, id)).toBe(`row of ${id}`);
+  });
+
+  test("reads a type id's row of a partial table, and undefined where it has none", () => {
+    expect(typeIdRow(PARTIAL, "postgres")).toBe("row of postgres");
+    expect(typeIdRow(PARTIAL, "mysql")).toBeUndefined();
+  });
+
+  test.each(OUTSIDE_THE_UNION)("refuses %s by name before it reads the table", (_label, value) => {
+    expect(refusalThrownBy(() => typeIdRow(TOTAL, value))).toEqual(refusalOf(value));
+    expect(refusalThrownBy(() => typeIdRow(PARTIAL, value))).toEqual(refusalOf(value));
+    const { table, reads } = recordingTable();
+    expect(refusalThrownBy(() => typeIdRow(table, value))).toEqual(refusalOf(value));
+    expect(reads).toEqual([]);
+  });
+
+  test("a recording table sees the read of a type id's row", () => {
+    const { table, reads } = recordingTable();
+    expect(typeIdRow(table, "postgres")).toBe("row of postgres");
+    expect(reads).toEqual(["postgres"]);
+  });
+});
+
+/** The total table behind a proxy that records every key read from it, so a test can see whether the table was read. */
+function recordingTable(): { table: Readonly<Record<DatabaseType, string>>; reads: PropertyKey[] } {
+  const reads: PropertyKey[] = [];
+  const rows: Record<string, string> = Object.fromEntries(SHIPPED_DATABASE_TYPES.map((id) => [id, `row of ${id}`]));
+  const table = new Proxy(rows, {
+    get(target, key, receiver) {
+      reads.push(key);
+      return Reflect.get(target, key, receiver);
+    },
+  }) as Record<DatabaseType, string>;
+  return { table, reads };
+}

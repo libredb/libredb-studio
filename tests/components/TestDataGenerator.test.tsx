@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TestDataGenerator } from "@/components/TestDataGenerator";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { OUTSIDE_THE_UNION, refusalOf } from "../helpers/outside-the-union";
 
 /**
  * The declaration this modal now takes instead of a bare `queryLanguage` string: the
@@ -1675,5 +1676,88 @@ describe("TestDataGenerator Oracle literals (#1400)", () => {
     expect(statement).not.toContain("TO_DATE");
     expect(statement).not.toContain("TO_TIMESTAMP");
     expect(statement.match(/\('\d{4}-\d{2}-\d{2}', '\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'\)/g)).toHaveLength(10);
+  });
+});
+
+// A host hands this published dialog the connection's type as a plain string (FND-1, Q2). A value that is not a type
+// id, the empty string and null included, is refused by name in place of the statement, so nothing is written under
+// another engine's rules or the SQL defaults and nothing can be copied or run. An omitted databaseType is no
+// connection, as before.
+describe("TestDataGenerator and a databaseType outside the union (FND-1)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  function renderWithType(
+    databaseType: unknown,
+    overrides: { capabilities?: ProviderCapabilities; isOpen?: boolean } = {},
+  ) {
+    const onClose = mock(() => {});
+    const onExecuteQuery = mock(() => {});
+    const view = (type: unknown) => (
+      <TestDataGenerator
+        isOpen={overrides.isOpen ?? true}
+        onClose={onClose}
+        tablePath={["employees"]}
+        tableSchema={schema}
+        databaseType={type as string}
+        capabilities={overrides.capabilities ?? postgresCaps}
+        onExecuteQuery={onExecuteQuery}
+      />
+    );
+    const rendered = render(view(databaseType));
+    return { ...rendered, onClose, onExecuteQuery, rerenderWithType: (type: unknown) => rendered.rerender(view(type)) };
+  }
+
+  test.each(OUTSIDE_THE_UNION)(
+    "draws the refusal for %s in place of the statement, with no Copy and no Execute",
+    (_label, value) => {
+      const { getByTestId, queryByTestId, queryByText, container } = renderWithType(value);
+      expect(getByTestId("test-data-refusal").textContent).toBe(`This connection: ${refusalOf(value).message}`);
+      expect(container.textContent).not.toContain("INSERT");
+      expect(queryByTestId("test-data-copy")).toBeNull();
+      expect(queryByText("Execute")).toBeNull();
+    },
+  );
+
+  test("a JSON language is refused the same way, before its document insert is read", () => {
+    const { getByTestId, container } = renderWithType("acmefoo", { capabilities: capsOf({ queryLanguage: "json" }) });
+    expect(getByTestId("test-data-refusal").textContent).toBe(`This connection: ${refusalOf("acmefoo").message}`);
+    expect(container.textContent).not.toContain("insertMany");
+  });
+
+  test("Close still closes it, and nothing is run", () => {
+    const { getByLabelText, onClose, onExecuteQuery } = renderWithType("constructor");
+    fireEvent.click(getByLabelText("Close"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  test("closed, handed such a value, it renders nothing and does not throw", () => {
+    const { container } = renderWithType("__proto__", { isOpen: false });
+    expect(container.textContent).toBe("");
+  });
+
+  test("a host that swaps the type for one outside the union while it is open withdraws the statement", () => {
+    const { container, getByTestId, queryByTestId, rerenderWithType } = renderWithType("postgres");
+    expect(container.textContent).toContain("INSERT INTO");
+    rerenderWithType("acmefoo");
+    expect(container.textContent).not.toContain("INSERT");
+    expect(getByTestId("test-data-refusal").textContent).toBe(`This connection: ${refusalOf("acmefoo").message}`);
+    expect(queryByTestId("test-data-copy")).toBeNull();
+  });
+
+  test("a type id writes its statement as before", () => {
+    const { container, queryByTestId, getByText } = renderWithType("postgres");
+    expect(container.textContent).toContain("INSERT INTO employees (email, name, salary)");
+    expect(queryByTestId("test-data-refusal")).toBeNull();
+    expect(queryByTestId("test-data-copy")).not.toBeNull();
+    expect(getByText("Execute")).not.toBeNull();
+  });
+
+  test("an omitted databaseType writes the statement as with no connection, as before", () => {
+    const { container, queryByTestId } = renderWithType(undefined);
+    expect(container.textContent).toContain("INSERT INTO");
+    expect(queryByTestId("test-data-refusal")).toBeNull();
   });
 });

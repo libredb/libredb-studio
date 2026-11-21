@@ -134,7 +134,9 @@ describe("the plan-draft reader stays reachable from a browser", () => {
     // The SQL grammar registry joined the closure when `grammar.ts` started reading each engine's row from it
     // (engine contract spec 5.3). Its own closure is walked here, re-exports included and type-only lines left out:
     // every module it reaches is the registry, an engine's `sql-grammar` module, or one of the two leaves an engine
-    // module may import, and those leaves import nothing at all.
+    // module may import, and those leaves import nothing at all. The type-id check joined it with FND-1: the registry
+    // refuses a value outside the type-id union through `typeIdRow`, and the check reaches only the compatibility
+    // table, the error classes and the error codes, each named below with its exact value imports.
     const valueSpecifiers = (source: string): readonly string[] =>
       [...source.matchAll(/^(?:import|export)\s(?!type\s)[^;]*?from\s+"([^"]+)"/gm)].map((match) => match[1]);
     const resolve = (specifier: string, from: string): string => {
@@ -144,6 +146,12 @@ describe("the plan-draft reader stays reachable from a browser", () => {
       return fs.existsSync(path.join(ROOT, `${base}.ts`)) ? `${base}.ts` : `${base}/index.ts`;
     };
     const LEAVES = new Set(["src/lib/is-record.ts", "src/lib/db/providers/keyvalue/redis-command-text.ts"]);
+    const TYPE_ID_CHECK: Readonly<Record<string, readonly string[]>> = {
+      "src/lib/db/type-id.ts": ["./compatibility", "./errors"],
+      "src/lib/db/errors.ts": ["@/lib/api/error-codes"],
+      "src/lib/db/compatibility.ts": [],
+      "src/lib/api/error-codes.ts": [],
+    };
     const registry = new Set<string>();
     const walk = ["src/lib/db/sql-grammar/index.ts"];
     while (walk.length > 0) {
@@ -157,9 +165,14 @@ describe("the plan-draft reader stays reachable from a browser", () => {
       (file) =>
         !file.startsWith("src/lib/db/sql-grammar/") &&
         !(file.startsWith("src/lib/db/providers/") && /(?:^|[/-])sql-grammar\.ts$/.test(file)) &&
-        !LEAVES.has(file),
+        !LEAVES.has(file) &&
+        !Object.hasOwn(TYPE_ID_CHECK, file),
     );
     expect(outside).toEqual([]);
+    for (const [file, imports] of Object.entries(TYPE_ID_CHECK)) {
+      expect(registry.has(file)).toBe(true);
+      expect(valueSpecifiers(fs.readFileSync(path.join(ROOT, file), "utf8"))).toEqual(imports);
+    }
     expect(registry.size).toBeGreaterThan(42);
     for (const leaf of LEAVES) {
       expect(valueSpecifiers(fs.readFileSync(path.join(ROOT, leaf), "utf8"))).toEqual([]);

@@ -257,13 +257,17 @@ mock.module("lucide-react", () => {
 });
 
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { render, cleanup, fireEvent, act, waitFor } from "@testing-library/react";
 import { QueryEditor } from "@/components/QueryEditor";
 import type { SchemaCompletionCache } from "@/lib/editor/sql-completions";
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import type { MaintenanceType } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { logger } from "@/lib/logger";
+import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, shapeOfRefusal } from "../helpers/outside-the-union";
 
 // =============================================================================
 // QueryEditor Tests
@@ -3564,5 +3568,128 @@ describe("QueryEditor completion addresses (#1397)", () => {
     test("with no default the first listed wins", () => {
       expect(columnMap({ schemaContext: dup }).get("orders")![0].label).toBe("sale_id");
     });
+  });
+});
+
+// QueryEditor is published and types `databaseType` as a DatabaseType, which only a caller outside TypeScript's checks
+// can break (FND-1, D-a). Such a value is refused by name as the editor renders, before any hook or reader runs with
+// it, and the host's error boundary receives the error.
+describe("QueryEditor and a databaseType outside DatabaseType (FND-1)", () => {
+  /** A test's own error boundary, which records what it caught. */
+  class RecordingBoundary extends React.Component<
+    { children?: React.ReactNode; onCaught: (error: unknown) => void },
+    { caught: boolean }
+  > {
+    state = { caught: false };
+    static getDerivedStateFromError() {
+      return { caught: true };
+    }
+    componentDidCatch(error: unknown) {
+      this.props.onCaught(error);
+    }
+    render() {
+      return this.state.caught ? React.createElement("p", { "data-testid": "boundary-caught" }) : this.props.children;
+    }
+  }
+
+  const ROWS = OUTSIDE_THE_UNION.filter(([, value]) =>
+    ["acmefoo", "constructor", "", null, 5].includes(value as never),
+  );
+  let caught: unknown[];
+  let consoleError: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    caught = [];
+    mockUseMonacoReturn = { Range: class {} };
+    mockRegisterSQLCompletionProvider.mockClear();
+    // React reports an error its boundary caught on console.error; the boundary's record is what is asserted.
+    consoleError = spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+    mockUseMonacoReturn = null;
+    cleanup();
+  });
+
+  function editorUnder(props: Partial<Parameters<typeof QueryEditor>[0]>) {
+    return React.createElement(
+      RecordingBoundary,
+      { onCaught: (error: unknown) => caught.push(error) },
+      React.createElement(QueryEditor, createDefaultProps(props)),
+    );
+  }
+
+  function caughtRefusal() {
+    expect(caught).toHaveLength(1);
+    expect(caught[0]).toBeInstanceOf(UnknownProviderError);
+    return shapeOfRefusal(caught[0] as UnknownProviderError);
+  }
+
+  test("ROWS holds the five values named for this table", () => {
+    expect(ROWS.map(([label]) => label)).toEqual([
+      "acmefoo",
+      "constructor",
+      "the empty string",
+      "null",
+      "the number 5",
+    ]);
+  });
+
+  test.each(ROWS)("refuses %s by name as it renders, before any completion is registered", (_label, value) => {
+    const { queryByTestId } = render(editorUnder({ databaseType: value as DatabaseType }));
+    expect(caughtRefusal()).toEqual(refusalOf(value));
+    expect(queryByTestId("boundary-caught")).not.toBeNull();
+    expect(queryByTestId("mock-monaco-editor")).toBeNull();
+    expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+  });
+
+  test("under graph-cypher, a prototype key is refused before the graph policy profile is read", () => {
+    render(
+      editorUnder({
+        language: "graph-cypher",
+        value: "MATCH (n) RETURN n",
+        databaseType: "constructor" as DatabaseType,
+      }),
+    );
+    expect(caughtRefusal()).toEqual(refusalOf("constructor"));
+  });
+
+  test("a host that re-renders it with such a value gets the named error at its boundary, and nothing is formatted or registered with it", () => {
+    const warn = spyOn(logger, "warn");
+    try {
+      mockSqlFormat.mockClear();
+      const { rerender, queryByTestId, queryByText } = render(
+        editorUnder({ databaseType: "postgres", value: "select 1" }),
+      );
+      expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
+      expect(caught).toHaveLength(0);
+      // The control: under a type id Format runs the formatter once and nothing is logged.
+      fireEvent.click(queryByText("Format")!);
+      expect(mockSqlFormat).toHaveBeenCalledTimes(1);
+      rerender(editorUnder({ databaseType: "acmefoo" as DatabaseType, value: "select 1" }));
+      expect(caughtRefusal()).toEqual(refusalOf("acmefoo"));
+      expect(queryByTestId("mock-monaco-editor")).toBeNull();
+      // The refused render never commits, so no Format control holds a handler that could read the refused value.
+      expect(queryByText("Format")).toBeNull();
+      expect(mockSqlFormat).toHaveBeenCalledTimes(1);
+      const registeredTypes = mockRegisterSQLCompletionProvider.mock.calls.map((call) => call[2]);
+      expect(registeredTypes).toEqual(["postgres"]);
+      const warnings = warn.mock.calls.map((call) => call[0]);
+      expect(warnings).not.toContain("Statement formatting failed; the editor text is left as written");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a type id renders the editor", () => {
+    const { queryByTestId } = render(editorUnder({ databaseType: "postgres" }));
+    expect(caught).toHaveLength(0);
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
+    expect(mockRegisterSQLCompletionProvider).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "postgres",
+    );
   });
 });

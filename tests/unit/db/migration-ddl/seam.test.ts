@@ -1,7 +1,7 @@
 /**
  * The migration DDL seam (spec 5.3): an engine module imports only the contract's `types` and `shared`, and the
  * type-only `@/lib/types`, so it can reach no other engine's text, no registry and none of the quoting or export
- * helpers. The no-connection and unknown-type specs are built the same way and no engine module imports them; the
+ * helpers. The no-connection spec is built the same way and no engine module imports it; the
  * registry imports each engine module once; the generator names no type id (held here because the engine-branch guard
  * is not on this branch); and every engine module loads first in a fresh process.
  *
@@ -19,7 +19,6 @@ const CONTRACT = "src/lib/db/migration-ddl";
 const TYPES = `${CONTRACT}/types`;
 const SHARED = `${CONTRACT}/shared`;
 const NO_CONNECTION = `${CONTRACT}/no-connection.ts`;
-const UNKNOWN_TYPE = `${CONTRACT}/unknown-type.ts`;
 const GENERATOR = "src/lib/schema-diff/migration-generator.ts";
 const TYPE_IDS: ReadonlySet<string> = new Set([...EXTERNAL_DATABASE_TYPES, "libredb"]);
 const MODULES = engineModules();
@@ -136,15 +135,12 @@ describe("migration DDL seam", () => {
     });
   }
 
-  test("the no-connection and unknown-type specs import only the contract's types and shared", () => {
-    expect([
-      ...seamFindings(NO_CONNECTION, read(NO_CONNECTION)),
-      ...seamFindings(UNKNOWN_TYPE, read(UNKNOWN_TYPE)),
-    ]).toEqual([]);
+  test("the no-connection spec imports only the contract's types and shared", () => {
+    expect(seamFindings(NO_CONNECTION, read(NO_CONNECTION))).toEqual([]);
   });
 
-  test("no engine module imports the no-connection or the unknown-type spec", () => {
-    const fallbacks = new Set([NO_CONNECTION, UNKNOWN_TYPE].map((path) => path.replace(/\.ts$/, "")));
+  test("no engine module imports the no-connection spec", () => {
+    const fallbacks = new Set([NO_CONNECTION.replace(/\.ts$/, "")]);
     const importers = MODULES.filter((engine) =>
       references(engine.path, read(engine.path)).some(({ target }) => target !== undefined && fallbacks.has(target)),
     );

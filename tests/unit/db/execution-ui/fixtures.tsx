@@ -19,23 +19,15 @@ import { mockGlobalFetch, restoreGlobalFetch } from "../../../helpers/mock-fetch
  * Today's execution UI per engine, through the real hook and the real components: the keyword the rolled-back
  * transaction notice names (as `tests/hooks/use-query-execution.test.ts` drives it), the hand-over consent chips and
  * SQLite deadline sentence (as `tests/components/agent/ConsentCard.test.tsx` renders it), and the engine hint the AI
- * explain request carries (as `tests/components/VisualExplain.test.tsx` sends it). Every engine id, then the inputs
- * that are no engine: no connection, the empty string, two prototype keys and an unknown id.
+ * explain request carries (as `tests/components/VisualExplain.test.tsx` sends it). Every engine id, then the one key
+ * that is no engine: no connection. Every other value outside the type-id union is refused by name (FND-1), which the
+ * registry census pins.
  */
-export const GOLDEN_KEYS: readonly string[] = Object.freeze([
-  ...EXTERNAL_DATABASE_TYPES,
-  "libredb",
-  "no-connection",
-  "empty-string",
-  "constructor",
-  "__proto__",
-  "not-an-engine",
-]);
+export const GOLDEN_KEYS: readonly string[] = Object.freeze([...EXTERNAL_DATABASE_TYPES, "libredb", "no-connection"]);
 
 /** `undefined` is no connection at all; every other key is the engine string the code is handed. */
 function engineOf(key: string): string | undefined {
   if (key === "no-connection") return undefined;
-  if (key === "empty-string") return "";
   return key;
 }
 

@@ -2,8 +2,7 @@
  * The SQL export output of every engine, rendered as text after the inline edit lines.
  *
  * Each line is one `buildResultExport` call and the file content it answered, or the
- * error it threw: today a prototype key and an unknown string throw on some paths, and
- * the golden pins that too. Every call is made with `tabName: "t"` and no `query`, so the
+ * error it threw, and the golden pins that too. Every call is made with `tabName: "t"` and no `query`, so the
  * table name never comes from reading a statement.
  *
  * The lines render under `Asia/Tokyo`, the zone `tests/unit/lib/export/result-export.test.ts`

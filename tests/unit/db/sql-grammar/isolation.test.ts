@@ -72,7 +72,7 @@ describe("one engine's module cannot reach another engine's output", () => {
   test(
     "mocking each engine's module moves its own golden output and no other",
     async () => {
-      expect(MODULES.length).toBe(GOLDEN_KEYS.length - 3);
+      expect(MODULES.length).toBe(GOLDEN_KEYS.length - 1);
       const results = await renderAll(MODULES);
       for (const engine of MODULES) {
         const rendered = results.get(engine.id) ?? {};

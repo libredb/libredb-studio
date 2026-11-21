@@ -44,7 +44,7 @@ import { TRINO_SQL_GRAMMAR } from "@/lib/db/providers/sql/trino/sql-grammar";
 import type { DatabaseType } from "@/lib/types";
 import { NO_CONNECTION_SQL_GRAMMAR } from "./no-connection";
 import type { SqlGrammarSpec } from "./types";
-import { UNKNOWN_TYPE_SQL_GRAMMAR } from "./unknown-type";
+import { typeIdRow } from "@/lib/db/type-id";
 
 /**
  * Every engine's SQL grammar facts, one row per type id, each declared in a module beside its provider (spec 5.3).
@@ -97,25 +97,14 @@ export const SQL_GRAMMAR: Readonly<Record<DatabaseType, SqlGrammarSpec>> = Objec
 });
 
 /**
- * The grammar facts of a type: its row for a member of `DatabaseType`, `NO_CONNECTION_SQL_GRAMMAR` for `undefined`,
- * and `UNKNOWN_TYPE_SQL_GRAMMAR` for any other string.
+ * The grammar facts of a type: `NO_CONNECTION_SQL_GRAMMAR` for `undefined`, and its row for a type id, read through
+ * `typeIdRow`, so any other value, a `String` object such as `new String("mysql")` from a host calling in plain
+ * JavaScript included, is refused by name and a prototype key never reaches an `Object.prototype` member.
  *
- * `Object.hasOwn` rather than a bare lookup: the packaged confirmation dialog resolves its own grammar from an
- * optional prop a HOST application supplies as a plain string, and a prototype key (`"constructor"`, `"toString"`)
- * would otherwise return something that is not a spec at all.
+ * @throws {UnknownProviderError} When `type` is defined and not a type id: a string that names no provider, `""`,
+ * `null`, or a value that is not text.
  */
 export function sqlGrammarFor(type: string | undefined): SqlGrammarSpec {
   if (type === undefined) return NO_CONNECTION_SQL_GRAMMAR;
-  return Object.hasOwn(SQL_GRAMMAR, type) ? SQL_GRAMMAR[type as DatabaseType] : UNKNOWN_TYPE_SQL_GRAMMAR;
-}
-
-/**
- * `sqlGrammarFor` for the facts that were identity comparisons against a type id before they moved here
- * (`readsSqlText`, the update-target rules and completion quoting): a type that is not a primitive string, such as
- * `new String("mysql")` from a host calling in plain JavaScript, is the unknown-type spec rather than the row its
- * string conversion names. The span grammar and redaction were property-key lookups, which convert, and keep
- * `sqlGrammarFor`.
- */
-export function sqlGrammarForExactType(type: string | undefined): SqlGrammarSpec {
-  return type === undefined || typeof type === "string" ? sqlGrammarFor(type) : UNKNOWN_TYPE_SQL_GRAMMAR;
+  return typeIdRow(SQL_GRAMMAR, type);
 }

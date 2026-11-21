@@ -5565,7 +5565,8 @@ describe("useQueryExecution", () => {
 // =============================================================================
 //
 // Milvus's and Qdrant's rows declare `refuse` and `maxTextBytes` (describe("the real milvus row") and describe("the
-// real qdrant row") below), and the stand-in row drives every case here, so each rule is pinned apart from any engine's grammar. The refusal runs before
+// real qdrant row") below), and the stand-in row drives every case here, so each rule is pinned apart from any shipped
+// vocabulary row, and the texts are read under Trino's grammar. The refusal runs before
 // the confirmation gate, which is why `isDangerousQueryMock` is never consulted, and before every condition that
 // Proceed, an explain run, a page and playground mode skip.
 describe("a statement the connection type's editor refuses", () => {

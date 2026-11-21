@@ -15,10 +15,10 @@ const GOLDEN_DIR = join(import.meta.dir, "golden");
 const ENGINE_COUNT = EXTERNAL_DATABASE_TYPES.length + 1;
 
 describe("migration DDL golden files", () => {
-  test("the keys are every engine id, then the three non-engine keys", () => {
-    expect(GOLDEN_KEYS.length).toBe(ENGINE_COUNT + 3);
+  test("the keys are every engine id, then the no-connection key", () => {
+    expect(GOLDEN_KEYS.length).toBe(ENGINE_COUNT + 1);
     expect([...GOLDEN_KEYS.slice(0, ENGINE_COUNT)].sort()).toEqual([...EXTERNAL_DATABASE_TYPES, "libredb"].sort());
-    expect(GOLDEN_KEYS.slice(ENGINE_COUNT)).toEqual(["no-connection", "constructor", "not-an-engine"]);
+    expect(GOLDEN_KEYS.slice(ENGINE_COUNT)).toEqual(["no-connection"]);
   });
 
   for (const key of GOLDEN_KEYS) {

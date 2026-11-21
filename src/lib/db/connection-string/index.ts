@@ -44,7 +44,7 @@ import { TRINO_CONNECTION_STRING } from "@/lib/db/providers/sql/trino/connection
 import type { DatabaseType } from "@/lib/types";
 import { NO_CONNECTION_CONNECTION_STRING } from "./no-connection";
 import type { ConnectionStringPaste, ConnectionStringSpec } from "./types";
-import { UNKNOWN_TYPE_CONNECTION_STRING } from "./unknown-type";
+import { typeIdRow } from "@/lib/db/type-id";
 
 /**
  * Each engine's connection string facts, one row per type id, each declared beside its provider. A missing id is a
@@ -167,15 +167,16 @@ export const CONNECTION_STRING_PASTES: readonly PasteRow[] = pasteRows(
 );
 
 /**
- * The spec for a connection's type: `NO_CONNECTION_CONNECTION_STRING` without one, the engine's row for a shipped
- * id, otherwise `UNKNOWN_TYPE_CONNECTION_STRING`. `Object.hasOwn`, so `"constructor"` or `"__proto__"` never reaches
- * an Object.prototype member.
+ * The spec for a connection's type: `NO_CONNECTION_CONNECTION_STRING` without one, and the engine's row for a type id,
+ * read through `typeIdRow`, so any other value is refused by name and a prototype key never reaches an
+ * `Object.prototype` member.
+ *
+ * @throws {UnknownProviderError} When `type` is defined and not a type id: a string that names no provider, `""`,
+ * `null`, or a value that is not text.
  */
 export function connectionStringFor(type: string | undefined): ConnectionStringSpec {
   if (type === undefined) return NO_CONNECTION_CONNECTION_STRING;
-  return Object.hasOwn(CONNECTION_STRING, type)
-    ? CONNECTION_STRING[type as DatabaseType]
-    : UNKNOWN_TYPE_CONNECTION_STRING;
+  return typeIdRow(CONNECTION_STRING, type);
 }
 
 /**

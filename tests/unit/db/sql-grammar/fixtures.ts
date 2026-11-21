@@ -14,14 +14,11 @@ import { splitStatements } from "@/lib/sql/statement-splitter";
 import { resolveUpdateTarget, selectsPlainColumn } from "@/lib/sql/update-target";
 import type { DatabaseType } from "@/lib/types";
 
-/** Every engine id, then the three lookups that are not one: no connection, a prototype key, an unknown id. */
-export const GOLDEN_KEYS: readonly string[] = [
-  ...EXTERNAL_DATABASE_TYPES,
-  "libredb",
-  "no-connection",
-  "constructor",
-  "not-an-engine",
-];
+/**
+ * Every engine id, then the one lookup that is not one: no connection. Every other value outside the type-id union is
+ * refused by name (FND-1), which the registry census pins.
+ */
+export const GOLDEN_KEYS: readonly string[] = [...EXTERNAL_DATABASE_TYPES, "libredb", "no-connection"];
 
 export const SPAN_STATEMENTS: readonly string[] = [
   "SELECT 1 # c\nFROM t",

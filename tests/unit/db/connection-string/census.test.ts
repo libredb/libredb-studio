@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { ENGINE_URI_SCHEMES as PARSER_ENGINE_URI_SCHEMES } from "@/lib/connection-string-parser";
 import { CONNECTION_STRING, connectionStringFor, ENGINE_URI_SCHEMES } from "@/lib/db/connection-string";
 import { NO_CONNECTION_CONNECTION_STRING } from "@/lib/db/connection-string/no-connection";
-import { UNKNOWN_TYPE_CONNECTION_STRING } from "@/lib/db/connection-string/unknown-type";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 
 /** The flat and dual placements (spec 5.3); every other id is `<family>/<id>/connection-string.ts`. */
 const FLAT: Readonly<Record<string, string>> = {
@@ -96,16 +96,14 @@ describe("connection string registry census", () => {
     expect(idsWhere((id) => CONNECTION_STRING[id].validateSeed !== null)).toEqual(["etcd", "opcua", "snowflake"]);
   });
 
-  test("connectionStringFor answers no connection and unknown types with their own specs", () => {
+  test("connectionStringFor answers no connection with its own spec and a type id with its row", () => {
     expect(connectionStringFor(undefined)).toBe(NO_CONNECTION_CONNECTION_STRING);
-    for (const type of ["constructor", "__proto__", "not-an-engine"]) {
-      expect(connectionStringFor(type)).toBe(UNKNOWN_TYPE_CONNECTION_STRING);
-    }
-    expect(NO_CONNECTION_CONNECTION_STRING).not.toBe(UNKNOWN_TYPE_CONNECTION_STRING);
-    for (const spec of [NO_CONNECTION_CONNECTION_STRING, UNKNOWN_TYPE_CONNECTION_STRING]) {
-      expect(spec).toEqual({ scheme: null, readTls: null, paste: null, validateSeed: null });
-    }
+    expect(NO_CONNECTION_CONNECTION_STRING).toEqual({ scheme: null, readTls: null, paste: null, validateSeed: null });
     expect(connectionStringFor("postgres")).toBe(CONNECTION_STRING.postgres);
+  });
+
+  test.each(OUTSIDE_THE_UNION)("connectionStringFor refuses %s by name", (_label, value) => {
+    expect(refusalThrownBy(() => connectionStringFor(value as string))).toEqual(refusalOf(value));
   });
 
   test("the scheme map is derived inside the registry, and the parser re-exports that same object", () => {

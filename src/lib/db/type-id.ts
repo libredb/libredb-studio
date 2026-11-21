@@ -5,11 +5,13 @@
  * shares the same server storage, a hand-edited record, one with no type at all, or one whose type is not text. A value
  * that is not exactly a type id is refused by name, never normalised (no trimming, no lowercasing).
  *
- * The provider factory, `resolveConnection`, the `db-ui-config` lookups, the Studio connection lists and the connection
- * hook ask this module first. Not every per-engine read does yet: the contract registries still answer an unknown type
- * with their `UNKNOWN_TYPE_*` rows, and the capability tables (`WRITE_REACH`, the `CONNECTION_FORM` helpers such as
- * `offersSslPanel`, and their neighbours) are still read by bare index, so a new per-engine lookup is not covered by
- * this module unless it calls it.
+ * The provider factory, `resolveConnection`, the `db-ui-config` lookups, the Studio connection lists, the connection
+ * hook, the embedded workspace's connection adapter and the connection form hook ask this module first; so do the five
+ * contract registry lookups (through `typeIdRow`) and the migration's dialect header, and the published
+ * `QuerySafetyDialog`, `TestDataGenerator`, `QueryEditor` and `ResultsGrid`, the components that read a per-engine fact
+ * with a type a host hands them. Not every per-engine read does yet: the capability tables (`WRITE_REACH`,
+ * the `CONNECTION_FORM` helpers such as `offersSslPanel`, the destructive vocabulary and their neighbours) are still
+ * read by bare index, so a new per-engine lookup is not covered by this module unless it calls it.
  *
  * The set is `SHIPPED_DATABASE_TYPES`, which the compiler holds to the union through an exhaustive Record, so this
  * module has no list of its own. Membership is a `Set` lookup, so a prototype key such as `"constructor"` is unknown
@@ -82,4 +84,20 @@ export function typeIdRefusal(value: unknown): TypeIdRefusal | null {
 export function assertDatabaseType(value: unknown): asserts value is DatabaseType {
   const refusal = typeIdRefusal(value);
   if (refusal !== null) throw new UnknownProviderError(refusal);
+}
+
+/**
+ * Reads `table`'s row for `value` after `assertDatabaseType`, so a value that is not a type id is refused by name
+ * before the table is read, and a prototype key such as `"constructor"` never reaches an `Object.prototype` member. A
+ * total table answers its row; a partial table answers `undefined` for a type id it has no row for. The table is an
+ * argument, so any module holding a per-engine table reads it through this one function.
+ *
+ * @throws {UnknownProviderError} When `value` is absent, not text, or names no provider.
+ */
+export function typeIdRow<T extends Readonly<Partial<Record<DatabaseType, unknown>>>>(
+  table: T,
+  value: unknown,
+): T[DatabaseType] {
+  assertDatabaseType(value);
+  return table[value];
 }

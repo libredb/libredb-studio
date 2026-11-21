@@ -161,6 +161,12 @@ export const REGISTRIES: readonly Listed[] = [
     reason: "the composition root, which maps each type id to its provider class",
   },
   {
+    path: "src/lib/db/type-id.ts",
+    declaration: "typeIdRow",
+    count: 1,
+    reason: "the parameter type of the per-engine table it is handed, which holds no row here",
+  },
+  {
     path: "src/lib/db/graph-policy-profiles.ts",
     declaration: "GRAPH_POLICY_PROFILES",
     count: 1,

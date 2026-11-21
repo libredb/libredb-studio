@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { EXECUTION_UI, executionUiFor } from "@/lib/db/execution-ui";
 import { NO_CONNECTION_EXECUTION_UI } from "@/lib/db/execution-ui/no-connection";
-import { UNKNOWN_TYPE_EXECUTION_UI } from "@/lib/db/execution-ui/unknown-type";
 import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 
 /** The flat and dual placements (spec 5.3); every other id is `<family>/<id>/execution-ui.ts`. */
 const FLAT: Readonly<Record<string, string>> = {
@@ -84,15 +84,13 @@ describe("execution UI registry census", () => {
     });
   });
 
-  test("executionUiFor answers no connection and unknown types with their own specs", () => {
+  test("executionUiFor answers no connection with its own spec and a type id with its row", () => {
     expect(executionUiFor(undefined)).toBe(NO_CONNECTION_EXECUTION_UI);
-    for (const type of ["constructor", "__proto__", "", "not-an-engine"]) {
-      expect(executionUiFor(type)).toBe(UNKNOWN_TYPE_EXECUTION_UI);
-    }
-    expect(NO_CONNECTION_EXECUTION_UI).not.toBe(UNKNOWN_TYPE_EXECUTION_UI);
-    for (const spec of [NO_CONNECTION_EXECUTION_UI, UNKNOWN_TYPE_EXECUTION_UI]) {
-      expect(spec).toEqual({ commitKeyword: "COMMIT", consentDeadline: null });
-    }
+    expect(NO_CONNECTION_EXECUTION_UI).toEqual({ commitKeyword: "COMMIT", consentDeadline: null });
     expect(executionUiFor("redis")).toBe(EXECUTION_UI.redis);
+  });
+
+  test.each(OUTSIDE_THE_UNION)("executionUiFor refuses %s by name", (_label, value) => {
+    expect(refusalThrownBy(() => executionUiFor(value as string))).toEqual(refusalOf(value));
   });
 });

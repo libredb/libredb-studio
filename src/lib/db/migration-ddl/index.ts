@@ -49,7 +49,7 @@ import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 import type { DatabaseType } from "@/lib/types";
 import { NO_CONNECTION_MIGRATION_DDL } from "./no-connection";
 import type { MigrationDdlSpec } from "./types";
-import { UNKNOWN_TYPE_MIGRATION_DDL } from "./unknown-type";
+import { assertDatabaseType, typeIdRow } from "@/lib/db/type-id";
 
 export const MIGRATION_DDL: Readonly<Record<DatabaseType, MigrationDdlSpec>> = Object.freeze({
   bigquery: BIGQUERY_MIGRATION_DDL,
@@ -98,21 +98,26 @@ export const MIGRATION_DDL: Readonly<Record<DatabaseType, MigrationDdlSpec>> = O
 });
 
 /**
- * The spec for a connection's type: `undefined` (no connection) gives the no-connection spec, a member of the union
- * its row (checked with `Object.hasOwn`, so `"constructor"` is not a member), and any other string the unknown-type
- * spec.
+ * The spec for a connection's type: `undefined` (no connection) gives the no-connection spec, and a type id its row,
+ * read through `typeIdRow`, so any other value is refused by name and `"constructor"` is never read as a row.
+ *
+ * @throws {UnknownProviderError} When `type` is defined and not a type id: a string that names no provider, `""`,
+ * `null`, or a value that is not text.
  */
 export function migrationDdlFor(type: string | undefined): MigrationDdlSpec {
   if (type === undefined) return NO_CONNECTION_MIGRATION_DDL;
-  if (Object.hasOwn(MIGRATION_DDL, type)) return MIGRATION_DDL[type as DatabaseType];
-  return UNKNOWN_TYPE_MIGRATION_DDL;
+  return typeIdRow(MIGRATION_DDL, type);
 }
 
 /**
  * The word the migration's `-- Dialect:` header prints: the default connection type for `undefined`, which is what
- * `SchemaDiff.tsx` passed with no connection open, and the type string as given otherwise, so the generator holds no
+ * `SchemaDiff.tsx` passed with no connection open, and the type id as given otherwise, so the generator holds no
  * type id of its own.
+ *
+ * @throws {UnknownProviderError} When `type` is defined and not a type id: a string that names no provider, `""`,
+ * `null`, or a value that is not text.
  */
 export function migrationDialectHeader(type: string | undefined): string {
+  if (type !== undefined) assertDatabaseType(type);
   return type === undefined ? DEFAULT_CONNECTION_TYPE : type;
 }

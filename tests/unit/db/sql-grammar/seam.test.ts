@@ -72,8 +72,8 @@ describe("each engine module imports only the contract", () => {
     expect(importers).toEqual(["libsql", "sqlite"]);
   });
 
-  test("no engine module imports the no-connection or unknown-type spec", () => {
-    const named = new Set([join(REGISTRY_DIR, "no-connection.ts"), join(REGISTRY_DIR, "unknown-type.ts")]);
+  test("no engine module imports the no-connection spec", () => {
+    const named = new Set([join(REGISTRY_DIR, "no-connection.ts")]);
     const importers = MODULES.filter((engine) =>
       importsOf(engine.path).some((entry) => named.has(resolveSpecifier(entry.specifier, engine.path) ?? "")),
     ).map((engine) => engine.id);

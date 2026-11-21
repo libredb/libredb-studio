@@ -1,15 +1,16 @@
 /**
  * The migration DDL registry is total over the type-id union, one module per id at its spec 5.3
- * placement, and its reader answers the three cases by name.
+ * placement, and its reader answers no connection and a type id by name and refuses every other value outside the
+ * `DatabaseType` union by name (FND-1).
  */
 import { describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { MIGRATION_DDL, migrationDdlFor, migrationDialectHeader } from "@/lib/db/migration-ddl";
 import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 import { NO_CONNECTION_MIGRATION_DDL } from "@/lib/db/migration-ddl/no-connection";
-import { UNKNOWN_TYPE_MIGRATION_DDL } from "@/lib/db/migration-ddl/unknown-type";
 import type { MigrationDdlSpec } from "@/lib/db/migration-ddl/types";
 import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 
 const PROVIDERS = "@/lib/db/providers";
 
@@ -105,12 +106,10 @@ describe("migration DDL registry census", () => {
     });
   }
 
-  test("every row is its own object, distinct from both named specs", () => {
+  test("every row is its own object, distinct from the no-connection spec", () => {
     const rows = ids.map((id) => MIGRATION_DDL[id]);
     expect(new Set(rows).size).toBe(rows.length);
     expect(rows).not.toContain(NO_CONNECTION_MIGRATION_DDL);
-    expect(rows).not.toContain(UNKNOWN_TYPE_MIGRATION_DDL);
-    expect(NO_CONNECTION_MIGRATION_DDL).not.toBe(UNKNOWN_TYPE_MIGRATION_DDL);
   });
 
   test("the registry is frozen", () => {
@@ -121,22 +120,27 @@ describe("migration DDL registry census", () => {
     expect(ids.filter((id) => MIGRATION_DDL[id].tableDdl === "refused").sort()).toEqual([...REFUSED].sort());
   });
 
-  test("the reader answers no connection, a member and an unknown string by name", () => {
+  test("the reader answers no connection and a member by name", () => {
     expect(migrationDdlFor(undefined)).toBe(NO_CONNECTION_MIGRATION_DDL);
     expect(migrationDdlFor("postgres")).toBe(MIGRATION_DDL.postgres);
-    for (const unknown of ["constructor", "__proto__", "toString", "not-an-engine"]) {
-      expect(migrationDdlFor(unknown)).toBe(UNKNOWN_TYPE_MIGRATION_DDL);
-    }
+  });
+
+  test.each(OUTSIDE_THE_UNION)("migrationDdlFor refuses %s by name", (_label, value) => {
+    expect(refusalThrownBy(() => migrationDdlFor(value as string))).toEqual(refusalOf(value));
   });
 
   test("the no-connection dialect is the word SchemaDiff passed, the default connection type", () => {
     expect(DEFAULT_CONNECTION_TYPE).toBe("postgres");
   });
 
-  test("the header word is the no-connection dialect with no connection and the type string otherwise", () => {
+  test("the header word is the no-connection dialect with no connection and the type id otherwise", () => {
     expect(migrationDialectHeader(undefined)).toBe(DEFAULT_CONNECTION_TYPE);
-    for (const type of ["postgres", "mysql", "constructor", "not-an-engine"]) {
+    for (const type of ["postgres", "mysql"]) {
       expect(migrationDialectHeader(type)).toBe(type);
     }
+  });
+
+  test.each(OUTSIDE_THE_UNION)("migrationDialectHeader refuses %s by name", (_label, value) => {
+    expect(refusalThrownBy(() => migrationDialectHeader(value as string))).toEqual(refusalOf(value));
   });
 });
