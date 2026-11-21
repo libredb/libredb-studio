@@ -55,6 +55,7 @@ import {
 } from "@/lib/db/providers/sql/duckdb/objects";
 import { openDuckDBClient } from "@/lib/db/providers/sql/duckdb/client";
 import { DUCKDB_CREATE_TABLE } from "@/lib/db/providers/sql/duckdb/create-table";
+import { DUCKDB_UNICODE_SPACE_SENTENCE } from "@/lib/db/providers/sql/duckdb/statement-shape";
 import {
   ConnectionError,
   DatabaseConfigError,
@@ -1120,6 +1121,31 @@ describe("query()", () => {
     expect(result.rows).toEqual([{ a: 7, b: "x" }]);
   });
 
+  // Measured on 1.5.5: DuckDB reads U+00A0, U+3000 and U+200B between INSERT, OR and REPLACE as spaces and replaced the
+  // row, while the confirmation gate read no INSERT OR REPLACE there and did not ask.
+  test.each([
+    "INSERT\u00A0OR\u00A0REPLACE INTO t VALUES (1, 'new', NULL)",
+    "INSERT OR\u3000REPLACE INTO t VALUES (1, 'new', NULL)",
+    "INSERT\u200BOR REPLACE INTO t VALUES (1, 'new', NULL)",
+  ])("a Unicode space DuckDB reads as a space is refused before the engine runs %j", async (sql) => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+    await provider.query("CREATE TABLE t (id INTEGER PRIMARY KEY, v VARCHAR, note VARCHAR)");
+    await provider.query("INSERT INTO t VALUES (1, 'a', 'keep-me')");
+
+    await expect(provider.query(sql)).rejects.toThrow(QueryError);
+    await expect(provider.query(sql)).rejects.toThrow(DUCKDB_UNICODE_SPACE_SENTENCE);
+
+    expect((await provider.query("SELECT * FROM t")).rows).toEqual([{ id: 1, v: "a", note: "keep-me" }]);
+  });
+
+  test("a Unicode space inside a string is the string's own, and the statement runs", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+
+    expect((await provider.query("SELECT 'a\u00A0b' AS s")).rows).toEqual([{ s: "a\u00A0b" }]);
+  });
+
   test("a syntax error is a QueryError carrying DuckDB's own sentence", async () => {
     provider = new DuckDBProvider(makeConfig());
     await provider.connect();
@@ -1738,6 +1764,52 @@ describe("queryReadOnly()", () => {
     expect((error as Error).message).toMatch(/^Read-only execution refused /);
     expect(run).not.toHaveBeenCalled();
     run.mockRestore();
+  });
+
+  // Measured on 1.5.5: DuckDB reads U+00A0 and U+3000 between two code words as spaces, and this path handed such a
+  // statement to the engine, where every reader of Studio's, the statement guard above included, sees a code character.
+  test.each(["SELECT\u00A0id, secret FROM users ORDER BY id", "SELECT id FROM\u3000users ORDER BY id"])(
+    "a Unicode space DuckDB reads as a space is refused before the engine is called %j",
+    async (sql) => {
+      provider = await readOnlyProvider();
+      const client = (provider as unknown as { client: { run(sql: string): Promise<unknown> } }).client;
+      const run = spyOn(client, "run");
+
+      const error = await provider.queryReadOnly(sql, GENEROUS_BUDGET).catch((caught: unknown) => caught);
+
+      // A QueryError, as on the editor path, and this path's own class for a statement refused before it was sent, so
+      // the agent and MCP say this server refused it rather than presenting the sentence as DuckDB's error.
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error).toBeInstanceOf(RefusedBeforeSendError);
+      expect((error as Error).message).toBe(DUCKDB_UNICODE_SPACE_SENTENCE);
+      expect(run).not.toHaveBeenCalled();
+      run.mockRestore();
+    },
+  );
+
+  // The order the docblock states: the Unicode-space refusal comes before the statement guard, so a statement both
+  // would refuse gets the sentence about the space, the one that says what the guard itself could not read.
+  test.each(["SELECT\u00A0id FROM users; INSTALL httpfs", "SELECT id FROM\u3000read_text('/etc/hostname')"])(
+    "a Unicode space is refused before the statement guard reads %j",
+    async (sql) => {
+      expect(() => assertReadOnlyStatementIsBounded(sql)).toThrow(/^Read-only execution refused /);
+      provider = await readOnlyProvider();
+      const client = (provider as unknown as { client: { run(sql: string): Promise<unknown> } }).client;
+      const run = spyOn(client, "run");
+
+      const error = await provider.queryReadOnly(sql, GENEROUS_BUDGET).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(RefusedBeforeSendError);
+      expect((error as Error).message).toBe(DUCKDB_UNICODE_SPACE_SENTENCE);
+      expect(run).not.toHaveBeenCalled();
+      run.mockRestore();
+    },
+  );
+
+  test("a Unicode space inside a string is the string's own, and the read runs on this path too", async () => {
+    provider = await readOnlyProvider();
+
+    expect((await provider.queryReadOnly("SELECT 'a\u00A0b' AS s", GENEROUS_BUDGET)).rows).toEqual([{ s: "a\u00A0b" }]);
   });
 
   test("reading a file outside the database is refused, so nothing is returned from it", async () => {

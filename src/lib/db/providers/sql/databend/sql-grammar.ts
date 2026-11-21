@@ -36,6 +36,11 @@ const DATABEND_GRAMMAR: SqlGrammar = {
   // Measured on the pinned image: `SELECT 1 FORMAT JSON LIMIT 5` is 1005 "unexpected `LIMIT`", and
   // `SELECT 1 LIMIT 5 FORMAT JSON` succeeds. The format is one bracket-free word, so a `)` after it ends the match.
   trailingLimitClauses: [/\s+FORMAT\s+\w+\s*$/i],
+  // REPLACE deletes the row a new one collides with on the key its ON clause names. Measured on the pinned image: `REPLACE
+  // INTO t ON (id) VALUES ...` and `REPLACE t ON (id) VALUES ...` both replaced the row, so INTO is optional, and a
+  // REPLACE without ON is 1005 "expecting `ON`". So the form asks when ON follows it, which every REPLACE that runs has,
+  // and a replace() call in a block without an ON after it does not.
+  confirmFormsWhen: [{ form: ["REPLACE"], when: "ON" }],
 };
 
 /** How Databend statement text is read: grammar, SQL text, redaction, update target and completion. */

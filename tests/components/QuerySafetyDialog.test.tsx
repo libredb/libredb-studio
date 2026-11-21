@@ -3341,3 +3341,272 @@ describe("a PostgreSQL DO block asks", () => {
     expect(isDangerousQuery("DO 'x'", "mysql")).toBe(false);
   });
 });
+
+// An INSERT-shaped statement whose text overwrites or deletes rows already there changes rows, so it asks as UPDATE and
+// DELETE do. The gate reads the statement, not the table: a plain INSERT and an INSERT ... SELECT do not ask, also where
+// the table's own definition turns them into a replace.
+describe("MySQL's statements that overwrite rows through an INSERT ask", () => {
+  // REPLACE deletes the row a new one collides with on a primary or unique key, with or without INTO; ON DUPLICATE KEY
+  // UPDATE updates it, after VALUES, SET or SELECT. Measured on MySQL 8.4.13: each ran from the editor with no dialog.
+  // INSERT OVERWRITE is StarRocks' and Apache Doris' (TABLE is Doris' spelling): it replaces every row of the table or
+  // of the partitions it names. The relatives on the mysql type id have no row of their own, so they get these answers.
+  test.each([
+    "REPLACE INTO t (id, v) VALUES (1, 'a')",
+    "REPLACE t (id, v) VALUES (1, 'a')",
+    "REPLACE LOW_PRIORITY INTO t VALUES (1, 'a')",
+    "REPLACE INTO t SET id = 1, v = 'a'",
+    "REPLACE INTO t SELECT id, v FROM u",
+    "replace into t values (1, 'a')",
+    "-- refresh\nREPLACE INTO t VALUES (1, 'a')",
+    "# refresh\nREPLACE INTO t VALUES (1, 'a')",
+    "INSERT INTO t (id, v) VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'b'",
+    "INSERT INTO t SET id = 1, v = 'a' ON DUPLICATE KEY UPDATE v = 'b'",
+    "INSERT INTO t SELECT id, v FROM u ON DUPLICATE KEY UPDATE v = u.v",
+    "INSERT INTO t VALUES (1, 'a') AS n ON DUPLICATE KEY UPDATE v = n.v",
+    "insert into t values (1, 'a') on /* c */ duplicate key -- d\nupdate v = 'b'",
+    "SELECT 1; REPLACE INTO t VALUES (1, 'a')",
+    "SELECT 1; INSERT INTO t VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'b'",
+    "INSERT OVERWRITE t SELECT id, v FROM u",
+    "INSERT OVERWRITE t PARTITION (p1) SELECT id, v FROM u",
+    "INSERT OVERWRITE t VALUES (1, 'a')",
+    "INSERT OVERWRITE TABLE t SELECT id, v FROM u",
+    "insert /* c */ overwrite t select id, v from u",
+    "SELECT 1; INSERT OVERWRITE t SELECT id, v FROM u",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(true);
+  });
+
+  test.each([
+    "INSERT INTO t (id, v) VALUES (1, 'a')",
+    "INSERT INTO t SELECT id, v FROM u",
+    "INSERT IGNORE INTO t VALUES (1, 'a')",
+    "INSERT INTO overwrite VALUES (1, 'a')",
+    "SELECT REPLACE(v, 'a', 'b') FROM t",
+    "SELECT 'REPLACE INTO t VALUES (1)' AS note",
+    "INSERT INTO t VALUES ('ON DUPLICATE KEY UPDATE')",
+    "INSERT INTO t VALUES (1, 'a') # ON DUPLICATE KEY UPDATE v = 'b'",
+    "CREATE TABLE t (id INT, ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(false);
+  });
+
+  test("a script led by BEGIN that only calls REPLACE() asks: inside a block every form counts anywhere in the code", () => {
+    // The accepted cost of reading a REPLACE without INTO as the statement: the gate reads a block's code for its
+    // forms, and a false prompt costs one click where silence costs an unconfirmed REPLACE.
+    expect(isDangerousQuery("BEGIN; SELECT REPLACE(v, 'a', 'b') FROM t; COMMIT;", "mysql")).toBe(true);
+  });
+
+  const REPLACED_WITHOUT_ROWS = [
+    "CREATE OR REPLACE VIEW v AS SELECT 1 AS x",
+    "CREATE OR REPLACE PROCEDURE p() SELECT 1",
+    "CREATE OR REPLACE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1",
+  ];
+
+  test.each(REPLACED_WITHOUT_ROWS)(
+    "a script led by BEGIN that holds %j asks: the same accepted false prompt",
+    (sql) => {
+      // The object holds no rows of its own, but inside a block led by BEGIN the gate reads every form anywhere in the
+      // code, so the REPLACE in CREATE OR REPLACE counts as the statement: one click, the fail-safe direction.
+      expect(isDangerousQuery(`BEGIN; ${sql}; COMMIT;`, "mysql")).toBe(true);
+    },
+  );
+
+  test.each(REPLACED_WITHOUT_ROWS.flatMap((sql) => [sql, `SELECT 1; ${sql}`, `START TRANSACTION; ${sql}; COMMIT;`]))(
+    "does not ask for %j outside a script led by BEGIN",
+    (sql) => {
+      expect(isDangerousQuery(sql, "mysql")).toBe(false);
+    },
+  );
+
+  test.each(["postgres", "mssql", "oracle"] as const)("%s keeps its verdicts", (type) => {
+    expect(isDangerousQuery("SELECT REPLACE(v, 'a', 'b') FROM t", type)).toBe(false);
+    expect(isDangerousQuery("INSERT INTO t VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'b'", type)).toBe(false);
+  });
+});
+
+describe("SQLite's statements that overwrite rows through an INSERT ask", () => {
+  // REPLACE INTO and INSERT OR REPLACE delete the row a new one collides with on a primary or unique key, and so a
+  // different row than the one the key names. OR ROLLBACK, OR ABORT and OR FAIL refuse the new row with an error and
+  // OR IGNORE skips it, so none of them changes a row that is there (measured through bun:sqlite on SQLite 3.53.4, and
+  // on sqld 0.24.33 for libSQL, which reads the same grammar).
+  const ENGINES = ["sqlite", "libsql"] as const;
+  const pairs = (statements: readonly string[]) =>
+    ENGINES.flatMap((type) => statements.map((sql) => [type, sql] as const));
+
+  test.each(
+    pairs([
+      "REPLACE INTO t (id, v) VALUES (1, 'a')",
+      "INSERT OR REPLACE INTO t (id, v) VALUES (1, 'a')",
+      "replace into t values (1, 'a')",
+      "insert or replace into t values (1, 'a')",
+      "INSERT /* c */ OR -- d\nREPLACE INTO t VALUES (1, 'a')",
+      "WITH c AS (SELECT 1 AS id) REPLACE INTO t SELECT id, 'a' FROM c",
+      "WITH c AS (SELECT 1 AS id) INSERT OR REPLACE INTO t SELECT id, 'a' FROM c",
+      "SELECT 1; REPLACE INTO t VALUES (1, 'a')",
+      "BEGIN; INSERT OR REPLACE INTO t VALUES (1, 'a'); COMMIT;",
+    ]),
+  )("%s asks for %j", (type, sql) => {
+    expect(isDangerousQuery(sql, type)).toBe(true);
+  });
+
+  test.each(
+    pairs([
+      "INSERT INTO t (id, v) VALUES (1, 'a')",
+      "INSERT INTO t SELECT id, v FROM u",
+      "INSERT OR IGNORE INTO t VALUES (1, 'a')",
+      "INSERT OR ABORT INTO t VALUES (1, 'a')",
+      "INSERT OR FAIL INTO t VALUES (1, 'a')",
+      "INSERT OR ROLLBACK INTO t VALUES (1, 'a')",
+      "SELECT replace(v, 'a', 'b') FROM t",
+      "BEGIN; SELECT replace(v, 'a', 'b') FROM t; COMMIT;",
+      "SELECT 'INSERT OR REPLACE INTO t' AS note",
+    ]),
+  )("%s does not ask for %j", (type, sql) => {
+    expect(isDangerousQuery(sql, type)).toBe(false);
+  });
+});
+
+describe("MySQL's LOAD DATA and LOAD XML that replace rows ask", () => {
+  // REPLACE before INTO TABLE deletes the row a loaded one collides with on a primary or unique key. Measured on MySQL
+  // 8.4.13: `LOAD DATA INFILE ... REPLACE INTO TABLE t` turned (1, 'a', 'keep-me') into (1, 'loaded', NULL) from the
+  // editor with no dialog, IGNORE kept the row, and a load with neither refused the duplicate with ERROR 1062. The words
+  // follow a file name, not the statement's keyword, so the form is read anywhere in the code.
+  test.each([
+    "LOAD DATA INFILE '/var/lib/mysql-files/rows.csv' REPLACE INTO TABLE t FIELDS TERMINATED BY ','",
+    "LOAD DATA LOCAL INFILE 'rows.csv' REPLACE INTO TABLE t",
+    "LOAD DATA LOW_PRIORITY LOCAL INFILE 'rows.csv' REPLACE INTO TABLE probe.t (id, v)",
+    "LOAD XML LOCAL INFILE 'rows.xml' REPLACE INTO TABLE t ROWS IDENTIFIED BY '<row>'",
+    "load data local infile 'rows.csv' replace into table t",
+    "LOAD DATA INFILE 'rows.csv' REPLACE /* c */ INTO -- d\nTABLE t",
+    "LOAD DATA INFILE 'rows.csv' REPLACE INTO TABLE `t`",
+    "SELECT 1; LOAD DATA INFILE 'rows.csv' REPLACE INTO TABLE t",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(true);
+  });
+
+  // What the code form could newly catch and must not: a load that keeps the rows there, the words in a literal or a
+  // comment, and a REPLACE() call, which a `(` follows rather than INTO.
+  test.each([
+    "LOAD DATA INFILE 'rows.csv' IGNORE INTO TABLE t",
+    "LOAD DATA INFILE 'rows.csv' INTO TABLE t",
+    "LOAD DATA INFILE 'replace into table.csv' INTO TABLE t",
+    "LOAD DATA INFILE 'rows.csv' INTO TABLE t # REPLACE INTO TABLE t",
+    "SELECT 'REPLACE INTO TABLE t' AS note",
+    "SELECT REPLACE(note, 'INTO', 'TABLE') FROM t",
+    "SELECT `replace` FROM t",
+    "CREATE TABLE u REPLACE SELECT id, v FROM t",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(false);
+  });
+
+  test("SingleStore's CREATE PIPELINE with a replacing load asks, the accepted false prompt of the form", () => {
+    // SingleStore connects through the mysql type id, and its pipeline definition writes the same words
+    // (`CREATE PIPELINE ... AS LOAD DATA ... REPLACE INTO TABLE t`, SingleStore reference "CREATE PIPELINE"). Creating a
+    // pipeline loads nothing, and the START PIPELINE that runs the replacing load does not ask: the definition is the
+    // only text that shows the REPLACE, so the prompt is kept there.
+    expect(isDangerousQuery("CREATE PIPELINE p AS LOAD DATA S3 'bucket/key' REPLACE INTO TABLE t", "mysql")).toBe(true);
+    expect(isDangerousQuery("START PIPELINE p", "mysql")).toBe(false);
+  });
+});
+
+describe("MariaDB's CREATE OR REPLACE TABLE asks on a mysql connection", () => {
+  // MariaDB connects through the mysql type id. Measured on MariaDB 11.8.9: CREATE OR REPLACE TABLE dropped t and its
+  // row with no dialog, and the AS SELECT form left only the selected row. MySQL refuses the TABLE form (8.4.13, ERROR
+  // 1064), so on MySQL it never runs.
+  test.each([
+    "CREATE OR REPLACE TABLE t (id INT PRIMARY KEY, v VARCHAR(32))",
+    "CREATE OR REPLACE TABLE t AS SELECT 2 AS id, 'other' AS v",
+    "CREATE OR REPLACE TABLE t LIKE u",
+    "create or replace table t (id int)",
+    "CREATE /* c */ OR -- d\nREPLACE TABLE t (id INT)",
+    "SELECT 1; CREATE OR REPLACE TABLE t (id INT)",
+    // A TEMPORARY table replaces the session's temporary table of that name and its rows: measured on MariaDB 11.8.9,
+    // a temporary table holding a row read none after it, and the AS SELECT form left only the selected row, while a
+    // base table of the same name kept its row. DROP TEMPORARY TABLE asks for the same rows. MySQL 8.4.13 refuses the
+    // statement with ERROR 1064.
+    "CREATE OR REPLACE TEMPORARY TABLE tt (id INT, v VARCHAR(32))",
+    "CREATE OR REPLACE TEMPORARY TABLE tt AS SELECT 9 AS id, 'other' AS v",
+    "create or replace temporary table tt (id int)",
+    "CREATE OR /* c */ REPLACE -- d\nTEMPORARY TABLE tt (id INT)",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(true);
+  });
+
+  // Each replaces an object that holds no rows of its own and kept t's row on MariaDB 11.8.9.
+  test.each([
+    "CREATE OR REPLACE VIEW v AS SELECT 1 AS x",
+    "CREATE OR REPLACE PROCEDURE p() SELECT 1",
+    "CREATE OR REPLACE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1",
+    "CREATE TABLE IF NOT EXISTS t (id INT)",
+    "CREATE TEMPORARY TABLE tt (id INT)",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(false);
+  });
+});
+
+describe("Databend's REPLACE asks", () => {
+  // REPLACE deletes the row a new one collides with on the key its ON clause names. Measured on Databend
+  // v1.2.951-nightly: REPLACE INTO turned (1, 'a', 'keep-me') into (1, 'new', NULL) from the editor with no dialog, INTO
+  // is optional (`REPLACE t ON (id) VALUES ...` replaced the row too), and ON is required ("expecting `ON`").
+  test.each([
+    "REPLACE INTO t ON (id) VALUES (1, 'a')",
+    "REPLACE t ON (id) VALUES (1, 'a')",
+    "REPLACE INTO t (id, v) ON (id) SELECT id, v FROM u",
+    "replace into t on (id) values (1, 'a')",
+    "-- refresh\nREPLACE /* c */ INTO t ON (id) VALUES (1, 'a')",
+    "SELECT 1; REPLACE INTO t ON (id) VALUES (1, 'a')",
+    "BEGIN; REPLACE INTO t ON (id) VALUES (1, 'a'); COMMIT;",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "databend")).toBe(true);
+  });
+
+  test.each([
+    "INSERT INTO t VALUES (1, 'a')",
+    "SELECT replace(v, 'a', 'b') FROM t",
+    "BEGIN; SELECT replace(v, 'a', 'b') FROM t; COMMIT;",
+    "SELECT 'REPLACE INTO t ON (id)' AS note",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "databend")).toBe(false);
+  });
+
+  test("a script led by BEGIN that calls replace() before an ON asks: inside a block the form is read anywhere", () => {
+    // The accepted cost of reading REPLACE with the ON that every REPLACE statement carries: in a block the gate reads
+    // the form anywhere in the code, and a join's ON after the call satisfies it, the fail-safe direction.
+    expect(
+      isDangerousQuery("BEGIN; SELECT replace(t.v, 'a', 'b') FROM t JOIN u ON t.id = u.id; COMMIT;", "databend"),
+    ).toBe(true);
+  });
+});
+
+describe("DuckDB's INSERT OR REPLACE asks", () => {
+  // Measured on DuckDB 1.5.5: INSERT OR REPLACE overwrote (1, 'a', 'keep-me') with (1, 'new', NULL) from the editor with
+  // no dialog, BY NAME included, and ON CONFLICT ... DO UPDATE SET updated it, which the code-wide UPDATE ... SET
+  // reading already asks about. INSERT OR IGNORE, ON CONFLICT DO NOTHING, a plain INSERT and INSERT ... BY NAME or BY
+  // POSITION kept the row, refusing a duplicate key with a Constraint Error where they do not skip it.
+  test.each([
+    "INSERT OR REPLACE INTO t VALUES (1, 'a')",
+    "INSERT OR REPLACE INTO t (id, v) VALUES (1, 'a')",
+    "INSERT OR REPLACE INTO t BY NAME SELECT 1 AS id, 'a' AS v",
+    "insert or replace into t values (1, 'a')",
+    "INSERT /* c */ OR -- d\nREPLACE INTO t VALUES (1, 'a')",
+    "WITH c AS (SELECT 1 AS id) INSERT OR REPLACE INTO t SELECT id, 'a' FROM c",
+    "SELECT 1; INSERT OR REPLACE INTO t VALUES (1, 'a')",
+    "BEGIN; INSERT OR REPLACE INTO t VALUES (1, 'a'); COMMIT;",
+    "INSERT INTO t VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET v = EXCLUDED.v",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "duckdb")).toBe(true);
+  });
+
+  test.each([
+    "INSERT INTO t VALUES (1, 'a')",
+    "INSERT OR IGNORE INTO t VALUES (1, 'a')",
+    "INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING",
+    "INSERT INTO t BY NAME SELECT 1 AS id, 'a' AS v",
+    "INSERT INTO t BY POSITION VALUES (1, 'a')",
+    "SELECT replace(v, 'a', 'b') FROM t",
+    "BEGIN; SELECT replace(v, 'a', 'b') FROM t; COMMIT;",
+    "SELECT 'INSERT OR REPLACE INTO t' AS note",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "duckdb")).toBe(false);
+  });
+});

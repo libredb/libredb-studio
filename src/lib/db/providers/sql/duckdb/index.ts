@@ -159,6 +159,7 @@ import {
 } from "./objects";
 import { comparePaths } from "@/lib/db/object-path";
 import { readCount, toQueryResult } from "./values";
+import { unicodeSpaceRefusal } from "./statement-shape";
 import { createMissingDirectories } from "@/lib/db/utils/create-directory";
 import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 import { logger } from "@/lib/logger";
@@ -796,8 +797,15 @@ export class DuckDBProvider extends SQLBaseProvider {
     return readLeadingKeyword(sql, resolveSqlGrammar("duckdb"))?.keyword;
   }
 
+  /**
+   * One statement on the connection. A Unicode space DuckDB reads as a space and Studio's reader does not is refused
+   * before the engine reads the statement (`unicodeSpaceRefusal`, which `queryReadOnly` applies too), so the statement
+   * that runs is the one the confirmation gate and the row limiter read.
+   */
   public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     this.ensureConnected();
+    const refusal = unicodeSpaceRefusal(sql);
+    if (refusal !== undefined) throw new QueryError(refusal, "duckdb", sql);
 
     return this.trackQuery(async () => {
       if (queryId) this.runningQueryIds.add(queryId);
@@ -904,15 +912,19 @@ export class DuckDBProvider extends SQLBaseProvider {
    *    provider that implements this method.
    * 2. The profile check - a writable handle has no boundary to enforce, so running the
    *    statement there would be exactly the fail-open this layer exists to prevent.
-   * 3. `assertReadOnlyStatementIsBounded` - the statement guard, BEFORE the engine, for
+   * 3. `unicodeSpaceRefusal` - the refusal `query` makes too, of a Unicode space DuckDB
+   *    reads as a space and Studio's readers do not, so the statement the guard below
+   *    reads is the one the engine parses. A `RefusedBeforeSendError` here, as every
+   *    refusal of this path before the engine is.
+   * 4. `assertReadOnlyStatementIsBounded` - the statement guard, BEFORE the engine, for
    *    the forms `access_mode` does not refuse. This is the one step with no equivalent
    *    in `sqlite.ts`, where `PRAGMA query_only` covers the same ground engine-side;
    *    DuckDB has no such pragma, so the boundary has to be drawn here.
-   * 4. The engine, which owns "no writes to this database" and is re-asserted by
+   * 5. The engine, which owns "no writes to this database" and is re-asserted by
    *    construction rather than per statement: `access_mode` is fixed at OPEN and no
    *    statement can change it (unlike `PRAGMA query_only`, which is why sqlite
    *    re-asserts).
-   * 5. The result budgets - rows, then bytes, then time.
+   * 6. The result budgets - rows, then bytes, then time.
    *
    * `client.run()` issues ONE `runAndReadAll`, which executes only the FIRST statement
    * of a multi-statement string (measured: `"SELECT 1 AS a; SELECT 2 AS b"` answers
@@ -930,6 +942,8 @@ export class DuckDBProvider extends SQLBaseProvider {
         sql,
       );
     }
+    const refusal = unicodeSpaceRefusal(sql);
+    if (refusal !== undefined) throw new RefusedBeforeSendError(refusal, "duckdb", sql);
     assertReadOnlyStatementIsBounded(sql);
 
     return this.trackQuery(async () => {

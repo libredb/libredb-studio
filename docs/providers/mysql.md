@@ -964,6 +964,24 @@ Block comments are flat: the MySQL reference manual (11.7 Comments, checked 2026
 `//` is code, probed 2026-08-25 on 26.7.0: `SELECT 1 AS a // note` is ERROR 1064.
 A backslash does not always escape, because `NO_BACKSLASH_ESCAPES` in `sql_mode` turns the escape off per session.
 `[...]` and compound statements (`CREATE PROCEDURE ... BEGIN ... END`, cut with `DELIMITER` by MySQL's own client) are not established and stay at the fail-safe default; the second gap is BACKLOG S7.
+The confirmation gate asks before the INSERT-shaped statements whose text changes rows already there, as it asks before `UPDATE` and `DELETE`.
+`REPLACE` (`confirmForms`) deletes the row a new one collides with on a primary or unique key; its `INTO` is optional, so every statement led by the word asks.
+`ON DUPLICATE KEY UPDATE` (`confirmCodeForms`) asks wherever it is in the statement's code, after `VALUES`, `SET` or `SELECT`.
+`INSERT OVERWRITE` (`confirmForms`) is StarRocks' and Apache Doris' statement (`INSERT OVERWRITE TABLE` in Doris) and replaces every row of the table or of the partitions it names.
+MySQL has no such statement, so on MySQL its one false prompt is an `INSERT` without `INTO` into a table named `overwrite`.
+`REPLACE INTO TABLE` (`confirmCodeForms`) is `LOAD DATA`'s and `LOAD XML`'s, after the file name: measured on MySQL 8.4.13, `LOAD DATA INFILE ... REPLACE INTO TABLE t` turned `(1, 'a', 'keep-me')` into the loaded row, `IGNORE` kept it, and a load with neither word refused the duplicate with ERROR 1062, so only `REPLACE` asks.
+`REPLACE` and `TABLE` are reserved and a `REPLACE()` call takes a `(`, so the one other statement found that writes those three words is SingleStore's `CREATE PIPELINE ... AS LOAD DATA ... REPLACE INTO TABLE t`, which loads nothing until `START PIPELINE` runs it.
+It asks, the form's one accepted false prompt: the definition is the only text that shows the `REPLACE`, and `START PIPELINE` does not ask.
+`CREATE OR REPLACE TABLE` (`confirmForms`) is MariaDB's: measured on MariaDB 11.8.9, it dropped the table and its rows, and the `AS SELECT` form left only the selected rows.
+`CREATE OR REPLACE TEMPORARY TABLE` (`confirmForms`) replaces the session's temporary table of that name and its rows: measured on 11.8.9, a temporary table holding a row read none after it, and the `AS SELECT` form left only the selected row, while a base table of the same name kept its row in a new session.
+It asks as `DROP TEMPORARY TABLE` does for the same rows.
+MySQL 8.4.13 refuses both with ERROR 1064, so on MySQL they never run.
+`CREATE OR REPLACE VIEW`, `PROCEDURE` and `FUNCTION` replace objects that hold no rows, so none of them asks outside a script led by `BEGIN`.
+A plain `INSERT`, `INSERT IGNORE` and `INSERT ... SELECT` do not ask.
+The gate reads the statement, not the table: StarRocks treats an `INSERT` into a Primary Key table, and Apache Doris an `INSERT` into a Unique Key table, as an upsert that overwrites the row with the same key (each engine's table-model documentation), and such an `INSERT` does not ask either.
+Inside a script led by `BEGIN`, the gate reads every form anywhere in the code, so there a `REPLACE()` call asks too, the fail-safe direction.
+Every MySQL-wire relative in section 1.1 connects through the `mysql` type id and has no grammar row of its own, so it gets the same answers.
+TiDB's non-transactional `BATCH ... DELETE` and `BATCH ... REPLACE` still run with no confirmation, since the gate reads `BATCH` as the statement's keyword: BACKLOG D476.
 The update-target reader takes `--` as a comment only before a space or a control character, as MySQL and MariaDB do; its measurement on MariaDB 11.8.9 sits beside its regex in `src/lib/sql/update-target.ts`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with a backtick as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.

@@ -695,6 +695,9 @@ Its grammar is `SQLITE_GRAMMAR`, the one reading the statement splitter, the row
 Block comments are flat: `case CC_SLASH` scans for the first `*/` with no depth count.
 `//` is code, probed 2026-08-25 through the bundled driver: `SELECT 1 AS a // note` and `SELECT 1 // 2` are both 'near "/": syntax error'.
 `CREATE TRIGGER ... BEGIN ... END` is the one statement with a body: measured through node:sqlite 3.50.4, the trigger cut at its inner `;` was `incomplete input`.
+The confirmation gate asks before `REPLACE INTO` and `INSERT OR REPLACE` (`confirmForms`), as it asks before `UPDATE` and `DELETE`: both delete the row a new one collides with on a primary or unique key.
+Measured through bun:sqlite on SQLite 3.53.4, `INSERT OR ROLLBACK`, `INSERT OR ABORT` and `INSERT OR FAIL` refuse the new row with an error and `INSERT OR IGNORE` skips it, so none of them changes a row already there and none asks; nor does a plain `INSERT` or `INSERT ... SELECT`.
+The gate reads the statement, not the table, so an `INSERT` that a constraint declared `ON CONFLICT REPLACE` turns into a replace does not ask either: measured on the same SQLite, a plain `INSERT` into a table whose `INTEGER PRIMARY KEY` carries that clause turned `(1, 'a', 'keep-me')` into `(1, 'new', NULL)`, and one into a `UNIQUE ... ON CONFLICT REPLACE` column deleted the other row holding the value.
 `readsSqlText` is `true`: the editor text is SQL.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 

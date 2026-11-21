@@ -31,6 +31,11 @@ const DUCKDB_GRAMMAR: SqlGrammar = {
   backslashAlwaysEscapes: false,
   script: DEFAULT_SQL_GRAMMAR.script,
   trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
+  // The one INSERT form whose text overwrites a row already there: measured on v1.5.5, `INSERT OR REPLACE` (with or
+  // without BY NAME) overwrote the row a new one collided with on its primary key, while `INSERT OR IGNORE`, `ON
+  // CONFLICT DO NOTHING`, a plain `INSERT` and `INSERT ... BY NAME` or `BY POSITION` kept it. `ON CONFLICT ... DO
+  // UPDATE SET` overwrote it too and asks through the gate's shared `UPDATE ... SET` reading, so it is not a form here.
+  confirmForms: [["INSERT", "OR", "REPLACE"]],
 };
 
 /**
