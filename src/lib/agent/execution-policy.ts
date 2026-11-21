@@ -31,8 +31,9 @@
  *   own paging limits are irrelevant here. The caps refuse rather than truncate
  *   (the providers throw on an over-budget result, and on the read-only statement
  *   path, the model's statements, the composed catalog, plan and profile reads and
- *   the hand-over, `runReadOnlyStatement` refuses one again in core), which is what
- *   lets a caller trust that a delivered result is complete.
+ *   the hand-over, `runReadOnlyStatement` refuses one again in core, as
+ *   `runReadOnlyReading` does for the MongoDB catalog read and the two cluster
+ *   readings), which is what lets a caller trust that a delivered result is complete.
  */
 
 import type { ExecutionProfile } from "@/lib/db/factory";
@@ -206,9 +207,10 @@ function workflowBudget(input: {
 }): AgentWorkflowBudget {
   const budgets: ExecutionBudget = Object.freeze({
     /**
-     * The run loop is sequential: one statement at a time. On the read-only statement
-     * path a statement counts until its provider call settles, also one Studio stopped
-     * waiting for at its timeout (`runReadOnlyStatement`, `executeAuditedOperation`), and
+     * The run loop is sequential: one read at a time. Each read counts until its
+     * provider call settles, also one Studio stopped waiting for at its timeout
+     * (`runReadOnlyStatement`, `runReadOnlyReading`) or at the time its call was granted
+     * (`withinGrantedTime` in `tools.ts`), through `executeAuditedOperation`'s hold, and
      * the run's next call waits for it (`runAuditedAgentCall`).
      */
     maxConcurrentExecutions: 1,
