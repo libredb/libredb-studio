@@ -34,8 +34,9 @@ import { admittedConnection, grantedSnapshot, WRITE_CREDENTIAL } from "../../hel
 /*
   A sample path that runs through a regular file is a path the admission cannot check on POSIX, which reports it as
   ENOTDIR, so the sample is refused target-unreadable. Windows reports the same path as absent (ENOENT), so the
-  admission lets it through and its copy fails at the mkdir instead, as copy-failed. Both are a failed sample listed
-  unavailable with its reason while the listing still answers, which is what the test below holds.
+  admission lets it through and its copy fails at the mkdir instead, as copy-failed; the test names SEED_ASSETS_DIR, so
+  the copy gets that far rather than stopping as asset-directory-unset. Both are a failed sample listed unavailable with
+  its reason while the listing still answers, which is what the test below holds.
 */
 const UNCHECKABLE_PATH_REASON = process.platform === "win32" ? "copy-failed" : "target-unreadable";
 
@@ -515,6 +516,7 @@ describe("GET /api/connections/managed", () => {
     writeFileSync(blocker, "");
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
     process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SEED_ASSETS_DIR = path.resolve(__dirname, "../../../seed-assets");
     try {
       await seedSamples();
       const admin = await GET();
@@ -533,6 +535,7 @@ describe("GET /api/connections/managed", () => {
       resetSampleSeedStates();
       delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
       delete process.env.LIBREDB_EMBEDDED_SAMPLE;
+      delete process.env.SEED_ASSETS_DIR;
       rmSync(dir, { recursive: true, force: true });
     }
   });

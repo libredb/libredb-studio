@@ -477,18 +477,24 @@ describe("the seed assets directory", () => {
   });
 
   test("resolves a relative SEED_ASSETS_DIR against the working directory, as every other path setting is, and copies both samples from it", async () => {
-    const relative = path.relative(process.cwd(), path.join(ROOT, "seed-assets"));
+    // The runner starts this file in the checkout root, so the test moves to another directory: a value resolved
+    // against the checkout or the module's location would then name a directory that does not exist.
+    const workingDirectory = temporaryDirectory();
+    const relative = path.relative(workingDirectory, path.join(ROOT, "seed-assets"));
     expect(relative).not.toBe("");
     expect(path.isAbsolute(relative)).toBe(false);
     process.env.SEED_ASSETS_DIR = relative;
     const dataDir = path.dirname(process.env.STORAGE_SQLITE_PATH ?? "");
     const info = spyOn(logger, "info").mockImplementation(() => {});
+    const before = process.cwd();
+    process.chdir(workingDirectory);
     try {
       await startSampleSeeding();
       expect(getSampleSeedState("sqlite-embedded-sample")).toEqual({ phase: "done" });
       expect(getSampleSeedState("libredb-embedded-sample")).toEqual({ phase: "done" });
       expect(readdirSync(dataDir).sort()).toEqual(["sample-employees.db", "sample.libredb"]);
     } finally {
+      process.chdir(before);
       info.mockRestore();
     }
   });
