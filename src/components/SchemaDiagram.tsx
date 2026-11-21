@@ -76,7 +76,11 @@ interface SchemaDiagramProps {
    * never resolved. The read's own words are drawn.
    */
   schemaError?: string | null;
-  /** Whether the catalog is being read now: the spinner, not a previous read's failure. */
+  /**
+   * Whether the catalog is being read now: the spinner, not a previous read's failure. False says
+   * the read has ended, so an empty schema has nothing to draw; left out, an empty schema keeps the
+   * spinner, because nothing then says whether a read is still on its way.
+   */
   isLoadingSchema?: boolean;
   /** Asks for the catalog read again; the failure draws Try again only when one is handed in. */
   onRetrySchema?: () => void;
@@ -112,7 +116,7 @@ function SchemaDiagramInner({
   onClose,
   capabilities,
   schemaError = null,
-  isLoadingSchema = false,
+  isLoadingSchema,
   onRetrySchema,
 }: SchemaDiagramProps) {
   const mode = useEffectiveTheme();
@@ -386,13 +390,28 @@ function SchemaDiagramInner({
     ? `${schemaHasFkData ? "No usable FK relationships in this view." : "No FK data available."} Showing heuristic relationships (dashed).`
     : "No FK data available.";
 
+  // These three states cover the editor with no diagram on them, so each draws the diagram's own
+  // Close: a read that keeps failing, or one still running, must not leave the editor out of reach.
+  const overlayClose = (
+    <Button
+      variant="outline"
+      size="icon"
+      className="absolute top-4 right-4 rounded-full bg-raised border-hairline-strong hover:bg-fill"
+      onClick={onClose}
+      aria-label="Close schema diagram"
+    >
+      <X strokeWidth={1.5} className="w-3.5 h-3.5" />
+    </Button>
+  );
+
   // Drawn as the sidebar's object tree draws a failed read: the read's own message and Try again.
-  if (relations.length === 0 && schemaError !== null && !isLoadingSchema) {
+  if (relations.length === 0 && schemaError !== null && isLoadingSchema !== true) {
     return (
       <div
         data-testid="diagram-read-failed"
         className="absolute inset-0 z-50 bg-canvas flex flex-col items-center justify-center px-6 text-center"
       >
+        {overlayClose}
         <CircleAlert strokeWidth={1.5} className="w-8 h-8 text-warning mb-4" />
         <h3 className="text-foreground text-xs font-medium mb-1">The objects could not be read</h3>
         <p className="max-w-md text-xs text-muted-foreground leading-relaxed break-words">{schemaError}</p>
@@ -409,9 +428,28 @@ function SchemaDiagramInner({
     );
   }
 
+  // A read that ended with no relation in it: an empty database, or a connection whose objects are
+  // not read until it is used. SchemaExplorer says the same for the same state.
+  if (relations.length === 0 && schemaError === null && isLoadingSchema === false) {
+    return (
+      <div
+        data-testid="diagram-empty"
+        className="absolute inset-0 z-50 bg-canvas flex flex-col items-center justify-center px-6 text-center"
+      >
+        {overlayClose}
+        <Info strokeWidth={1.5} className="w-8 h-8 text-fg-muted mb-4" />
+        <h3 className="text-foreground text-xs font-medium mb-1">No objects to draw</h3>
+        <p className="max-w-md text-xs text-muted-foreground leading-relaxed">
+          No table, view or other object with columns has been read for this connection.
+        </p>
+      </div>
+    );
+  }
+
   if (relations.length === 0) {
     return (
       <div className="absolute inset-0 z-50 bg-canvas flex flex-col items-center justify-center">
+        {overlayClose}
         <LoaderCircle strokeWidth={1.5} className="w-8 h-8 text-brand animate-spin mb-4" />
         <p className="text-fg-muted text-xs">Generating ERD Diagram...</p>
       </div>

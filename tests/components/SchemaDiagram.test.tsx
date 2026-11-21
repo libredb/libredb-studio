@@ -874,6 +874,62 @@ describe("SchemaDiagram", () => {
     expect(view.queryByTestId("diagram-read-failed")).toBeNull();
   });
 
+  // Every state that covers the editor without a diagram draws the diagram's own Close, so a read
+  // that keeps failing, or one that is still running, never leaves the editor out of reach.
+  test("a failed catalog read draws Close beside Try again, and Close closes the diagram", () => {
+    const onClose = mock(() => {});
+    const props = createDefaultProps({
+      schema: emptySchema,
+      schemaError: "database is locked",
+      onRetrySchema: mock(() => {}),
+      onClose,
+    });
+    const { container } = render(<SchemaDiagram {...props} />);
+
+    fireEvent.click(within(container).getByRole("button", { name: "Close schema diagram" }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("the spinner draws Close while the catalog is read", () => {
+    const onClose = mock(() => {});
+    const props = createDefaultProps({ schema: emptySchema, isLoadingSchema: true, onClose });
+    const { container } = render(<SchemaDiagram {...props} />);
+    const view = within(container);
+
+    expect(view.queryByText("Generating ERD Diagram...")).not.toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Close schema diagram" }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // A read that ended with no relation in it (an empty database, a deferred scan, a held connection)
+  // has nothing to draw, and the spinner would wait for a read that is not coming.
+  test("a catalog read that ended with nothing to draw says so instead of the spinner", () => {
+    const onClose = mock(() => {});
+    const props = createDefaultProps({ schema: emptySchema, schemaError: null, isLoadingSchema: false, onClose });
+    const { container } = render(<SchemaDiagram {...props} />);
+    const view = within(container);
+
+    expect(view.queryByText("Generating ERD Diagram...")).toBeNull();
+    expect(view.getByTestId("diagram-empty")).not.toBeNull();
+    expect(view.getByText("No objects to draw")).not.toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Close schema diagram" }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("a schema with objects but no relation, read to the end, draws the empty state", () => {
+    const props = createDefaultProps({
+      schema: [{ name: "refresh_totals", kind: "procedure", columns: [] } as unknown as DetailedObject],
+      capabilities: { objectKinds: [{ id: "procedure", role: "routine" }] } as unknown as ProviderCapabilities,
+      isLoadingSchema: false,
+    });
+    const { container } = render(<SchemaDiagram {...props} />);
+
+    expect(within(container).getByTestId("diagram-empty")).not.toBeNull();
+  });
+
   // ── Search affects edge count ───────────────────────────────────────────
 
   test("filtering to table with FK shows its relationships", () => {
