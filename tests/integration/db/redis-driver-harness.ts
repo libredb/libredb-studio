@@ -7,8 +7,8 @@
  *  - a reply the parser cannot hold: an array header no JS array can take (`*4294967296`), or arrays nested deeper
  *    than the stack, answered to a command, to the first command of a connect, or to the `SELECT` or the agent
  *    read-only proof a connect sends after it;
- *  - on a TLS connection, one record the client cannot decrypt written under the TLS layer, then a reset, or one more
- *    client write, which Node reports as a second `error` on the same socket.
+ *  - on a TLS connection, one record the client cannot decrypt written under the TLS layer: in place of the answer to a
+ *    command or to a connect, with the socket kept open, or on an idle connection, then a reset or one more command.
  *
  * Each case records what the caller got, what the next command got, the `[Redis]` warnings the provider logged, and
  * every error that escaped a call instead of reaching its caller (uncaughtException, unhandledRejection). The test runs this file twice, under Bun and, bundled
@@ -171,6 +171,8 @@ interface CaseReport {
   readonly call: string;
   /** What the next command on the same provider settled with, when the case sends one. */
   readonly next?: string;
+  /** How many times the peer received the command the fault answered, when the case counts it. */
+  readonly delivered?: number;
   readonly logged: string[];
   readonly escaped: string[];
 }
@@ -184,7 +186,7 @@ interface Opening {
 async function runCase(
   name: string,
   secure: boolean,
-  body: (provider: RedisProvider, peer: Peer) => Promise<{ call: string; next?: string }>,
+  body: (provider: RedisProvider, peer: Peer) => Promise<{ call: string; next?: string; delivered?: number }>,
   opening: Opening = {},
 ): Promise<CaseReport> {
   escaped.length = 0;
@@ -266,6 +268,20 @@ async function idleRecordCase(name: string, then: "reset" | "command"): Promise<
   });
 }
 
+/**
+ * Writes the unreadable record where an answer to `name` belongs, once, and keeps the socket open: nothing but the
+ * record tells the client that this connection cannot answer the command any more.
+ */
+function recordFor(name: string): Answer {
+  let sent = false;
+  return (command, { raw }) => {
+    if (sent || (command[0] ?? "").toUpperCase() !== name) return undefined;
+    sent = true;
+    raw.write(UNREADABLE_TLS_RECORD);
+    return "silence";
+  };
+}
+
 const cases: CaseReport[] = [];
 cases.push(await replyCase("oversized array header", OVERSIZED_ARRAY_HEADER));
 cases.push(await replyCase("deeply nested reply", DEEP_REPLY));
@@ -290,6 +306,26 @@ cases.push(
       setTimeout(() => raw.resetAndDestroy(), 150);
       return "silence";
     };
+    return { call: await settle(4_000, () => provider.connect()) };
+  }),
+);
+cases.push(
+  await runCase("unreadable TLS record while a command waits", true, async (provider, peer) => {
+    await provider.connect();
+    let delivered = 0;
+    const record = recordFor("GET");
+    peer.answer = (command, connection) => {
+      if ((command[0] ?? "").toUpperCase() === "GET") delivered++;
+      return record(command, connection);
+    };
+    const call = await settle(4_000, () => provider.query("GET k"));
+    const next = await settle(4_000, () => provider.query("PING"));
+    return { call, next, delivered };
+  }),
+);
+cases.push(
+  await runCase("unreadable TLS record while connecting", true, async (provider, peer) => {
+    peer.answer = recordFor("INFO");
     return { call: await settle(4_000, () => provider.connect()) };
   }),
 );
