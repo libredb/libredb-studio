@@ -66,8 +66,10 @@ const P2 = record({ id: "p2", name: "DB Two", type: "postgres", host: "two.inter
 
 function dialog(editConnection: DatabaseConnection, isOpen = true) {
   const onClose = mock(() => {});
-  const onConnect = mock((_conn: DatabaseConnection) => {});
-  const onTestConnection = mock(async (_conn: DatabaseConnection) => ({ success: true }));
+  const onConnect = mock<(conn: DatabaseConnection) => void>(() => {});
+  const onTestConnection = mock<(conn: DatabaseConnection) => Promise<{ success: boolean }>>(async () => ({
+    success: true,
+  }));
   const element = (target: DatabaseConnection, open = isOpen) => (
     <ConnectionModal
       isOpen={open}

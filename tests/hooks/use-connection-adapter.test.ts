@@ -800,7 +800,7 @@ describe("useConnectionAdapter and a host connection whose type names no provide
   const P2 = makeWorkspaceConnection({ id: "p2", name: "DB Two" });
 
   function adapterOver(initial: WorkspaceConnection[]) {
-    const onSchemaFetch = mock((_id: string) => Promise.resolve([] as DetailedObject[]));
+    const onSchemaFetch = mock<(id: string) => Promise<DetailedObject[]>>(() => Promise.resolve([]));
     const hook = renderHook(
       ({ connections }) => useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
       { initialProps: { connections: initial } },
