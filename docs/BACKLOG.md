@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D472, U17 · 348
+- [Drivers and connections](#drivers-and-connections) — D1-D472, U17 · 347
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U209 · 194
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U210 · 195
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC37 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL11 · 10
@@ -4118,6 +4118,7 @@ Repro: start the server with a fresh data directory, sign in, open `/` with Samp
 The sidebar shows "The object list could not be read. Failed to open SQLite database: database is locked", and Try again clears it.
 The server log showed five concurrent `[DB] Creating sqlite provider for "Sample (Employees)"` lines, then `/api/db/health` and `/api/db/objects/counts` failing with that error.
 Intermittent: seen on 1 of 4 cold starts, not on the 3 later ones.
+Since 2026-11-21 the sample is seeded in WAL journal mode, so its first opens no longer lose the journal switch with that error (`docs/providers/sqlite.md` §3.2); a file a user brings in rollback-journal mode still can, and each concurrent first request still opens its own handle.
 Seen 2026-10-30 in the pre-release browser E2E of Studio 1.1.0 (build 12e81a05f), on the PostgreSQL tester's server; the evidence is that run's PostgreSQL screenshots of the first studio load and of the retry.
 
 Found 2026-10-30 in the pre-release browser E2E; pre-existing.
@@ -4589,21 +4590,6 @@ Found 2026-11-21 by the review of the Couchbase answer bounds change.
 Not fixed there: failing every 2xx whose body is not JSON changes how each Couchbase read is interpreted, which is the maintainer's decision.
 
 **Done when:** a Couchbase 2xx whose body is not JSON fails by name as a retriable `CouchbaseError` that reads as a `ConnectionError`, or the decision to keep reading it as empty is recorded in `docs/providers/couchbase.md` section 4.5, and a test drives both paths against a local listener that cuts a close-delimited answer.
-
-### D469. The first concurrent opens of a fresh SQLite sample can fail with "database is locked", and the ERD then waits forever
-
-`seedSqliteSampleFile` in `src/lib/seed/sqlite-sample.ts` copies `seed-assets/sqlite/employee.db`, which is in rollback-journal mode, into the data directory.
-Every writable open then runs `PRAGMA journal_mode = WAL` (`src/lib/db/providers/sql/sqlite-worker.ts`, and `src/lib/db/providers/sql/sqlite.ts` on the in-process path) with no busy timeout, so when several routes open the fresh file at once, the opens that lose the switch fail with `database is locked`.
-When the loser is `/api/db/objects/inventory`, the only catalog read `use-connection-manager.ts` makes, the schema diagram in `src/components/SchemaDiagram.tsx` has no relations and draws "Generating ERD Diagram..." with no failure state, so it never resolves.
-Measured 2026-11-21 from a worktree with no `data/` directory: `CI=1 bunx playwright test e2e/security-headers.spec.ts e2e/object-edit.spec.ts --project=chromium --repeat-each=5 --retries=0` failed 1 of 40 runs, the test "drives the editor, a query, the diagram and both exports with no policy violation" in `security-headers.spec.ts` drawing no PNG button within 30 s, while the server logged `database is locked` for `api/db/health` and `api/db/objects/inventory`.
-Six more runs of `security-headers.spec.ts` alone, each from a fresh data directory, logged lock errors on the first open in all six and failed the same way in one, the run in which the inventory read lost.
-Four processes running the worker's open sequence on a fresh copy of the sample had at least three of four opens fail in 6 of 6 trials, and none failed on a copy already in WAL mode (4 of 4 trials).
-A warm data directory does not show it, because the sample is already in WAL mode there.
-
-Found 2026-11-21 by the review of the E2E query budget change, which this symptom had been filed under (REL7).
-Not fixed there: the cause is in the SQLite provider and the sample seed, not in the E2E harness.
-
-**Done when:** concurrent first opens of a freshly seeded sample all succeed (for example, the sample is shipped or seeded in WAL mode, or the switch waits on a busy timeout), a failed inventory read draws a named failure with a retry on the schema diagram instead of its spinner, and tests cover both: several concurrent opens of a fresh rollback-journal copy, and the diagram given a failed catalog read.
 
 ### D470. A Redis connection that resets before it is ready again leaves the commands written to it unanswered
 
@@ -7213,6 +7199,16 @@ In the embedded workspace this toast is not shown at all (U204).
 Found 2026-11-21 by the review of the FND-1 saved query and picker change.
 
 **Done when:** a refused backup is answered with the entry's position or name and the field the schema refused, distinct from a parse or storage failure, and a unit test of the import and a component test assert that sentence.
+
+### U210. In the embedded workspace a failed catalog read is drawn as an empty database, and the diagram waits forever
+
+`useConnectionAdapter` in `src/workspace/hooks/use-connection-adapter.ts` reads the catalog through the host's `onSchemaFetch`, and when that rejects, `readSchema` sets an empty schema and keeps no error, so the shell has nothing to say why.
+`StudioWorkspace` then hands `SchemaDiagram` an empty schema with no `schemaError`, so the diagram draws "Generating ERD Diagram..." for a read that already ended, and the schema explorer reads as a connection with no tables.
+The standalone shell keeps the read's error in `use-connection-manager.ts` and draws it on the diagram with Try again; the workspace shell has no such state.
+`tests/hooks/use-connection-adapter.test.ts` pins the current answer in "fetchSchema error sets empty schema".
+Found 2026-11-21 while adding the failed-read state to the standalone diagram.
+
+**Done when:** the adapter keeps the host read's error beside the empty schema, `StudioWorkspace` hands it to `SchemaDiagram` with a retry that reads the active connection again, and a test drives a rejecting `onSchemaFetch` to the diagram's failure state.
 
 ## Dependencies
 
