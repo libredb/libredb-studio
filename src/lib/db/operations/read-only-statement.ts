@@ -11,7 +11,9 @@
  *   (`rowBudgetSentence`). An estimating plan (`mode: "estimate-plan"`) is held to the byte budget only: its rows are
  *   the optimizer's operators, not data rows (SQL Server's SHOWPLAN answers one per operator, 340 for an ordinary
  *   union of one view with itself), and SQL Server's provider exempts them from its row budget the same way. The mode
- *   is core's own choice (`composeEstimatingExplain`), not a provider's claim.
+ *   is the caller's own choice (`composeEstimatingExplain`, `mongoInspectPlanTool`), not a provider's claim, and the
+ *   exemption rests on the obligation `ReadOnlyStatementMode` states: a provider handed `"estimate-plan"` answers a
+ *   plan or refuses, so the byte budget is then the only cap core holds that answer to.
  * - **Bytes.** The UTF-8 JSON bytes of each served row are summed (`measureRowBytes`, a bigint cell counting as its
  *   decimal text), stopping at the row that carries the sum past `maxResultBytes`, which is refused in the byte
  *   sentence (`byteBudgetSentence`); a row after that one is never serialised. The per-row sum is never more than the

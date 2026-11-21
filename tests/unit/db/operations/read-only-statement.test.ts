@@ -16,7 +16,9 @@ import type { QueryResult } from "@/lib/types";
 
 /**
  * The one core call of a provider's read-only statement path: core holds the provider's answer to the row, byte and
- * time budget it handed out, whatever the provider does with that budget itself.
+ * time budget it handed out, with the two exceptions the module docblock names: an estimating plan's rows are held to
+ * the byte budget only, and a provider that runs its statement synchronously on the event loop (LibreDB, SQLite
+ * without its worker) is not stopped by core's timer.
  */
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -244,6 +246,7 @@ describe("runReadOnlyStatement", () => {
     const unhandled: unknown[] = [];
     const listener = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", listener);
+    const warned = spyOn(logger, "warn").mockImplementation(() => {});
     try {
       const error = await settled(
         runReadOnlyStatement(provider, {
@@ -258,6 +261,7 @@ describe("runReadOnlyStatement", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(unhandled).toEqual([]);
     } finally {
+      warned.mockRestore();
       process.off("unhandledRejection", listener);
     }
   });

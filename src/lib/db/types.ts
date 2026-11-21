@@ -2094,6 +2094,12 @@ export type ReadOnlyCatalogReading =
  *
  * `"execute"` is the default everywhere, including for a provider that ignores the
  * argument entirely: a provider written before this existed keeps its behaviour.
+ *
+ * A provider handed `"estimate-plan"` answers a plan or refuses, as LibreDB and
+ * Kubernetes refuse; it never executes the statement instead. `runReadOnlyStatement`
+ * holds an estimating plan's answer to the byte budget only, because its rows are
+ * operators rather than data rows, so a provider that executed the statement there
+ * would serve data rows no row cap in core checks.
  */
 export type ReadOnlyStatementMode = "execute" | "estimate-plan";
 
