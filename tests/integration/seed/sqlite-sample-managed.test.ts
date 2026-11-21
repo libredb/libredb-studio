@@ -30,6 +30,7 @@ afterEach(() => {
   delete process.env.SQLITE_EMBEDDED_SAMPLE;
   delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
   delete process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE;
+  delete process.env.LIBREDB_ENABLED_PROVIDERS;
   setSqliteSampleSeedState("idle");
 });
 
@@ -45,6 +46,18 @@ describe("getManagedConnections: sqlite embedded sample", () => {
     expect(sample?.name).toBe("Sample (Employees)");
     expect(sample?.database).toBe(file);
     expect(sample?.managed).toBe(false);
+  });
+
+  test("neither lists nor reports pending a sample the enabled providers leave out", async () => {
+    const file = useTempSamplePath();
+    await seedSqliteSampleFile(file);
+    setSqliteSampleSeedState("seeding");
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres";
+
+    const conns = await getManagedConnections(["admin"]);
+
+    expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)).toBeUndefined();
+    expect(getPendingSeeds()).toEqual([]);
   });
 
   /*

@@ -413,9 +413,11 @@ mock.module("@/components/CommandPalette", () => ({
   },
 }));
 
+let capturedSchemaDiagramProps: Record<string, unknown> = {};
 mock.module("@/components/SchemaDiagram", () => ({
-  SchemaDiagram: () => {
+  SchemaDiagram: (props: Record<string, unknown>) => {
     if (failingSplitViews.has("diagram")) throw new ChunkLoadError("Loading chunk 7 failed");
+    capturedSchemaDiagramProps = props;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     return React.createElement("div", { "data-testid": "schemadiagram" }, "SchemaDiagram");
@@ -2730,6 +2732,31 @@ describe("Studio", () => {
     const fn = capturedSidebarProps.onShowDiagram as () => void;
     await act(async () => fn());
     expect(queryByTestId("schemadiagram")).not.toBeNull();
+  });
+
+  // A failed catalog read empties the schema the diagram draws, so the diagram is handed the
+  // read's error and a way to ask again, and does not wait on a read that already ended.
+  test("the diagram is handed the catalog read's error, its loading state and a retry of the read", async () => {
+    connMgrOverride = { activeConnection: pgConn, schemaError: "database is locked", isLoadingSchema: false };
+    render(<Studio />);
+    await act(async () => (capturedSidebarProps.onShowDiagram as () => void)());
+    mockFetchSchema.mockClear();
+
+    expect(capturedSchemaDiagramProps.schemaError).toBe("database is locked");
+    expect(capturedSchemaDiagramProps.isLoadingSchema).toBe(false);
+    act(() => (capturedSchemaDiagramProps.onRetrySchema as () => void)());
+    expect(mockFetchSchema).toHaveBeenCalledTimes(1);
+    expect(mockFetchSchema).toHaveBeenCalledWith(pgConn);
+  });
+
+  test("with no connection active, the diagram's retry reads nothing", async () => {
+    connMgrOverride = { schemaError: "database is locked" };
+    render(<Studio />);
+    await act(async () => (capturedSidebarProps.onShowDiagram as () => void)());
+    mockFetchSchema.mockClear();
+
+    act(() => (capturedSchemaDiagramProps.onRetrySchema as () => void)());
+    expect(mockFetchSchema).not.toHaveBeenCalled();
   });
 
   // A split view whose chunk never arrives must not take the shell down with it (X5).

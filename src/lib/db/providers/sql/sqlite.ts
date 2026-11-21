@@ -54,7 +54,13 @@ import {
   type SQLiteDeclaredColumn,
   type SQLiteStatement,
 } from "./sqlite-driver";
-import { SQLiteWorkerClient, type SQLiteHandle, type SQLiteRawRead, type SQLiteWorkerOpen } from "./sqlite-worker";
+import {
+  SQLITE_OPEN_BUSY_TIMEOUT_MS,
+  SQLiteWorkerClient,
+  type SQLiteHandle,
+  type SQLiteRawRead,
+  type SQLiteWorkerOpen,
+} from "./sqlite-worker";
 import { declaredColumnTypes } from "./column-types";
 import { SQLITE_CREATE_TABLE } from "./sqlite-create-table";
 import {
@@ -1339,9 +1345,12 @@ export class SQLiteProvider extends SQLBaseProvider {
         // exercise every on-disk behaviour without Bun's worker-process hang.
         const SQLiteDB = await loadSQLiteDriver();
         this.db = new SQLiteDB(dbPath, { create: true, readwrite: true });
+        // The open waits for another connection's lock for a bound, and only the open (§3.2).
+        this.db.exec(`PRAGMA busy_timeout = ${SQLITE_OPEN_BUSY_TIMEOUT_MS}`);
         this.db.exec("PRAGMA foreign_keys = ON");
         this.db.exec("PRAGMA journal_mode = WAL");
         this.db.exec("PRAGMA synchronous = NORMAL");
+        this.db.exec("PRAGMA busy_timeout = 0");
       }
       this.setConnected(true);
     } catch (error) {
@@ -1415,9 +1424,11 @@ export class SQLiteProvider extends SQLBaseProvider {
     } else {
       const SQLiteDB = await loadSQLiteDriver();
       this.db = new SQLiteDB(dbPath, { readonly: true });
+      this.db.exec(`PRAGMA busy_timeout = ${SQLITE_OPEN_BUSY_TIMEOUT_MS}`);
       this.db.exec("PRAGMA foreign_keys = ON");
       // A file in WAL mode fails here rather than at the open: SQLite opens its files lazily.
       this.db.prepare("PRAGMA journal_mode").get();
+      this.db.exec("PRAGMA busy_timeout = 0");
     }
     this.setConnected(true);
   }

@@ -185,6 +185,19 @@ different open sequence entirely — `journal_mode = WAL` is itself a write and 
 handle ([§12.1](#121-where-the-boundary-is)). So does an existing file this process cannot write
 ([§3.7](#37-a-database-file-this-process-cannot-write)).
 
+The open sets `PRAGMA busy_timeout = 2000` before these pragmas and `PRAGMA busy_timeout = 0` after them, on the worker and on the in-process path alike (`SQLITE_OPEN_BUSY_TIMEOUT_MS` in [`sqlite-worker.ts`](../../src/lib/db/providers/sql/sqlite-worker.ts)).
+So the open waits up to two seconds for another connection's lock, and a statement after it still fails at once on another writer's lock instead of waiting.
+Without that bound the open failed at once with `Failed to open SQLite database: database is locked` whenever it met another connection's lock: the WAL-index recovery that the first open of a WAL-mode file with no `-shm` runs, the checkpoint a last close runs, or a reader of a file still under a rollback journal, where the switch to WAL needs every reader gone.
+Measured 2026-11-21 on `node:sqlite`: eight processes running this open sequence at once on a fresh WAL-mode copy of the sample with no sidecar lost 4 of 1,200 opens at `journal_mode` under CPU load, and none with `busy_timeout = 5000`; eight processes each opening and at once closing a WAL-mode copy lost 15 of 1,200, and none with it.
+Beside a reader of a rollback-journal file the switch with a busy timeout waited for the reader and then succeeded (a reader held 300 ms, then 1,000 ms).
+A lock held past the bound still fails the open with that error, once the bound is spent.
+
+One case no busy timeout covers: several connections switching the same rollback-journal file to WAL at once.
+Each holds a read lock when it asks for the write lock the switch needs, and SQLite refuses that upgrade at once instead of waiting, since neither could go on.
+Four processes running this open sequence at once on a fresh rollback-journal copy lost at least one open in every trial, and with `busy_timeout = 5000` set first, 29 of 60 opens on `node:sqlite` and 35 of 60 on `bun:sqlite` still failed, each within 5 ms of its start.
+So the first opens of a rollback-journal file, made by several requests at once, can fail; a file already in WAL mode has no switch to make, and the embedded sample is published in WAL mode for that reason ([§4.1](#41-embedded-sample-database-standalone-mode)).
+`tests/integration/db/sqlite-provider.test.ts` pins the bound in "the open's busy bound": an open waits for a reader of a rollback-journal file and for an exclusive lock on a WAL-mode file, each let go within the bound, fails once a reader holds past it, and leaves `busy_timeout` at 0.
+
 `disconnect()` closes with `close(true)`, and the argument is load-bearing. Bare `close()` on
 `bun:sqlite` is `sqlite3_close_v2`: with any statement still unfinalized the connection becomes a
 zombie and the database, its `-wal` and its `-shm` stay **open** until the last statement is
@@ -422,7 +435,8 @@ A write is refused by SQLite itself, and `query()` raises it as a `QueryError` t
 `query_only` is not set: this is the editor, and the file's permissions are the boundary, not the agent profile of [§12](#12-agent-read-only-execution-profile-328).
 
 A file already in WAL journal mode, with no `-shm` file beside it, still cannot be opened when its directory is unwritable: SQLite reads one only with a `-shm` file beside it, and has nowhere to make one (measured on `bun:sqlite` and `node:sqlite`, 2026-09-26).
-That includes any file this editor has written, because §3.2 leaves the file in WAL mode.
+That includes any file this editor has written, because §3.2 leaves the file in WAL mode, and the embedded sample, which the seed publishes in WAL mode with no `-shm` ([§4.1](#41-embedded-sample-database-standalone-mode)).
+Apple's libsqlite3, which `bun:sqlite` uses on macOS, refuses a read-only handle on such a file even in a writable directory, with "unable to open database file" (the seed tests on the macos-latest runner, 2026-11-21); a writable handle opens it there.
 `connect()` then fails with a `ConnectionError` that says so and names the two ways out: run `PRAGMA journal_mode = DELETE` on the file where it is writable, or make its directory writable.
 SQLite's own words for that refusal differ by build: the library bundled on Linux answers the file alone with "attempt to write a readonly database", Apple's libsqlite3 on macOS answers "unable to open database file", and so does Linux when a `-wal` is left beside the file with no `-shm` (measured on the macos-latest runner and on Linux, 2026-09-26).
 So the reason is not read from those words but from the file's header, where bytes 18 and 19 are 2 in WAL mode, and SQLite's words follow it.
@@ -494,6 +508,13 @@ from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sa
 `<data dir>/sample-employees.db` and `getManagedConnections()` advertises it as an editable,
 dismissable "Sample (Employees)" connection (`type: "sqlite"`, `managed: false`, `roles: ["admin"]`).
 
+The template is in rollback-journal mode.
+The seed copies it to a temp file beside the target, opens that copy once with this provider, whose open switches it to WAL journal mode ([§3.2](#32-pragmas-on-connect)), closes it, and only then renames it into place.
+So the published sample is already in WAL mode, and the first page load, which opens it from several routes at once, has no switch to race.
+A template that is not a SQLite database is refused by that open, and nothing is published.
+
+The sample is neither seeded nor listed when `LIBREDB_ENABLED_PROVIDERS` is set and does not name `sqlite`, because the factory refuses every open of a type that list leaves out.
+
 Unlike the LibreDB sample, the copy runs **asynchronously and fail-open**: `register()`
 fires-and-forgets the seed (start/completion/duration are logged), boot never waits on it, and a
 failure only logs a warning — the sample is then silently absent. While the copy is in flight the
@@ -504,7 +525,7 @@ Env vars:
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `SQLITE_EMBEDDED_SAMPLE` | `true` | Only the literal `false` disables |
+| `SQLITE_EMBEDDED_SAMPLE` | `true` | Only the literal `false` disables; off as well under governance, and when `LIBREDB_ENABLED_PROVIDERS` leaves out `sqlite` |
 | `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Runtime copy location |
 | `SQLITE_EMBEDDED_SAMPLE_TEMPLATE` | `<cwd>/seed-assets/sqlite/employee.db` | Vendored template location (packaging overrides) |
 

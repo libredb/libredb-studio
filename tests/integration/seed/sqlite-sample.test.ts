@@ -13,6 +13,7 @@ import {
   setSqliteSampleSeedState,
   SQLITE_SAMPLE_SEED_ID,
 } from "@/lib/seed/sqlite-sample";
+import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 
 const tmpDirs: string[] = [];
 function tmpPath(): string {
@@ -40,8 +41,26 @@ afterEach(() => {
   delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
   delete process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE;
   delete process.env.GOVERNANCE_SOURCE;
+  delete process.env.LIBREDB_SQLITE_WORKER;
+  delete process.env.LIBREDB_ENABLED_PROVIDERS;
   setSqliteSampleSeedState("idle");
 });
+
+/** A provider on the seeded sample, the way the server builds one for the seed connection. */
+function sampleProvider(file: string): SQLiteProvider {
+  return new SQLiteProvider({
+    id: "seed:sqlite-embedded-sample",
+    name: "Sample",
+    type: "sqlite",
+    database: file,
+    createdAt: new Date(0),
+  });
+}
+
+/** Bytes 18 and 19 of the file header, the write and read format versions: 2 in WAL mode, 1 under a rollback journal. */
+function formatVersions(file: string): number[] {
+  return [...fs.readFileSync(file).subarray(18, 20)];
+}
 
 describe("sqlite-sample", () => {
   test('isSqliteSampleEnabled: default on; only "false" disables', () => {
@@ -60,6 +79,28 @@ describe("sqlite-sample", () => {
     expect(isSqliteSampleEnabled()).toBe(false);
     // Unset is on by default, and still off under governance.
     delete process.env.SQLITE_EMBEDDED_SAMPLE;
+    expect(isSqliteSampleEnabled()).toBe(false);
+  });
+
+  // The factory refuses every open of a type LIBREDB_ENABLED_PROVIDERS leaves out, so a server whose list leaves out
+  // sqlite neither seeds the sample, which would load the SQLite provider, nor lists one that could never open.
+  test("isSqliteSampleEnabled() is false when LIBREDB_ENABLED_PROVIDERS is set and does not name sqlite", () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres,mysql";
+    expect(isSqliteSampleEnabled()).toBe(false);
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres, sqlite ,";
+    expect(isSqliteSampleEnabled()).toBe(true);
+    process.env.LIBREDB_ENABLED_PROVIDERS = "  ";
+    expect(isSqliteSampleEnabled()).toBe(true);
+    process.env.LIBREDB_ENABLED_PROVIDERS = "sqlite";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    expect(isSqliteSampleEnabled()).toBe(false);
+  });
+
+  // The factory refuses every open under a value it cannot read, so the sample, which names sqlite there, is off too.
+  test("isSqliteSampleEnabled() is false when LIBREDB_ENABLED_PROVIDERS is a value the factory refuses as a whole", () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = "sqlite,postgresql";
+    expect(isSqliteSampleEnabled()).toBe(false);
+    process.env.LIBREDB_ENABLED_PROVIDERS = " , ,";
     expect(isSqliteSampleEnabled()).toBe(false);
   });
 
@@ -82,7 +123,9 @@ describe("sqlite-sample", () => {
     expect(await seedSqliteSampleFile(file)).toBe("seeded");
     expect(fs.existsSync(file)).toBe(true);
 
-    const db = new Database(file, { readonly: true });
+    // Writable: Apple's system SQLite, which bun:sqlite uses on macOS, cannot open a WAL file read-only without its
+    // -shm file (SQLITE_CANTOPEN on macos-latest), and the seed publishes the sample in WAL mode with no sidecar.
+    const db = new Database(file);
     try {
       const row = db.query("SELECT COUNT(*) AS n FROM employee").get() as { n: number };
       expect(row.n).toBeGreaterThan(0);
@@ -114,7 +157,9 @@ describe("sqlite-sample", () => {
 
     expect(fs.existsSync(file)).toBe(true);
     expect(fs.existsSync(tempPath)).toBe(false);
-    const db = new Database(file, { readonly: true });
+    // Writable: Apple's system SQLite, which bun:sqlite uses on macOS, cannot open a WAL file read-only without its
+    // -shm file (SQLITE_CANTOPEN on macos-latest), and the seed publishes the sample in WAL mode with no sidecar.
+    const db = new Database(file);
     try {
       expect((db.query("SELECT COUNT(*) AS n FROM employee").get() as { n: number }).n).toBeGreaterThan(0);
     } finally {
@@ -155,6 +200,81 @@ describe("sqlite-sample", () => {
     }
     expect(fs.existsSync(file)).toBe(false);
     expect(fs.existsSync(`${file}.${process.pid}.seeding`)).toBe(false);
+  });
+
+  // The template is in rollback-journal mode, and every writable open switches the file to WAL.
+  // Two opens making that switch at once fail with "database is locked" whatever the busy timeout,
+  // because SQLite refuses the read lock's upgrade to the write lock the switch needs instead of
+  // waiting, so the first opens of a fresh copy, made by several routes at once, failed. The seed
+  // switches its private copy once, before the rename publishes it, so no open of the published
+  // sample has a switch to make, and the open's busy bound covers the WAL recovery of its first open.
+  test("seedSqliteSampleFile: publishes the sample already in WAL journal mode, with no sidecar left beside it", async () => {
+    const file = tmpPath();
+    expect(formatVersions(resolveSqliteSampleTemplatePath())).toEqual([1, 1]);
+
+    await seedSqliteSampleFile(file);
+
+    expect(formatVersions(file)).toEqual([2, 2]);
+    expect(fs.readdirSync(path.dirname(file))).toEqual(["sample-employees.db"]);
+  });
+
+  test("seedSqliteSampleFile: an open of the fresh sample succeeds while another connection is reading it", async () => {
+    const file = tmpPath();
+    await seedSqliteSampleFile(file);
+    // Writable: Apple's system SQLite, which bun:sqlite uses on macOS, cannot open a WAL file read-only without its
+    // -shm file (SQLITE_CANTOPEN on macos-latest); a read transaction holds the same read lock either way.
+    const reader = new Database(file);
+    reader.exec("BEGIN");
+    try {
+      expect((reader.query("SELECT COUNT(*) AS n FROM employee").get() as { n: number }).n).toBeGreaterThan(0);
+      for (const worker of ["1", "0"]) {
+        process.env.LIBREDB_SQLITE_WORKER = worker;
+        const provider = sampleProvider(file);
+        try {
+          await provider.connect();
+          expect((await provider.listObjects([], "table")).length).toBeGreaterThan(0);
+        } finally {
+          await provider.disconnect();
+        }
+      }
+    } finally {
+      reader.exec("COMMIT");
+      reader.close();
+    }
+  });
+
+  test("seedSqliteSampleFile: concurrent first opens of a freshly seeded sample all succeed", async () => {
+    const file = tmpPath();
+    await seedSqliteSampleFile(file);
+    const providers = Array.from({ length: 4 }, () => sampleProvider(file));
+    try {
+      const opens = await Promise.allSettled(
+        providers.map(async (provider) => {
+          await provider.connect();
+          return (await provider.listObjects([], "table")).length;
+        }),
+      );
+      expect(opens.map((open) => (open.status === "fulfilled" ? "opened" : String(open.reason)))).toEqual([
+        "opened",
+        "opened",
+        "opened",
+        "opened",
+      ]);
+    } finally {
+      await Promise.all(providers.map((provider) => provider.disconnect()));
+    }
+  });
+
+  test("seedSqliteSampleFile: a template that is not a SQLite database is refused and nothing is published", async () => {
+    const template = path.join(path.dirname(tmpPath()), "not-a-database.db");
+    fs.writeFileSync(template, "this is not a SQLite database, and it is long enough to have a header");
+    process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE = template;
+    const file = tmpPath();
+
+    await expect(seedSqliteSampleFile(file)).rejects.toThrow("file is not a database");
+
+    expect(fs.existsSync(file)).toBe(false);
+    expect(fs.readdirSync(path.dirname(file)).filter((name) => name.startsWith("sample-employees.db"))).toEqual([]);
   });
 
   test("buildSqliteSampleConnection: editable sqlite seed pointing at the resolved path", () => {

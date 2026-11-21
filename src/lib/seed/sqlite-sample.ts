@@ -16,18 +16,37 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { ManagedConnection } from "./types";
+import type { DatabaseType } from "@/lib/types";
 import { getDataDir } from "@/lib/data-dir";
+import { readEnabledProviders } from "@/lib/db/enabled-providers";
 import { governanceEnabled } from "@/lib/governance/config";
 
 export const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
 
+/** The sample's connection type. */
+const SQLITE_SAMPLE_TYPE = "sqlite" satisfies DatabaseType;
+
 /**
  * Default on; only the literal "false" disables. Server-side env. Off under governance whatever
  * the variable says (docs/GOVERNANCE.md), so a governance install neither seeds nor lists it.
+ *
+ * Off too when `LIBREDB_ENABLED_PROVIDERS` does not let the provider factory open sqlite: the
+ * factory refuses every open of a type a set list leaves out, so the sample could never open, and
+ * seeding it would load the SQLite provider in a server that is not to run it. The list is the
+ * factory's own reading (`readEnabledProviders`), so the two never disagree; a value the factory
+ * refuses as a whole leaves the sample off, and the factory names that value on every open.
  */
 export function isSqliteSampleEnabled(): boolean {
   if (governanceEnabled()) return false;
-  return process.env.SQLITE_EMBEDDED_SAMPLE !== "false";
+  if (process.env.SQLITE_EMBEDDED_SAMPLE === "false") return false;
+  return allowedByEnabledProviders(SQLITE_SAMPLE_TYPE);
+}
+
+/** Whether the provider factory may open `type` under `LIBREDB_ENABLED_PROVIDERS`. */
+function allowedByEnabledProviders(type: DatabaseType): boolean {
+  const enabled = readEnabledProviders();
+  if (enabled.kind === "every") return true;
+  return enabled.kind === "listed" && enabled.types.includes(type);
 }
 
 /** Override via SQLITE_EMBEDDED_SAMPLE_PATH, else `<data dir>/sample-employees.db`,
@@ -87,6 +106,18 @@ async function fileExists(p: string): Promise<boolean> {
  * concurrent workers each publish one complete file (last writer wins; both
  * copies are identical).
  *
+ * The copy is switched to WAL journal mode before the rename publishes it.
+ * The template is in rollback-journal mode, and every writable open runs
+ * `PRAGMA journal_mode = WAL`. Two opens making that switch at once fail with
+ * "database is locked" whatever the busy timeout: each holds a read lock when
+ * it asks for the write lock the switch needs, and SQLite refuses that upgrade
+ * instead of waiting. The first page load opens the sample from several routes
+ * at once, so most of those opens failed; a file already in WAL mode has no
+ * switch to make (docs/providers/sqlite.md, "PRAGMAs on connect"). The switch
+ * is made here by the provider's own open sequence, once, on a temp file no
+ * other connection can see yet; a template that is not a SQLite database is
+ * refused by that open rather than published.
+ *
  * Genuinely asynchronous (fs.promises throughout): instrumentation.ts
  * fire-and-forgets this, and only real await points make that true — with
  * sync fs calls the whole copy would run before the IIFE's first suspension,
@@ -110,6 +141,7 @@ export async function seedSqliteSampleFile(filePath: string): Promise<"seeded" |
 
   try {
     await fs.promises.copyFile(templatePath, tempPath);
+    await switchToWalJournal(tempPath);
     try {
       await fs.promises.rename(tempPath, filePath);
     } catch (renameError) {
@@ -127,13 +159,41 @@ export async function seedSqliteSampleFile(filePath: string): Promise<"seeded" |
   return "seeded";
 }
 
+/**
+ * Open the private copy once with the SQLite provider, whose open switches a writable file to
+ * WAL journal mode, and close it again. Imported lazily, as the LibreDB sample imports its
+ * engine, so the routes that only list the sample do not load the provider.
+ *
+ * The close removes the `-wal` and `-shm` files beside the copy where SQLite does (Linux,
+ * Windows, and every worker open, which runs node:sqlite); bun:sqlite on macOS keeps them
+ * (docs/providers/sqlite.md, "PRAGMAs on connect"). Nothing was written in WAL mode, so they
+ * hold no page, and they are removed here so no file named after the temp path is left behind.
+ */
+async function switchToWalJournal(tempPath: string): Promise<void> {
+  const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
+  const provider = new SQLiteProvider({
+    id: `seed:${SQLITE_SAMPLE_SEED_ID}`,
+    name: "Sample (Employees)",
+    type: SQLITE_SAMPLE_TYPE,
+    database: tempPath,
+    createdAt: new Date(0),
+  });
+  try {
+    await provider.connect();
+  } finally {
+    await provider.disconnect();
+    await fs.promises.rm(`${tempPath}-wal`, { force: true });
+    await fs.promises.rm(`${tempPath}-shm`, { force: true });
+  }
+}
+
 /** The built-in editable seed connection descriptor (managed:false). */
 export function buildSqliteSampleConnection(): ManagedConnection {
   return {
     id: `seed:${SQLITE_SAMPLE_SEED_ID}`,
     seedId: SQLITE_SAMPLE_SEED_ID,
     name: "Sample (Employees)",
-    type: "sqlite",
+    type: SQLITE_SAMPLE_TYPE,
     database: resolveSqliteSamplePath(),
     managed: false,
     roles: ["admin"],

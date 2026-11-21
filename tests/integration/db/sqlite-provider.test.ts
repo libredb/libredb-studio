@@ -9,6 +9,7 @@
 
 import { describe, test, expect, afterEach, beforeAll, beforeEach, afterAll, spyOn } from "bun:test";
 import * as childProcess from "node:child_process";
+import { once } from "node:events";
 import { spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Database as BunDatabase, constants as sqliteConstants } from "bun:sqlite";
 import {
@@ -40,7 +41,7 @@ import {
   readDbstatSizes,
 } from "@/lib/db/providers/sql/sqlite";
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
-import { SQLiteWorkerClient } from "@/lib/db/providers/sql/sqlite-worker";
+import { SQLITE_OPEN_BUSY_TIMEOUT_MS, SQLiteWorkerClient } from "@/lib/db/providers/sql/sqlite-worker";
 import { SQLITE_CREATE_TABLE } from "@/lib/db/providers/sql/sqlite-create-table";
 import {
   containerDepth,
@@ -1302,6 +1303,144 @@ describe("SQLiteProvider", () => {
       const overview = await provider.getOverview();
       expect(overview.databaseSizeBytes).toBeGreaterThan(0);
       expect(overview.tableCount).toBe(1);
+    });
+
+    // §3.2: the open waits for another connection's lock for SQLITE_OPEN_BUSY_TIMEOUT_MS, and only
+    // the open: a WAL recovery, a last close's checkpoint or a reader of a rollback-journal file used
+    // to fail it at once with "database is locked", while a statement after it still never waits.
+    describe("the open's busy bound", () => {
+      /** A file under a rollback journal, so the open's switch to WAL needs every other reader gone. */
+      function rollbackJournalFile(name: string): string {
+        const dbPath = join(fileTmpDir, name);
+        const setup = new BunDatabase(dbPath);
+        setup.exec("PRAGMA journal_mode = DELETE");
+        setup.exec("CREATE TABLE j (id INTEGER PRIMARY KEY)");
+        setup.close();
+        return dbPath;
+      }
+
+      /** A file already in WAL mode with no `-wal` or `-shm` beside it, as the seed publishes the sample. */
+      function walFile(name: string): string {
+        const dbPath = join(fileTmpDir, name);
+        const setup = new BunDatabase(dbPath);
+        setup.exec("PRAGMA journal_mode = WAL");
+        setup.exec("CREATE TABLE j (id INTEGER PRIMARY KEY)");
+        setup.close();
+        return dbPath;
+      }
+
+      /**
+       * Another connection in its own process that holds `dbPath` for `holdMs` once it says "held",
+       * then lets go. "reader" holds a read transaction; "exclusive" holds the file's exclusive lock,
+       * as a WAL recovery or a last close's checkpoint does for its moment. Its own process, because
+       * the in-process open waits on this thread and a holder here could not let go while it does.
+       */
+      async function holderInChild(
+        dbPath: string,
+        hold: "reader" | "exclusive",
+        holdMs: number,
+      ): Promise<{ exited: Promise<unknown> }> {
+        const child = childProcess.spawn(
+          "node",
+          [
+            "-e",
+            [
+              'const { DatabaseSync } = require("node:sqlite");',
+              hold === "reader"
+                ? `const db = new DatabaseSync(${JSON.stringify(dbPath)}, { readOnly: true });\ndb.exec("BEGIN");`
+                : `const db = new DatabaseSync(${JSON.stringify(dbPath)});\ndb.exec("PRAGMA locking_mode = EXCLUSIVE");\ndb.exec("BEGIN EXCLUSIVE");`,
+              'db.prepare("SELECT COUNT(*) AS n FROM j").get();',
+              'process.stdout.write("held\\n");',
+              `setTimeout(() => { db.exec("COMMIT"); db.close(); }, ${holdMs});`,
+            ].join("\n"),
+          ],
+          { stdio: ["ignore", "pipe", "inherit"] },
+        );
+        const exited = once(child, "exit");
+        const [line] = (await once(child.stdout, "data")) as [Buffer];
+        expect(line.toString()).toBe("held\n");
+        return { exited };
+      }
+
+      afterEach(() => {
+        delete process.env.LIBREDB_SQLITE_WORKER;
+      });
+
+      test.each(["1", "0"])(
+        "with LIBREDB_SQLITE_WORKER=%s an open waits for a reader of a rollback-journal file that lets go within the bound",
+        async (worker) => {
+          process.env.LIBREDB_SQLITE_WORKER = worker;
+          const dbPath = rollbackJournalFile(`journal-wait-${worker}.db`);
+          const reader = await holderInChild(dbPath, "reader", 300);
+
+          provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+          await provider.connect();
+          await reader.exited;
+
+          expect(provider.isConnected()).toBe(true);
+          expect([...readFileSync(dbPath).subarray(18, 20)]).toEqual([2, 2]);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+
+      // A WAL-mode file has no switch to make, yet its open still reads the file under another
+      // connection's lock: the first open of a file with no -shm recovers the WAL index under an
+      // exclusive lock, and a last close checkpoints under one. Either used to fail a concurrent open.
+      test.each(["1", "0"])(
+        "with LIBREDB_SQLITE_WORKER=%s an open of a WAL-mode file waits for another connection's exclusive lock that lets go within the bound",
+        async (worker) => {
+          process.env.LIBREDB_SQLITE_WORKER = worker;
+          const dbPath = walFile(`wal-wait-${worker}.db`);
+          const holder = await holderInChild(dbPath, "exclusive", 300);
+
+          provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+          await provider.connect();
+          await holder.exited;
+
+          expect(provider.isConnected()).toBe(true);
+          expect((await provider.query("SELECT COUNT(*) AS n FROM j")).rows).toEqual([{ n: 0 }]);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+
+      test(
+        "an open beside a reader held past the bound fails with database is locked once the bound is spent",
+        async () => {
+          const dbPath = rollbackJournalFile("journal-held.db");
+          const reader = new BunDatabase(dbPath, { readonly: true });
+          reader.exec("BEGIN");
+          reader.query("SELECT COUNT(*) FROM j").get();
+          const started = performance.now();
+          let failure: unknown = null;
+          try {
+            provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+            await provider.connect();
+          } catch (error) {
+            failure = error;
+          } finally {
+            reader.exec("COMMIT");
+            reader.close();
+          }
+
+          expect(String(failure)).toBe("ConnectionError: Failed to open SQLite database: database is locked");
+          expect(performance.now() - started).toBeGreaterThanOrEqual(SQLITE_OPEN_BUSY_TIMEOUT_MS / 2);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+
+      test.each(["1", "0"])(
+        "with LIBREDB_SQLITE_WORKER=%s the bound covers the open only, and a statement after it does not wait",
+        async (worker) => {
+          process.env.LIBREDB_SQLITE_WORKER = worker;
+          provider = new SQLiteProvider(makeSQLiteConfig({ database: join(fileTmpDir, `bound-${worker}.db`) }));
+          await provider.connect();
+
+          const busy = await provider.query("PRAGMA busy_timeout");
+
+          expect(busy.rows).toEqual([{ timeout: 0 }]);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
     });
 
     test("getStorageStats lists the main database plus WAL and SHM sidecar files", async () => {
