@@ -48,6 +48,14 @@ export const SQLITE_GRAMMAR: SqlGrammar = {
   // `incomplete input`.
   script: { blocks: "trigger-body", separatorLine: null, unit: "statement" },
   trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
+  // The INSERTs that delete the row a new one collides with on a primary or unique key (SQLite reference, "INSERT"
+  // and "The ON CONFLICT Clause"): `REPLACE INTO`, whose INTO is required, and `INSERT OR REPLACE`. Measured through
+  // bun:sqlite on 3.53.4, OR ROLLBACK, OR ABORT and OR FAIL refuse the new row with an error and OR IGNORE skips it,
+  // so none of them changes a row already there and none asks.
+  confirmForms: [
+    ["REPLACE", "INTO"],
+    ["INSERT", "OR", "REPLACE"],
+  ],
 };
 
 /** The empty word set, for an engine that adds no word to a shared set. */

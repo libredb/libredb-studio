@@ -25,6 +25,16 @@ describe("sql grammar shared building blocks", () => {
     expect(SQLITE_GRAMMAR.script.blocks).toBe("trigger-body");
   });
 
+  test("SQLITE_GRAMMAR declares the confirmation forms of the INSERTs that replace rows", () => {
+    // OR REPLACE is the one conflict algorithm that deletes a row already there; OR ROLLBACK, OR ABORT, OR FAIL and OR
+    // IGNORE leave it (SQLite reference, "The ON CONFLICT Clause").
+    expect(SQLITE_GRAMMAR.confirmForms).toEqual([
+      ["REPLACE", "INTO"],
+      ["INSERT", "OR", "REPLACE"],
+    ]);
+    expect(SQLITE_GRAMMAR.confirmCodeForms).toBeUndefined();
+  });
+
   test("NO_EXTRA_WORDS is empty", () => {
     expect(NO_EXTRA_WORDS.size).toBe(0);
   });
