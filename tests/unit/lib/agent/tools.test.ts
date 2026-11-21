@@ -7472,6 +7472,22 @@ describe("a provider that answers past the run's budget", () => {
     expect(h.artifacts.size).toBe(0);
   });
 
+  test("a SQL Server estimating plan with more operator rows than the row budget is read, because its rows are not data", async () => {
+    // Measured by the provider on AdventureWorks2022: a TOP 10 over one view unioned with itself plans to 340 operators.
+    const rows = Array.from({ length: maxResultRows + 140 }, (_, index) => ({ NodeId: index, PhysicalOp: "Scan" }));
+    const h = harness({ connection: { ...connection, type: "mssql" } }, async () =>
+      queryResult({ rows, fields: Object.keys(rows[0]), rowCount: rows.length }),
+    );
+
+    const outcome = await inspectPlanTool(h.context, {
+      sql: "SELECT TOP 10 * FROM v UNION ALL SELECT TOP 10 * FROM v",
+    });
+
+    if (outcome.kind !== "completed") throw new Error(`expected completed, got ${outcome.kind}`);
+    expect(h.queryReadOnly.mock.calls[0][2]).toBe("estimate-plan");
+    expect(outcome.artifact.summary.rowCount).toBe(rows.length);
+  });
+
   test("an answer that does not arrive within the statement timeout is refused as a statement failure", async () => {
     // 300 ms left on the run clamps the statement timeout to 300 ms, above the 250 ms a call needs at least.
     const h = harness({ deadline: new AgentRunDeadline(300, frozenClock) }, () => new Promise<QueryResult>(() => {}));

@@ -1,7 +1,10 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import path from "node:path";
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { logger } from "@/lib/logger";
 import {
   byteBudgetSentence,
+  MAX_STATEMENT_TIMEOUT_MS,
   measureResultBytes,
   measureRowBytes,
   rowBudgetSentence,
@@ -15,6 +18,9 @@ import type { QueryResult } from "@/lib/types";
  * The one core call of a provider's read-only statement path: core holds the provider's answer to the row, byte and
  * time budget it handed out, whatever the provider does with that budget itself.
  */
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const MODULE = path.join(ROOT, "src/lib/db/operations/read-only-statement.ts");
 
 const budget: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 10, maxResultBytes: 10_000 };
 
@@ -87,6 +93,64 @@ describe("runReadOnlyStatement", () => {
     );
     expect(error).toBeInstanceOf(QueryError);
     expect((error as QueryError).message).toBe(byteBudgetSentence(first + measureRowBytes(rows[1]), first + 10));
+  });
+
+  test("holds an estimating plan to the byte budget only, because a plan's rows are the optimizer's operators, not data rows", async () => {
+    const rows = [{ op: "Scan" }, { op: "Sort" }, { op: "Top" }];
+    const served = answer(rows);
+    const { provider } = providerAnswering(async () => served);
+    const result = await runReadOnlyStatement(provider, {
+      type: "mssql",
+      statement: "SELECT TOP 10 * FROM v",
+      budget: { ...budget, maxResultRows: 2 },
+      mode: "estimate-plan",
+      wait: "statement-timeout",
+    });
+    expect(result).toBe(served);
+    const first = measureRowBytes(rows[0]);
+    const error = await settled(
+      runReadOnlyStatement(provider, {
+        type: "mssql",
+        statement: "SELECT TOP 10 * FROM v",
+        budget: { ...budget, maxResultRows: 2, maxResultBytes: first },
+        mode: "estimate-plan",
+        wait: "statement-timeout",
+      }),
+    );
+    expect((error as QueryError).message).toBe(byteBudgetSentence(first + measureRowBytes(rows[1]), first));
+  });
+
+  test("holds an executed statement's answer to the row budget", async () => {
+    const { provider } = providerAnswering(async () => answer([{ id: 1 }, { id: 2 }, { id: 3 }]));
+    const error = await settled(
+      runReadOnlyStatement(provider, {
+        type: "mssql",
+        statement: "SELECT id FROM t",
+        budget: { ...budget, maxResultRows: 2 },
+        mode: "execute",
+        wait: "statement-timeout",
+      }),
+    );
+    expect((error as QueryError).message).toBe(rowBudgetSentence(3, 2));
+  });
+
+  test("stops summing bytes at the row that carries the sum past the budget, and never serialises a later row", async () => {
+    const later = mock(() => {
+      throw new Error("a row after the crossing row was serialised");
+    });
+    const rows: Record<string, unknown>[] = [{ text: "a".repeat(60) }, { text: "b".repeat(60) }, { toJSON: later }];
+    const { provider } = providerAnswering(async () => answer(rows));
+    const first = measureRowBytes(rows[0]);
+    const error = await settled(
+      runReadOnlyStatement(provider, {
+        type: "postgres",
+        statement: "SELECT text FROM t",
+        budget: { ...budget, maxResultBytes: first + 10 },
+        wait: "statement-timeout",
+      }),
+    );
+    expect((error as QueryError).message).toBe(byteBudgetSentence(first + measureRowBytes(rows[1]), first + 10));
+    expect(later).not.toHaveBeenCalled();
   });
 
   test("counts UTF-8 bytes, so a row that a UTF-16 length would admit is refused", async () => {
@@ -197,6 +261,113 @@ describe("runReadOnlyStatement", () => {
       process.off("unhandledRejection", listener);
     }
   });
+
+  test("logs, without the statement or the error's text, how a call it stopped waiting for settled later", async () => {
+    let reject: (error: Error) => void = () => {};
+    const late = new Promise<QueryResult>((_resolve, rejectLate) => {
+      reject = rejectLate;
+    });
+    const { provider } = providerAnswering(() => late);
+    const warned = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const statement = `SELECT ${crypto.randomUUID()}`;
+      await settled(
+        runReadOnlyStatement(provider, {
+          type: "postgres",
+          statement,
+          budget: { ...budget, statementTimeoutMs: 1 },
+          wait: "statement-timeout",
+        }),
+      );
+      expect(warned).not.toHaveBeenCalled();
+      const detail = crypto.randomUUID();
+      const failure = new Error(`connect ETIMEDOUT ${detail}`);
+      failure.name = "ConnectionError";
+      reject(failure);
+      await late.catch(() => {});
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(warned).toHaveBeenCalledTimes(1);
+      const [message, context] = warned.mock.calls[0];
+      expect(message).toBe("A read-only statement settled after Studio stopped waiting for it");
+      expect(context).toMatchObject({ provider: "postgres", outcome: "failed", errorClass: "ConnectionError" });
+      expect(typeof context?.settledAfterMs).toBe("number");
+      expect(JSON.stringify(warned.mock.calls)).not.toContain(detail);
+      expect(JSON.stringify(warned.mock.calls)).not.toContain(statement);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  test("logs a call it stopped waiting for that answered later as answered, with no error class", async () => {
+    let resolve: (result: QueryResult) => void = () => {};
+    const late = new Promise<QueryResult>((resolveLate) => {
+      resolve = resolveLate;
+    });
+    const { provider } = providerAnswering(() => late);
+    const warned = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await settled(
+        runReadOnlyStatement(provider, {
+          type: "duckdb",
+          statement: "SELECT 1",
+          budget: { ...budget, statementTimeoutMs: 1 },
+          wait: "statement-timeout",
+        }),
+      );
+      resolve(answer([{ id: 1 }]));
+      await late;
+      await new Promise<void>((settle) => setImmediate(settle));
+      expect(warned).toHaveBeenCalledTimes(1);
+      const context = warned.mock.calls[0][1];
+      expect(context).toMatchObject({ provider: "duckdb", outcome: "answered" });
+      expect(context).not.toHaveProperty("errorClass");
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  test("logs nothing for a call that answered within the timeout", async () => {
+    const { provider } = providerAnswering(async () => answer([{ id: 1 }]));
+    const warned = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await runReadOnlyStatement(provider, {
+        type: "postgres",
+        statement: "SELECT 1",
+        budget,
+        wait: "statement-timeout",
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(warned).not.toHaveBeenCalled();
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  test("clears its timer once the provider answers, so a hand-over's 24-day timeout keeps no process alive", async () => {
+    // In a child process: a timer left armed keeps that process alive, so the child exits only if it was cleared.
+    const script = `
+      const { runReadOnlyStatement } = await import(${JSON.stringify(MODULE)});
+      const provider = { queryReadOnly: async () => ({ rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 }) };
+      await runReadOnlyStatement(provider, {
+        type: "postgres",
+        statement: "SELECT 1",
+        budget: { statementTimeoutMs: ${MAX_STATEMENT_TIMEOUT_MS}, maxResultRows: 10, maxResultBytes: 10000 },
+        wait: "statement-timeout",
+      });
+    `;
+    const child = Bun.spawn([process.execPath, "-e", script], {
+      cwd: ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+    const exitCode = await child.exited;
+    expect({ exitCode, signal: child.signalCode, stderr: await new Response(child.stderr).text() }).toEqual({
+      exitCode: 0,
+      signal: null,
+      stderr: "",
+    });
+  }, 30_000);
 
   test("under the caller's own deadline it sets no timer of its own", async () => {
     const served = answer([{ id: 1 }]);
