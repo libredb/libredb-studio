@@ -354,7 +354,7 @@ describe("inspect_usage", () => {
     expect(outcome.modelText).not.toContain("smaller limit");
   });
 
-  test("rows past the byte budget are READING_OVER_BUDGET with a byte sentence, never the generic limit advice", async () => {
+  test("rows past the byte budget are READING_OVER_BUDGET with advice naming the budget and not the part measured before the refusal", async () => {
     const wide = { ...USAGE_ROW, ownerName: "w".repeat(4_000) };
     const maxResultBytes = AGENT_WORKFLOW_BUDGETS["query-optimization"].policy.budgets.maxResultBytes;
     // Few enough rows to sit under the 500-row ceiling, wide enough to pass the byte budget.
@@ -369,9 +369,9 @@ describe("inspect_usage", () => {
 
     if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
     expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
-    expect(outcome.modelText).toContain(`${maxResultBytes} bytes`);
-    expect(outcome.modelText).toContain("selector");
-    expect(outcome.modelText).not.toContain("smaller limit");
+    expect(outcome.modelText).toBe(
+      `That reading holds more than the ${maxResultBytes} bytes this run may carry, so none of it was kept. Ask again narrowed by a label selector, or for a smaller namespace.`,
+    );
   });
 
   test("rows a provider answered past the 500-row ceiling are refused with the ceiling's advice, and none reaches the model", async () => {
@@ -562,7 +562,7 @@ describe("profile_workloads", () => {
     expect(h.context.tracker.usage(h.context.runId).executedStatements).toBe(1);
   });
 
-  test("rows past the byte budget are READING_OVER_BUDGET with a byte sentence", async () => {
+  test("rows past the byte budget are READING_OVER_BUDGET with advice naming the budget and not the part measured before the refusal", async () => {
     const wide = { ...WORKLOAD_ROW, name: "w".repeat(4_000) };
     const maxResultBytes = AGENT_WORKFLOW_BUDGETS["database-assessment"].policy.budgets.maxResultBytes;
     const count = Math.ceil(maxResultBytes / JSON.stringify(wide).length) + 1;
@@ -581,9 +581,9 @@ describe("profile_workloads", () => {
 
     if (outcome.kind !== "refused") throw new Error(`expected a refusal, got ${outcome.kind}`);
     expect(outcome.refusal).toMatchObject({ class: "reading-refused", reasonCode: "READING_OVER_BUDGET" });
-    expect(outcome.modelText).toContain(`${maxResultBytes} bytes`);
-    expect(outcome.modelText).toContain("namespace");
-    expect(outcome.modelText).not.toContain("smaller limit");
+    expect(outcome.modelText).toBe(
+      `That profile holds more than the ${maxResultBytes} bytes this run may carry, so none of it was kept. Profile a smaller namespace, or read the workloads in question with run_read_query.`,
+    );
   });
 
   test("rows a provider answered past the 500-workload ceiling are refused with the ceiling's advice, and none reaches the model", async () => {

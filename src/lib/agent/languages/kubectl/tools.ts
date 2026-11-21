@@ -40,9 +40,13 @@ function readingRows(reading: ClusterUsageReading | WorkloadProfileReading): rea
 /** The cluster usage reading's advice past its row ceiling: it takes no limit, so a smaller limit is not advice. */
 const CLUSTER_OVER_CEILING_TEXT = `That reading holds more than ${CLUSTER_READING_ROW_CEILING} rows, the most it may carry, so none of it was kept. Ask again narrowed by a label selector, or for a smaller namespace.`;
 
-/** The same advice past the run's byte budget, which a few hundred wide rows can reach under the row ceiling. */
-const clusterOverBytesText = (bytes: number, allowed: number): string =>
-  `That reading came to ${bytes} bytes, more than the ${allowed} bytes this run may carry, so none of it was kept. Ask again narrowed by a label selector, or for a smaller namespace.`;
+/**
+ * The same advice past the run's byte budget, which a few hundred wide rows can reach under the row ceiling. It names
+ * the budget and not a size: core stops measuring at the row that carries the sum past it, so the sum it refuses on is
+ * not the reading's size.
+ */
+const clusterOverBytesText = (allowed: number): string =>
+  `That reading holds more than the ${allowed} bytes this run may carry, so none of it was kept. Ask again narrowed by a label selector, or for a smaller namespace.`;
 
 /**
  * The cluster usage reading, inside the audited call.
@@ -77,8 +81,7 @@ async function runClusterUsage(
     servedRows: readingRows,
     maxRows: CLUSTER_READING_ROW_CEILING,
     refuseRows: () => new AgentCuratedReadError("READING_OVER_BUDGET", CLUSTER_OVER_CEILING_TEXT),
-    refuseBytes: (bytes, allowed) =>
-      new AgentCuratedReadError("READING_OVER_BUDGET", clusterOverBytesText(bytes, allowed)),
+    refuseBytes: (_bytes, allowed) => new AgentCuratedReadError("READING_OVER_BUDGET", clusterOverBytesText(allowed)),
   });
   if (reading.kind === "metrics-unavailable") throw new AgentCuratedReadError("METRICS_UNAVAILABLE");
   if (reading.kind === "over-ceiling")
@@ -106,9 +109,9 @@ export async function inspectUsageTool(context: AgentToolContext, input: unknown
 /** The workload profile's advice past its row ceiling: it takes a namespace alone, so a selector is not advice. */
 const WORKLOADS_OVER_CEILING_TEXT = `That profile holds more than ${CLUSTER_READING_ROW_CEILING} workloads, the most it may carry, so none of it was kept. Profile a smaller namespace, or read the workloads in question with run_read_query.`;
 
-/** The same advice past the run's byte budget. */
-const workloadsOverBytesText = (bytes: number, allowed: number): string =>
-  `That profile came to ${bytes} bytes, more than the ${allowed} bytes this run may carry, so none of it was kept. Profile a smaller namespace, or read the workloads in question with run_read_query.`;
+/** The same advice past the run's byte budget, naming the budget and not a size, as `clusterOverBytesText` does. */
+const workloadsOverBytesText = (allowed: number): string =>
+  `That profile holds more than the ${allowed} bytes this run may carry, so none of it was kept. Profile a smaller namespace, or read the workloads in question with run_read_query.`;
 
 /**
  * The workload profile, inside the audited call: `runClusterUsage`'s shape for `readWorkloadProfile`.
@@ -142,8 +145,7 @@ async function runWorkloadProfile(
     servedRows: readingRows,
     maxRows: CLUSTER_READING_ROW_CEILING,
     refuseRows: () => new AgentCuratedReadError("READING_OVER_BUDGET", WORKLOADS_OVER_CEILING_TEXT),
-    refuseBytes: (bytes, allowed) =>
-      new AgentCuratedReadError("READING_OVER_BUDGET", workloadsOverBytesText(bytes, allowed)),
+    refuseBytes: (_bytes, allowed) => new AgentCuratedReadError("READING_OVER_BUDGET", workloadsOverBytesText(allowed)),
   });
   if (reading.kind === "over-ceiling")
     throw new AgentCuratedReadError("READING_OVER_BUDGET", WORKLOADS_OVER_CEILING_TEXT);
