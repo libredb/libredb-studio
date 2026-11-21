@@ -605,8 +605,10 @@ A connection that resets again before it is ready, while ioredis's own ready che
 On the connection that follows a reset, ioredis sends a `SELECT` of its own for the `db` option to put it back in a numbered database, before the ready check, and no caller awaits that `SELECT`.
 Its failure is the client's `error` event, which the provider logs, for example the parser's message, and the client reconnects and selects the database again, so the next command still runs in it.
 A reset before the ready check leaves that `SELECT` unsettled with the rest of that connection's handshake (D470), and the next connection sends its own.
-ioredis can also send a `SELECT` of its own once a connection is ready, when a command it queued was recorded in another database; the patch gives that one the same handler, so a close or the fatal-error path fails it as an `error` event instead of a rejection nobody handles.
-Since `openClient()` gives every connection that reconnects its `db` option, Studio's connections do not reach that path.
+ioredis can also send a `SELECT` of its own once a connection is ready, when the database it recorded for the last connection or for a command it queued is not the one the new connection opened in.
+That `SELECT` has no handler, and the patch leaves it as ioredis ships it, because Studio's connections do not reach it.
+`openClient()` gives every connection that reconnects its `db` option, and its own `SELECT` names the same database, so the database ioredis recorded is always the one each connection opens in.
+The agent's one-command connection never reconnects and queues nothing while it is not ready.
 
 The server can also refuse that `SELECT`.
 It refuses it for good when the user's ACL or the server's database count changed between two connections.
