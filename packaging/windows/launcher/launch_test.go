@@ -44,8 +44,10 @@ func TestLauncherEnvKeepsPresetSeedAssets(t *testing.T) {
 
 func TestLauncherEnvTreatsAnEmptySeedAssetsPresetAsUnset(t *testing.T) {
 	env := launcherEnv([]string{"SEED_ASSETS_DIR="}, testSeedAssets)
-	if last := lastValue(t, env, "SEED_ASSETS_DIR"); last != testSeedAssets {
-		t.Errorf("SEED_ASSETS_DIR = %q, want the payload's %q despite the empty preset", last, testSeedAssets)
+	// envValue, not lastValue: it keeps empty entries, so an inherited "SEED_ASSETS_DIR=" that comes
+	// last, and so is the value os/exec hands the child, fails the test.
+	if value, _ := envValue(env, "SEED_ASSETS_DIR"); value != testSeedAssets {
+		t.Errorf("SEED_ASSETS_DIR = %q, want the payload's %q despite the empty preset", value, testSeedAssets)
 	}
 }
 

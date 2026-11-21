@@ -62,8 +62,16 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
     for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
-  /** Run the launcher and return the environment the stub node saw, plus the fixture's $SNAP. */
-  function runLauncher(env: Record<string, string> = {}): { env: Record<string, string>; snap: string } {
+  /**
+   * Run the launcher and return the environment the stub node saw, plus the fixture's $SNAP. Each
+   * defaulted key reaches the launcher empty, unless `absent` names it: then the key is not in the
+   * launcher's environment at all, which is the real daemon's starting state. The difference matters
+   * in sh, where an inherited variable is already exported even when it is empty.
+   */
+  function runLauncher(
+    env: Record<string, string> = {},
+    { absent = [] as readonly string[] } = {},
+  ): { env: Record<string, string>; snap: string } {
     const root = mkdtempSync(join(tmpdir(), "libredb-snap-launcher-"));
     fixtureRoots.push(root);
     const snap = join(root, "snap");
@@ -74,8 +82,16 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
     writeFileSync(join(snap, "server.js"), "");
 
     const cleared = Object.fromEntries([...DEFAULTED_KEYS, "INVOCATION_ID", "LIBREDB_BIND"].map((k) => [k, ""]));
+    const childEnv: Record<string, string | undefined> = {
+      ...process.env,
+      ...cleared,
+      SNAP: snap,
+      SNAP_DATA: join(root, "data"),
+      ...env,
+    };
+    for (const key of absent) delete childEnv[key];
     const result = Bun.spawnSync([SHELL!, LAUNCHER], {
-      env: { ...process.env, ...cleared, SNAP: snap, SNAP_DATA: join(root, "data"), ...env },
+      env: childEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -104,6 +120,11 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
       HOSTNAME: "127.0.0.1",
       SEED_ASSETS_DIR: join(snap, "seed-assets"),
     });
+  });
+
+  test("hands the server $SNAP/seed-assets when the environment has no SEED_ASSETS_DIR at all", () => {
+    const { env, snap } = runLauncher({ INVOCATION_ID: SYSTEMD_INVOCATION_ID }, { absent: ["SEED_ASSETS_DIR"] });
+    expect(env.SEED_ASSETS_DIR).toBe(join(snap, "seed-assets"));
   });
 
   test("honours every value a systemd drop-in sets", () => {
