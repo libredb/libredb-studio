@@ -10,7 +10,6 @@ import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
 import { statementRefusal } from "@/lib/db/destructive-commands";
-import { WIRE_COMPATIBLE_ENGINES } from "@/lib/db/compatibility";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@/lib/sql/grammar";
@@ -3343,12 +3342,15 @@ describe("a PostgreSQL DO block asks", () => {
   });
 });
 
-// An INSERT-shaped statement that overwrites or deletes the rows a new one collides with changes rows, so it asks as
-// UPDATE and DELETE do. A plain INSERT and an INSERT ... SELECT add rows and do not ask.
+// An INSERT-shaped statement whose text overwrites or deletes rows already there changes rows, so it asks as UPDATE and
+// DELETE do. The gate reads the statement, not the table: a plain INSERT and an INSERT ... SELECT do not ask, also where
+// the table's own definition turns them into a replace.
 describe("MySQL's statements that overwrite rows through an INSERT ask", () => {
   // REPLACE deletes the row a new one collides with on a primary or unique key, with or without INTO; ON DUPLICATE KEY
   // UPDATE updates it, after VALUES, SET or SELECT. Measured on MySQL 8.4.13: each ran from the editor with no dialog.
-  const FORMS = [
+  // INSERT OVERWRITE is StarRocks' and Apache Doris' (TABLE is Doris' spelling): it replaces every row of the table or
+  // of the partitions it names. The relatives on the mysql type id have no row of their own, so they get these answers.
+  test.each([
     "REPLACE INTO t (id, v) VALUES (1, 'a')",
     "REPLACE t (id, v) VALUES (1, 'a')",
     "REPLACE LOW_PRIORITY INTO t VALUES (1, 'a')",
@@ -3364,35 +3366,21 @@ describe("MySQL's statements that overwrite rows through an INSERT ask", () => {
     "insert into t values (1, 'a') on /* c */ duplicate key -- d\nupdate v = 'b'",
     "SELECT 1; REPLACE INTO t VALUES (1, 'a')",
     "SELECT 1; INSERT INTO t VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'b'",
-  ];
-
-  test.each(FORMS)("asks for %j", (sql) => {
+    "INSERT OVERWRITE t SELECT id, v FROM u",
+    "INSERT OVERWRITE t PARTITION (p1) SELECT id, v FROM u",
+    "INSERT OVERWRITE t VALUES (1, 'a')",
+    "INSERT OVERWRITE TABLE t SELECT id, v FROM u",
+    "insert /* c */ overwrite t select id, v from u",
+    "SELECT 1; INSERT OVERWRITE t SELECT id, v FROM u",
+  ])("asks for %j", (sql) => {
     expect(isDangerousQuery(sql, "mysql")).toBe(true);
-  });
-
-  const RELATIVES = WIRE_COMPATIBLE_ENGINES.filter((engine) => engine.via === "mysql");
-
-  test("every MySQL-wire relative connects through the mysql type id", () => {
-    expect(RELATIVES.map((engine) => engine.name)).toEqual([
-      "MariaDB",
-      "Percona Server for MySQL",
-      "TiDB",
-      "StarRocks",
-      "Apache Doris",
-      "Vitess",
-      "OceanBase",
-      "SingleStore",
-    ]);
-  });
-
-  test.each(RELATIVES.map((engine) => [engine.name, engine.via] as const))("%s asks for each form", (_name, via) => {
-    for (const sql of FORMS) expect(isDangerousQuery(sql, via)).toBe(true);
   });
 
   test.each([
     "INSERT INTO t (id, v) VALUES (1, 'a')",
     "INSERT INTO t SELECT id, v FROM u",
     "INSERT IGNORE INTO t VALUES (1, 'a')",
+    "INSERT INTO overwrite VALUES (1, 'a')",
     "SELECT REPLACE(v, 'a', 'b') FROM t",
     "SELECT 'REPLACE INTO t VALUES (1)' AS note",
     "INSERT INTO t VALUES ('ON DUPLICATE KEY UPDATE')",
@@ -3417,10 +3405,14 @@ describe("MySQL's statements that overwrite rows through an INSERT ask", () => {
 describe("SQLite's statements that overwrite rows through an INSERT ask", () => {
   // REPLACE INTO and INSERT OR REPLACE delete the row a new one collides with on a primary or unique key, and so a
   // different row than the one the key names. OR ROLLBACK, OR ABORT and OR FAIL refuse the new row with an error and
-  // OR IGNORE skips it, so none of them changes a row that is there (measured through bun:sqlite on SQLite 3.53.4).
-  // libSQL reads the same grammar.
-  test.each(["sqlite", "libsql"] as const)("%s asks for each form", (type) => {
-    for (const sql of [
+  // OR IGNORE skips it, so none of them changes a row that is there (measured through bun:sqlite on SQLite 3.53.4, and
+  // on sqld 0.24.33 for libSQL, which reads the same grammar).
+  const ENGINES = ["sqlite", "libsql"] as const;
+  const pairs = (statements: readonly string[]) =>
+    ENGINES.flatMap((type) => statements.map((sql) => [type, sql] as const));
+
+  test.each(
+    pairs([
       "REPLACE INTO t (id, v) VALUES (1, 'a')",
       "INSERT OR REPLACE INTO t (id, v) VALUES (1, 'a')",
       "replace into t values (1, 'a')",
@@ -3430,13 +3422,13 @@ describe("SQLite's statements that overwrite rows through an INSERT ask", () => 
       "WITH c AS (SELECT 1 AS id) INSERT OR REPLACE INTO t SELECT id, 'a' FROM c",
       "SELECT 1; REPLACE INTO t VALUES (1, 'a')",
       "BEGIN; INSERT OR REPLACE INTO t VALUES (1, 'a'); COMMIT;",
-    ]) {
-      expect(isDangerousQuery(sql, type)).toBe(true);
-    }
+    ]),
+  )("%s asks for %j", (type, sql) => {
+    expect(isDangerousQuery(sql, type)).toBe(true);
   });
 
-  test.each(["sqlite", "libsql"] as const)("%s does not ask for an INSERT that keeps the rows there", (type) => {
-    for (const sql of [
+  test.each(
+    pairs([
       "INSERT INTO t (id, v) VALUES (1, 'a')",
       "INSERT INTO t SELECT id, v FROM u",
       "INSERT OR IGNORE INTO t VALUES (1, 'a')",
@@ -3446,8 +3438,8 @@ describe("SQLite's statements that overwrite rows through an INSERT ask", () => 
       "SELECT replace(v, 'a', 'b') FROM t",
       "BEGIN; SELECT replace(v, 'a', 'b') FROM t; COMMIT;",
       "SELECT 'INSERT OR REPLACE INTO t' AS note",
-    ]) {
-      expect(isDangerousQuery(sql, type)).toBe(false);
-    }
+    ]),
+  )("%s does not ask for %j", (type, sql) => {
+    expect(isDangerousQuery(sql, type)).toBe(false);
   });
 });

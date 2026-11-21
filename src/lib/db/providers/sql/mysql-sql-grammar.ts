@@ -46,12 +46,15 @@ const MYSQL_GRAMMAR: SqlGrammar = {
     /\s+FOR\s+(?:UPDATE|SHARE)(?:\s+OF\s+(?:`(?:[^`]|``)*`|"(?:[^"]|"")*"|[^\s()',;"`]+)(?:\s*,\s*(?:`(?:[^`]|``)*`|"(?:[^"]|"")*"|[^\s()',;"`]+))*)?(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?\s*$/i,
     /\s+LOCK\s+IN\s+SHARE\s+MODE(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?\s*$/i,
   ],
-  // The INSERT-shaped statements that change rows already there (MySQL 8.4 reference, "REPLACE Statement" and "INSERT
-  // ... ON DUPLICATE KEY UPDATE Statement"; MariaDB and the other relatives on this type id read the same forms). A
-  // REPLACE deletes the row a new one collides with on a primary or unique key, and its INTO is optional, so the word
-  // alone is the form: no other statement starts with it. Inside a block the gate reads every form anywhere in the
-  // code, so there a REPLACE() call asks too, the fail-safe direction.
-  confirmForms: [["REPLACE"]],
+  // The INSERT-shaped statements whose text changes rows already there (MySQL 8.4 reference, "REPLACE Statement" and
+  // "INSERT ... ON DUPLICATE KEY UPDATE Statement"). MariaDB and the other relatives on this type id have no type id of
+  // their own, so they get the same answers. A REPLACE deletes the row a new one collides with on a primary or unique
+  // key, and its INTO is optional, so the word alone is the form: no other statement starts with it. INSERT OVERWRITE
+  // is StarRocks' and Apache Doris' (reference "INSERT" and "INSERT OVERWRITE" of each), replacing every row of the
+  // table or of the partitions it names; MySQL has no such statement, so the one false prompt is an INSERT without INTO
+  // into a table named overwrite. Inside a block the gate reads every form anywhere in the code, so there a REPLACE()
+  // call asks too, the fail-safe direction.
+  confirmForms: [["REPLACE"], ["INSERT", "OVERWRITE"]],
   // Anywhere in the code: the clause updates the row a new one collides with, after VALUES, SET or SELECT.
   confirmCodeForms: [["ON", "DUPLICATE", "KEY", "UPDATE"]],
 };
