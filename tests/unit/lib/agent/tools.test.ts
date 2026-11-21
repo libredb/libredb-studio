@@ -67,6 +67,12 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import {
+  byteBudgetSentence,
+  measureRowBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "@/lib/db/providers/sql/read-only-budget";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
@@ -7404,5 +7410,78 @@ describe("present_answer records which result IS the answer, and how to show it"
     if (outcome.kind !== "answered") throw new Error("expected an answer");
     expect(outcome.answer.handover).toBe("applied");
     expect(outcome.answer.handoverWarning).toContain("9000 ms");
+  });
+});
+
+/*
+  A provider's own code refuses a result past the budget it is handed, and bounds the statement by the budget's
+  timeout. These fakes do neither, so what they show is that the run holds the answer to its budget itself.
+*/
+describe("a provider that answers past the run's budget", () => {
+  const { maxResultRows, maxResultBytes } = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
+
+  test("more rows than the budget are refused before the model reads any of them", async () => {
+    const rows = Array.from({ length: maxResultRows + 1 }, (_, index) => ({ id: index, name: `row-value-${index}` }));
+    const h = harness({}, async () => queryResult({ rows, rowCount: rows.length }));
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT id, name FROM orders" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({
+      class: "database-error",
+      message: rowBudgetSentence(maxResultRows + 1, maxResultRows),
+    });
+    expect(outcome.modelText).toContain(`LIMIT ${maxResultRows}`);
+    expect(outcome.modelText).not.toContain("row-value-");
+    expect(h.artifacts.size).toBe(0);
+  });
+
+  test("more UTF-8 bytes than the budget are refused before the model reads any of them", async () => {
+    // Multibyte text: its UTF-16 length is under the budget, its UTF-8 bytes are not.
+    const row = { id: 1, name: `marker-${"é".repeat(Math.ceil(maxResultBytes / 2))}` };
+    expect(JSON.stringify(row).length).toBeLessThan(maxResultBytes);
+    const h = harness({}, async () => queryResult({ rows: [row], rowCount: 1 }));
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT id, name FROM orders" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({
+      class: "database-error",
+      message: byteBudgetSentence(measureRowBytes(row), maxResultBytes),
+    });
+    expect(outcome.modelText).not.toContain("marker-");
+    expect(h.artifacts.size).toBe(0);
+  });
+
+  test("a catalog read past the budget is refused before its rows are mapped", async () => {
+    // Elasticsearch's catalog rows are mapped to the column kind's fields, which drops the provider's REMARKS. The
+    // provider's rows are over the byte budget and the mapped ones are not, so only a check of the provider's own
+    // answer refuses it.
+    const rows = [{ TABLE_NAME: "logs", COLUMN_NAME: "message", REMARKS: "r".repeat(maxResultBytes) }];
+    const h = harness({ connection: { ...connection, type: "elasticsearch" } }, async () =>
+      queryResult({ rows, fields: Object.keys(rows[0]), rowCount: 1 }),
+    );
+
+    const outcome = await readCatalogForGrounding(h.context, { kind: "columns" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({
+      class: "database-error",
+      message: byteBudgetSentence(measureRowBytes(rows[0]), maxResultBytes),
+    });
+    expect(h.artifacts.size).toBe(0);
+  });
+
+  test("an answer that does not arrive within the statement timeout is refused as a statement failure", async () => {
+    // 300 ms left on the run clamps the statement timeout to 300 ms, above the 250 ms a call needs at least.
+    const h = harness({ deadline: new AgentRunDeadline(300, frozenClock) }, () => new Promise<QueryResult>(() => {}));
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT id FROM orders" });
+
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({
+      class: "database-error",
+      message: `${TIME_BUDGET_PREFIX}: no answer within 300ms`,
+    });
   });
 });

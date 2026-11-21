@@ -84,6 +84,7 @@ import {
 import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/execution";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
+import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import { admitComposedStatement, type ComposedStatementAdmission } from "@/lib/db/operations/statement-guard";
 import type {
   Container,
@@ -1425,7 +1426,15 @@ async function runStatement(
   // separates a wrong agent credential from `permission denied for table secrets`
   // without inspecting message text.
   phase.statementSent = true;
-  return provider.queryReadOnly(sql, readOnlyBudgetFor(context, budget), mode);
+  // Through the one core call of the read-only path, which holds the provider's answer to the rows, bytes and time
+  // this run handed out, so an over-budget answer is refused before any of it is mapped or rendered.
+  return runReadOnlyStatement(provider, {
+    type: context.connection.type,
+    statement: sql,
+    budget: readOnlyBudgetFor(context, budget),
+    mode,
+    wait: "statement-timeout",
+  });
 }
 
 /**
