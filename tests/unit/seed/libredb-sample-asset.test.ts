@@ -7,9 +7,9 @@
  * script and a new pin in SAMPLES. The CLI runs in a node child process that writes only into a temporary directory.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { createHash, randomUUID } from "node:crypto";
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import path from "node:path";
 import { catalog, kv, open } from "@libredb/libredb";
 import { SAMPLES } from "@/lib/seed/samples";
@@ -56,6 +56,12 @@ describe("the committed LibreDB sample", () => {
     const directory = temporaryDirectory();
     const file = path.join(directory, "sample.libredb");
     buildLibreDbSample(file);
+    // A crashed earlier build of this pid (the build runs in this process): a half-built temp, and the lock the engine
+    // writes beside it, naming this pid and host.
+    const building = `${file}.${process.pid}.building`;
+    writeFileSync(building, readFileSync(COMMITTED).subarray(0, 300));
+    const token = randomUUID().replaceAll("-", "").slice(0, 16);
+    writeFileSync(`${building}.lock`, `libredb-lock\n${process.pid}\n${hostname()}\n${token}\n`);
     buildLibreDbSample(file);
     expect(readFileSync(file).equals(readFileSync(COMMITTED))).toBe(true);
     expect(readdirSync(directory)).toEqual(["sample.libredb"]);

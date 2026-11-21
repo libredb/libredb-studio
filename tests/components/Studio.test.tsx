@@ -110,6 +110,7 @@ const mockRevokeObjectURL = mock(() => {});
 // test read a changed prop that no real render produces.
 const STABLE_USER = { username: "admin", role: "admin" };
 const EMPTY_SCHEMA: unknown[] = [];
+const NO_UNAVAILABLE_SAMPLES: unknown[] = [];
 const EMPTY_PENDING_CHANGES: unknown[] = [];
 
 // ---- Hook override objects (spread into mock returns per-test) ----
@@ -160,6 +161,7 @@ mock.module("@/hooks/use-connection-manager", () => ({
     markActiveUsed: mockMarkActiveUsed,
     activateFallback: mockActivateFallback,
     customConnections: true,
+    unavailableSamples: NO_UNAVAILABLE_SAMPLES,
     ...connMgrOverride,
   })),
 }));
@@ -1703,6 +1705,27 @@ describe("Studio", () => {
     await waitFor(() => expect(capturedConnectionModalProps.isOpen).toBe(true));
     expect(capturedConnectionModalProps.editConnection).toEqual(pgConn);
   });
+
+  test.each(["desktop", "mobile"] as const)(
+    "hands the hook's unavailable samples to the %s connections list",
+    (surface) => {
+      const unavailableSamples = [
+        {
+          seedId: "sqlite-embedded-sample",
+          name: "Sample (Employees)",
+          reason: "asset-missing",
+          sentence: "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied.",
+        },
+      ];
+      connMgrOverride = { unavailableSamples };
+      render(<Studio />);
+      if (surface === "mobile") {
+        act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("database"));
+      }
+      const props = surface === "mobile" ? capturedConnectionsListProps : capturedSidebarProps;
+      expect(props.unavailableSamples).toBe(unavailableSamples);
+    },
+  );
 
   // --- onAddConnection ---
   test.each(["desktop", "mobile"])("duplicate opens a detached copy in the %s connection editor", (surface) => {

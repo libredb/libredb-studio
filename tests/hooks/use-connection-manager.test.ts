@@ -3662,13 +3662,18 @@ describe("built-in samples listed unavailable", () => {
   });
 
   test("an answer without the field, or with a field that is not a list, reads as none", async () => {
+    // Rows, then an answer without the field, then rows again, then a field that is not a list.
+    const answers = [
+      { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] },
+      { connections: [], pendingSeeds: [] },
+      { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] },
+      { connections: [], pendingSeeds: [], unavailableSamples: "none" },
+    ];
     let calls = 0;
     mockGlobalFetch({
       "/api/connections/managed": () => {
         calls += 1;
-        return calls === 1
-          ? { ok: true, json: { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] } }
-          : { ok: true, json: { connections: [], pendingSeeds: [], unavailableSamples: "none" } };
+        return { ok: true, json: answers[Math.min(calls, answers.length) - 1] };
       },
       "/api/db/health": { ok: true, json: { status: "healthy" } },
     });
@@ -3678,6 +3683,16 @@ describe("built-in samples listed unavailable", () => {
     });
     focus();
     await waitFor(() => {
+      expect(calls).toBe(2);
+      expect(result.current.unavailableSamples).toEqual([]);
+    });
+    focus();
+    await waitFor(() => {
+      expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+    });
+    focus();
+    await waitFor(() => {
+      expect(calls).toBe(4);
       expect(result.current.unavailableSamples).toEqual([]);
     });
   });
