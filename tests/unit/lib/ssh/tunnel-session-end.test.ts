@@ -4,7 +4,13 @@ import net from "node:net";
 import { Server as SshServer, utils, type Connection, type ServerChannel } from "ssh2";
 import { logger } from "@/lib/logger";
 import type { SSHTunnelConfig } from "@/lib/types";
-import { closeSSHTunnel, createSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
+import {
+  closeSSHTunnel,
+  createSSHTunnel,
+  hasTunnel,
+  releaseUnopenedTunnel,
+  tunnelProviderOpened,
+} from "@/lib/ssh/tunnel";
 
 /**
  * The pooled tunnel against a real `ssh2` bastion, for the ways an SSH session ends.
@@ -239,6 +245,37 @@ describe("concurrent calls for one tunnel", () => {
     expect(hasTunnel(connId)).toBe(false);
     expect(await roundTrip(first.localPort)).toBe("error ECONNREFUSED");
     await until("the bastion to see every session of this tunnel close", () =>
+      sessions.slice(before).every((session) => closedSessions.has(session)),
+    );
+  });
+
+  test("a caller whose provider did not open leaves the shared forward answering for the one that opened", async () => {
+    const connId = `session-share-release-${Date.now()}`;
+    const before = sessions.length;
+    const [opened, unopened] = await Promise.all([open(connId), open(connId)]);
+
+    // Released first, while the other caller is still connecting, and again after it opened: neither closes it.
+    await releaseUnopenedTunnel(unopened);
+    expect(await roundTrip(opened.localPort)).toBe("echoed ping");
+    tunnelProviderOpened(opened);
+    const later = await open(connId);
+    await releaseUnopenedTunnel(later);
+
+    expect(await roundTrip(opened.localPort)).toBe("echoed ping");
+    expect(sessions.length - before).toBe(1);
+    expect(sessions.slice(before).some((session) => closedSessions.has(session))).toBe(false);
+  });
+
+  test("a shared forward every caller released unopened closes its session and its loopback listener", async () => {
+    const connId = `session-share-all-released-${Date.now()}`;
+    const before = sessions.length;
+    const [first, second] = await Promise.all([open(connId), open(connId)]);
+
+    await Promise.all([releaseUnopenedTunnel(first), releaseUnopenedTunnel(second)]);
+
+    expect(hasTunnel(connId)).toBe(false);
+    expect(await roundTrip(first.localPort)).toBe("error ECONNREFUSED");
+    await until("the bastion to see the session close", () =>
       sessions.slice(before).every((session) => closedSessions.has(session)),
     );
   });
