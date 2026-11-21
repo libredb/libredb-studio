@@ -40,13 +40,13 @@ import { createRestQdrantClient } from "@/lib/db/providers/vector/qdrant/rest-cl
 import { type DatabaseConnection, TUNNEL_FAR_END } from "@/lib/types";
 import {
   closeAll,
-  countingListener,
   eventually,
   httpListener,
   httpsListener,
   jsonAnswer,
   type Listener,
   makeCertificates,
+  proxyListener,
   streamingAnswer,
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
@@ -220,14 +220,14 @@ describe("what reaches the wire (QE2, QE4)", () => {
   });
 
   test("proxy variables naming a listener carry nothing to it", async () => {
-    const proxy = await countingListener();
+    const proxy = await proxyListener();
     for (const name of PROXY_VARIABLES) setEnvironment(name, `http://127.0.0.1:${proxy.port}`);
     setEnvironment("NODE_USE_ENV_PROXY", "1");
     const listener = await httpListener(ok);
     const answer = await connect(options(listener.port)).send(request("get_collections"), deadline());
     expect(answer.status).toBe(200);
     expect(listener.seen).toHaveLength(1);
-    expect(proxy.accepted()).toBe(0);
+    expect(proxy.requests).toEqual([]);
   });
 
   test("with the egress guard on, a name that resolves to this machine is refused before any socket", async () => {
