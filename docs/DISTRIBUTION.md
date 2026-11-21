@@ -336,6 +336,7 @@ In a source checkout, `bun dev` and `bun start` run Next.js through `scripts/nex
 A `SEED_ASSETS_DIR` set in the shell, or in a `.env` file Next.js loads for the command, is kept, and Next.js reads it as it would without the launcher.
 Otherwise the launcher sets it to the checkout's own `seed-assets`, found from the script's location.
 The launcher learns this from Next.js's own loader, `@next/env`, run on the working directory for that command, so a file Next.js does not load for it, or cannot read, sets nothing, and Next.js still reports a file it cannot read.
+The launcher reads each of those files once before Next.js does, so a `.env` that is a named pipe has to serve every read.
 An inspector set in `NODE_OPTIONS`, such as `--inspect` or `--inspect-brk`, is taken by the launcher, which starts first.
 Under `bun start` the server then has no inspector, and under `bun dev` its server gets the next port, as before the launcher.
 Debug the server with `bun start --inspect` or `bun run dev --inspect`.

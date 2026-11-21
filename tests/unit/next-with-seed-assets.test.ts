@@ -46,9 +46,14 @@ if (mode === "exit") {
 }
 `;
 
-/** This checkout's @next/env, the package Next.js loads .env files with, as next's own package finds it. */
+/**
+ * This checkout's @next/env, the package Next.js loads .env files with, as next's own package finds it from its real
+ * directory, which is not node_modules/next under an isolated install.
+ */
 const NEXT_ENV = path.dirname(
-  path.dirname(createRequire(path.join(ROOT, "node_modules", "next", "package.json")).resolve("@next/env")),
+  path.dirname(
+    createRequire(fs.realpathSync(path.join(ROOT, "node_modules", "next", "package.json"))).resolve("@next/env"),
+  ),
 );
 
 /** Copies this checkout's @next/env, its manifest and its one bundled file, to `directory`. */
@@ -403,6 +408,45 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
     const marker = path.join(root, "ran");
     copyNextEnv(path.join(root, "node_modules", "next", "node_modules", "@next", "env"));
     strayNextEnv(path.join(root, "node_modules"), marker);
+    const cwd = withEnvFile(".env.local", "SEED_ASSETS_DIR=/from/the/file\n");
+    expect(report(run(root, ["dev"], {}, cwd)).seedAssets).toBeNull();
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  test.each([
+    ["", false],
+    [", node_modules itself being a link to another directory", true],
+  ])(
+    "loads the @next/env beside next's real directory in the checkout's node_modules, as bun's isolated install lays it out%s",
+    (_, linkedModules) => {
+      const root = checkout({ withNextEnv: false });
+      let modules = path.join(root, "node_modules");
+      if (linkedModules) {
+        const moved = fs.mkdtempSync(path.join(tempDir, "modules-"));
+        fs.renameSync(modules, path.join(moved, "node_modules"));
+        fs.symlinkSync(path.join(moved, "node_modules"), modules, "junction");
+        modules = path.join(moved, "node_modules");
+      }
+      const store = path.join(modules, ".bun", "next@0.0.0", "node_modules");
+      fs.mkdirSync(store, { recursive: true });
+      fs.renameSync(path.join(modules, "next"), path.join(store, "next"));
+      fs.symlinkSync(path.join(store, "next"), path.join(modules, "next"), "junction");
+      const envPackage = path.join(modules, ".bun", "@next+env@0.0.0", "node_modules", "@next", "env");
+      copyNextEnv(envPackage);
+      fs.mkdirSync(path.join(store, "@next"));
+      fs.symlinkSync(envPackage, path.join(store, "@next", "env"), "junction");
+      const cwd = withEnvFile(".env.local", "SEED_ASSETS_DIR=/from/the/file\n");
+      expect(report(run(root, ["dev"], {}, cwd)).seedAssets).toBeNull();
+    },
+  );
+
+  test("never loads the @next/env beside a linked next's real directory outside the checkout", () => {
+    const root = checkout();
+    const moved = fs.mkdtempSync(path.join(tempDir, "next-build-"));
+    const marker = path.join(moved, "ran");
+    fs.renameSync(path.join(root, "node_modules", "next"), path.join(moved, "next"));
+    fs.symlinkSync(path.join(moved, "next"), path.join(root, "node_modules", "next"), "junction");
+    strayNextEnv(moved, marker);
     const cwd = withEnvFile(".env.local", "SEED_ASSETS_DIR=/from/the/file\n");
     expect(report(run(root, ["dev"], {}, cwd)).seedAssets).toBeNull();
     expect(fs.existsSync(marker)).toBe(false);

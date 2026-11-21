@@ -8,20 +8,21 @@
  * needs it set, as every packaged channel's launcher sets it for its payload. The default is computed from this file's
  * own location and is absolute.
  *
- * Next.js reads the process environment before any .env file and skips a key already there, so the default is set
- * only when Next.js would find no non-blank SEED_ASSETS_DIR itself. To know, this launcher calls Next.js's own loader,
+ * Next.js reads the process environment before any .env file and skips a key already there, so this launcher has to
+ * know whether Next.js would find a non-blank SEED_ASSETS_DIR itself. To know, it calls Next.js's own loader,
  * loadEnvConfig of @next/env, on its working directory, the project directory under `bun dev` and `bun start`, in the
  * mode Next.js uses for the command: development for `dev`, production for any other, and test when NODE_ENV is test.
- * A value the loader finds, in the shell or in a file, is left for Next.js to read as it would without this launcher.
  * The loader prints nothing here, and the Next.js CLI gets the caller's environment plus the default, never what the
- * loader loaded, so Next.js loads the same files itself and reports one it cannot read.
+ * loader loaded, so Next.js loads the same files itself and reports one it cannot read. Each of those files is thus
+ * read twice, first by this launcher, so a .env that is a named pipe has to serve every read.
  *
  * Every argument is passed to the Next.js CLI unchanged. The CLI is the `next` binary named by the `bin` field of the
  * checkout's own node_modules/next/package.json, run with this Node.js, so no shell, no PATH lookup and no package
- * lookup is involved on any OS. @next/env is loaded by path from the first of the two places next's own require looks
- * in, node_modules/next/node_modules/@next/env and node_modules/@next/env. A next or an @next/env installed only in a
- * parent directory, through NODE_PATH or in a global folder is never used, a missing one is an error, exit 1, and a
- * link among them, as `bun link` makes, is followed.
+ * lookup is involved on any OS. @next/env is loaded by path from the first place that holds it, in the order next's
+ * own require looks: node_modules/next/node_modules/@next/env; the @next/env beside next's real directory when that
+ * directory lies inside the checkout's node_modules, as in bun's isolated store and pnpm's; node_modules/@next/env. A
+ * next or an @next/env installed only in a parent directory, through NODE_PATH or in a global folder is never used, a
+ * missing one is an error, exit 1, and a link among them, as `bun link` makes, is followed.
  *
  * SIGINT and SIGTERM are forwarded to the Next.js CLI; this process exits with its exit code, or ends itself with the
  * signal that ended it. On Windows, Node.js forwards a signal by ending the process at once: the console delivers a
@@ -37,14 +38,15 @@
  * Tested by tests/unit/next-with-seed-assets.test.ts, which spawns it.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { seedAssetsEnv } from "../bin/lib/launcher-utils.mjs";
 
 const CHECKOUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const NEXT_MANIFEST = path.join(CHECKOUT, "node_modules", "next", "package.json");
+const NODE_MODULES = path.join(CHECKOUT, "node_modules");
+const NEXT_MANIFEST = path.join(NODE_MODULES, "next", "package.json");
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM"];
 
 /** The Next.js CLI this checkout installs; throws when next is not installed or declares no `next` binary. */
@@ -55,14 +57,17 @@ function nextCli() {
   return path.join(path.dirname(NEXT_MANIFEST), relative);
 }
 
-/** The @next/env this checkout's next loads .env files with; throws when neither place holds one. */
+/** The @next/env this checkout's next loads .env files with; throws when no place holds one. */
 function nextEnv() {
+  const holder = path.dirname(realpathSync(path.dirname(NEXT_MANIFEST)));
+  const inStore = holder.startsWith(realpathSync(NODE_MODULES) + path.sep);
   const places = [
     path.join(path.dirname(NEXT_MANIFEST), "node_modules", "@next", "env"),
-    path.join(CHECKOUT, "node_modules", "@next", "env"),
+    ...(inStore ? [path.join(holder, "@next", "env")] : []),
+    path.join(NODE_MODULES, "@next", "env"),
   ];
   const found = places.find((place) => existsSync(path.join(place, "package.json")));
-  if (found === undefined) throw new Error(`neither ${places.join(" nor ")} holds a package`);
+  if (found === undefined) throw new Error(`none of ${places.join(", ")} holds a package`);
   return createRequire(NEXT_MANIFEST)(found);
 }
 
