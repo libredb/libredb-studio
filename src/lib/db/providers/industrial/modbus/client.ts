@@ -49,6 +49,9 @@ export interface ModbusSocket {
   on(event: "data", listener: (chunk: Buffer) => void): unknown;
   on(event: "end" | "close", listener: () => void): unknown;
   on(event: "error", listener: (error: Error) => void): unknown;
+  removeListener(event: "data", listener: (chunk: Buffer) => void): unknown;
+  removeListener(event: "close", listener: () => void): unknown;
+  removeListener(event: "error", listener: (error: Error) => void): unknown;
   setTimeout(ms: number, listener?: () => void): unknown;
   destroy(): unknown;
   readonly destroyed: boolean;
@@ -252,10 +255,18 @@ export function exchangeOnce(
   return new Promise<Exchange>((resolve, reject) => {
     const reader = createFrameReader();
     let settled = false;
+    // EACH EXCHANGE REMOVES ITS OWN LISTENERS WHEN IT SETTLES, on every ending: an answer, an
+    // error, a close, the deadline or a frame the valve refuses. A read of many blocks runs one exchange per block over one
+    // socket, so a listener left behind would feed every later chunk to this exchange's reader too.
+    // The socket keeps the dial's own `error` listener for its whole life, so removing this one
+    // leaves no moment between exchanges in which an error has nobody to hear it.
     const done = (fn: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      socket.removeListener("data", onData);
+      socket.removeListener("error", onError);
+      socket.removeListener("close", onClose);
       fn();
     };
     const timer = setTimeout(
@@ -265,7 +276,7 @@ export function exchangeOnce(
         ),
       timeoutMs,
     );
-    socket.on("data", (chunk) => {
+    const onData = (chunk: Buffer) => {
       let frames: InboundFrame[];
       try {
         frames = reader.push(chunk);
@@ -287,21 +298,28 @@ export function exchangeOnce(
         done(() => resolve(match));
         return;
       }
-    });
-    socket.on("error", (error) => done(() => reject(atSocketBoundary(error, where))));
-    socket.on("close", () =>
+    };
+    const onError = (error: Error) => done(() => reject(atSocketBoundary(error, where)));
+    const onClose = () =>
       done(() =>
         reject(atSocketBoundary(new ModbusDialError("The device closed the connection before answering."), where)),
-      ),
-    );
+      );
+    socket.on("data", onData);
+    socket.on("error", onError);
+    socket.on("close", onClose);
     // THE VALVE RUNS HERE, and until this line it ran nowhere.
     //
     // It was written, tested on its own and called by NOTHING, while the README said in nine
     // languages that a valve re-checks every outbound byte. This is the one place every ADU
     // passes through on its way to a device, so it is the only place the sentence can be true.
     // A refusal here is OUR defect, not the user's, and it is raised before a single byte is
-    // written rather than after.
-    assertOutboundAllowed(adu);
-    socket.write(adu);
+    // written rather than after. The refusal settles through `done` like every other ending, so the
+    // exchange removes its own listeners and timer without waiting for a caller to close the socket.
+    try {
+      assertOutboundAllowed(adu);
+      socket.write(adu);
+    } catch (error) {
+      done(() => reject(error));
+    }
   });
 }
