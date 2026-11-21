@@ -51,6 +51,23 @@ for (const [type, Provider] of [
         expect(fs.existsSync(target)).toBe(false);
       });
     }
+
+    // On macOS and Windows each of these spellings names the reserved file itself.
+    for (const name of ["STORAGE.DB", "Storage.db-WAL", "AUTH-BOOTSTRAP.JSON.BAK", "Auth-Bootstrap.json.123.TMP"]) {
+      test(`refuses ${name}, another letter case of a reserved file, before opening or creating it`, async () => {
+        const target = path.join(dir, name);
+        const provider = new Provider({
+          id: "reserved",
+          name: "reserved",
+          type,
+          database: target,
+          createdAt: new Date(),
+        });
+        await expect(provider.connect()).rejects.toThrow("reserved");
+        expect(provider.isConnected()).toBe(false);
+        expect(fs.existsSync(target)).toBe(false);
+      });
+    }
   });
 }
 
