@@ -848,9 +848,9 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 1. **A plan run costs statements now.** On PostgreSQL and SQLite grounding is catalog reads plus one
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
    because SQLite resolves table names at prepare time). On the other forty-one it is **one**, the
-   single `db.schema.read` call, except on SQL Server, which adds the one statistics read
-   its overlay's `statistics` supplies without a `catalogCapture`, audited as a `db.schema.read` too; the other forty hold no statistics this run
-   knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
+   single `db.schema.read` call, except on SQL Server and libSQL, whose overlays supply `statistics` without a `catalogCapture`.
+   SQL Server adds one statistics read and libSQL two, its `sqlite_stat1` availability probe first, each audited as a `db.schema.read` too and sent through `provider.query` only after the statement guard admits it as `sql.query.read`'s input contract would; a statement it refuses is audited as an input denial and never sent.
+   The other thirty-nine hold no statistics this run knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
    object-surface reading above; an engine that declares none is charged nothing extra, because a read
    that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,
    and they are audited the same way. The ledger-reuse path saves the schema reading and deliberately
@@ -1057,6 +1057,8 @@ Four tools are the read class, and `agent` mode receives exactly these unless it
 otherwise. Three of them reach the database, each through `executeAuditedOperation` against a
 provider acquired under the agent read-only execution profile — never the shared writable connection
 cache.
+
+No agent tool reaches provider installation, update, removal, enablement, reload, trust or grants: every tool in every language and workflow drives a read operation or reaches no database, which `tests/unit/no-provider-management-tools.test.ts` holds.
 
 | Tool | Operation | What the model supplies |
 | --- | --- | --- |
@@ -1778,6 +1780,8 @@ under a **third execution profile**, `agent-handover`:
 | Statement timeout | 10 s | none — spelled as 2 147 483 647 ms |
 | Bytes | 256 KiB | 64 MiB |
 
+The replay's rows and bytes are checked against this budget again by Studio, after the provider's own check and before the response is written, through the same `runReadOnlyStatement` the run's own read goes through.
+
 The agent's own profile is unchanged: what a MODEL may spend on a run and what a USER's replay may
 spend are different questions, and a shared row would have made a later change to one move the other.
 "No timeout" is an explicit ceiling rather than an absent field because `assertReadOnlyBudget` requires
@@ -2056,11 +2060,12 @@ twice, once broad and once narrowed to a schema.
 on purpose: a ceiling left at 12 would have paid for the inventory by silently costing the run a third
 of the readings it exists to take. Grounding's own cost is smaller than six. A catalog capture is
 three statements on PostgreSQL and two on SQLite, one on every other engine (#414: `db.schema.read`
-takes no selector and makes one call), and the statistics read — plan mode only, and PostgreSQL and
-SQLite only — adds one on PostgreSQL and two on SQLite (it probes `sqlite_stat1` before reading it), so
+takes no selector and makes one call), and the statistics read, plan mode only, adds one on PostgreSQL and two on SQLite (it probes `sqlite_stat1` before reading it), so
 the worst case before the first turn is four in plan mode and three in agent mode, which is the mode
 where the reading ceiling binds. `AGENT_WORKFLOW_BUDGETS` therefore did not move in #414: the path it
-added is the cheapest of the three. The remainder is deliberate slack in a row nothing has been measured against yet, and
+added is the cheapest of the three.
+The statistics read is also taken on libSQL, two statements with the same probe first, and on SQL Server, one statement.
+The remainder is deliberate slack in a row nothing has been measured against yet, and
 the wall clocks are the same slack in time: at a 10 s statement timeout, four catalog reads can be 40 s
 of database time on their own. `maxModelTurns` does not move, because grounding is the server's work
 before the first turn and costs no turn. The policy version moved with the figures, to `agent-read-only.operations.2`: a row whose
@@ -2082,8 +2087,8 @@ at least the longest deadline it wants to serve, and a stream cut mid-run has no
 
 | Bound | Value | Counts |
 | --- | --- | --- |
-| `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. |
-| `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. |
+| `statementTimeoutMs` | 10 s | Per statement, clamped further by the run deadline. Handed to the provider, and on the read-only statement path Studio also stops waiting at it and refuses the statement in the time sentence, whatever the provider does. |
+| `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. The provider refuses past either, and Studio checks the answer again, each row's UTF-8 JSON bytes summed, before the run keeps it (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`). |
 | `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out — and a second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
 | One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
 | Repair attempts | 3 | Statements that failed **at the database**, and statements a provider's fence or the run read allowance refused before sending. |

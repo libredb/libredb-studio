@@ -8,7 +8,11 @@
  * composed, and no provider method reached outside a registered operation: a reach
  * that skipped this module would be a defect by the milestone's own constraint, not a
  * shortcut. The one `provider.query()` is `readStatisticsForGrounding` under the
- * operations profile, which sends a statement it composes itself.
+ * operations profile, which sends a statement it composes itself, and only after the
+ * statement guard admits it as `sql.query.read`'s input contract would. Every
+ * `queryReadOnly` call goes through `runReadOnlyStatement`
+ * (`src/lib/db/operations/read-only-statement.ts`), which holds the provider's answer to
+ * the row, byte and time budget this layer handed out.
  *
  * Four properties are load-bearing, and each is asserted rather than asserted-in-prose:
  *
@@ -1398,6 +1402,11 @@ function isStatementFailure(error: unknown): error is DatabaseError {
  * should not be "fixed" by acquiring earlier: acquiring before the decision would
  * open a pool for every denied call, which is exactly what the spy-provider
  * invariant exists to forbid.
+ *
+ * The statement goes through `runReadOnlyStatement`, which refuses an answer past the
+ * run's row or byte budget and stops waiting at its statement timeout, in the sentences
+ * the providers raise, so an over-budget answer is a repairable database error that
+ * reaches neither a row mapper nor the model.
  */
 async function runStatement(
   context: AgentToolContext,
@@ -3016,8 +3025,10 @@ export type AgentStatisticsStatement = "availability" | "estimates";
  * it is the curated family `readObjectInventoryForGrounding` belongs to, and audited the same way, under the
  * `db.schema.read` descriptor with an empty input: the statement is composed HERE from the dialect's own composers,
  * the caller names only which of the two it wants, and no text from a caller or a model reaches the engine. It is sent
- * through `provider.query`, because the operations profile opens no read-only statement path, and it is bounded the
- * way the curated reads are: a result over the run's row or byte budget is refused rather than cut, and a read that
+ * through `provider.query`, because the operations profile opens no read-only statement path, after the statement
+ * guard admits it as `sql.query.read`'s input contract admits the same statement on the execution profile (a refusal
+ * is the pipeline's audited input denial, and nothing is acquired or sent), and it is bounded the way the curated
+ * reads are: a result over the run's row or byte budget is refused rather than cut, and a read that
  * outlasts the time the call was granted is refused as a timeout, which `readSchemaStatistics` reports like any other
  * read that did not complete.
  */

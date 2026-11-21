@@ -29,8 +29,9 @@
  *   read on this path is going to be rendered into a prompt, so the cap that
  *   matters is the one that keeps a result affordable in tokens; the editor's
  *   own paging limits are irrelevant here. The caps refuse rather than truncate
- *   (the providers throw on an over-budget result), which is what lets a caller
- *   trust that a delivered result is complete.
+ *   (the providers throw on an over-budget result, and `runReadOnlyStatement`
+ *   refuses one again in core), which is what lets a caller trust that a
+ *   delivered result is complete.
  */
 
 import type { ExecutionProfile } from "@/lib/db/factory";

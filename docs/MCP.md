@@ -219,6 +219,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
   Those engines are the rows of `MCP_METADATA_READ_CHANGES_STATE` in `src/lib/db/compatibility.ts` that are true, one per engine, so a self-hosted Databend server, which bills nothing, is marked too.
   No tool sets `idempotentHint`, which a client reads only beside `readOnlyHint: false`, where a repeated call extends the lock's idle time or the billed run.
   A statement tool whose read has an effect of the server's own bookkeeping stays read-only, and its description says so: a Redis read can delete an expired key and publish an event about it, and an MQTT or Sparkplug B read opens broker sessions; `inspect_schema` also stays read-only on Redis and Sparkplug B, with what a call does there stated in its entry above.
+- No MCP tool reaches provider installation, update, removal, enablement, reload, trust or grants: every tool is a metadata tool or a statement language's read-only statement tool, which `tests/unit/no-provider-management-tools.test.ts` holds.
 - Read-only is the database's own enforcement, not a filter over statement text: every statement tool takes the connection under Studio's least-privilege read profile (`agent-read-only`) and runs through the provider's read-only statement path, and each engine enforces it as follows:
   - PostgreSQL: by a read-only transaction, and refuses a login that could do more than read.
   - SQLite: by a read-only open.
@@ -655,6 +656,7 @@ OpenAI's [plugin guide](https://developers.openai.com/plugins/build/plugins) sai
 
 - Authentication is a static bearer token that Studio mints: there is no OAuth and no protected resource metadata document, so a client needs its `Authorization` header configured.
 - `run_read_query` reads at most 1000 rows and 1 MiB from the database, and answers at most `max_rows` rows (default 100, at most 500) and 32 KiB; `truncated`, `truncated_by`, `pagination.hasMore` and `pagination.nextOffset` say what was cut and where the next page starts.
+  The provider refuses a result past 1000 rows or 1 MiB, and Studio checks every statement tool's answer against both again, each row's UTF-8 JSON bytes summed, before it is cut to `max_rows` and 32 KiB, so a result past either is refused as too large rather than cut.
 - On an engine that bills every read, one statement call may spend at most 2000 billed reads (`MCP_CALL_READ_ALLOWANCE`), and each call gets its own allowance; a read past it is refused before it is sent. No engine served by MCP bills its reads yet.
 - A statement a provider's own read-only fence refuses before sending it is answered "The statement was refused before it reached the database:" with the provider's sentence, never as the database's error.
 - A NaN, Infinity or -Infinity cell in a `run_read_query` answer is the string `"NaN"`, `"Infinity"` or `"-Infinity"`; it used to be `null`, which a client could not tell from SQL NULL. A text cell holding one of those words looks the same.

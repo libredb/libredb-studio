@@ -51,6 +51,9 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
  *  - **A run answers once** (`ANSWER_ALREADY_RECORDED` in `tools.ts`), so "the
  *    answer" is unambiguous and needs no id in the path.
  *
+ * The replay goes through `runReadOnlyStatement`, the one core call of a provider's read-only path, so its rows and
+ * bytes are held to the hand-over budget again before the response is written, whatever the provider does.
+ *
  * What it does NOT do is record a ledger event. The run may already have finished,
  * and a finished ledger does not accept appends; the replay is the editor's action on
  * the user's behalf, and the ledger's claim is that everything the RUN did is in it.

@@ -64,8 +64,9 @@ import {
  *
  * The order is run_read_query's: signal, resolve, availability, the served-engine gate, canonicalize, fence, the decision
  * record, `acquire(connection, "agent-read-only")`, `providerInDatabase`, for an arm that pages the provider's
- * `prepareQuery` with the row cap and offset, `queryReadOnly` under the provider budgets, the cut to max_rows and the
- * result cap, the outcome record.
+ * `prepareQuery` with the row cap and offset, `queryReadOnly` under the provider budgets through
+ * `runReadOnlyStatement`, which refuses an answer past either budget again in core, the cut to max_rows and the result
+ * cap, the outcome record.
  *
  * The boundary is the agent-read-only acquisition and the provider's queryReadOnly, which the factory refuses to hand
  * out for an engine without one; this module never calls query(), and that is what makes every statement tool's
@@ -83,7 +84,7 @@ import {
  * provider's prepareQuery refuses by throwing OffsetUnsupportedError, answered in its own words, and any offset on an
  * engine whose accepted-forms row says its SQL has none, refused before prepareQuery with the way to page there; such
  * an engine is never offered a next offset either. An arm that does not page sends the statement as written, and the
- * provider's row budget bounds it.
+ * row budget, the provider's and core's, bounds it.
  *
  * A result's warnings stay off the answer, except on an arm whose facet says they are Studio's own sentences an answer
  * must carry: there they are its `notes`, in the order the provider gave them.
