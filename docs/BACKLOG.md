@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D468, U17 · 346
+- [Drivers and connections](#drivers-and-connections) — D1-D469, U17 · 347
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 187
@@ -4611,6 +4611,21 @@ The adapter serves seven provider transports, so the fix is outside any one prov
 Found 2026-11-21 by the review of the Couchbase answer bounds change.
 
 **Done when:** `httpTransportFetch` rejects a 101 answer at once as a network failure and destroys its socket, with a test against a local listener that answers a 101 and closes, and one that keeps the socket open.
+
+### D469. The first concurrent opens of a fresh SQLite sample can fail with "database is locked", and the ERD then waits forever
+
+`seedSqliteSampleFile` in `src/lib/seed/sqlite-sample.ts` copies `seed-assets/sqlite/employee.db`, which is in rollback-journal mode, into the data directory.
+Every writable open then runs `PRAGMA journal_mode = WAL` (`src/lib/db/providers/sql/sqlite-worker.ts`, and `src/lib/db/providers/sql/sqlite.ts` on the in-process path) with no busy timeout, so when several routes open the fresh file at once, the opens that lose the switch fail with `database is locked`.
+When the loser is `/api/db/objects/inventory`, the only catalog read `use-connection-manager.ts` makes, the schema diagram in `src/components/SchemaDiagram.tsx` has no relations and draws "Generating ERD Diagram..." with no failure state, so it never resolves.
+Measured 2026-11-21 from a worktree with no `data/` directory: `CI=1 bunx playwright test e2e/security-headers.spec.ts e2e/object-edit.spec.ts --project=chromium --repeat-each=5 --retries=0` failed 1 of 40 runs, the test "drives the editor, a query, the diagram and both exports with no policy violation" in `security-headers.spec.ts` drawing no PNG button within 30 s, while the server logged `database is locked` for `api/db/health` and `api/db/objects/inventory`.
+Six more runs of `security-headers.spec.ts` alone, each from a fresh data directory, logged lock errors on the first open in all six and failed the same way in one, the run in which the inventory read lost.
+Four processes running the worker's open sequence on a fresh copy of the sample had at least three of four opens fail in 6 of 6 trials, and none failed on a copy already in WAL mode (4 of 4 trials).
+A warm data directory does not show it, because the sample is already in WAL mode there.
+
+Found 2026-11-21 by the review of the E2E query budget change, which this symptom had been filed under (REL7).
+Not fixed there: the cause is in the SQLite provider and the sample seed, not in the E2E harness.
+
+**Done when:** concurrent first opens of a freshly seeded sample all succeed (for example, the sample is shipped or seeded in WAL mode, or the switch waits on a busy timeout), a failed inventory read draws a named failure with a retry on the schema diagram instead of its spinner, and tests cover both: several concurrent opens of a fresh rollback-journal copy, and the diagram given a failed catalog read.
 
 ## Value interpolation
 
