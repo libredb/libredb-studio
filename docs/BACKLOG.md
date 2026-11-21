@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D473, U17 · 347
+- [Drivers and connections](#drivers-and-connections) — D1-D472, U17 · 346
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U216 · 201
@@ -2573,7 +2573,7 @@ Found in the round-2 review of #1552, which introduced the first two edges; the 
 ### D244. A broken operator seed file makes the built-in sample connections fail as well
 
 `visibleConnectionById` in `src/lib/governance/visible.ts` finds one id by building the whole seed listing, and `getSeedListing` in `src/lib/seed/index.ts` starts with `loadOperatorSources()`, which throws when an operator source fails.
-So a seed file that does not parse, does not validate or cannot be read makes every `seed:` id fail, including `seed:sqlite-embedded-sample` and `seed:libredb-embedded-sample`, which no operator source declares (`src/lib/seed/sqlite-sample.ts`, `src/lib/seed/libredb-sample.ts`).
+So a seed file that does not parse, does not validate or cannot be read makes every `seed:` id fail, including `seed:sqlite-embedded-sample` and `seed:libredb-embedded-sample`, which no operator source declares (`src/lib/seed/samples.ts`).
 `resolveConnection` in `src/lib/seed/resolve-connection.ts` rethrows it, so `/api/db/provider-meta`, `/api/db/health`, `/api/db/query` and every other route that resolves a connection answer 500 for both samples and for every role, and a user's 404 for the admin-only SQLite sample becomes the same 500.
 Measured with the CI image of 715cca4 and an invalid `color` in the seed file: the sidebar showed "This connection could not be read" with the seed error while the active connection was Sample (Employees), and a bun probe on `main` reproduced it for an invalid and for an unreadable file.
 Spec A decided that a failing operator source fails the whole operator list, so a config read in part never looks complete (`docs/SEED_CONNECTIONS.md`, Error Handling); the samples are not part of that config, and no document says they stop resolving.
@@ -4614,15 +4614,6 @@ Found 2026-11-21 by the review of the Redis resend change.
 Found 2026-11-21 by the review of the Redis resend change.
 
 **Done when:** a failed `CLIENT LIST` reaches the monitoring page as a panel error that names it, the refusal case `docs/providers/redis.md` section 7 describes is decided and documented, and `tests/integration/db/redis-provider.test.ts` covers a refusal and a reset.
-
-### D473. The LibreDB sample is seeded and listed when `LIBREDB_ENABLED_PROVIDERS` leaves out `libredb`
-
-`isSampleEnabled` in `src/lib/seed/libredb-sample.ts` reads only `LIBREDB_EMBEDDED_SAMPLE`, governance and the Kubernetes access review, so a server whose `LIBREDB_ENABLED_PROVIDERS` leaves out `libredb` still seeds `sample.libredb` at boot and `getManagedConnections` in `src/lib/seed/index.ts` lists "Sample (LibreDB)" to every role, while `createDatabaseProvider` in `src/lib/db/factory.ts` refuses every open of it with "The libredb provider is not available in this distribution of LibreDB Studio."
-The SQLite sample has been off under such a list since 2026-11-21 (`isSqliteSampleEnabled` in `src/lib/seed/sqlite-sample.ts`).
-The VS Code extension, the one channel that sets the list, runs no instrumentation, so it seeds neither sample.
-Found 2026-11-21 by the review of the SQLite sample seed change.
-
-**Done when:** `isSampleEnabled` is false when `LIBREDB_ENABLED_PROVIDERS` is set and does not name `libredb`, `docs/SEED_CONNECTIONS.md` says so, and a test in `tests/integration/seed/` covers the listing and the switch.
 
 ## Value interpolation
 

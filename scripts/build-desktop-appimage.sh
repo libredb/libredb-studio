@@ -486,7 +486,7 @@ if [ "$RUN_SMOKE" = "true" ]; then
   # .next/node_modules holds the externalized database drivers; it is absent when
   # the symlink materialization above is skipped or regresses, and then every
   # request fails with "Failed to load external module <driver>-<hash>".
-  for required in server.js .next/BUILD_ID .next/node_modules seed-assets/sqlite/employee.db; do
+  for required in server.js .next/BUILD_ID .next/node_modules seed-assets/sqlite/employee.db seed-assets/libredb/sample.libredb; do
     if [ ! -e "$APPDIR_PAYLOAD/$required" ]; then
       echo "Smoke test FAILED: bundled payload is missing $required" >&2
       exit 1

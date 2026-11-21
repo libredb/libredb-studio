@@ -1013,7 +1013,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   (`src/lib/agent/runtime.ts`) — the rail says so in as many words
   (`src/components/agent/timeline.ts`).
   So on every other id in the `DatabaseType` union (`src/lib/types.ts`) an Agent-mode run cannot read anything.
-  The bundled **LibreDB sample** connection runs the investigation and data-analysis workflows on its own command language (`src/lib/db/providers/embedded/libredb.ts`), and the bundled **SQLite sample** is the seeded connection to try every workflow against (`src/lib/seed/sqlite-sample.ts`).
+  The bundled **LibreDB sample** connection runs the investigation and data-analysis workflows on its own command language (`src/lib/db/providers/embedded/libredb.ts`), and the bundled **SQLite sample** is the seeded connection to try every workflow against (`src/lib/seed/samples.ts`).
   **Plan** mode still opens on
   every connection — the model is toolless there, so no profile has to be acquired for it — and since
   #414 its **grounding** no longer takes this path at all on the other forty-one: it asks the provider to
