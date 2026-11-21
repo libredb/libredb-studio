@@ -540,10 +540,7 @@ alongside that rewrite and the seal hashes the far end, never the ephemeral loca
 property of this process and not of the server. The far end is read back off the tunnel and is never
 the address the factory asked for, and the tunnel pool keys a forward by connection id, by that far
 end and by the same four bastion fields this seal frames, so the only forward a provider can be
-handed is one opened to the address it seals THROUGH the bastion its record names.
-Concurrent connects through one forward share one SSH connection: a connect that arrives while that forward is still being dialled is handed the forward the dial opens, or the error it fails with.
-A connect whose provider does not open releases the forward rather than closing it, and the pool closes it only when no other connect is still using it and no provider opened on it, so one connect's failure never closes the forward a sibling connects or serves through.
-Measured against a
+handed is one opened to the address it seals THROUGH the bastion its record names. Measured against a
 live bastion in both directions on 2026-09-15: with the far end alone in the key, a record edited to
 name a bastion that does not resolve was served the forward already open through the real one,
 reached the old machine, and sealed a digest the route recomputed to the same value; with the route
@@ -553,6 +550,9 @@ deliberately OUT, because a caller supplies them, and so is the password, becaus
 credential must not invalidate a plan built five minutes earlier. Both of the last two additions came
 from external review of the change that introduced the control, each with a colliding pair measured
 against the real module, so this list is a measured floor rather than a design intention.
+
+Concurrent connects through one forward share one SSH connection: a connect that arrives while that forward is still being dialled is handed the forward the dial opens, or the error it fails with.
+A connect whose provider does not open releases the forward rather than closing it, and the pool closes it only when no other connect is still using it and no provider opened on it, so one connect's failure never closes the forward a sibling connects or serves through.
 
 **What the round trip carried, on PostgreSQL: guarded on both sides, and neither guard is a
 parser.** The day-one PostgreSQL unit is a multi-statement simple query, so every statement the

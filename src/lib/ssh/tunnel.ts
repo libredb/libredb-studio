@@ -210,6 +210,10 @@ export interface CreateSSHTunnelOptions {
    * connection. A tunnel whose SSH session ends, by an error or by the bastion ending it,
    * closes itself and leaves the pool, pooled or not.
    *
+   * A shared call counts its caller as connecting through the forward until the caller makes
+   * exactly one report: {@link tunnelProviderOpened} or {@link releaseUnopenedTunnel}. The last
+   * release of a forward no provider opened on closes it.
+   *
    * `false` requests a one-shot tunnel for a caller that owns the whole lifecycle and
    * closes it itself - the routes that build a provider outside both provider caches
    * (test-connection, schema-snapshot). Pooling those would leak: the connection dialog
@@ -222,6 +226,11 @@ export interface CreateSSHTunnelOptions {
 /**
  * Create an SSH tunnel for a database connection.
  * Returns the local host/port to connect the database client to.
+ *
+ * Every shared call is answered by exactly one of {@link tunnelProviderOpened} or
+ * {@link releaseUnopenedTunnel} on the tunnel it returned, whether it dialled the forward,
+ * joined the dial under way or was served the pooled forward. The last release of a forward no
+ * provider opened on closes it.
  */
 export async function createSSHTunnel(
   connectionId: string,
@@ -532,6 +541,10 @@ export function hasTunnel(connectionId: string, forward?: TunnelForward): boolea
  * The pooled tunnel for a connection: the one carrying `forward` when one is given, and
  * otherwise the first pooled for the id, which is all a caller asking the loose question can
  * be told once a connection may hold more than one.
+ *
+ * What it returns is not a claim on the forward, so it is never reported to
+ * {@link tunnelProviderOpened} or {@link releaseUnopenedTunnel}: only a call to
+ * {@link createSSHTunnel} is counted.
  */
 export function getTunnelInfo(connectionId: string, forward?: TunnelForward): TunnelInfo | undefined {
   if (forward) {
