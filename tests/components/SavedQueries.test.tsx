@@ -233,7 +233,7 @@ describe("SavedQueries", () => {
 
     test("a saved query of a type id still loads from its name and from Edit", () => {
       mockGetSavedQueries.mockReturnValue(library);
-      const onSelectQuery = mock(() => {});
+      const onSelectQuery = mock((_query: string) => {});
       const view = render(<SavedQueries onSelectQuery={onSelectQuery} />);
       fireEvent.click(view.getByRole("button", { name: "Active Users" }));
       fireEvent.click(view.getByRole("button", { name: "Edit Active Users" }));

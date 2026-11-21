@@ -191,12 +191,15 @@ describe("the command palette and a saved query whose type names no provider (FN
       await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(index + 1));
     }
 
-    expect(mockToastError.mock.calls).toEqual([
-      ["Saved query unavailable", { description: `Untyped query: ${ABSENT_TYPE_SENTENCE}` }],
-      ["Saved query unavailable", { description: `Malformed query: ${MALFORMED_TYPE_SENTENCE}` }],
-      ["Saved query unavailable", { description: `This saved query: ${unknownTypeSentence("acmefoo")}` }],
-      ["Saved query unavailable", { description: `This saved query: ${unknownTypeSentence("acmefoo")}` }],
-    ]);
+    const descriptions = [
+      `Untyped query: ${ABSENT_TYPE_SENTENCE}`,
+      `Malformed query: ${MALFORMED_TYPE_SENTENCE}`,
+      `This saved query: ${unknownTypeSentence("acmefoo")}`,
+      `This saved query: ${unknownTypeSentence("acmefoo")}`,
+    ];
+    descriptions.forEach((description, index) =>
+      expect(mockToastError).toHaveBeenNthCalledWith(index + 1, "Saved query unavailable", { description }),
+    );
     expect(onLoadSavedQuery).not.toHaveBeenCalled();
   });
 
