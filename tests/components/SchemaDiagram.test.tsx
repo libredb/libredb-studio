@@ -821,6 +821,59 @@ describe("SchemaDiagram", () => {
     expect(view.queryByPlaceholderText("Filter tables...")).toBeNull();
   });
 
+  // ── A failed catalog read ───────────────────────────────────────────────
+  // A failed read empties the schema, so the diagram used to draw its spinner over it and never
+  // resolve. It draws the read's own error instead, and a way to ask for the read again.
+
+  test("a failed catalog read draws its error and a retry instead of the spinner", () => {
+    const props = createDefaultProps({
+      schema: emptySchema,
+      schemaError: "Failed to open SQLite database: database is locked",
+      onRetrySchema: mock(() => {}),
+    });
+    const { container } = render(<SchemaDiagram {...props} />);
+    const view = within(container);
+
+    expect(view.queryByText("Generating ERD Diagram...")).toBeNull();
+    expect(view.getByTestId("diagram-read-failed")).not.toBeNull();
+    expect(view.getByText("The objects could not be read")).not.toBeNull();
+    expect(view.getByText("Failed to open SQLite database: database is locked")).not.toBeNull();
+    expect(view.getByRole("button", { name: "Try again" })).not.toBeNull();
+  });
+
+  test("Try again on a failed catalog read asks for the read again", () => {
+    const onRetrySchema = mock(() => {});
+    const props = createDefaultProps({ schema: emptySchema, schemaError: "database is locked", onRetrySchema });
+    const { container } = render(<SchemaDiagram {...props} />);
+
+    fireEvent.click(within(container).getByRole("button", { name: "Try again" }));
+
+    expect(onRetrySchema).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failed catalog read with no retry handed in draws the error without a button", () => {
+    const props = createDefaultProps({ schema: emptySchema, schemaError: "database is locked" });
+    const { container } = render(<SchemaDiagram {...props} />);
+    const view = within(container);
+
+    expect(view.getByText("database is locked")).not.toBeNull();
+    expect(view.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  test("while the catalog is read again the spinner is drawn, not the previous failure", () => {
+    const props = createDefaultProps({
+      schema: emptySchema,
+      schemaError: "database is locked",
+      isLoadingSchema: true,
+      onRetrySchema: mock(() => {}),
+    });
+    const { container } = render(<SchemaDiagram {...props} />);
+    const view = within(container);
+
+    expect(view.queryByText("Generating ERD Diagram...")).not.toBeNull();
+    expect(view.queryByTestId("diagram-read-failed")).toBeNull();
+  });
+
   // ── Search affects edge count ───────────────────────────────────────────
 
   test("filtering to table with FK shows its relationships", () => {

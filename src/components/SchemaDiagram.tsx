@@ -20,7 +20,7 @@ import "@xyflow/react/dist/style.css";
 import { relationCountLabel, relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import { objectPathLabel } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
-import { Download, Info, LoaderCircle, Search, X } from "lucide-react";
+import { CircleAlert, Download, Info, LoaderCircle, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
@@ -70,6 +70,16 @@ interface SchemaDiagramProps {
    * flight would read as a database with no tables.
    */
   capabilities?: ProviderCapabilities;
+  /**
+   * Why the catalog read behind `schema` failed, or null when it did not. A failed read empties
+   * `schema`, so without it this canvas drew its spinner over a read that had already ended and
+   * never resolved. The read's own words are drawn.
+   */
+  schemaError?: string | null;
+  /** Whether the catalog is being read now: the spinner, not a previous read's failure. */
+  isLoadingSchema?: boolean;
+  /** Asks for the catalog read again; the failure draws Try again only when one is handed in. */
+  onRetrySchema?: () => void;
 }
 
 /**
@@ -97,7 +107,14 @@ const DIAGRAM_THEME = {
   },
 } as const;
 
-function SchemaDiagramInner({ schema, onClose, capabilities }: SchemaDiagramProps) {
+function SchemaDiagramInner({
+  schema,
+  onClose,
+  capabilities,
+  schemaError = null,
+  isLoadingSchema = false,
+  onRetrySchema,
+}: SchemaDiagramProps) {
   const mode = useEffectiveTheme();
   const diagram = DIAGRAM_THEME[mode];
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -369,6 +386,29 @@ function SchemaDiagramInner({ schema, onClose, capabilities }: SchemaDiagramProp
     ? `${schemaHasFkData ? "No usable FK relationships in this view." : "No FK data available."} Showing heuristic relationships (dashed).`
     : "No FK data available.";
 
+  // Drawn as the sidebar's object tree draws a failed read: the read's own message and Try again.
+  if (relations.length === 0 && schemaError !== null && !isLoadingSchema) {
+    return (
+      <div
+        data-testid="diagram-read-failed"
+        className="absolute inset-0 z-50 bg-canvas flex flex-col items-center justify-center px-6 text-center"
+      >
+        <CircleAlert strokeWidth={1.5} className="w-8 h-8 text-warning mb-4" />
+        <h3 className="text-foreground text-xs font-medium mb-1">The objects could not be read</h3>
+        <p className="max-w-md text-xs text-muted-foreground leading-relaxed break-words">{schemaError}</p>
+        {onRetrySchema !== undefined && (
+          <button
+            type="button"
+            onClick={onRetrySchema}
+            className="mt-3 rounded-md bg-brand-solid hover:bg-brand-solid-hover text-white px-3 py-1.5 text-xs font-medium transition-colors"
+          >
+            Try again
+          </button>
+        )}
+      </div>
+    );
+  }
+
   if (relations.length === 0) {
     return (
       <div className="absolute inset-0 z-50 bg-canvas flex flex-col items-center justify-center">
@@ -542,10 +582,10 @@ function SchemaDiagramInner({ schema, onClose, capabilities }: SchemaDiagramProp
   );
 }
 
-export function SchemaDiagram({ schema, onClose, capabilities }: SchemaDiagramProps) {
+export function SchemaDiagram(props: SchemaDiagramProps) {
   return (
     <ReactFlowProvider>
-      <SchemaDiagramInner schema={schema} onClose={onClose} capabilities={capabilities} />
+      <SchemaDiagramInner {...props} />
     </ReactFlowProvider>
   );
 }

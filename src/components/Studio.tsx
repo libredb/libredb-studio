@@ -618,6 +618,11 @@ export default function Studio() {
   const [showDiagram, setShowDiagram] = useState(false);
   const handleShowDiagram = useCallback(() => setShowDiagram(true), []);
   const handleHideDiagram = useCallback(() => setShowDiagram(false), []);
+  // The diagram draws a failed catalog read with Try again, which reads the active connection again.
+  const { activeConnection, fetchSchema } = conn;
+  const handleRetrySchema = useCallback(() => {
+    if (activeConnection) void fetchSchema(activeConnection);
+  }, [activeConnection, fetchSchema]);
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
   const openSaveQuery = useCallback(() => setIsSaveQueryModalOpen(true), []);
   const [savedKey, setSavedKey] = useState(0);
@@ -1501,6 +1506,9 @@ export default function Studio() {
                     <SchemaDiagram
                       schema={conn.schema}
                       capabilities={metadata?.capabilities}
+                      schemaError={conn.schemaError}
+                      isLoadingSchema={conn.isLoadingSchema}
+                      onRetrySchema={handleRetrySchema}
                       onClose={handleHideDiagram}
                     />
                   </React.Suspense>
