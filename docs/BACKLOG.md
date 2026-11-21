@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D473, U17 · 348
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U210 · 195
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U216 · 201
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC37 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL11 · 10
@@ -7218,6 +7218,55 @@ The standalone shell keeps the read's error in `use-connection-manager.ts` and d
 Found 2026-11-21 while adding the failed-read state to the standalone diagram.
 
 **Done when:** the adapter keeps the host read's error beside the empty schema, `StudioWorkspace` hands it to `SchemaDiagram` with a retry that reads the active connection again, and a test drives a rejecting `onSchemaFetch` to the diagram's failure state.
+
+### U211. A confirmed statement in the standalone editor runs on whichever connection is open when Proceed is pressed
+
+`forceExecuteQuery` in `src/hooks/use-query-execution.ts`, which the query safety dialog's Proceed reaches through `proceedSafety` in `src/components/Studio.tsx`, reads the active connection when Proceed is pressed, not the connection the statement was confirmed for.
+So a managed refresh that moves the editor to another connection while the dialog is open, as it does when the open connection's type stops naming a provider, would run the confirmed statement there (found by reading the code, not measured).
+The embedded workspace binds its confirmation to the connection it was raised on since the FND-1 npm surface change (`proceedSafetyCheck` in `src/workspace/hooks/use-query-adapter.ts`), and the standalone editor can take the same shape.
+Found 2026-11-21 by the review of the FND-1 npm surface change.
+
+**Done when:** Proceed runs the statement only on the connection it was confirmed for and otherwise closes the dialog with a sentence that says why, and a component test moves the editor while the dialog is open.
+
+### U212. The embedded workspace runs an Import or Test Data statement on whichever connection is open when it finishes
+
+When the host drops the open connection while the Import or Test Data dialog is open, the workspace moves to the first connection a provider can open, and the dialog's statement runs there: measured for Import through `@/exports/workspace` before and after the FND-1 npm surface change, and read in the code for Test Data.
+The dialogs keep no record of the connection they were opened for; the safety dialog does since that change (`proceedSafetyCheck` in `src/workspace/hooks/use-query-adapter.ts`).
+Found 2026-11-21 by the review of the FND-1 npm surface change.
+
+**Done when:** each modal statement runs only on the connection its dialog was opened for, or the dialog says why it did not, and a component test drops the open connection while each dialog is open.
+
+### U213. The embedded workspace's Import closes as a success whatever the host answered
+
+`runModalStatement` in `src/workspace/StudioWorkspace.tsx` resolves with no value whatever `onQueryExecute` answers, so an import the host failed closes the dialog as if it had succeeded.
+The standalone app hands the failure to the dialog's `onFailure` (#1396), which keeps the dialog open with the reason.
+Found 2026-11-21 by the review of the FND-1 npm surface change.
+
+**Done when:** a host failure keeps the Import dialog open with the host's own words, and a component test answers a failure from `onQueryExecute`.
+
+### U214. The embedded workspace takes a host record with no id, or with a numeric id, as a connection
+
+A host record with no `id` is drawn as the active row while nothing is open, and a pick of it answers `true` with nothing chosen (measured through `useConnectionAdapter` in `src/workspace/hooks/use-connection-adapter.ts`).
+A record whose `id` is a number worked before the FND-1 npm surface change, since the adapter finds a connection with `===` and hands the same value to `onSchemaFetch`, so refusing it is a decision about the published contract, which types `id` as a string.
+Found 2026-11-21 by the review of the FND-1 npm surface change.
+
+**Done when:** the published contract says whether a numeric id is supported, a record with no id is refused by name and listed as unavailable, and adapter tests cover both.
+
+### U215. The embedded workspace answers a save, and a run with no open connection, only with toasts it never draws
+
+The embedded shell answers a save with the toasts "Query Saved" and "Save Failed", and `forceExecuteQuery` in `src/workspace/hooks/use-query-adapter.ts` answers a run with no open connection with a toast alone, but the workspace mounts no Toaster, so a host without one shows nothing.
+Since the FND-1 npm surface change the workspace draws its connection refusals on a line above the tab bar for that reason, and Proceed no longer reaches that no-connection branch, so only a direct caller of the hook does.
+Found 2026-11-21 by the review of the FND-1 npm surface change.
+
+**Done when:** each of these outcomes is drawn in the workspace itself, and component tests render the workspace without a Toaster.
+
+### U216. The query hooks keep an unlimited-run confirmation that nothing sets
+
+`pendingUnlimitedQuery` and `unlimitedWarningOpen` are state in both query hooks, `src/hooks/use-query-execution.ts` and `src/workspace/hooks/use-query-adapter.ts`, but nothing in `src/` sets a pending unlimited query: `setPendingUnlimitedQuery` appears only in the hooks' own return values.
+So `handleUnlimitedQuery` never receives a statement, and if it is ever wired it needs the connection binding the safety dialog has since the FND-1 npm surface change.
+Found 2026-11-21 by the review of the FND-1 npm surface change.
+
+**Done when:** the unlimited-run confirmation is removed with its state, or wired with a test that binds it to the connection it was raised on.
 
 ## Dependencies
 

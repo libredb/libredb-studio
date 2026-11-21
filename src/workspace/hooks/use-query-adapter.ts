@@ -48,6 +48,20 @@ function carriedChannels(
   };
 }
 
+/**
+ * Why the safety dialog's Proceed ran nothing: the connection the statement was confirmed for is no longer the open one,
+ * because the host's list closed or replaced it while the dialog was open. Drawn on the tab, as a refused statement is.
+ */
+export const CONFIRMED_ELSEWHERE_SENTENCE =
+  "This statement was not run: it was confirmed for a connection that is no longer the open one. Open the connection it is meant for and run it again.";
+
+/**
+ * Why `executeQuery` ran nothing: no connection is open. Drawn on the tab, as a refused statement is, because this shell
+ * mounts no toaster; a modal's statement (Test Data) left open while the host's list closed the connection lands here.
+ */
+export const NO_CONNECTION_SENTENCE =
+  "This statement was not run: no connection is open. Open the connection it is meant for and run it again.";
+
 interface UseQueryAdapterParams {
   activeConnection: DatabaseConnection | null;
   onQueryExecute: (
@@ -129,7 +143,18 @@ export function useQueryAdapter({
     };
   }, []);
 
-  const [safetyCheckQuery, setSafetyCheckQuery] = useState<string | null>(null);
+  /**
+   * The statement the safety dialog asks about, with the id of the connection it was raised on. The host owns the list,
+   * so it can close or replace the open connection while the dialog is open; Proceed compares the two ids
+   * (`proceedSafetyCheck`) and never runs a statement on a connection it was not confirmed for.
+   */
+  const [safetyCheck, setSafetyCheck] = useState<{ query: string; connectionId: string | undefined } | null>(null);
+  const safetyCheckQuery = safetyCheck?.query ?? null;
+  /** Raises the dialog for `query` on the connection open now, or withdraws it with null. */
+  const setSafetyCheckQuery = useCallback(
+    (query: string | null) => setSafetyCheck(query === null ? null : { query, connectionId: activeConnection?.id }),
+    [activeConnection],
+  );
   const [unlimitedWarningOpen, setUnlimitedWarningOpen] = useState(false);
   const [pendingUnlimitedQuery, setPendingUnlimitedQuery] = useState<{
     query: string;
@@ -195,7 +220,7 @@ export function useQueryAdapter({
       const queryToExecute = overrideQuery || tabToExec.query;
 
       if (!activeConnection) {
-        toast({ title: "No Connection", description: "Select a connection first.", variant: "destructive" });
+        refuseRun(targetTabId, NO_CONNECTION_SENTENCE);
         return;
       }
 
@@ -216,7 +241,7 @@ export function useQueryAdapter({
       // (#292): the same characters are a comment in one engine and code in
       // another, and only the connection says which.
       if (isDangerousQuery(queryToExecute, activeConnection.type)) {
-        setSafetyCheckQuery(queryToExecute);
+        setSafetyCheck({ query: queryToExecute, connectionId: activeConnection.id });
         return;
       }
 
@@ -339,7 +364,7 @@ export function useQueryAdapter({
   // Force execute (bypass safety check)
   const forceExecuteQuery = useCallback(
     (query: string) => {
-      setSafetyCheckQuery(null);
+      setSafetyCheck(null);
 
       if (!activeConnection) {
         toast({ title: "No Connection", description: "Select a connection first.", variant: "destructive" });
@@ -450,6 +475,21 @@ export function useQueryAdapter({
     },
     [activeConnection, activeTabId, toast, onQueryExecute, setTabs, beginRun, refuseRun],
   );
+
+  /**
+   * The safety dialog's Proceed: runs the pending statement on the connection it was confirmed for. When another
+   * connection, or none, is open by now, it runs nothing, withdraws the dialog and says why on the tab, as a refused
+   * statement is said, because this shell mounts no toaster.
+   */
+  const proceedSafetyCheck = useCallback(() => {
+    if (safetyCheck === null) return;
+    if (safetyCheck.connectionId !== activeConnection?.id) {
+      setSafetyCheck(null);
+      refuseRun(activeTabId, CONFIRMED_ELSEWHERE_SENTENCE);
+      return;
+    }
+    forceExecuteQuery(safetyCheck.query);
+  }, [safetyCheck, activeConnection, activeTabId, refuseRun, forceExecuteQuery]);
 
   // Cancel running query (best-effort via ref flag)
   const cancelQuery = useCallback(() => {
@@ -732,6 +772,7 @@ export function useQueryAdapter({
   return {
     executeQuery,
     forceExecuteQuery,
+    proceedSafetyCheck,
     cancelQuery,
     handleLoadMore,
     handleUnlimitedQuery,

@@ -395,7 +395,8 @@ export interface DatabaseConnection {
   name: string;
   /**
    * The connection's type id. A record read from storage or from a request may carry any value here: one saved by a
-   * newer Studio that shares the same storage, one listed from the operator's seed file, or one with no type at all.
+   * newer Studio that shares the same storage, one listed from the operator's seed file, one a host application hands
+   * the published components, or one with no type at all.
    * Studio checks the value and refuses one that names no provider it has, by name, rather than treating the record as
    * another engine.
    */

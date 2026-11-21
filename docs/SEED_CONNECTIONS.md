@@ -950,7 +950,7 @@ A connection the user chooses while the link is pending cancels it, so a later r
 If the first refresh one seed-cache lifetime (`SEED_CACHE_TTL_MS`) after the load does not list it either, the editor shows a notice that reads the same whatever the cause: an id that does not exist, a seed whose `roles` leave the user out, or a connection of the user's own while [Custom Connections](#custom-connections) are switched off.
 The notice therefore does not reveal which seed ids exist for other roles.
 When the managed list cannot be loaded at all, the notice says so instead, and the link opens only a connection the browser holds itself.
-The parameter belongs to the standalone editor page: the embeddable `StudioWorkspace` component takes its connections and its selection from its host and ignores the address bar.
+The parameter belongs to the standalone editor page: the embeddable `StudioWorkspace` component takes its connections from its host, chooses the open one itself as [STORAGE.md](./STORAGE.md#connections-whose-type-this-studio-has-no-provider-for) describes, and ignores the address bar.
 
 ---
 

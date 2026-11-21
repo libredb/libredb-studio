@@ -8,7 +8,11 @@ import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
 import { influxqlRefusal } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import { renderHook, act } from "@testing-library/react";
 
-import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
+import {
+  CONFIRMED_ELSEWHERE_SENTENCE,
+  NO_CONNECTION_SENTENCE,
+  useQueryAdapter,
+} from "@/workspace/hooks/use-query-adapter";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { WorkspaceQueryResult, WorkspaceFeatures } from "@/workspace/types";
 import { mockToastSuccess, mockToastError, mockToastDefault } from "../helpers/mock-sonner";
@@ -457,6 +461,8 @@ describe("useQueryAdapter", () => {
 
     // Should toast error
     expect(mockToastError).toHaveBeenCalled();
+    // And say so on the tab, since the embedded shell mounts no toaster: a modal's statement (Test Data) lands here.
+    expect(params.tabs[0].runError).toBe(NO_CONNECTION_SENTENCE);
   });
 
   // ── executeQuery toasts error when query is empty ──────────────────────────
@@ -566,6 +572,91 @@ describe("useQueryAdapter", () => {
 
     expect(result.current.safetyCheckQuery).toBe("DROP TABLE users");
     expect(params.onQueryExecute).not.toHaveBeenCalled();
+  });
+
+  // The confirmation is bound to the connection it was raised on (FND-1 slice 4 review). A host re-render can close or
+  // replace the open connection while the dialog is open, and its Proceed used to run the statement on whatever was
+  // open when it was pressed.
+  describe("the safety confirmation and the connection it was raised on", () => {
+    function confirmedOn(initial: DatabaseConnection | null) {
+      const params = makeHookParams({ activeConnection: initial });
+      const hook = renderHook(({ activeConnection }) => useQueryAdapter({ ...params, activeConnection } as never), {
+        initialProps: { activeConnection: initial },
+      });
+      return { ...hook, params };
+    }
+
+    test("Proceed runs the statement on the connection it was confirmed for", async () => {
+      const { result, params } = confirmedOn(makeConnection({ id: "p1" }));
+      await act(async () => {
+        await result.current.executeQuery("DROP TABLE users");
+      });
+
+      await act(async () => {
+        result.current.proceedSafetyCheck();
+      });
+
+      expect(params.onQueryExecute).toHaveBeenCalledWith("p1", "DROP TABLE users");
+      expect(result.current.safetyCheckQuery).toBeNull();
+    });
+
+    test("Proceed refuses, in a sentence on the tab, once another connection is open", async () => {
+      const { result, params, rerender } = confirmedOn(makeConnection({ id: "p1" }));
+      await act(async () => {
+        await result.current.executeQuery("DROP TABLE users");
+      });
+      rerender({ activeConnection: makeConnection({ id: "p2", name: "DB Two" }) });
+
+      await act(async () => {
+        result.current.proceedSafetyCheck();
+      });
+
+      expect(params.onQueryExecute).not.toHaveBeenCalled();
+      expect(result.current.safetyCheckQuery).toBeNull();
+      expect(params.tabs[0].runError).toBe(CONFIRMED_ELSEWHERE_SENTENCE);
+    });
+
+    test("and once no connection is open", async () => {
+      const { result, params, rerender } = confirmedOn(makeConnection({ id: "p1" }));
+      await act(async () => {
+        await result.current.executeQuery("DROP TABLE users");
+      });
+      rerender({ activeConnection: null });
+
+      await act(async () => {
+        result.current.proceedSafetyCheck();
+      });
+
+      expect(params.onQueryExecute).not.toHaveBeenCalled();
+      expect(params.tabs[0].runError).toBe(CONFIRMED_ELSEWHERE_SENTENCE);
+      // Worded for this case too: it asks for no run on the connection open now, since none is.
+      expect(CONFIRMED_ELSEWHERE_SENTENCE).not.toContain("open now");
+      expect(CONFIRMED_ELSEWHERE_SENTENCE).toContain("Open the connection it is meant for");
+    });
+
+    test("a confirmation the setter raises is bound to the connection open at that moment", async () => {
+      const { result, params } = confirmedOn(makeConnection({ id: "p1" }));
+      act(() => {
+        result.current.setSafetyCheckQuery("DROP TABLE users");
+      });
+
+      await act(async () => {
+        result.current.proceedSafetyCheck();
+      });
+
+      expect(params.onQueryExecute).toHaveBeenCalledWith("p1", "DROP TABLE users");
+    });
+
+    test("Proceed with no confirmation pending runs nothing", async () => {
+      const { result, params } = confirmedOn(makeConnection({ id: "p1" }));
+
+      await act(async () => {
+        result.current.proceedSafetyCheck();
+      });
+
+      expect(params.onQueryExecute).not.toHaveBeenCalled();
+      expect(params.tabs[0].runError).toBeUndefined();
+    });
   });
 
   /**

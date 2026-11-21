@@ -109,6 +109,9 @@ let mockFormOverrides: Record<string, unknown> = {};
 
 function getDefaultForm() {
   return withFieldAccess({
+    // An edit target a provider can open, or none: the refusal is driven in ConnectionModal.unavailable.test.tsx,
+    // through the real hook.
+    editRefusal: null,
     type: "postgres" as const,
     setType: mock(() => {}),
     name: "",

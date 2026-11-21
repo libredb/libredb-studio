@@ -38,6 +38,7 @@ import { databendNotAppliedNotice, parseConnectionString } from "@/lib/connectio
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { parseHostUri, tlsModeAfterScheme, type HostUriResult } from "@/lib/connection-host-uri";
 import { newLocalId } from "@/lib/ids";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import { WRITE_REACH } from "@/lib/db/compatibility";
 import type { WriteReach } from "@/lib/db/write-reach";
 import { credentialWarningFor } from "@/lib/db/credential-warnings";
@@ -719,6 +720,12 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   // seeding the state from `editConnection` directly would skip mount, and today's
   // effect does run on mount. Comparing on `.conn` keeps exactly the identity
   // semantics of the effect's old `[editConnection]` dependency.
+  //
+  // A target whose type names no provider (FND-1), which a host application can hand the
+  // published dialog, is withdrawn to as any new target is and seeds nothing else: no
+  // type, no engine config, no field. The form keeps its defaults and `editRefusal` below
+  // says why, so the dialog refuses it by name instead of throwing in render or rebinding
+  // the record to the picker's default engine. This runs whatever `isOpen` is.
   const [appliedEdit, setAppliedEdit] = useState<{ conn: DatabaseConnection | null | undefined } | null>(null);
   if (!appliedEdit || appliedEdit.conn !== editConnection) {
     setAppliedEdit({ conn: editConnection });
@@ -729,6 +736,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // next connection was saved on its first click having reported nothing (#1180).
       withdrawTransientState();
       resetConnectionFields();
+    }
+    if (editConnection && typeIdRefusal(editConnection.type) === null) {
       setType(editConnection.type);
       setName(editConnection.name);
       setHost(editConnection.host || "localhost");
@@ -1476,6 +1485,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   };
 
   return {
+    /**
+     * Why the edit target cannot be edited: its type names no provider, is missing, or is not text (FND-1). Null
+     * without a target and for a target a provider can open. Derived on every render, never stored.
+     */
+    editRefusal: editConnection ? typeIdRefusal(editConnection.type) : null,
     // Connection fields
     type,
     setType: chooseType,
