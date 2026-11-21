@@ -58,6 +58,8 @@ const ALLOWLIST: Record<string, string> = {
     "Inlined at build time, so a runtime value has no effect. Documented in docs/SEED_CONNECTIONS.md.",
   NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS:
     "Inlined at build time, so a runtime value has no effect. Documented in docs/SEED_CONNECTIONS.md.",
+  NEXT_MANUAL_SIG_HANDLE:
+    "Read by Next.js's start-up before it loads .env files, so it must be set in the environment that starts the server, never in .env. Documented in docs/DISTRIBUTION.md, Stopping the server.",
   VERCEL_DEPLOYMENT_ID:
     "Injected by the Vercel platform; read only to refuse an implicit hosted workflow backend, never set by an operator.",
 };

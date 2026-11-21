@@ -24,7 +24,7 @@ import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
-import { runShutdownHooks } from "@/lib/shutdown";
+import { onProviderCacheClose } from "@/lib/shutdown";
 import * as path from "path";
 
 // ============================================================================
@@ -1864,6 +1864,9 @@ registerOwnerRemoval(removeProvider);
  * An owned provider (docs/GOVERNANCE.md#per-user-providers) is torn down (`teardownProvider`), so an open transaction
  * it holds is rolled back before it closes, and it is waited for at most 15 s; a provider every caller shares is
  * disconnected as before.
+ * At a shutdown Studio's handler owns, the handler (src/lib/shutdown-handler.ts) runs it through the shutdown registry,
+ * where each copy of this module registers it below; importing this module adds no process listener, so an embedder
+ * of the package that wants its pools closed on a signal calls it from its own handler.
  */
 export async function clearProviderCache(): Promise<void> {
   // Stop idle sweep
@@ -1904,6 +1907,11 @@ export async function clearProviderCache(): Promise<void> {
   profiledProviderCache.clear();
 }
 
+// Every copy of this module a process loads registers the close of its own caches, as it registers its owner-scoped
+// removal above: the shutdown handler lives in the instrumentation bundle and reaches the route handlers' copies only
+// through this registry (src/lib/shutdown.ts).
+onProviderCacheClose(clearProviderCache);
+
 /**
  * Get cache statistics
  */
@@ -1925,45 +1933,4 @@ export function getExecutionProfileCacheStats(): { size: number; connections: st
     size: profiledProviderCache.size,
     connections: Array.from(profiledProviderCache.values(), (entry) => entry.connectionId),
   };
-}
-
-// ============================================================================
-// Graceful Shutdown
-// ============================================================================
-
-let shutdownRegistered = false;
-
-/**
- * Register process signal handlers for graceful shutdown.
- * Safe to call multiple times — handlers are only registered once.
- * The hooks other modules registered with `onShutdown()` (src/lib/shutdown.ts), such as the governance
- * listener's close, run first, cut at their 5 s deadline, and the providers are closed after them.
- */
-export function registerShutdownHandlers(): void {
-  if (shutdownRegistered) return;
-  shutdownRegistered = true;
-
-  const shutdown = async (signal: string) => {
-    logger.info(`[DB] Received ${signal}, closing all database connections...`);
-    await runShutdownHooks();
-    try {
-      await clearProviderCache();
-      logger.info("[DB] All database connections closed gracefully");
-    } catch (error) {
-      logger.error("[DB] Error during graceful shutdown", error, { route: "db/factory" });
-    }
-    process.exit(0);
-  };
-
-  process.on("SIGTERM", () => {
-    void shutdown("SIGTERM");
-  });
-  process.on("SIGINT", () => {
-    void shutdown("SIGINT");
-  });
-}
-
-// Auto-register on server-side (not during tests)
-if (typeof process !== "undefined" && process.env.NODE_ENV !== "test") {
-  registerShutdownHandlers();
 }

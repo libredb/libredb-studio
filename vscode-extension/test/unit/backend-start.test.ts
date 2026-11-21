@@ -141,7 +141,7 @@ describe("startBackend", () => {
       assert.deepEqual(errors, []);
     });
 
-    it("logs a close that fails, then exits 0, as the factory's signal handler does", async () => {
+    it("logs a close that fails, then exits 0", async () => {
       const failure = new Error("pool hung");
       const proc = new FakeProcess();
       startBackend(proc, fakeFactory(() => Promise.reject(failure)).factory, ">=24.0.0");
@@ -151,6 +151,37 @@ describe("startBackend", () => {
       assert.deepEqual(proc.exits, [0]);
     });
   });
+});
+
+describe("on SIGTERM or SIGINT", () => {
+  let clock: Clock;
+
+  beforeEach(() => {
+    clock = install({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+
+  afterEach(() => {
+    clock.uninstall();
+  });
+
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    it(`closes every pool and exits 0 on ${signal}`, async () => {
+      let close = () => {};
+      const { factory, clears } = fakeFactory(() => new Promise<void>((resolve) => (close = resolve)));
+      const proc = new FakeProcess();
+      const connection = startBackend(proc, factory, ">=24.0.0");
+      proc.emit(signal, signal);
+      // A repeated signal, as a terminal's Ctrl+C beside a forwarded one, starts no second close.
+      proc.emit(signal, signal);
+      await clock.tickAsync(100);
+      assert.equal(clears(), 1);
+      assert.deepEqual(proc.exits, []);
+      close();
+      await clock.tickAsync(0);
+      assert.deepEqual(proc.exits, [0]);
+      connection.dispose();
+    });
+  }
 });
 
 describe("the child entry", () => {

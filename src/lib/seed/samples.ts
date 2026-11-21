@@ -116,8 +116,7 @@ export function sampleEnabled(type: DatabaseType, spec: SampleSpec): boolean {
 
 /**
  * Whether a listing considers the sample at all: always, except in a test run, where only a sample whose path override
- * is set is considered, so an uncontrolled real ./data/sample.* cannot perturb unrelated suites (the NODE_ENV guard of
- * src/lib/db/factory.ts).
+ * is set is considered, so an uncontrolled real ./data/sample.* cannot perturb unrelated suites.
  */
 export function sampleConsidered(spec: SampleSpec): boolean {
   return process.env.NODE_ENV !== "test" || !!process.env[spec.pathVariable];

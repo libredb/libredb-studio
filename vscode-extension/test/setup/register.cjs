@@ -4,8 +4,8 @@
 // A CommonJS file, so require() is its only import form.
 /* eslint-disable @typescript-eslint/no-require-imports */
 
-// registerShutdownHandlers in src/lib/db/factory.ts runs at the factory's module load unless NODE_ENV is "test",
-// and would give the test process a SIGTERM and a SIGINT handler that end it; set before anything loads the factory.
+// The repository modules the unit leg loads read NODE_ENV to tell a test run apart, such as the sample listing in
+// src/lib/seed/samples.ts; set before anything loads them.
 // The integration leg requires this file too, which is harmless there: it forks its children with NODE_ENV=production.
 process.env.NODE_ENV = "test";
 

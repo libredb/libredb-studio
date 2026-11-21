@@ -2,7 +2,8 @@
  * Next.js boot hook. register() runs once per server worker, ONLY when this app
  * boots its own Next.js server (never when @libredb/studio is imported by
  * libredb-platform). On standalone boot, first install the uncaught-exception
- * exit (docs/DISTRIBUTION.md#uncaught-errors-and-restarts), then bootstrap
+ * exit (docs/DISTRIBUTION.md#uncaught-errors-and-restarts), then the shutdown
+ * handler (docs/DISTRIBUTION.md#stopping-the-server), then bootstrap
  * missing auth env (#109), run the boot preflights, and start copying the
  * built-in samples (src/lib/seed/samples.ts), which boot never waits for: a
  * sample whose copy fails is logged once and listed unavailable.
@@ -15,6 +16,14 @@ export async function register(): Promise<void> {
   // instead of leaving it running in an unknown state (docs/DISTRIBUTION.md#uncaught-errors-and-restarts).
   const { installUncaughtExceptionExit } = await import("@/lib/uncaught-exception");
   installUncaughtExceptionExit(process);
+
+  // Second, so that a signal at any later point of the boot or of the life of the process runs the shutdown hooks
+  // (docs/DISTRIBUTION.md#stopping-the-server). NEXT_MANUAL_SIG_HANDLE decides who ends the process on SIGTERM and
+  // SIGINT: Studio's handler for `true`, Next.js's own when unset or empty; any other value refuses the boot.
+  const { exitOwnerAtBoot, installShutdownHandler } = await import("@/lib/shutdown-handler");
+  const exitOwner = exitOwnerAtBoot();
+  if (exitOwner === undefined) return;
+  installShutdownHandler(process, exitOwner);
 
   // Zero-config first run (#109): fill missing auth env from the persisted
   // bootstrap file BEFORE anything reads process.env secrets. Fail-open inside.

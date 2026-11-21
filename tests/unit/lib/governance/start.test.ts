@@ -13,6 +13,7 @@
  */
 import { afterAll, afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/governance/keyring-file";
+import { shutdownStandIn } from "../../../helpers/shutdown-stand-in";
 import { standInProcess } from "../../../helpers/uncaught-exception-stand-in";
 import {
   answerSnapshot,
@@ -49,6 +50,7 @@ const { resetShutdownHooks, runShutdownHooks } = await import("@/lib/shutdown");
 const { register } = await import("@/instrumentation");
 const { logger } = await import("@/lib/logger");
 const { installUncaughtExceptionExit, resetUncaughtExceptionExit } = await import("@/lib/uncaught-exception");
+const { installShutdownHandler, resetShutdownHandler } = await import("@/lib/shutdown-handler");
 
 const KEYRING_FILE = keyringFileOf(testKey());
 
@@ -425,10 +427,16 @@ describe("the listener", () => {
 });
 
 describe("register()", () => {
-  // register() installs the uncaught-exception exit once per process; installed on a stand-in first, its own install
-  // attaches nothing, so these tests never bind the real process.exit.
-  beforeEach(() => installUncaughtExceptionExit(standInProcess()));
-  afterEach(() => resetUncaughtExceptionExit());
+  // register() installs the uncaught-exception exit and the shutdown handler once per process; installed on stand-ins
+  // first, its own installs attach nothing, so these tests never bind the real process.exit or a real signal listener.
+  beforeEach(() => {
+    installUncaughtExceptionExit(standInProcess());
+    installShutdownHandler(shutdownStandIn(), "nextjs");
+  });
+  afterEach(() => {
+    resetUncaughtExceptionExit();
+    resetShutdownHandler();
+  });
 
   test("register() starts the refresher under governance without waiting for its first load", async () => {
     process.env.NEXT_RUNTIME = "nodejs";

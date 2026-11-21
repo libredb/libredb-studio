@@ -6,17 +6,20 @@
  *   logs it and exits, and whatever started the server (the kubelet, a restart policy, systemd, Snap, the desktop
  *   shell) starts a fresh one. Without this, Next.js 16 only logs such an exception and the server goes on serving.
  * - The code is 70, `EX_SOFTWARE` in `sysexits.h`, "internal software error". No launcher or framework the server runs
- *   under gives it another meaning: 0 is a clean stop on a signal, 1 a boot preflight refusal and Node.js's own exit
- *   for an uncaught exception, 7 Node.js's exit for a listener that throws, 77 and 78 are Next.js's own.
+ *   under gives it another meaning: 0 is a complete shutdown on SIGTERM or SIGINT, 143 and 130 a shutdown on that
+ *   signal that did not complete or that Next.js's own handler ended (docs/DISTRIBUTION.md#stopping-the-server), 1 a
+ *   boot refusal and Node.js's own exit for an uncaught exception, 7 Node.js's exit for a listener that throws, 77 and
+ *   78 are Next.js's own.
  * - One line, and no stack: Next.js 16.4.6 registers its own `uncaughtException` logger in the NextNodeServer
  *   constructor, before `register()` runs, and that logger prints the error as thrown, with its stack, before this
  *   listener runs. That order was measured on 16.4.6 and is not documented by Next.js; if a release changes it, the
  *   line and the exit stay and only the stack is missing from the log. The line is redacted with
  *   `redactErrorMessage`; the error Next.js prints is not.
  * - The exit is synchronous: nothing else should run in a process whose state is unknown, so the shutdown hooks and
- *   pool closes of the SIGTERM path are not run either. The governance query events still queued are therefore lost,
- *   and the line counts them as `queryEventsLost`, read synchronously by `queuedQueryEventCount()`. That count includes
- *   an insert under way, whose rows may have landed, so it is at most what was lost. It is read from
+ *   provider closes of the shutdown handler (src/lib/shutdown-handler.ts) are not run either, and an uncaught
+ *   exception during a shutdown ends it at once with this code. The governance query events still queued are
+ *   therefore lost, and the line counts them as `queryEventsLost`, read synchronously by `queuedQueryEventCount()`.
+ *   That count includes an insert under way, whose rows may have landed, so it is at most what was lost. It is read from
  *   `src/lib/query-events/queued.ts`, which imports nothing, so this first boot step does not load the sink and its
  *   governance and storage modules.
  * - The exit runs even when building or writing the line throws, so the process ends with the named code and not with
