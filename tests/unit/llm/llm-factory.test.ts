@@ -22,7 +22,8 @@ mock.module("@google/generative-ai", () => ({
     }
     return {
       getGenerativeModel: () => ({
-        generateContentStream: async () => ({ stream: (async function* () {})() }),
+        // The SDK's result carries `response`, the aggregate of the stream's chunks, beside `stream`.
+        generateContentStream: async () => ({ stream: (async function* () {})(), response: Promise.resolve({}) }),
       }),
     };
   },

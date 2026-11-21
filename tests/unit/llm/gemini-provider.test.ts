@@ -32,7 +32,11 @@ mock.module("@google/generative-ai", () => ({
         return {
           generateContentStream: async (prompt: string, streamRequestOptions?: { signal?: AbortSignal }) => {
             capturedStreamRequestOptions = streamRequestOptions;
-            return mockGenerateContentStream(prompt);
+            // The SDK's result always carries `response`, the aggregate of the same chunks, beside `stream`.
+            // These cases are about the stream, so the stand-in's aggregate resolves; an aggregate that
+            // rejects is held with the real SDK in `gemini-stream-failure.test.ts`.
+            const result = (await mockGenerateContentStream(prompt)) as Record<string, unknown>;
+            return { response: Promise.resolve({}), ...result };
           },
         };
       },
