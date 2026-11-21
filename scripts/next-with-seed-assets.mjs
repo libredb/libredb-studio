@@ -1,31 +1,27 @@
 #!/usr/bin/env node
 /**
  * The launcher of `bun dev` and `bun start` (package.json `dev` and `start`): runs the Next.js CLI with SEED_ASSETS_DIR
- * set to this checkout's own seed-assets directory, the built-in samples' assets (docs/DISTRIBUTION.md, "Built-in
- * sample assets").
+ * set to this checkout's own seed-assets directory, the built-in samples' assets, unless the shell or a .env file
+ * Next.js loads sets it (docs/DISTRIBUTION.md, "Built-in sample assets").
  *
  * The server never takes that directory from its working directory (src/lib/seed/samples.ts), so a checkout's server
- * needs it set, as every packaged channel's launcher sets it for its payload. The path is computed from this file's own
- * location and is absolute. A non-blank SEED_ASSETS_DIR the caller set is kept as given: Next.js runs in this process's
- * working directory, so a relative value means the same to it.
+ * needs it set, as every packaged channel's launcher sets it for its payload. The default is computed from this file's
+ * own location and is absolute.
  *
- * Next.js reads the process environment before any .env file and skips a key already there, so a SEED_ASSETS_DIR
- * assigned in a .env file would be dropped without a word once this launcher sets the default. So when the caller set
- * none, `dev` and `start` first look in the working directory, the project directory Next.js loads .env files from
- * when it is given no directory argument, as under `bun dev` and `bun start`, at the files Next.js reads for that
- * command, in its documented load order: `.env.$(NODE_ENV).local`, `.env.local` (not when NODE_ENV is test),
- * `.env.$(NODE_ENV)` and `.env`, where NODE_ENV is test when the caller set it so, and otherwise development for `dev`
- * and production for `start`. A path that is neither a file nor a FIFO, such as the directory `python -m venv .env`
- * makes, is skipped, as Next.js skips it. A line of one of them that assigns SEED_ASSETS_DIR, in any form Next.js's
- * parser reads, is an error, exit 1, naming the file: export the value in the shell instead. A file that cannot be
- * read is an error too, exit 1, naming it. The check matches the assignment and never reads the value, and any other
- * command runs with no check. The test file holds this list to the files @next/env's loadEnvConfig loads.
+ * Next.js reads the process environment before any .env file and skips a key already there, so the default is set
+ * only when Next.js would find no non-blank SEED_ASSETS_DIR itself. To know, this launcher calls Next.js's own loader,
+ * loadEnvConfig of @next/env, on its working directory, the project directory under `bun dev` and `bun start`, in the
+ * mode Next.js uses for the command: development for `dev`, production for any other, and test when NODE_ENV is test.
+ * A value the loader finds, in the shell or in a file, is left for Next.js to read as it would without this launcher.
+ * The loader prints nothing here, and the Next.js CLI gets the caller's environment plus the default, never what the
+ * loader loaded, so Next.js loads the same files itself and reports one it cannot read.
  *
- * Every argument is passed to the Next.js CLI unchanged. The CLI is the `next` binary this checkout installs, read
- * from the `bin` field of the checkout's own node_modules/next/package.json and run with this Node.js, so no shell, no
- * PATH lookup and no Node.js package lookup is involved on any OS: a next installed only in a parent directory,
- * through NODE_PATH or in a global folder is never run, and a missing one is an error, exit 1. A node_modules/next that
- * is a link, as `bun link` makes, is followed.
+ * Every argument is passed to the Next.js CLI unchanged. The CLI is the `next` binary named by the `bin` field of the
+ * checkout's own node_modules/next/package.json, run with this Node.js, so no shell, no PATH lookup and no package
+ * lookup is involved on any OS. @next/env is loaded by path from the first of the two places next's own require looks
+ * in, node_modules/next/node_modules/@next/env and node_modules/@next/env. A next or an @next/env installed only in a
+ * parent directory, through NODE_PATH or in a global folder is never used, a missing one is an error, exit 1, and a
+ * link among them, as `bun link` makes, is followed.
  *
  * SIGINT and SIGTERM are forwarded to the Next.js CLI; this process exits with its exit code, or ends itself with the
  * signal that ended it. On Windows, Node.js forwards a signal by ending the process at once: the console delivers a
@@ -41,24 +37,37 @@
  * Tested by tests/unit/next-with-seed-assets.test.ts, which spawns it.
  */
 import { spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { seedAssetsEnv } from "../bin/lib/launcher-utils.mjs";
 
 const CHECKOUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const NEXT_MANIFEST = path.join(CHECKOUT, "node_modules", "next", "package.json");
 const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM"];
 
 /** The Next.js CLI this checkout installs; throws when next is not installed or declares no `next` binary. */
 function nextCli() {
-  const manifest = path.join(CHECKOUT, "node_modules", "next", "package.json");
-  const { bin } = JSON.parse(readFileSync(manifest, "utf8"));
+  const { bin } = JSON.parse(readFileSync(NEXT_MANIFEST, "utf8"));
   const relative = typeof bin === "string" ? bin : bin?.next;
-  if (typeof relative !== "string") throw new Error(`${manifest} declares no next binary`);
-  return path.join(path.dirname(manifest), relative);
+  if (typeof relative !== "string") throw new Error(`${NEXT_MANIFEST} declares no next binary`);
+  return path.join(path.dirname(NEXT_MANIFEST), relative);
+}
+
+/** The @next/env this checkout's next loads .env files with; throws when neither place holds one. */
+function nextEnv() {
+  const places = [
+    path.join(path.dirname(NEXT_MANIFEST), "node_modules", "@next", "env"),
+    path.join(CHECKOUT, "node_modules", "@next", "env"),
+  ];
+  const found = places.find((place) => existsSync(path.join(place, "package.json")));
+  if (found === undefined) throw new Error(`neither ${places.join(" nor ")} holds a package`);
+  return createRequire(NEXT_MANIFEST)(found);
 }
 
 let cli;
+let loadEnvConfig;
 try {
   cli = nextCli();
 } catch (error) {
@@ -67,44 +76,19 @@ try {
   );
   process.exit(1);
 }
-
-/** The .env files Next.js reads for `command` (its "Environment Variable Load Order"), or none for another command. */
-function nextEnvFiles(command) {
-  if (command !== "dev" && command !== "start") return [];
-  const mode = process.env.NODE_ENV === "test" ? "test" : command === "dev" ? "development" : "production";
-  return [`.env.${mode}.local`, ...(mode === "test" ? [] : [".env.local"]), `.env.${mode}`, ".env"];
+try {
+  ({ loadEnvConfig } = nextEnv());
+} catch (error) {
+  console.error(
+    `Cannot find this checkout's @next/env (run bun install): ${error instanceof Error ? error.message : String(error)}`,
+  );
+  process.exit(1);
 }
 
-/** A line that assigns SEED_ASSETS_DIR, in the `KEY=value`, `export KEY=value` and `KEY: value` forms Next.js parses. */
-const SEED_ASSETS_ASSIGNMENT = /^[^\S\n]*(?:export[^\S\n]+)?SEED_ASSETS_DIR(?:[^\S\n]*=|:[^\S\n])/m;
-
-const seedAssets = seedAssetsEnv(CHECKOUT, process.env.SEED_ASSETS_DIR);
-if (seedAssets.SEED_ASSETS_DIR !== undefined) {
-  for (const name of nextEnvFiles(process.argv[2])) {
-    const file = path.join(process.cwd(), name);
-    let content;
-    try {
-      const stats = statSync(file, { throwIfNoEntry: false });
-      if (stats === undefined || (!stats.isFile() && !stats.isFIFO())) continue;
-      content = readFileSync(file, "utf8");
-    } catch (error) {
-      console.error(
-        `Cannot read ${file} to check it for SEED_ASSETS_DIR: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      process.exit(1);
-    }
-    if (SEED_ASSETS_ASSIGNMENT.test(content)) {
-      console.error(
-        `SEED_ASSETS_DIR is assigned in ${file}, and Next.js would drop that value, because this launcher sets ` +
-          "SEED_ASSETS_DIR in the process environment, which Next.js reads first. Remove it from the file and " +
-          'export SEED_ASSETS_DIR in the shell instead (docs/DISTRIBUTION.md, "Built-in sample assets").',
-      );
-      process.exit(1);
-    }
-  }
-}
-
-const env = { ...process.env, ...seedAssets };
+const callerEnv = { ...process.env };
+const silent = { info() {}, error() {} };
+const { combinedEnv } = loadEnvConfig(process.cwd(), process.argv[2] === "dev", silent);
+const env = { ...callerEnv, ...seedAssetsEnv(CHECKOUT, combinedEnv.SEED_ASSETS_DIR) };
 const child = spawn(process.execPath, [cli, ...process.argv.slice(2)], { env, stdio: "inherit" });
 const forward = (signal) => child.kill(signal);
 for (const signal of FORWARDED_SIGNALS) process.on(signal, forward);

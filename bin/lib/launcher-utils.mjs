@@ -223,7 +223,8 @@ export function loopbackPlaintextEnv(hostname, current) {
  * Two launchers use it. bin/studio.js passes a value under the exact name SEED_ASSETS_DIR that resolvePathVariables
  * has already made absolute; on Windows, where environment names ignore letter case, a value under the name in another
  * letter case is passed on as given. scripts/next-with-seed-assets.mjs passes the checkout for `bun dev` and
- * `bun start`, and the caller's value as given, since Next.js keeps the launcher's working directory.
+ * `bun start`, and the value Next.js's own loader finds in the shell or a .env file, which it leaves for Next.js to
+ * read.
  *
  * @param {string} payloadDir the directory that holds `seed-assets`: the payload server.js runs from, or the checkout;
  *   absolute or relative to the launcher's cwd

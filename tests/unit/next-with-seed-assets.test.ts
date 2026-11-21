@@ -3,10 +3,11 @@
  *
  * The server never takes the seed assets directory from its working directory (src/lib/seed/samples.ts), so a
  * checkout's server gets it from this launcher: SEED_ASSETS_DIR set to the checkout's own seed-assets, unless the
- * caller set one (docs/DISTRIBUTION.md, "Built-in sample assets"). The launcher is outside the line coverage gate,
- * which counts src/ only, so these spawned tests are its proof. Every fixture case runs a copy of the launcher in a
- * checkout-shaped temp directory whose `next` package is a stub that reports what it was given, or obeys its
- * arguments; the stub's every mode ends by itself within seconds, so nothing outlives a failing case.
+ * shell or a .env file Next.js loads sets one (docs/DISTRIBUTION.md, "Built-in sample assets"). The launcher is outside
+ * the line coverage gate, which counts src/ only, so these spawned tests are its proof. Every fixture case runs a copy
+ * of the launcher in a checkout-shaped temp directory that holds a copy of this checkout's @next/env and a `next`
+ * package whose CLI is a stub that reports what it was given, or obeys its arguments; the stub's every mode ends by
+ * itself within seconds, so nothing outlives a failing case.
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -23,7 +24,8 @@ const tempDir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ne
 afterAll(() => fs.rmSync(tempDir, { recursive: true, force: true }));
 
 /**
- * The stub Next.js CLI. With no mode it prints `{ seedAssets, argv, cwd }`. `exit <code>` exits with that code;
+ * The stub Next.js CLI. With no mode it prints `{ seedAssets, argv, cwd, keys }`, where keys are its environment's
+ * names. `exit <code>` exits with that code;
  * `die <signal>` ends itself with that signal; `wait` prints `ready` once its SIGINT and SIGTERM handlers are
  * installed and exits 130 or 143 on them. Each mode that waits exits 99 by itself after five seconds.
  */
@@ -40,12 +42,36 @@ if (mode === "exit") {
   setTimeout(() => process.exit(99), 5000);
   console.log("ready");
 } else {
-  console.log(JSON.stringify({ seedAssets: process.env.SEED_ASSETS_DIR ?? null, argv: process.argv.slice(2), cwd: process.cwd() }));
+  console.log(JSON.stringify({ seedAssets: process.env.SEED_ASSETS_DIR ?? null, argv: process.argv.slice(2), cwd: process.cwd(), keys: Object.keys(process.env) }));
 }
 `;
 
-/** A checkout-shaped fixture: the launcher and its helper copied in at the same relative paths, an empty seed-assets, and a stub next package. */
-function checkout({ withNext = true, parent = tempDir }: { withNext?: boolean; parent?: string } = {}): string {
+/** This checkout's @next/env, the package Next.js loads .env files with, as next's own package finds it. */
+const NEXT_ENV = path.dirname(
+  path.dirname(createRequire(path.join(ROOT, "node_modules", "next", "package.json")).resolve("@next/env")),
+);
+
+/** Copies this checkout's @next/env, its manifest and its one bundled file, to `directory`. */
+function copyNextEnv(directory: string): void {
+  fs.mkdirSync(path.join(directory, "dist"), { recursive: true });
+  for (const file of ["package.json", path.join("dist", "index.js")]) {
+    fs.copyFileSync(path.join(NEXT_ENV, file), path.join(directory, file));
+  }
+}
+
+/**
+ * A checkout-shaped fixture: the launcher and its helper copied in at the same relative paths, an empty seed-assets,
+ * a stub next package, and a copy of this checkout's @next/env at the top of node_modules.
+ */
+function checkout({
+  withNext = true,
+  withNextEnv = true,
+  parent = tempDir,
+}: {
+  withNext?: boolean;
+  withNextEnv?: boolean;
+  parent?: string;
+} = {}): string {
   const root = fs.mkdtempSync(path.join(parent, "checkout-"));
   fs.mkdirSync(path.join(root, "scripts"));
   fs.mkdirSync(path.join(root, "bin", "lib"), { recursive: true });
@@ -64,6 +90,7 @@ function checkout({ withNext = true, parent = tempDir }: { withNext?: boolean; p
     );
     fs.writeFileSync(path.join(next, "dist", "bin", "next"), STUB);
   }
+  if (withNextEnv) copyNextEnv(path.join(root, "node_modules", "@next", "env"));
   return root;
 }
 
@@ -96,6 +123,20 @@ function strayNext(directory: string, marker: string): string {
   return path.join(next, "package.json");
 }
 
+/**
+ * An @next/env package at `directory`/@next/env whose loadEnvConfig writes `ran` to `marker`: one the launcher must
+ * never load.
+ */
+function strayNextEnv(directory: string, marker: string): void {
+  const env = path.join(directory, "@next", "env");
+  fs.mkdirSync(env, { recursive: true });
+  fs.writeFileSync(path.join(env, "package.json"), JSON.stringify({ name: "@next/env", main: "index.js" }));
+  fs.writeFileSync(
+    path.join(env, "index.js"),
+    `exports.loadEnvConfig = () => { require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran"); return { combinedEnv: {} }; };`,
+  );
+}
+
 function node(): string {
   const found = Bun.which("node");
   if (found === null) throw new Error("node is not on PATH: bun dev and bun start run the launcher with node");
@@ -118,7 +159,12 @@ function run(root: string, args: string[], overrides: Record<string, string> = {
 }
 
 /** What the stub reported, from a run that printed its report. */
-function report(result: ReturnType<typeof run>): { seedAssets: string | null; argv: string[]; cwd: string } {
+function report(result: ReturnType<typeof run>): {
+  seedAssets: string | null;
+  argv: string[];
+  cwd: string;
+  keys: string[];
+} {
   expect(result.stderr).toBe("");
   expect(result.exitCode).toBe(0);
   return JSON.parse(result.stdout.trim());
@@ -246,100 +292,77 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
     return cwd;
   }
 
-  test.each([
-    ["dev", ".env.development.local"],
-    ["dev", ".env.local"],
-    ["dev", ".env.development"],
-    ["dev", ".env"],
-    ["start", ".env.production.local"],
-    ["start", ".env.local"],
-    ["start", ".env.production"],
-    ["start", ".env"],
-  ])(
-    "%s refuses, with exit code 1, a SEED_ASSETS_DIR assigned in %s, whose value Next.js would drop, and names the file",
-    (command, name) => {
-      const cwd = withEnvFile(name, "OTHER_SETTING=1\nSEED_ASSETS_DIR=/from/the/file\n");
-      const result = run(checkout(), [command], {}, cwd);
-      expect(result.exitCode).toBe(1);
-      expect(result.stdout).toBe("");
-      expect(result.stderr).toContain(`SEED_ASSETS_DIR is assigned in ${path.join(real(cwd), name)}`);
-      expect(result.stderr).toContain("export SEED_ASSETS_DIR in the shell");
-    },
-  );
-
-  test.each(["export SEED_ASSETS_DIR=/x", "  SEED_ASSETS_DIR = /x", "SEED_ASSETS_DIR=", "SEED_ASSETS_DIR: /x"])(
-    "refuses the assignment form %p, as Next.js's .env parser reads each",
-    (line) => {
-      const result = run(checkout(), ["dev"], {}, withEnvFile(".env.local", `${line}\n`));
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain("SEED_ASSETS_DIR is assigned in");
-    },
-  );
-
-  test.each(["# SEED_ASSETS_DIR=/x", "MY_SEED_ASSETS_DIR=/x", "SEED_ASSETS_DIRECTORY=/x", "OTHER=SEED_ASSETS_DIR=/x"])(
-    "runs on a .env file whose line %p assigns no SEED_ASSETS_DIR",
-    (line) => {
-      const root = checkout();
-      const { seedAssets } = report(run(root, ["dev"], {}, withEnvFile(".env.local", `${line}\n`)));
-      expect(real(seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
-    },
-  );
+  /** The names in the stub's environment that the launcher was not given; on Windows names ignore letter case. */
+  function added(keys: string[], given: Record<string, string>): string[] {
+    const fold = (key: string) => (process.platform === "win32" ? key.toUpperCase() : key);
+    const known = new Set(Object.keys(given).map(fold));
+    return keys.filter((key) => !known.has(fold(key)));
+  }
 
   test.each([
-    ["dev", ".env.production"],
-    ["start", ".env.development"],
-    ["start", ".env.development.local"],
-  ])("%s runs on a SEED_ASSETS_DIR assigned in %s, which Next.js does not read for it", (command, name) => {
-    const root = checkout();
-    const { seedAssets } = report(run(root, [command], {}, withEnvFile(name, "SEED_ASSETS_DIR=/from/the/file\n")));
-    expect(real(seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
-  });
-
-  test("with NODE_ENV=test reads the test files Next.js reads, which leave out .env.local", () => {
-    const root = checkout();
-    const local = withEnvFile(".env.local", "SEED_ASSETS_DIR=/from/the/file\n");
-    const { seedAssets } = report(run(root, ["dev"], { NODE_ENV: "test" }, local));
-    expect(real(seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
-    const testLocal = withEnvFile(".env.test.local", "SEED_ASSETS_DIR=/from/the/file\n");
-    const result = run(root, ["dev"], { NODE_ENV: "test" }, testLocal);
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain(`SEED_ASSETS_DIR is assigned in ${path.join(real(testLocal), ".env.test.local")}`);
-  });
-
-  test.each([
-    ["dev", "development", {}],
-    ["start", "production", {}],
-    ["dev", "test", { NODE_ENV: "test" }],
+    ["dev", ".env.development.local", {}],
+    ["dev", ".env.local", {}],
+    ["dev", ".env.development", {}],
+    ["dev", ".env", {}],
+    ["start", ".env.production.local", {}],
+    ["start", ".env.local", {}],
+    ["start", ".env.production", {}],
+    ["start", ".env", {}],
+    ["dev", ".env.test.local", { NODE_ENV: "test" }],
+    ["dev", ".env.test", { NODE_ENV: "test" }],
+    ["dev", ".env", { NODE_ENV: "test" }],
+    ["start", ".env.test", { NODE_ENV: "test" }],
   ] as const)(
-    "%s in %s mode refuses a SEED_ASSETS_DIR in exactly the .env files @next/env loads for it",
-    (command, _mode, overrides) => {
-      const names = [".env", ".env.local"];
-      for (const mode of ["development", "production", "test"]) names.push(`.env.${mode}`, `.env.${mode}.local`);
-      const all = withEnvFile(names[0], "SEED_ASSETS_DIR=/from/the/file\n");
-      for (const name of names.slice(1)) fs.writeFileSync(path.join(all, name), "SEED_ASSETS_DIR=/from/the/file\n");
-      // Next.js's own loader, asked in a child with the NODE_ENV the launcher's child gets, which files it loads.
-      const nextEnv = createRequire(path.join(ROOT, "node_modules", "next", "package.json")).resolve("@next/env");
-      const ask = Bun.spawnSync(
-        [
-          node(),
-          "-e",
-          `const { loadEnvConfig } = require(${JSON.stringify(nextEnv)});` +
-            `const log = { info() {}, error(m) { throw new Error(m); } };` +
-            `const { loadedEnvFiles } = loadEnvConfig(${JSON.stringify(all)}, ${command === "dev"}, log, true);` +
-            "console.log(JSON.stringify(loadedEnvFiles.map((file) => file.path)));",
-        ],
-        { cwd: tempDir, env: envWith(overrides), stdout: "pipe", stderr: "pipe" },
-      );
-      expect(ask.stderr.toString()).toBe("");
-      const loaded = JSON.parse(ask.stdout.toString()) as string[];
-      expect(loaded.length).toBeGreaterThan(0);
-      for (const name of names) {
-        const cwd = withEnvFile(name, "SEED_ASSETS_DIR=/from/the/file\n");
-        const result = run(checkout(), [command], overrides, cwd);
-        expect([name, result.exitCode]).toEqual([name, loaded.includes(name) ? 1 : 0]);
-      }
+    "%s keeps a SEED_ASSETS_DIR in %s (%o) for Next.js to read, and passes nothing it loaded",
+    (command, name, overrides) => {
+      const cwd = withEnvFile(name, "OTHER_SETTING=1\nSEED_ASSETS_DIR=/from/the/file\n");
+      const reported = report(run(checkout(), [command], overrides, cwd));
+      expect(reported.seedAssets).toBeNull();
+      expect(added(reported.keys, envWith(overrides))).toEqual([]);
     },
   );
+
+  test.each([
+    ["dev", ".env.production", {}],
+    ["start", ".env.development", {}],
+    ["start", ".env.development.local", {}],
+    ["dev", ".env.local", { NODE_ENV: "test" }],
+    ["dev", ".env.development", { NODE_ENV: "test" }],
+    ["start", ".env.production", { NODE_ENV: "test" }],
+  ] as const)(
+    "%s sets the checkout's seed-assets over a SEED_ASSETS_DIR in %s (%o), which Next.js does not load for it",
+    (command, name, overrides) => {
+      const root = checkout();
+      const cwd = withEnvFile(name, "SEED_ASSETS_DIR=/from/the/file\n");
+      const reported = report(run(root, [command], overrides, cwd));
+      expect(real(reported.seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
+    },
+  );
+
+  test("loads the production .env files for a command other than dev", () => {
+    const cwd = withEnvFile(".env.production", "SEED_ASSETS_DIR=/from/the/file\n");
+    expect(report(run(checkout(), ["build"], {}, cwd)).seedAssets).toBeNull();
+  });
+
+  test("sets the checkout's seed-assets, and passes nothing else, when no .env file Next.js loads sets it", () => {
+    const root = checkout();
+    const cwd = withEnvFile(".env.local", "OTHER_SETTING=1\n");
+    const reported = report(run(root, ["dev"], {}, cwd));
+    expect(real(reported.seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
+    expect(added(reported.keys, envWith())).toEqual(["SEED_ASSETS_DIR"]);
+  });
+
+  test("treats a blank SEED_ASSETS_DIR in a .env file as unset, as it does a blank one from the shell", () => {
+    const root = checkout();
+    const reported = report(run(root, ["dev"], {}, withEnvFile(".env.local", "SEED_ASSETS_DIR=\n")));
+    expect(real(reported.seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
+  });
+
+  test("keeps a SEED_ASSETS_DIR the caller exported over one in a .env file, as Next.js does", () => {
+    const own = path.join(tempDir, "own-assets");
+    const cwd = withEnvFile(".env.local", "SEED_ASSETS_DIR=/from/the/file\n");
+    expect(report(run(checkout(), ["dev"], { SEED_ASSETS_DIR: own }, cwd)).seedAssets).toBe(own);
+  });
 
   test("skips a .env that is a directory, as Next.js does, such as the one python -m venv .env makes", () => {
     const root = checkout();
@@ -350,36 +373,52 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
   });
 
   test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-    "fails with exit code 1 and one line naming a .env file it cannot read",
+    "leaves a .env file it cannot read to Next.js, which reports it, and sets the checkout's seed-assets",
     () => {
-      const cwd = withEnvFile(".env.local", "OTHER_SETTING=1\n");
+      const root = checkout();
+      const cwd = withEnvFile(".env.local", "SEED_ASSETS_DIR=/from/the/file\n");
       const file = path.join(cwd, ".env.local");
       fs.chmodSync(file, 0o000);
       try {
-        const result = run(checkout(), ["dev"], {}, cwd);
-        expect(result.exitCode).toBe(1);
-        expect(result.stdout).toBe("");
-        expect(result.stderr.trim().split("\n")).toEqual([
-          expect.stringContaining(`Cannot read ${file} to check it for SEED_ASSETS_DIR:`),
-        ]);
-        expect(result.stderr).toContain("EACCES");
+        const { seedAssets } = report(run(root, ["dev"], {}, cwd));
+        expect(real(seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
       } finally {
         fs.chmodSync(file, 0o600);
       }
     },
   );
 
-  test("keeps a SEED_ASSETS_DIR the caller exported over one in a .env file, as Next.js does", () => {
-    const own = path.join(tempDir, "own-assets");
-    const cwd = withEnvFile(".env.local", "SEED_ASSETS_DIR=/from/the/file\n");
-    expect(report(run(checkout(), ["dev"], { SEED_ASSETS_DIR: own }, cwd)).seedAssets).toBe(own);
+  test("fails with exit code 1 and names both places when this checkout has no @next/env", () => {
+    const root = checkout({ withNextEnv: false });
+    const result = run(root, ["dev"], {}, root);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Cannot find this checkout's @next/env (run bun install)");
+    expect(result.stderr).toContain(path.join(root, "node_modules", "next", "node_modules", "@next", "env"));
+    expect(result.stderr).toContain(path.join(root, "node_modules", "@next", "env"));
   });
 
-  test("reads no .env file for a command other than dev and start", () => {
-    const cwd = withEnvFile(".env", "SEED_ASSETS_DIR=/from/the/file\n");
-    const result = run(checkout(), ["exit", "0"], {}, cwd);
-    expect(result.stderr).toBe("");
-    expect(result.exitCode).toBe(0);
+  test("loads next's own nested @next/env before the one at the top of node_modules", () => {
+    const root = checkout({ withNextEnv: false });
+    const marker = path.join(root, "ran");
+    copyNextEnv(path.join(root, "node_modules", "next", "node_modules", "@next", "env"));
+    strayNextEnv(path.join(root, "node_modules"), marker);
+    const cwd = withEnvFile(".env.local", "SEED_ASSETS_DIR=/from/the/file\n");
+    expect(report(run(root, ["dev"], {}, cwd)).seedAssets).toBeNull();
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  test("never loads an @next/env from a parent directory's node_modules or from NODE_PATH", () => {
+    const outer = fs.mkdtempSync(path.join(tempDir, "outer-"));
+    const marker = path.join(outer, "ran");
+    strayNextEnv(path.join(outer, "node_modules"), marker);
+    const elsewhere = fs.mkdtempSync(path.join(tempDir, "node-path-"));
+    strayNextEnv(elsewhere, marker);
+    const root = checkout({ withNextEnv: false, parent: outer });
+    const result = run(root, ["dev"], { NODE_PATH: elsewhere }, root);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Cannot find this checkout's @next/env (run bun install)");
+    expect(fs.existsSync(marker)).toBe(false);
   });
 
   const NO_POSIX_SIGNALS =
