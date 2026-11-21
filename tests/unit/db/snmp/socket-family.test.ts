@@ -14,12 +14,15 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
 import type { Socket, SocketType } from "node:dgram";
+import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 const realDns = { ...(await import("node:dns")) };
 const realDgram = { ...(await import("node:dgram")) };
 
 const SIX = "agent-six.test";
+const READ_ONLY: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
+const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 400, maxResultRows: 5, maxResultBytes: 10_000 };
 const COMMUNITY = "socket-family-community";
 
 mock.module("node:dns", () => ({
@@ -97,7 +100,7 @@ describe("an agent on IPv6 is reached over a udp6 socket", () => {
   for (const [host, consent] of [
     ["::1", undefined],
     ["[::1]", undefined],
-    // A name is not loopback to the cleartext check, so it needs the consent any other agent needs.
+    // This name is not loopback to the cleartext check, so it needs the consent any other agent needs.
     [SIX, true],
   ] as const) {
     test(`${host} answers a get`, async () => {
@@ -141,6 +144,35 @@ describe("a connect that fails closes the socket it opened", () => {
     expect(since(from)).toEqual([{ type: "udp6", closed: true }]);
   });
 
+  test("a socket whose bind fails reports it as an error event, and the connect fails by name", async () => {
+    // A host without IPv6 answers a udp6 socket's implicit bind with EAFNOSUPPORT (a process out of descriptors, any
+    // socket with EMFILE). The runtime reports that only as an `error` event and never calls the connect callback.
+    fault = (type) => {
+      const socket = realDgram.createSocket(type);
+      socket.connect = (() => {
+        setImmediate(() =>
+          socket.emit(
+            "error",
+            Object.assign(new Error("bind EAFNOSUPPORT ::"), { code: "EAFNOSUPPORT", syscall: "bind" }),
+          ),
+        );
+      }) as unknown as Socket["connect"];
+      return socket;
+    };
+    const from = opened.length;
+    provider = new SnmpProvider(connection("::1", 161), { queryTimeout: 2000 }, READ_ONLY);
+    const error = await provider.connect().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(SnmpTransportError);
+    expect((error as Error).message).toBe("could not connect a udp6 socket to ::1 port 161: EAFNOSUPPORT");
+    expect(since(from)).toEqual([{ type: "udp6", closed: true }]);
+    // A connect that failed leaves the provider closed: a statement is refused rather than dialled again.
+    await expect(provider.queryReadOnly("get sysDescr.0", BUDGET)).rejects.toThrow(/This connection is not open/);
+    expect(since(from)).toHaveLength(1);
+  });
+
   test("a probe the socket fails to send fails the connect and closes the socket", async () => {
     agent = await startFakeAgent(TREE);
     fault = (type) => {
@@ -151,13 +183,14 @@ describe("a connect that fails closes the socket it opened", () => {
       return socket;
     };
     const from = opened.length;
-    provider = new SnmpProvider(connection("127.0.0.1", agent.port), { queryTimeout: 2000 });
+    provider = new SnmpProvider(connection("127.0.0.1", agent.port), { queryTimeout: 2000 }, READ_ONLY);
     const error = await provider.connect().then(
       () => undefined,
       (failure: unknown) => failure,
     );
     expect(String((error as Error).message)).toContain("the socket refused the send");
     expect(since(from)).toEqual([{ type: "udp4", closed: true }]);
+    await expect(provider.queryReadOnly("get sysDescr.0", BUDGET)).rejects.toThrow(/This connection is not open/);
   });
 
   test("a probe nobody answers fails the connect and closes the socket", async () => {

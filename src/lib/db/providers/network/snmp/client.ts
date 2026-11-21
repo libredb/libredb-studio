@@ -73,7 +73,7 @@ export interface ResolvedTarget extends GuardedTarget {
   readonly asked: string;
   /**
    * The family of `address`, which picks the socket: a udp4 socket cannot be connected to an
-   * IPv6 address, nor a udp6 socket to an IPv4 one.
+   * IPv6 address, nor, under Node, a udp6 socket to an IPv4 one.
    */
   readonly family: 4 | 6;
 }

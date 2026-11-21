@@ -107,10 +107,6 @@ describe("a target is resolved and checked before a socket exists", () => {
     expect(await resolveTarget("::1", 161)).toMatchObject({ address: "::1", family: 6 });
     expect(await resolveTarget("[::1]", 161)).toMatchObject({ address: "::1", family: 6 });
   });
-  test("a name carries the family of the answer the socket is connected to", async () => {
-    const target = await resolveTarget("localhost", 161);
-    expect(target.family).toBe(target.address.includes(":") ? 6 : 4);
-  });
   test("a dotted host that is not an IP literal is resolved as a name and checked as one", async () => {
     // `127.1` is not an IP literal (`isIP` answers 0), but a resolver reads it as 127.0.0.1. It is resolved here, so
     // the socket is connected to the address the checks saw.
@@ -945,6 +941,9 @@ describe("a send the socket itself refuses", () => {
         if (event === "message") listener = handler;
         return socket;
       },
+      // The connect below always succeeds, so the `error` listener held while it is pending is never called.
+      once: () => socket,
+      removeListener: () => socket,
       bind: () => socket,
       address: () => ({ address: "127.0.0.1", family: "IPv4", port: 1 }),
       unref: () => socket,

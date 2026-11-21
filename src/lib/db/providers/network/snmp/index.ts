@@ -294,9 +294,12 @@ export class SnmpProvider extends BaseDatabaseProvider {
     // configured, so it must not arrive wearing the clothes of a failed read.
     const checked = checkConnection(input);
     this.pendingNotices = [...checked.cautions.map((caution) => caution.text), ...allNotices()];
-    this.target = await resolveTarget(input.host, input.port);
+    // Kept on the provider only once the probe below has answered, with the exchange: a provider
+    // whose connect failed holds no target, so a later statement is refused as not open rather
+    // than dialled again.
+    const target = await resolveTarget(input.host, input.port);
     const exchange = await openExchange({
-      target: this.target,
+      target,
       community: input.community ?? "",
       // BOTH PLACES ARE READ, and reading one of them was a defect found on 15 October 2026.
       // This line used to read `this.config.queryTimeout` alone. The connection record does carry
@@ -333,13 +336,13 @@ export class SnmpProvider extends BaseDatabaseProvider {
     });
     if (!("varbinds" in probe)) {
       exchange.close();
-      this.target = undefined;
       throw new DatabaseConfigError(
         `No SNMP agent answered at ${input.host}:${input.port}. ${probe.reason} ` +
           "Over SNMPv2c an agent that rejects the community answers exactly as one that is not there, " +
           "so this is either no agent at that address or the wrong community for it.",
       );
     }
+    this.target = target;
     this.exchange = exchange;
   }
 
