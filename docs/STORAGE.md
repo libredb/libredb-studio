@@ -511,6 +511,11 @@ The API answers a request that sends such a connection with `400 PROVIDER_UNKNOW
 
 An operator's seed entry whose type names no provider is listed and shown the same way, with the lock a managed connection gets and no Delete, as [SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for) describes.
 
+In the npm package, the embedded `StudioWorkspace` lists a host connection whose `type` names no provider in that version of the package, has none, or is not text, with the same **Unavailable** marker, and never opens it by itself: it opens on the first connection a provider can open, or on none.
+A pick of it is refused with the same **Connection unavailable** notice, drawn on a line at the top of the workspace, since the embedded shell shows no toasts, and the workspace keeps its connection.
+When the host's list gives the open connection such a type, the workspace moves to the first connection a provider can open, or to none, and says why on the same line.
+The published `ConnectionModal`, handed such a connection to edit, shows the same notice in place of its form, open or closed, and offers only Close, so nothing is tested or saved under another type.
+
 ## Saved queries whose type this Studio has no provider for
 
 A saved query keeps the type of the connection it was saved from, in its `connectionType`.

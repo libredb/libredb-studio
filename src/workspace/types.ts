@@ -24,6 +24,11 @@ import type {
 export interface WorkspaceConnection {
   id: string;
   name: string;
+  /**
+   * The connection's type id. A host may pass a connection whose type names no provider in this version of the
+   * package, such as one its own backend has a provider for, or one with no type. The workspace lists such a
+   * connection as unavailable with the reason, never opens it, and refuses a pick of it on a line of its own.
+   */
   type: DatabaseType;
   /**
    * What this connection's provider can do, as `getCapabilities()` reports it.
