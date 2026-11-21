@@ -102,6 +102,62 @@ describe("a target is resolved and checked before a socket exists", () => {
   test("the name the user asked for is kept for the message", async () => {
     expect((await resolveTarget("127.0.0.1", 161)).asked).toBe("127.0.0.1");
   });
+  test("a literal carries its address family, which picks the socket", async () => {
+    expect((await resolveTarget("127.0.0.1", 161)).family).toBe(4);
+    expect(await resolveTarget("::1", 161)).toMatchObject({ address: "::1", family: 6 });
+    expect(await resolveTarget("[::1]", 161)).toMatchObject({ address: "::1", family: 6 });
+  });
+  // Named in the title rather than returned early from the body, the way tests/unit/lib/auth-bootstrap.test.ts does it.
+  // Windows' resolver answers ENOTFOUND for `127.1`, so there the name fails to resolve by name and nothing reaches a
+  // socket either; measured on windows-latest.
+  test.skipIf(process.platform === "win32")(
+    "a dotted host that is not an IP literal is resolved as a name and checked as one (not on Windows: its resolver does not read 127.1 as 127.0.0.1)",
+    async () => {
+      // `127.1` is not an IP literal (`isIP` answers 0), but a resolver that reads the inet_aton shorthand answers
+      // 127.0.0.1. It is resolved here, so the socket is connected to the address the checks saw.
+      expect(await resolveTarget("127.1", 161)).toMatchObject({ address: "127.0.0.1", family: 4, asked: "127.1" });
+      const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
+      const before = process.env[flag];
+      process.env[flag] = "true";
+      try {
+        await expect(resolveTarget("127.1", 161)).rejects.toThrow(DatabaseConfigError);
+      } finally {
+        if (before === undefined) delete process.env[flag];
+        else process.env[flag] = before;
+      }
+    },
+  );
+});
+
+/** A real socket the exchange is handed, with a record of whether the exchange closed it. */
+function recordedSocket(type: "udp4" | "udp6"): { socket: Socket; closed: () => boolean } {
+  const socket = createSocket(type);
+  let closed = false;
+  const close = socket.close.bind(socket);
+  socket.close = ((callback?: () => void) => {
+    closed = true;
+    return close(callback);
+  }) as Socket["close"];
+  return { socket, closed: () => closed };
+}
+
+describe("an exchange that cannot be opened closes its socket", () => {
+  test("a socket that cannot be connected to the target fails the open by name", async () => {
+    // A udp4 socket cannot be connected to an IPv6 address, and the runtime reports that to the connect callback.
+    const { socket, closed } = recordedSocket("udp4");
+    const error = await openExchange({
+      target: await resolveTarget("::1", 161),
+      community: "public",
+      deadlineMs: 2000,
+      createRawSocket: () => socket,
+    }).then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(SnmpTransportError);
+    expect((error as Error).message).toMatch(/^could not connect a udp6 socket to ::1 port 161: \S/);
+    expect(closed()).toBe(true);
+  });
 });
 
 describe("a request goes out and its answer comes back", () => {
@@ -458,14 +514,17 @@ describe("a v3 connection discovers the engine and then talks to it", () => {
   test("an engine id that does not match the pin ends the connection", async () => {
     const port = await v3Agent([]);
     const target = await resolveTarget("127.0.0.1", port);
+    const { socket, closed } = recordedSocket("udp4");
     await expect(
       openExchange({
         target,
         community: "",
         deadlineMs: 2000,
         v3: { ...credentials, engineIdPin: "8000000001020304" },
+        createRawSocket: () => socket,
       }),
     ).rejects.toThrow(SnmpTransportError);
+    expect(closed()).toBe(true);
   });
 
   test("the pin accepts the engine it was written for", async () => {
@@ -830,6 +889,7 @@ describe("a v3 connection whose discovery is never answered", () => {
     const silent = createSocket("udp4");
     await new Promise<void>((resolve) => silent.bind(0, "127.0.0.1", () => resolve()));
     const port = (silent.address() as { port: number }).port;
+    const { socket, closed } = recordedSocket("udp4");
     try {
       await expect(
         openExchange({
@@ -837,8 +897,11 @@ describe("a v3 connection whose discovery is never answered", () => {
           community: "",
           deadlineMs: 150,
           v3: { userName: "u1", authPassphrase: "authpass12345", level: "authNoPriv", hash: "sha1" },
+          createRawSocket: () => socket,
         }),
       ).rejects.toThrow(/did not answer the discovery request/);
+      // Nothing else holds the socket once the open has failed, so the open closes it.
+      expect(closed()).toBe(true);
     } finally {
       silent.close();
     }
@@ -884,6 +947,9 @@ describe("a send the socket itself refuses", () => {
         if (event === "message") listener = handler;
         return socket;
       },
+      // The connect below always succeeds, so the `error` listener held while it is pending is never called.
+      once: () => socket,
+      removeListener: () => socket,
       bind: () => socket,
       address: () => ({ address: "127.0.0.1", family: "IPv4", port: 1 }),
       unref: () => socket,

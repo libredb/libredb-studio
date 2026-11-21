@@ -18,7 +18,9 @@
  */
 import { createSocket, type Socket } from "node:dgram";
 import { lookup as dnsLookup } from "node:dns";
+import { isIP } from "node:net";
 import {
+  assertNoLinkLocalDnsAnswer,
   assertNotLinkLocalLiteral,
   assertPublicDnsAnswers,
   assertPublicLiteralHost,
@@ -69,6 +71,11 @@ export class SnmpTransportError extends QueryError {
 export interface ResolvedTarget extends GuardedTarget {
   /** The name the user typed, kept so a message can name what they asked for. */
   readonly asked: string;
+  /**
+   * The family of `address`, which picks the socket: a udp4 socket cannot be connected to an
+   * IPv6 address, nor, under Node, a udp6 socket to an IPv4 one.
+   */
+  readonly family: 4 | 6;
 }
 
 /**
@@ -77,13 +84,18 @@ export interface ResolvedTarget extends GuardedTarget {
  * An address literal is checked as a literal; a name is resolved with every answer checked
  * together, because a mixed answer that is half acceptable is not acceptable: the socket would
  * be free to pick the other half.
+ *
+ * A literal is what `isIP` reads as one, as in the shared guard. A dotted form such as `127.1`
+ * is not, although a resolver reads it as an address, so it is resolved here like any other
+ * name and the socket is connected to the address the checks saw.
  */
 export async function resolveTarget(host: string, port: number): Promise<ResolvedTarget> {
   const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-  if (/^[\d.]+$/.test(bare) || bare.includes(":")) {
+  const family = isIP(bare);
+  if (family === 4 || family === 6) {
     assertNotLinkLocalLiteral(bare);
     assertPublicLiteralHost(bare);
-    return { address: bare, port, asked: host };
+    return { address: bare, port, asked: host, family };
   }
   const answers = await new Promise<{ address: string; family: number }[]>((resolve, reject) => {
     dnsLookup(bare, { all: true }, (error, addresses) => {
@@ -102,9 +114,12 @@ export async function resolveTarget(host: string, port: number): Promise<Resolve
   // here refused every agent reached by name on a local network even with the flag off, which
   // is the common case; a test with a name rather than a literal is what found it.
   if (blockPrivateHosts()) assertPublicDnsAnswers(answers);
-  // The link-local refusal is not flag-dependent anywhere, so it runs either way.
-  for (const answer of answers) assertNotLinkLocalLiteral(answer.address);
-  return { address: answers[0].address, port, asked: host };
+  // The link-local refusal is not flag-dependent anywhere, so it runs either way. It also refuses
+  // an answer set with no usable address, or an answer whose family does not match its address,
+  // so the family below is the address's own.
+  assertNoLinkLocalDnsAnswer(answers);
+  const [first] = answers;
+  return { address: first.address, port, asked: host, family: first.family as 4 | 6 };
 }
 
 /**
@@ -156,9 +171,10 @@ export interface Exchange {
  */
 export async function openExchange(options: ExchangeOptions): Promise<Exchange> {
   const { target, community, deadlineMs, v3 } = options;
-  const createRawSocket = options.createRawSocket ?? (() => createSocket("udp4"));
+  const socketType = target.family === 6 ? "udp6" : "udp4";
+  const createRawSocket = options.createRawSocket ?? (() => createSocket(socketType));
   const factory = createGuardedSocketFactory({ target, createRawSocket });
-  const socket = factory.dgramModule.createSocket("udp4");
+  const socket = factory.dgramModule.createSocket(socketType);
   // Each waiting request keeps the means to send itself again, because a notInTimeWindow
   // Report is the engine saying "ask again with my clock", and a request that merely stopped
   // waiting would report silence for a question the engine was willing to answer.
@@ -259,33 +275,46 @@ export async function openExchange(options: ExchangeOptions): Promise<Exchange> 
     }
     waiting.get(response.requestId)?.settle(response);
   });
-  await factory.start();
 
-  if (v3 !== undefined) {
-    engine = await discover(socket, target, deadlineMs, messageId, (listener) => {
-      awaitingDiscovery = listener;
+  // Until the exchange is returned, nothing but this function holds the socket, so every way out
+  // of the open below closes it: a connect the socket reports as failed, a discovery nobody
+  // answers, an engine that is not the pinned one.
+  try {
+    await factory.start().catch((error: unknown) => {
+      const reason = (error as NodeJS.ErrnoException).code ?? (error as Error).message;
+      throw new SnmpTransportError(
+        `could not connect a ${socketType} socket to ${target.address} port ${target.port}: ${reason}`,
+      );
     });
-    awaitingDiscovery = undefined;
-    messageId += 1;
-    if (v3.engineIdPin !== undefined) {
-      const found = Buffer.from(engine.engineId).toString("hex");
-      if (found !== v3.engineIdPin.toLowerCase()) {
-        socket.close();
-        throw new SnmpTransportError(
-          `the agent at ${target.address} answered with engine id ${found}, and this connection is pinned to ${v3.engineIdPin.toLowerCase()}`,
-        );
+
+    if (v3 !== undefined) {
+      engine = await discover(socket, target, deadlineMs, messageId, (listener) => {
+        awaitingDiscovery = listener;
+      });
+      awaitingDiscovery = undefined;
+      messageId += 1;
+      if (v3.engineIdPin !== undefined) {
+        const found = Buffer.from(engine.engineId).toString("hex");
+        if (found !== v3.engineIdPin.toLowerCase()) {
+          throw new SnmpTransportError(
+            `the agent at ${target.address} answered with engine id ${found}, and this connection is pinned to ${v3.engineIdPin.toLowerCase()}`,
+          );
+        }
       }
+      const engineId = Buffer.from(engine.engineId);
+      keys = {
+        localizedAuthKey: localizedKey(v3.authPassphrase, engineId, v3.hash),
+        localizedPrivKey:
+          v3.level === "authPriv" && v3.privacyPassphrase !== undefined
+            ? localizedKey(v3.privacyPassphrase, engineId, v3.hash)
+            : undefined,
+        hash: v3.hash,
+      };
+      clock = startClock(engine.engineBoots, engine.engineTime, Date.now());
     }
-    const engineId = Buffer.from(engine.engineId);
-    keys = {
-      localizedAuthKey: localizedKey(v3.authPassphrase, engineId, v3.hash),
-      localizedPrivKey:
-        v3.level === "authPriv" && v3.privacyPassphrase !== undefined
-          ? localizedKey(v3.privacyPassphrase, engineId, v3.hash)
-          : undefined,
-      hash: v3.hash,
-    };
-    clock = startClock(engine.engineBoots, engine.engineTime, Date.now());
+  } catch (error) {
+    socket.close();
+    throw error;
   }
 
   return {

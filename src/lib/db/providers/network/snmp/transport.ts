@@ -217,7 +217,22 @@ export function createGuardedSocketFactory(options: GuardedSocketOptions): {
           reject(new EgressRefusal("the client has not asked for a socket yet"));
           return;
         }
-        raw.connect(target.port, target.address, () => {
+        // A connect fails in one of two ways, and both reject here. A connect the runtime cannot
+        // make is reported to the callback: a udp4 socket asked for an IPv6 address answers EINVAL
+        // under Node and "Failed to connect socket" under Bun. A failed implicit bind (EAFNOSUPPORT
+        // for udp6 on a host without IPv6, EMFILE with no descriptor left) is reported only as an
+        // `error` event, and the callback is never called. Either way the socket stays
+        // unconnected, so a send after it is refused above rather than going out on a socket aimed
+        // nowhere.
+        const socket = raw;
+        const failed = (error: Error) => reject(error);
+        socket.once("error", failed);
+        socket.connect(target.port, target.address, (error?: Error) => {
+          socket.removeListener("error", failed);
+          if (error) {
+            reject(error);
+            return;
+          }
           connected = true;
           resolve();
         });

@@ -161,3 +161,60 @@ describe("a send before the socket is connected", () => {
     await expect(factory.start()).rejects.toThrow(/has not asked for a socket/);
   });
 });
+
+describe("a connect the socket reports as failed", () => {
+  test("rejects start with the socket's own error, and a send after it is refused", async () => {
+    // A udp4 socket cannot be connected to an IPv6 address. The runtime reports that to the connect callback, and a
+    // start that resolved anyway left the next send on a socket that was never connected.
+    const factory = createGuardedSocketFactory({
+      target: { address: "::1", port: PORT },
+      createRawSocket: () => dgram.createSocket("udp4"),
+    });
+    const fresh = factory.dgramModule.createSocket("udp6");
+    const error = await factory.start().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(await send((cb) => fresh.send(GET, 0, GET.length, PORT, "::1", cb))).toBe(EgressRefusal.name);
+    fresh.close();
+  });
+});
+
+describe("a connect the socket fails with an error event", () => {
+  test("rejects start with that error instead of waiting for a callback that never comes", async () => {
+    // When the socket's implicit bind fails (a host without IPv6 answers EAFNOSUPPORT for udp6, a process out of
+    // descriptors EMFILE), the runtime reports it only as an `error` event and drops the queued connect.
+    const raw = dgram.createSocket("udp4");
+    raw.connect = (() => {
+      setImmediate(() =>
+        raw.emit("error", Object.assign(new Error("bind EAFNOSUPPORT"), { code: "EAFNOSUPPORT", syscall: "bind" })),
+      );
+    }) as unknown as dgram.Socket["connect"];
+    const factory = createGuardedSocketFactory({
+      target: { address: "127.0.0.1", port: PORT },
+      createRawSocket: () => raw,
+    });
+    const fresh = factory.dgramModule.createSocket("udp4");
+    const error = await factory.start().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect((error as NodeJS.ErrnoException).code).toBe("EAFNOSUPPORT");
+    expect(raw.listenerCount("error")).toBe(0);
+    expect(await send((cb) => fresh.send(GET, 0, GET.length, PORT, "127.0.0.1", cb))).toBe(EgressRefusal.name);
+    fresh.close();
+  });
+
+  test("a connect that succeeds leaves no error listener of its own behind", async () => {
+    const raw = dgram.createSocket("udp4");
+    const factory = createGuardedSocketFactory({
+      target: { address: "127.0.0.1", port: PORT },
+      createRawSocket: () => raw,
+    });
+    const fresh = factory.dgramModule.createSocket("udp4");
+    await factory.start();
+    expect(raw.listenerCount("error")).toBe(0);
+    fresh.close();
+  });
+});

@@ -294,9 +294,12 @@ export class SnmpProvider extends BaseDatabaseProvider {
     // configured, so it must not arrive wearing the clothes of a failed read.
     const checked = checkConnection(input);
     this.pendingNotices = [...checked.cautions.map((caution) => caution.text), ...allNotices()];
-    this.target = await resolveTarget(input.host, input.port);
+    // Kept on the provider only once the probe below has answered, with the exchange: a provider
+    // whose connect failed holds no target, so a later statement is refused as not open rather
+    // than dialled again.
+    const target = await resolveTarget(input.host, input.port);
     const exchange = await openExchange({
-      target: this.target,
+      target,
       community: input.community ?? "",
       // BOTH PLACES ARE READ, and reading one of them was a defect found on 15 October 2026.
       // This line used to read `this.config.queryTimeout` alone. The connection record does carry
@@ -324,16 +327,22 @@ export class SnmpProvider extends BaseDatabaseProvider {
     // The sentence names BOTH possibilities on purpose. Over v2c a wrong community is answered
     // with silence, exactly like an absent agent, and this provider cannot tell them apart from
     // here. Claiming one of them would be inventing the half we did not measure.
-    const probe = await exchange.send(PDU_GET, nextRequestId(), [SYS_UPTIME], undefined);
+    //
+    // A probe that fails by throwing rather than by answering closes the exchange too: this
+    // provider keeps the exchange only once the probe was answered, so nothing else could close it.
+    const probe = await exchange.send(PDU_GET, nextRequestId(), [SYS_UPTIME], undefined).catch((error: unknown) => {
+      exchange.close();
+      throw error;
+    });
     if (!("varbinds" in probe)) {
       exchange.close();
-      this.target = undefined;
       throw new DatabaseConfigError(
         `No SNMP agent answered at ${input.host}:${input.port}. ${probe.reason} ` +
           "Over SNMPv2c an agent that rejects the community answers exactly as one that is not there, " +
           "so this is either no agent at that address or the wrong community for it.",
       );
     }
+    this.target = target;
     this.exchange = exchange;
   }
 

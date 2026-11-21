@@ -14,7 +14,7 @@ measured, the document says so instead of estimating.
 ## 1. What it does
 
 `connect` checks the connection record, resolves the host through the repository's shared egress
-policy, and opens one UDP socket connected to the agent. `query` parses the statement before the
+policy, and opens one UDP socket connected to the agent, udp6 for an IPv6 agent (section 1.2). `query` parses the statement before the
 socket is touched, asks, and renders each value by the tag the AGENT put on it. `getOverview`
 reads `sysDescr.0` and `sysUpTime.0` from the device; one the agent does not answer, or answers with an exception such as `noSuchObject`, is shown as no figure rather than as an empty one. `disconnect` closes the socket.
 
@@ -33,6 +33,21 @@ How this engine's statement text is read is declared once, in [`src/lib/db/provi
 The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/network/snmp/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
+
+### 1.2 IPv6 agents, and a connect that fails
+
+An agent on IPv6 is supported: a literal (`::1`, `[::1]`, `2001:db8::1`) or a name whose first answer is an IPv6 address is reached over a udp6 socket, and any other agent over a udp4 one.
+The socket's family is taken from the address the host resolved to, in [`client.ts`](../../src/lib/db/providers/network/snmp/client.ts) `resolveTarget`, and the socket is connected to that same address.
+A host is an address literal only when `isIP` reads it as one, as in the shared egress policy, so a dotted form such as `127.1` is resolved as a name and checked as one.
+A name is dialled at its first answer only, so an agent that listens only on IPv4 behind a name whose first answer is IPv6 reads as no agent at that address or the wrong community.
+Typing that agent's IPv4 address reaches it over udp4.
+`::1` is loopback to the cleartext check of [section 3](#3-the-community-is-a-single-secret); any other IPv6 agent needs the same `allowInsecureAuth` consent as any other agent off this machine.
+
+A connect the socket cannot make, such as an IPv6 address on a host with no IPv6 route, fails `connect` with `SnmpTransportError` before anything is sent, and the message names the socket, the address, the port and the reason the runtime gave.
+Measured on 21 November 2026 against `2001:db8::1` on a host with no IPv6 route: Node 24 says `could not connect a udp6 socket to 2001:db8::1 port 161: ENETUNREACH`, and Bun 1.4.4, which gives the error no code, says `... port 161: Failed to connect socket`.
+A socket whose bind fails fails `connect` the same way, with the code the runtime gave: `EAFNOSUPPORT` for a udp6 socket on a host without IPv6, such as a kernel booted with `ipv6.disable=1`, or `EMFILE` when the process has no descriptor left.
+There is no retry, and no second attempt over IPv4.
+Every connect that fails closes the socket it opened: this one, one whose probe the agent does not answer, and a v3 discovery that ends unanswered.
 
 ## 2. Why v2c only, today
 
@@ -254,6 +269,8 @@ What the agent got: version 1 on the wire, the community, the OIDs, two objects 
 What the caller got: the values, the type each was rendered as, and a short table column reported as an absence rather than shifting the rows below it.
 A refused statement sends nothing, and that is proved by counting the agent's datagrams rather than by watching the throw.
 
+[`socket-family.test.ts`](../../tests/unit/db/snmp/socket-family.test.ts) reads an agent listening on `::1` through `::1`, `[::1]` and a name that resolves to it, and holds that every connect that fails closes its socket, including one whose bind fails, and leaves the provider not open.
+
 The health read is driven the same way: a full answer, an object answered with an exception, an object left out of the answer, an answer carrying a non-zero error-status, and an agent that stops answering.
 The catalog needs no listener, because it sends nothing: `tests/unit/db/snmp/mib-tree.test.ts` and `tests/unit/db/snmp/provider.test.ts` hold the listing order, the batch limit, the column and index shapes and the refusals to the bundled modules.
 
@@ -277,7 +294,7 @@ known defect; they are the places where the evidence stops.
   and time 10, so every window case is driven from constructed values.
 - **Modules this build does not carry.** A descriptor resolves against the index generated from the bundled MIB modules, and the catalog lists only what they define.
   A name from any other module is refused with the reason `explainUnknown` gives, and a table the catalog lists may hold no rows on a given agent.
-- **IPv6 end to end.** Measured only against the library's own in-process agent.
+- **IPv6 to a device.** An agent on `::1` is read end to end in the tests, over a udp6 socket, but no device has been read over an IPv6 network yet.
 
 ## 13. Agent mode
 
