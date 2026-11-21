@@ -6,6 +6,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type { SavedQuery } from "@/lib/types";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 import { mockToastDefault, mockToastError, mockToastSuccess } from "../helpers/mock-sonner";
 
 const mockSavedQueries: SavedQuery[] = [
@@ -123,6 +124,57 @@ describe("SavedQueries", () => {
       expect((view.getByRole("button", { name: "Import JSON" }) as HTMLButtonElement).disabled).toBe(false);
     },
   );
+
+  describe("importing a backup that holds an entry whose type names no provider (FND-1)", () => {
+    const known = { ...mockSavedQueries[0], id: "known", name: "Known report" };
+    const acme = { ...mockSavedQueries[0], id: "acme", name: "Acme report", connectionType: "acmefoo" };
+    const acmeLine = `Acme report: ${unknownTypeSentence("acmefoo")}`;
+
+    test("imports the rest of a backup and names each entry whose type names no provider", async () => {
+      const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
+      importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([known, acme]));
+      await waitFor(() => expect(mockImportSavedQueries).toHaveBeenCalledWith([known]));
+      expect(mockToastDefault).toHaveBeenCalledWith("Import finished with unavailable queries", {
+        description: `Added 1. Not imported: ${acmeLine}`,
+      });
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(mockToastError).not.toHaveBeenCalled();
+    });
+
+    test("names the refused entries beside the duplicate IDs", async () => {
+      mockImportSavedQueries.mockReturnValue({ imported: 1, collisions: ["q1"] });
+      const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
+      importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([known, acme]));
+      await waitFor(() =>
+        expect(mockToastDefault).toHaveBeenCalledWith("Import finished with unavailable queries", {
+          description: `Added 1; skipped duplicate IDs: q1. Not imported: ${acmeLine}`,
+        }),
+      );
+    });
+
+    test("a backup whose every entry is refused imports nothing and says so", async () => {
+      mockImportSavedQueries.mockReturnValue({ imported: 0, collisions: [] });
+      const zeta = { ...acme, id: "zeta", name: "Zeta report", connectionType: "zeta" };
+      const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
+      importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([acme, zeta]));
+      await waitFor(() => expect(mockImportSavedQueries).toHaveBeenCalledWith([]));
+      expect(mockToastDefault).toHaveBeenCalledWith("Import finished with unavailable queries", {
+        description: `Added 0. Not imported: ${acmeLine} Zeta report: ${unknownTypeSentence("zeta")}`,
+      });
+    });
+
+    test("a backup with an entry that has no connection type is still refused whole", async () => {
+      const { connectionType: _connectionType, ...untyped } = acme;
+      const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
+      importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([known, untyped]));
+      await waitFor(() =>
+        expect(mockToastError).toHaveBeenCalledWith(
+          "Could not import saved queries. Check the JSON file and available browser storage.",
+        ),
+      );
+      expect(mockImportSavedQueries).not.toHaveBeenCalled();
+    });
+  });
 
   test("opens the file picker, handles cancellation and disables export for an empty library", () => {
     mockGetSavedQueries.mockReturnValue([]);

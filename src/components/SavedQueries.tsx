@@ -10,6 +10,7 @@ import { format } from "date-fns";
 import { downloadText } from "@/lib/export/download";
 import { jsonText } from "@/lib/export/json";
 import { parseSavedQueries } from "@/lib/saved-query-import";
+import { unavailableSavedQueryNotice } from "@/lib/connection-availability";
 import { toast } from "sonner";
 
 interface SavedQueriesProps {
@@ -54,15 +55,23 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
     if (!file) return;
     setIsImporting(true);
     try {
-      const incoming = parseSavedQueries(await file.text());
+      const { queries: incoming, refused } = parseSavedQueries(await file.text());
       const result = storage.importSavedQueries(incoming);
       setQueries(storage.getSavedQueries());
-      if (result.collisions.length > 0) {
-        toast("Import finished with ID conflicts", {
-          description: `Added ${result.imported}; skipped duplicate IDs: ${result.collisions.join(", ")}.`,
-        });
+      const added =
+        result.collisions.length > 0
+          ? `Added ${result.imported}; skipped duplicate IDs: ${result.collisions.join(", ")}.`
+          : `Added ${result.imported}.`;
+      if (refused.length > 0) {
+        // An entry whose type names no provider is left out by itself and named with its reason (FND-1).
+        const notImported = refused
+          .map((entry) => unavailableSavedQueryNotice(entry, entry.error.message).description)
+          .join(" ");
+        toast("Import finished with unavailable queries", { description: `${added} Not imported: ${notImported}` });
+      } else if (result.collisions.length > 0) {
+        toast("Import finished with ID conflicts", { description: added });
       } else {
-        toast.success("Saved queries import finished", { description: `Added ${result.imported}.` });
+        toast.success("Saved queries import finished", { description: added });
       }
     } catch {
       toast.error("Could not import saved queries. Check the JSON file and available browser storage.");
