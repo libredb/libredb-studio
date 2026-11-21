@@ -9,7 +9,7 @@
  * STARTUP and REGISTER are READY; a query
  * that reads `system.local` gets one row of text columns; every other query gets an empty set of rows.
  *
- * Each case replaces one answer with a frame the driver cannot parse:
+ * Each case replaces one answer with a frame the driver cannot parse, or resets a connection:
  * - `truncated-error`: the answer to the first STARTUP is an ERROR frame whose 2-byte body cannot hold its error code.
  * - `truncated-auth`: the answer to the first STARTUP is an AUTHENTICATE frame whose string length runs past the body.
  * - `header-mismatch`: the answer to the first STARTUP is a v1 READY header (8 bytes) followed by a v4 header cut
@@ -24,6 +24,14 @@
  * - `lost-connection`: the node is healthy until a query whose text holds {@link LOST_MARKER}, whose connection it
  *   resets instead of answering; it is the only connection the one-node cluster has open, so the driver's control
  *   connection opens a new one, and the case then watches for any other connection the driver opens.
+ * - `lost-connection-repeated`: as `lost-connection`, three times on the same session, each after the driver has
+ *   recovered from the one before.
+ * - `lost-connection-disconnect`: as `lost-connection`, but every connection accepted after the reset gets each of its
+ *   answers {@link SLOW_ANSWER_MS} late, and the provider is disconnected while the driver is still reconnecting.
+ * - `lost-connection-in-connect`: the node resets the connection that carries the provider's identity read, the first
+ *   statement `connect()` sends once the driver is connected, so `connect()` fails while the driver reconnects.
+ * - `lost-connection-reinit-error`: as `lost-connection`, but the first `system.peers` read after the reset gets a
+ *   server ERROR, so the driver's first attempt to reconnect fails and its scheduled retry succeeds.
  *
  * `runCassandraFrameCases` drives Studio's real provider through each case and returns what a caller saw, so the
  * same run can be made under Bun in the test process and under Node from a bundle of this file.
@@ -33,6 +41,11 @@ import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
 
 const MALFORMED_MARKER = "malformed_frame_marker";
 const LOST_MARKER = "lost_connection_marker";
+/** A column only the provider's identity read selects (`CASSANDRA_IDENTITY_CQL`). */
+const IDENTITY_MARKER = "gossip_generation";
+const PEERS_QUERY = "SELECT * FROM system.peers";
+/** How late `lost-connection-disconnect` answers on a connection accepted after the reset. */
+const SLOW_ANSWER_MS = 300;
 
 export const CASSANDRA_FRAME_CASES = [
   "truncated-error",
@@ -43,6 +56,10 @@ export const CASSANDRA_FRAME_CASES = [
   "malformed-answer",
   "malformed-event",
   "lost-connection",
+  "lost-connection-repeated",
+  "lost-connection-disconnect",
+  "lost-connection-in-connect",
+  "lost-connection-reinit-error",
 ] as const;
 export type CassandraFrameCase = (typeof CASSANDRA_FRAME_CASES)[number];
 
@@ -58,6 +75,7 @@ const OPCODE = {
   register: 0x0b,
   event: 0x0c,
 } as const;
+const SERVER_ERROR = 0x0000;
 const PROTOCOL_ERROR = 0x000a;
 const VARCHAR = 0x000d;
 const LOCAL_ROW: ReadonlyArray<readonly [string, string]> = [
@@ -137,6 +155,10 @@ async function startFakeCassandraPeer(mode: CassandraFrameCase): Promise<FakeCas
   const sockets = new Set<Socket>();
   let startupsAnswered = 0;
   let registered: Socket | null = null;
+  /** Set once the node has reset a connection; the sockets accepted after it. */
+  let reset = false;
+  const acceptedAfterReset = new Set<Socket>();
+  let peersErrorSent = false;
 
   const answer = (socket: Socket, version: number, streamId: number, opcode: number, body: Buffer): void => {
     if (opcode === OPCODE.startup && version > 4) {
@@ -186,8 +208,18 @@ async function startFakeCassandraPeer(mode: CassandraFrameCase): Promise<FakeCas
         socket.write(truncatedError(version, streamId));
         return;
       }
-      if (text.includes(LOST_MARKER)) {
+      if (
+        text.includes(LOST_MARKER) ||
+        (mode === "lost-connection-in-connect" && !reset && text.includes(IDENTITY_MARKER))
+      ) {
+        reset = true;
         socket.resetAndDestroy();
+        return;
+      }
+      if (mode === "lost-connection-reinit-error" && reset && !peersErrorSent && text === PEERS_QUERY) {
+        peersErrorSent = true;
+        const message = "The fake peer fails this read of system.peers";
+        socket.write(frame(version, streamId, OPCODE.error, Buffer.concat([int(SERVER_ERROR), cqlString(message)])));
         return;
       }
       const result = text.includes("system.local")
@@ -206,6 +238,7 @@ async function startFakeCassandraPeer(mode: CassandraFrameCase): Promise<FakeCas
   const server = createServer((socket) => {
     log.accepted += 1;
     sockets.add(socket);
+    if (reset) acceptedAfterReset.add(socket);
     socket.on("error", () => {});
     socket.on("close", () => {
       log.closed += 1;
@@ -222,6 +255,12 @@ async function startFakeCassandraPeer(mode: CassandraFrameCase): Promise<FakeCas
         const opcode = buffered[4];
         const body = buffered.subarray(9, 9 + length);
         buffered = buffered.subarray(9 + length);
+        if (mode === "lost-connection-disconnect" && acceptedAfterReset.has(socket)) {
+          setTimeout(() => {
+            if (!socket.destroyed) answer(socket, version, streamId, opcode, body);
+          }, SLOW_ANSWER_MS);
+          continue;
+        }
         answer(socket, version, streamId, opcode, body);
       }
     });
@@ -250,8 +289,13 @@ export interface CassandraFrameOutcome {
   readonly connect: string;
   /** The outcome of the query that meets the case's failure, for `malformed-answer` and `lost-connection` only. */
   readonly malformedQuery: string | null;
-  /** The next query's outcome on the same provider, for `malformed-answer`, `malformed-event` and `lost-connection`. */
+  /**
+   * The next query's outcome on the same provider, for `malformed-answer`, `malformed-event`, `lost-connection` and
+   * `lost-connection-reinit-error`.
+   */
   readonly nextQuery: string | null;
+  /** For `lost-connection-repeated`: each lost query's outcome and the next query's, in order. */
+  readonly losses: ReadonlyArray<{ readonly lost: string; readonly next: string }>;
   /**
    * Wall time from the start of the call that met the malformed frame to its settling; for `malformed-event`, from
    * the push of the event to the close of the connection that received it.
@@ -297,10 +341,27 @@ const AFTER_DISCONNECT_MS = 300;
  */
 const RECONNECTION_WATCH_MS = 1_500;
 
+/**
+ * How long `lost-connection-disconnect` watches the peer after the provider is disconnected: past the reconnection's
+ * slowed answers (the version refusal, STARTUP, OPTIONS, the two topology reads and REGISTER, {@link SLOW_ANSWER_MS}
+ * each), so a connection the reconnection would keep is open inside it.
+ */
+const SLOW_RECONNECTION_WATCH_MS = 2_500;
+
+/** How many times `lost-connection-repeated` loses the session's connection. */
+const REPEATED_LOSSES = 3;
+
 /** Waits for a condition the peer can observe, up to a bound; the caller's assertions say what was not reached. */
 async function waitFor(condition: () => boolean, boundMs: number): Promise<void> {
   const deadline = Date.now() + boundMs;
   while (!condition() && Date.now() < deadline) await sleep(10);
+}
+
+/** How long a case watches the peer after the provider is disconnected. */
+function afterDisconnectMs(name: CassandraFrameCase): number {
+  if (name === "lost-connection-disconnect") return SLOW_RECONNECTION_WATCH_MS;
+  if (name === "malformed-answer" || name === "malformed-event") return 50;
+  return AFTER_DISCONNECT_MS;
 }
 
 async function runCase(name: CassandraFrameCase): Promise<CassandraFrameOutcome> {
@@ -330,7 +391,14 @@ async function runCase(name: CassandraFrameCase): Promise<CassandraFrameOutcome>
     let nextQuery: string | null = null;
     let acceptedBefore = 0;
     let closedBefore = 0;
-    const midSession = name === "malformed-answer" || name === "malformed-event" || name === "lost-connection";
+    const midSession =
+      name === "malformed-answer" ||
+      name === "malformed-event" ||
+      name === "lost-connection" ||
+      name === "lost-connection-repeated" ||
+      name === "lost-connection-disconnect" ||
+      name === "lost-connection-reinit-error";
+    const losses: { lost: string; next: string }[] = [];
     let queriesBefore = 0;
     if (midSession) {
       acceptedBefore = peer.log.accepted;
@@ -341,8 +409,21 @@ async function runCase(name: CassandraFrameCase): Promise<CassandraFrameOutcome>
     if (name === "malformed-answer") {
       malformedQuery = await settle(() => provider.query(`SELECT ${MALFORMED_MARKER} FROM system.local`));
     }
-    if (name === "lost-connection") {
+    if (
+      name === "lost-connection" ||
+      name === "lost-connection-disconnect" ||
+      name === "lost-connection-reinit-error"
+    ) {
       malformedQuery = await settle(() => provider.query(`SELECT ${LOST_MARKER} FROM system.local`));
+    }
+    if (name === "lost-connection-repeated") {
+      for (let round = 0; round < REPEATED_LOSSES; round += 1) {
+        const peersBefore = peer.log.queries.filter((query) => query === PEERS_QUERY).length;
+        const lost = await settle(() => provider.query(`SELECT ${LOST_MARKER} FROM system.local`));
+        await waitFor(() => peer.log.queries.filter((query) => query === PEERS_QUERY).length > peersBefore, 3_000);
+        await sleep(100);
+        losses.push({ lost, next: await settle(() => provider.query("SELECT key FROM system.local")) });
+      }
     }
     if (name === "malformed-event") {
       // Nothing is pending on the connection that receives the event, so only its close shows the failure.
@@ -350,28 +431,42 @@ async function runCase(name: CassandraFrameCase): Promise<CassandraFrameOutcome>
       await waitFor(() => peer.log.closed > closedBefore, 3_000);
     }
     const settledMs = Date.now() - started;
-    if (midSession) {
+    if (name === "lost-connection-disconnect") {
+      // The control connection is still reconnecting through the slowed answers.
+      await sleep(100);
+    } else if (name === "lost-connection-reinit-error") {
+      // The first reconnection fails on its system.peers read; the control connection's retry, about a second later
+      // on the default reconnection policy, reads it again.
+      await waitFor(
+        () => peer.log.queries.slice(queriesBefore).filter((query) => query === PEERS_QUERY).length >= 2,
+        3_000,
+      );
+      await sleep(100);
+      nextQuery = await settle(() => provider.query("SELECT key FROM system.local"));
+    } else if (!midSession) {
+      // A closed connection reaches the peer as a close event a moment after the client closed it.
+      await waitFor(() => peer.log.closed === peer.log.accepted, 2_000);
+    } else if (name !== "lost-connection-repeated") {
+      // (Each round of `lost-connection-repeated` has waited for this already.)
       // The driver's control connection reconnects as soon as its connection closes and reads the topology again
       // on the new one; the next query goes out once that read is answered and the host is back up.
-      await waitFor(() => peer.log.queries.slice(queriesBefore).includes("SELECT * FROM system.peers"), 3_000);
+      await waitFor(() => peer.log.queries.slice(queriesBefore).includes(PEERS_QUERY), 3_000);
       await sleep(100);
       nextQuery = await settle(() => provider.query("SELECT key FROM system.local"));
       if (name === "lost-connection") await sleep(RECONNECTION_WATCH_MS);
-    } else {
-      // A closed connection reaches the peer as a close event a moment after the client closed it.
-      await waitFor(() => peer.log.closed === peer.log.accepted, 2_000);
     }
     const accepted = peer.log.accepted;
     const closedBeforeDisconnect = peer.log.closed;
     await provider.disconnect();
     // Long enough for an error raised while the connections close to be counted against this case and, after a
     // failed connect or a lost connection, for a connection dialled after it to reach the peer.
-    await sleep(midSession && name !== "lost-connection" ? 50 : AFTER_DISCONNECT_MS);
+    await sleep(afterDisconnectMs(name));
     return {
       name,
       connect,
       malformedQuery,
       nextQuery,
+      losses,
       settledMs,
       acceptedBefore,
       closedBefore,
