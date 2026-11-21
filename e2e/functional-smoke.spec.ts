@@ -104,7 +104,7 @@ test.describe("Functional smoke: connect to PostgreSQL and run a query", () => {
     await page.waitForURL("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 15_000 });
 
-    // Open the connection modal (last button in the sidebar header row).
+    // Open the connection modal.
     await openConnectionDialog(page);
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 5000 });

@@ -5,12 +5,13 @@ import { typeIdRefusal } from "@/lib/db/type-id";
 import config from "../../playwright.config";
 
 // Every spec signs in as the same shared account, and the server keeps one "query" rate-limit
-// bucket per account per process (src/lib/api/rate-limit.ts, 120 requests a minute), so a spec
-// that reaches a db route late in file order can meet a budget the specs before it spent. On CI
+// bucket per account per process (src/lib/api/rate-limit.ts, 120 requests a minute by default), so a
+// spec that reaches a db route late in file order can meet a budget the specs before it spent. On CI
 // run 36263561882, e2e/kafka-provider.spec.ts got "Too many requests. Try again in 38 seconds."
 // on all three attempts of its Test Connection check. Such a spec runs against the second server
 // process instead, whose counters only it and the other specs listed below touch;
-// this pins that choice.
+// this pins that choice. Since then playwright.config.ts raises the bucket to 10000 on the main
+// server too (pinned further down), so the budget alone no longer sends a new spec here.
 
 const SECOND_SERVER = `http://localhost:${Number(process.env.E2E_OFFLINE_PORT ?? 3010)}`;
 const SECOND_SERVER_SPECS = [

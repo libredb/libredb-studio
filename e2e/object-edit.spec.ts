@@ -209,7 +209,7 @@ async function login(page: Page): Promise<void> {
  * login-and-connect in one window is refused, and the dialog draws `Too many requests. Try again in
  * 40 seconds.` and stays open. It is the same shared bucket `waitForTheObjectTree` and
  * `restoreTheTabAndWaitForItsRead` already carry - one `user@libredb.org` account, 120 requests per
- * 60 seconds across every db-reaching route (src/lib/api/rate-limit.ts) - reached one test earlier
+ * 60 seconds across every db-reaching route by default (src/lib/api/rate-limit.ts) - reached one test earlier
  * than before because this file now has six tests rather than five. Which test pays is arithmetic
  * and not a property of the test: in the run before this repair the same refusal landed on the
  * FIFTH, the shipped marker-coordinate test, with nothing about it changed.
@@ -255,6 +255,10 @@ async function connectToTheFixture(page: Page): Promise<void> {
  * (src/lib/api/rate-limit.ts, 120 requests per 60 seconds, shared by every db-reaching route) is
  * sized for one real session and not for five fresh logins in three minutes. The same hazard is
  * documented on playwright.config.ts's `chromium-offline-editor` project for the same reason.
+ *
+ * 120 is the production default. playwright.config.ts now raises the bucket to 10000 on the server
+ * this file runs against, as it does on the second server, so this retry and the two like it below
+ * are a backstop for a run that still meets the limiter, not the everyday path.
  *
  * The refusal can land one read earlier, on the connection's metadata, and then no tree is drawn at
  * all: the sidebar draws "This connection could not be read / Too many requests. Try again in 60
@@ -436,7 +440,8 @@ async function markersOnTheSourceEditor(page: Page): Promise<MarkerReading[]> {
  *
  * The arithmetic behind that, from `src/lib/api/rate-limit.ts`: every test in this file and in
  * `functional-smoke.spec.ts` signs in as the same `user@libredb.org`, whose per-process `query`
- * bucket is 120 requests per 60 seconds and is shared by every database-reaching route including
+ * bucket was then 120 requests per 60 seconds (the production default, which playwright.config.ts
+ * now raises for this server) and is shared by every database-reaching route including
  * all nine under `db/objects`. A `page.reload()` re-hydrates the whole application on top of
  * whatever three earlier tests already spent. The bucket is a FIXED window and a refused request
  * does not increment the counter, so waiting out the `Retry-After` the server itself names buys a
@@ -491,8 +496,8 @@ async function restoreTheTabAndWaitForItsRead(page: Page): Promise<void> {
  * exactly as `waitForTheObjectTree` presses `tree-retry` and `restoreTheTabAndWaitForItsRead`
  * presses the pane's own control. The cause is the same one those two carry: `/api/db/objects/
  * describe` is metered into the shared `query` bucket (src/lib/api/object-route.ts), 120 requests
- * per 60 seconds for the one `user@libredb.org` account every test in this file and in
- * functional-smoke.spec.ts signs in as.
+ * per 60 seconds by default (playwright.config.ts raises it for this server) for the one
+ * `user@libredb.org` account every test in this file and in functional-smoke.spec.ts signs in as.
  *
  * It waits for ANY level-4 row and never for a NAME, which is the split that matters: this helper
  * answers "did the read land", and the test below answers "is the name right". A helper that waited

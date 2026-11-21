@@ -67,9 +67,6 @@ test.describe("OPC UA, end to end, with pictures", () => {
     });
 
     // ---- the dialog ---------------------------------------------------------------------------
-    // `.last()` is the add-connection button; `.first()` is the layers panel, which is what a
-    // screenshot caught this test clicking - it opened the ERD visualizer and waited three minutes
-    // for a dialog that was never going to appear.
     await openConnectionDialog(page);
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog).toBeVisible({ timeout: 15_000 });
