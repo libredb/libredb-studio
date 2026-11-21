@@ -23,6 +23,7 @@ import { createServer as createNetServer, type AddressInfo, type Server as NetSe
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadTlsFixtures } from "../tls-fixtures";
+import { answerWithUpgrade, type UpgradeAnswer } from "../upgrade-answer";
 
 export const CLIENT_ID = "system:serviceaccount:os-lab-studio:studio";
 /** Clearly not a credential: gitleaks scans every commit. */
@@ -61,11 +62,15 @@ export interface RecordedRequest {
   readonly body: string;
 }
 
-/** A scripted answer: a status with an optional body and headers, no answer at all, or a body past every cap. */
+/**
+ * A scripted answer: a status with an optional body and headers, no answer at all, a body past every cap, or a 101 that
+ * announces an upgrade (tests/helpers/upgrade-answer.ts).
+ */
 export type ScriptedAnswer =
   | { readonly status: number; readonly body?: string; readonly headers?: Readonly<Record<string, string>> }
   | "hang"
-  | "oversize";
+  | "oversize"
+  | UpgradeAnswer;
 
 /** A script for one path: an answer, or a function of the request whose `undefined` falls back to the default. */
 export type Script = ScriptedAnswer | ((request: RecordedRequest) => ScriptedAnswer | undefined);
@@ -100,6 +105,8 @@ const json = (status: number, document: unknown): ScriptedAnswer => ({
 export class FakeCluster {
   readonly requests: RecordedRequest[] = [];
   readonly proxy = { url: "", connections: 0 };
+  /** One promise per socket an upgrade answer was written on, resolved once that socket has closed. */
+  readonly upgradedSockets: Promise<void>[] = [];
   user: FakeUser = { name: "dev-a", uid: "0b6f5c1e-4d2a-4c55-9e1f-7a3b2c1d0e9f", groups: ["system:authenticated"] };
   /** The token endpoint's success answer; `access_token` is also what users/~ accepts as a bearer. */
   tokenAnswer: Record<string, unknown> = {};
@@ -208,6 +215,7 @@ export class FakeCluster {
   reset(): void {
     this.requests.length = 0;
     this.proxy.connections = 0;
+    this.upgradedSockets.length = 0;
     this.scripts.clear();
     this.codes.clear();
     this.user = { name: "dev-a", uid: "0b6f5c1e-4d2a-4c55-9e1f-7a3b2c1d0e9f", groups: ["system:authenticated"] };
@@ -328,6 +336,10 @@ function handler(server: "api" | "oauth", cluster: () => FakeCluster) {
       fake.requests.push(recorded);
       const answer = fake.answer(recorded);
       if (answer === "hang") return;
+      if (answer === "upgrade" || answer === "upgrade-close") {
+        fake.upgradedSockets.push(answerWithUpgrade(request.socket, answer));
+        return;
+      }
       if (answer === "oversize") {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(`"${"x".repeat(1024 * 1024)}"`);

@@ -11,7 +11,8 @@
  * Every request is a fresh `node:https` request with `agent: false`, so no global agent and no proxy configuration
  * (HTTPS_PROXY with NODE_USE_ENV_PROXY=1) ever sees the code, the client secret or the token; no redirect is followed;
  * the answer is capped; the deadline is an AbortSignal. The HTTPS call itself is module-private, so every outside call
- * goes through the two entry points. Nothing here logs, and no failure carries a header, a body or an error object.
+ * goes through the two entry points. A 101 that switches the connection to another protocol fails as `network` at once.
+ * Nothing here logs, and no failure carries a header, a body or an error object.
  */
 
 import https from "node:https";
@@ -130,6 +131,13 @@ function openShiftHttpsCall(call: HttpsCall): Promise<OpenShiftCallResult> {
         },
       );
       outgoing.on("error", (error) => settle(failureOf(error, signal)));
+      // node:http hands a 101 that announces an upgrade (Connection: upgrade and an Upgrade header) to this event, never
+      // to the response callback, and without a listener it emits no error either, so the call would never settle. The
+      // switched socket is no longer the request's, so it is destroyed here.
+      outgoing.on("upgrade", (_answer, socket) => {
+        socket.destroy();
+        settle(failed("network"));
+      });
       outgoing.end(call.body);
     } catch (error) {
       settle(failureOf(error, signal));
