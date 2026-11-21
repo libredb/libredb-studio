@@ -29,6 +29,7 @@ interface CaseReport {
   readonly next?: string;
   readonly delivered?: number;
   readonly database?: string;
+  readonly connected?: boolean;
   readonly logged: string[];
   readonly escaped: string[];
 }
@@ -310,14 +311,34 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
     }
   });
 
-  test("a reconnect whose SELECT of the database is refused fails the next commands by name, and none of them runs", () => {
-    const refusal = "QueryError: Redis refused database 1 after a reconnect: ERR DB index is out of range";
+  // The provider closes a client whose reconnect's SELECT of the database the server refused, whatever the reply, so the
+  // command waiting fails by name and none runs in database 0; it also reports itself disconnected, so the next request
+  // connects again, and that connect either opens the database or is refused by name.
+  test("a reconnect whose SELECT of the database is refused fails the command waiting by name, and none of them runs", () => {
     for (const report of reports) {
       const refused = find(report, "the server refuses the reconnect's SELECT of database 1");
       expect(refused.logged).toContain("[Redis] ERR DB index is out of range");
-      expect(refused.call).toBe(refusal);
-      expect(refused.next).toBe(refusal);
+      expect(refused.call).toBe("QueryError: Redis refused database 1 after a reconnect: ERR DB index is out of range");
       expect(refused.delivered).toBe(0);
+      expect(refused.connected).toBe(false);
+      expect(refused.next).toBe("QueryError: Redis refused database 1: ERR DB index is out of range");
+      expect(refused.escaped).toEqual([]);
+    }
+  });
+
+  test("a reconnect whose SELECT is answered BUSY fails the command waiting, and the next connect answers in the database", () => {
+    const busy = "BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.";
+    for (const report of reports) {
+      const refused = find(
+        report,
+        "the server answers the reconnect's SELECT of database 1 with BUSY, then selects it again",
+      );
+      expect(refused.logged).toContain(`[Redis] ${busy}`);
+      expect(refused.call).toBe(`QueryError: Redis refused database 1 after a reconnect: ${busy}`);
+      expect(refused.delivered).toBe(0);
+      expect(refused.connected).toBe(false);
+      expect(refused.next).toBe('ok {"result":"value"}');
+      expect(refused.database).toBe("1");
       expect(refused.escaped).toEqual([]);
     }
   });

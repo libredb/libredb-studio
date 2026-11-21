@@ -1590,10 +1590,13 @@ export class RedisProvider extends BaseDatabaseProvider {
    * visible to an operator; without any listener ioredis printed every event as
    * "[ioredis] Unhandled error event" (#1356). The message only, never the error: a `ReplyError`
    * carries the command it answered, which for `AUTH` holds the password. One event also closes the
-   * client: the server refusing the `SELECT` ioredis sends for `db` on a reconnect, as it does
-   * when its ACL or its database count changed in between. The connection would go on in database
-   * 0, so it is closed at once, and every command on it fails with the refusal (`redisError`)
-   * instead of running there.
+   * client: an error reply to the `SELECT` ioredis sends for `db` on a reconnect. The server refuses
+   * it for good when its ACL or its database count changed in between, and for a while when it is
+   * busy running a script, has no client slot left, or refused the reconnect's `AUTH` (`NOAUTH`).
+   * Either way the connection would go on in database 0, so it is closed at once, and every command
+   * on it fails with the refusal (`redisError`) instead of running there. The session's client is
+   * also marked disconnected, so the provider cache opens the connection again on the next request,
+   * which then selects the database or is refused by name, instead of handing out a closed client.
    */
   private async openClient(db: number, commandTimeout?: number): Promise<Redis> {
     const client = new Redis({
@@ -1614,6 +1617,7 @@ export class RedisProvider extends BaseDatabaseProvider {
         const reason = this.agentProfile ? agentRefusalReason(error) : error.message;
         refusedDatabases.set(client, `Redis refused database ${db} after a reconnect: ${reason}`);
         client.disconnect();
+        if (client === this.client) this.setConnected(false);
       }
     });
     try {
