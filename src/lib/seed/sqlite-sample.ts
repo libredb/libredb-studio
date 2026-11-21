@@ -87,6 +87,17 @@ async function fileExists(p: string): Promise<boolean> {
  * concurrent workers each publish one complete file (last writer wins; both
  * copies are identical).
  *
+ * The copy is switched to WAL journal mode before the rename publishes it.
+ * The template is in rollback-journal mode, and every writable open runs
+ * `PRAGMA journal_mode = WAL`, which on such a file needs an exclusive lock
+ * that SQLite does not wait for, with or without a busy timeout. The first
+ * page load opens the sample from several routes at once, so most of those
+ * opens failed with "database is locked", and none did on a copy already in
+ * WAL mode (docs/providers/sqlite.md, "PRAGMAs on connect"). The switch is
+ * made here by the provider's own open sequence, once, on a temp file no other
+ * connection can see yet; a template that is not a SQLite database is refused
+ * by that open rather than published.
+ *
  * Genuinely asynchronous (fs.promises throughout): instrumentation.ts
  * fire-and-forgets this, and only real await points make that true — with
  * sync fs calls the whole copy would run before the IIFE's first suspension,
@@ -110,6 +121,7 @@ export async function seedSqliteSampleFile(filePath: string): Promise<"seeded" |
 
   try {
     await fs.promises.copyFile(templatePath, tempPath);
+    await switchToWalJournal(tempPath);
     try {
       await fs.promises.rename(tempPath, filePath);
     } catch (renameError) {
@@ -125,6 +137,34 @@ export async function seedSqliteSampleFile(filePath: string): Promise<"seeded" |
     throw error;
   }
   return "seeded";
+}
+
+/**
+ * Open the private copy once with the SQLite provider, whose open switches a writable file to
+ * WAL journal mode, and close it again. Imported lazily, as the LibreDB sample imports its
+ * engine, so the routes that only list the sample do not load the provider.
+ *
+ * The close removes the `-wal` and `-shm` files beside the copy where SQLite does (Linux,
+ * Windows, and every worker open, which runs node:sqlite); bun:sqlite on macOS keeps them
+ * (docs/providers/sqlite.md, "PRAGMAs on connect"). Nothing was written in WAL mode, so they
+ * hold no page, and they are removed here so no file named after the temp path is left behind.
+ */
+async function switchToWalJournal(tempPath: string): Promise<void> {
+  const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
+  const provider = new SQLiteProvider({
+    id: `seed:${SQLITE_SAMPLE_SEED_ID}`,
+    name: "Sample (Employees)",
+    type: "sqlite",
+    database: tempPath,
+    createdAt: new Date(0),
+  });
+  try {
+    await provider.connect();
+  } finally {
+    await provider.disconnect();
+    await fs.promises.rm(`${tempPath}-wal`, { force: true });
+    await fs.promises.rm(`${tempPath}-shm`, { force: true });
+  }
 }
 
 /** The built-in editable seed connection descriptor (managed:false). */

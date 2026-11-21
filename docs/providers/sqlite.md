@@ -185,6 +185,11 @@ different open sequence entirely — `journal_mode = WAL` is itself a write and 
 handle ([§12.1](#121-where-the-boundary-is)). So does an existing file this process cannot write
 ([§3.7](#37-a-database-file-this-process-cannot-write)).
 
+The switch to WAL is a write that needs an exclusive lock on a file still under a rollback journal, and SQLite does not wait for it: while any other connection holds the file, the open fails at once with `Failed to open SQLite database: database is locked`, and a busy timeout does not change that (measured 2026-11-21 on `bun:sqlite` and `node:sqlite`: four processes running this open sequence at once on a fresh rollback-journal copy lost at least one open in every trial; with `busy_timeout = 5000` set first, 29 of 60 opens on `node:sqlite` and 35 of 60 on `bun:sqlite` still failed, each within 5 ms of its start).
+On a file already in WAL mode the pragma has nothing to switch, and four or eight processes opened it every time (0 of 1,520 opens failed, on both drivers, with and without a busy timeout).
+So the first opens of a rollback-journal file, made by several requests at once, can fail; the embedded sample is published in WAL mode for that reason ([§4.1](#41-embedded-sample-database-standalone-mode)).
+`tests/integration/db/sqlite-provider.test.ts` pins both answers beside a reader that holds the file.
+
 `disconnect()` closes with `close(true)`, and the argument is load-bearing. Bare `close()` on
 `bun:sqlite` is `sqlite3_close_v2`: with any statement still unfinalized the connection becomes a
 zombie and the database, its `-wal` and its `-shm` stay **open** until the last statement is
@@ -493,6 +498,11 @@ from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sa
 [`seed-assets/sqlite/ATTRIBUTION.md`](../../seed-assets/sqlite/ATTRIBUTION.md)) to
 `<data dir>/sample-employees.db` and `getManagedConnections()` advertises it as an editable,
 dismissable "Sample (Employees)" connection (`type: "sqlite"`, `managed: false`, `roles: ["admin"]`).
+
+The template is in rollback-journal mode.
+The seed copies it to a temp file beside the target, opens that copy once with this provider, whose open switches it to WAL journal mode ([§3.2](#32-pragmas-on-connect)), closes it, and only then renames it into place.
+So the published sample is already in WAL mode, and the first page load, which opens it from several routes at once, has no switch to race.
+A template that is not a SQLite database is refused by that open, and nothing is published.
 
 Unlike the LibreDB sample, the copy runs **asynchronously and fail-open**: `register()`
 fires-and-forgets the seed (start/completion/duration are logged), boot never waits on it, and a

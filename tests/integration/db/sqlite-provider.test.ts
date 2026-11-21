@@ -1304,6 +1304,44 @@ describe("SQLiteProvider", () => {
       expect(overview.tableCount).toBe(1);
     });
 
+    // §3.2: the open switches a writable file to WAL journal mode. On a file still under a rollback
+    // journal that switch needs an exclusive lock, and SQLite answers "database is locked" at once
+    // while any other connection holds the file; once the file is in WAL mode there is nothing to
+    // switch, and the open succeeds beside a reader. This is why the sample is seeded in WAL mode.
+    test("an open beside a reader fails on a rollback-journal file and succeeds once the file is in WAL mode", async () => {
+      const dbPath = join(fileTmpDir, "journal-switch.db");
+      const setup = new BunDatabase(dbPath);
+      setup.exec("PRAGMA journal_mode = DELETE");
+      setup.exec("CREATE TABLE j (id INTEGER PRIMARY KEY)");
+      setup.close();
+
+      const reader = new BunDatabase(dbPath, { readonly: true });
+      reader.exec("BEGIN");
+      reader.query("SELECT COUNT(*) FROM j").get();
+      try {
+        provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+        await expect(provider.connect()).rejects.toThrow("Failed to open SQLite database: database is locked");
+      } finally {
+        reader.exec("COMMIT");
+        reader.close();
+      }
+
+      const switcher = new BunDatabase(dbPath);
+      switcher.exec("PRAGMA journal_mode = WAL");
+      switcher.close();
+      const walReader = new BunDatabase(dbPath, { readonly: true });
+      walReader.exec("BEGIN");
+      walReader.query("SELECT COUNT(*) FROM j").get();
+      try {
+        provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+        await provider.connect();
+        expect(provider.isConnected()).toBe(true);
+      } finally {
+        walReader.exec("COMMIT");
+        walReader.close();
+      }
+    });
+
     test("getStorageStats lists the main database plus WAL and SHM sidecar files", async () => {
       const dbPath = join(fileTmpDir, "storage.db");
       provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
