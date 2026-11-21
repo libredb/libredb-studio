@@ -333,9 +333,11 @@ The server finds that directory only through `SEED_ASSETS_DIR`, which every laun
 Every launcher but the desktop app keeps a value the operator set, and an empty value counts as unset.
 The desktop app sets it on every start, as it does its storage path.
 In a source checkout, `bun dev` and `bun start` run Next.js through `scripts/next-with-seed-assets.mjs`, which sets it to the checkout's own `seed-assets`, found from the script's location, unless the caller set a value.
-Next.js reads the process environment before any `.env` file, so under `bun dev` and `bun start` a `SEED_ASSETS_DIR` in `.env.local` is not read: export it in the shell instead.
+Next.js reads the process environment before any `.env` file and skips a key already there, so a `SEED_ASSETS_DIR` in a `.env` file would be dropped once the launcher sets its default.
+So when the caller set none, the launcher refuses to start, exit 1, if a `.env` file Next.js reads for that command in the working directory assigns it (`.env.local`, `.env` and the `.env.development` or `.env.production` pair, with their `.local` forms), and names the file: export the value in the shell instead.
+An inspector set in `NODE_OPTIONS`, such as `--inspect` or `--inspect-brk`, is taken by the launcher, which starts first, not by the server, so debug the server with `bun start --inspect` or `bun run dev --inspect`.
 A `server.js` that no launcher starts, such as the standalone tarball extracted and run by hand, needs it set by whoever starts it, for example from the extracted directory: `SEED_ASSETS_DIR="$PWD/seed-assets" node server.js`.
-The server never takes the directory from its working directory: with `SEED_ASSETS_DIR` unset or blank it starts as usual, and every enabled sample whose file is not in the data directory yet is listed unavailable as `asset-directory-unset` and logged once.
+The server never takes the directory from its working directory: with `SEED_ASSETS_DIR` unset or blank it starts as usual, and every enabled, admitted sample whose file is not at its target yet is listed unavailable as `asset-directory-unset` and logged once.
 A relative value is resolved against the server's working directory, as every other path setting is.
 A sample whose assets are not where it points is listed unavailable with its reason, and boot continues ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
 
@@ -1646,7 +1648,7 @@ macOS, missing artifact) and prints a summary. Where each channel runs in CI:
 
 The next-dev row's servers get this checkout's `seed-assets` from `playwright.config.ts`, the tarball channel, which has no launcher, gets it from the script, as a user running `server.js` directly would, and the docker channel runs on the image's `ENV`.
 Every channel the script starts through a launcher runs with no inherited `SEED_ASSETS_DIR`, so it runs on the value its launcher sets ([Built-in sample assets](#built-in-sample-assets)), and a wrong value fails it.
-A launcher that sets nothing fails it as well: the server never takes the assets from its working directory, so both samples are listed unavailable as `asset-directory-unset` and the spec does not find them.
+A launcher that sets nothing fails it as well: the server never takes the assets from its working directory, so both samples are listed unavailable as `asset-directory-unset`, never as connections, and the spec's two query tests fail on them; its sidebar test still passes, since an Unavailable row shows the sample's name.
 The default `scripts/next-with-seed-assets.mjs` sets for `bun dev` and `bun start` when the caller sets none is not exercised here, since `playwright.config.ts` sets the variable; that launcher's own unit test proves it.
 
 ### First-release validation runbook

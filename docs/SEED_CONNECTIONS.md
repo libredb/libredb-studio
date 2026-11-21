@@ -1782,7 +1782,7 @@ An operator's own seed connections are listed before both.
 
 Each sample is a committed file in the seed assets directory, `SEED_ASSETS_DIR`.
 Every launcher sets it to the `seed-assets` directory its payload ships beside `server.js`, and in a source checkout `bun dev` and `bun start` set it to the checkout's own ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)).
-The server never takes it from its working directory: with `SEED_ASSETS_DIR` unset or blank, a sample whose file is not in the data directory yet is listed unavailable as `asset-directory-unset`, and one whose file is already there is listed as usual.
+The server never takes it from its working directory: with `SEED_ASSETS_DIR` unset or blank, an enabled, admitted sample whose file is not at its target yet is listed unavailable as `asset-directory-unset`, and one whose file is already there is listed as usual.
 Each file is the output of a committed script, held by a test that reruns it, and the sample table pins its size and SHA-256 digest; `seed-assets/README.md` lists them.
 At boot, `src/lib/seed/sample-copy.ts` copies each enabled sample's file into the data directory and opens no database:
 
@@ -1895,7 +1895,7 @@ Hover the marker for the reason, and find the warning `Embedded sample unavailab
   Two paths that differ only in Unicode normalization form, such as a precomposed `ü` against a `u` followed by a combining diaeresis (NFC against NFD), conflict on every OS too, because on macOS they name one file.
   Give each sample its own.
 - `target-lost`: the sample's file was in place, and a later request could not find it (`ENOENT`) or could not check its path (`EACCES`, `ENOTDIR`).
-  Give the server back access to the path, or restart it, which copies a removed sample again.
+  Give the server back access to the path, or restart it, which copies a removed sample again when `SEED_ASSETS_DIR` is set; without it the sample is listed as `asset-directory-unset`.
 
 A restart retries the copy and reads the variables again; a sample whose file exists is never copied again.
 

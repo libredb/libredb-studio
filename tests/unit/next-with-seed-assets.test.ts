@@ -42,8 +42,8 @@ if (mode === "exit") {
 `;
 
 /** A checkout-shaped fixture: the launcher and its helper copied in at the same relative paths, an empty seed-assets, and a stub next package. */
-function checkout({ withNext = true }: { withNext?: boolean } = {}): string {
-  const root = fs.mkdtempSync(path.join(tempDir, "checkout-"));
+function checkout({ withNext = true, parent = tempDir }: { withNext?: boolean; parent?: string } = {}): string {
+  const root = fs.mkdtempSync(path.join(parent, "checkout-"));
   fs.mkdirSync(path.join(root, "scripts"));
   fs.mkdirSync(path.join(root, "bin", "lib"), { recursive: true });
   fs.mkdirSync(path.join(root, "seed-assets"));
@@ -64,13 +64,33 @@ function checkout({ withNext = true }: { withNext?: boolean } = {}): string {
   return root;
 }
 
-/** The test's environment without SEED_ASSETS_DIR, plus the case's own values. */
+/**
+ * The test's environment, plus the case's own values. Three keys are left out: SEED_ASSETS_DIR, which the cases set
+ * themselves; NODE_PATH, a further place Node.js looks for packages; and NODE_ENV, which bun test sets to test and
+ * which picks the .env files Next.js reads.
+ */
+const LEFT_OUT = new Set(["SEED_ASSETS_DIR", "NODE_PATH", "NODE_ENV"]);
 function envWith(overrides: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && key !== "SEED_ASSETS_DIR") env[key] = value;
+    if (value !== undefined && !LEFT_OUT.has(key)) env[key] = value;
   }
   return { ...env, ...overrides };
+}
+
+/**
+ * A next package at `directory`/next whose binary writes `ran` to `marker`: one the launcher must never run. Returns
+ * its package.json path.
+ */
+function strayNext(directory: string, marker: string): string {
+  const next = path.join(directory, "next");
+  fs.mkdirSync(path.join(next, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(next, "package.json"), JSON.stringify({ name: "next", bin: { next: "./bin/next" } }));
+  fs.writeFileSync(
+    path.join(next, "bin", "next"),
+    `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");`,
+  );
+  return path.join(next, "package.json");
 }
 
 function node(): string {
@@ -173,6 +193,119 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("Cannot find this checkout's Next.js CLI (run bun install)");
+  });
+
+  test("refuses, with exit code 1, a Next.js CLI that Node.js finds in a parent directory's node_modules, and never runs it", () => {
+    const outer = fs.mkdtempSync(path.join(tempDir, "outer-"));
+    const marker = path.join(outer, "ran");
+    const manifest = strayNext(path.join(outer, "node_modules"), marker);
+    const root = checkout({ withNext: false, parent: outer });
+    const result = run(root, ["dev"], {}, root);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Cannot find this checkout's Next.js CLI (run bun install)");
+    expect(result.stderr).toContain(`${real(manifest)} is outside ${real(root)}${path.sep}node_modules`);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  test("runs the Next.js CLI of a checkout whose node_modules is a link to another directory", () => {
+    const root = checkout();
+    const moved = fs.mkdtempSync(path.join(tempDir, "modules-"));
+    fs.renameSync(path.join(root, "node_modules"), path.join(moved, "node_modules"));
+    fs.symlinkSync(path.join(moved, "node_modules"), path.join(root, "node_modules"), "junction");
+    expect(report(run(root, ["dev"])).argv).toEqual(["dev"]);
+  });
+
+  test("refuses, with exit code 1, a Next.js CLI that Node.js finds through NODE_PATH, and never runs it", () => {
+    const elsewhere = fs.mkdtempSync(path.join(tempDir, "node-path-"));
+    const marker = path.join(elsewhere, "ran");
+    strayNext(elsewhere, marker);
+    const root = checkout({ withNext: false });
+    const result = run(root, ["dev"], { NODE_PATH: elsewhere }, root);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Cannot find this checkout's Next.js CLI (run bun install)");
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  /** A working directory holding one .env file with `content`. */
+  function withEnvFile(name: string, content: string): string {
+    const cwd = fs.mkdtempSync(path.join(tempDir, "env-"));
+    fs.writeFileSync(path.join(cwd, name), content);
+    return cwd;
+  }
+
+  test.each([
+    ["dev", ".env.development.local"],
+    ["dev", ".env.local"],
+    ["dev", ".env.development"],
+    ["dev", ".env"],
+    ["start", ".env.production.local"],
+    ["start", ".env.local"],
+    ["start", ".env.production"],
+    ["start", ".env"],
+  ])(
+    "%s refuses, with exit code 1, a SEED_ASSETS_DIR assigned in %s, whose value Next.js would drop, and names the file",
+    (command, name) => {
+      const cwd = withEnvFile(name, "OTHER_SETTING=1\nSEED_ASSETS_DIR=/from/the/file\n");
+      const result = run(checkout(), [command], {}, cwd);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(`SEED_ASSETS_DIR is assigned in ${path.join(real(cwd), name)}`);
+      expect(result.stderr).toContain("export SEED_ASSETS_DIR in the shell");
+    },
+  );
+
+  test.each(["export SEED_ASSETS_DIR=/x", "  SEED_ASSETS_DIR = /x", "SEED_ASSETS_DIR=", "SEED_ASSETS_DIR: /x"])(
+    "refuses the assignment form %p, as Next.js's .env parser reads each",
+    (line) => {
+      const result = run(checkout(), ["dev"], {}, withEnvFile(".env.local", `${line}\n`));
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("SEED_ASSETS_DIR is assigned in");
+    },
+  );
+
+  test.each(["# SEED_ASSETS_DIR=/x", "MY_SEED_ASSETS_DIR=/x", "SEED_ASSETS_DIRECTORY=/x", "OTHER=SEED_ASSETS_DIR=/x"])(
+    "runs on a .env file whose line %p assigns no SEED_ASSETS_DIR",
+    (line) => {
+      const root = checkout();
+      const { seedAssets } = report(run(root, ["dev"], {}, withEnvFile(".env.local", `${line}\n`)));
+      expect(real(seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
+    },
+  );
+
+  test.each([
+    ["dev", ".env.production"],
+    ["start", ".env.development"],
+    ["start", ".env.development.local"],
+  ])("%s runs on a SEED_ASSETS_DIR assigned in %s, which Next.js does not read for it", (command, name) => {
+    const root = checkout();
+    const { seedAssets } = report(run(root, [command], {}, withEnvFile(name, "SEED_ASSETS_DIR=/from/the/file\n")));
+    expect(real(seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
+  });
+
+  test("with NODE_ENV=test reads the test files Next.js reads, which leave out .env.local", () => {
+    const root = checkout();
+    const local = withEnvFile(".env.local", "SEED_ASSETS_DIR=/from/the/file\n");
+    const { seedAssets } = report(run(root, ["dev"], { NODE_ENV: "test" }, local));
+    expect(real(seedAssets as string)).toBe(real(path.join(root, "seed-assets")));
+    const testLocal = withEnvFile(".env.test.local", "SEED_ASSETS_DIR=/from/the/file\n");
+    const result = run(root, ["dev"], { NODE_ENV: "test" }, testLocal);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(`SEED_ASSETS_DIR is assigned in ${path.join(real(testLocal), ".env.test.local")}`);
+  });
+
+  test("keeps a SEED_ASSETS_DIR the caller exported over one in a .env file, as Next.js does", () => {
+    const own = path.join(tempDir, "own-assets");
+    const cwd = withEnvFile(".env.local", "SEED_ASSETS_DIR=/from/the/file\n");
+    expect(report(run(checkout(), ["dev"], { SEED_ASSETS_DIR: own }, cwd)).seedAssets).toBe(own);
+  });
+
+  test("reads no .env file for a command other than dev and start", () => {
+    const cwd = withEnvFile(".env", "SEED_ASSETS_DIR=/from/the/file\n");
+    const result = run(checkout(), ["exit", "0"], {}, cwd);
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
   });
 
   const NO_POSIX_SIGNALS =
