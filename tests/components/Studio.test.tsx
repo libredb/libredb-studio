@@ -565,6 +565,7 @@ const { default: Studio } = await import("@/components/Studio");
 import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions";
+import type { CreateTableNames } from "@/components/CreateTableModal";
 
 // =============================================================================
 // Test data
@@ -2452,6 +2453,22 @@ describe("Studio", () => {
     act(() => fn());
     expect(mockSetEditingEnabled).toHaveBeenCalledWith(false);
     expect(mockHandleDiscardChanges).toHaveBeenCalled();
+  });
+
+  test("the Create Table form is handed the active connection's name quoting, by its type", () => {
+    // The declaration names PostgreSQL's port, so only the connection's type can quote with backticks.
+    connMgrOverride = { activeConnection: { ...pgConn, type: "mysql" as const } };
+    capabilitiesOverride = { defaultPort: 5432 };
+    render(<Studio />);
+    const names = capturedCreateTableProps.names as CreateTableNames;
+    expect(names.typed("a b")).toBe("`a b`");
+    expect(names.container(["app db"])).toBe("`app db`");
+  });
+
+  test("with no active connection the form is handed no names", () => {
+    connMgrOverride = { activeConnection: null };
+    render(<Studio />);
+    expect(capturedCreateTableProps.names).toBeUndefined();
   });
 
   // --- Inline-edit capability gate (#269) ---

@@ -10,8 +10,11 @@
  *   bun tests/fixtures/query-generators/generator-corpus.ts > tests/fixtures/query-generators/generator-corpus.json
  *
  * The declarations are every shipped provider's own, built unconnected through the real factory, and synthetic ones
- * that reach each port, language and declared-quoting arm alone and in combination, as a host's own declaration to
- * `StudioWorkspace` may.
+ * that reach each SQL engine row, language and declared-quoting arm alone and in combination, as a host's own
+ * declaration to `StudioWorkspace` may.
+ * Each provider's declaration is read under its own type id.
+ * Each synthetic one is read under `TYPE_OF_PORT[port]`, the type whose SQL engine row its port selected when the
+ * generators still keyed those rows by port, so the committed digests hold across the move to type ids.
  */
 import { createHash } from "node:crypto";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -26,7 +29,7 @@ import {
   quoteObjectPath,
   quoteTypedName,
 } from "@/lib/query-generators";
-import type { ColumnSchema } from "@/lib/types";
+import type { ColumnSchema, DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 const PATHS: readonly (readonly string[])[] = [
@@ -105,17 +108,43 @@ function base(overrides: Partial<ProviderCapabilities>): ProviderCapabilities {
   };
 }
 
-/** Declarations no shipped provider makes, each reaching one arm or two at once. */
-function syntheticDeclarations(): Record<string, ProviderCapabilities> {
-  const out: Record<string, ProviderCapabilities> = {};
-  const ports = [null, 5432, 3306, 1433, 1521, 8091, 8888, 8123];
+/**
+ * The type each synthetic declaration is read under, by the port it names: the type whose SQL engine row that port
+ * selected before the rows were keyed by type id, and no type for no port. The label keeps the port, so each digest
+ * stays under the key it was committed with.
+ */
+const TYPE_OF_PORT: ReadonlyMap<number | null, DatabaseType | undefined> = new Map<
+  number | null,
+  DatabaseType | undefined
+>([
+  [null, undefined],
+  [5432, "postgres"],
+  [3306, "mysql"],
+  [1433, "mssql"],
+  [1521, "oracle"],
+  [8091, "couchbase"],
+  [8888, "druid"],
+  [8123, "clickhouse"],
+]);
+
+/** A declaration and the type it is read under. */
+interface Declaration {
+  readonly type: DatabaseType | undefined;
+  readonly caps: ProviderCapabilities;
+}
+
+/** Declarations no shipped provider makes, each reaching one arm or two at once, with the type each is read under. */
+function syntheticDeclarations(): Record<string, Declaration> {
+  const out: Record<string, Declaration> = {};
   const quotings = [undefined, "double", "double-always", "backtick", "backtick-always"] as const;
-  for (const port of ports) {
+  for (const [port, type] of TYPE_OF_PORT) {
+    const add = (label: string, overrides: Partial<ProviderCapabilities>): void => {
+      out[label] = { type, caps: base({ defaultPort: port, ...overrides }) };
+    };
     for (const quoting of quotings) {
-      out[`sql port=${port} quoting=${quoting}`] = base({ defaultPort: port, identifierQuoting: quoting });
+      add(`sql port=${port} quoting=${quoting}`, { identifierQuoting: quoting });
     }
-    out[`sql port=${port} window`] = base({
-      defaultPort: port,
+    add(`sql port=${port} window`, {
       previewTimeWindow: {
         column: "time",
         since: "now() - INTERVAL '1 hour'",
@@ -123,8 +152,7 @@ function syntheticDeclarations(): Record<string, ProviderCapabilities> {
         examples: ["SELECT {column} FROM {table}", "-- a $& {table}\nnext"],
       },
     } as Partial<ProviderCapabilities>);
-    out[`sql port=${port} projection`] = base({
-      defaultPort: port,
+    add(`sql port=${port} projection`, {
       previewProjection: {
         rules: [
           { type: "^geometry$", expression: "ST_AsText({column})" },
@@ -134,28 +162,27 @@ function syntheticDeclarations(): Record<string, ProviderCapabilities> {
         omittedNote: "they cannot be read",
       },
     } as Partial<ProviderCapabilities>);
-    out[`sql port=${port} no-terminator no-constant`] = base({
-      defaultPort: port,
+    add(`sql port=${port} no-terminator no-constant`, {
       statementTerminator: "none",
       supportsConstantPredicate: false,
     } as Partial<ProviderCapabilities>);
     for (const language of ["promql", "cypher", "influxql", "json"] as const) {
-      out[`${language} port=${port}`] = base({ queryLanguage: language, defaultPort: port });
-      out[`${language} port=${port} backtick`] = base({
-        queryLanguage: language,
-        defaultPort: port,
-        identifierQuoting: "backtick",
-      });
+      add(`${language} port=${port}`, { queryLanguage: language });
+      add(`${language} port=${port} backtick`, { queryLanguage: language, identifierQuoting: "backtick" });
     }
   }
-  out["json schema-level"] = base({
-    queryLanguage: "json",
-    containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
-  } as unknown as Partial<ProviderCapabilities>);
-  out["host dialect constructor"] = base({
-    queryLanguage: "json",
-    queryDialect: "constructor" as ProviderCapabilities["queryDialect"],
-  });
+  // The two portless declarations name no engine, so they are read under no type.
+  out["json schema-level"] = {
+    type: undefined,
+    caps: base({
+      queryLanguage: "json",
+      containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+    } as unknown as Partial<ProviderCapabilities>),
+  };
+  out["host dialect constructor"] = {
+    type: undefined,
+    caps: base({ queryLanguage: "json", queryDialect: "constructor" as ProviderCapabilities["queryDialect"] }),
+  };
   return out;
 }
 
@@ -168,25 +195,25 @@ function attempt(generate: () => unknown): unknown {
   }
 }
 
-/** Every answer for one declaration, in a fixed order. */
-function answers(caps: ProviderCapabilities): unknown[] {
+/** Every answer for one declaration read under `type`, in a fixed order. */
+function answers(type: DatabaseType | undefined, caps: ProviderCapabilities): unknown[] {
   const out: unknown[] = [];
   for (const name of NAMES) {
-    out.push(attempt(() => quoteIdentifier(name, caps)));
-    out.push(attempt(() => quoteIdentifier(name, caps, { always: true })));
-    out.push(attempt(() => quoteTypedName(name, caps)));
+    out.push(attempt(() => quoteIdentifier(name, type, caps)));
+    out.push(attempt(() => quoteIdentifier(name, type, caps, { always: true })));
+    out.push(attempt(() => quoteTypedName(name, type, caps)));
   }
   for (const path of PATHS) {
-    out.push(attempt(() => quoteObjectPath(path, caps)));
-    out.push(attempt(() => quoteObjectPath(path, caps, { always: true })));
-    out.push(attempt(() => generateCountQuery(path, caps)));
+    out.push(attempt(() => quoteObjectPath(path, type, caps)));
+    out.push(attempt(() => quoteObjectPath(path, type, caps, { always: true })));
+    out.push(attempt(() => generateCountQuery(path, type, caps)));
     for (const columns of COLUMN_SETS) {
       for (const scope of SCOPES) {
-        out.push(attempt(() => generateTableQuery(path, caps, columns, scope)));
-        out.push(attempt(() => generateSelectQuery(path, columns, caps, scope)));
+        out.push(attempt(() => generateTableQuery(path, type, caps, columns, scope)));
+        out.push(attempt(() => generateSelectQuery(path, columns, type, caps, scope)));
       }
     }
-    out.push(attempt(() => generateTableQuery(path, caps)));
+    out.push(attempt(() => generateTableQuery(path, type, caps)));
     for (const action of ROW_ACTIONS) {
       out.push(attempt(() => generateRowActionQuery(path, action, caps, { kind: "Pod" })));
       out.push(attempt(() => generateRowActionQuery(path, action, caps, { kind: "Deployment", readOnly: true })));
@@ -207,12 +234,13 @@ export async function generatorCorpusDigests(): Promise<string> {
       SHIPPED_DATABASE_TYPES.map((type) => createDatabaseProvider(CENSUS_CONNECTION[type])),
     );
     for (const [index, type] of SHIPPED_DATABASE_TYPES.entries()) {
-      out[`provider ${type}`] = digest(answers(providers[index].getCapabilities()));
+      out[`provider ${type}`] = digest(answers(type, providers[index].getCapabilities()));
     }
   } finally {
     console.log = realLog;
   }
-  for (const [label, caps] of Object.entries(syntheticDeclarations())) out[label] = digest(answers(caps));
+  for (const [label, { type, caps }] of Object.entries(syntheticDeclarations()))
+    out[label] = digest(answers(type, caps));
   return `${JSON.stringify(out, null, 1)}\n`;
 }
 

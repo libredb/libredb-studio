@@ -1576,8 +1576,8 @@ describe("OracleProvider", () => {
       // The polarity of this guard is unchanged: no trailing `;`, because that is what
       // Oracle answers ORA-00933 for. What moved is the row bound, which #816 took out of
       // the generated text and into the `limit` execution option.
-      expect(generateTableQuery(["APP", "APP_CUSTOMERS"], caps)).toBe("SELECT * FROM APP.APP_CUSTOMERS");
-      expect(generateSelectQuery(["APP", "APP_CUSTOMERS"], [], caps)).toBe(
+      expect(generateTableQuery(["APP", "APP_CUSTOMERS"], "oracle", caps)).toBe("SELECT * FROM APP.APP_CUSTOMERS");
+      expect(generateSelectQuery(["APP", "APP_CUSTOMERS"], [], "oracle", caps)).toBe(
         "SELECT\n  *\nFROM APP.APP_CUSTOMERS\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY",
       );
     });

@@ -26,15 +26,16 @@ interface TestDataGeneratorProps {
   tableSchema: DetailedObject | null;
   /**
    * The type id of the connection the rows are written for, as a plain string because this dialog is published.
-   * Omitted, the statement is written as with no connection open. A value that is not exactly a type id, the empty
+   * Omitted, the statement is written as with no connection open: names are quoted by the declaration's
+   * `identifierQuoting` or the shared default. A value that is not exactly a type id, the empty
    * string and `null` included, is refused by name (FND-1): the dialog draws the Connection unavailable notice in place
    * of the statement and offers neither Copy nor Execute.
    */
   databaseType?: string;
   /**
    * The connected provider's declaration. It replaced a bare `queryLanguage` string because
-   * the statement now needs the dialect's QUOTING as well as its language, and both come
-   * from the same declaration rather than from two props that can disagree.
+   * the statement now needs the dialect's QUOTING as well as its language: the language and a declared
+   * `identifierQuoting` come from this declaration, and an SQL engine's own quoting from `databaseType`.
    */
   capabilities?: ProviderCapabilities;
   onExecuteQuery: (query: string) => void;
@@ -395,15 +396,6 @@ export function TestDataGenerator({
   // The comparable spelling of the address, for the memo's dependency list: an array prop is
   // a new identity on every render and would defeat the memo.
   const tablePathKey = pathKey(tablePath);
-  /*
-    What the statement names. With a declaration it is the address quoted per segment, the
-    same rule and the same function the query generators use, so a name containing a dot
-    cannot become a qualifier. Without one - `provider-meta` has not answered yet - it is the
-    dotted spelling, which is what `useTabManager` writes in the same position for the same
-    reason: a qualified address is valid wherever the bare label is, and a bare label here
-    would write rows into another container's table.
-  */
-  const target = capabilities === undefined ? objectPathLabel(tablePath) : quoteObjectPath(tablePath, capabilities);
   const [rowCount, setRowCount] = useState(10);
   const [refreshKey, setRefreshKey] = useState(0);
   // Why `databaseType` is refused, or null for a type id and for no type at all (FND-1). The statement checks it
@@ -484,12 +476,26 @@ export function TestDataGenerator({
     }
 
     // SQL INSERT
+    // A type id or no type at all here: a refused value returned first, so no generator reads it.
+    const connectionType = databaseType as DatabaseType | undefined;
+    /*
+      What the statement names. With a declaration it is the address quoted per segment, the
+      same rule and the same function the query generators use, so a name containing a dot
+      cannot become a qualifier. Without one - `provider-meta` has not answered yet - it is the
+      dotted spelling, which is what `useTabManager` writes in the same position for the same
+      reason: a qualified address is valid wherever the bare label is, and a bare label here
+      would write rows into another container's table.
+    */
+    const target =
+      capabilities === undefined
+        ? objectPathLabel(tablePath)
+        : quoteObjectPath(tablePath, connectionType, capabilities);
     // Quoted by the CONNECTED engine's rule, like the target above: a hardcoded `"`
     // made the two halves of one statement speak different dialects, and MySQL reads
     // `"email"` as a string literal rather than a column, so the INSERT did not parse.
     // The fallback is the old spelling, for a caller that has no declaration to read.
     const colNames = cols
-      .map((c) => (capabilities === undefined ? `"${c.name}"` : quoteIdentifier(c.name, capabilities)))
+      .map((c) => (capabilities === undefined ? `"${c.name}"` : quoteIdentifier(c.name, connectionType, capabilities)))
       .join(", ");
     const rows = Array.from({ length: rowCount }, (_, i) => {
       const values = cols.map((col) => {
@@ -542,7 +548,7 @@ export function TestDataGenerator({
     columnConfigs,
     rowCount,
     queryLanguage,
-    target,
+    capabilities,
     tablePathKey,
     databaseType,
     refreshKey,

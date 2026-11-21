@@ -322,7 +322,7 @@ export async function POST(req: NextRequest) {
       // SQL profiling
       // Quote the ADDRESS once for the target dialect, per segment and never by splitting a
       // string: two containers may hold one label, and a name may itself contain a dot.
-      const safeTable = quoteObjectPath(path, capabilities);
+      const safeTable = quoteObjectPath(path, provider.type, capabilities);
 
       // The run is recorded with the quoted path as its statement, never the reads Studio built around it
       // (docs/GOVERNANCE.md#query-events).
@@ -340,7 +340,7 @@ export async function POST(req: NextRequest) {
               provider,
               safeTable,
               col,
-              quoteIdentifier(col, capabilities, { always: true }),
+              quoteIdentifier(col, provider.type, capabilities, { always: true }),
               totalRows,
             ),
           );
@@ -350,7 +350,9 @@ export async function POST(req: NextRequest) {
         // through the same limiter the editor's statements go through: `LIMIT 5` written here
         // was a syntax error on Oracle, SQL Server and Db2.
         const topCols = profiled.slice(0, 5);
-        const safeCols = topCols.map((c) => quoteIdentifier(c, capabilities, { always: true })).join(", ");
+        const safeCols = topCols
+          .map((c) => quoteIdentifier(c, provider.type, capabilities, { always: true }))
+          .join(", ");
         try {
           const sample = provider.prepareQuery(`SELECT ${safeCols} FROM ${safeTable}`, { limit: 5 });
           const sampleResult = await provider.query(sample.query);

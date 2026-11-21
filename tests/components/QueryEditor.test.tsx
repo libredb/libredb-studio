@@ -3468,13 +3468,37 @@ describe("QueryEditor completion addresses (#1397)", () => {
     const capabilities = { queryLanguage: "sql", defaultPort: 3306 } as unknown as Parameters<
       typeof QueryEditor
     >[0]["capabilities"];
-    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ capabilities })));
+    const { unmount } = render(
+      React.createElement(QueryEditor, createDefaultProps({ capabilities, databaseType: "mysql" })),
+    );
     const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
     expect(calls[calls.length - 1][1].quoteSegment!("e2e-other")).toBe("`e2e-other`");
     unmount();
     const bare = render(React.createElement(QueryEditor, createDefaultProps()));
     expect(calls[calls.length - 1][1].quoteSegment).toBeUndefined();
     bare.unmount();
+    mockUseMonacoReturn = null;
+  });
+
+  test("completion quotes a segment by the connection's type, never the port its declaration names", () => {
+    mockUseMonacoReturn = { Range: class {} };
+    mockRegisterSQLCompletionProvider.mockClear();
+    type Capabilities = Parameters<typeof QueryEditor>[0]["capabilities"];
+    const declaring = (defaultPort: number) => ({ queryLanguage: "sql", defaultPort }) as unknown as Capabilities;
+    const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
+    const cases: readonly (readonly [Parameters<typeof QueryEditor>[0]["databaseType"], number, string])[] = [
+      ["mysql", 5432, "`e2e-other`"],
+      ["postgres", 3306, '"e2e-other"'],
+      // No type is no connection's engine: the declaration's own quoting or the shared default, whatever its port.
+      [undefined, 3306, '"e2e-other"'],
+    ];
+    for (const [databaseType, defaultPort, quoted] of cases) {
+      const view = render(
+        React.createElement(QueryEditor, createDefaultProps({ capabilities: declaring(defaultPort), databaseType })),
+      );
+      expect(calls[calls.length - 1][1].quoteSegment!("e2e-other")).toBe(quoted);
+      view.unmount();
+    }
     mockUseMonacoReturn = null;
   });
 
@@ -3498,7 +3522,9 @@ describe("QueryEditor completion addresses (#1397)", () => {
     expect(spelling.pathNames(["lake", "a.b", "t"])).toStrictEqual([["lake"], ["a", "b"], ["t"]]);
     spelled.unmount();
     const mysql = { queryLanguage: "sql", defaultPort: 3306 } as unknown as Capabilities;
-    const plain = render(React.createElement(QueryEditor, createDefaultProps({ capabilities: mysql })));
+    const plain = render(
+      React.createElement(QueryEditor, createDefaultProps({ capabilities: mysql, databaseType: "mysql" })),
+    );
     expect(calls[calls.length - 1][1].containerSpelling).toBeUndefined();
     plain.unmount();
     mockUseMonacoReturn = null;

@@ -1563,7 +1563,7 @@ describe("Db2Provider: prepareQuery", () => {
   });
 
   test("the preview the object browser generates reads each column through the projection", () => {
-    const preview = generateTableQuery(["APP", "ALLTYPES"], provider.getCapabilities(), [
+    const preview = generateTableQuery(["APP", "ALLTYPES"], "db2", provider.getCapabilities(), [
       { name: "ID", type: "INTEGER", nullable: false, isPrimary: true },
       { name: "C_BIG", type: "BIGINT", nullable: true, isPrimary: false },
       { name: "C_VCHAR", type: "VARCHAR(50)", nullable: true, isPrimary: false },

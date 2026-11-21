@@ -2217,7 +2217,7 @@ describe("RedisProvider", () => {
           { name: "value", type: sample, nullable: true, isPrimary: false },
           { name: "type", type: sample, nullable: false, isPrimary: false },
         ];
-        const out = generateSelectQuery(["user:*"], columns, provider.getCapabilities());
+        const out = generateSelectQuery(["user:*"], columns, "redis", provider.getCapabilities());
         const lines = out
           .split("\n")
           .map((l) => l.trim())
@@ -2261,7 +2261,7 @@ describe("RedisProvider", () => {
       // Plain-form `DEL "say"hi""` tokenizes to `sayhi` — a DIFFERENT key. The
       // generator must fall back to the lossless JSON form for such a line.
       const calls = await runGeneratedLines(
-        generateSelectQuery(['say"hi"'], KEY_COLUMNS("string"), provider.getCapabilities()),
+        generateSelectQuery(['say"hi"'], KEY_COLUMNS("string"), "redis", provider.getCapabilities()),
       );
       for (const call of calls) {
         expect(call.args[0]).toBe('say"hi"');
@@ -2271,7 +2271,7 @@ describe("RedisProvider", () => {
 
     test("a key containing a single quote reaches the driver unmangled (#427)", async () => {
       const calls = await runGeneratedLines(
-        generateSelectQuery(["it's"], KEY_COLUMNS("hash"), provider.getCapabilities()),
+        generateSelectQuery(["it's"], KEY_COLUMNS("hash"), "redis", provider.getCapabilities()),
       );
       for (const call of calls) {
         expect(call.args[0]).toBe("it's");
@@ -2280,28 +2280,28 @@ describe("RedisProvider", () => {
 
     test("a quoted prefix group SCANs the pattern it meant to (#427)", async () => {
       const calls = await runGeneratedLines(
-        generateTableQuery(['a"b:*'], provider.getCapabilities(), KEY_COLUMNS("string")),
+        generateTableQuery(['a"b:*'], "redis", provider.getCapabilities(), KEY_COLUMNS("string")),
       );
       expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", 'a"b:*', "COUNT", "50"] }]);
     });
 
     test("a key containing whitespace still round-trips in plain form (#427)", async () => {
       const calls = await runGeneratedLines(
-        generateTableQuery(["my key"], provider.getCapabilities(), KEY_COLUMNS("string")),
+        generateTableQuery(["my key"], "redis", provider.getCapabilities(), KEY_COLUMNS("string")),
       );
       expect(calls).toEqual([{ command: "GET", args: ["my key"] }]);
     });
 
     test("an ordinary key still round-trips in plain form (#427)", async () => {
       const calls = await runGeneratedLines(
-        generateTableQuery(["user:1"], provider.getCapabilities(), KEY_COLUMNS("zset")),
+        generateTableQuery(["user:1"], "redis", provider.getCapabilities(), KEY_COLUMNS("zset")),
       );
       expect(calls).toEqual([{ command: "ZRANGE", args: ["user:1", "0", "-1", "WITHSCORES"] }]);
     });
 
     test("a glob-escaped prefix reaches the driver with its backslash intact (#427)", async () => {
       const calls = await runGeneratedLines(
-        generateTableQuery(["a[b:*"], provider.getCapabilities(), KEY_COLUMNS("string")),
+        generateTableQuery(["a[b:*"], "redis", provider.getCapabilities(), KEY_COLUMNS("string")),
       );
       expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "a\\[b:*", "COUNT", "50"] }]);
     });
@@ -2353,7 +2353,7 @@ describe("RedisProvider", () => {
 
     test("a blank line ends what a run reads: the cheatsheet runs only its first command", async () => {
       capturedCalls.length = 0;
-      await provider.query(generateSelectQuery(["user:*"], KEY_COLUMNS("string"), provider.getCapabilities()));
+      await provider.query(generateSelectQuery(["user:*"], KEY_COLUMNS("string"), "redis", provider.getCapabilities()));
       expect(capturedCalls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "user:*", "COUNT", "50"] }]);
     });
 
@@ -2434,7 +2434,7 @@ describe("RedisProvider", () => {
     test("a node name containing a newline cannot inject a command (#427)", async () => {
       const name = "a\nDEL user:1 x";
       const calls = await runWholeBuffer(
-        generateSelectQuery([name], KEY_COLUMNS("string"), provider.getCapabilities()),
+        generateSelectQuery([name], KEY_COLUMNS("string"), "redis", provider.getCapabilities()),
       );
       expect(calls).toEqual([{ command: "TYPE", args: [name] }]);
     });
@@ -2442,20 +2442,22 @@ describe("RedisProvider", () => {
     test("a node name containing CRLF cannot inject a command (#427)", async () => {
       const name = "a\r\nDEL user:1 x";
       const calls = await runWholeBuffer(
-        generateSelectQuery([name], KEY_COLUMNS("string"), provider.getCapabilities()),
+        generateSelectQuery([name], KEY_COLUMNS("string"), "redis", provider.getCapabilities()),
       );
       expect(calls).toEqual([{ command: "TYPE", args: [name] }]);
     });
 
     test("a node name containing a newline and a quote cannot inject a command (#427)", async () => {
       const name = 'a\nDEL "user:1" x';
-      const calls = await runWholeBuffer(generateSelectQuery([name], KEY_COLUMNS("hash"), provider.getCapabilities()));
+      const calls = await runWholeBuffer(
+        generateSelectQuery([name], KEY_COLUMNS("hash"), "redis", provider.getCapabilities()),
+      );
       expect(calls).toEqual([{ command: "TYPE", args: [name] }]);
     });
 
     test("a newline-bearing prefix group still SCANs its own pattern (#427)", async () => {
       const calls = await runWholeBuffer(
-        generateSelectQuery(["a\nDEL user:1 x:*"], KEY_COLUMNS("string"), provider.getCapabilities()),
+        generateSelectQuery(["a\nDEL user:1 x:*"], KEY_COLUMNS("string"), "redis", provider.getCapabilities()),
       );
       expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "a\nDEL user:1 x:*", "COUNT", "50"] }]);
     });
@@ -2505,7 +2507,7 @@ describe("RedisProvider", () => {
 
     for (const { name, node, sample, expected } of wholeBufferCases) {
       test(`the whole cheatsheet buffer for ${name} runs exactly its first block (#427)`, async () => {
-        const buffer = generateSelectQuery([node], KEY_COLUMNS(sample), provider.getCapabilities());
+        const buffer = generateSelectQuery([node], KEY_COLUMNS(sample), "redis", provider.getCapabilities());
         const calls = await runWholeBuffer(buffer);
         expect(calls).toEqual([expected]);
       });

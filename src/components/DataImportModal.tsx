@@ -182,12 +182,20 @@ export type ImportTarget =
  * A new table is the name the operator typed, read as a dotted address (`sales.imported` is a
  * table in `sales`) and quoted always, as its columns are (see `newColumnIdentifier`).
  */
-function targetIdentifier(target: ImportTarget, capabilities: ProviderCapabilities | undefined): string {
+function targetIdentifier(
+  target: ImportTarget,
+  dialect: DatabaseType | undefined,
+  capabilities: ProviderCapabilities | undefined,
+): string {
   if (target.kind === "new") {
     const name = target.name || "imported_data";
-    return capabilities === undefined ? name : quoteObjectPath(name.split("."), capabilities, { always: true });
+    return capabilities === undefined
+      ? name
+      : quoteObjectPath(name.split("."), dialect, capabilities, { always: true });
   }
-  return capabilities === undefined ? objectPathLabel(target.path) : quoteObjectPath(target.path, capabilities);
+  return capabilities === undefined
+    ? objectPathLabel(target.path)
+    : quoteObjectPath(target.path, dialect, capabilities);
 }
 
 /**
@@ -202,8 +210,12 @@ function targetIdentifier(target: ImportTarget, capabilities: ProviderCapabiliti
  * already has, and quoting a name a bare spelling folds (`Name` for PostgreSQL's `name`) would
  * address a different column.
  */
-function newColumnIdentifier(name: string, capabilities: ProviderCapabilities | undefined): string {
-  return capabilities === undefined ? name : quoteIdentifier(name, capabilities, { always: true });
+function newColumnIdentifier(
+  name: string,
+  dialect: DatabaseType | undefined,
+  capabilities: ProviderCapabilities | undefined,
+): string {
+  return capabilities === undefined ? name : quoteIdentifier(name, dialect, capabilities, { always: true });
 }
 
 /**
@@ -258,7 +270,7 @@ export function generateImportSQL(
     throw new Error("This connection's engine declares no create-table, so an import cannot create its target table.");
   }
 
-  const tableName = targetIdentifier(target, capabilities);
+  const tableName = targetIdentifier(target, dialect, capabilities);
   const createNewTable = target.kind === "new";
 
   const statements: string[] = [];
@@ -273,7 +285,7 @@ export function generateImportSQL(
   // CREATE TABLE if new
   if (createNewTable) {
     const colDefs = parsedData.headers.map((h, idx) => {
-      const colName = newColumnIdentifier(columnMapping[h] || h, capabilities);
+      const colName = newColumnIdentifier(columnMapping[h] || h, dialect, capabilities);
       return `  ${colName} ${columnTypes[idx]}`;
     });
     statements.push(`CREATE TABLE ${tableName} (\n${colDefs.join(",\n")}\n);`);
@@ -282,7 +294,7 @@ export function generateImportSQL(
   // INSERT statements, in groups of 100 rows, or one row each where the engine's INSERT takes
   // a single row (CQL, #1410).
   const mappedHeaders = parsedData.headers.map((h) =>
-    createNewTable ? newColumnIdentifier(columnMapping[h] || h, capabilities) : columnMapping[h] || h,
+    createNewTable ? newColumnIdentifier(columnMapping[h] || h, dialect, capabilities) : columnMapping[h] || h,
   );
   const batchSize = capabilities?.supportsMultiRowInsert === false ? 1 : 100;
 

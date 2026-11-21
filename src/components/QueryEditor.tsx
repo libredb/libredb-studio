@@ -84,6 +84,8 @@ interface QueryEditorProps {
    * A value outside `DatabaseType`, which only a caller outside TypeScript's checks can
    * pass, is refused by name as the editor renders: it throws `UnknownProviderError`
    * before any hook or reader runs with it, so the host's error boundary receives it.
+   * It also decides the SQL engine's own identifier quoting that completion writes; without it, completion quotes by
+   * the declaration's `identifierQuoting` or the shared default.
    */
   databaseType?: DatabaseType;
   schemaContext?: string;
@@ -351,13 +353,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         ...(capabilities === undefined
           ? {}
           : {
-              quoteSegment: (segment: string) => quoteIdentifier(segment, capabilities),
+              quoteSegment: (segment: string) => quoteIdentifier(segment, databaseType, capabilities),
               // Only an engine that spells a container segment itself has one; every other engine
               // keeps writing a qualified name segment by segment.
-              containerSpelling: containerSpellingOf(capabilities),
+              containerSpelling: containerSpellingOf(databaseType, capabilities),
             }),
       };
-    }, [parsedSchema, defaultContainer, capabilities]);
+    }, [parsedSchema, defaultContainer, databaseType, capabilities]);
 
     // The formatter of the tab's language, from its editor language row: SQL's, the JSON one MongoDB and
     // Kafka share, or none, in which case the toolbar draws no Format button and the shortcut does nothing.

@@ -834,6 +834,15 @@ describe("objects/selectStatement", () => {
     assert.deepEqual(methodsOf(provider), ["getCapabilities"]);
   });
 
+  it("answers the statement in its provider's type's quoting, never the port its declaration names", async () => {
+    // SQL_CAPS declares PostgreSQL's port; only the provider's type can write MySQL's backticks.
+    const { handlers } = await openedOn(fakeProvider({ type: "mysql", getCapabilities: () => SQL_CAPS }));
+    const object = { path: ["app", "Order Items"], name: "Order Items", kind: "table" };
+    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object }), {
+      statement: "SELECT * FROM app.`Order Items`;",
+    });
+  });
+
   it("names the described columns where a previewProjection is declared on a kind with columns", async () => {
     const detail = { path: ORDERS.path, columns: COLUMNS, indexes: [], foreignKeys: [] };
     const { handlers, provider } = await on(PROJECTED, { describeObject: async () => detail });
@@ -860,7 +869,7 @@ describe("objects/selectStatement", () => {
     const object = { path: ["orders"], name: "orders", kind: "collection" };
     let sentence = "";
     try {
-      generateTableQuery(object.path, JSON_CAPS);
+      generateTableQuery(object.path, "mongodb", JSON_CAPS);
     } catch (error) {
       sentence = (error as Error).message;
     }

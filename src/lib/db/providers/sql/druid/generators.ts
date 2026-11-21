@@ -1,11 +1,8 @@
 /**
- * Druid's identifier quoting, collected as its row by `SQL_PORT_GENERATORS` in
- * `src/lib/db/query-generators/index.ts`, keyed by the Router port its declaration names.
+ * Druid's identifier quoting, collected as its row of `SQL_ENGINE_GENERATORS` in
+ * `src/lib/db/query-generators/index.ts`, read under its type id.
  */
-import type { SqlPortGenerators } from "@/lib/db/query-generators/types";
-
-/** Apache Druid Router port, the capability signal for the Druid SQL dialect. */
-const DRUID_PORT = 8888;
+import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 
 /**
  * Druid (Calcite SQL): quote unconditionally, as Couchbase does. A bare reserved word is a SYNTAX error, not a
@@ -15,6 +12,5 @@ const DRUID_PORT = 8888;
  * version-dependent, so no safe unquoted subset is worth detecting.
  */
 export const DRUID_SQL_GENERATORS = Object.freeze({
-  port: DRUID_PORT,
   quote: (name) => `"${name.replaceAll('"', '""')}"`,
-} satisfies SqlPortGenerators);
+} satisfies SqlEngineGenerators);

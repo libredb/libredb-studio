@@ -5,7 +5,8 @@ import "../helpers/mock-navigation";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
-import { CreateTableModal } from "@/components/CreateTableModal";
+import { CreateTableModal, type CreateTableNames } from "@/components/CreateTableModal";
+import { quoteObjectPath, quoteTypedName } from "@/lib/query-generators";
 import type { CreateTableSpec, ProviderCapabilities } from "@/lib/db/types";
 import { POSTGRES_CREATE_TABLE } from "@/lib/db/providers/sql/postgres-create-table";
 import { MYSQL_CREATE_TABLE } from "@/lib/db/providers/sql/mysql-create-table";
@@ -35,11 +36,24 @@ const CAPS = {
 } as unknown as Record<Engine, ProviderCapabilities>;
 
 /**
+ * The name quoting the shell binds for one engine's connection: its type and the capabilities the form is handed, as
+ * `StudioOverlays` binds the active connection's.
+ */
+function namesOf(engine: Engine, capabilities: ProviderCapabilities): CreateTableNames {
+  return {
+    typed: (name) => quoteTypedName(name, engine, capabilities),
+    container: (path) => quoteObjectPath(path, engine, capabilities),
+  };
+}
+
+/**
  * The modal as the app mounts it: with one engine's capabilities (PostgreSQL unless a test names
- * another), unless a test passes its own.
+ * another), unless a test passes its own, and the name quoting bound to that engine and those capabilities.
  */
 function Modal({ engine = "postgres", ...props }: React.ComponentProps<typeof CreateTableModal> & { engine?: Engine }) {
-  return <CreateTableModal capabilities={CAPS[engine]} {...props} />;
+  const capabilities = "capabilities" in props ? props.capabilities : CAPS[engine];
+  const names = capabilities === undefined ? undefined : namesOf(engine, capabilities);
+  return <CreateTableModal capabilities={capabilities} names={names} {...props} />;
 }
 
 describe("CreateTableModal", () => {
@@ -1070,6 +1084,37 @@ describe("CreateTableModal", () => {
         isOpen={false}
         engine="mysql"
         capabilities={undefined}
+        onClose={mock(() => {})}
+        onTableCreated={mock(() => {})}
+      />,
+    );
+    expect(baseElement.textContent).not.toContain("Create New Table");
+  });
+
+  test("opening it without the connection's name quoting throws by name", () => {
+    const consoleError = console.error;
+    console.error = () => {};
+    try {
+      expect(() =>
+        render(
+          <CreateTableModal
+            isOpen
+            capabilities={CAPS.mysql}
+            onClose={mock(() => {})}
+            onTableCreated={mock(() => {})}
+          />,
+        ),
+      ).toThrow("CreateTableModal: opened without the connection's name quoting");
+    } finally {
+      console.error = consoleError;
+    }
+  });
+
+  test("closed without names it renders nothing", () => {
+    const { baseElement } = render(
+      <CreateTableModal
+        isOpen={false}
+        capabilities={CAPS.mysql}
         onClose={mock(() => {})}
         onTableCreated={mock(() => {})}
       />,

@@ -38,7 +38,7 @@ function makeCaps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabi
 
 describe("the generators take a dialect's text from its DIALECT_GENERATORS record", () => {
   test("a tree click writes the record's read, ahead of the language's own arm", () => {
-    expect(JSON.parse(generateTableQuery(["orders"], makeCaps()))).toEqual({
+    expect(JSON.parse(generateTableQuery(["orders"], "prometheus", makeCaps()))).toEqual({
       topic: "orders",
       from: "latest",
       limit: 50,
@@ -46,7 +46,7 @@ describe("the generators take a dialect's text from its DIALECT_GENERATORS recor
   });
 
   test("Generate Query writes the record's text, ahead of the language's own arm", () => {
-    expect(JSON.parse(generateSelectQuery(["orders"], [], makeCaps()))).toEqual({
+    expect(JSON.parse(generateSelectQuery(["orders"], [], "prometheus", makeCaps()))).toEqual({
       topic: "orders",
       partition: 0,
       from: "earliest",
@@ -58,8 +58,12 @@ describe("the generators take a dialect's text from its DIALECT_GENERATORS recor
 describe("the record comes ahead of the InfluxQL arm too (InfluxDB spec 6.7)", () => {
   test("a tree click and Generate Query write the record's text, never the InfluxQL preview", () => {
     const caps = makeCaps({ queryLanguage: "influxql" });
-    expect(JSON.parse(generateTableQuery(["orders"], caps))).toEqual({ topic: "orders", from: "latest", limit: 50 });
-    expect(JSON.parse(generateSelectQuery(["orders"], [], caps))).toEqual({
+    expect(JSON.parse(generateTableQuery(["orders"], "influxdb", caps))).toEqual({
+      topic: "orders",
+      from: "latest",
+      limit: 50,
+    });
+    expect(JSON.parse(generateSelectQuery(["orders"], [], "influxdb", caps))).toEqual({
       topic: "orders",
       partition: 0,
       from: "earliest",

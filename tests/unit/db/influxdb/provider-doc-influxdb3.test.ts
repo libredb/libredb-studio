@@ -368,8 +368,8 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
 
   test("the previews are the generators' output over the built provider's capabilities", async () => {
     const previews = sectionOf(DOC, "### 5.9 Previews and Generate Query");
-    const table = generateTableQuery(["home"], capabilities);
-    const select = generateSelectQuery(["home"], await homeColumns(), capabilities);
+    const table = generateTableQuery(["home"], "influxdb3", capabilities);
+    const select = generateSelectQuery(["home"], await homeColumns(), "influxdb3", capabilities);
     expect(table).not.toMatch(/\bLIMIT\b/);
     expect(previews).toContain(`\`\`\`sql\n${table}\n\`\`\``);
     expect(previews).toContain(`\`\`\`sql\n${select}\n\`\`\``);

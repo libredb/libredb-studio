@@ -1388,7 +1388,7 @@ describe("ElasticsearchProvider metadata", () => {
 
     expect(capabilities.statementTerminator).toBe("none");
     // No row bound since #816: the preview cap rides the `limit` execution option.
-    expect(generateTableQuery(["orders"], capabilities)).toBe("SELECT * FROM orders");
+    expect(generateTableQuery(["orders"], "elasticsearch", capabilities)).toBe("SELECT * FROM orders");
   });
 
   test("declares no explain format at all, which is what hides the button and the tab", () => {

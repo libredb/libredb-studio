@@ -169,6 +169,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "employees"]}
         tableSchema={awkward}
+        databaseType="mysql"
         capabilities={capsOf({ defaultPort: 3306 })}
         onExecuteQuery={mock(() => {})}
       />,
@@ -186,11 +187,61 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "employees"]}
         tableSchema={awkward}
+        databaseType="mssql"
         capabilities={mssqlCaps}
         onExecuteQuery={mock(() => {})}
       />,
     );
     expect(container.textContent ?? "").toContain("[order date]");
+  });
+
+  test("quotes by the connection's type, never the port its declaration names", () => {
+    const awkward: DetailedObject = {
+      ...schema,
+      columns: [{ name: "order date", type: "VARCHAR(50)", nullable: false, isPrimary: false }],
+    };
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "Order Items"]}
+        tableSchema={awkward}
+        databaseType="mysql"
+        capabilities={capsOf({ defaultPort: 5432 })}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("INSERT INTO shop.`Order Items` (`order date`)");
+    expect(text).not.toContain('"order date"');
+  });
+
+  test("an omitted databaseType quotes with the declaration's own rule or the default, whatever port it names", () => {
+    const awkward: DetailedObject = {
+      ...schema,
+      columns: [{ name: "order date", type: "VARCHAR(50)", nullable: false, isPrimary: false }],
+    };
+    const statementFor = (capabilities: ProviderCapabilities): string => {
+      const { container } = render(
+        <TestDataGenerator
+          isOpen
+          onClose={mock(() => {})}
+          tablePath={["shop", "Order Items"]}
+          tableSchema={awkward}
+          capabilities={capabilities}
+          onExecuteQuery={mock(() => {})}
+        />,
+      );
+      const text = container.textContent ?? "";
+      cleanup();
+      return text;
+    };
+    // MySQL's port names no engine here: with no type the shared default quotes.
+    expect(statementFor(capsOf({ defaultPort: 3306 }))).toContain('INSERT INTO shop."Order Items" ("order date")');
+    // A declared quoting is the declaration's own rule, and it answers with no type too.
+    expect(statementFor(capsOf({ defaultPort: 3306, identifierQuoting: "backtick" }))).toContain(
+      "INSERT INTO shop.`Order Items` (`order date`)",
+    );
   });
 
   test("quotes a generated value that does not match its column's numeric type", () => {
@@ -948,6 +999,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "dbo", "customers"]}
         tableSchema={customers}
+        databaseType="mssql"
         capabilities={mssqlCaps}
         onExecuteQuery={mock(() => {})}
       />,

@@ -763,7 +763,12 @@ describe("query", () => {
       { name: "code", type: "label", nullable: true, isPrimary: false },
       { name: "handler", type: "label", nullable: true, isPrimary: false },
     ];
-    const generated = generateSelectQuery(["prometheus_http_requests_total"], columns, provider.getCapabilities());
+    const generated = generateSelectQuery(
+      ["prometheus_http_requests_total"],
+      columns,
+      "prometheus",
+      provider.getCapabilities(),
+    );
 
     await provider.query(generated);
 

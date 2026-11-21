@@ -88,13 +88,12 @@ export interface SqlFormContext {
 }
 
 /**
- * What one SQL engine writes apart from the shared SQL forms, selected by the default port its declaration names,
- * which is the signal the generators have always keyed these forms by. `quote` is the engine's identifier quoting,
- * read after a declared `identifierQuoting`; the forms are optional and each replaces the shared one at its place.
+ * What one SQL engine writes apart from the shared SQL forms, its row in `SQL_ENGINE_GENERATORS` under the engine's
+ * type id, so a connection's forms follow its type and never the port its declaration names. `quote` is the engine's
+ * identifier quoting, read after a declared `identifierQuoting`; the forms are optional and each replaces the shared
+ * one at its place.
  */
-export interface SqlPortGenerators {
-  /** The default port that selects this row. */
-  readonly port: number;
+export interface SqlEngineGenerators {
   /** A name quoted for the engine, left bare where it round-trips bare and `always` is false. */
   readonly quote: (name: string, always: boolean) => string;
   /** The tree click's statement on the quoted address, ahead of a declared projection or time window. */

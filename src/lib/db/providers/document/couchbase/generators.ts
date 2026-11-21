@@ -1,11 +1,8 @@
 /**
- * Couchbase's SQL++ forms, collected as its row by `SQL_PORT_GENERATORS` in `src/lib/db/query-generators/index.ts`,
- * keyed by the management port its declaration names. Browser-safe: it imports nothing at run time.
+ * Couchbase's SQL++ forms, collected as its row of `SQL_ENGINE_GENERATORS` in `src/lib/db/query-generators/index.ts`,
+ * read under its type id. Browser-safe: it imports nothing at run time.
  */
-import type { SqlPortGenerators } from "@/lib/db/query-generators/types";
-
-/** Couchbase management port, the capability signal for the SQL++ dialect. */
-const COUCHBASE_PORT = 8091;
+import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 
 /**
  * Alias every generated Couchbase statement binds its keyspace to. SQL++ needs a
@@ -48,7 +45,6 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
  * Generate Query ends in a literal `;`, which SQL++ accepts, rather than the declaration's terminator.
  */
 export const COUCHBASE_SQL_GENERATORS = Object.freeze({
-  port: COUCHBASE_PORT,
   quote: (name) => couchbaseQuote(name),
   table: (table, { terminator }) =>
     `SELECT ${COUCHBASE_KEY_PROJECTION}, ${COUCHBASE_ALIAS}.* FROM ${table} AS ${COUCHBASE_ALIAS}${terminator}`,
@@ -59,4 +55,4 @@ export const COUCHBASE_SQL_GENERATORS = Object.freeze({
     const projection = [`  ${COUCHBASE_KEY_PROJECTION}`, ...projected].join(",\n");
     return `SELECT\n${projection}\nFROM ${table} AS ${COUCHBASE_ALIAS}\nWHERE 1=1\nLIMIT 100;`;
   },
-} satisfies SqlPortGenerators);
+} satisfies SqlEngineGenerators);
