@@ -897,6 +897,19 @@ describe("RedisProvider", () => {
       expect(capturedRedisOptions[capturedRedisOptions.length - 1]).toMatchObject({ readOnly: true });
     });
 
+    // A command written to a connection that then closed may already have run on the server: ioredis's default sends it
+    // again on the next connection, so an INCR the user ran once could run twice. With the option off, the patched
+    // driver fails it with "Connection is closed." instead (docs/providers/redis.md section 4.6).
+    test("asks ioredis not to send a command in flight again on the next connection", async () => {
+      capturedRedisOptions.length = 0;
+      await provider.connect();
+      await provider.scanKeysPage({ cursor: "0", count: 10, database: 1 });
+      expect(capturedRedisOptions).toHaveLength(2);
+      for (const options of capturedRedisOptions) {
+        expect(options).toMatchObject({ autoResendUnfulfilledCommands: false });
+      }
+    });
+
     /*
      * A DATABASE THE SERVER DOES NOT HAVE IS REFUSED, NOT READ AS 0 (#1095).
      *

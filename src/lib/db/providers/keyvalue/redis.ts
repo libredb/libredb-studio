@@ -1530,6 +1530,11 @@ export class RedisProvider extends BaseDatabaseProvider {
       // `DBSIZE` counts this provider reads for itself go through `integerReply`, which reads
       // the digit string back as a number; `SLOWLOG GET` is read through `String()`/`Number()`.
       stringNumbers: true,
+      // A command written to a connection that then closes may already have run on the server, so it is not sent
+      // again on the next connection, where an `INCR` the user ran once would run twice. ioredis's default resends it;
+      // with the option off, the patched driver fails it with "Connection is closed." (docs/providers/redis.md
+      // section 4.6). A command sent while the client reconnects still waits for the next connection and goes out once.
+      autoResendUnfulfilledCommands: false,
       // Under the agent read-only profile, no ready check: its INFO is @dangerous, refused a +@read user, and ioredis
       // then warns of the refusal on every connection, which is one per agent command. The proof's HELLO is the check.
       ...(this.readOnlyProfile ? { enableReadyCheck: false } : {}),

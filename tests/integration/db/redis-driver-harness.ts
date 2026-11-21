@@ -10,8 +10,9 @@
  *  - on a TLS connection, one record the client cannot decrypt written under the TLS layer: in place of the answer to a
  *    command, to a connect or to a reconnect, with the socket kept open, or on an idle connection, then a reset or one
  *    more command;
- *  - a reset in place of the answer to a command;
- *  - on the object surface's own connection, the same header answering its `SELECT` or its read.
+ *  - a reset in place of the answer to a command, or on an idle connection before a command is sent;
+ *  - on the object surface's own connection, the same header answering its `SELECT` or its read, or a reset in place
+ *    of the answer to its read.
  *
  * Each case records what the caller got, what the next command got, the `[Redis]` warnings the provider logged, and
  * every error that escaped a call instead of reaching its caller (uncaughtException, unhandledRejection). The test runs this file twice, under Bun and, bundled
@@ -432,6 +433,18 @@ cases.push(
   }),
 );
 
+cases.push(
+  await runCase("reset, then a command sent while the client reconnects", true, async (provider, peer) => {
+    await provider.connect();
+    const get = counting("GET", () => undefined);
+    peer.answer = get.answer;
+    peer.connections[peer.connections.length - 1].raw.resetAndDestroy();
+    await untilLogged(4_000);
+    const call = await settle(8_000, () => provider.query("GET k"));
+    return { call, delivered: get.count() };
+  }),
+);
+
 /** One page of the object surface's key walk, which opens a connection of its own, in `database` when given. */
 function scanPage(provider: RedisProvider, database?: number): Promise<void> {
   return provider
@@ -453,5 +466,20 @@ cases.push(
     return { call: await settle(4_000, () => scanPage(provider)) };
   }),
 );
+cases.push(
+  await runCase("reset while an object read waits", false, async (provider, peer) => {
+    await provider.connect();
+    let sent = false;
+    const scan = counting("SCAN", (command, { raw }) => {
+      if (sent || (command[0] ?? "").toUpperCase() !== "SCAN") return undefined;
+      sent = true;
+      raw.resetAndDestroy();
+      return "silence";
+    });
+    peer.answer = scan.answer;
+    return { call: await settle(4_000, () => scanPage(provider)), delivered: scan.count() };
+  }),
+);
+
 console.log(JSON.stringify({ runtime: typeof Bun === "undefined" ? "node" : "bun", cases }));
 process.exit(0);
