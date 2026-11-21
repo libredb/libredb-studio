@@ -156,6 +156,15 @@ jobs:
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
+      # The image ships the SDK and platform in its system installation, and
+      # flatpak-builder updates them in place whenever Flathub has a newer commit.
+      # On the x86_64 runners that update fails inside the image's own layers with
+      # "Invalid cross-device link" and the build then dies in xvfb-run
+      # (flatpak/flatpak-github-actions#267; run 44841263683, while the aarch64 leg
+      # updated the same runtimes). A volume, which Docker fills from the image when
+      # it creates it, keeps the installation on the runner's own filesystem.
+      volumes:
+        - /var/lib/flatpak
     strategy:
       fail-fast: false
       matrix:
