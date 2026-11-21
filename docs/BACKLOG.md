@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D472, U17 · 346
+- [Drivers and connections](#drivers-and-connections) — D1-D475, U17 · 348
 - [Value interpolation](#value-interpolation) — V1
-- [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U216 · 201
+- [Row editing](#row-editing) — R1-R5 · 4
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U220 · 205
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC37 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL11 · 10
@@ -4615,6 +4615,38 @@ Found 2026-11-21 by the review of the Redis resend change.
 
 **Done when:** a failed `CLIENT LIST` reaches the monitoring page as a panel error that names it, the refusal case `docs/providers/redis.md` section 7 describes is decided and documented, and `tests/integration/db/redis-provider.test.ts` covers a refusal and a reset.
 
+### D475. Connections cannot be exported or imported, so moving them to another Studio means entering each one again
+
+A user's connections live in the storage layer (`getConnections` in `src/lib/storage/storage-facade.ts`), and nothing in the UI writes them to a file or reads them back.
+The only library backup is for saved queries: `src/lib/saved-query-import.ts` checks and merges a saved-query JSON file, and connections are not part of it.
+A plain JSON export would carry every password, private key and token in the clear, so this is filed with its rules rather than as a file format.
+
+The owner decided on 2026-11-21:
+
+- the secret fields of every exported connection are encrypted with a passphrase the user gives for that one package, through Argon2id key derivation and AES-256-GCM, while the public fields stay readable;
+- import decrypts them with that passphrase and re-encrypts them for the importing Studio, so the package passphrase is never kept;
+- a wrong passphrase, or a package that fails authentication, commits nothing: no connection of the package is written, and the refusal says which of the two it was;
+- there is no third-party cloud sync: the package is a file the user moves.
+
+Filed 2026-11-21 on the owner's decision, outside the provider-plugin program.
+
+**Done when:** a user can export chosen connections to one passphrase-encrypted file and import it into another Studio, a wrong passphrase and a tampered package each leave the store untouched, and tests cover the round trip, both refusals and a package holding a type this Studio has no provider for.
+
+### D474. An SSH tunnel is one hop, with no jump host and no SOCKS5 or HTTP proxy in front of it
+
+`createSSHTunnel` in `src/lib/ssh/tunnel.ts` dials the one bastion that `SSHTunnelConfig` in `src/lib/types.ts` names and forwards the database through it.
+A database reachable only through a second bastion, or only through a SOCKS5 or HTTP CONNECT proxy, cannot be reached, and no connection field can declare either.
+
+The owner decided on 2026-11-21:
+
+- each connection declares its own route, an ordered list of SSH jump hosts and optionally a SOCKS5 or HTTP proxy layer, and core's tunnel module opens it, each SSH hop with its own credential and host key pin as the single hop has today;
+- Studio never reads the server account's `~/.ssh/config`, its aliases or its `ProxyJump` lines, because on a multi-user host that file would apply one account's SSH setup to every user's tunnel;
+- a route that cannot be opened fails by name, naming the hop that failed, and never falls back to dialling the database directly.
+
+Filed 2026-11-21 on the owner's decision, outside the provider-plugin program.
+
+**Done when:** a connection can declare jump hosts and a SOCKS5 or HTTP proxy layer, every tunnelled provider reaches its engine through them, a missing or refused hop fails naming that hop with no direct dial, nothing in `src` reads `~/.ssh/config`, and tests drive a two-hop route and each proxy kind against in-process servers.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -4651,6 +4683,8 @@ Two constraints from #269 that do not go away:
   should derive the key from the schema. A table whose key is named otherwise is refused with
   "No primary key column detected" (`useInlineEditing` in `src/hooks/use-inline-editing.ts`), which reads as if
   the table had none (found by the end-to-end test pass of 2026-10-03 and 2026-10-04).
+  The owner decided on 2026-11-21 that the key is read from the table's declared primary or unique keys, never from the name guess, and that a table declaring neither is refused with a sentence that says so.
+  R5 shows that key to the user before Apply sends anything.
 
 Whether row editing should be universal at all is a product decision. The published
 `WorkspaceFeatures.inlineEditing` flag is deprecated against this entry (#288): it becomes real, or
@@ -4707,6 +4741,22 @@ writes correctly and must keep doing so.
 point on the engines whose drivers round - the scale beside the word, or a second field that says
 it - a whole key is refused only where it can, and a test carries the Oracle and SQL Server pairs
 above beside the fractional ones #969 added.
+
+### R5. Apply sends generated row edits without showing the statements
+
+`useInlineEditing` in `src/hooks/use-inline-editing.ts` builds one `UPDATE` per edited row and sends them with `skipSafety: true`, so Apply is the only confirmation.
+The user sees the edited cells in the grid, never the statement text, the bound values or the key column each `WHERE` matches on, which is where R1's name guess does its damage.
+
+The owner decided on 2026-11-21:
+
+- Apply first shows every generated statement with its bound values and the key column it uses, and sends nothing until the user confirms;
+- the key is the one R1 now requires, read from the table's declared primary or unique keys.
+
+The preview does not replace the production escalation of U217: on a production connection the typed confirmation is still asked.
+
+Filed 2026-11-21 on the owner's decision, outside the provider-plugin program.
+
+**Done when:** Apply opens a preview listing each statement, its values and its key, cancelling it sends nothing, confirming it sends exactly the listed statements, and a component test pins all three.
 
 ---
 
@@ -7250,6 +7300,73 @@ So `handleUnlimitedQuery` never receives a statement, and if it is ever wired it
 Found 2026-11-21 by the review of the FND-1 npm surface change.
 
 **Done when:** the unlimited-run confirmation is removed with its state, or wired with a test that binds it to the connection it was raised on.
+
+### U217. A connection stored as production gets the same write prompts as any other
+
+The connection form stores `environment` (`ConnectionEnvironment` in `src/lib/types.ts`), and `production` is one of its values.
+Every read of it in `src` is display, seed parsing, fleet health, the MCP connection list filter or governance admission, and none is on an execution path, so a production connection is gated exactly like a development one.
+The browser's confirmation gate in `executeQuery` of `src/hooks/use-query-execution.ts` is skipped in playground mode and under `skipSafety`, which `useInlineEditing` in `src/hooks/use-inline-editing.ts` passes for every generated inline edit.
+The gate can already ask for a typed confirmation (`TypedConfirmField` in `src/components/QuerySafetyDialog.tsx`, #1089), so what is missing is an escalation, not a new dialog.
+
+The owner decided on 2026-11-21:
+
+- on a connection whose stored environment is `production`, every write needs the typed confirmation, writes the base gate does not prompt for included;
+- the playground skip and the generated inline-edit skip do not apply on such a connection;
+- the answer is never remembered, so every write asks again;
+- the scope is the connection, never a pattern over database or schema names, which dynamic SQL slips past;
+- when the server-side destructive classification of the provider-plugin program lands (FND-5), its verdict takes the connection's environment as an input, so the escalation also holds in the npm workspace and in the VS Code extension.
+
+Filed 2026-11-21 on the owner's decision, outside the provider-plugin program.
+
+**Done when:** on a production connection every write, an inline edit and a playground run included, waits for the typed confirmation each time it runs, the same statements on a development connection behave as today, and component tests cover the editor, an inline edit and a playground run on both environments.
+
+### U218. Results and imports have no XLSX format
+
+`DataImportModal` in `src/components/DataImportModal.tsx` accepts `.csv`, `.json` and `.tsv`, and `ResultExportFormat` in `src/lib/export/result-export.ts` is CSV, JSON, SQL INSERT, CREATE TABLE DDL, Markdown and HTML.
+A spreadsheet user goes through CSV in both directions and loses the column types on the way.
+
+The owner decided on 2026-11-21:
+
+- XLSX joins both directions;
+- an XLSX import reports, row by row, which rows failed and why, rather than one failure for the file;
+- the export keeps the rules the CSV writer keeps: a cell a spreadsheet would read as a formula is neutralised as `FORMULA_LEAD` in `src/lib/export/csv.ts` decides, and a masked result exports its masked values (`applyMaskingToRows` in `src/lib/data-masking.ts`).
+
+Filed 2026-11-21 on the owner's decision, outside the provider-plugin program.
+
+**Done when:** a result exports to XLSX and an XLSX file imports, a failing row is reported by number with its reason while the other rows import, a formula-shaped value and a masked column are pinned by tests, and `docs/FEATURES.md` lists the format.
+
+### U219. Rows cannot be copied from one connection to another
+
+Moving a table between connections today is a result export, a download and an import through `DataImportModal`, with the type mapping of a file format in between, and CSV carries no types at all.
+Schema Diff (`diffSchemas` in `src/lib/schema-diff/diff-engine.ts`) compares structure across two connections and moves no rows.
+U146 and X12 record how the import and the export spell a type the target may not have, which a transfer must not repeat.
+
+The owner decided on 2026-11-21 that a cross-connection transfer keeps these rules:
+
+- no fallback to a text type: a column whose type has no mapping on the target refuses the transfer, naming the column and the type;
+- every mode states its transaction scope before it runs, for example one transaction for the table or one per batch;
+- a mode that rebuilds the target table keeps its backup of that table until the copy succeeds;
+- a cancel names what stayed committed;
+- which engine pairs are supported is derived from the capabilities each provider declares and a measured pair table, never from a list of type ids.
+
+Filed 2026-11-21 on the owner's decision, outside the provider-plugin program.
+
+**Done when:** a table can be copied between the two connections of a supported pair, an unmappable type is refused by name, a cancelled transfer reports the committed part, a failed rebuild leaves the backup in place, the pair table is documented, and each measured pair has a test.
+
+### U220. Two connections' rows cannot be compared
+
+Schema Diff (`src/components/SchemaDiff.tsx`, `diffSchemas` in `src/lib/schema-diff/diff-engine.ts`) compares tables, columns, indexes and constraints, and its migration generator (`src/lib/schema-diff/migration-generator.ts`) writes DDL.
+Nothing compares the rows of a table across two connections, so finding drift in reference data means exporting both sides and diffing the files by hand.
+
+The owner decided on 2026-11-21:
+
+- rows are matched by key columns the user chooses;
+- the result lists rows found only on the source, rows found only on the target, and rows that differ, with the columns that differ;
+- any statement generated to reconcile the two runs behind the existing confirmation gate (`isDangerousQuery` in `src/lib/sql/dangerous-query.ts` and `QuerySafetyDialog`), never with `skipSafety`.
+
+Filed 2026-11-21 on the owner's decision, outside the provider-plugin program.
+
+**Done when:** a user can compare a table across two connections by chosen key columns, see the three kinds of difference, and run a reconciliation only through the confirmation gate, with tests for each kind of difference and for the gate.
 
 ## Dependencies
 
