@@ -12,7 +12,9 @@
  *    more command;
  *  - a reset in place of the answer to a command, or on an idle connection before a command is sent;
  *  - on the object surface's own connection, the same header answering its `SELECT` or its read, or a reset in place
- *    of the answer to its read.
+ *    of the answer to its read;
+ *  - in a numbered database, a reset or the same header in place of the answer to the `SELECT` ioredis sends itself
+ *    to select that database again on the connection that follows a reset.
  *
  * Each case records what the caller got, what the next command got, the `[Redis]` warnings the provider logged, and
  * every error that escaped a call instead of reaching its caller (uncaughtException, unhandledRejection). The test runs this file twice, under Bun and, bundled
@@ -188,6 +190,8 @@ interface CaseReport {
   readonly next?: string;
   /** How many times the peer received the command the fault answered, when the case counts it. */
   readonly delivered?: number;
+  /** The database the next command ran in, by the last `SELECT` its connection received, when the case reads it. */
+  readonly database?: string;
   readonly logged: string[];
   readonly escaped: string[];
 }
@@ -203,7 +207,10 @@ interface Opening {
 async function runCase(
   name: string,
   secure: boolean,
-  body: (provider: RedisProvider, peer: Peer) => Promise<{ call: string; next?: string; delivered?: number }>,
+  body: (
+    provider: RedisProvider,
+    peer: Peer,
+  ) => Promise<{ call: string; next?: string; delivered?: number; database?: string }>,
   opening: Opening = {},
 ): Promise<CaseReport> {
   escaped.length = 0;
@@ -479,6 +486,86 @@ cases.push(
     peer.answer = scan.answer;
     return { call: await settle(4_000, () => scanPage(provider)), delivered: scan.count() };
   }),
+);
+
+/**
+ * In database 1, resets the provider's idle connection; on the connection that follows, answers the first `SELECT`
+ * with `reply` (or resets the connection when `reply` is `reset`), then reads which database the next `GET` ran in.
+ * The `SELECT` it answers is one ioredis sends itself, with no caller awaiting it, to select the database again.
+ */
+async function reselectCase(name: string, reply: string | "reset"): Promise<CaseReport> {
+  return runCase(
+    name,
+    false,
+    async (provider, peer) => {
+      await provider.connect();
+      const selected = new Map<PeerConnection, string>();
+      let faulted = false;
+      let database: string | undefined;
+      let reachedNext: () => void = () => undefined;
+      const next = new Promise<void>((resolve) => (reachedNext = resolve));
+      peer.answer = (command, connection) => {
+        const verb = (command[0] ?? "").toUpperCase();
+        const index = peer.connections.indexOf(connection);
+        if (verb === "SELECT" && index === 1 && !faulted) {
+          faulted = true;
+          if (reply !== "reset") return reply;
+          connection.raw.resetAndDestroy();
+          return "silence";
+        }
+        if (verb === "SELECT") selected.set(connection, command[1] ?? "");
+        // The SELECT that puts the connection after the faulted one back in database 1, sent once it is ready: the
+        // escape, if any, has been recorded, and a command sent now is written after it.
+        if (verb === "SELECT" && index > 1) reachedNext();
+        if (verb === "GET") database = selected.get(connection) ?? "0";
+        return undefined;
+      };
+      peer.connections[0].raw.resetAndDestroy();
+      await Promise.race([next, sleep(8_000)]);
+      const call = await settle(4_000, () => provider.query("GET k"));
+      return { call, database };
+    },
+    { fields: { database: "1" } },
+  );
+}
+
+cases.push(await reselectCase("reset while the reconnect's own SELECT of database 1 waits", "reset"));
+cases.push(
+  await reselectCase(
+    "oversized array header answering the reconnect's own SELECT of database 1",
+    OVERSIZED_ARRAY_HEADER,
+  ),
+);
+cases.push(
+  await runCase(
+    "reset while an object read selects its database again after a reset",
+    false,
+    async (provider, peer) => {
+      await provider.connect();
+      let scanReset = false;
+      let selectReset = false;
+      peer.answer = (command, connection) => {
+        const verb = (command[0] ?? "").toUpperCase();
+        const index = peer.connections.indexOf(connection);
+        // The object read's own connection, in database 1: its SCAN is reset, and the SELECT ioredis then sends itself
+        // on the next connection, before the read's next command, is reset too.
+        if (verb === "SCAN" && index === 1 && !scanReset) {
+          scanReset = true;
+          connection.raw.resetAndDestroy();
+          return "silence";
+        }
+        if (verb === "SELECT" && index === 2 && !selectReset) {
+          selectReset = true;
+          connection.raw.resetAndDestroy();
+          return "silence";
+        }
+        return undefined;
+      };
+      const call = await settle(8_000, () => provider.countObjects(["1"]).then((counts) => ({ rows: [counts] })));
+      const next = await settle(4_000, () => provider.query("PING"));
+      return { call, next };
+    },
+  ),
 );
 
 console.log(JSON.stringify({ runtime: typeof Bun === "undefined" ? "node" : "bun", cases }));

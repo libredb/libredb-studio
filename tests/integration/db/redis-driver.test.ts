@@ -28,6 +28,7 @@ interface CaseReport {
   readonly call: string;
   readonly next?: string;
   readonly delivered?: number;
+  readonly database?: string;
   readonly logged: string[];
   readonly escaped: string[];
 }
@@ -260,6 +261,41 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
       const read = find(report, "oversized array header answering an object read");
       expect(read.call).toMatch(new RegExp(`^QueryError: Redis error: .+${FATAL}`));
       expect(read.escaped).toEqual([]);
+    }
+  });
+
+  // ioredis selects a numbered database again on the connection that follows a reset with a SELECT it sends itself,
+  // which no caller awaits. Failed with the commands in flight, that SELECT's error is the client's `error` event,
+  // which the provider logs, as for the SELECT connect() sends; the next command still runs in the database.
+  test("a reset while the reconnect's own SELECT waits is logged, and the next command runs in the database", () => {
+    for (const report of reports) {
+      const reselect = find(report, "reset while the reconnect's own SELECT of database 1 waits");
+      expect(reselect.escaped).toEqual([]);
+      expect(reselect.logged).toContain("[Redis] Connection is closed.");
+      expect(reselect.call).toBe('ok {"result":"value"}');
+      expect(reselect.database).toBe("1");
+    }
+  });
+
+  test("a header no JS array can hold answering the reconnect's own SELECT is logged, and the next command answers", () => {
+    for (const report of reports) {
+      const reselect = find(report, "oversized array header answering the reconnect's own SELECT of database 1");
+      expect(reselect.escaped).toEqual([]);
+      expect(reselect.logged.some((line) => new RegExp(`^\\[Redis\\] .+${FATAL}`).test(line))).toBe(true);
+      expect(reselect.call).toBe('ok {"result":"value"}');
+      expect(reselect.database).toBe("1");
+    }
+  });
+
+  test("a reset while an object read selects its database again marks each kind unavailable by name", () => {
+    for (const report of reports) {
+      const read = find(report, "reset while an object read selects its database again after a reset");
+      expect(read.escaped).toEqual([]);
+      // countObjects answers a kind it could not count as unavailable, with the driver's message.
+      expect(read.call).toBe(
+        'ok {"keyspace":{"unavailable":"Connection is closed."},"function":{"unavailable":"Connection is closed."}}',
+      );
+      expect(read.next).toBe(PONG);
     }
   });
 

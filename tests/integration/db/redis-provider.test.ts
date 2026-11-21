@@ -2477,6 +2477,29 @@ describe("RedisProvider", () => {
       await expect(provider.endOpenQueryTransaction()).rejects.toThrow("Connection is closed.");
     });
 
+    // A reset while PING or DISCARD waits is not sent again (redisOptions), so the driver fails it; the route that
+    // ends the transaction answers that failure as the editor does (docs/providers/redis.md section 4.6).
+    test("a PING the driver failed raises the editor's QueryError", async () => {
+      pingFailure = new Error("Connection is closed.");
+      const error = await provider.endOpenQueryTransaction().then(
+        () => new Error("endOpenQueryTransaction() resolved"),
+        (failure: Error) => failure,
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Redis error: Connection is closed.");
+    });
+
+    test("a DISCARD the driver failed raises the editor's QueryError", async () => {
+      await provider.query("MULTI");
+      discardFailure = new Error("Connection is closed.");
+      const error = await provider.endOpenQueryTransaction().then(
+        () => new Error("endOpenQueryTransaction() resolved"),
+        (failure: Error) => failure,
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Redis error: Connection is closed.");
+    });
+
     test("raises when the reading itself is refused", async () => {
       // An ACL that grants neither PING nor DISCARD leaves nothing to read. A provider that
       // cannot ask has to say so: answering "none" would certify an absence nobody read.
@@ -2645,6 +2668,22 @@ describe("RedisProvider", () => {
       }
     });
 
+    // A reset while INFO waits is not sent again (redisOptions), so the driver fails it; the overview names that
+    // failure as the editor does (docs/providers/redis.md section 4.6).
+    test("an INFO the driver failed raises the editor's QueryError", async () => {
+      infoRefusal = "Connection is closed.";
+      try {
+        const error = await provider.getOverview().then(
+          () => new Error("getOverview() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(QueryError);
+        expect(error.message).toBe("Redis error: Connection is closed.");
+      } finally {
+        infoRefusal = null;
+      }
+    });
+
     test("reads the connection limit under Dragonfly's underscored max_clients", async () => {
       infoOverride = MOCK_INFO_STRING.replace("maxclients:10000", "max_clients:64000");
       try {
@@ -2670,6 +2709,20 @@ describe("RedisProvider", () => {
       expect(typeof metrics.cacheHitRatio).toBe("number");
       // hitRatio: 900/(900+100)*100 = 90.0
       expect(metrics.cacheHitRatio).toBe(90);
+    });
+
+    test("an INFO the driver failed raises the editor's QueryError", async () => {
+      infoRefusal = "Connection is closed.";
+      try {
+        const error = await provider.getPerformanceMetrics().then(
+          () => new Error("getPerformanceMetrics() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(QueryError);
+        expect(error.message).toBe("Redis error: Connection is closed.");
+      } finally {
+        infoRefusal = null;
+      }
     });
   });
 
@@ -2968,6 +3021,20 @@ describe("RedisProvider", () => {
       expect(unbounded.usagePercent).toBeUndefined();
     });
 
+    test("an INFO the driver failed raises the editor's QueryError", async () => {
+      infoRefusal = "Connection is closed.";
+      try {
+        const error = await provider.getStorageStats().then(
+          () => new Error("getStorageStats() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(QueryError);
+        expect(error.message).toBe("Redis error: Connection is closed.");
+      } finally {
+        infoRefusal = null;
+      }
+    });
+
     test("returns memory usage info", async () => {
       const stats = await provider.getStorageStats();
       expect(stats).toBeArray();
@@ -3112,7 +3179,9 @@ describe("RedisProvider", () => {
     ])("refuses an overview whose DBSIZE answered %s, rather than showing 0 keys", async (_label, reply) => {
       dbsizeOverride = reply;
       try {
-        await expect(provider.getOverview()).rejects.toThrow("Redis answered no key count for the overview");
+        await expect(provider.getOverview()).rejects.toThrow(
+          new QueryError("Redis answered no key count for the overview", "redis"),
+        );
       } finally {
         dbsizeOverride = NO_OVERRIDE;
       }
@@ -3472,9 +3541,16 @@ describe("RedisProvider", () => {
       await expect(provider.listContainers()).rejects.toThrow(/LOADING/);
     });
 
-    test("a transport failure on CONFIG GET still raises rather than listing one database", async () => {
+    // A reset while CONFIG GET waits is not sent again (redisOptions), so the driver fails it, and the database list
+    // names that failure as the editor does (docs/providers/redis.md section 4.6).
+    test("a transport failure on CONFIG GET raises the editor's QueryError rather than listing one database", async () => {
       configFailure = new Error("Connection is closed.");
-      await expect(provider.listContainers()).rejects.toThrow("Connection is closed.");
+      const error = await provider.listContainers().then(
+        () => new Error("listContainers() resolved"),
+        (failure: Error) => failure,
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Redis error: Connection is closed.");
     });
 
     test("counts both kinds, seeded at zero before either read answers", async () => {
@@ -3718,7 +3794,11 @@ describe("RedisProvider", () => {
         objectKinds: [...(base.objectKinds ?? []), { id: "stream", role: "relation", label: "S", labelPlural: "S" }],
       });
 
-      await expect(provider.listObjects(["0"], "stream")).rejects.toThrow(/has no command that lists it/);
+      // Exact: the read raised it inside its own connection, and a typed error it raises there passes unchanged, never
+      // wrapped as "Redis error: ...".
+      await expect(provider.listObjects(["0"], "stream")).rejects.toThrow(
+        new QueryError('Redis declares the kind "stream" but has no command that lists it', "redis"),
+      );
       // And the same kind counts as unavailable rather than as zero, carrying that sentence.
       const counts = await provider.countObjects(["0"]);
       expect(counts.stream).toEqual({
