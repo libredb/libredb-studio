@@ -130,15 +130,19 @@ describe("SavedQueries", () => {
     const acme = { ...mockSavedQueries[0], id: "acme", name: "Acme report", connectionType: "acmefoo" };
     const acmeLine = `Acme report: ${unknownTypeSentence("acmefoo")}`;
 
-    test("imports the rest of a backup and names each entry whose type names no provider", async () => {
+    // The outcome is drawn in the Saved panel itself, so it is seen in the npm StudioWorkspace too, which mounts no
+    // toaster.
+    test("imports the rest of a backup and names each entry whose type names no provider, in the panel", async () => {
       const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
       importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([known, acme]));
       await waitFor(() => expect(mockImportSavedQueries).toHaveBeenCalledWith([known]));
-      expect(mockToastDefault).toHaveBeenCalledWith("Import finished with unavailable queries", {
-        description: `Added 1. Not imported: ${acmeLine}`,
-      });
+      expect(view.getByRole("status").textContent).toContain(`Added 1. Not imported: ${acmeLine}`);
+      expect(mockToastDefault).not.toHaveBeenCalled();
       expect(mockToastSuccess).not.toHaveBeenCalled();
       expect(mockToastError).not.toHaveBeenCalled();
+
+      fireEvent.click(view.getByRole("button", { name: "Dismiss" }));
+      expect(view.queryByRole("status")).toBeNull();
     });
 
     test("names the refused entries beside the duplicate IDs", async () => {
@@ -146,9 +150,9 @@ describe("SavedQueries", () => {
       const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
       importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([known, acme]));
       await waitFor(() =>
-        expect(mockToastDefault).toHaveBeenCalledWith("Import finished with unavailable queries", {
-          description: `Added 1; skipped duplicate IDs: q1. Not imported: ${acmeLine}`,
-        }),
+        expect(view.getByRole("status").textContent).toContain(
+          `Added 1; skipped duplicate IDs: q1. Not imported: ${acmeLine}`,
+        ),
       );
     });
 
@@ -158,21 +162,31 @@ describe("SavedQueries", () => {
       const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
       importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([acme, zeta]));
       await waitFor(() => expect(mockImportSavedQueries).toHaveBeenCalledWith([]));
-      expect(mockToastDefault).toHaveBeenCalledWith("Import finished with unavailable queries", {
-        description: `Added 0. Not imported: ${acmeLine} Zeta report: ${unknownTypeSentence("zeta")}`,
-      });
+      expect(view.getByRole("status").textContent).toContain(
+        `Added 0. Not imported: ${acmeLine} Zeta report: ${unknownTypeSentence("zeta")}`,
+      );
     });
 
-    test("a backup with an entry that has no connection type is still refused whole", async () => {
-      const { connectionType: _connectionType, ...untyped } = acme;
+    test("an entry that has no connection type, or one that is not text, is left out by itself with its reason", async () => {
+      const { connectionType: _connectionType, ...untyped } = { ...acme, id: "untyped", name: "Untyped report" };
+      const malformed = { ...acme, id: "malformed", name: "Malformed report", connectionType: 5 };
       const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
-      importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([known, untyped]));
-      await waitFor(() =>
-        expect(mockToastError).toHaveBeenCalledWith(
-          "Could not import saved queries. Check the JSON file and available browser storage.",
-        ),
+      importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([known, untyped, malformed]));
+      await waitFor(() => expect(mockImportSavedQueries).toHaveBeenCalledWith([known]));
+      expect(view.getByRole("status").textContent).toContain(
+        `Added 1. Not imported: Untyped report: ${ABSENT_TYPE_SENTENCE} Malformed report: ${MALFORMED_TYPE_SENTENCE}`,
       );
-      expect(mockImportSavedQueries).not.toHaveBeenCalled();
+      expect(mockToastError).not.toHaveBeenCalled();
+    });
+
+    test("the next import replaces the outcome, and one that refuses nothing leaves none in the panel", async () => {
+      const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
+      importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([known, acme]));
+      await waitFor(() => expect(view.getByRole("status")).toBeTruthy());
+
+      importFile(view.getByLabelText("Import saved queries JSON"), JSON.stringify([known]));
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalled());
+      expect(view.queryByRole("status")).toBeNull();
     });
   });
 

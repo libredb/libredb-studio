@@ -3,7 +3,7 @@
 import React, { useRef, useState } from "react";
 import { storage } from "@/lib/storage";
 import { SavedQuery } from "@/lib/types";
-import { Bookmark, Search, Trash2, PenLine, Tag, Calendar, Download, Upload } from "lucide-react";
+import { Bookmark, Search, Trash2, PenLine, Tag, Calendar, Download, Upload, TriangleAlert } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { format } from "date-fns";
@@ -24,6 +24,9 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
   const [queries, setQueries] = useState<SavedQuery[]>(() => storage.getSavedQueries());
   const [search, setSearch] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  // The last import's report of the entries it left out, drawn in this panel until dismissed or replaced by the next
+  // import. A line here rather than a toast, so the npm StudioWorkspace, which mounts no toaster, shows it too.
+  const [importRefusals, setImportRefusals] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   // `refreshTrigger` is bumped by whoever writes a saved query. Adjusting state during
@@ -54,6 +57,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    setImportRefusals(null);
     setIsImporting(true);
     try {
       const { queries: incoming, refused } = parseSavedQueries(await file.text());
@@ -68,7 +72,7 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
         const notImported = refused
           .map((entry) => unavailableSavedQueryNotice(entry, entry.error.message).description)
           .join(" ");
-        toast("Import finished with unavailable queries", { description: `${added} Not imported: ${notImported}` });
+        setImportRefusals(`${added} Not imported: ${notImported}`);
       } else if (result.collisions.length > 0) {
         toast("Import finished with ID conflicts", { description: added });
       } else {
@@ -118,6 +122,21 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
             onChange={handleImport}
           />
         </div>
+
+        {importRefusals !== null && (
+          <output className="flex items-start gap-2 rounded border border-hairline bg-warning-tint/10 px-2 py-1.5 text-warning">
+            <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span className="text-xs break-words min-w-0">{importRefusals}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 px-1.5 ml-auto text-xs text-warning hover:text-fg-bright"
+              onClick={() => setImportRefusals(null)}
+            >
+              Dismiss
+            </Button>
+          </output>
+        )}
 
         <div className="relative">
           <Search strokeWidth={1.5} className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-fg-muted" />

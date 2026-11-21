@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseConfigError, UnknownProviderError } from "@/lib/db/errors";
-import { unknownTypeSentence } from "@/lib/db/type-id";
+import { ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { parseSavedQueries } from "@/lib/saved-query-import";
 import type { SavedQuery } from "@/lib/types";
@@ -132,21 +132,30 @@ describe("parseSavedQueries and an entry whose type names no provider (FND-1)", 
     expect(backup.refused.map((entry) => entry.name)).toEqual(["First", "Second"]);
   });
 
+  // Studio's own Export all writes a stored entry as stored, and storage keeps one with no type or a type that is not
+  // text, so such an entry is refused by itself too, with the reason its type gives.
   test.each([
-    ["missing", undefined],
-    ["empty", ""],
-    ["null", null],
-    ["a number", 5],
-    ["a list", ["postgres"]],
-    ["an object", { id: "postgres" }],
-  ])("rejects the entire backup whose entry has a connection type that is %s", (_label, connectionType) => {
-    const text = JSON.stringify([query, { ...query, id: "bad", connectionType }]);
-    expect(() => parseSavedQueries(text)).toThrow(
-      expect.objectContaining({
-        issues: [expect.objectContaining({ path: [1, "connectionType"] })],
-      }),
-    );
-  });
+    ["missing", undefined, "absent" as const, ABSENT_TYPE_SENTENCE],
+    ["empty", "", "absent" as const, ABSENT_TYPE_SENTENCE],
+    ["null", null, "absent" as const, ABSENT_TYPE_SENTENCE],
+    ["a number", 5, "malformed" as const, MALFORMED_TYPE_SENTENCE],
+    ["a list", ["postgres"], "malformed" as const, MALFORMED_TYPE_SENTENCE],
+    ["an object", { id: "postgres" }, "malformed" as const, MALFORMED_TYPE_SENTENCE],
+  ])(
+    "imports the rest and refuses by itself an entry whose connection type is %s",
+    (_label, connectionType, reason, sentence) => {
+      const backup = parseSavedQueries(JSON.stringify([query, { ...query, id: "bad", name: "Bad", connectionType }]));
+
+      expect(backup.queries).toEqual([query]);
+      expect(backup.refused).toHaveLength(1);
+      const [entry] = backup.refused;
+      expect(entry.name).toBe("Bad");
+      expect(entry.error).toBeInstanceOf(UnknownProviderError);
+      expect(entry.error.reason).toBe(reason);
+      expect(entry.error.typeId).toBeUndefined();
+      expect(entry.error.message).toBe(sentence);
+    },
+  );
 
   test.each([
     ["an updatedAt that is not a date", { updatedAt: "not a date" }],
