@@ -240,7 +240,7 @@ describe("runReadOnlyStatement", () => {
   test("hands the provider's call to the caller's hold as soon as it is made, so a call it stopped waiting for stays held", async () => {
     const call = new Promise<QueryResult>(() => {});
     const { provider } = providerAnswering(() => call);
-    const holdUntilSettled = mock((_call: PromiseLike<unknown>) => {});
+    const holdUntilSettled = mock<(call: PromiseLike<unknown>) => void>(() => {});
     const error = await settled(
       runReadOnlyStatement(provider, {
         type: "duckdb",
