@@ -329,6 +329,7 @@ ships English-only ICU data — safe here because every server-side locale call 
 
 Oracle **Thick** mode needs Oracle Instant Client, which has no musl build, so it is reachable on
 the default tag only — see [providers/oracle.md](providers/oracle.md).
+The darwin-x64 standalone tarball, which `npx @libredb/studio` and Homebrew install on an Intel Mac, has no Thick mode either: node-oracledb 26.0.0 ships no addon for that target ([providers/oracle.md §4.4](providers/oracle.md#44-thick-mode-opt-in-oracle_client_lib_dir)).
 
 **All three prune the payload.** Next's output file tracing sweeps the repository root into
 `.next/standalone`, so every image used to unpack `src/`, `scripts/`, the lockfile and the tooling

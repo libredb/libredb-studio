@@ -12,7 +12,7 @@
 | **Status** | ✅ Implemented & shipped |
 | **Database type id** | `oracle` |
 | **Family** | SQL (relational) |
-| **Driver** | `oracledb` — **Thin mode** (no Instant Client) |
+| **Driver** | `oracledb` 26.0.0 in **Thin mode** (no Instant Client), pinned and patched ([§4.5](#45-a-proxy-that-refuses-the-connect-and-a-packet-header-the-driver-cannot-read)) |
 | **Query language** | `sql` |
 | **Default port** | `1521` |
 | **Connection pooling** | Yes — `oracledb` pool (`poolMin`/`poolMax`/`poolTimeout`) |
@@ -22,7 +22,7 @@
 | **SSL** | Yes — `connection.ssl` selects TCPS, the DN match and the wallet ([§4.3](#43-ssl--tls)) |
 | **Source** | [`src/lib/db/providers/sql/oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
-| **Tests** | [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts) |
+| **Tests** | [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts), and over the real Thin transport [`tests/integration/db/oracle-thin-transport.test.ts`](../../tests/integration/db/oracle-thin-transport.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, maintenance (`analyze`, `optimize`, `kill`) and the transaction route all send writes |
 
 ---
@@ -353,6 +353,12 @@ container. An attempted `initOracleClient()` fails with the driver's own NJS-045
 tells the operator to use Thin mode. So an Oracle 12.1+ server works on every tag; an 11.2 server
 needs the default one.
 
+**No Thick mode on macOS on Intel.**
+node-oracledb 26.0.0 ships no prebuilt Thick-mode addon for darwin-x64: its `build/Release` holds darwin-arm64, linux-x64, linux-arm64 and win32-x64.
+So the darwin-x64 standalone tarball, and with it `npx @libredb/studio` and Homebrew on an Intel Mac, runs Oracle in Thin mode only, and an 11.2 server is out of reach there.
+[`scripts/build-standalone-payload.sh`](../../scripts/build-standalone-payload.sh) names darwin-x64 as the one payload target without the addon and still fails the build when any other target lacks it.
+Thin mode is unaffected.
+
 node-oracledb's Thin/Thick choice is a **process-wide singleton** — `initOracleClient()` throws if
 called more than once, or after any connection/pool already exists. This is why the setting is a
 process-level env var rather than a per-connection config field: every `OracleProvider` in the
@@ -390,6 +396,8 @@ Measured with Instant Client 19.28 against Oracle Free 23ai: with either of thos
 `initOracleClient({ libDir })` succeeds (`oracledb.thin === false`, client 19.28.0.0.0) and
 `v$session_connect_info.client_driver` reports `node-oracledb : 6.10.0 thk`. Without them, only
 `DPI-1047`.
+node-oracledb 26 loads the client by its unversioned name `libclntsh.so`, which the Instant Client 19.28 Basic zip ships as a symlink to `libclntsh.so.19.1`.
+Measured 2026-11-21 with the recipe below in a container of the published image, against Oracle Free 23.26.3: `oracledb.thin === false`, client 19.28.0.0.0, and `client_driver` reports `node-oracledb : 26.0.0 thk`.
 
 There is a second Linux prerequisite on Debian 13 (the runtime base): the client links against
 `libaio.so.1`, but trixie's `libaio1t64` package installs only `libaio.so.1t64`, so
@@ -497,6 +505,53 @@ same directory in the container's environment (`docker run -e`, or `env:` in the
 or the container has to run as root long enough to create it, which is why the derived image above is
 the supported path. A first-class, separately-published Thick-mode image variant is a possible future
 addition.
+
+### 4.5 A proxy that refuses the CONNECT, and a packet header the driver cannot read
+
+Studio installs `oracledb` 26.0.0, pinned to that exact version, with one patch ([`patches/oracledb@26.0.0.patch`](../../patches/oracledb@26.0.0.patch), listed in [TOOLCHAIN.md, "Patched dependencies"](../TOOLCHAIN.md#patched-dependencies)).
+The cases below fail the connect with a named error, and the socket is closed when the call answers.
+[`oracle-thin-transport.test.ts`](../../tests/integration/db/oracle-thin-transport.test.ts) holds each against the real driver, with peers that answer as a refusing proxy and a broken listener do.
+The proxy cases run in the test process.
+The packet header cases run in a Node child with a 256 MB heap limit and a hard timeout ([`oracle-thin-transport-harness.ts`](../../tests/integration/db/oracle-thin-transport-harness.ts)), because oracledb 6.10.0 answered that header by looping forever in its socket `data` handler while allocating, so a driver that does so again fails the test at the child's heap limit within seconds.
+
+**A proxy that refuses the CONNECT.**
+A TCPS descriptor can name an HTTPS proxy, `(ADDRESS=(PROTOCOL=TCPS)(HOST=...)(PORT=...)(HTTPS_PROXY=<host>)(HTTPS_PROXY_PORT=<port>))`, and a pasted descriptor reaches the driver unchanged ([§4.1](#41-configuration)).
+When the proxy answers the CONNECT with any status but 200 (403 from a proxy whose policy refuses the port, 407 from one that wants credentials), the connect fails with:
+
+```
+Failed to connect to Oracle: NJS-504: connection establishment through a web proxy at host <proxy> port <port> failed. (CONNECTION_ID=...)
+403
+```
+
+The last line is the status the proxy answered.
+The patch is the part that destroys the socket: the unpatched driver kept no reference to the socket the proxy answered on and gave it no `error` listener, so it stayed open until the proxy closed it, and a reset from the proxy was thrown out of the socket's event handler instead of reaching any caller.
+Every release up to 26.0.0, the latest, has that flaw, so the patch stays until a release closes the socket itself.
+
+**A packet header the driver cannot read.**
+A TNS packet header is 8 bytes, and its first field is the packet's length.
+When a peer sends a header whose length is below 8, the connect fails with:
+
+```
+Failed to connect to Oracle: NJS-500: connection to Oracle Database was closed or broken
+NJS-501: connection to host <host> port <port> terminated unexpectedly. (CONNECTION_ID=...)
+Invalid packet length: 0 (must be at least 8)
+```
+
+The check is the driver's own since node-oracledb 7.0.0, which is why Studio moved from 6.10.0 to 26.0.0.
+The check sits in the handler that reads every packet of a session, not only the answer to the connect (read in `lib/thin/sqlnet/ntTcp.js`; measured only on the connect).
+
+**The same header after the client closed the session.**
+When the client closes a session itself, for example after refusing a server older than 12.1 with `NJS-138` ([§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir)), it ends the socket gracefully and drops its reference to it, while the socket can still deliver data.
+The unpatched 26.0.0 refused a header shorter than 8 bytes that arrived then through the reference it had already dropped, so the refusal failed inside the socket's event handler instead of reaching the caller.
+The patch refuses the header on the socket that read it, so that socket is destroyed and the connect fails with its own error, here the `DatabaseConfigError` for `NJS-138`.
+Every release since 7.0.0 has that flaw, so this part of the patch stays until a release refuses the header on the socket that read it.
+
+**The move from 6.10.0 to 26.0.0.**
+Measured 2026-11-21 against Oracle Free 23.26.3 (`gvenzl/oracle-free:slim`), Thin mode, under both versions: `tests/live/oracle-column-type.ts`, `oracle-zoneless-values.ts`, `oracle-mcp-boundary.ts` and `oracle-agent-boundary.ts` printed the same results line for line, apart from generated table names, and interval, `TIMESTAMP WITH LOCAL TIME ZONE` and `NUMBER` values read through the provider were identical under `TZ=UTC` and `TZ=Europe/Istanbul`.
+Thick mode is covered in [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir), including the darwin-x64 addon that 26.0.0 no longer ships.
+The measurements elsewhere in this document that name 6.10.0 were taken on that version.
+
+An application that embeds the npm library installs `oracledb` itself, and the patch is not part of the published package, so it applies the same patch file with its own package manager.
 
 ### Connection string
 
@@ -2606,6 +2661,8 @@ A zoned column is written through `FROM_TZ(..., 'UTC')`, which keeps the instant
 | A privilege the user lacks, by `errorNum`: `ORA-01031` insufficient privileges, `ORA-01045` no `CREATE SESSION` | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | A refused credential, by `errorNum`: `ORA-01017` an invalid credential, `ORA-01005` a null password, `ORA-28000` a locked account, `ORA-28001` an expired one | `AuthenticationError`, answered `401 AUTH_ERROR`; a message with no `errorNum` is still read by its words (*ORA-01017*, *password*) |
 | `ORA-12541` / `ORA-12154` / `TNS:` | `ConnectionError` |
+| `NJS-504` (an HTTPS proxy refused the CONNECT; the status follows on the last line) | `ConnectionError` from `connect()`; `DatabaseError` from a later call, see [§4.5](#45-a-proxy-that-refuses-the-connect-and-a-packet-header-the-driver-cannot-read) |
+| `NJS-500` with `Invalid packet length` (a TNS header the driver cannot read) | `ConnectionError` from `connect()`, see [§4.5](#45-a-proxy-that-refuses-the-connect-and-a-packet-header-the-driver-cannot-read) |
 | `ORA-00942` (table or view does not exist) | `QueryError` |
 | `NJS-138` (server predates Oracle 12.1, Thin-mode incompatible) | `DatabaseConfigError`, **not retryable** — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir) |
 | `NJS-116` (account has only a 10G password verifier) | `DatabaseConfigError`, **not retryable**. Checked *before* the generic *password* branch, which would otherwise report it as an authentication failure. The message also names the DBA-side fix (a password reset writes a 12C verifier) |
@@ -2644,7 +2701,7 @@ the two `INTERVAL` identities and the `IntervalYM`/`IntervalDS` field shapes
 ([§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be)) — and those
 constants are typed as the driver's `DbType` from `src/types/db-drivers.d.ts`, which is what keeps
 the mock and the provider reading the same declaration. That declaration is hand-written because
-**`oracledb` publishes none** (verified on 6.10.0: no `types`/`typings` field, no `.d.ts` in the
+**`oracledb` publishes none** (verified on 6.10.0 and again on 26.0.0: no `types`/`typings` field, no `.d.ts` in the
 package, and no `@types/oracledb` dependency here), so a driver upgrade that changes a shape is
 caught by a live probe, not by `tsc`.
 

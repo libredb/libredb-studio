@@ -1,0 +1,59 @@
+diff --git a/lib/thin/sqlnet/ntTcp.js b/lib/thin/sqlnet/ntTcp.js
+index 43e15605b783ea17816b21cb01e221dda88a895c..69ae6f5c247d57c10a3c7f7dcba4991efe2e104e 100644
+--- a/lib/thin/sqlnet/ntTcp.js
++++ b/lib/thin/sqlnet/ntTcp.js
+@@ -179,6 +179,9 @@ class NTTCP {
+             this.stream = socket;
+           } else {
+             proxyConnectErrCause = res.statusCode;
++            // The socket is handed over without an error listener and is not
++            // kept, so close it here; the caller gets NJS-504 with the status.
++            socket.destroy();
+           }
+           resolve();
+         });
+@@ -407,13 +410,16 @@ class NTTCP {
+ 
+   /**
+    * Reject invalid packet and clean up
++   * @param {object} stream The stream the packet was read from
+    * @param {string} message Error message
+    * @returns {null} to clear tempBuf
+    */
+-  rejectInvalidPacket(message) {
++  rejectInvalidPacket(stream, message) {
+     this.savedErr = new Error(message);
+     this.err = true;
+-    this.stream.destroy();
++    // The stream the packet came from: a graceful disconnect() has already
++    // set this.stream to null while that stream can still deliver data.
++    stream.destroy();
+     this._notifyWaiters();
+     return null;
+   }
+@@ -424,7 +430,8 @@ class NTTCP {
+   startRead() {
+     let tempBuf;
+     this.packets = [];
+-    this.stream.on('data', (chunk) => {
++    const stream = this.stream;
++    stream.on('data', (chunk) => {
+ 
+       // append buffer if previous chunk(s) were insufficient for a full packet
+       if (tempBuf) {
+@@ -444,13 +451,13 @@ class NTTCP {
+         }
+ 
+         if (len < PACKET_HEADER_SIZE) {
+-          tempBuf = this.rejectInvalidPacket(`Invalid packet length: ${len} (must be at least ${PACKET_HEADER_SIZE})`);
++          tempBuf = this.rejectInvalidPacket(stream, `Invalid packet length: ${len} (must be at least ${PACKET_HEADER_SIZE})`);
+           break;
+         }
+ 
+         const maxPacket = this.largeSDU ? constants.NSPABSSDULN : constants.NSPMXSDULN;
+         if (len > maxPacket) {
+-          tempBuf = this.rejectInvalidPacket(`Invalid packet length: ${len} (exceeds maximum ${maxPacket})`);
++          tempBuf = this.rejectInvalidPacket(stream, `Invalid packet length: ${len} (exceeds maximum ${maxPacket})`);
+           break;
+         }
+ 

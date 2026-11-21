@@ -252,12 +252,24 @@ cp -R node_modules/oracledb "$PAYLOAD_DIR/node_modules/oracledb"
 # addon only loads under initOracleClient(), which needs an Oracle Instant
 # Client that no build runner has. What IS checkable is the failure the copy
 # exists to prevent - the addon for THIS target missing from the payload.
-if ! ls "$PAYLOAD_DIR"/node_modules/oracledb/build/Release/oracledb-*-"${OS}"-"${ARCH}".node >/dev/null 2>&1; then
-  echo "node_modules/oracledb has no Thick-mode addon for ${OS}-${ARCH} in build/Release." >&2
-  echo "The published package ships one per platform, so this normally means an incomplete" >&2
-  echo "node_modules - reinstall with 'bun install --frozen-lockfile'." >&2
-  exit 1
-fi
+# The targets the installed driver ships no addon for are named here, so their
+# payloads run Thin mode only (oracledb 26.0.0 dropped darwin-x64; see
+# docs/providers/oracle.md section 4.4); tests/unit/packaging-oracledb-thick.test.ts
+# holds this list to the installed package's build/Release.
+ORACLEDB_THIN_ONLY_TARGETS="darwin-x64"
+case " ${ORACLEDB_THIN_ONLY_TARGETS} " in
+  *" ${OS}-${ARCH} "*)
+    echo "==> node_modules/oracledb ships no Thick-mode addon for ${OS}-${ARCH}: this payload runs Oracle in Thin mode only"
+    ;;
+  *)
+    if ! ls "$PAYLOAD_DIR"/node_modules/oracledb/build/Release/oracledb-*-"${OS}"-"${ARCH}".node >/dev/null 2>&1; then
+      echo "node_modules/oracledb has no Thick-mode addon for ${OS}-${ARCH} in build/Release." >&2
+      echo "The published package ships one per platform, so this normally means an incomplete" >&2
+      echo "node_modules - reinstall with 'bun install --frozen-lockfile'." >&2
+      exit 1
+    fi
+    ;;
+esac
 
 # The Db2 driver (#786). No copy here, unlike the three above: db2-node's
 # index.js reaches its eight prebuilt addons through static require literals,

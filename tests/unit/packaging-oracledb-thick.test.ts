@@ -27,7 +27,7 @@
  * `--smoke` probe and a live Thick-mode connection.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..", "..");
@@ -68,6 +68,22 @@ describe("Oracle Thick-mode packaging", () => {
     // actually be entered here. What CAN be checked is the file tracing drops:
     // the addon for the target platform must exist in the copied package.
     expect(script).toContain("build/Release");
+  });
+
+  test("the payload runs Thin mode only on exactly the targets the installed driver ships no addon for", () => {
+    // The standalone payload targets: the four release tarballs and the Windows zip (DISTRIBUTION.md,
+    // "Release artifact naming"). oracledb 26.0.0 ships no darwin-x64 addon, so a payload check that
+    // demanded one for every target failed the darwin-x64 release job.
+    const payloadTargets = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64"];
+    const shipped = new Set(
+      readdirSync(join(ROOT, "node_modules", "oracledb", "build", "Release"))
+        .map((file) => /^oracledb-.+-(\w+-\w+)\.node$/.exec(file)?.[1])
+        .filter((target) => target !== undefined),
+    );
+    const script = readRepoFile("scripts/build-standalone-payload.sh");
+    const thinOnly = /^ORACLEDB_THIN_ONLY_TARGETS="([^"]*)"$/m.exec(script)?.[1].split(" ").filter(Boolean);
+
+    expect(thinOnly).toEqual(payloadTargets.filter((target) => !shipped.has(target)));
   });
 
   test("the docs recipe carries the three Linux loader steps", () => {
