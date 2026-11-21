@@ -3,14 +3,14 @@ import type { DatabaseConnection } from "@/lib/types";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { KafkaError } from "@/lib/db/providers/stream/kafka/client";
 import { kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
 const httpFlag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const originalHttpFlag = process.env[httpFlag];
 afterEach(() => {
-  if (originalHttpFlag === undefined) delete process.env[httpFlag];
-  else process.env[httpFlag] = originalHttpFlag;
+  setEgressFlag(originalHttpFlag);
 });
 
 const base = {
@@ -42,7 +42,7 @@ describe("kafkaConnectionOptions", () => {
   });
 
   test.each(["true", "invalid"])("the HTTP address flag %s does not govern Kafka brokers", (value) => {
-    process.env[httpFlag] = value;
+    setEgressFlag(value);
     expect(kafkaConnectionOptions({ ...base, host: "10.0.0.5" }, 1).broker.host).toBe("10.0.0.5");
   });
 

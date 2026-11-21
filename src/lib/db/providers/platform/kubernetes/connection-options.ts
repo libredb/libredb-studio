@@ -158,7 +158,13 @@ export function parseNamespaceList(value: string): readonly string[] | { readonl
   return entries;
 }
 
-/** Reads a flag the way DB_HTTP_BLOCK_PRIVATE_HOSTS is read: off when unset, refused when it is neither on nor off. */
+/**
+ * Reads a flag with the spellings DB_HTTP_BLOCK_PRIVATE_HOSTS accepts, trimmed and in any case: off when unset, empty,
+ * `false`, `off` or `0`, on for `true`, `on` or `1`, and refused by name otherwise. Only the spellings are shared:
+ * DB_HTTP_BLOCK_PRIVATE_HOSTS is read once per process (src/lib/db/egress-decision.ts) and a standalone server refuses
+ * to boot on a value it cannot read, while this reads its variable on every call and refuses only the call that reads
+ * it.
+ */
 function flag(name: string): boolean {
   const value = process.env[name]?.trim().toLowerCase();
   if (value === undefined || value === "" || value === "false" || value === "off" || value === "0") return false;

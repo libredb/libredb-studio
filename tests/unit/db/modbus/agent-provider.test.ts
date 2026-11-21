@@ -22,19 +22,19 @@ import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db
 import { fenceUntrustedContent, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import type { DatabaseConnection } from "@/lib/types";
 import { fakeModbusDevice, readAdu, type FakeModbusDevice } from "../../../helpers/modbus-fake-device";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
 const devices: FakeModbusDevice[] = [];
 
 beforeEach(() => {
-  delete process.env[FLAG];
+  setEgressFlag(undefined);
 });
 
 afterEach(async () => {
   for (const device of devices.splice(0)) await device.close();
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
+  setEgressFlag(original);
 });
 
 const HOLDING = Array.from({ length: 10 }, (_unused, n) => 7000 + 11 * n);

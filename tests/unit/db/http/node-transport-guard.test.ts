@@ -11,14 +11,14 @@ import { BLOCKED_HOST as BLOCKED } from "@/lib/db/http/egress-policy";
 import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeTransport } from "@/lib/db/http/node-transport";
 import { closeAll, httpListener, jsonAnswer } from "../../../helpers/node-transport-fixtures";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
 const transports: NodeTransport[] = [];
 
 afterEach(async () => {
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
+  setEgressFlag(original);
   for (const transport of transports.splice(0)) transport.close();
   await closeAll();
 });
@@ -37,7 +37,7 @@ describe("with the guard on", () => {
     const listener = await httpListener(jsonAnswer(200, "{}"));
     // Built while the guard is off: httpOrigin runs the literal check too, and this test is the transport's own.
     const origin = httpOrigin("http", "127.0.0.1", listener.port);
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     const error = refusal(() => createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {} }));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe(BLOCKED);
@@ -46,7 +46,7 @@ describe("with the guard on", () => {
 
   test.each(["[::1]", "10.0.0.5", "169.254.169.254"])("%s is refused the same way", (host) => {
     const origin = httpOrigin("http", host, 6333);
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     const error = refusal(() => createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {} }));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe(BLOCKED);
@@ -54,7 +54,7 @@ describe("with the guard on", () => {
 
   test("a name that resolves to loopback is refused by the guard's lookup on the Agent, with the guard's own error", async () => {
     const listener = await httpListener(jsonAnswer(200, "{}"));
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     const origin = httpOrigin("http", "localhost", listener.port);
     const transport = createNodeTransport({
       origin,
@@ -81,7 +81,7 @@ describe("with the guard on", () => {
 
   test("an unreadable flag fails closed when the transport is built", () => {
     const origin = httpOrigin("http", "db.example.com", 6333);
-    process.env[FLAG] = "sometimes";
+    setEgressFlag("sometimes");
     const error = refusal(() => createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {} }));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe("Invalid DB_HTTP_BLOCK_PRIVATE_HOSTS: expected true or false");
@@ -90,7 +90,7 @@ describe("with the guard on", () => {
 
 describe("with the guard off", () => {
   test("127.0.0.1 reaches the listener, the control for the refusals above", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const listener = await httpListener(jsonAnswer(200, "{}"));
     const origin = httpOrigin("http", "127.0.0.1", listener.port);
     const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {} });

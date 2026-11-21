@@ -24,6 +24,7 @@ import { assertOutboundAllowed, ModbusValveDefect } from "@/lib/db/providers/ind
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseConnection } from "@/lib/types";
 import { fakeModbusDevice, readAdu, type FakeModbusDevice } from "../../../helpers/modbus-fake-device";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const MODBUS = path.join(ROOT, "src/lib/db/providers/industrial/modbus");
@@ -81,14 +82,13 @@ describe("on the wire", () => {
   let dev: FakeModbusDevice | undefined;
 
   beforeEach(() => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
   });
 
   afterEach(async () => {
     await dev?.close();
     dev = undefined;
-    if (original === undefined) delete process.env[FLAG];
-    else process.env[FLAG] = original;
+    setEgressFlag(original);
   });
 
   test("every frame of every admitted shape is a read or 43/14, and nothing else ever leaves", async () => {

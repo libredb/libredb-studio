@@ -17,9 +17,11 @@ import { delimiter, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { BLOCKED_HOST, LINK_LOCAL_HOST } from "@/lib/db/http/egress-policy";
 import type { readTopics } from "@/lib/db/providers/keyvalue/mqtt/session";
+import type { setEgressFlag } from "../../../helpers/egress-flag";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const SESSION = join(ROOT, "src", "lib", "db", "providers", "keyvalue", "mqtt", "session.ts");
+const EGRESS_FLAG_HELPER = join(ROOT, "tests", "helpers", "egress-flag.ts");
 
 interface Outcome {
   readonly ok: boolean;
@@ -33,6 +35,7 @@ interface Outcome {
  */
 async function runCases(
   read: typeof readTopics,
+  setFlag: typeof setEgressFlag,
   port: number,
 ): Promise<{ runtime: string; outcomes: Record<string, Outcome> }> {
   const outcomes: Record<string, Outcome> = {};
@@ -45,16 +48,16 @@ async function runCases(
       outcomes[name] = { ok: false, errorName: failure.name, message: failure.message };
     }
   };
-  delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+  setFlag(undefined);
   await record("link-local literal, flag off", "169.254.169.254", false);
   await record("link-local answer, flag off", "metadata.test", false);
   await record("link-local answer over tls, flag off", "metadata.test", true);
   await record("name answered by the checked lookup, flag off", "pinned.test", false);
-  process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
+  setFlag("true");
   await record("private literal, flag on", "127.0.0.1", false);
   await record("private answer, flag on", "pinned.test", false);
   await record("private answer over tls, flag on", "pinned.test", true);
-  delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+  setFlag(undefined);
   return { runtime: typeof Bun === "undefined" ? process.version : `bun ${Bun.version}`, outcomes };
 }
 
@@ -93,8 +96,9 @@ beforeAll(async () => {
     at("child.ts"),
     [
       `import { readTopics } from ${JSON.stringify(SESSION)};`,
+      `import { setEgressFlag } from ${JSON.stringify(EGRESS_FLAG_HELPER)};`,
       `const runCases = ${runCases.toString()};`,
-      "const report = await runCases(readTopics, Number(process.argv[2]));",
+      "const report = await runCases(readTopics, setEgressFlag, Number(process.argv[2]));",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "process.exit(0);",
       "",

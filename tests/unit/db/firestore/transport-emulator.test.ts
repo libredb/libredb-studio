@@ -10,6 +10,7 @@ import type { FirestoreTarget } from "@/lib/db/providers/document/firestore/name
 import type { FirestoreRequest } from "@/lib/db/providers/document/firestore/requests";
 import { createFirestoreClient } from "@/lib/db/providers/document/firestore/transport";
 import { FIXED_NOW, fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const target: FirestoreTarget = { projectId: "demo-p", databaseId: DEFAULT_DATABASE_ID };
 const signal = new AbortController().signal;
@@ -30,8 +31,7 @@ const BLOCK_FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const originalBlockFlag = process.env[BLOCK_FLAG];
 
 afterEach(() => {
-  if (originalBlockFlag === undefined) delete process.env[BLOCK_FLAG];
-  else process.env[BLOCK_FLAG] = originalBlockFlag;
+  setEgressFlag(originalBlockFlag);
 });
 
 describe("firestore emulator lane", () => {
@@ -100,7 +100,7 @@ describe("firestore emulator lane", () => {
   });
 
   test("DB_HTTP_BLOCK_PRIVATE_HOSTS=true refuses a loopback emulator when the client is built, before any lane", () => {
-    process.env[BLOCK_FLAG] = "true";
+    setEgressFlag("true");
     const seams = fakeSeams({ env: { FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080" }, answer: () => jsonAnswer({}) });
     const auth = resolveFirestoreAuth({ password: "" }, seams);
     let caught: unknown;

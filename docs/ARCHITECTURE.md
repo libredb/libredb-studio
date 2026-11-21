@@ -331,7 +331,14 @@ Unhandled promise rejections stay non-fatal, as Next.js keeps them, unless Node.
 On standalone boot it:
 
 1. **Bootstraps missing auth env** (`src/lib/auth-bootstrap.ts`, #109). When `JWT_SECRET` / `ADMIN_PASSWORD` are absent they are generated once, persisted to `<data dir>/auth-bootstrap.json` (mode `0600`), and injected into `process.env` before any secret reader runs; the admin password is printed once. Explicitly set env vars always win. Disable with `AUTH_BOOTSTRAP=off|false|0` (case-insensitive); an unrecognized value warns and stays on. In OIDC mode only the JWT secret is generated.
-2. **Runs the auth-config preflight** (`src/lib/config/auth-preflight.ts`, #227). A `JWT_SECRET` that is set but shorter than 32 characters prints an operator-facing banner (length only, never the value) and exits with code 1. It runs *after* bootstrap so a generated secret is validated too. This is the one step that intentionally stops boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling the failure there would restart the pod forever and hide the login screen's actionable 503; refusing to start costs nothing because a too-short secret can sign no session at all.
+2. **Runs the boot preflights, in this order**, each of which prints an operator-facing banner naming what to fix, never a secret's value, and exits with code 1, so the steps after it never run:
+   1. the auth-config preflight (`src/lib/config/auth-preflight.ts`, #227), which refuses an auth or storage setting the server could not work with, such as an unknown `NEXT_PUBLIC_AUTH_PROVIDER` or a `JWT_SECRET` that is set but shorter than 32 characters (length only, never the value); it runs *after* bootstrap so a generated secret is validated too;
+   2. the private CA preflight (`src/lib/config/ca-bundle-preflight.ts`), which refuses a `NODE_EXTRA_CA_CERTS` that names a missing, unreadable or empty file, where Node itself only warns;
+   3. the egress preflight (`src/lib/config/egress-preflight.ts`), which takes the `DB_HTTP_BLOCK_PRIVATE_HOSTS` decision, logs it once, and refuses a value other than `true`, `on`, `1`, `false`, `off`, `0` or empty, naming the variable;
+   4. the governance preflight (`src/lib/governance/preflight.ts`, [GOVERNANCE.md](GOVERNANCE.md#boot-checks)), which with `GOVERNANCE_SOURCE` set refuses an environment that contradicts governance mode, and checks nothing while governance is off;
+   5. the Kubernetes access review preflight (`src/lib/kubernetes-access/preflight.ts`, [SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#kubernetes-access-review)), which with `KUBERNETES_ACCESS_REVIEW` on refuses an environment that contradicts the review, and checks nothing while it is off.
+
+   These are the steps that intentionally stop boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling such a failure there would restart the pod forever and hide the actionable error behind a green check; refusing to start costs nothing because a server with such a setting cannot work as configured, a too-short secret, for one, can sign no session at all.
 3. **Starts copying the built-in samples, asynchronously** (`src/lib/seed/samples.ts`, `src/lib/seed/sample-copy.ts`).
    Which samples are enabled, where each one's file goes and whether that path is admitted are decided here, once, and kept for the life of the process; every listing reads that decision, and checks only whether the file exists on each request; a file lost after boot is listed unavailable as `target-lost` and logged once.
    Every enabled sample, "Sample (Employees)" and "Sample (LibreDB)", has its committed, digest-pinned file in the seed assets directory (`SEED_ASSETS_DIR`, by default `<working directory>/seed-assets`) copied to the data directory, never over an existing file, and no database is opened.
@@ -341,7 +348,7 @@ On standalone boot it:
 A failure in the bootstrap step is logged and swallowed.
 A sample whose path cannot be checked, whose target is refused or whose copy fails is logged once, with its reason, and listed unavailable with that reason; boot never breaks.
 A copy that fails with an error the copy does not know is a defect: its sample is listed unavailable as `copy-defect`, and the error is rethrown into the copies' promise, which nothing awaits, so it is the process's unhandled rejection that Next.js logs and the server keeps serving.
-The preflight in step 2 is the deliberate exception.
+The preflights in step 2 are the deliberate exception.
 
 ### 4.8. SQLite Driver Selection (`src/lib/db/providers/sql/sqlite-driver.ts`)
 

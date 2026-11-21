@@ -49,6 +49,12 @@ A socket whose bind fails fails `connect` the same way, with the code the runtim
 There is no retry, and no second attempt over IPv4.
 Every connect that fails closes the socket it opened: this one, one whose probe the agent does not answer, and a v3 discovery that ends unanswered.
 
+### 1.3 Private destinations
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, an agent at a loopback, private or other non-public address is refused before a socket exists, with the shared guard's sentence, whether the host is an address literal or a name.
+The setting is the decision core takes once per process ([`egress-decision.ts`](../../src/lib/db/egress-decision.ts)), the one every other guarded engine reads, so a value other than `true`, `on`, `1`, `false`, `off`, `0` or empty (trimmed, any case) is refused by name, before any lookup, for a name as for a literal, and a standalone server refuses to start on it.
+A link-local address and AWS's IPv6 instance metadata address are refused whatever the setting says.
+
 ## 2. Why v2c only, today
 
 This is a fact about the connection form, not a preference. The shared connection record carries

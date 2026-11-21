@@ -30,6 +30,7 @@ import {
   makeCertificates,
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
@@ -40,14 +41,13 @@ beforeAll(() => {
 }, 30_000);
 
 afterEach(async () => {
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
+  setEgressFlag(original);
   await closeAll();
 });
 
 function flag(state: "on" | "off"): void {
-  if (state === "on") process.env[FLAG] = "true";
-  else delete process.env[FLAG];
+  if (state === "on") setEgressFlag("true");
+  else setEgressFlag(undefined);
 }
 
 function refusal(run: () => unknown): Error {
@@ -135,7 +135,7 @@ describe("a literal is checked before any lookup is chosen", () => {
   );
 
   test("an invalid flag value fails closed before any address is read", () => {
-    process.env[FLAG] = "maybe";
+    setEgressFlag("maybe");
     const error = refusal(() => socketEgress("db.example.test", { refusesLinkLocal: true }));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe("Invalid DB_HTTP_BLOCK_PRIVATE_HOSTS: expected true or false");

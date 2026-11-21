@@ -36,9 +36,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createSocket, type Socket } from "node:dgram";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import { SnmpProvider } from "@/lib/db/providers/network/snmp/index";
 import type { DatabaseConnection } from "@/lib/types";
 import { FIXTURE_COMMUNITY } from "../../fixtures/snmp/identity";
+import { setEgressFlag } from "../../helpers/egress-flag";
 import { keyOf, readRequest, withRequestId } from "../../helpers/snmp-capture";
 
 const CAPTURES = JSON.parse(
@@ -312,6 +315,33 @@ describe("the provider reads what a real agent answered", () => {
       expect(groups.map((object) => object.name)).toContain("system");
       expect(detail.columns.map((column) => column.name)).toContain("sysDescr");
       expect(batch.details).toHaveLength(tables.length);
+    },
+    CASE_BUDGET_MS,
+  );
+});
+
+describe("the private-destination setting", () => {
+  const original = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+  afterEach(() => {
+    setEgressFlag(original);
+  });
+
+  test(
+    "a connect to an agent reached by name with DB_HTTP_BLOCK_PRIVATE_HOSTS set to yes is refused by name and sends the agent nothing",
+    async () => {
+      const missed: string[] = [];
+      const port = await recordedAgent(missed);
+      setEgressFlag("yes");
+      const before = received;
+      opened = new SnmpProvider(connectionTo(port, "localhost"), { queryTimeout: DEADLINE_MS });
+      const failure = await opened.connect().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(DatabaseConfigError);
+      expect((failure as Error).message).toContain(INVALID_EGRESS_SETTING);
+      expect(received).toBe(before);
+      expect(missed).toEqual([]);
     },
     CASE_BUDGET_MS,
   );

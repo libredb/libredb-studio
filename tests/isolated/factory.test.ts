@@ -67,6 +67,7 @@ import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import { removeOwnerProviders } from "@/lib/db/owner-removal";
+import { forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import { logger } from "@/lib/logger";
 import { encryptSecret } from "@/lib/storage/encryption";
 import { projectSeedConnection } from "@/lib/seed/connection-filter";
@@ -78,6 +79,7 @@ import { TrinoTransportError } from "@/lib/db/providers/sql/trino/transport";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../helpers/outside-the-union";
 import { markersReachableFrom } from "../helpers/reachable-markers";
+import { setEgressFlag } from "../helpers/egress-flag";
 
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
 const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
@@ -5171,6 +5173,32 @@ describe("a connection whose type names no provider (FND-1)", () => {
     }
   });
 
+  test("an unknown type is refused for its type while DB_HTTP_BLOCK_PRIVATE_HOSTS is invalid, by every entry point, before the tunnel", async () => {
+    const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+    setEgressFlag("yes");
+    const run = mock(async () => "ran");
+    try {
+      const built = await rejection(() => createDatabaseProvider(makeConnection("acmefoo")));
+      expect(built).toBeInstanceOf(UnknownProviderError);
+      expect((built as Error).message).toBe(unknownTypeSentence("acmefoo"));
+      for (const refused of [
+        await rejection(() => getOrCreateProvider(tunnelled("acmefoo"))),
+        await rejection(() => acquireExecutionProfileProvider(tunnelled("acmefoo"), "agent-operations")),
+        await rejection(() => withOneShotTunnel(tunnelled("acmefoo"), run)),
+      ]) {
+        expect(refused).toBeInstanceOf(UnknownProviderError);
+        expect((refused as Error).message).toBe(unknownTypeSentence("acmefoo"));
+      }
+    } finally {
+      setEgressFlag(before);
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getProviderCacheStats().size).toBe(0);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
   test("a record with neither an id nor a type is refused for its type by both cached entry points", async () => {
     const connection = { name: "Neither", host: "db.internal", port: 5432 } as unknown as DatabaseConnection;
     const cached = await rejection(() => getOrCreateProvider(connection));
@@ -5917,4 +5945,120 @@ describe("the Snowflake provider in the factory", () => {
       }
     },
   );
+});
+
+// ─── The egress decision comes before any cache, tunnel or provider (FND-2 slice 2a) ──
+
+describe("the egress decision comes before any cache, tunnel or provider (FND-2 slice 2a)", () => {
+  const original = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+  // Generated per run: a fabricated credential is never written in the source.
+  const bastion: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+    password: crypto.randomUUID(),
+  };
+  const tunnelled = (id: string) =>
+    makeConnection("postgres", { id, host: "db.internal", port: 5432, sshTunnel: bastion });
+
+  /** The lines `createDatabaseProvider` logs, one for every provider it builds. */
+  const buildLines = (log: { readonly mock: { readonly calls: readonly (readonly unknown[])[] } }) =>
+    log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"));
+
+  /** The error a call rejects with, so a case can pin its class: `toThrow` with an instance compares only the message. */
+  const refusalOf = (run: () => Promise<unknown>): Promise<unknown> =>
+    run().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+  beforeEach(() => {
+    setEgressFlag("yes");
+  });
+
+  afterEach(() => {
+    setEgressFlag(original);
+  });
+
+  test("createDatabaseProvider refuses an invalid DB_HTTP_BLOCK_PRIVATE_HOSTS by name for an engine the guard does not cover, and builds nothing", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const refusal = await refusalOf(() => createDatabaseProvider(makeConnection("postgres")));
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
+      expect(buildLines(log)).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("getOrCreateProvider refuses it before the cache and before the tunnel, and builds and opens nothing", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const refusal = await refusalOf(() => getOrCreateProvider(tunnelled("egress-tunnelled")));
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
+      expect(buildLines(log)).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+
+  test("acquireExecutionProfileProvider refuses it before the profiled cache and before the tunnel", async () => {
+    const refusal = await refusalOf(() =>
+      acquireExecutionProfileProvider(tunnelled("egress-profiled"), "agent-operations"),
+    );
+    expect(refusal).toBeInstanceOf(DatabaseConfigError);
+    expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
+
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("withOneShotTunnel refuses it before it dials, and never runs its callback", async () => {
+    const run = mock(async () => "ran");
+
+    const refusal = await refusalOf(() => withOneShotTunnel(tunnelled("egress-one-shot"), run));
+    expect(refusal).toBeInstanceOf(DatabaseConfigError);
+    expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
+
+    expect(run).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("the first build takes the decision and reports it once, and a later build reports nothing", async () => {
+    setEgressFlag(undefined);
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    let reported: unknown[][] = [];
+    try {
+      await createDatabaseProvider(makeConnection("postgres", { id: "egress-first" }));
+      await createDatabaseProvider(makeConnection("postgres", { id: "egress-second" }));
+      reported = info.mock.calls.filter((call) => call[1]?.route === "egress-decision");
+      expect(buildLines(log)).toHaveLength(2);
+    } finally {
+      log.mockRestore();
+      info.mockRestore();
+      forgetEgressDecision();
+    }
+
+    expect(reported).toEqual([
+      [
+        "Private database destinations are reachable",
+        {
+          route: "egress-decision",
+          variable: "DB_HTTP_BLOCK_PRIVATE_HOSTS",
+          blocksPrivateHosts: false,
+          source: "default",
+        },
+      ],
+    ]);
+  });
 });

@@ -13,7 +13,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createSocket, type Socket } from "node:dgram";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import { openExchange, resolveTarget, SnmpTransportError } from "@/lib/db/providers/network/snmp/client";
 import { writeInteger, writeOctetString, writeOid, writeSequence } from "@/lib/db/providers/network/snmp/ber";
 import { localizedKey } from "@/lib/db/providers/network/snmp/usm";
@@ -27,6 +29,7 @@ import {
 import { decodeResponse, encodeRequest } from "@/lib/db/providers/network/snmp/message";
 import { MAX_VARBINDS_PER_REQUEST } from "@/lib/db/providers/network/snmp/statement";
 import { PDU_GET, PDU_SET } from "@/lib/db/providers/network/snmp/valve";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const SYS_DESCR = [1, 3, 6, 1, 2, 1, 1, 1, 0];
 const CAPTURED = JSON.parse(
@@ -88,12 +91,46 @@ describe("a target is resolved and checked before a socket exists", () => {
     // shared guard refuses while the flag is on.
     const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
     const before = process.env[flag];
-    process.env[flag] = "true";
+    setEgressFlag("true");
     try {
       await expect(resolveTarget("localhost", 161)).rejects.toThrow(DatabaseConfigError);
     } finally {
-      if (before === undefined) delete process.env[flag];
-      else process.env[flag] = before;
+      setEgressFlag(before);
+    }
+  });
+  test("a name is refused by name when DB_HTTP_BLOCK_PRIVATE_HOSTS is yes, as a literal is, before any socket", async () => {
+    const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+    setEgressFlag("yes");
+    try {
+      // A name that does not resolve too: the refusal is taken before any lookup, so no query leaves the machine.
+      const refusals = await Promise.all(
+        ["localhost", "127.0.0.1", "no-such-host.invalid"].map((host) =>
+          resolveTarget(host, 161).then(
+            () => null,
+            (error: unknown) => error,
+          ),
+        ),
+      );
+      for (const refusal of refusals) {
+        expect(refusal).toBeInstanceOf(DatabaseConfigError);
+        expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
+      }
+    } finally {
+      setEgressFlag(before);
+    }
+  });
+  test("the answer check keeps the decision the process took, as the shared guard does", async () => {
+    const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+    setEgressFlag("true");
+    try {
+      await expect(resolveTarget("localhost", 161)).rejects.toThrow(BLOCKED_HOST);
+      // A direct write, not the helper, on purpose: the process decided at its first read, so the write moves nothing.
+      process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
+      await expect(resolveTarget("localhost", 161)).rejects.toThrow(BLOCKED_HOST);
+      forgetEgressDecision();
+      expect((await resolveTarget("localhost", 161)).address).toMatch(/^(127\.|::1)/);
+    } finally {
+      setEgressFlag(before);
     }
   });
   test("and the same name passes while the flag is off, which is the default", async () => {
@@ -118,12 +155,11 @@ describe("a target is resolved and checked before a socket exists", () => {
       expect(await resolveTarget("127.1", 161)).toMatchObject({ address: "127.0.0.1", family: 4, asked: "127.1" });
       const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
       const before = process.env[flag];
-      process.env[flag] = "true";
+      setEgressFlag("true");
       try {
         await expect(resolveTarget("127.1", 161)).rejects.toThrow(DatabaseConfigError);
       } finally {
-        if (before === undefined) delete process.env[flag];
-        else process.env[flag] = before;
+        setEgressFlag(before);
       }
     },
   );

@@ -29,14 +29,14 @@ import {
 } from "@/lib/db/providers/industrial/modbus/client";
 import { ModbusSession } from "@/lib/db/providers/industrial/modbus/session";
 import { fakeModbusDevice, readAdu } from "../../../helpers/modbus-fake-device";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const originalFlag = process.env[FLAG];
 const open: Server[] = [];
 
 afterEach(() => {
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
+  setEgressFlag(originalFlag);
   for (const server of open.splice(0)) server.close();
 });
 
@@ -81,7 +81,7 @@ const request = () => {
 
 describe("with the guard off, a local device is reachable both ways", () => {
   test("by IP literal", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const port = await listener("answer");
     const socket = await dialModbus({ host: "127.0.0.1", port });
     expect(socket.destroyed).toBe(false);
@@ -93,7 +93,7 @@ describe("with the guard off, a local device is reachable both ways", () => {
    * this, because the DNS guard blocks loopback and checks no flag of its own.
    */
   test("by NAME, which is how a controller is usually addressed", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const port = await listener("answer");
     const socket = await dialModbus({ host: "localhost", port });
     expect(socket.destroyed).toBe(false);
@@ -103,13 +103,13 @@ describe("with the guard off, a local device is reachable both ways", () => {
 
 describe("with the guard on, the shared rule refuses and its own words are kept", () => {
   test("a private literal is refused before any socket exists", async () => {
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     const error = await dialModbus({ host: "10.20.30.40", port: 502 }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DatabaseConfigError);
   });
 
   test("a loopback literal is refused too, which is why the flag is off for local work", async () => {
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     const error = await dialModbus({ host: "127.0.0.1", port: 502 }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DatabaseConfigError);
   });
@@ -117,13 +117,13 @@ describe("with the guard on, the shared rule refuses and its own words are kept"
 
 describe("link-local, where the cost runs the other way than it does for a broker", () => {
   test("refused by default, whatever the flag says", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const error = await dialModbus({ host: "169.254.10.20", port: 502 }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DatabaseConfigError);
   });
 
   test("reachable only when the call site says so, which is where that decision belongs", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const port = await listener("answer");
     const socket = await dialModbus({ host: "127.0.0.1", port, refusesLinkLocal: false });
     expect(socket.destroyed).toBe(false);
@@ -133,7 +133,7 @@ describe("link-local, where the cost runs the other way than it does for a broke
 
 describe("one exchange on an open socket", () => {
   test("a complete answer resolves with the frame", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const port = await listener("answer");
     const socket = await dialModbus({ host: "127.0.0.1", port });
     const got = await exchangeOnce(socket, request(), { expect: EXPECT });
@@ -144,7 +144,7 @@ describe("one exchange on an open socket", () => {
   });
 
   test("a silent device ends by our own timer and names the time", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const port = await listener("silent");
     const socket = await dialModbus({ host: "127.0.0.1", port });
     const error = await exchangeOnce(socket, request(), {
@@ -169,7 +169,7 @@ describe("one exchange on an open socket", () => {
    * two outcomes are no longer different.
    */
   test("a device that ends the connection before answering is a ConnectionError, either way", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const port = await listener("close");
     const socket = await dialModbus({ host: "127.0.0.1", port }).catch(() => undefined);
     if (socket === undefined) return;
@@ -228,7 +228,7 @@ describe("the dial timer", () => {
   }
 
   test("a listener that never accepts ends by our timer, and the time is in the sentence", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const fake = silentSocket();
     const error = await dialModbus(
       { host: "203.0.113.7", port: 502 },
@@ -241,7 +241,7 @@ describe("the dial timer", () => {
   });
 
   test("the socket is destroyed when the dial times out, so nothing is left half open", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const fake = silentSocket();
     await dialModbus(
       { host: "203.0.113.7", port: 502 },
@@ -251,7 +251,7 @@ describe("the dial timer", () => {
   });
 
   test("the timer is armed with a positive value, which a zero would not be", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const fake = silentSocket();
     await dialModbus(
       { host: "203.0.113.7", port: 502 },
@@ -525,7 +525,7 @@ describe("the error event reaches the boundary too", () => {
  */
 describe("the declared timers, on the path that reads them", () => {
   test("the dial arms the declared dial timeout when none is given", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     let armed = -1;
     const socket = {
       setTimeout(ms: number) {
@@ -851,7 +851,7 @@ describe("each exchange removes its own listeners when it settles", () => {
   });
 
   test("forty exchanges on one dialled socket leave it holding only the dial's own listeners", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const dev = await fakeModbusDevice({ holding: Array.from({ length: 80 }, (_, at) => 100 + at) });
     const warnings: string[] = [];
     const onWarning = (warning: Error) => warnings.push(warning.name);

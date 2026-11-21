@@ -9,6 +9,7 @@ import { BLOCKED_HOST as BLOCKED } from "@/lib/db/http/egress-policy";
 import { httpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeByteTransport, type NodeByteTransport } from "@/lib/db/http/node-transport";
 import { closeAll, rawAnswer, rawHttpListener } from "../../../helpers/node-transport-fixtures";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
@@ -16,8 +17,7 @@ const transports: NodeByteTransport[] = [];
 const OK = (): Buffer => rawAnswer("200 OK", ["content-length: 2"], "ok");
 
 afterEach(async () => {
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
+  setEgressFlag(original);
   for (const transport of transports.splice(0)) transport.close();
   await closeAll();
 });
@@ -34,7 +34,7 @@ function send(transport: NodeByteTransport) {
 describe("with the guard on", () => {
   test("localhost is refused by the guard's lookup on the Agent with the guard's sentence, and nothing is accepted", async () => {
     const listener = await rawHttpListener(OK);
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     const transport = createNodeByteTransport({
       origin: httpOrigin("http", "localhost", listener.port),
       tls: null,
@@ -54,7 +54,7 @@ describe("with the guard on", () => {
   });
 
   test("a link-local literal gets the guard's sentence, because the guard runs first", () => {
-    process.env[FLAG] = "true";
+    setEgressFlag("true");
     let error: Error | undefined;
     try {
       createNodeByteTransport({
@@ -72,7 +72,7 @@ describe("with the guard on", () => {
 
 describe("with the guard off", () => {
   test("127.0.0.1 reaches the listener, the control for the refusals above", async () => {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const listener = await rawHttpListener(OK);
     const transport = createNodeByteTransport({
       origin: httpOrigin("http", "127.0.0.1", listener.port),

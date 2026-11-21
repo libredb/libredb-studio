@@ -20,6 +20,7 @@ import { createServer as createTlsServer, type TLSSocket } from "node:tls";
 import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import type { dialAmqp } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
 import { makeCertificates } from "../../../helpers/node-transport-fixtures";
+import type { setEgressFlag } from "../../../helpers/egress-flag";
 
 const DIAL = join(
   import.meta.dir,
@@ -36,6 +37,7 @@ const DIAL = join(
   "amqp",
   "dial.ts",
 );
+const EGRESS_FLAG_HELPER = join(import.meta.dir, "..", "..", "..", "helpers", "egress-flag.ts");
 
 interface Plan {
   readonly plain: number;
@@ -63,6 +65,7 @@ interface Outcome {
  */
 async function runCases(
   dial: typeof dialAmqp,
+  setFlag: typeof setEgressFlag,
   plan: Plan,
 ): Promise<{ runtime: string; outcomes: Record<string, Outcome> }> {
   const outcomes: Record<string, Outcome> = {};
@@ -96,7 +99,7 @@ async function runCases(
       };
     }
   };
-  delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+  setFlag(undefined);
   await record("plain literal", "127.0.0.1", plan.plain, null);
   await record("name answered by the checked lookup", "pinned.test", plan.plain, null);
   await record("link-local answer, flag off", "metadata.test", plan.plain, null);
@@ -119,11 +122,11 @@ async function runCases(
   await record("tls wrong name", "localhost", plan.farName, tls("localhost", plan.ca));
   await record("tls to a plain AMQP port", "localhost", plan.amqp, tls("localhost", plan.ca));
   await record("tls 1.2 refused without a client certificate", "localhost", plan.refusing, tls("localhost", plan.ca));
-  process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
+  setFlag("true");
   await record("flag on, private literal", "127.0.0.1", plan.plain, null);
   await record("flag on, name", "pinned.test", plan.plain, null);
   await record("flag on, name over tls", "pinned.test", plan.local, tls("pinned.test", plan.ca));
-  delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+  setFlag(undefined);
   return { runtime: typeof Bun === "undefined" ? process.version : `bun ${Bun.version}`, outcomes };
 }
 
@@ -281,9 +284,10 @@ beforeAll(async () => {
     [
       'import { readFileSync } from "node:fs";',
       `import { dialAmqp } from ${JSON.stringify(DIAL)};`,
+      `import { setEgressFlag } from ${JSON.stringify(EGRESS_FLAG_HELPER)};`,
       `const runCases = ${runCases.toString()};`,
       'const plan = JSON.parse(readFileSync(process.argv[2], "utf8"));',
-      "const report = await runCases(dialAmqp, plan);",
+      "const report = await runCases(dialAmqp, setEgressFlag, plan);",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "process.exit(0);",
       "",

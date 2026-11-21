@@ -3,20 +3,22 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpOrigin } from "@/lib/db/http/endpoint";
+import { forgetEgressDecision } from "@/lib/db/egress-decision";
 import {
   assertPublicDnsAnswers,
+  BLOCKED_HOST,
   guardedNodeOptions,
   httpTransportFetch,
   LOOPBACK_NETWORKS,
   publicAddressLookup,
 } from "@/lib/db/http/egress-policy";
 import { nodeRequestJson } from "@/lib/db/providers/document/couchbase/http-transport";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[flag];
 afterEach(() => {
-  if (original === undefined) delete process.env[flag];
-  else process.env[flag] = original;
+  setEgressFlag(original);
 });
 
 describe("opt-in HTTP database destination policy", () => {
@@ -38,7 +40,7 @@ describe("opt-in HTTP database destination policy", () => {
     ["internal SRv6 range", "5f00::1"],
     ["IPv6 benchmark range", "2001:2::1"],
   ])("refuses %s before building a request", (_label, host) => {
-    process.env[flag] = "true";
+    setEgressFlag("true");
     expect(() => httpOrigin("http", host, 8080)).toThrow(DatabaseConfigError);
     try {
       httpOrigin("http", host, 8080);
@@ -48,7 +50,7 @@ describe("opt-in HTTP database destination policy", () => {
   });
 
   test("keeps public literals and hostnames available in guarded mode", () => {
-    process.env[flag] = "1";
+    setEgressFlag("1");
     expect(httpOrigin("https", "8.8.8.8", 443).host).toBe("8.8.8.8");
     expect(httpOrigin("https", "168.63.129.16", 443).host).toBe("168.63.129.16");
     expect(httpOrigin("https", "2606:4700:4700::1111", 443).host).toBe("[2606:4700:4700::1111]");
@@ -56,14 +58,14 @@ describe("opt-in HTTP database destination policy", () => {
   });
 
   test("leaves local connections enabled by default and with an explicit false", () => {
-    delete process.env[flag];
+    setEgressFlag(undefined);
     expect(httpOrigin("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
-    process.env[flag] = "false";
+    setEgressFlag("false");
     expect(httpOrigin("http", "[::1]", 8080).host).toBe("[::1]");
   });
 
   test("an invalid setting cannot silently disable the guard", () => {
-    process.env[flag] = "tru";
+    setEgressFlag("tru");
     expect(() => httpOrigin("http", "8.8.8.8", 8080)).toThrow(DatabaseConfigError);
   });
 
@@ -81,13 +83,13 @@ describe("opt-in HTTP database destination policy", () => {
   });
 
   test("passes the validating lookup to a fresh socket", () => {
-    process.env[flag] = "on";
+    setEgressFlag("on");
     expect(guardedNodeOptions("db.example.com")).toEqual({ lookup: publicAddressLookup, agent: false });
     expect(() => guardedNodeOptions("[::1]")).toThrow(DatabaseConfigError);
   });
 
   test("guards the custom TLS request path too", () => {
-    process.env[flag] = "true";
+    setEgressFlag("true");
     expect(() =>
       nodeRequestJson(
         "https://169.254.169.254/query/service",
@@ -98,7 +100,7 @@ describe("opt-in HTTP database destination policy", () => {
   });
 
   test("does not send either literal or DNS-alias loopback requests", async () => {
-    process.env[flag] = "true";
+    setEgressFlag("true");
     let hits = 0;
     const server = createServer((_request, response) => {
       hits += 1;
@@ -110,7 +112,7 @@ describe("opt-in HTTP database destination policy", () => {
       expect(() => httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`)).toThrow(DatabaseConfigError);
       await expect(httpTransportFetch(`http://localhost:${port}/api/v1/query`)).rejects.toThrow();
       expect(hits).toBe(0);
-      process.env[flag] = "false";
+      setEgressFlag("false");
       expect(await (await httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`)).text()).toBe("reached");
       expect(hits).toBe(1);
     } finally {
@@ -135,9 +137,25 @@ describe("LOOPBACK_NETWORKS", () => {
   });
 
   test("the blocked list refuses an address inside every row", () => {
-    process.env[flag] = "true";
+    setEgressFlag("true");
     for (const [network] of LOOPBACK_NETWORKS) {
       for (const host of PROBES[network]) expect(() => httpOrigin("http", host, 8080)).toThrow(DatabaseConfigError);
     }
+  });
+});
+
+describe("the decision the guard reads (FND-2 slice 2a)", () => {
+  test("the guard keeps the decision the process took: a value written after the first guarded call moves nothing until the decision is forgotten", () => {
+    setEgressFlag("true");
+    expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
+    // A direct write, not the helper, on purpose: the process decided at its first read, so the write moves nothing.
+    process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
+    expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
+    expect(guardedNodeOptions("db.example.com")).toEqual({ lookup: publicAddressLookup, agent: false });
+    // The third reader, the fetch path of couchbase, clickhouse, druid, libsql, search, trino and prometheus: its
+    // literal check throws synchronously, before any socket.
+    expect(() => httpTransportFetch("http://127.0.0.1:9/")).toThrow(BLOCKED_HOST);
+    forgetEgressDecision();
+    expect(httpOrigin("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
   });
 });

@@ -23,6 +23,7 @@ import {
 } from "@/lib/db/providers/sql/databend/connection-options";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { type DatabaseConnection, type SSHTunnelConfig, TUNNEL_FAR_END } from "@/lib/types";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_USER = "reader";
@@ -33,8 +34,7 @@ const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const originalFlag = process.env[FLAG];
 
 afterEach(() => {
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
+  setEgressFlag(originalFlag);
 });
 
 const BROWSER_WORDS = ["Mozilla", "Chrome", "Firefox", "Safari", "Edge", "worksheet"];

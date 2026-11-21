@@ -18,6 +18,7 @@ import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
 import { EventEmitter } from "node:events";
 import type { TcpNetConnectOpts, Server, Socket } from "node:net";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const realDns = { ...(await import("node:dns")) };
 const realNet = { ...(await import("node:net")) };
@@ -85,8 +86,7 @@ const flagBefore = process.env[FLAG];
 const servers: Server[] = [];
 
 afterEach(() => {
-  if (flagBefore === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = flagBefore;
+  setEgressFlag(flagBefore);
   dials.length = 0;
   lookups.length = 0;
   handedBack.length = 0;
@@ -96,8 +96,8 @@ afterAll(() => {
 });
 
 function flag(state: "on" | "off"): void {
-  if (state === "on") process.env[FLAG] = "true";
-  else delete process.env[FLAG];
+  if (state === "on") setEgressFlag("true");
+  else setEgressFlag(undefined);
 }
 
 /** A loopback listener that accepts and says nothing, counting what it accepted. */

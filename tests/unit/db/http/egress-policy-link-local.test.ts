@@ -8,6 +8,7 @@
  */
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const realDns = { ...(await import("node:dns")) };
 const lookups: string[] = [];
@@ -61,8 +62,7 @@ const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
 
 afterEach(() => {
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
+  setEgressFlag(original);
   lookups.length = 0;
   lookupOptions.length = 0;
 });
@@ -139,7 +139,7 @@ describe("assertNotLinkLocalLiteral", () => {
   });
 
   test("refuses whatever the guard flag says", () => {
-    process.env[FLAG] = "false";
+    setEgressFlag("false");
     expect(refusal(() => assertNotLinkLocalLiteral("169.254.169.254")).message).toBe(LINK_LOCAL);
   });
 });
@@ -244,7 +244,7 @@ describe("through a byte transport with the guard off", () => {
   const OK = (): Buffer => rawAnswer("200 OK", ["content-length: 2"], "ok");
 
   function connect(host: string, port: number) {
-    delete process.env[FLAG];
+    setEgressFlag(undefined);
     const transport = createNodeByteTransport({
       origin: httpOrigin("http", host, port),
       tls: null,
@@ -305,8 +305,8 @@ describe("a byte transport refuses every link-local form whatever the guard flag
 
   /** The guard flag off or on, then a byte transport on the host and port given, read raw so no validation runs first. */
   function build(host: string, port: number, guard: "off" | "on") {
-    if (guard === "on") process.env[FLAG] = "true";
-    else delete process.env[FLAG];
+    if (guard === "on") setEgressFlag("true");
+    else setEgressFlag(undefined);
     const transport = createNodeByteTransport({
       origin: { scheme: "http", host, port },
       tls: null,
@@ -392,8 +392,8 @@ describe("a text transport asked to refuse link-local addresses", () => {
   const OK = (): Buffer => rawAnswer("200 OK", ["content-length: 2"], "ok");
 
   function send(host: string, port: number, guard: "off" | "on" = "off", refusesLinkLocal = true) {
-    if (guard === "on") process.env[FLAG] = "true";
-    else delete process.env[FLAG];
+    if (guard === "on") setEgressFlag("true");
+    else setEgressFlag(undefined);
     const origin = httpOrigin("http", host, port);
     const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {}, refusesLinkLocal });
     transports.push(transport);

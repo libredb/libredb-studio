@@ -14,13 +14,13 @@ import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus";
 import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[flag];
 
 afterEach(() => {
-  if (original === undefined) delete process.env[flag];
-  else process.env[flag] = original;
+  setEgressFlag(original);
 });
 
 const providers = [
@@ -50,7 +50,7 @@ const USERLESS: ReadonlySet<string> = new Set(["influxdb", "influxdb3", "s3"]);
 for (const [name, type, Provider] of providers) {
   for (const secure of [false, true]) {
     test(`${name} ${secure ? "TLS" : "plain HTTP"} keeps DNS policy refusals as configuration errors`, async () => {
-      process.env[flag] = "true";
+      setEgressFlag("true");
       let hits = 0;
       const server = createServer((_request, response) => {
         hits += 1;
@@ -84,7 +84,7 @@ for (const [name, type, Provider] of providers) {
 }
 
 test("libSQL version discovery also reports a DNS policy refusal", async () => {
-  process.env[flag] = "true";
+  setEgressFlag("true");
   const transport = new LibSQLHranaTransport({
     id: "blocked-version",
     name: "Blocked version",

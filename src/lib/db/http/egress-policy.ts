@@ -6,12 +6,11 @@ import { BlockList, isIP, type LookupFunction } from "node:net";
 import { PassThrough, Readable } from "node:stream";
 import { urlToHttpOptions } from "node:url";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 /** The guard's refusal of a non-public destination, worded for any transport the guard serves: it names no protocol. */
 export const BLOCKED_HOST = "Invalid host: this database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const BLOCKED_CONFIG = `Invalid ${FLAG}: expected true or false`;
 
 /**
  * The loopback networks, read by two rules: the blocked list below, and `plaintextSecretRefusal` in `./endpoint`,
@@ -60,14 +59,6 @@ for (const [network, prefix] of [
   blocked.addSubnet(network, prefix, "ipv6");
 for (const [network, prefix, family] of LOOPBACK_NETWORKS) blocked.addSubnet(network, prefix, family);
 
-/** Unset and false preserve local-first connections. Invalid opt-in values fail closed. */
-function blockPrivateHttpHosts(): boolean {
-  const value = process.env[FLAG]?.trim().toLowerCase();
-  if (value === undefined || value === "" || value === "false" || value === "off" || value === "0") return false;
-  if (value === "true" || value === "on" || value === "1") return true;
-  throw new DatabaseConfigError(BLOCKED_CONFIG);
-}
-
 /**
  * Whether the guard refuses an address of family 4 or 6. An IPv6 address with a zone index is refused whatever its
  * address: the zone makes it link-scoped, and Bun's BlockList ignores the zone, so ::1%lo would pass it there.
@@ -79,7 +70,7 @@ function isBlocked(address: string, family: number): boolean {
 
 /** Block all non-public address forms before a socket can be opened. */
 export function assertPublicLiteralHost(host: string): void {
-  if (!blockPrivateHttpHosts()) return;
+  if (!egressDecision().blocksPrivateHosts) return;
   const address = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const family = isIP(address);
   if (family !== 0 && isBlocked(address, family)) {
@@ -127,7 +118,7 @@ export const publicAddressLookup: LookupFunction = checkedLookup(assertPublicDns
 
 /** Disable socket reuse so an earlier unguarded connection cannot bypass lookup. */
 export function guardedNodeOptions(hostname: string | null | undefined): Pick<RequestOptions, "lookup" | "agent"> {
-  if (!blockPrivateHttpHosts()) return {};
+  if (!egressDecision().blocksPrivateHosts) return {};
   if (!hostname) throw new DatabaseConfigError(BLOCKED_HOST);
   assertPublicLiteralHost(hostname);
   return { lookup: publicAddressLookup, agent: false };
@@ -139,8 +130,9 @@ export const UNUSABLE_ANSWER = "Invalid host: the name did not resolve to a usab
 
 /**
  * The three sentences of the shared egress refusal. A provider that wraps its own failures passes a DatabaseConfigError
- * whose message is one of these through unchanged, so the user reads the guard's own words. The invalid-flag sentence
- * is not among them: it is a configuration fault of the server, not a refused destination.
+ * whose message is one of these through unchanged, so the user reads the guard's own words. The invalid-flag sentence,
+ * `INVALID_EGRESS_SETTING` in `@/lib/db/egress-decision`, is not among them: it is a configuration fault of the server,
+ * not a refused destination.
  */
 export const EGRESS_REFUSAL_SENTENCES: ReadonlySet<string> = new Set([BLOCKED_HOST, LINK_LOCAL_HOST, UNUSABLE_ANSWER]);
 
@@ -258,7 +250,7 @@ class SwitchedProtocolsError extends DatabaseError {
  * native fetch fails one at once.
  */
 export function httpTransportFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
-  if (!blockPrivateHttpHosts()) return globalThis.fetch(input, init);
+  if (!egressDecision().blocksPrivateHosts) return globalThis.fetch(input, init);
 
   const url = new URL(String(input));
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new DatabaseConfigError(BLOCKED_HOST);

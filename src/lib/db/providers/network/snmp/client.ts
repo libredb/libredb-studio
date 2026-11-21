@@ -25,6 +25,7 @@ import {
   assertPublicDnsAnswers,
   assertPublicLiteralHost,
 } from "@/lib/db/http/egress-policy";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { QueryError } from "@/lib/db/errors";
 import { randomBytes } from "node:crypto";
 import { decodeResponse, encodePdu, encodeRequest, type Response, SnmpAnswerTooLargeError } from "./message";
@@ -50,15 +51,6 @@ import {
   type SnmpFailure,
 } from "./errors";
 import { createGuardedSocketFactory, type ClientFacingSocket, type GuardedTarget } from "./transport";
-
-/**
- * Reads the same flag the shared guard reads, by the same name, so the two cannot disagree.
- * An unset or false value leaves local connections working, which is the repository's default.
- */
-function blockPrivateHosts(): boolean {
-  const value = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS?.trim().toLowerCase();
-  return value === "true" || value === "on" || value === "1";
-}
 
 export class SnmpTransportError extends QueryError {
   constructor(message: string) {
@@ -90,6 +82,10 @@ export interface ResolvedTarget extends GuardedTarget {
  * name and the socket is connected to the address the checks saw.
  */
 export async function resolveTarget(host: string, port: number): Promise<ResolvedTarget> {
+  // Core's one decision (`@/lib/db/egress-decision`), read before anything else, as the shared
+  // transport reads it before it dials: an invalid DB_HTTP_BLOCK_PRIVATE_HOSTS is refused by name
+  // for every host form, before any lookup leaves the machine.
+  const { blocksPrivateHosts } = egressDecision();
   const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const family = isIP(bare);
   if (family === 4 || family === 6) {
@@ -107,13 +103,14 @@ export async function resolveTarget(host: string, port: number): Promise<Resolve
     });
   });
   // The two checks are not applied the same way, and copying the shared transport's shape is
-  // the point rather than a detail. `assertPublicLiteralHost` consults the flag itself and
-  // returns when it is off (`egress-policy.ts`), but `assertPublicDnsAnswers` does NOT: it
-  // refuses loopback and private answers unconditionally, because the shared transport only
-  // installs it when the flag is on (`guardedNodeOptions`). Calling it unconditionally
-  // here refused every agent reached by name on a local network even with the flag off, which
-  // is the common case; a test with a name rather than a literal is what found it.
-  if (blockPrivateHosts()) assertPublicDnsAnswers(answers);
+  // the point rather than a detail. `assertPublicLiteralHost` consults the decision itself and
+  // returns when it allows private destinations (`egress-policy.ts`), but `assertPublicDnsAnswers`
+  // does NOT: it refuses loopback and private answers unconditionally, because the shared transport
+  // only installs it when the decision blocks them (`guardedNodeOptions`). Calling it
+  // unconditionally here refused every agent reached by name on a local network with the flag
+  // off, which is the common case; a test with a name rather than a literal is what found it.
+  // Both checks read core's one decision, so they cannot disagree.
+  if (blocksPrivateHosts) assertPublicDnsAnswers(answers);
   // The link-local refusal is not flag-dependent anywhere, so it runs either way. It also refuses
   // an answer set with no usable address, or an answer whose family does not match its address,
   // so the family below is the address's own.

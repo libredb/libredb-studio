@@ -62,7 +62,8 @@ beforeAll(async () => {
       timedOut: run.exitedDueToTimeout === true,
       stderr: run.stderr.toString(),
     }).toMatchObject({ exitCode: 0, timedOut: false });
-    underNode = JSON.parse(run.stdout.toString());
+    // The report is the child's last line: its first egress decision logs one info line to the same stdout before it.
+    underNode = JSON.parse(run.stdout.toString().trim().split("\n").at(-1) as string);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

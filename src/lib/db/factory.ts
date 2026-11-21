@@ -17,6 +17,7 @@ import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
 import { assertTunnelRecordIsPlainData, providerConnection } from "./provider-connection";
+import { egressDecision } from "./egress-decision";
 import { registerOwnerRemoval } from "./owner-removal";
 import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
 import { assertDatabaseType, typeIdRow } from "./type-id";
@@ -38,7 +39,8 @@ import * as path from "path";
  *   (./provider-connection): a copy whose `sshTunnel` holds only the fields `SSH_TUNNEL_FIELDS` classifies public, so
  *   the tunnel's password, private key and passphrase stay in the record the caller passed. An `sshTunnel` that is not
  *   plain data, or a connection carrying one that is not, is refused with a `DatabaseConfigError` before anything is
- *   built.
+ *   built. The process's egress decision is taken first too (see assertEgressDecided): the first call of a process
+ *   with no boot hook reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and keeps it, and an invalid value is refused on every call.
  * @param options - Optional provider options (pooling, timeout, etc.)
  * @param execution - Server-injected execution context (#328, non-admin DuckDB file access). Never built
  *   from caller-supplied options. `acquireExecutionProfileProvider` passes the agent
@@ -184,6 +186,20 @@ function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: Prov
   }
 }
 
+/**
+ * Take the process's egress decision (`./egress-decision`) before anything is cached, dialled or built, refusing an
+ * invalid `DB_HTTP_BLOCK_PRIVATE_HOSTS` with its `DatabaseConfigError`, on every call.
+ *
+ * The factory is where a channel with no boot hook, the published package and the VS Code backend, takes the decision:
+ * its first entry point call reads the variable, logs the decision and keeps it for the life of the process (FND-2,
+ * LD9). On a standalone server the boot preflight took it already, so this reads the kept outcome. It runs in all four
+ * entry points beside `assertTunnelRecordIsPlainData`, so `getOrCreateProvider` never dials a bastion for a server
+ * whose setting it then refuses.
+ */
+function assertEgressDecided(): void {
+  egressDecision();
+}
+
 // ============================================================================
 // Enabled providers (LIBREDB_ENABLED_PROVIDERS)
 // ============================================================================
@@ -219,6 +235,7 @@ export async function createDatabaseProvider(
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
   assertOwnerPoolHonoured(connection, execution);
+  assertEgressDecided();
   // Every provider is built from the connection `providerConnection` answers: the record with its `sshTunnel` reduced to
   // the public fields, so no provider holds the tunnel's password, private key or passphrase (FND-2,
   // docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider, acquireExecutionProfileProvider,
@@ -681,6 +698,7 @@ export async function withOneShotTunnel<T>(
   assertReadOnlyHonoured(connection);
   // Before the copy below, which would hand createDatabaseProvider plain data: see assertTunnelRecordIsPlainData.
   assertTunnelRecordIsPlainData(connection);
+  assertEgressDecided();
   if (!connection.sshTunnel?.enabled || !connection.host || !connection.port) {
     return await run(connection);
   }
@@ -1197,6 +1215,7 @@ export async function getOrCreateProvider(
   assertReadOnlyHonoured(connection);
   assertTunnelRecordIsPlainData(connection);
   assertOwnerPoolHonoured(connection, execution);
+  assertEgressDecided();
   // The writable cache never holds a read-only handle, and its key frames no such mode for an
   // execution context: a readOnly reaching the provider from here would be served to every later
   // editor request, or a read-only caller handed the writable one. The type has no such field; a
@@ -1614,6 +1633,7 @@ export async function acquireExecutionProfileProvider(
   assertReadOnlyHonoured(connection);
   assertTunnelRecordIsPlainData(connection);
   assertOwnerPoolHonoured(connection, requester);
+  assertEgressDecided();
   // Refuses an unknown profile ahead of the cache key, which frames the profile.
   const execution = executionContextFor(profile, requester);
 

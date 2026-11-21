@@ -51,11 +51,11 @@ import {
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
 import { QDRANT_FIXTURE_ROUTES, QDRANT_SAMPLE_REQUESTS } from "../../../helpers/qdrant-routes";
+import { withEgressFlag } from "../../../helpers/egress-flag";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
 const WITHHELD = "(the server's text was withheld because it contained the configured credential)";
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const PROXY_VARIABLES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"];
 
 let certificates: TransportCertificates;
@@ -232,9 +232,10 @@ describe("what reaches the wire (QE2, QE4)", () => {
 
   test("with the egress guard on, a name that resolves to this machine is refused before any socket", async () => {
     const listener = await httpListener(ok);
-    setEnvironment(FLAG, "true");
     const connection = options(listener.port, { host: "localhost" });
-    const error = await failure(() => connect(connection).send(request("get_collections"), deadline()));
+    const error = await withEgressFlag("true", () =>
+      failure(() => connect(connection).send(request("get_collections"), deadline())),
+    );
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect((error as Error).message).toContain("blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS");
     expect(toProviderError(error, context(connection))).toBe(error as Error);
