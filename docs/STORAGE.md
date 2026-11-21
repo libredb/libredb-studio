@@ -20,6 +20,7 @@ This document is split into two parts. Most readers want **[Part 1 — Setup & C
 - [3. PostgreSQL Mode](#3-postgresql-mode)
 - [Migration: Local to Server](#migration-local-to-server)
 - [Connections whose type this Studio has no provider for](#connections-whose-type-this-studio-has-no-provider-for)
+- [Saved queries whose type this Studio has no provider for](#saved-queries-whose-type-this-studio-has-no-provider-for)
 - [Credential Encryption at Rest](#credential-encryption-at-rest)
 - [Environment Variables Reference](#environment-variables-reference)
 - [Health Check](#health-check)
@@ -493,15 +494,37 @@ Whether a connection is available is decided each time it is listed, from its `t
 
 The sidebar, the mobile connections list, the mobile header menu and the command palette show it with an **Unavailable** marker whose tooltip gives the reason, such as `No provider for the connection type "acmefoo" is installed in this LibreDB Studio.`
 The admin overview's fleet card draws it with the unavailable icon and the same marker, and shows the server's refusal as the item's error.
-The monitoring dashboard and the admin Operations tab still list it by name and type, and the schema diff by name, with no marker; a pick of it there is accepted, and the server refuses the request with `400 PROVIDER_UNKNOWN` and the same sentence.
-It cannot be opened: a pick of it from one of the four marked lists, a `?connection=` link that names it, or the connection the browser had open last time naming it, is refused with a **Connection unavailable** notice that names the connection and the reason, and the active connection stays as it was or falls to the first available one, if there is one.
+The monitoring dashboard, the admin Operations tab and the schema diff's list of connections to fetch from show it with the same marker.
+It cannot be opened: a pick of it from any list that marks it is refused by name, and nothing is sent to the server.
+The editor's four lists, the monitoring dashboard and the Operations tab raise a **Connection unavailable** notice that names the connection and the reason; the schema diff says on its own line that nothing was fetched from it, and why.
+A `?connection=` link that names it, or the connection the browser had open last time naming it, is refused with the same **Connection unavailable** notice, and the active connection stays as it was or falls to the first available one, if there is one.
 Studio never makes it the active connection by itself, at sign-in, on a reload or when another connection is deleted.
+The monitoring dashboard and the Operations tab never open on it by themselves either: they open on the connection the editor had open last while a provider can open it, otherwise on the first one a provider can open, or on none.
+A connection chosen there that a later refresh lists with such a type stays chosen, shown with the marker, and the server refuses its reads by name.
 It cannot be edited or duplicated, because the connection dialog has no form for an engine this Studio does not have; it can be deleted, favourited, grouped and reordered like any other.
 A Studio that has the provider lists and opens the same record as usual.
 
 The API answers a request that sends such a connection with `400 PROVIDER_UNKNOWN` and the same sentence, before any provider is built or any SSH tunnel opened (see [API_DOCS.md](./API_DOCS.md#post-apidbquery)).
 
 An operator's seed entry whose type names no provider is listed and shown the same way, with the lock a managed connection gets and no Delete, as [SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for) describes.
+
+## Saved queries whose type this Studio has no provider for
+
+A saved query keeps the type of the connection it was saved from, in its `connectionType`.
+One saved by a newer Studio that shares the same server storage can name a type this Studio has no provider for, and a record written by hand or by another tool can name none, or one that is not text.
+
+Studio keeps such a query as saved, in the browser copy and in server storage alike, and **Export all** writes it like any other.
+The Saved tab lists the queries of the active connection's type, so it lists such a query only while no connection is active; the command palette lists it with the other saved queries.
+Both show it with an **Unavailable** marker whose tooltip gives the reason.
+
+It is never loaded into the editor.
+The Saved tab offers no way to open or edit it, and it can be deleted there like any other query.
+A pick of it in the command palette is refused with a **Saved query unavailable** notice that names it and gives the reason.
+
+**Import JSON** checks every entry of a backup before it saves anything.
+An entry whose `connectionType` is text that names no provider this Studio has is not imported: the import's notice names each such entry with the reason, and the backup's other entries are imported as usual.
+An entry whose `connectionType` is missing, empty or not text, or any entry with another field that is not valid, refuses the whole backup.
+Release 1.3.0 refused the whole backup for such an entry.
 
 ---
 
@@ -1097,7 +1120,7 @@ storage.saveConnection(conn);
 |----------|---------|
 | **Connections** | `getConnections()`, `saveConnection(conn)`, `deleteConnection(id)`, `getDismissedSeeds()`, `getFavoriteConnectionIds()`, `toggleFavoriteConnection(id)`, `getConnectionOrder()`, `setConnectionOrder(order)` |
 | **History** | `getHistory()`, `addToHistory(item)`, `clearHistory()` |
-| **Saved Queries** | `getSavedQueries()`, `saveQuery(query)`, `deleteSavedQuery(id)` |
+| **Saved Queries** | `getSavedQueries()`, `saveQuery(query)`, `deleteSavedQuery(id)`, `importSavedQueries(queries)` |
 | **Schema Snapshots** | `getSchemaSnapshots(connId?)`, `saveSchemaSnapshot(snap)`, `deleteSchemaSnapshot(id)` |
 | **Charts** | `getSavedCharts()`, `saveChart(chart)`, `deleteChart(id)` |
 | **Active Connection** | `getActiveConnectionId()`, `setActiveConnectionId(id)` |
