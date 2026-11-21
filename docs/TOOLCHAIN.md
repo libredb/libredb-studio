@@ -354,6 +354,13 @@ The same thing happened one order of magnitude up, which is why the flag says 60
 Linux and macOS are left on bun's default on purpose: Linux is the leg the coverage gate and every contributor run on, and it is where a test that really did get slow has to stay visible.
 The flag is placed before the forwarded arguments, so `-- --timeout=...` still wins, bun taking the last of a repeated option; `tests/unit/test-runner-cli.test.ts` measures that precedence against the real bun binary rather than assuming it.
 
+One shape hangs a file on Windows that no per-test timeout catches.
+Measured on windows-latest with Bun 1.4.4 (#2331): a test that awaits a timer (`Bun.sleep`, or a promise around `setTimeout`) and then calls `expect(promise).rejects` or `.resolves` on a promise a later timer settles spins at 100% CPU, no timer fires again, bun's per-test timeout included, and only the runner's 300-second per-file budget ends it.
+The same case with the promise settled by a plain `await promise.catch(...)` passes, and Linux and macOS pass both.
+Bun runs a timer's continuation inside its Windows timer dispatch, where the matcher's nested wait cannot fire a timer (oven-sh/bun#40023; oven-sh/bun#44833 makes the matcher non-blocking, in no Bun release yet).
+So a test that needs events in an order waits on a signal its fixture gives rather than on a clock, as the read-only deadline cases in `tests/integration/db/mysql-provider.test.ts` wait for the statement to reach the fixture, or it settles the promise with a plain `await` before asserting.
+This holds until the Bun that `package.json` pins carries both fixes.
+
 The titles of the tests a file skipped come from the same report, and their describe path from its nested `<testsuite>` elements rather than from the `classname` attribute.
 classname lists those titles too, but bun joins them with " &gt; " and writes a literal ">" inside a title as "&gt;" as well, so no split rule can tell the separator from the character: measured on 1.4.2, splitting classname turned a describe titled "rows where count > 100" into "100 > rows where count".
 The titles are worth printing at all because a skip in this repository states its reason in its title, and bun prints that title nowhere: piped, with `FORCE_COLOR` set, and under a real pty, the output carries the count and nothing else.
