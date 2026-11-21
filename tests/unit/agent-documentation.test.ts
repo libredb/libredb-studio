@@ -610,7 +610,7 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
    * DuckDB and SQL Server joined, which no test could see. Every line break is joined away first,
    * with the comment marker that continues it, if any, and the indentation around it, so a
    * sentence may wrap where the file wraps: in a docblock, in a # comment, or in a block comment
-   * whose lines carry no marker at all, as the seed loader's does.
+   * whose lines carry no marker at all.
    */
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
@@ -630,10 +630,6 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
 
   test("the factory's profile comment states it", () => {
     expect(prose("src/lib/db/factory.ts")).toContain(`implement that: ${list} (`);
-  });
-
-  test("the seed loader's sample comment states it", () => {
-    expect(prose("src/lib/seed/index.ts")).toContain(`Agent mode executes statements on ${list};`);
   });
 
   test("each engine on the list has its read-only provider file, and the map has no other key", () => {

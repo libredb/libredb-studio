@@ -1409,6 +1409,7 @@ export default function Studio() {
                 onAddConnection={addConnectionAction}
                 governed={conn.governance}
                 connectionAccessUnavailable={conn.connectionAccessUnavailable}
+                unavailableSamples={conn.unavailableSamples}
                 onObjectClick={onObjectClick}
                 onOpenKey={onOpenKey}
                 objectActions={objectActions}
@@ -1548,6 +1549,7 @@ export default function Studio() {
                     onAddConnection={addConnectionAction}
                     governed={conn.governance}
                     accessUnavailable={conn.connectionAccessUnavailable}
+                    unavailableSamples={conn.unavailableSamples}
                   />
                 </div>
               )}

@@ -73,8 +73,9 @@ function readBootstrapFile(filePath: string): BootstrapFile {
   } catch {
     // Unreadable state: keep the evidence, regenerate. Sessions signed with a
     // lost secret become invalid; that is logged by the caller's banner path.
-    // Windows rename throws if the destination exists (see seedSampleFile), so
-    // clear any older .bak first — the newest evidence wins.
+    // Windows rename throws if the destination exists (see copySampleAsset in
+    // src/lib/seed/sample-copy.ts), so clear any older .bak first: the newest
+    // evidence wins.
     fs.rmSync(`${filePath}.bak`, { force: true });
     fs.renameSync(filePath, `${filePath}.bak`);
     console.warn(`LibreDB Studio: corrupt ${filePath} moved to .bak; regenerating credentials`);
@@ -106,14 +107,14 @@ function isEEXIST(error: unknown): boolean {
 function writeBootstrapFile(filePath: string, data: BootstrapFile): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   // Temp + atomic rename so a crash never leaves a partial credentials file
-  // (same pattern as seedSampleFile in libredb-sample.ts).
+  // (same pattern as copySampleAsset in src/lib/seed/sample-copy.ts).
   const tempPath = `${filePath}.${process.pid}.tmp`;
   fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), { mode: 0o600 });
   try {
     fs.renameSync(tempPath, filePath);
   } catch {
     // POSIX rename overwrites, but Windows throws if the destination exists
-    // (see seedSampleFile). Fall back to copy-over instead of delete-and-retry
+    // (see copySampleAsset). Fall back to copy-over instead of delete-and-retry
     // so a failure here can never destroy the only copy of the credentials
     // file; a torn copy is repaired by the corrupt-file recovery on next boot.
     try {

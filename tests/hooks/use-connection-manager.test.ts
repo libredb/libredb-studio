@@ -3604,3 +3604,148 @@ describe("useConnectionManager on a server-level connection (#1530)", () => {
     expect(storage.getActiveCatalog("conn-1")).toBeNull();
   });
 });
+
+// =============================================================================
+// A built-in sample whose copy failed
+// =============================================================================
+
+describe("built-in samples listed unavailable", () => {
+  const sqliteFailed = {
+    seedId: "sqlite-embedded-sample",
+    name: "Sample (Employees)",
+    reason: "asset-missing" as const,
+    sentence: "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied.",
+  };
+  const libredbFailed = {
+    seedId: "libredb-embedded-sample",
+    name: "Sample (LibreDB)",
+    reason: "copy-failed" as const,
+    sentence: "This sample could not be copied into the server's data directory (EACCES).",
+  };
+  const focus = () => {
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+  };
+  const managedCalls = (fetchMock: ReturnType<typeof mockGlobalFetch>) =>
+    fetchMock.mock.calls.filter((c) => String(c[0]).includes("/api/connections/managed")).length;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+    delete process.env.NEXT_PUBLIC_MANAGED_POLL_MS;
+    delete process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS;
+  });
+
+  test("keeps the server's unavailable samples without the dismissed ones", async () => {
+    // Dismiss the LibreDB sample through the public API: deleting a seed copy records the dismissal.
+    storage.saveConnection(makeConnection({ id: "dismissed-sample", seedId: "libredb-embedded-sample" }));
+    storage.deleteConnection("dismissed-sample");
+    mockGlobalFetch({
+      "/api/connections/managed": {
+        ok: true,
+        json: { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed, libredbFailed] },
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => {
+      expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+    });
+    // Never a connection.
+    expect(result.current.connections.some((c) => c.seedId === "sqlite-embedded-sample")).toBe(false);
+  });
+
+  test("an answer without the field, or with a field that is not a list, reads as none", async () => {
+    // Rows, then an answer without the field, then rows again, then a field that is not a list.
+    const answers = [
+      { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] },
+      { connections: [], pendingSeeds: [] },
+      { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] },
+      { connections: [], pendingSeeds: [], unavailableSamples: "none" },
+    ];
+    let calls = 0;
+    mockGlobalFetch({
+      "/api/connections/managed": () => {
+        calls += 1;
+        return { ok: true, json: answers[Math.min(calls, answers.length) - 1] };
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    const { result } = renderHook(() => useConnectionManager(true));
+    await waitFor(() => {
+      expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+    });
+    focus();
+    await waitFor(() => {
+      expect(calls).toBe(2);
+      expect(result.current.unavailableSamples).toEqual([]);
+    });
+    focus();
+    await waitFor(() => {
+      expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+    });
+    focus();
+    await waitFor(() => {
+      expect(calls).toBe(4);
+      expect(result.current.unavailableSamples).toEqual([]);
+    });
+  });
+
+  test("the pending-seed poll shows a sample whose copy failed", async () => {
+    process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "25";
+    let calls = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/managed": () => {
+        calls += 1;
+        return calls === 1
+          ? { ok: true, json: { connections: [], pendingSeeds: ["sqlite-embedded-sample"] } }
+          : { ok: true, json: { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] } };
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+    expect(result.current.unavailableSamples).toEqual([]);
+
+    await waitFor(
+      () => {
+        expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+      },
+      { timeout: 3000 },
+    );
+    expect(managedCalls(fetchMock)).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a quiet refresh that fails keeps the unavailable samples it had", async () => {
+    let calls = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/managed": () => {
+        calls += 1;
+        return calls === 1
+          ? { ok: true, json: { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] } }
+          : { status: 500, json: { error: "Failed to load managed connections" } };
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    const { result } = renderHook(() => useConnectionManager(true));
+    await waitFor(() => {
+      expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+    });
+    const before = result.current.unavailableSamples;
+
+    focus();
+    await waitFor(() => {
+      expect(managedCalls(fetchMock)).toBe(2);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(result.current.unavailableSamples).toBe(before);
+  });
+});

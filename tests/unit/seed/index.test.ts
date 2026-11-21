@@ -13,14 +13,16 @@ import {
 } from "@/lib/seed";
 import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
 import { getDiscoveredConnections, resetDiscoveryCache } from "@/lib/seed/discovery-loader";
-import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
 import { DEFAULT_SEED_CONFIG_PATH } from "@/lib/seed/sources/file";
-import { SQLITE_SAMPLE_SEED_ID, setSqliteSampleSeedState } from "@/lib/seed/sqlite-sample";
+import { resetSampleSeedStates, setSampleSeedState } from "@/lib/seed/samples";
 import { logger } from "@/lib/logger";
 import { LITERAL_SEED_FILE } from "@/lib/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
+import { seedSamples } from "../../helpers/sample-seeding";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/seed-connections");
+const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
+const SAMPLE_SEED_ID = "libredb-embedded-sample";
 
 describe("seed/index orchestrator", () => {
   beforeEach(() => {
@@ -149,7 +151,7 @@ describe("seed/index with discovered connections", () => {
   let discovery: DiscoveryExportFixture;
   let scratch: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     resetCache();
     resetDiscoveryCache();
     resetPlaintextWarnings();
@@ -159,10 +161,12 @@ describe("seed/index with discovered connections", () => {
     process.env.SHARED_PG_PASS = "shared-secret";
     process.env.BOTH_PG_PASS = "both-secret";
     scratch = mkdtempSync(path.join(tmpdir(), "libredb-seed-index-"));
-    // getManagedConnections lists the SQLite sample when its file exists; its content is never read here.
+    // getManagedConnections lists the SQLite sample boot admitted when its file exists; its content is never read here.
     const sample = path.join(scratch, "sample-employees.db");
     writeFileSync(sample, "");
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = sample;
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    await seedSamples();
     discovery = writeDiscoveryExport([postgresService("pg", "discovered-secret")]);
     process.env.SEED_DISCOVERY_PATH = discovery.path;
   });
@@ -174,9 +178,11 @@ describe("seed/index with discovered connections", () => {
     delete process.env.SHARED_PG_PASS;
     delete process.env.BOTH_PG_PASS;
     delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+    delete process.env.LIBREDB_EMBEDDED_SAMPLE;
     delete process.env.SEED_DISCOVERY_PATH;
     resetCache();
     resetDiscoveryCache();
+    resetSampleSeedStates();
     discovery.remove();
     rmSync(scratch, { recursive: true, force: true });
   });
@@ -456,7 +462,7 @@ describe("seed/index under governance", () => {
     }
     resetCache();
     resetDiscoveryCache();
-    setSqliteSampleSeedState("idle");
+    resetSampleSeedStates();
     scratch = mkdtempSync(path.join(tmpdir(), "libredb-seed-index-governance-"));
   });
 
@@ -468,7 +474,7 @@ describe("seed/index under governance", () => {
     }
     resetCache();
     resetDiscoveryCache();
-    setSqliteSampleSeedState("idle");
+    resetSampleSeedStates();
     rmSync(scratch, { recursive: true, force: true });
   });
 
@@ -508,10 +514,11 @@ describe("seed/index under governance", () => {
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbSample;
     const discovery = writeDiscoveryExport([postgresService("pg", "discovered-secret")]);
     process.env.SEED_DISCOVERY_PATH = discovery.path;
-    setSqliteSampleSeedState("seeding");
+    await seedSamples();
+    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     const open = spyOn(fsPromises, "open");
-    const existsSync = spyOn(fs, "existsSync");
+    const statSync = spyOn(fs, "statSync");
 
     try {
       // Control: without governance the export and both samples are read and listed, and the SQLite sample pends.
@@ -521,23 +528,26 @@ describe("seed/index under governance", () => {
         SAMPLE_SEED_ID,
       ]);
       expect(open.mock.calls.map((call) => call[0])).toEqual([discovery.path]);
-      expect(existsSync.mock.calls.map((call) => call[0])).toEqual([sqliteSample, libredbSample]);
+      expect(statSync.mock.calls.map((call) => call[0])).toEqual([sqliteSample, libredbSample]);
       expect(getPendingSeeds()).toEqual([SQLITE_SAMPLE_SEED_ID]);
       resetCache();
       resetDiscoveryCache();
       open.mockClear();
-      existsSync.mockClear();
+      statSync.mockClear();
 
       process.env.GOVERNANCE_SOURCE = "postgres";
+      // A governance boot enables no sample, so even a sample set seeding is not pending.
+      await seedSamples();
+      setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
 
       expect(await getManagedConnections(["admin"])).toEqual([]);
       expect(await getSeedListing(["admin"])).toEqual({ before: [], pendingReview: [], after: [] });
       expect(await getSeedListing(["user"])).toEqual({ before: [], pendingReview: [], after: [] });
       expect(getPendingSeeds()).toEqual([]);
       expect(open).not.toHaveBeenCalled();
-      expect(existsSync).not.toHaveBeenCalled();
+      expect(statSync).not.toHaveBeenCalled();
     } finally {
-      existsSync.mockRestore();
+      statSync.mockRestore();
       open.mockRestore();
       warn.mockRestore();
       discovery.remove();

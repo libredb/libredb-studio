@@ -1762,24 +1762,77 @@ The exporter's own variables (`DISCOVERY_*` and `DOCKER_SOCKET`) are read by `do
 The Kubernetes exporter's (`KUBERNETES_DISCOVERY_*`) are read by `docker/discover-kubernetes.mjs` only, and are listed there too.
 `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS` is inlined at build time like `NEXT_PUBLIC_MANAGED_POLL_MS` (see [Built-in Sample Connections](#built-in-sample-connections)), so it is not in `.env.example` and setting it on a running container has no effect.
 
-These are unrelated to the embedded sample connection described below, which uses its own `LIBREDB_EMBEDDED_SAMPLE` / `LIBREDB_EMBEDDED_SAMPLE_PATH` variables.
+These are unrelated to the built-in sample connections described below, which use their own `LIBREDB_EMBEDDED_SAMPLE`, `SQLITE_EMBEDDED_SAMPLE`, their `_PATH` overrides and `SEED_ASSETS_DIR`.
 
 ---
 
 ## Built-in Sample Connections
 
-Standalone deployments also get automatic, code-defined seed connections (none of this has any effect when embedded in libredb-platform — it is not part of the published `@libredb/studio` package surface):
+Standalone deployments also get two built-in sample connections.
+None of this has any effect when embedded in libredb-platform: it is not part of the published `@libredb/studio` package surface.
+The samples are one table, `SAMPLES` in `src/lib/seed/samples.ts`, listed in its order:
 
-- **Sample (LibreDB)** — on first startup, `src/lib/seed/libredb-sample.ts` creates an embedded LibreDB file (default `<data dir>/sample.libredb`, alongside the SQLite storage DB) and seeds it with example data — a `users` table, an `articles` document collection, and a couple of KV entries — one per LibreDB lens. Seeded synchronously during boot.
-- **Sample (Employees)** — `src/lib/seed/sqlite-sample.ts` copies the vendored employees SQLite database (`seed-assets/sqlite/employee.db`, from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database) `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db); see `seed-assets/sqlite/ATTRIBUTION.md`) to `<data dir>/sample-employees.db`. Seeded **asynchronously and fail-open**: boot never waits for the copy; while it is in flight `GET /api/connections/managed` lists the seed id in `pendingSeeds` and the client polls (1s, max 30 attempts; the interval constant is inlined at build time — `NEXT_PUBLIC_MANAGED_POLL_MS` only affects source builds and tests, not packaged artifacts) so the connection appears without a page refresh.
-  The copy is switched to WAL journal mode before it is published, so the first opens of a fresh sample, made by several requests at once, have no journal switch to race ([`docs/providers/sqlite.md` §4.1](providers/sqlite.md#41-embedded-sample-database-standalone-mode)).
-  It is neither seeded nor listed when `LIBREDB_ENABLED_PROVIDERS` is set and does not name `sqlite`, since no open of it could then succeed.
+- **Sample (Employees)**, a SQLite database: the employees sample from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database) `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db) (see `seed-assets/sqlite/ATTRIBUTION.md`), copied to `<data dir>/sample-employees.db`.
+- **Sample (LibreDB)**, a LibreDB database with a `users` table, an `articles` document collection and two key-value entries, one per LibreDB lens, copied to `<data dir>/sample.libredb`.
 
-`getManagedConnections()` appends each sample to the managed-connections list once its file exists (`managed: false`). LibreDB is offered to all roles (`roles: ["*"]`); SQLite is offered only to administrators (`roles: ["admin"]`) because its adapters cannot confine statement-level file access. Both behave like other unmanaged seeds: editable, and if deleted they go to the dismissed list rather than reappearing.
+The SQLite sample is listed first, because a client with no saved active connection opens the first one listed, and the SQLite sample offers every agent workflow.
+An operator's own seed connections are listed before both.
+
+### How a sample is created
+
+Each sample is a committed file in the seed assets directory (`SEED_ASSETS_DIR`, by default `<working directory>/seed-assets`, which every distribution ships beside `server.js`).
+Each file is the output of a committed script, held by a test that reruns it, and the sample table pins its size and SHA-256 digest; `seed-assets/README.md` lists them.
+At boot, `src/lib/seed/sample-copy.ts` copies each enabled sample's file into the data directory and opens no database:
+
+- a target that already exists is never touched, so a user's edits survive every restart;
+- the asset's size is checked before a byte is written, and its bytes are hashed while they are copied into a temporary file beside the target, opened exclusively under a name of this copy's own (`<target>.<pid>.<random UUID>.seeding`), so two copies never share one, not even two replicas that each run the server as pid 1 on one shared volume;
+- a file that is not the pinned one is refused, and nothing is published;
+- the temporary file is flushed to disk after its last write and renamed onto the target, so a published sample is always complete;
+- a temporary file that a crashed copy left behind is never touched, and stays until it is removed by hand.
+
+Both copies are asynchronous: boot never waits for them.
+While a copy is in flight, `GET /api/connections/managed` lists the sample's seed id in `pendingSeeds`, and the client polls (1s, max 30 attempts; the interval constant is inlined at build time, so `NEXT_PUBLIC_MANAGED_POLL_MS` only affects source builds and tests, not packaged artifacts) so the connection appears without a page refresh.
+The SQLite sample is committed in WAL journal mode, so the first opens of a fresh sample, made by several requests at once, have no journal switch to race ([`docs/providers/sqlite.md` §4.1](providers/sqlite.md#41-embedded-sample-database-standalone-mode)).
+
+### Who sees a sample
+
+`getManagedConnections()` appends each sample boot admitted to the managed-connections list once its file exists (`managed: false`); whether the file exists is checked on every request.
+A sample whose file was in place and is then removed, or whose path the server can no longer check, is listed unavailable as `target-lost` from that request on, and logged once ([A sample that could not be created](#a-sample-that-could-not-be-created)); it is listed again once its file is back.
+The SQLite sample is offered only to administrators (`roles: ["admin"]`), because its engine cannot confine statement-level file access; the LibreDB sample is offered to all roles (`roles: ["*"]`).
+Both behave like other unmanaged seeds: editable, and if deleted they go to the dismissed list rather than reappearing.
 Neither sample is ever visible to an MCP client, because neither carries `mcp: true`.
-In [governance mode](#governance-mode) neither sample is created or listed, whatever `LIBREDB_EMBEDDED_SAMPLE` and `SQLITE_EMBEDDED_SAMPLE` say.
-With the [Kubernetes access review](#kubernetes-access-review) on, the LibreDB sample is off unless `LIBREDB_EMBEDDED_SAMPLE` is exactly `true`: it is offered to all roles and names no Secret, so no review gates it, and an operator who wants every signed-in person to see it opts in.
-The SQLite sample keeps its own default there, because it is offered only to administrators, and with the review on only the review makes an administrator.
+
+One rule decides whether a sample is on, for both:
+
+- In [governance mode](#governance-mode) neither sample is created or listed, whatever `LIBREDB_EMBEDDED_SAMPLE` and `SQLITE_EMBEDDED_SAMPLE` say.
+- A sample is neither created nor listed when `LIBREDB_ENABLED_PROVIDERS` is set and does not name its engine, or holds a value the provider factory refuses as a whole, since no open of it could then succeed.
+- Otherwise its switch decides: only the exact value `false` turns it off.
+- With the [Kubernetes access review](#kubernetes-access-review) on, the LibreDB sample is off unless `LIBREDB_EMBEDDED_SAMPLE` is exactly `true`: it is offered to all roles and names no Secret, so no review gates it, and an operator who wants every signed-in person to see it opts in.
+  The SQLite sample keeps its own default there, because it is offered only to administrators, and with the review on only the review makes an administrator.
+
+The server applies this rule, and decides each sample's path and whether it is admitted, once, at boot, and keeps that decision until it stops.
+A change to any of these variables, or to a `_PATH` override, takes effect at the next restart.
+
+### A sample that could not be created
+
+A sample whose copy fails, or whose target is refused, is logged once as the warning `Embedded sample unavailable` with its reason, the target path and the seed assets directory, and boot continues.
+So is a sample whose file a request finds lost after boot.
+`GET /api/connections/managed` then answers it in `unavailableSamples`, for the roles the sample is offered to, with one of these reasons and a sentence that names no path:
+
+| Reason | What happened |
+|--------|---------------|
+| `asset-missing` | The sample's file is not in the seed assets directory |
+| `asset-unreadable` | The sample's file in the seed assets directory could not be read; the sentence names the error code, such as `EACCES` or `EIO` |
+| `digest-mismatch` | The file in the seed assets directory is not the one this release ships |
+| `copy-failed` | The copy into the data directory failed; the sentence names the error code, such as `EACCES` or `ENOSPC` |
+| `copy-defect` | The copy failed with an error the copy does not know, a defect, which the server log shows again as an unhandled rejection |
+| `target-unreadable` | The sample's path could not be checked before any copy; the sentence names the error code, such as `EACCES`, `ENOTDIR` or `ELOOP` |
+| `target-reserved` | The sample's path, or one of its sidecar files, names one of the server's own storage files, in any letter case or Unicode normalization form |
+| `target-conflict` | The sample's path is another sample's, or differs from it only in letter case or Unicode normalization form, so only the first one is created |
+| `target-lost` | The sample's file was in place, and a later request could not find it or check its path; the sentence names the error code, such as `ENOENT` or `EACCES` |
+
+The sidebar shows each one as a row with the Unavailable marker, whose title is the sentence, and no action.
+It is never a connection: no picker, route or MCP tool can reach a sample that has no file.
 
 This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own:
 
@@ -1789,9 +1842,9 @@ This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own
 | `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Override the LibreDB sample file's location |
 | `SQLITE_EMBEDDED_SAMPLE` | `true` | Set to `false` (exact match) to disable the SQLite sample |
 | `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Override the SQLite sample file's location |
-| `SQLITE_EMBEDDED_SAMPLE_TEMPLATE` | `<cwd>/seed-assets/sqlite/employee.db` | Override the vendored template's location |
+| `SEED_ASSETS_DIR` | `<working directory>/seed-assets` | The directory both samples are copied from; a relative value is resolved against the working directory |
 
-The sample files are only created if they don't already exist — the seeding is idempotent and never overwrites a user's edits.
+`SEED_ASSETS_DIR` replaces `SQLITE_EMBEDDED_SAMPLE_TEMPLATE`, which is no longer read.
 
 ---
 
@@ -1811,6 +1864,35 @@ The sample files are only created if they don't already exist — the seeding is
 Its type names no provider this Studio has: the seed file names an engine of a newer Studio, or one not installed here, or the type is misspelled.
 Hover the marker, or read the Seed sources card on the admin Overview, for the type it names.
 Correct the type, or run a Studio that has the provider; until then no route opens the connection, and the file's other connections work as usual.
+
+### A sample shows Unavailable
+
+The built-in sample could not be created at boot, or its file was lost after boot ([A sample that could not be created](#a-sample-that-could-not-be-created)).
+Hover the marker for the reason, and find the warning `Embedded sample unavailable` in the server log, which names the path:
+
+- `asset-missing`: the seed assets directory does not hold the sample's file.
+  Point `SEED_ASSETS_DIR` at the `seed-assets` directory of this release, or start the server from the directory that holds it.
+- `asset-unreadable`: the server could not read the sample's file in the seed assets directory.
+  Give the server read access to `SEED_ASSETS_DIR` and the files in it (`EACCES`), or check the volume it is on (`EIO`), then restart.
+- `digest-mismatch`: the file there is not this release's.
+  Use the `seed-assets` directory of the same release as the server; never edit the files in it.
+- `copy-failed`: the data directory could not take the copy.
+  Give the server write access to it (`EACCES`, `EROFS`) or free space (`ENOSPC`), then restart.
+- `copy-defect`: the copy met an error it does not know, which is a defect in Studio, not in your setup.
+  The server log shows it as an unhandled rejection with its stack; report it with that log, and restart to try the copy again.
+- `target-unreadable`: the server could not check the sample's path.
+  A `_PATH` override, or the data directory, names a directory the server cannot search (`EACCES`), a path through a regular file (`ENOTDIR`) or a symlink loop (`ELOOP`); correct it, then restart.
+  On Windows a path through a regular file reads as absent, so it is not refused here: its copy fails instead, as `copy-failed` with `EEXIST`.
+- `target-reserved`: a `_PATH` override names the storage database, a sidecar of it or the bootstrap credentials file, in any letter case or Unicode normalization form.
+  Point it elsewhere.
+- `target-conflict`: a `_PATH` override names another sample's file, its default one included, or a sidecar of it.
+  Two paths that differ only in letter case conflict on every OS, because on macOS and Windows they name one file.
+  Two paths that differ only in Unicode normalization form, such as a precomposed `ü` against a `u` followed by a combining diaeresis (NFC against NFD), conflict on every OS too, because on macOS they name one file.
+  Give each sample its own.
+- `target-lost`: the sample's file was in place, and a later request could not find it (`ENOENT`) or could not check its path (`EACCES`, `ENOTDIR`).
+  Give the server back access to the path, or restart it, which copies a removed sample again.
+
+A restart retries the copy and reads the variables again; a sample whose file exists is never copied again.
 
 ### "Access denied" error when querying
 
@@ -1906,8 +1988,8 @@ seed-connections.yaml (SEED_CONFIG_PATH)
         │         │                                        │  else admin; literal, Secret marker
         │         └───────────────────────────────────────┘
         │         ┌───────────────────────────────────────┐
-        ├─────────┤ Embedded samples (libredb-sample.ts,   │  Appended if enabled and the
-        │         │ sqlite-sample.ts)                      │  sample file exists
+        ├─────────┤ Built-in samples (samples.ts, copied   │  Appended if boot admitted it and
+        │         │ at boot by sample-copy.ts)             │  its file exists on this request
         │         └───────────────────────────────────────┘
   ┌─────▼───────────────────────┐
   │ GET /api/connections/managed │  Auth + strip credentials for managed:true
@@ -1940,9 +2022,9 @@ seed-connections.yaml (SEED_CONFIG_PATH)
 | `vault-client.ts` | HashiCorp Vault KV v2 reads: env config, Kubernetes auth, per-path TTL cache |
 | `connection-filter.ts` | Role filter, and `mergeDefaults`, which each operator source applies to its own connections (`sources/config-text.ts`) |
 | `resolve-connection.ts` | Shared utility for all API routes |
-| `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |
-| `sqlite-sample.ts` | Built-in "Sample (Employees)" connection: vendored template copy + descriptor |
-| `index.ts` | Public API: `getManagedConnections()`, `getSeedListing()`, `getPendingSeeds()`, `getSeedConnectionByIdUnfiltered()` and `resetCache()` |
+| `samples.ts` | The built-in samples: the `SAMPLES` table, enablement, targets and their admission, the seed assets directory, the seed state and `startSampleSeeding()` |
+| `sample-copy.ts` | The verified copy of one pinned sample asset to its target |
+| `index.ts` | Public API: `getManagedConnections()`, `getSeedListing()`, `getPendingSeeds()`, `getUnavailableSamples()`, `getSeedConnectionByIdUnfiltered()` and `resetCache()` |
 | `roles.ts` | `seedRolesOf()`: the session's role and the claim roles that carry `OIDC_ROLE_PREFIX`, which seed roles are matched against; `KUBERNETES_REVIEWED_ROLE`, the role reserved for Kubernetes-discovered connections while the access review is on, which the role filter never selects |
 | `discovery-export.ts` | Zod schema and parser of the platform discovery export file, with its 2 MiB cap |
 | `discovery-fingerprint.ts` | Image repository parsing, engine detection and credential mapping of discovered services |

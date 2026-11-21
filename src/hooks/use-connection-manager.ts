@@ -11,6 +11,7 @@ import type { Container, DatabaseObject, ObjectDetail, ProviderCapabilities } fr
 import { useReadGeneration } from "@/hooks/use-read-generation";
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
+import type { UnavailableSample } from "@/lib/seed/types";
 import { logger } from "@/lib/logger";
 import { startManagedListRefresh } from "@/lib/connection-refresh";
 import { isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
@@ -189,6 +190,12 @@ export function useConnectionManager(storageReady = false) {
    * list. The next managed read that answers clears it. Never set without governance.
    */
   const [connectionAccessUnavailable, setConnectionAccessUnavailable] = useState(false);
+  /**
+   * The built-in samples whose copy failed on the server, as the managed route last answered them (an absent or
+   * non-list field reads as none), without the ones this browser dismissed. Each is drawn as a row with its reason and
+   * no action, and is never a connection. A managed read that fails leaves it as it was.
+   */
+  const [unavailableSamples, setUnavailableSamples] = useState<readonly UnavailableSample[]>([]);
   const visibleConnections = useMemo(() => connectionsUnderPolicy(connections, policy), [connections, policy]);
   /** Null rather than a connection the server refuses, whichever path made it active. */
   const visibleActive =
@@ -678,14 +685,22 @@ export function useConnectionManager(storageReady = false) {
         connections: managedConns,
         pendingSeeds,
         cacheHint,
+        unavailableSamples: failedSamples,
       } = (await managedRes.json()) as {
         connections?: ManagedConnectionPayload[];
         pendingSeeds?: string[];
         cacheHint?: unknown;
+        unavailableSamples?: unknown;
       };
       if (!cancelled) {
         setServedSeeds({ loaded: true, seeds: managedConns ?? [] });
         setConnectionAccessUnavailable(false);
+        const dismissed = new Set(storage.getDismissedSeeds());
+        setUnavailableSamples(
+          Array.isArray(failedSamples)
+            ? (failedSamples as UnavailableSample[]).filter((sample) => !dismissed.has(sample.seedId))
+            : [],
+        );
       }
       return {
         merged: managedConns && managedConns.length > 0 ? mergeManagedConnections(managedConns) : null,
@@ -1009,5 +1024,7 @@ export function useConnectionManager(storageReady = false) {
     statementCapture: policy.statementCapture,
     /** Whether governance could not serve the granted connections at the last read; the refresh keeps trying. */
     connectionAccessUnavailable,
+    /** The built-in samples whose copy failed, each with the reason the sidebar shows; never connections. */
+    unavailableSamples,
   };
 }

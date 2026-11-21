@@ -21,6 +21,7 @@ import { getAppVersion } from "@/lib/app-version";
 import { cn } from "@/lib/utils";
 import { ConnectionsList } from "./ConnectionsList";
 import type { ConnectionGroup } from "@/lib/storage/types";
+import type { UnavailableSample } from "@/lib/seed/types";
 
 /**
  * The two readings of a connection the sidebar can draw: its objects, or its keys.
@@ -97,6 +98,8 @@ interface SidebarProps {
   governed?: boolean;
   /** Under governance: the granted connections could not be served at the last read. */
   connectionAccessUnavailable?: boolean;
+  /** The built-in samples whose copy failed, drawn after the connections with their reason (standalone Studio only). */
+  unavailableSamples?: readonly UnavailableSample[];
   /** A row the reader activated, handed over whole: path, kind and the fields the tree loaded. */
   onObjectClick?: (object: DatabaseObject) => void;
   onShowDiagram?: () => void;
@@ -200,6 +203,7 @@ export const Sidebar = React.memo(function Sidebar({
   onAddConnection,
   governed,
   connectionAccessUnavailable,
+  unavailableSamples,
   onObjectClick,
   onShowDiagram,
   metadata,
@@ -476,6 +480,7 @@ export const Sidebar = React.memo(function Sidebar({
           onAddConnection={onAddConnection}
           governed={governed}
           accessUnavailable={connectionAccessUnavailable}
+          unavailableSamples={unavailableSamples}
         />
       </ScrollArea>
 

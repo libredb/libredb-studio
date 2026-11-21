@@ -145,7 +145,7 @@ export function loadKeyring(file: string): Keyring {
 /**
  * Where the loaded keyring lives. Next.js bundles instrumentation, which loads it at boot, apart from each route
  * handler, so a module-level variable would hold one keyring per bundle; a global under a registered symbol holds one
- * per process (src/lib/seed/sqlite-sample.ts does the same).
+ * per process (src/lib/seed/samples.ts does the same).
  */
 const KEYRING_KEY = Symbol.for("libredb-studio.governance-keyring");
 

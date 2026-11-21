@@ -4,6 +4,7 @@ import { DatabaseConnection } from "@/lib/types";
 import { applyConnectionOrder } from "@/lib/connection-order";
 import { buildConnectionSections, type ConnectionSection } from "@/lib/connection-groups";
 import type { ConnectionGroup } from "@/lib/storage/types";
+import type { UnavailableSample } from "@/lib/seed/types";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ConnectionItem } from "./ConnectionItem";
 import { GroupNameDialog } from "./GroupNameDialog";
+import { UnavailableSampleItem } from "./UnavailableSampleItem";
 
 interface ConnectionsListProps {
   connections: DatabaseConnection[];
@@ -49,6 +51,11 @@ interface ConnectionsListProps {
   governed?: boolean;
   /** Governance could not serve the granted connections at the last read: a banner says so. */
   accessUnavailable?: boolean;
+  /**
+   * The built-in samples whose copy failed on the server, each drawn after the connections, also in an empty list, as
+   * a row with its reason and no action. Only the standalone Studio passes them; the embedded workspace has no samples.
+   */
+  unavailableSamples?: readonly UnavailableSample[];
 }
 
 /**
@@ -130,6 +137,7 @@ export const ConnectionsList = React.memo(function ConnectionsList({
   onAddConnection,
   governed,
   accessUnavailable,
+  unavailableSamples,
 }: ConnectionsListProps) {
   const ordered = applyConnectionOrder(connections, connectionOrder ?? []);
   const reorderable = onReorderConnections !== undefined;
@@ -290,6 +298,14 @@ export const ConnectionsList = React.memo(function ConnectionsList({
           )}
         </section>
       ))}
+
+      {unavailableSamples !== undefined && unavailableSamples.length > 0 && (
+        <div className="space-y-0.5">
+          {unavailableSamples.map((sample) => (
+            <UnavailableSampleItem key={sample.seedId} sample={sample} />
+          ))}
+        </div>
+      )}
 
       {nameDialog?.mode === "create" && onCreateGroup && (
         <GroupNameDialog

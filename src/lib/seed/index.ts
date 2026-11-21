@@ -1,24 +1,23 @@
-import * as fs from "fs";
 import { governanceEnabled } from "@/lib/governance/config";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
-import { filterByRoles, filterUnavailableByRoles, projectSeedConnection } from "./connection-filter";
+import { filterByRoles, filterUnavailableByRoles, projectSeedConnection, rolesMatch } from "./connection-filter";
 import { getDiscoveredConnections } from "./discovery-loader";
 import { getKubernetesDiscoveredConnections } from "./kubernetes-discovery-loader";
-import { isSampleEnabled, resolveSamplePath, buildSampleConnection } from "./libredb-sample";
 import { loadOperatorSources } from "./operator-loader";
 import { KUBERNETES_REVIEWED_ROLE } from "./roles";
-import type { OperatorEntry, OperatorUnavailableEntry } from "./sources/types";
 import {
-  isSqliteSampleEnabled,
-  resolveSqliteSamplePath,
-  buildSqliteSampleConnection,
-  getSqliteSampleSeedState,
-  SQLITE_SAMPLE_SEED_ID,
-} from "./sqlite-sample";
+  getSampleSeedState,
+  type SampleAdmission,
+  sampleConnection,
+  sampleConsidered,
+  sampleFilePresent,
+  seededSampleAdmissions,
+} from "./samples";
+import type { OperatorEntry, OperatorUnavailableEntry } from "./sources/types";
 import { LITERAL_SEED_FILE } from "@/lib/types";
-import type { ManagedConnection } from "./types";
+import type { ManagedConnection, UnavailableSample } from "./types";
 
-export type { ManagedConnection } from "./types";
+export type { ManagedConnection, UnavailableSample } from "./types";
 export { resetCache } from "./operator-loader";
 export { KUBERNETES_REVIEWED_ROLE, seedRolesOf } from "./roles";
 
@@ -73,7 +72,7 @@ export interface SeedListing {
    * gate lists one.
    */
   readonly pendingReview: ManagedConnection[];
-  /** The built-in samples, the SQLite one first. */
+  /** The built-in samples, in the order of SAMPLES (src/lib/seed/samples.ts). */
   readonly after: ManagedConnection[];
 }
 
@@ -147,32 +146,11 @@ export async function getSeedListing(roles: string[]): Promise<SeedListing> {
   const before = reviewed
     ? [...fromOperators, ...unavailable, ...discovered]
     : [...fromOperators, ...unavailable, ...discovered, ...kubernetes];
-  const after: ManagedConnection[] = [];
-
-  /*
-    The SQLite sample leads the built-ins, and the order is the point: a client with
-    no persisted active connection selects the first of this list, so whichever sample
-    comes first is what a brand-new administrator lands on. Agent mode executes statements on
-    PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino; the order was set while the LibreDB engine's
-    provider had no read-only statement path, when leading with it put every
-    zero-config administrator on the one connection an agent run could not execute
-    against, and it is kept: the SQLite sample offers every agent workflow, where the
-    LibreDB one offers no plan or profile workflow. An operator's own seed config
-    still leads both: those are already in `before`.
-
-    In a test run, only consider a sample when its explicit path override is set, so
-    an uncontrolled real ./data/sample.* cannot perturb unrelated suites.
-    (NODE_ENV==='test' guard mirrors the existing pattern in src/lib/db/factory.ts.)
-  */
-  const sqliteSampleConsidered = process.env.NODE_ENV !== "test" || !!process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
-  if (isSqliteSampleEnabled() && sqliteSampleConsidered && roles.includes("admin")) {
-    if (fs.existsSync(resolveSqliteSamplePath())) after.push(buildSqliteSampleConnection());
-  }
-
-  const libredbSampleConsidered = process.env.NODE_ENV !== "test" || !!process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
-  if (isSampleEnabled() && libredbSampleConsidered) {
-    if (fs.existsSync(resolveSamplePath())) after.push(buildSampleConnection());
-  }
+  // The built-in samples, in the order of SAMPLES (src/lib/seed/samples.ts, whose docblock says why SQLite leads).
+  // Each file is checked on this request: one lost after boot is listed unavailable instead (sampleFilePresent).
+  const after = offeredSamples(roles)
+    .filter((admission) => admission.refusal === null && sampleFilePresent(admission))
+    .map(({ type, spec, target }) => sampleConnection(type, spec, target));
 
   return { before, pendingReview: reviewed ? kubernetes : [], after };
 }
@@ -188,17 +166,39 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
 }
 
 /**
- * Seed ids whose async seeding is still in flight — advertised by the managed
- * connections API so clients poll until the sample appears (or seeding ends).
- * Empty when nothing is seeding: embedded in platform, instrumentation never
- * runs, the state stays "idle", and clients never poll. Empty under governance
- * too, where the SQLite sample is off.
+ * The enabled samples a listing for these roles considers, in table order, each with its target and admission, as boot
+ * computed them (`seededSampleAdmissions`, none in a process that never seeded): in a test run only a sample whose path
+ * override is set (`sampleConsidered`), and only one these roles are offered.
+ */
+function offeredSamples(roles: string[]): SampleAdmission[] {
+  return seededSampleAdmissions().filter(({ spec }) => sampleConsidered(spec) && rolesMatch([...spec.roles], roles));
+}
+
+/**
+ * Seed ids of the samples boot enabled whose copy is still in flight, in table order, so clients poll until each
+ * appears or its copy ends. Empty when nothing is seeding, and in a process that never seeded, where clients never
+ * poll. Empty under governance too, where boot enables no sample.
  */
 export function getPendingSeeds(): string[] {
-  if (isSqliteSampleEnabled() && getSqliteSampleSeedState() === "seeding") {
-    return [SQLITE_SAMPLE_SEED_ID];
-  }
-  return [];
+  return seededSampleAdmissions()
+    .filter(({ spec }) => getSampleSeedState(spec.seedId)?.phase === "seeding")
+    .map(({ spec }) => spec.seedId);
+}
+
+/**
+ * The samples boot enabled, offered to these roles, that have no file and whose copy failed, whose target was refused,
+ * or whose file was lost after boot, in table order, each with its reason and the sentence a client shows. The file is
+ * checked first (`sampleFilePresent`), so a loss this request finds is listed at once. Never a connection, so no
+ * picker, route or MCP tool can reach one. Empty under governance, where boot enables no sample.
+ */
+export function getUnavailableSamples(roles: string[]): UnavailableSample[] {
+  return offeredSamples(roles).flatMap((admission): UnavailableSample[] => {
+    const present = admission.refusal === null && sampleFilePresent(admission);
+    const { spec } = admission;
+    const state = getSampleSeedState(spec.seedId);
+    if (present || state?.phase !== "failed") return [];
+    return [{ seedId: spec.seedId, name: spec.name, reason: state.reason, sentence: state.sentence }];
+  });
 }
 
 /**

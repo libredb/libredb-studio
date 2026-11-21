@@ -66,7 +66,7 @@ RUN node scripts/copy-monaco.mjs && npx next build
 # are what turn an over-eager future entry into a failed build rather than a
 # provider failing at runtime. `seed-assets/` is not on the list and is COPYed
 # explicitly below in any case; nothing else under /app is read at runtime
-# (src/lib/seed/sqlite-sample.ts is the only `process.cwd()` reader).
+# (src/lib/seed/samples.ts is the only `process.cwd()` reader).
 #
 # HERE rather than in the runner: an `rm` after a COPY deletes the files in a
 # later layer while leaving every byte of them in the layer the COPY created.

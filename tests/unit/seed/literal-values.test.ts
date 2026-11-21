@@ -22,11 +22,14 @@ import { logger } from "@/lib/logger";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
-import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
-import { SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
+import { resetSampleSeedStates } from "@/lib/seed/samples";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { LITERAL_SEED_FILE } from "@/lib/types";
 import { resetVaultCache } from "@/lib/seed/vault-client";
+import { seedSamples } from "../../helpers/sample-seeding";
+
+const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
+const SAMPLE_SEED_ID = "libredb-embedded-sample";
 
 /** A seed file as a platform writes it: JSON, managed, a `${NAME}` user, a `${vault:...}` password and an admin-only `${JWT_SECRET}` user. */
 const FIXTURE = path.resolve(import.meta.dir, "../../fixtures/seed-connections/literal-values-config.json");
@@ -152,7 +155,7 @@ describe("SEED_LITERAL_VALUES", () => {
       delete process.env.SQLITE_EMBEDDED_SAMPLE;
       delete process.env.LIBREDB_EMBEDDED_SAMPLE;
       const scratch = mkdtempSync(path.join(tmpdir(), "libredb-literal-sample-"));
-      // getManagedConnections lists each sample when its file exists; their content is never read here.
+      // getManagedConnections lists each sample boot admitted when its file exists; their content is never read here.
       const sqliteSample = path.join(scratch, "sample-employees.db");
       const libredbSample = path.join(scratch, "sample.libredb");
       writeFileSync(sqliteSample, "");
@@ -161,6 +164,7 @@ describe("SEED_LITERAL_VALUES", () => {
       process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbSample;
 
       try {
+        await seedSamples();
         const bySeedId = await listed();
 
         expect(bySeedId.get("orders")?.literal).toBe(true);
@@ -173,6 +177,7 @@ describe("SEED_LITERAL_VALUES", () => {
       } finally {
         delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
         delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+        resetSampleSeedStates();
         rmSync(scratch, { recursive: true, force: true });
       }
     });

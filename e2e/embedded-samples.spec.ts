@@ -1,9 +1,9 @@
 /**
  * Embedded samples: the zero-config first-run promise, end to end — log in on
  * a fresh install and find ready-to-query sample connections in the sidebar:
- * Sample (LibreDB) (seeded synchronously at boot) and Sample (Employees)
- * (a SQLite copy seeded asynchronously; the client polls the managed API so
- * it appears without a page refresh).
+ * Sample (LibreDB) and Sample (Employees), both copied asynchronously at
+ * boot; the client polls the managed API so they appear without a page
+ * refresh.
  *
  * Channel-agnostic by design: the spec only talks to baseURL. It runs in two
  * harnesses — the regular Playwright config (webServer boots the repo build;

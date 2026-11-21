@@ -502,8 +502,8 @@ An optional in-app base-dir allowlist is tracked in
 
 ### 4.1 Embedded sample database (standalone mode)
 
-On standalone startup (never when embedded in libredb-platform),
-[`src/lib/seed/sqlite-sample.ts`](../../src/lib/seed/sqlite-sample.ts) copies the vendored
+On standalone startup (never when embedded in libredb-platform), the sample service
+([`src/lib/seed/samples.ts`](../../src/lib/seed/samples.ts)) copies the vendored
 employees database ([`seed-assets/sqlite/employee.db`](../../seed-assets/sqlite/employee.db),
 from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database)
 `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db) — see
@@ -511,18 +511,15 @@ from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sa
 `<data dir>/sample-employees.db` and `getManagedConnections()` advertises it as an editable,
 dismissable "Sample (Employees)" connection (`type: "sqlite"`, `managed: false`, `roles: ["admin"]`).
 
-The template is in rollback-journal mode.
-The seed copies it to a temp file beside the target, opens that copy once with this provider, whose open switches it to WAL journal mode ([§3.2](#32-pragmas-on-connect)), closes it, and only then renames it into place.
-So the published sample is already in WAL mode, and the first page load, which opens it from several routes at once, has no switch to race.
-A template that is not a SQLite database is refused by that open, and nothing is published.
+The template is committed in WAL journal mode: [`scripts/generate-sqlite-sample.mjs`](../../scripts/generate-sqlite-sample.mjs) set its header bytes 18 and 19 to 2, which the SQLite file format defines, and changed no page.
+So the published sample needs no switch to WAL on its first opens ([§3.2](#32-pragmas-on-connect)), and the first page load, which opens it from several routes at once, has no switch to race.
+The seed copies bytes and opens nothing: [`src/lib/seed/sample-copy.ts`](../../src/lib/seed/sample-copy.ts) checks the copy against the size and SHA-256 digest the sample table pins, flushes it, and renames it into place, never over an existing file.
 
 The sample is neither seeded nor listed when `LIBREDB_ENABLED_PROVIDERS` is set and does not name `sqlite`, because the factory refuses every open of a type that list leaves out.
+The server reads that list, the variables below and the sample's path once, at boot; a change takes effect at the next restart.
 
-Unlike the LibreDB sample, the copy runs **asynchronously and fail-open**: `register()`
-fires-and-forgets the seed (start/completion/duration are logged), boot never waits on it, and a
-failure only logs a warning — the sample is then silently absent. While the copy is in flight the
-managed-connections API reports the seed id in `pendingSeeds` and the client polls (1s, up to 30
-attempts) so the connection appears in the sidebar without a page refresh.
+The copy runs asynchronously, like the LibreDB sample's: boot never waits on it, and while it is in flight the managed-connections API reports the seed id in `pendingSeeds` and the client polls (1s, up to 30 attempts) so the connection appears in the sidebar without a page refresh.
+A copy that fails is logged once and listed unavailable with its reason, such as `asset-missing` or `copy-failed` ([`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
 
 Env vars:
 
@@ -530,7 +527,7 @@ Env vars:
 |----------|---------|-------|
 | `SQLITE_EMBEDDED_SAMPLE` | `true` | Only the literal `false` disables; off as well under governance, and when `LIBREDB_ENABLED_PROVIDERS` leaves out `sqlite` |
 | `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Runtime copy location |
-| `SQLITE_EMBEDDED_SAMPLE_TEMPLATE` | `<cwd>/seed-assets/sqlite/employee.db` | Vendored template location (packaging overrides) |
+| `SEED_ASSETS_DIR` | `<working directory>/seed-assets` | The directory the template is copied from; replaces `SQLITE_EMBEDDED_SAMPLE_TEMPLATE`, which is no longer read |
 
 The template ships as a top-level `seed-assets/` directory in every distribution payload
 (Docker image, standalone tarball, and everything derived from it: npx, deb/rpm, snap,

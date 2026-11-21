@@ -3,8 +3,9 @@
  * boots its own Next.js server (never when @libredb/studio is imported by
  * libredb-platform). On standalone boot, first install the uncaught-exception
  * exit (docs/DISTRIBUTION.md#uncaught-errors-and-restarts), then bootstrap
- * missing auth env (#109) and seed the embedded samples if enabled. A failure
- * here must never break boot.
+ * missing auth env (#109), run the boot preflights, and start copying the
+ * built-in samples (src/lib/seed/samples.ts), which boot never waits for: a
+ * sample whose copy fails is logged once and listed unavailable.
  */
 export async function register(): Promise<void> {
   // Node.js server runtime only (skip the edge runtime).
@@ -58,36 +59,9 @@ export async function register(): Promise<void> {
     startGovernance();
   }
 
-  const { logger } = await import("@/lib/logger");
-
-  // LibreDB sample: programmatic and fast — seeded synchronously as before.
-  const { isSampleEnabled, resolveSamplePath, seedSampleFile } = await import("@/lib/seed/libredb-sample");
-  if (isSampleEnabled()) {
-    let filePath: string | undefined;
-    try {
-      filePath = resolveSamplePath();
-      await seedSampleFile(filePath);
-    } catch (error) {
-      logger.warn("LibreDB embedded sample seeding skipped", {
-        route: "instrumentation",
-        path: filePath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  // SQLite sample: a file copy — fire-and-forget so boot never waits on it.
-  // The seed state lets GET /api/connections/managed advertise the pending
-  // seed, and the client polls until the sample appears (no page refresh).
-  // The inner try/catch guarantees no unhandled rejection; on failure the
-  // server keeps running and the sample is silently absent.
-  const { isSqliteSampleEnabled, resolveSqliteSamplePath, seedSqliteSampleFile, setSqliteSampleSeedState } =
-    await import("@/lib/seed/sqlite-sample");
-
   // Boot banner: version, URL, and the invitation to star the repo. Printed
-  // before the early return below so a deployment with the sqlite sample
-  // disabled still gets it, and after the preflight above so a server that
-  // refuses to boot never prints a welcome. Never throws.
+  // after the preflight above so a server that refuses to boot never prints a
+  // welcome. Never throws.
   const { printStartupBanner } = await import("@/lib/startup-banner");
   printStartupBanner();
 
@@ -97,39 +71,18 @@ export async function register(): Promise<void> {
   const { startAgentResumeSweep } = await import("@/lib/agent/resume-sweep");
   startAgentResumeSweep();
 
-  if (!isSqliteSampleEnabled()) return;
-
-  // "seeding" is set BEFORE the IIFE so no request can observe "idle" while a
-  // first-boot copy is about to start; on fast-path boots (file already
-  // present) the window closes within the first fs call, before the HTTP
-  // server accepts its first request.
-  setSqliteSampleSeedState("seeding");
-  void (async () => {
-    const started = Date.now();
-    let filePath: string | undefined;
-    try {
-      filePath = resolveSqliteSamplePath();
-      const outcome = await seedSqliteSampleFile(filePath);
-      setSqliteSampleSeedState("done");
-      if (outcome === "skipped") {
-        // Every boot after the first takes this path — keep it to one quiet
-        // line instead of a started/completed info pair (PR #191 review).
-        logger.debug("SQLite embedded sample already present", { route: "instrumentation", path: filePath });
-      } else {
-        logger.info("SQLite embedded sample seed completed", {
-          route: "instrumentation",
-          path: filePath,
-          durationMs: Date.now() - started,
-        });
-      }
-    } catch (error) {
-      setSqliteSampleSeedState("failed");
-      logger.warn("SQLite embedded sample seeding skipped", {
-        route: "instrumentation",
-        path: filePath,
-        durationMs: Date.now() - started,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  })();
+  // Built-in samples: which samples are enabled and admitted is decided here,
+  // once, for the life of the process, and every enabled sample is marked
+  // seeding before this returns, so GET /api/connections/managed lists it in
+  // pendingSeeds and the client polls until it appears. The copies are not
+  // awaited: a failed copy is logged once and listed unavailable. Their promise
+  // rejects only for a defect, an error a copy throws that is not a
+  // SampleCopyError; that sample is listed unavailable as copy-defect, and the
+  // rejection, which nothing here catches, is the process's unhandled
+  // rejection: Next.js logs it and goes on serving, and under
+  // --unhandled-rejections=strict the uncaught-exception exit stops the server
+  // with code 70.
+  // The sample service loads no engine code (tests/unit/seed/no-engine-imports.test.ts).
+  const { startSampleSeeding } = await import("@/lib/seed/samples");
+  void startSampleSeeding();
 }

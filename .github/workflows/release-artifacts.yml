@@ -358,16 +358,16 @@ jobs:
             exit 1
           fi
           grep -q "first run: generated admin credentials" /tmp/win-smoke.log
-          # The embedded SQLite sample seeds asynchronously into the storage
-          # directory (the launcher's %LOCALAPPDATA% default) - its absence
+          # Both built-in samples are copied asynchronously into the storage
+          # directory (the launcher's %LOCALAPPDATA% default) - an absent one
           # means the zip shipped without seed-assets/.
           SAMPLE_SEEDED=false
           for _ in $(seq 1 30); do
-            if [ -f "${LOCALAPPDATA}/LibreDB/Studio/sample-employees.db" ]; then SAMPLE_SEEDED=true; break; fi
+            if [ -f "${LOCALAPPDATA}/LibreDB/Studio/sample-employees.db" ] && [ -f "${LOCALAPPDATA}/LibreDB/Studio/sample.libredb" ]; then SAMPLE_SEEDED=true; break; fi
             sleep 1
           done
           if [ "$SAMPLE_SEEDED" != "true" ]; then
-            echo "Smoke test FAILED: embedded SQLite sample was not seeded within 30s" >&2
+            echo "Smoke test FAILED: the embedded samples were not both copied within 30s" >&2
             cat /tmp/win-smoke.log >&2 || true
             exit 1
           fi

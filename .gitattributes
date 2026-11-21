@@ -11,3 +11,8 @@
 *.sh text eol=lf
 *.mjs text eol=lf
 *.tmpl text eol=lf
+
+# The seed assets are binary database files held to pinned digests (src/lib/seed/samples.ts), and the digest
+# tests run on Windows checkouts too, so no line-ending conversion may touch them, whatever NUL detection decides.
+seed-assets/**/*.db binary
+seed-assets/**/*.libredb binary

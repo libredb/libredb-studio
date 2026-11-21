@@ -2279,7 +2279,21 @@ Auth required. Merges a client's localStorage payload into server storage on fir
 Auth required. Returns seed/managed connections for the current user's role. A `managed: true` connection has every secret-classified field stripped (`password`, `connectionString`, `apiKeyId`, `apiKeySecret`, `ssl.clientKey`); a `managed: false` one is returned whole, because the browser edits it. `cacheHint` is the client cache TTL in ms (`SEED_CACHE_TTL_MS`, default 60000). See [`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md).
 
 ```json
-{ "connections": [], "cacheHint": 60000 }
+{ "connections": [], "cacheHint": 60000, "pendingSeeds": [], "unavailableSamples": [] }
+```
+
+`pendingSeeds` lists the seed ids of the built-in samples whose copy at boot is still in flight, `sqlite-embedded-sample` and `libredb-embedded-sample`, in that order; a client polls while it is not empty, so a sample appears without a page refresh.
+`unavailableSamples` lists the built-in samples offered to the session's roles whose copy failed, whose target was refused or could not be checked, or whose file was lost after boot, so they have no file and are not in `connections` ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
+The SQLite sample is offered to the `admin` role only, and the LibreDB sample to every role.
+Each entry carries `seedId`, `name`, `reason` (`asset-missing`, `asset-unreadable`, `digest-mismatch`, `copy-failed`, `copy-defect`, `target-unreadable`, `target-reserved`, `target-conflict` or `target-lost`) and `sentence`, which a client shows and which names no path:
+
+```json
+{
+  "seedId": "sqlite-embedded-sample",
+  "name": "Sample (Employees)",
+  "reason": "asset-missing",
+  "sentence": "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied. The server log names the path."
+}
 ```
 
 A failure the endpoint attributes to its **own seed configuration** says so, so a client can tell
@@ -2302,7 +2316,7 @@ configuration is what failed.
 In governance mode (`GOVERNANCE_SOURCE` set, [`docs/GOVERNANCE.md`](GOVERNANCE.md)) it lists the connections the session's identity provider subject holds an unexpired grant on, by name, for an admin as for a user, and nothing for a session without a subject.
 Each is a `managed: true` record of the credential of the grant's level, with every secret-classified field stripped and `queryTimeout: 60000`, and no server-only field.
 Its `access` is `"read"` or `"write"`, the level of that credential, so a client can show a connection as read only before a write fails.
-`cacheHint` is `10000`, so a grant made or revoked in the control plane reaches the list within seconds, and `pendingSeeds` is `[]`.
+`cacheHint` is `10000`, so a grant made or revoked in the control plane reaches the list within seconds, and `pendingSeeds` and `unavailableSamples` are `[]`.
 While the governance snapshot cannot be served (still loading, older than `GOVERNANCE_MAX_STALENESS_MS`, misconfigured or incompatible) it answers `503` instead of an empty list:
 
 ```json

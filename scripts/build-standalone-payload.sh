@@ -289,13 +289,16 @@ fi
 # root, next to LICENSE (prune-standalone-payload.sh keeps both).
 cp THIRD_PARTY_NOTICES.txt "$PAYLOAD_DIR/THIRD_PARTY_NOTICES.txt"
 
-# Vendored sample database templates (seed-assets/): read at runtime relative
-# to the payload root, so output file tracing never includes them — copy
-# explicitly (mirrors the Dockerfile runner stage COPY).
-if [ ! -f seed-assets/sqlite/employee.db ]; then
-  echo "seed-assets/sqlite/employee.db not found - the repo checkout is incomplete" >&2
-  exit 1
-fi
+# The built-in sample assets (seed-assets/): read at runtime relative to the
+# payload root, so output file tracing never includes them: copy explicitly
+# (mirrors the Dockerfile runner stage COPY). Every asset the sample table
+# (src/lib/seed/samples.ts) pins must be here.
+for asset in seed-assets/sqlite/employee.db seed-assets/libredb/sample.libredb; do
+  if [ ! -f "$asset" ]; then
+    echo "$asset not found - the repo checkout is incomplete" >&2
+    exit 1
+  fi
+done
 rm -rf "$PAYLOAD_DIR/seed-assets"
 cp -R seed-assets "$PAYLOAD_DIR/seed-assets"
 
@@ -385,26 +388,26 @@ if [ "$RUN_SMOKE" = "true" ]; then
 
   echo "==> Smoke: /api/db/health returned 200"
 
-  # The embedded SQLite sample seeds asynchronously after boot: the vendored
-  # template must have shipped in the payload and the copy must land in the
-  # data dir. This catches a payload missing seed-assets/ on every platform
-  # without needing a browser (the full Playwright gate is
+  # Both built-in samples are copied asynchronously after boot: their assets
+  # must have shipped in the payload and both copies must land in the data dir.
+  # This catches a payload missing seed-assets/ on every platform without
+  # needing a browser (the full Playwright gate is
   # scripts/channel-embedded-sample-e2e.sh).
   SAMPLE_SEEDED=false
   for _ in $(seq 1 30); do
-    if [ -f "$STORAGE_DIR/sample-employees.db" ]; then
+    if [ -f "$STORAGE_DIR/sample-employees.db" ] && [ -f "$STORAGE_DIR/sample.libredb" ]; then
       SAMPLE_SEEDED=true
       break
     fi
     sleep 1
   done
   if [ "$SAMPLE_SEEDED" != "true" ]; then
-    echo "Smoke test FAILED: embedded SQLite sample was not seeded within 30s" >&2
+    echo "Smoke test FAILED: the embedded samples were not both copied within 30s" >&2
     echo "---- server.log ----" >&2
     cat "$STAGE_DIR/server.log" >&2 || true
     exit 1
   fi
-  echo "==> Smoke: embedded SQLite sample seeded"
+  echo "==> Smoke: both embedded samples copied"
 fi
 
 echo "==> Done: $OUT_DIR/$ARCHIVE"

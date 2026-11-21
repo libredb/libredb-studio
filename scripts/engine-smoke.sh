@@ -130,6 +130,37 @@ fi
 LOGIN_BODY=$(login "$BASE" "$PASSWORD" "$WORK/cookies.txt")
 check "zero-config login succeeds" "$LOGIN_BODY" '"success":true'
 
+# The LibreDB sample is copied asynchronously at boot, like the SQLite one: wait
+# until the managed connections route lists no sample still pending, then
+# require that none is unavailable. A copy that failed also leaves nothing
+# pending, so it fails here at once with the body, which names its reason, and
+# the server log, which names the path.
+SAMPLES_READY=false
+for _ in $(seq 1 30); do
+  MANAGED_BODY=$(curl -s -b "$WORK/cookies.txt" "$BASE/api/connections/managed")
+  case "$MANAGED_BODY" in
+    *'"pendingSeeds":[]'*) ;;
+    *)
+      sleep 1
+      continue
+      ;;
+  esac
+  case "$MANAGED_BODY" in
+    *'"unavailableSamples":[]'*)
+      SAMPLES_READY=true
+      break
+      ;;
+  esac
+  echo "FAIL: an embedded sample is unavailable: $MANAGED_BODY" >&2
+  cat "$LOG" >&2
+  exit 1
+done
+if [ "$SAMPLES_READY" != "true" ]; then
+  echo "FAIL: the embedded samples were still pending after 30s: $MANAGED_BODY" >&2
+  cat "$LOG" >&2
+  exit 1
+fi
+
 SAMPLE_BODY=$(curl -s -b "$WORK/cookies.txt" -X POST "$BASE/api/db/query" -H "Content-Type: application/json" \
   -d '{"connectionId":"seed:libredb-embedded-sample","sql":"prefix users:"}')
 check "embedded sample query returns seeded rows" "$SAMPLE_BODY" "Ada"

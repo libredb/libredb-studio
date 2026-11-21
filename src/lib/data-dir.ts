@@ -33,8 +33,11 @@ export function reservedStoragePaths(): string[] {
   return [base, `${base}-wal`, `${base}-shm`];
 }
 
-/** Resolve existing ancestors too, so aliases of a directory protect files not yet created. */
-function canonicalPath(candidate: string): string {
+/**
+ * The real path of `candidate`, an absolute path: its existing ancestors are resolved too, so aliases of a directory
+ * name one path for files not yet created. Any error but ENOENT is thrown.
+ */
+export function canonicalPath(candidate: string): string {
   try {
     return fs.realpathSync(candidate);
   } catch (error) {

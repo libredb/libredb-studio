@@ -12,10 +12,12 @@ import { logger } from "@/lib/logger";
 import { MCP_CONNECTIONS_UNREADABLE_TEXT } from "@/lib/mcp/context";
 import { MCP_NOT_VISIBLE_TEXT } from "@/lib/mcp/output";
 import { servingStatementArms } from "@/lib/mcp/tools/statement-arms";
-import { resetCache } from "@/lib/seed";
+import { getManagedConnections, resetCache } from "@/lib/seed";
+import { resetSampleSeedStates } from "@/lib/seed/samples";
 import { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { registeredMcpToolNames } from "../../helpers/mcp-tool-names";
+import { seedSamples } from "../../helpers/sample-seeding";
 
 pinMcpTestEnvironment();
 
@@ -30,6 +32,7 @@ beforeAll(() => {
 
 afterEach(async () => {
   for (const name of SAMPLE_PATHS) delete process.env[name];
+  resetSampleSeedStates();
   await resetMcpTestState();
 });
 
@@ -106,7 +109,14 @@ describe("the opt-in", () => {
     writeFileSync(libredbSample, "");
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = sqliteSample;
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbSample;
+    await seedSamples();
     writeSeedFile(dir, [{ id: "opted-in", type: "sqlite", database: join(dir, "shop.db") }]);
+    // Control: the seed listing offers both samples to an admin.
+    expect((await getManagedConnections(["admin"])).map((c) => c.seedId)).toEqual([
+      "opted-in",
+      "sqlite-embedded-sample",
+      "libredb-embedded-sample",
+    ]);
     expect(await listedIds(admin)).toEqual(["seed:opted-in"]);
     for (const connectionId of ["seed:sqlite-embedded-sample", "seed:libredb-embedded-sample"]) {
       const result = await callTool(admin, "inspect_schema", { connection_id: connectionId });
