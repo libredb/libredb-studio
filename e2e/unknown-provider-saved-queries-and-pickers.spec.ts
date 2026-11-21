@@ -6,9 +6,8 @@
  * loaded the stored query into the active tab, and the monitoring page landed on "Something went wrong" for a stored
  * connection whose type is not text.
  *
- * Runs under playwright.config.ts's "chromium-unknown-provider" project, against the second server, for the reason
- * unknown-provider-connection.spec.ts does: every test signs in and loads the studio, and the palette test reloads it
- * and the monitoring test opens a second page, so they pay the hydration requests again.
+ * Runs under playwright.config.ts's "chromium" project, against the main server: every test signs in and loads the
+ * studio, and the palette test reloads it and the monitoring test opens a second page.
  * That server keeps its storage in the browser, so what a test writes to `localStorage` is what the page reads.
  */
 import { expect, test, type Page } from "@playwright/test";

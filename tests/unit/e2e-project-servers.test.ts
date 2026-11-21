@@ -35,7 +35,6 @@ const SECOND_SERVER_SPECS = [
   "rabbitmq-provider.spec.ts",
   "mqtt-provider.spec.ts",
   "unknown-provider-connection.spec.ts",
-  "unknown-provider-saved-queries-and-pickers.spec.ts",
 ];
 
 type Project = NonNullable<typeof config.projects>[number];
