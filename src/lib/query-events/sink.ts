@@ -243,7 +243,8 @@ export function queryEventSinkState(): QueryEventSinkState {
 
 /**
  * Whether the shutdown flush has closed the sink of this process, after which an event it records is queued and never
- * sent; false while it has recorded no event.
+ * sent. The flush runs only when the process recorded an event before the shutdown hooks ran, so this stays false
+ * otherwise.
  */
 export function queryEventSinkClosed(): boolean {
   return (globalThis as SinkHolder)[SINK_KEY]?.closing ?? false;

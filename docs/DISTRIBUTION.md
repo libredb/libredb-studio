@@ -282,7 +282,8 @@ Next.js's own handler ignores a repeated signal too, so under neither handler do
 
 143 and 130 are 128 plus the signal's number, the codes Next.js's own handler exits with.
 A provider close fails when a shared provider's disconnect rejects, or when an owned provider's rollback or disconnect fails or passes its own deadline ([GOVERNANCE.md](GOVERNANCE.md#per-user-providers)); the end line's `cacheClosesFailed` counts it, and the error line before it names the providers.
-Query events are left unsent when the flush could not insert them, or when a request recorded them after the flush had closed the query event sink, which sends nothing after it.
+Query events are left unsent when the flush could not insert them, or when a request recorded them after the flush had ended.
+The flush runs only when the process recorded a query event before the signal; it sends the events recorded while it runs, and then closes the query event sink, which sends nothing after it.
 Under systemd (the .deb, .rpm, AUR and Snap services) an exit with 143 or 130 is recorded as a failed unit, and only 0 as a clean stop.
 
 Where Next.js ends the process, the stop has no bound of its own.
@@ -290,8 +291,10 @@ On an idle server it exits within milliseconds, while the hooks may still be run
 Otherwise it waits for every request in flight without a limit, and serves a keep-alive connection open at the signal for as long as a client keeps sending requests on it, the unauthenticated `GET /health` included.
 A long response, such as an agent run's timeline stream, which stays open until the run ends, holds the stop as long.
 Such a stop ends only with the platform's SIGKILL, or a `kill -9`, which the table below times.
-The shutdown hooks closed the query event sink at the signal, so a statement run during that wait leaves a query event that is never inserted; with `queryLog.onSinkFailure` at `refuse` Studio refuses such a statement with 503 `AUDIT_UNAVAILABLE` instead ([GOVERNANCE.md](GOVERNANCE.md#query-events)).
-As the process exits, Studio's handler logs `Exiting with 143 after SIGTERM`, as a warning carrying `queryEventsLost` and `hooksRunning` when the exit leaves query events unsent or cuts a hook still running; Studio's start line, `Received SIGTERM: running the shutdown hooks; Next.js's handler ends the process`, shows that its handler ran.
+When the process recorded a query event before the signal, the shutdown hooks closed the query event sink once their insert ended, so a statement run after that during the wait leaves a query event that is never inserted; with `queryLog.onSinkFailure` at `refuse` Studio refuses such a statement with 503 `AUDIT_UNAVAILABLE` instead, until the exit ([GOVERNANCE.md](GOVERNANCE.md#query-events)).
+Without such an event the sink stays open and inserts the events of the wait as it does while the server runs.
+Under governance, from the signal on this instance applies no further change of grants or sessions, a revocation included, until it exits: the shutdown hooks stop the governance listener and the reloads at the signal, so it keeps authorizing requests by the snapshot it held then, during the shutdown Studio's handler owns too ([GOVERNANCE.md](GOVERNANCE.md#operating-notes)).
+As the process exits, unless the platform's SIGKILL ends it, Studio's handler logs `Exiting with 143 after SIGTERM`, as a warning carrying `queryEventsLost` and `hooksRunning` when the exit leaves query events unsent or cuts a hook still running; Studio's start line, `Received SIGTERM: running the shutdown hooks; Next.js's handler ends the process`, shows that its handler ran.
 
 What each platform waits for before it kills the process, against the 20 s Studio's handler may take where it owns the exit; where Next.js owns it, the stop may last until this kill:
 

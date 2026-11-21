@@ -135,7 +135,7 @@ async function shutDown(proc: ShutdownProcess, owner: ExitOwner, signal: Shutdow
   const closes = await step("provider cache closes", closeProviderCaches, NO_CLOSE_CUT);
 
   const stepsFailed = [hooks.failed, closes.failed].filter((name): name is string => name !== undefined);
-  // Events still queued now are never sent: the flush has ended, and those recorded after it are never flushed.
+  // Events still queued now are never sent: the flush, which ran if an event was recorded before the signal, has ended.
   const queryEventsLost = queuedQueryEventCount();
   const complete =
     stepsFailed.length === 0 &&
