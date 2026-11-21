@@ -56,14 +56,47 @@ function parse(file: string, text: string): ts.SourceFile {
   );
 }
 
-/** `node` with the parentheses around it stepped over. */
+/** Whether `node` only wraps an expression without changing its value: parentheses, `!`, `as`, `satisfies`, `<T>`. */
+function isTransparent(node: ts.Node): boolean {
+  return (
+    ts.isParenthesizedExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isSatisfiesExpression(node) ||
+    ts.isTypeAssertionExpression(node)
+  );
+}
+
+/** The parent of `node` with every transparent wrapper around it stepped over. */
 function outer(node: ts.Node): ts.Node {
   let parent = node.parent;
-  while (parent !== undefined && ts.isParenthesizedExpression(parent)) parent = parent.parent;
+  while (parent !== undefined && isTransparent(parent)) parent = parent.parent;
   return parent;
 }
 
-/** Whether `node` reads a member called `name`: `x.name`, `x?.name`, `x["name"]`, or `{ name } = x`. */
+/** `node` with every transparent wrapper inside it stepped over. */
+function inner(node: ts.Node): ts.Node {
+  let at = node;
+  while (isTransparent(at)) at = (at as ts.ParenthesizedExpression).expression;
+  return at;
+}
+
+/** Whether `node` is an entry of an object literal that is the target of a destructuring assignment. */
+function isAssignmentPatternEntry(node: ts.Node): node is ts.ShorthandPropertyAssignment | ts.PropertyAssignment {
+  if (!ts.isShorthandPropertyAssignment(node) && !ts.isPropertyAssignment(node)) return false;
+  const literal = node.parent;
+  const assignment = literal.parent;
+  return (
+    ts.isBinaryExpression(assignment) &&
+    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    assignment.left === literal
+  );
+}
+
+/**
+ * Whether `node` reads a member called `name`: `x.name`, `x?.name`, `x["name"]`, `const { name } = x`, or
+ * `({ name } = x)`.
+ */
 function readsMember(node: ts.Node, name: string): boolean {
   if (ts.isPropertyAccessExpression(node)) return node.name.text === name;
   if (ts.isElementAccessExpression(node)) {
@@ -73,19 +106,25 @@ function readsMember(node: ts.Node, name: string): boolean {
     const key = node.propertyName ?? node.name;
     return (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) && key.text === name;
   }
+  if (isAssignmentPatternEntry(node)) {
+    return (ts.isIdentifier(node.name) || ts.isStringLiteralLike(node.name)) && node.name.text === name;
+  }
   return false;
 }
 
-/** Whether the member read `node` is called: `x.name(...)`, `x.name?.(...)`, or through `.bind`, `.call`, `.apply`. */
+/**
+ * Whether the member read `node` is called: `x.name(...)`, `x.name?.(...)`, or through `.bind`, `.call`, `.apply`,
+ * with any transparent wrapper (`isTransparent`) between the read and the call.
+ */
 function isCalled(node: ts.Node): boolean {
   const parent = outer(node);
   if (parent === undefined) return false;
-  if (ts.isCallExpression(parent) && parent.expression === node) return true;
+  if (ts.isCallExpression(parent) && inner(parent.expression) === node) return true;
   return (
     ts.isPropertyAccessExpression(parent) &&
     ["bind", "call", "apply"].includes(parent.name.text) &&
     ts.isCallExpression(outer(parent)) &&
-    (outer(parent) as ts.CallExpression).expression === parent
+    inner((outer(parent) as ts.CallExpression).expression) === parent
   );
 }
 
@@ -142,7 +181,7 @@ function memberReads(file: string, text: string, name: string): Finding[] {
         file,
         declaration: enclosingDeclaration(node),
         functions: enclosingFunctions(node),
-        called: !ts.isBindingElement(node) && isCalled(node),
+        called: !ts.isBindingElement(node) && !isAssignmentPatternEntry(node) && isCalled(node),
         typeofTest: parent !== undefined && ts.isTypeOfExpression(parent),
       });
     }
@@ -174,6 +213,8 @@ describe("the protected read path", () => {
       "function applied(p) { return p.queryReadOnly.apply(p, ['SELECT 1', budget]); }",
       "function indexed(p) { return p['queryReadOnly']('SELECT 1', budget); }",
       "function destructured(p) { const { queryReadOnly } = p; return queryReadOnly('SELECT 1', budget); }",
+      "function assigned(p) { let queryReadOnly; ({ queryReadOnly } = p); return queryReadOnly('SELECT 1', budget); }",
+      "function renamed(p) { let run; ({ queryReadOnly: run } = p); return run('SELECT 1', budget); }",
       "function tested(p) { return typeof p.queryReadOnly === 'function'; }",
       "/** p.queryReadOnly('SELECT 1', budget) */ // p.queryReadOnly?.('SELECT 1')",
     ].join("\n");
@@ -185,6 +226,8 @@ describe("the protected read path", () => {
       "applied",
       "indexed",
       "destructured",
+      "assigned",
+      "renamed",
     ]);
   });
 
@@ -207,6 +250,13 @@ describe("the protected read path", () => {
       "function optional(p) { return p.query?.('SELECT 1'); }",
       "function bound(p) { return p.query.bind(p)('SELECT 1'); }",
       "function indexed(p) { return p['query']('SELECT 1'); }",
+      "function called(p) { return p.query.call(p, 'SELECT 1'); }",
+      "function applied(p) { return p.query.apply(p, ['SELECT 1']); }",
+      "function nonNull(p) { return p.query!('SELECT 1'); }",
+      "function cast(p) { return (p.query as QueryFn)('SELECT 1'); }",
+      "function satisfied(p) { return (p.query satisfies unknown as QueryFn)('SELECT 1'); }",
+      "function asserted(p) { return (<QueryFn>p.query)('SELECT 1'); }",
+      "function nonNullCalled(p) { return p.query!.call(p, 'SELECT 1'); }",
       "function field(entry) { return { text: entry.query }; }",
       "/** p.query('SELECT 1') */ // p.query('SELECT 1')",
     ].join("\n");
@@ -215,6 +265,13 @@ describe("the protected read path", () => {
       "optional",
       "bound",
       "indexed",
+      "called",
+      "applied",
+      "nonNull",
+      "cast",
+      "satisfied",
+      "asserted",
+      "nonNullCalled",
     ]);
   });
 

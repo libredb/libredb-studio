@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
+import ts from "typescript";
 import {
   admitComposedStatement,
   agentPlanExecutionSqlInput,
@@ -363,12 +364,38 @@ describe("a composed statement admitted by identity", () => {
   });
 });
 
-test("only the catalog read mints an admission", () => {
+/** The innermost named function around every call of `callee` in `file`, read from the syntax tree. */
+function callersOf(file: string, callee: string): string[] {
+  const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  const callers: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === callee) {
+      let name = "(top level)";
+      for (let at: ts.Node | undefined = node.parent; at !== undefined; at = at.parent) {
+        if (ts.isFunctionDeclaration(at) && at.name !== undefined) {
+          name = at.name.text;
+          break;
+        }
+      }
+      callers.push(name);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return callers;
+}
+
+test("only the catalog read mints an admission, for the catalog statement itself or for its statistics kind", () => {
   const minting = readdirSync("src", { recursive: true, encoding: "utf8" })
     .map((file) => `src/${file.replaceAll("\\", "/")}`)
     .filter((file) => /\.tsx?$/.test(file) && readFileSync(file, "utf8").includes("admitComposedStatement("))
     .sort();
   expect(minting).toEqual(["src/lib/agent/tools.ts", "src/lib/db/operations/statement-guard.ts"]);
-  const tools = readFileSync("src/lib/agent/tools.ts", "utf8");
-  expect(tools.split("admitComposedStatement(").length - 1).toBe(1);
+  // One mint site, and the helper holding it is called only where a composed catalog read is sent: `readCatalog`, and
+  // `readStatisticsForGrounding` for the catalog read's statistics kind. A third caller is a second mint site.
+  expect(callersOf("src/lib/agent/tools.ts", "admitComposedStatement")).toEqual(["catalogReadAdmission"]);
+  expect(callersOf("src/lib/agent/tools.ts", "catalogReadAdmission").sort()).toEqual([
+    "readCatalog",
+    "readStatisticsForGrounding",
+  ]);
 });

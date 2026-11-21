@@ -21,8 +21,8 @@ import { TABLE_LABELS } from "../fixtures/provider-labels";
  * profile.
  *
  * The composition is planted, since no shipped engine composes one the guard refuses
- * (`tests/unit/lib/agent/schema-stats.test.ts` holds that): `mock.module` replaces the statistics composition with
- * the shipped statement followed by a second one. This file runs in a process of its own, so the replacement reaches
+ * (`tests/unit/lib/agent/schema-stats.test.ts` holds that): `mock.module` replaces both statistics compositions, the
+ * estimates and libSQL's availability probe, with the shipped statement followed by a second one. This file runs in a process of its own, so the replacement reaches
  * no other suite.
  */
 
@@ -34,6 +34,12 @@ mock.module("@/lib/agent/composed-sql", () => ({
   composeCatalogRead: (...args: Parameters<typeof realComposedSql.composeCatalogRead>) => {
     const sql = realComposedSql.composeCatalogRead(...args);
     return args[1].kind === "statistics" ? `${sql}${PLANTED_TAIL}` : sql;
+  },
+  composeStatisticsAvailabilityProbe: (
+    ...args: Parameters<typeof realComposedSql.composeStatisticsAvailabilityProbe>
+  ) => {
+    const probe = realComposedSql.composeStatisticsAvailabilityProbe(...args);
+    return probe === null ? null : `${probe}${PLANTED_TAIL}`;
   },
 }));
 
@@ -64,8 +70,11 @@ interface Harness {
   readonly queryReadOnly: ReturnType<typeof mock>;
 }
 
-/** SQL Server grounds under the operations profile in plan mode and under the execution profile in agent mode. */
-function harness(profile: "operations" | "execution"): Harness {
+/**
+ * SQL Server grounds under the operations profile in plan mode and under the execution profile in agent mode. libSQL
+ * sends an availability probe before its estimates.
+ */
+function harness(profile: "operations" | "execution", type: DatabaseConnection["type"] = "mssql"): Harness {
   const answer = async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 });
   const query = mock(answer);
   const queryReadOnly = mock(answer);
@@ -79,7 +88,7 @@ function harness(profile: "operations" | "execution"): Harness {
       workflowType: "investigation",
       ...(profile === "operations" ? {} : { statementLanguage: "sql" as const }),
       actor: { sessionId: "session-1", role: "user" },
-      connection,
+      connection: { ...connection, type },
       capabilities,
       labels: TABLE_LABELS,
       registry: createCanonicalOperationRegistry(),
@@ -152,6 +161,33 @@ describe("a composed statistics statement the statement guard refuses", () => {
     ]);
     expect(auditedText()).not.toContain("DELETE");
     expect(auditedText()).not.toContain("sys.partitions");
+  });
+
+  test("under the operations profile a statistics availability probe the guard refuses is never sent, and is audited with no statement text", async () => {
+    const h = harness("operations", "libsql");
+
+    const outcome = await readStatisticsForGrounding(h.context, "availability");
+
+    expect(outcome).toMatchObject({
+      kind: "refused",
+      refusal: { class: "policy-denied", reasonCode: "INPUT_VALIDATION_FAILED" },
+    });
+    expect(h.acquireProvider).not.toHaveBeenCalled();
+    expect(h.query).not.toHaveBeenCalled();
+    expect(h.queryReadOnly).not.toHaveBeenCalled();
+    expect(getServerAuditBuffer().getAll()).toEqual([
+      expect.objectContaining({
+        type: "agent_operation",
+        action: "db.schema.read",
+        target: "agent/operations/decision",
+        result: "failure",
+        reason: "agent_input_validation_failed",
+      }),
+    ]);
+    expect(auditedText()).not.toContain("DELETE");
+    expect(auditedText()).not.toContain("sqlite_master");
+    const statistics = await readSchemaStatistics(harness("operations", "libsql").context);
+    expect(statistics).toMatchObject({ kind: "unavailable", reasonCode: "STATISTICS_READ_REFUSED" });
   });
 
   test("the same statement is refused the same way under the execution profile", async () => {
