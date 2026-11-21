@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D469, U17 · 345
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 187
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U209 · 194
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC37 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL11 · 10
@@ -7116,6 +7116,71 @@ The 1,000,000-unit bound and the single slot are #2204's decisions, so a charge 
 Found 2026-11-04 by the review of #2204's route.
 
 **Done when:** a text near the bound costs its caller in proportion to its length, by a charge that grows with the text or a gate whose worst case is near the splitter's, and the known limit in docs/SECURITY.md is removed or restated with the new measurement.
+
+### U203. An open Operations tab confirmation runs on whichever connection the tab shows when it is confirmed
+
+The Operations tab keeps each pending confirmation without the connection it was opened for: the Terminate dialog holds the session (`confirmKill`, `src/components/admin/tabs/OperationsTab.tsx:311`), the whole-database dialog the operation and its name (`confirmGlobal`, :320), and the typed and per-row dialogs their card or request (:317, :323).
+The confirm buttons send to the connection shown at that moment (`handleConfirmGlobal` :619-623, `handleConfirmKill` :629-638).
+The tab drops a pending confirmation only when it draws no sections (:325-335), so it is not dropped when the shown connection is replaced by another that can be opened.
+That happens without the operator: a held connection that leaves the list is replaced during render by `shownConnection` (:302-304, `src/lib/connection-availability.ts:47`), for example when another tab deletes it or a storage sync drops it.
+A Terminate or whole-database run confirmed after that goes to the replacement connection, under a dialog that named the first.
+Found 2026-11-21 by the review of the FND-1 saved query and picker change.
+
+**Done when:** each confirmation records the connection id it was opened for and is refused, with a sentence naming both connections, when the shown id differs at confirm time, and a component test removes the held connection from the list while each of the four dialogs is open and asserts that nothing is sent.
+
+### U204. The Saved tab's import outcomes other than a refused entry are toasts, which the embedded workspace never shows
+
+`SavedQueries` reports an import that left an entry out in a line of its own panel (`src/components/SavedQueries.tsx:27-30`, :76), but a clean import, an import with ID conflicts and a refused backup are `sonner` toasts (:78, :80, :83).
+The npm `StudioWorkspace` renders the same panel through `BottomPanel` (`src/workspace/StudioWorkspace.tsx:1104`, `src/components/studio/BottomPanel.tsx:664`) and mounts no `<Toaster />` (`src/workspace/StudioWorkspace.tsx:656-658`), so an embedded user who imports a backup sees no answer at all, success or failure.
+Found 2026-11-21 by the review of the FND-1 saved query and picker change.
+
+**Done when:** every import outcome is drawn in the panel, as the refused-entry line is, and a component test asserts each outcome's text in the panel with no toaster mounted.
+
+### U205. The monitoring page draws its refresh controls with no connection to refresh
+
+The header's refresh controls, the Auto or Manual indicator, the interval select, the pause or start button and Refresh now, are drawn whatever the selection (`src/components/monitoring/MonitoringDashboard.tsx:207-256`), while the body says "No Connection Selected" or "Connection Unavailable" (:300-314).
+With no connection, Refresh now is enabled and does nothing, and the auto-refresh toggle flips the indicator to a pulsing "Auto" although no interval is set (`src/hooks/use-monitoring-data.ts:248`).
+Pre-existing; found 2026-11-21 by the review of the FND-1 saved query and picker change.
+
+**Done when:** the refresh controls are hidden or disabled while no connection that can be opened is shown, and a component test asserts it for no connection and for one whose type names no provider.
+
+### U206. A held Operations connection that leaves the list passes its picked database to the next connection
+
+The database the operator picks on a server-level connection is `pickedCatalog` (`src/components/admin/tabs/OperationsTab.tsx:401`), and it wins over the linked and stored database (:404-405).
+It is cleared only in `handleConnectionChange` (:532-533), when the operator picks another connection.
+When the shown connection leaves the list, the tab replaces it during render (:302-304) and keeps `pickedCatalog`, so the next connection's panel and its maintenance controls are asked for a database of the previous one.
+Pre-existing; found 2026-11-21 by the review of the FND-1 saved query and picker change.
+
+**Done when:** any change of the shown connection id clears the picked database, and a component test removes a connection with a picked database from the list and asserts that the replacement reads its own database.
+
+### U207. The command palette loads a saved query of another engine into the active tab
+
+The palette's Saved Queries group lists the first ten saved queries whatever their type (`src/components/CommandPalette.tsx:122`), and a pick of any whose type names a provider loads its text into the active tab (:251-258, `handleLoadSavedQuery` in `src/components/Studio.tsx:891-898`).
+The Saved tab lists only the queries of the active connection's type (`src/components/SavedQueries.tsx:45`), so the palette is the one path that puts, for example, a MongoDB saved query into a PostgreSQL tab.
+The FND-1 change refuses only a type that names no provider.
+Found 2026-11-21 by the review of the FND-1 saved query and picker change.
+
+**Done when:** the palette lists or loads only saved queries of the active connection's type, or refuses a pick of another type by name as it refuses an unknown one, and a component test picks a query of another known engine and asserts that the tab is unchanged.
+
+### U208. The Saved tab throws in render for a stored saved query with a malformed field
+
+`storage.getSavedQueries` returns the stored records as they are, only turning `createdAt` and `updatedAt` into `Date` objects (`src/lib/storage/storage-facade.ts:38-48`, :183-187), and `SavedQueries` reads them without a check.
+Measured 2026-11-21 by rendering the real component over `localStorage`: a `name` that is missing or not text throws in the search filter (`src/components/SavedQueries.tsx:44`); a missing `query` throws there once the search holds text the name does not contain; an `updatedAt` that is missing or not a date throws `RangeError: Invalid time value` in `date-fns` `format` (:239); a tag that is an object throws "Objects are not valid as a React child" (:232-236).
+A number tag renders.
+Such a record comes from another tool, a hand edit or another Studio sharing the storage, the same way a malformed `connectionType` does.
+Found 2026-11-21 by the review of the FND-1 saved query and picker change.
+
+**Done when:** the Saved tab lists a malformed record as unavailable with a reason naming the field, as it does a malformed type, or the storage read refuses it by name, and a component test covers each field above.
+
+### U209. A saved query backup refused for a field other than the type gets a toast that names neither the entry nor the field
+
+`parseSavedQueries` refuses the whole backup with a `ZodError` when any entry has an invalid field other than `connectionType` (`src/lib/saved-query-import.ts:43-44`, :50).
+The Saved tab catches it and shows "Could not import saved queries. Check the JSON file and available browser storage." (`src/components/SavedQueries.tsx:82-83`), the same sentence it shows for a file that is not JSON or a storage write that fails.
+So the user cannot tell which entry, or which field, to fix.
+In the embedded workspace this toast is not shown at all (U204).
+Found 2026-11-21 by the review of the FND-1 saved query and picker change.
+
+**Done when:** a refused backup is answered with the entry's position or name and the field the schema refused, distinct from a parse or storage failure, and a unit test of the import and a component test assert that sentence.
 
 ## Dependencies
 
