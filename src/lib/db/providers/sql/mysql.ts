@@ -3773,11 +3773,11 @@ export class MySQLProvider extends SQLBaseProvider {
    * deadline timer fired - the out-of-memory shape the SQL Server profile met, which
    * no result-side cap can prevent. Here the rows are counted AS THEY ARRIVE, and the
    * `maxResultRows + 1`-th row, or the first row that carries the bytes past
-   * `maxResultBytes`, is the refusal: `KILL QUERY` from another session stops the
-   * server's generation, and the connection is destroyed rather than released,
-   * because a connection dropped mid-result is not one this profile can prove clean
-   * again; the close in `queryReadOnly` is then a second destroy, which is
-   * idempotent.
+   * `maxResultBytes` (each row measured as the keyed row it is served as), is the
+   * refusal: `KILL QUERY` from another session stops the server's generation, and the
+   * connection is destroyed rather than released, because a connection dropped
+   * mid-result is not one this profile can prove clean again; the close in
+   * `queryReadOnly` is then a second destroy, which is idempotent.
    *
    * mysql2 streams through the callback API's command object: `query(...)` with no
    * callback hands back the command, and `.stream()` on it is the row-by-row
@@ -3803,6 +3803,7 @@ export class MySQLProvider extends SQLBaseProvider {
       if (UTF8_UNDER_UTF8MB3.has(core as object)) readUtf8mb3AsUtf8(declared);
     });
     const rows: unknown[] = [];
+    let names: string[] | undefined;
     let bytes = 0;
     for await (const row of command.stream()) {
       rows.push(row);
@@ -3811,7 +3812,11 @@ export class MySQLProvider extends SQLBaseProvider {
         conn.destroy();
         throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "mysql", sql);
       }
-      bytes += measureRowBytes(row);
+      // Measured as the row is served, keyed by its column names (`mysqlResultSet`), which is the measure core
+      // re-checks the answer with (`runReadOnlyStatement`), so the stream stops where that re-check would refuse.
+      names ??= uniqueFieldNames((fields ?? []).map((field) => field.name));
+      const [served] = keyRowsByPosition(names, [row as unknown[]], "mysql", sql);
+      bytes += measureRowBytes(served);
       if (bytes > budget.maxResultBytes) {
         this.killReadOnlyStatement(killPool, conn.threadId);
         conn.destroy();
