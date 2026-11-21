@@ -4581,6 +4581,11 @@ describe("the agent read-only profile", () => {
  * connection the way a socket error does, so the connect or the request in flight fails at once, by name, the
  * connection is closed, and the driver's pool dials a replacement. docs/TOOLCHAIN.md, "Patched dependencies".
  *
+ * The `lost-connection` case holds the patch's other change: when the control connection, after a lost connection,
+ * replaces the host it read the cluster from, the patched driver shuts down the replaced host's pool, so a
+ * reconnection still scheduled there cannot open a connection that `Client.shutdown()`, and so `disconnect()`, never
+ * closes.
+ *
  * Studio's real provider and the real (patched) driver run each case of tests/helpers/cassandra-fake-peer.ts under
  * Bun in this process and under every Node binary in NODE_TRANSPORT_NODES (or the node on PATH), from a bundle,
  * because the two runtimes report an error thrown in a stream handler differently.
@@ -4730,6 +4735,35 @@ describe("a frame the driver cannot parse fails the connection by name", () => {
         dialledSince: outcome.accepted > outcome.acceptedBefore,
         open: outcome.accepted - outcome.closedBeforeDisconnect,
       }).toEqual({ runtime, dialledSince: true, open: outcome.acceptedBefore - outcome.closedBefore });
+    }
+  });
+
+  test("lost-connection: the connection the driver opens again after a lost one is the only one left, and disconnect() closes it", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      expect({ runtime, query: outcome.malformedQuery }).toEqual({ runtime, query: "QueryError: Socket was closed" });
+      expect({ runtime, next: outcome.nextQuery }).toEqual({ runtime, next: "resolved" });
+      // The lost connection was the cluster's only one, so the control connection opened a new one, which also serves
+      // queries. With the reconnection delay of the host it replaced passed, that is still the only open connection:
+      // nothing scheduled for the replaced host dialled the peer.
+      expect({
+        runtime,
+        closedSince: outcome.closedBeforeDisconnect > outcome.closedBefore,
+        dialledSince: outcome.accepted > outcome.acceptedBefore,
+        open: outcome.accepted - outcome.closedBeforeDisconnect,
+      }).toEqual({
+        runtime,
+        closedSince: true,
+        dialledSince: true,
+        open: outcome.acceptedBefore - outcome.closedBefore,
+      });
+      // disconnect() closed it, and nothing was dialled once it had returned.
+      expect({
+        runtime,
+        accepted: outcome.acceptedAfterDisconnect,
+        closed: outcome.closedAfterDisconnect,
+      }).toEqual({ runtime, accepted: outcome.accepted, closed: outcome.accepted });
     }
   });
 });
