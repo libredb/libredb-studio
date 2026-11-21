@@ -269,6 +269,8 @@ describe("one agent command", () => {
     expect(opened).toHaveLength(1);
     expect(opened[0].options.commandTimeout).toBe(4_000);
     expect(opened[0].options.enableReadyCheck).toBe(false);
+    // It never reconnects, so the SELECT is the provider's own and ioredis is given no `db` option to select itself.
+    expect(opened[0].options.db).toBeUndefined();
     expect(opened[0].selected).toBe(3);
     expect(opened[0].pipelines).toHaveLength(1);
     expect(opened[0].pipelines[0][0]).toEqual(["HELLO", "2"]);

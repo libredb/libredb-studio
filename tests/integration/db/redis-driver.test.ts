@@ -264,14 +264,15 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
     }
   });
 
-  // ioredis selects a numbered database again on the connection that follows a reset with a SELECT it sends itself,
-  // which no caller awaits. Failed with the commands in flight, that SELECT's error is the client's `error` event,
-  // which the provider logs, as for the SELECT connect() sends; the next command still runs in the database.
+  // ioredis selects a numbered database again on the connection that follows a reset with a SELECT it sends itself for
+  // its `db` option, which no caller awaits, before the ready check. A failure of it is the client's `error` event, which
+  // the provider logs; a reset before the ready check leaves it unsettled (D470 in docs/BACKLOG.md), and the next
+  // connection sends its own. The next command still runs in the database.
   test("a reset while the reconnect's own SELECT waits is logged, and the next command runs in the database", () => {
     for (const report of reports) {
       const reselect = find(report, "reset while the reconnect's own SELECT of database 1 waits");
       expect(reselect.escaped).toEqual([]);
-      expect(reselect.logged).toContain("[Redis] Connection is closed.");
+      expect(reselect.logged).toEqual(["[Redis] read ECONNRESET", "[Redis] read ECONNRESET"]);
       expect(reselect.call).toBe('ok {"result":"value"}');
       expect(reselect.database).toBe("1");
     }
@@ -287,15 +288,25 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
     }
   });
 
-  test("a reset while an object read selects its database again marks each kind unavailable by name", () => {
+  test("a reset while an object read selects its database again marks the kind in flight unavailable by name", () => {
     for (const report of reports) {
       const read = find(report, "reset while an object read selects its database again after a reset");
       expect(read.escaped).toEqual([]);
-      // countObjects answers a kind it could not count as unavailable, with the driver's message.
-      expect(read.call).toBe(
-        'ok {"keyspace":{"unavailable":"Connection is closed."},"function":{"unavailable":"Connection is closed."}}',
-      );
+      // countObjects answers a kind it could not count as unavailable, with the driver's message. The next kind's read
+      // waits for a connection that is ready in the database, and is counted there.
+      expect(read.call).toBe('ok {"keyspace":{"unavailable":"Connection is closed."},"function":{"count":0}}');
       expect(read.next).toBe(PONG);
+    }
+  });
+
+  // ioredis records with a command queued while it reconnects the database the client is in, and the provider gives it
+  // the session's database as its `db` option, so the command runs there and never in database 0.
+  test("a command sent after the reconnect opens and before it is ready runs in the session's database", () => {
+    for (const report of reports) {
+      const queued = find(report, "a command sent after the reconnect opens and before it is ready, in database 1");
+      expect(queued.call).toBe('ok {"result":"value"}');
+      expect(queued.database).toBe("1");
+      expect(queued.escaped).toEqual([]);
     }
   });
 

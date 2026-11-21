@@ -554,7 +554,10 @@ const pipelineBatches: string[][] = [];
 mock.module("ioredis", () => {
   class MockRedis {
     private _config: unknown;
-    private _db: number;
+    /** The database this connection is in, by the last `SELECT` the server accepted on it. */
+    private _db = 0;
+    /** The `db` option it was given, which `connect()` selects as the real driver's connect handler does. */
+    private readonly _dbOption: number;
     /**
      * Whether this connection has an open `MULTI`, tracked per INSTANCE because that is
      * where a real server tracks it: measured on redis 7.4.11 through ioredis 5.11.1, a
@@ -567,7 +570,7 @@ mock.module("ioredis", () => {
       this._config = config;
       const options = (config ?? {}) as Record<string, unknown>;
       capturedRedisOptions.push(options);
-      this._db = typeof options.db === "number" ? options.db : 0;
+      this._dbOption = typeof options.db === "number" ? options.db : 0;
       openedClients.push(this._state);
     }
 
@@ -588,7 +591,14 @@ mock.module("ioredis", () => {
         for (const error of connectFailure) for (const listener of this._errorListeners) listener(error);
         throw new Error("Connection is closed.");
       }
-      this._state.database = this._db;
+      // The real driver's connect handler: with the `db` option set, it sends a `SELECT` of its own that no caller
+      // awaits, and a refusal of it is only an `error` event, the connection staying in database 0 (measured, see
+      // `openClient` in redis.ts).
+      if (this._dbOption !== 0) {
+        await this.select(this._dbOption).catch((error: Error) => {
+          for (const listener of this._errorListeners) listener(error);
+        });
+      }
       // The real driver's `ready` handler: with the `readOnly` option set, it sends `READONLY`
       // on every successful (re)connect and swallows a refusal itself (#2031).
       const options = (this._config ?? {}) as Record<string, unknown>;
@@ -908,6 +918,18 @@ describe("RedisProvider", () => {
       for (const options of capturedRedisOptions) {
         expect(options).toMatchObject({ autoResendUnfulfilledCommands: false });
       }
+    });
+
+    // ioredis records with a command queued while it reconnects the database the client is in, and resets that to its
+    // `db` option on every connection, so a connection that reconnects is given its database there: a command queued
+    // after the next connection opens and before it is ready then runs in that database, never in database 0
+    // (docs/providers/redis.md section 4.6).
+    test("gives each connection that reconnects its database as ioredis's db option", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "2" });
+      capturedRedisOptions.length = 0;
+      await provider.connect();
+      await provider.scanKeysPage({ cursor: "0", count: 10, database: 3 });
+      expect(capturedRedisOptions.map((options) => options.db)).toEqual([2, 3]);
     });
 
     /*

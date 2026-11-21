@@ -1516,7 +1516,8 @@ export class RedisProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * Every option ioredis needs, for any numbered database: `openClient` selects the database.
+   * Every option ioredis needs, for any numbered database: `openClient` selects the database, and gives a connection
+   * that reconnects its database as the `db` option too.
    */
   private redisOptions(): RedisOptions {
     const tls = this.buildTLSOptions();
@@ -1560,12 +1561,19 @@ export class RedisProvider extends BaseDatabaseProvider {
    * - this provider instance serves concurrent requests, so a query running alongside the
    * tree would execute against whichever database the object read had left selected.
    *
-   * The `SELECT` is sent here rather than handed to ioredis as its `db` option, because ioredis
-   * does not fail a connect on it. Measured 2026-09-24 on redis 8.10.0 through ioredis 5.11.1
+   * The `SELECT` is sent here rather than left to ioredis's `db` option, because ioredis does not
+   * fail a connect on that option. Measured 2026-09-24 on redis 8.10.0 through ioredis 5.11.1
    * with `db: 99`: `connect()` resolved, "ERR DB index is out of range" arrived only as an
-   * unhandled `error` event, and every later command ran in database 0. A `SELECT` ioredis saw
-   * answered is also the one it re-sends after a reconnect, so the connection stays where it was
-   * put.
+   * unhandled `error` event, and every later command ran in database 0.
+   *
+   * A connection that reconnects (no `commandTimeout`: the session's, and an object read's) is
+   * given `db` as well, because ioredis resets the database it records to that option as each
+   * connection opens, and records that database with a command it queues while it reconnects.
+   * Without it, a command queued after the next connection opened and before it was ready was
+   * recorded as database 0 and sent there, ahead of the `SELECT` that put the connection back.
+   * With it, ioredis selects the database as each connection opens, before its ready check
+   * (docs/providers/redis.md section 4.6). A one-command connection never reconnects and keeps
+   * this `SELECT` alone.
    *
    * The `error` listener is attached before `connect()` and stays for the client's life. While
    * connecting, its first event is the reason a refused connect names (`connectFailure`). After
@@ -1577,7 +1585,7 @@ export class RedisProvider extends BaseDatabaseProvider {
   private async openClient(db: number, commandTimeout?: number): Promise<Redis> {
     const client = new Redis({
       ...this.redisOptions(),
-      ...(commandTimeout === undefined ? {} : oneCommandOptions(commandTimeout)),
+      ...(commandTimeout === undefined ? { db } : oneCommandOptions(commandTimeout)),
     });
     let connecting = true;
     let firstError: Error | undefined;

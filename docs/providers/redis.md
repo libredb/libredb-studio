@@ -594,12 +594,20 @@ By default ioredis sends such a command again on the next connection, so a comma
 With that option off alone, ioredis 5.11.1 drops such a command when the client is ready again and never settles it, so the editor would wait for an answer that never comes.
 Patched, the close of a connection that was ready fails the commands in flight at once with ioredis's own *"Connection is closed."*, and the client reconnects.
 A command not yet sent, one the editor sends while the client reconnects, waits for the next connection and goes out once.
-In a numbered database, one sent after the next connection opens and before it is ready goes out ahead of the `SELECT` that puts that connection back, and runs in database 0 (D471 in [`../BACKLOG.md`](../BACKLOG.md)).
+In a numbered database it runs in that database, whenever it was sent.
+ioredis records with a command it queues the database the client is in, and resets that to its `db` option as each connection opens.
+`openClient()` gives every connection that reconnects, the session's and an object read's own, its database as that `db` option, so ioredis records the session's database with the command and selects it as each connection opens, before the ready check.
+Without the option, a command sent after the next connection opened and before it was ready was recorded as database 0 and went out ahead of the `SELECT` that put the connection back, so it ran in database 0.
+`openClient()` still sends its own `SELECT` after the connect, because a refusal of the `db` option's `SELECT` is only an `error` event ([§6.1](#61-the-object-surface-789), "Reads go to the CONTAINER's database").
+The agent's one-command connection never reconnects and is given no `db` option.
 A connection that resets again before it is ready, while ioredis's own ready check waits, is not covered: a command ioredis wrote to it in that window, such as an `INFO`, is dropped without an answer or an error (D470 in [`../BACKLOG.md`](../BACKLOG.md)).
 
-On the connection that follows a reset, ioredis sends a `SELECT` of its own to put it back in a numbered database, and no caller awaits that `SELECT`.
-With the resend on, a reset kept that `SELECT` and sent it again; now the close fails it, as ioredis's fatal-error path already failed it on a reply the parser cannot hold, so the patch gives it the handler ioredis already gives the `SELECT` it sends while connecting.
-Its failure is then the client's `error` event, which the provider logs as *"[Redis] Connection is closed."* or the parser's message, and the client reconnects and selects the database again, so the next command still runs in it.
+On the connection that follows a reset, ioredis sends a `SELECT` of its own for the `db` option to put it back in a numbered database, before the ready check, and no caller awaits that `SELECT`.
+Its failure is the client's `error` event, which the provider logs, for example the parser's message, and the client reconnects and selects the database again, so the next command still runs in it.
+A reset before the ready check leaves that `SELECT` unsettled with the rest of that connection's handshake (D470), and the next connection sends its own.
+ioredis can also send a `SELECT` of its own once a connection is ready, when a command it queued was recorded in another database; the patch gives that one the same handler, so a close or the fatal-error path fails it as an `error` event instead of a rejection nobody handles.
+Since `openClient()` gives every connection that reconnects its `db` option, Studio's connections do not reach that path.
+
 What the user sees:
 
 | When the reset arrives | What the user sees |
@@ -612,7 +620,7 @@ What the user sees:
 | While the `SELECT` ioredis sends itself on the connection that follows a reset waits | nothing until the next command, which is answered in the same database; the error is logged |
 | While the agent's one-command connection waits for its answer | the driver's own error, *"Connection is closed."*; that connection ends instead of reconnecting, so it never sent a command again |
 
-[`redis-driver.test.ts`](../../tests/integration/db/redis-driver.test.ts) holds the editor command, the ready check, the `SELECT` and the read-only proof, an object read's `SELECT` and `SCAN`, the idle connection, a reset that follows the record, a command sent while the client reconnects after the record or after a reset, a reset while an editor command or an object read waits, and a reset or an unreadable reply in place of the answer to the `SELECT` ioredis sends itself after a reset, on Bun and on Node, and [`redis-nested-reply-live.ts`](../../tests/live/redis-nested-reply-live.ts) holds a nested reply from a real server ([§11.2](#112-coverage)).
+[`redis-driver.test.ts`](../../tests/integration/db/redis-driver.test.ts) holds the editor command, the ready check, the `SELECT` and the read-only proof, an object read's `SELECT` and `SCAN`, the idle connection, a reset that follows the record, a command sent while the client reconnects after the record or after a reset, a reset while an editor command or an object read waits, a reset or an unreadable reply in place of the answer to the `SELECT` ioredis sends itself after a reset, and a command sent in a numbered database after the next connection opens and before it is ready, on Bun and on Node, and [`redis-nested-reply-live.ts`](../../tests/live/redis-nested-reply-live.ts) holds a nested reply from a real server ([§11.2](#112-coverage)).
 An application that embeds `@libredb/studio` installs ioredis itself, unpatched, unless it applies the same patch.
 
 ### Connection string
@@ -1579,11 +1587,12 @@ issuing `SELECT` on the shared client: a `SELECT` there would decide which datab
 in the same session ran against. Nothing in the object surface ever sends `SELECT` on the shared client.
 
 A DATABASE THE SERVER DOES NOT HAVE IS REFUSED, NOT READ AS 0. The `SELECT` is sent by the provider
-rather than handed to ioredis as its `db` option, because ioredis does not fail a connect on that option.
+rather than left to ioredis's `db` option, because ioredis does not fail a connect on that option.
 Measured 2026-09-24 on redis 8.10.0 through ioredis 5.11.1 with `db: 99`: `connect()` resolved,
 "ERR DB index is out of range" arrived only as an unhandled `error` event, and every later command ran
 in database 0. Now the session connection, each object read, the key walk and a run carrying
 `database` all fail with `Redis refused database 99: ERR DB index is out of range`, a 400.
+The connection is given the `db` option as well, so that a reconnect selects the database too ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)).
 
 ---
 
@@ -2076,6 +2085,7 @@ Each case checks what the caller got and that no error escaped a call, and each 
 The cases with the record on an idle connection or in place of a command's answer also check what was logged.
 The cases with a command in flight or sent while the client reconnects check how many times the peer received it: once, after the record and after a reset alike.
 The cases that fail the `SELECT` ioredis sends itself after a reset check that the next command runs in the same database.
+In database 1, one case sends a command after the next connection opens and before it is ready and checks that it runs in database 1.
 CI runs it in the suite on Node 24 and again on the Node release the image ships.
 [`tests/live/redis-nested-reply-live.ts`](../../tests/live/redis-nested-reply-live.ts) reads a deeply nested reply from a real redis 8.10.2 under Bun and Node, in the Functional Smoke job.
 

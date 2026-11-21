@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D473, U17 · 348
+- [Drivers and connections](#drivers-and-connections) — D1-D473, U17 · 347
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U210 · 195
@@ -4601,18 +4601,6 @@ The provider's own `getHealth()` and monitoring `INFO` reads can land in the sam
 Found 2026-11-21 by the review of the Redis resend change.
 
 **Done when:** a command other than the connection's own handshake that is written before the connection is ready fails with a named error when the connection closes, without changing how the ready check's own callback settles, and `tests/integration/db/redis-driver.test.ts` holds the case on Bun and Node.
-
-### D471. A Redis command sent while a reconnect opens, before it is ready, runs in database 0
-
-ioredis records with each queued command the database the client was in when it was queued (`item.select`, from `condition.select` in `sendCommand` of `node_modules/ioredis/built/Redis.js`).
-`connect()` there resets `condition.select` to the `db` option, which Studio leaves at 0 because `openClient()` sends its own `SELECT`.
-So a command queued after the next connection opens and before it is ready is recorded as database 0, `readyHandler` sends it without a `SELECT` ahead of it, and only then sends the `SELECT` that puts the connection back in the numbered database.
-Measured 2026-11-21 under Node 24.22.1 with the real provider in database 1 against a local peer that delayed the reconnect's ready-check `INFO` by 300 ms: a `GET` sent in that window arrived before `SELECT 1` on the new connection, so it read database 0.
-A command sent before the next connection opens is recorded with the right database and is not affected.
-The resend change does not touch this path; by code reading `main` behaves the same.
-Found 2026-11-21 while adding the reconnect `SELECT` cases to the Redis driver harness.
-
-**Done when:** a command queued while the client reconnects runs in the database the session is in, for example by recording the database the connection is to return to instead of the reset one, and a driver harness case sends a command in that window in database 1 and asserts the database it ran in, on Bun and Node.
 
 ### D472. The Redis session list answers an empty list for a read that failed
 
