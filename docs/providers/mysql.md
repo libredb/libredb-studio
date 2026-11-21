@@ -970,10 +970,13 @@ The confirmation gate asks before the INSERT-shaped statements whose text change
 `INSERT OVERWRITE` (`confirmForms`) is StarRocks' and Apache Doris' statement (`INSERT OVERWRITE TABLE` in Doris) and replaces every row of the table or of the partitions it names.
 MySQL has no such statement, so on MySQL its one false prompt is an `INSERT` without `INTO` into a table named `overwrite`.
 `REPLACE INTO TABLE` (`confirmCodeForms`) is `LOAD DATA`'s and `LOAD XML`'s, after the file name: measured on MySQL 8.4.13, `LOAD DATA INFILE ... REPLACE INTO TABLE t` turned `(1, 'a', 'keep-me')` into the loaded row, `IGNORE` kept it, and a load with neither word refused the duplicate with ERROR 1062, so only `REPLACE` asks.
-No other MySQL statement writes those three words, since `REPLACE` and `TABLE` are reserved and a `REPLACE()` call takes a `(`, and no statement that leaves rows alone was found that the form makes ask.
+`REPLACE` and `TABLE` are reserved and a `REPLACE()` call takes a `(`, so the one other statement found that writes those three words is SingleStore's `CREATE PIPELINE ... AS LOAD DATA ... REPLACE INTO TABLE t`, which loads nothing until `START PIPELINE` runs it.
+It asks, the form's one accepted false prompt: the definition is the only text that shows the `REPLACE`, and `START PIPELINE` does not ask.
 `CREATE OR REPLACE TABLE` (`confirmForms`) is MariaDB's: measured on MariaDB 11.8.9, it dropped the table and its rows, and the `AS SELECT` form left only the selected rows.
-MySQL 8.4.13 refuses it with ERROR 1064, so on MySQL it never runs.
-`CREATE OR REPLACE VIEW`, `PROCEDURE` and `FUNCTION` replace objects that hold no rows, and MariaDB's `CREATE OR REPLACE TEMPORARY TABLE` replaces only the session's temporary table of that name (a new session still read the base table's row), so none of them asks.
+`CREATE OR REPLACE TEMPORARY TABLE` (`confirmForms`) replaces the session's temporary table of that name and its rows: measured on 11.8.9, a temporary table holding a row read none after it, and the `AS SELECT` form left only the selected row, while a base table of the same name kept its row in a new session.
+It asks as `DROP TEMPORARY TABLE` does for the same rows.
+MySQL 8.4.13 refuses both with ERROR 1064, so on MySQL they never run.
+`CREATE OR REPLACE VIEW`, `PROCEDURE` and `FUNCTION` replace objects that hold no rows, so none of them asks outside a script led by `BEGIN`.
 A plain `INSERT`, `INSERT IGNORE` and `INSERT ... SELECT` do not ask.
 The gate reads the statement, not the table: StarRocks treats an `INSERT` into a Primary Key table, and Apache Doris an `INSERT` into a Unique Key table, as an upsert that overwrites the row with the same key (each engine's table-model documentation), and such an `INSERT` does not ask either.
 Inside a script led by `BEGIN`, the gate reads every form anywhere in the code, so there a `REPLACE()` call asks too, the fail-safe direction.

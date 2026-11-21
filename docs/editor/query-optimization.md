@@ -595,10 +595,10 @@ Which statements reach it is decided by `isDangerousQuery` (`src/lib/sql/dangero
 | MySQL's `REPLACE` and `INSERT ... ON DUPLICATE KEY UPDATE`, and SQLite's and libSQL's `REPLACE INTO` and `INSERT OR REPLACE`, which overwrite or delete the row a new one collides with | Yes |
 | `INSERT OVERWRITE` on a `mysql` connection (StarRocks' and Apache Doris' statement, `INSERT OVERWRITE TABLE` in Doris), which replaces every row of a table or of the partitions it names | Yes |
 | MySQL's and MariaDB's `LOAD DATA ... REPLACE INTO TABLE` and `LOAD XML ... REPLACE INTO TABLE`, which delete the row a loaded one collides with | Yes |
-| MariaDB's `CREATE OR REPLACE TABLE` on a `mysql` connection, which drops the table and its rows (MySQL refuses the statement) | Yes |
+| MariaDB's `CREATE OR REPLACE TABLE` and `CREATE OR REPLACE TEMPORARY TABLE` on a `mysql` connection, which drop the table, or the session's temporary table, and its rows (MySQL refuses both) | Yes |
 | Databend's `REPLACE [INTO] t ON (...)` and DuckDB's `INSERT OR REPLACE`, which overwrite the row a new one collides with | Yes |
 | A plain `INSERT`, `INSERT ... SELECT`, on SQLite `INSERT OR IGNORE`, `OR ABORT`, `OR FAIL` and `OR ROLLBACK`, on DuckDB `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING` and `INSERT ... BY NAME`, and a `LOAD DATA` with `IGNORE` or neither word. The gate reads the statement, not the table, so an `INSERT` that the table's own definition turns into a replace (a SQLite constraint declared `ON CONFLICT REPLACE`, a StarRocks Primary Key table, an Apache Doris Unique Key table) does not ask either | No |
-| `CREATE OR REPLACE VIEW`, `PROCEDURE` and `FUNCTION`, and MariaDB's `CREATE OR REPLACE TEMPORARY TABLE`, on a `mysql` connection: none of them replaces a table's rows | No |
+| `CREATE OR REPLACE VIEW`, `PROCEDURE` and `FUNCTION` on a `mysql` connection, outside a script led by `BEGIN`: none of them replaces a table's rows | No |
 | A PostgreSQL `DO` block (`DO $$ … $$`, `DO '…'`, `DO LANGUAGE …`), whatever its body does, since the gate does not read the body | Yes |
 | The `DO` of `ON CONFLICT DO NOTHING` or `CREATE RULE … DO INSTEAD`, which a word follows | No |
 | Any of those behind a comment (`-- note`, `/* note */`, MySQL's `# note`, several stacked) | Yes |

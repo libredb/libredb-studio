@@ -17,8 +17,10 @@ describe("the MySQL grammar", () => {
   test("declares the confirmation forms of the loads and the CREATE that replace rows", () => {
     // LOAD DATA and LOAD XML with REPLACE before INTO TABLE delete the row a loaded one collides with (MySQL 8.4
     // reference, "LOAD DATA Statement" and "LOAD XML Statement"), and MariaDB's CREATE OR REPLACE TABLE drops the table
-    // (MariaDB reference, "CREATE TABLE"); MariaDB connects through this type id.
+    // and its TEMPORARY form the session's temporary table (MariaDB reference, "CREATE TABLE"); MariaDB connects through
+    // this type id.
     expect(grammar.confirmCodeForms).toContainEqual(["REPLACE", "INTO", "TABLE"]);
     expect(grammar.confirmForms).toContainEqual(["CREATE", "OR", "REPLACE", "TABLE"]);
+    expect(grammar.confirmForms).toContainEqual(["CREATE", "OR", "REPLACE", "TEMPORARY", "TABLE"]);
   });
 });

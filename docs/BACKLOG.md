@@ -3310,10 +3310,10 @@ Found 2026-10-12 while designing the Snowflake provider.
 
 ### D331. Most SQL engines declare no confirmation forms of their own
 
-`SqlGrammar.confirmForms` and `confirmCodeForms` let a dialect name the destructive forms the shared keyword set misses, and only the Snowflake and Spark rows declare a full set; PostgreSQL's row declares only its `DO` block, MySQL's only `REPLACE`, `ON DUPLICATE KEY UPDATE`, `INSERT OVERWRITE`, `LOAD DATA ... REPLACE INTO TABLE` and MariaDB's `CREATE OR REPLACE TABLE`, SQLite's only `REPLACE INTO` and `INSERT OR REPLACE`, DuckDB's only `INSERT OR REPLACE`, and Databend's only `REPLACE`.
+`SqlGrammar.confirmForms` and `confirmCodeForms` let a dialect name the destructive forms the shared keyword set misses, and only the Snowflake and Spark rows declare a full set; PostgreSQL's row declares only its `DO` block, MySQL's only `REPLACE`, `ON DUPLICATE KEY UPDATE`, `INSERT OVERWRITE`, `LOAD DATA ... REPLACE INTO TABLE` and MariaDB's `CREATE OR REPLACE TABLE` and `CREATE OR REPLACE TEMPORARY TABLE`, SQLite's only `REPLACE INTO` and `INSERT OR REPLACE`, DuckDB's only `INSERT OR REPLACE`, and Databend's only `REPLACE`.
 `MERGE` asks on every engine, as shared vocabulary; other engines' replace, call, unload and opaque-text forms still run unconfirmed; D246 covers Databend's, and the rest have no entry.
 
-Found 2026-10-12 while designing the Snowflake provider; narrowed 2026-10-14 when `MERGE` joined the shared set and PostgreSQL's row named `DO`, and 2026-11-21 when the MySQL, SQLite, DuckDB and Databend rows named the INSERT, LOAD and REPLACE forms that overwrite rows and MariaDB's `CREATE OR REPLACE TABLE`.
+Found 2026-10-12 while designing the Snowflake provider; narrowed 2026-10-14 when `MERGE` joined the shared set and PostgreSQL's row named `DO`, and 2026-11-21 when the MySQL, SQLite, DuckDB and Databend rows named the INSERT, LOAD and REPLACE forms that overwrite rows and MariaDB's `CREATE OR REPLACE TABLE` in both forms.
 
 **Done when:** every SQL engine's row declares its own confirmation forms, each form is pinned by `isDangerousQuery` for that engine, also behind comments, and each provider doc lists what its gate asks for.
 
@@ -4084,7 +4084,7 @@ Found 2026-10-29 in the review of #1950; pre-existing.
 ### D409. The dangerous-query gate is a pure function tested from a component test file
 
 The gate, `isDangerousQuery` and `writesUnderGrammar` with the helpers they call, lives in `src/lib/sql/dangerous-query.ts` since #1990, and `src/components/QuerySafetyDialog.tsx` re-exports both.
-Its tests live in `tests/components/QuerySafetyDialog.test.tsx`: the `isDangerousQuery` block and the blocks from Snowflake's confirmation forms to the end of the file, about 1870 of its 3362 lines, render nothing and call the two functions directly.
+Its tests live in `tests/components/QuerySafetyDialog.test.tsx`: the `isDangerousQuery` block and the blocks from Snowflake's confirmation forms to the end of the file, about 1890 of its 3590 lines, render nothing and call the two functions directly.
 The hooks still import the gate through that re-export (`src/hooks/use-query-execution.ts`, `src/workspace/hooks/use-query-adapter.ts`), so the tests that stub it mock the component's module (`tests/hooks/use-query-execution.test.ts`, `tests/hooks/script-cancel-contract.test.ts`, `tests/components/StudioWorkspace.test.tsx`).
 Five unit test files import the gate from the component too: `tests/unit/db/destructive-commands.test.ts` and the BigQuery, Couchbase, Druid and carriage-return comment tests in `tests/unit/sql/`.
 #1990 moved the gate's code only: its tests, its imports and its stub seams stayed where they were.

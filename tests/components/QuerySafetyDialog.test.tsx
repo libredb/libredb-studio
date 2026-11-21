@@ -3476,6 +3476,15 @@ describe("MySQL's LOAD DATA and LOAD XML that replace rows ask", () => {
   ])("does not ask for %j", (sql) => {
     expect(isDangerousQuery(sql, "mysql")).toBe(false);
   });
+
+  test("SingleStore's CREATE PIPELINE with a replacing load asks, the accepted false prompt of the form", () => {
+    // SingleStore connects through the mysql type id, and its pipeline definition writes the same words
+    // (`CREATE PIPELINE ... AS LOAD DATA ... REPLACE INTO TABLE t`, SingleStore reference "CREATE PIPELINE"). Creating a
+    // pipeline loads nothing, and the START PIPELINE that runs the replacing load does not ask: the definition is the
+    // only text that shows the REPLACE, so the prompt is kept there.
+    expect(isDangerousQuery("CREATE PIPELINE p AS LOAD DATA S3 'bucket/key' REPLACE INTO TABLE t", "mysql")).toBe(true);
+    expect(isDangerousQuery("START PIPELINE p", "mysql")).toBe(false);
+  });
 });
 
 describe("MariaDB's CREATE OR REPLACE TABLE asks on a mysql connection", () => {
@@ -3489,18 +3498,25 @@ describe("MariaDB's CREATE OR REPLACE TABLE asks on a mysql connection", () => {
     "create or replace table t (id int)",
     "CREATE /* c */ OR -- d\nREPLACE TABLE t (id INT)",
     "SELECT 1; CREATE OR REPLACE TABLE t (id INT)",
+    // A TEMPORARY table replaces the session's temporary table of that name and its rows: measured on MariaDB 11.8.9,
+    // a temporary table holding a row read none after it, and the AS SELECT form left only the selected row, while a
+    // base table of the same name kept its row. DROP TEMPORARY TABLE asks for the same rows. MySQL 8.4.13 refuses the
+    // statement with ERROR 1064.
+    "CREATE OR REPLACE TEMPORARY TABLE tt (id INT, v VARCHAR(32))",
+    "CREATE OR REPLACE TEMPORARY TABLE tt AS SELECT 9 AS id, 'other' AS v",
+    "create or replace temporary table tt (id int)",
+    "CREATE OR /* c */ REPLACE -- d\nTEMPORARY TABLE tt (id INT)",
   ])("asks for %j", (sql) => {
     expect(isDangerousQuery(sql, "mysql")).toBe(true);
   });
 
-  // Each replaces an object that holds no rows of its own and kept t's row on MariaDB 11.8.9. A TEMPORARY table replaces
-  // only the session's temporary table of that name: a new session still read t's row.
+  // Each replaces an object that holds no rows of its own and kept t's row on MariaDB 11.8.9.
   test.each([
     "CREATE OR REPLACE VIEW v AS SELECT 1 AS x",
     "CREATE OR REPLACE PROCEDURE p() SELECT 1",
     "CREATE OR REPLACE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1",
-    "CREATE OR REPLACE TEMPORARY TABLE t (id INT)",
     "CREATE TABLE IF NOT EXISTS t (id INT)",
+    "CREATE TEMPORARY TABLE tt (id INT)",
   ])("does not ask for %j", (sql) => {
     expect(isDangerousQuery(sql, "mysql")).toBe(false);
   });
