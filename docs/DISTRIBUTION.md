@@ -270,6 +270,8 @@ So a shutdown Studio owns takes 20 s at most.
 Studio's handler does not close the HTTP server: until its exit the server accepts new connections and serves their requests, and a request that opens a provider after the close leaves it open until the exit.
 Requests still in flight are not drained either: a request that uses a provider fails once the providers close, and the exit ends the rest.
 A second SIGTERM or SIGINT during the shutdown starts nothing, does not cut it and does not change its exit code; npx delivers every Ctrl+C twice, once from the terminal and once from the launcher.
+In a source checkout, `bun dev` and `bun start` deliver it twice too, since `scripts/next-with-seed-assets.mjs` forwards SIGINT and SIGTERM to the Next.js CLI, which the terminal's Ctrl+C has already reached.
+On Windows that forward is not a second signal: Node.js ends the Next.js CLI at once, so a Ctrl+C under `bun dev` or `bun start` cuts the shutdown part way.
 Next.js's own handler ignores a repeated signal too, so under neither handler does a second Ctrl+C force the exit.
 
 | Code | Meaning |
