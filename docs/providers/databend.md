@@ -521,7 +521,7 @@ The statement splitter, the row limiter, the confirmation gate, the guard and th
 | `backslashAlwaysEscapes` | `true` | a backslash escapes the next character inside `'...'` and `"..."`, the first shipped row to declare it |
 | `script` | `{"blocks":"none","separatorLine":null,"unit":"statement"}` | the default: no procedural block and no separator line, so every code `;` ends a statement |
 | `trailingLimitClauses` | `["\\s+FORMAT\\s+\\w+\\s*$"]` | a trailing `FORMAT <name>` must follow the row bound, so the limiter appends `LIMIT` before it (measured, L3: `SELECT 1 FORMAT JSON LIMIT 5` is a parse error) |
-| `confirmFormsWhen` | `[{"form":["REPLACE"],"when":"ON"}]` | the confirmation gate asks before a `REPLACE`, which always carries an `ON` conflict key and replaces the row a new one collides with on it (section 5.9) |
+| `confirmFormsWhen` | `[{"form":["REPLACE"],"when":"ON"}]` | the confirmation gate asks before a `REPLACE`, which always carries an `ON` conflict key and replaces the row a new one collides with on it, unless a `SETTINGS (...)` clause leads it (section 5.9) |
 
 A top-level `SELECT TOP n` is a bounded statement to the shared limiter, so no `LIMIT` is appended to it: Databend refuses `TOP` and `LIMIT` together (L3).
 
@@ -667,7 +667,7 @@ Block comments are flat: `lex_comment_block` scans for the first `*/` with no de
 A backslash always escapes: the string token is `'([^'\\]|\\.|'')*'` and its `"` twin, and no setting turns the escape off.
 The row bound goes before a trailing `FORMAT` clause, measured on the pinned image over `POST /v1/query`: `SELECT 1 FORMAT JSON LIMIT 5` is 1005 "unexpected `LIMIT`", and `SELECT 1 LIMIT 5 FORMAT JSON` succeeds.
 The confirmation gate asks before `REPLACE` when `ON` follows it (`confirmFormsWhen`), as it asks before `UPDATE` and `DELETE`: measured on the pinned image against a table holding `(1, 'a', 'keep-me')`, `REPLACE INTO t ON (id) VALUES (1, 'new', NULL)`, its `SELECT` form and `REPLACE t ON (id) ...` without `INTO` each left `(1, 'new', NULL)`, and a `REPLACE` without `ON` is 1005 "expecting `ON`".
-So every `REPLACE` that runs asks, and a `replace()` call inside a script led by `BEGIN` asks only when an `ON` follows it.
+So every `REPLACE` that runs asks, unless a `SETTINGS (...)` clause leads it (D246), and a `replace()` call inside a script led by `BEGIN` asks only when an `ON` follows it.
 Databend's other destructive forms still run with no confirmation (section 13, BACKLOG D246).
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
