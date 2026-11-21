@@ -479,6 +479,36 @@ describe("GET /api/connections/managed", () => {
     }
   });
 
+  it("answers asset-directory-unset in unavailableSamples for the roles each sample is offered to when SEED_ASSETS_DIR is unset", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-unset-assets-"));
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample-employees.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample.libredb");
+    const savedAssets = process.env.SEED_ASSETS_DIR;
+    delete process.env.SEED_ASSETS_DIR;
+    const sentence = unavailableSentence("asset-directory-unset");
+    try {
+      await seedSamples();
+      const admin = await (await GET()).json();
+      expect(admin.unavailableSamples).toEqual([
+        { seedId: "sqlite-embedded-sample", name: "Sample (Employees)", reason: "asset-directory-unset", sentence },
+        { seedId: "libredb-embedded-sample", name: "Sample (LibreDB)", reason: "asset-directory-unset", sentence },
+      ]);
+
+      (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "user", username: "user@test.com" }));
+      const user = await (await GET()).json();
+      expect(user.unavailableSamples).toEqual([
+        { seedId: "libredb-embedded-sample", name: "Sample (LibreDB)", reason: "asset-directory-unset", sentence },
+      ]);
+    } finally {
+      resetSampleSeedStates();
+      delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+      delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+      if (savedAssets === undefined) delete process.env.SEED_ASSETS_DIR;
+      else process.env.SEED_ASSETS_DIR = savedAssets;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("a sample whose path cannot be checked never fails the listing: the operator's connections still answer for every role", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "libredb-unreadable-sample-"));
     const blocker = path.join(dir, "a-regular-file");

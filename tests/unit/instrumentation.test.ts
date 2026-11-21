@@ -46,6 +46,8 @@ const ENV_KEYS = [
   "NEXT_MANUAL_SIG_HANDLE",
 ] as const;
 
+const ROOT = path.resolve(import.meta.dir, "../..");
+
 /** Sets NODE_ENV, or removes it for `undefined`; the env typings declare it read-only. */
 function setNodeEnv(value: string | undefined): void {
   const env = process.env as Record<string, string | undefined>;
@@ -79,6 +81,8 @@ describe("instrumentation register()", () => {
     }
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "instrumentation-"));
     process.env.STORAGE_SQLITE_PATH = path.join(tmpDir, "libredb-storage.db");
+    // Every launcher sets it; the server never takes the seed assets directory from its working directory.
+    process.env.SEED_ASSETS_DIR = path.join(ROOT, "seed-assets");
     // Keep the boot banner out of the test output; the banner tests below opt
     // back in explicitly.
     process.env.LIBREDB_NO_BANNER = "1";
@@ -729,6 +733,51 @@ describe("instrumentation register()", () => {
         warn.mockRestore();
         fs.chmodSync(locked, 0o700);
       }
+    },
+  );
+
+  test.each([
+    ["unset", undefined],
+    ["blank", "   "],
+  ])(
+    "register() with SEED_ASSETS_DIR %s continues boot and lists both samples unavailable as asset-directory-unset, each logged once",
+    async (_label, value) => {
+      process.env.NEXT_RUNTIME = "nodejs";
+      process.env.AUTH_BOOTSTRAP = "off";
+      if (value === undefined) delete process.env.SEED_ASSETS_DIR;
+      else process.env.SEED_ASSETS_DIR = value;
+      const sqliteFile = path.join(tmpDir, "sample-employees.db");
+      const libredbFile = path.join(tmpDir, "sample.libredb");
+      process.env.SQLITE_EMBEDDED_SAMPLE_PATH = sqliteFile;
+      process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbFile;
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        await register();
+        await waitFor(() => getPendingSeeds().length === 0);
+        // The two copies settle in either order.
+        expect(
+          warn.mock.calls
+            .filter((c) => c[0] === "Embedded sample unavailable")
+            .map((c) => [String(c[1]?.seedId), c[1]?.reason, c[1]?.assets])
+            .sort(([a], [b]) => String(a).localeCompare(String(b))),
+        ).toEqual([
+          ["libredb-embedded-sample", "asset-directory-unset", null],
+          ["sqlite-embedded-sample", "asset-directory-unset", null],
+        ]);
+        const sentence = unavailableSentence("asset-directory-unset");
+        expect(getUnavailableSamples(["admin"])).toEqual([
+          { seedId: "sqlite-embedded-sample", name: "Sample (Employees)", reason: "asset-directory-unset", sentence },
+          { seedId: "libredb-embedded-sample", name: "Sample (LibreDB)", reason: "asset-directory-unset", sentence },
+        ]);
+        // Listing again logs nothing: each failure was logged once, when it happened.
+        const logged = warn.mock.calls.length;
+        getUnavailableSamples(["admin"]);
+        expect(warn.mock.calls.length).toBe(logged);
+      } finally {
+        warn.mockRestore();
+      }
+      expect(fs.existsSync(sqliteFile)).toBe(false);
+      expect(fs.existsSync(libredbFile)).toBe(false);
     },
   );
 

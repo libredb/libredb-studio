@@ -76,6 +76,24 @@ describe("copySampleAsset", () => {
     expect(fs.readFileSync(target, "utf8")).toBe("the user's edits");
   });
 
+  test("with no seed assets directory the copy is asset-directory-unset, names the target, and creates nothing", async () => {
+    const { target, targetDir } = fixture();
+    const error = await failure(copySampleAsset(null, target));
+    expect(error.reason).toBe("asset-directory-unset");
+    expect(error.code).toBeUndefined();
+    expect(error.message).toContain(target);
+    expect(error.message).toContain("SEED_ASSETS_DIR");
+    expect(fs.existsSync(targetDir)).toBe(false);
+  });
+
+  test("an existing target is present before the seed assets directory is consulted", async () => {
+    const { target, targetDir } = fixture();
+    fs.mkdirSync(targetDir);
+    fs.writeFileSync(target, "the user's edits");
+    expect(await copySampleAsset(null, target)).toBe("present");
+    expect(fs.readFileSync(target, "utf8")).toBe("the user's edits");
+  });
+
   test("refuses an asset of another size before writing anything", async () => {
     const { pinned, target } = fixture();
     const open = spyOn(fs.promises, "open");

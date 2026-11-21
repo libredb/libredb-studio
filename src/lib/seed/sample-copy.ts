@@ -20,7 +20,7 @@ export interface PinnedAsset {
 /** The reasons a copy itself can fail, a subset of the reasons a sample is listed unavailable. */
 export type SampleCopyFailure = Extract<
   SampleUnavailableReason,
-  "asset-missing" | "asset-unreadable" | "digest-mismatch" | "copy-failed"
+  "asset-directory-unset" | "asset-missing" | "asset-unreadable" | "digest-mismatch" | "copy-failed"
 >;
 
 /** A copy that failed, with its reason, the errno code of the error underneath when it has one, and that error. */
@@ -61,9 +61,11 @@ async function targetPresent(target: string): Promise<boolean> {
 
 /**
  * Copy `pinned.asset` to `target` and resolve "copied", or resolve "present" when the target already exists; reject
- * with a SampleCopyError otherwise.
+ * with a SampleCopyError otherwise. `pinned` is null when the server has no seed assets directory (SEED_ASSETS_DIR
+ * unset or blank).
  *
- * 1. An existing target is never touched: "present".
+ * 1. An existing target is never touched: "present". With `pinned` null, any other target is
+ *    `asset-directory-unset`, and nothing is read or created.
  * 2. The asset must be a regular file (else `asset-missing`) of the pinned size (else `digest-mismatch`), checked
  *    before any byte is written. An asset that cannot be checked for another reason is `asset-unreadable`.
  * 3. The target's directory is created, and the temp `<target>.<pid>.<random UUID>.seeding` is opened exclusively
@@ -86,11 +88,18 @@ async function targetPresent(target: string): Promise<boolean> {
  * hard links (FAT, exFAT, some SMB and FUSE mounts, Docker Desktop bind mounts) would turn a working copy into a
  * failure, so the rename is kept.
  */
-export async function copySampleAsset(pinned: PinnedAsset, target: string): Promise<"copied" | "present"> {
+export async function copySampleAsset(pinned: PinnedAsset | null, target: string): Promise<"copied" | "present"> {
   try {
     if (await targetPresent(target)) return "present";
   } catch (error) {
     throw new SampleCopyError("copy-failed", `Could not check the sample target ${target}: ${messageOf(error)}`, error);
+  }
+
+  if (pinned === null) {
+    throw new SampleCopyError(
+      "asset-directory-unset",
+      `No seed assets directory is set (SEED_ASSETS_DIR is unset or blank), so nothing is copied to ${target}.`,
+    );
   }
 
   let assetStats: fs.Stats;
