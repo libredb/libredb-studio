@@ -103,11 +103,15 @@ describe("a target is resolved and checked before a socket exists", () => {
     setEgressFlag("yes");
     try {
       // A name that does not resolve too: the refusal is taken before any lookup, so no query leaves the machine.
-      for (const host of ["localhost", "127.0.0.1", "no-such-host.invalid"]) {
-        const refusal = await resolveTarget(host, 161).then(
-          () => null,
-          (error: unknown) => error,
-        );
+      const refusals = await Promise.all(
+        ["localhost", "127.0.0.1", "no-such-host.invalid"].map((host) =>
+          resolveTarget(host, 161).then(
+            () => null,
+            (error: unknown) => error,
+          ),
+        ),
+      );
+      for (const refusal of refusals) {
         expect(refusal).toBeInstanceOf(DatabaseConfigError);
         expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
       }
