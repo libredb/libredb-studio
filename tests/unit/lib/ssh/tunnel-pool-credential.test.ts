@@ -28,6 +28,11 @@ const FIRST_PEM = "SEED-CANARY-pem-4e9f";
 const OTHER_PEM = "SEED-CANARY-pem-5a0b";
 const FIRST_UNLOCK = "SEED-CANARY-unlock-6c1d";
 const OTHER_UNLOCK = "SEED-CANARY-unlock-7d2e";
+/** Two splits of one text, for the framing case: "ab" + "c" and "a" + "bc". */
+const SPLIT_AB = "SEED-ab";
+const SPLIT_C = "c";
+const SPLIT_A = "SEED-a";
+const SPLIT_BC = "bc";
 
 /** What each SSH client the pool dialled presented, in order. */
 const presented: Array<{ password?: unknown; privateKey?: unknown; passphrase?: unknown }> = [];
@@ -183,6 +188,27 @@ describe("a pooled SSH forward is shared only by calls that present the credenti
       { password: undefined, privateKey: FIRST_PEM, passphrase: OTHER_UNLOCK },
       { password: FIRST_PHRASE, privateKey: undefined, passphrase: undefined },
     ]);
+  });
+
+  test("the auth method alone tells two records apart when both carry the same password and private key fields", async () => {
+    const connId = "credential-method-only-" + Date.now();
+    const fields = { password: REFUSED_PHRASE, privateKey: FIRST_PEM, passphrase: undefined };
+
+    const byPrivateKey = await open(connId, { ...BY_PRIVATE_KEY, ...fields });
+    const byPassword = await open(connId, { ...BY_PRIVATE_KEY, ...fields, authMethod: "password" });
+
+    expect(byPassword).not.toBe(byPrivateKey);
+    expect(presented.map((dial) => dial.password)).toEqual([undefined, REFUSED_PHRASE]);
+  });
+
+  test("two credentials whose values concatenate to the same text are two credentials", async () => {
+    const connId = "credential-framing-" + Date.now();
+
+    const first = await open(connId, { ...BY_PASSWORD, password: SPLIT_AB, privateKey: SPLIT_C });
+    const second = await open(connId, { ...BY_PASSWORD, password: SPLIT_A, privateKey: SPLIT_BC });
+
+    expect(second).not.toBe(first);
+    expect(presented.map((dial) => dial.password)).toEqual([SPLIT_AB, SPLIT_A]);
   });
 
   test("a dial with another credential that fails reports its own error and leaves the pooled forward open", async () => {
