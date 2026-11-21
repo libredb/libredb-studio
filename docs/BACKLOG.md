@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B171 · 82
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B172 · 83
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 24
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
@@ -1853,8 +1853,14 @@ When an MCP client cancels by closing the request, or `timeout_ms` passes, the s
 A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
 Where an engine serialises a seed's reads, the read that runs on also holds the next call: it keeps the seed's read slot until it ends on its own, so a later call on that seed waits behind a read its client already gave up, and one whose `timeout_ms` ends first is answered as the timeout; the cancel table says which engines do.
+The agent run and the editor's hand-over stop waiting by Studio's own statement timer (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), and there too the statement runs on.
+The timer's wait includes the provider's connection checkout, so a statement Studio stopped waiting for may still be waiting for a connection, and may start once it gets one.
+An engine the cancel table lists as running a statement to its end has no provider deadline on this path either.
+Where a provider runs a handle's statements on one connection, a later statement on that handle waits behind the abandoned one, although that provider already stops a running statement for `cancelQuery` by interrupting its connection, which a deadline could do as well.
+A provider that arms its own kill only after round trips to a worker process arms it a few milliseconds after Studio's timer, so Studio's time refusal arrives first and the provider's kill just after it (measured 2026-11-21: refused at 506 ms under a 500 ms timeout, the worker killed 1 to 3 ms later).
+An agent run counts the statement against `maxConcurrentExecutions` until the provider's call settles, and the run's end waits for it.
 
-**Done when:** `queryReadOnly` accepts an `AbortSignal`, every engine a statement tool serves stops the statement on abort, the cancel table and each provider doc say so, and `/api/mcp` passes the tool call's signal.
+**Done when:** `queryReadOnly` accepts an `AbortSignal`, every engine a statement tool serves stops the statement on abort, the cancel table and each provider doc say so, `/api/mcp` passes the tool call's signal, and on the agent and hand-over paths Studio's statement timer hands providers its deadline or aborts that signal, so an abandoned connection checkout or statement is withdrawn, on a one-connection handle by interrupting the statement.
 
 ### D129. `attachedSegment`, the object-path policy, is still a constant in each provider file rather than part of the declaration
 
@@ -9872,6 +9878,16 @@ A seed field `agentReadExclusions`, with the grammar and limits of `agentReadRoo
 Found 2026-11-04 while building the read roots, and left out of that change by decision.
 
 **Done when:** an OPC UA seed may declare `agentReadExclusions`, held to the read roots grammar at load and when the provider is built, refused inline and in `defaults`, kept from the browser, pruned with its subtree during the walk so an excluded node answers as one the server does not hold, with seed, walk and provider tests and the field documented in `docs/SEED_CONNECTIONS.md` and `docs/providers/opcua.md`; cited in `docs/AGENT.md`.
+
+### B172. The curated readings and the operations statistics read compare UTF-16 length with a byte budget, and a bigint cell throws
+
+`runCuratedRead` and `readStatisticsForGrounding` in `src/lib/agent/tools.ts` hold their rows to `maxResultBytes` by `JSON.stringify(rows).length`, which counts UTF-16 code units, not bytes.
+Text outside ASCII then passes at up to three times the byte budget: measured 2026-11-21, a table statistics reading of 150 rows whose names are CJK text completed under the operations workflow's 262,144-byte budget at 156,531 code units, while its rows carry 456,380 UTF-8 bytes summed per row.
+A bigint cell makes the same comparison throw `TypeError: JSON.stringify cannot serialize BigInt`, which leaves the tool layer as a server fault rather than the `READING_OVER_BUDGET` refusal or a reading.
+The read-only statement path measures with `measureRowBytes` in `src/lib/db/providers/sql/read-only-budget.ts`, which sums each row's UTF-8 JSON bytes and counts a bigint as its decimal text.
+Found 2026-11-21 while reviewing the read-only statement re-check.
+
+**Done when:** both sites measure their rows with `measureRowBytes`, summed per row and stopping at the row that crosses the budget, a test pins a multibyte reading past the budget refused as `READING_OVER_BUDGET` and a bigint cell measured as its text, for the curated readings and for the statistics read; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
