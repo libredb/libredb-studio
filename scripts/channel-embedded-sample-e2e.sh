@@ -167,9 +167,8 @@ default_tarball() {
 # (env -u), so it runs on the value its launcher sets, and a wrong value fails
 # it (docs/DISTRIBUTION.md, "Built-in sample assets"); the docker channel passes
 # only -e flags, so it runs on the image's own value. A launcher that sets
-# nothing is not caught here yet: the server's <working directory>/seed-assets
-# fallback finds the same directory, since server.js changes into its payload.
-# Each launcher's own unit tests prove it sets the value.
+# nothing fails here too: the server never takes the assets from its working
+# directory, so both samples are listed unavailable (asset-directory-unset).
 # ------------------------------------------------------------------------------
 RESULTS=()
 record() { RESULTS+=("$1: $2"); }

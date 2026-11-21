@@ -527,7 +527,7 @@ Env vars:
 |----------|---------|-------|
 | `SQLITE_EMBEDDED_SAMPLE` | `true` | Only the literal `false` disables; off as well under governance, and when `LIBREDB_ENABLED_PROVIDERS` leaves out `sqlite` |
 | `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Runtime copy location |
-| `SEED_ASSETS_DIR` | `<working directory>/seed-assets` | The directory the template is copied from; replaces `SQLITE_EMBEDDED_SAMPLE_TEMPLATE`, which is no longer read |
+| `SEED_ASSETS_DIR` | None: set by every launcher, and by `bun dev` and `bun start` ([`docs/DISTRIBUTION.md`](../DISTRIBUTION.md#built-in-sample-assets)) | The directory the template is copied from; unset or blank, the sample is listed unavailable as `asset-directory-unset` unless its file is already in place, and the working directory is never used instead; replaces `SQLITE_EMBEDDED_SAMPLE_TEMPLATE`, which is no longer read |
 
 The template ships as a top-level `seed-assets/` directory in every distribution payload
 (Docker image, standalone tarball, and everything derived from it: npx, deb/rpm, snap,

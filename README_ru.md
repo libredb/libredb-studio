@@ -297,7 +297,7 @@ journalctl -u libredb-studio
 
 Настройки хранятся в `/etc/libredb-studio/env`, данные приложения (база SQLite и сгенерированные учётные данные) в `/var/lib/libredb-studio`. Команду `libredb-studio` можно запускать и напрямую, без systemd.
 
-Если не хотите использовать пакетный менеджер, скачайте из того же релиза архив `libredb-studio-standalone-<version>-<os>-<arch>.tar.gz`. Он собран для `linux-x64`, `linux-arm64`, `darwin-x64` и `darwin-arm64`. Распакуйте его командой `tar xzf <archive> --strip-components=1` и запустите `node server.js` (нужен Node.js 24+). Контрольные суммы лежат в файле `SHA256SUMS`.
+Если не хотите использовать пакетный менеджер, скачайте из того же релиза архив `libredb-studio-standalone-<version>-<os>-<arch>.tar.gz`. Он собран для `linux-x64`, `linux-arm64`, `darwin-x64` и `darwin-arm64`. Распакуйте его командой `tar xzf <archive> --strip-components=1` и запустите `SEED_ASSETS_DIR="$PWD/seed-assets" node server.js` (нужен Node.js 24+). Контрольные суммы лежат в файле `SHA256SUMS`.
 
 Шаблоны развёртывания в один клик: Railway, Dokploy, CapRover, Sealos, Kubero, Cosmos, DigitalOcean Marketplace, Unraid Community Apps, Render Blueprint, Fly.io и Koyeb. Полный список в [`docs/CHANNELS.md`](docs/CHANNELS.md). Для Kubernetes есть также Operator bundle для OpenShift и OLM.
 
