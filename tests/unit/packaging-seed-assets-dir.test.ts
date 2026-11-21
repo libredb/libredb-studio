@@ -6,9 +6,9 @@
  * packaging-bind-address.test.ts - no real server ever starts.
  */
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { MISSING_POSIX_FILE_MODES, describeIf, missingPosixShell, posixShell } from "../helpers/posix-tools";
 
 /*
@@ -49,13 +49,24 @@ describeIf(NO_SH, "packaging/linux/libredb-studio seed assets directory", () => 
     for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
-  function runWrapper(env: Record<string, string> = {}) {
+  /**
+   * Run the wrapper against a fresh fixture home. With `relativeHome`, the wrapper runs from the home's
+   * parent directory and gets the home as its bare name, the way a caller in an extracted package tree would.
+   */
+  function runWrapper(env: Record<string, string> = {}, { relativeHome = false } = {}) {
     const home = mkdtempSync(join(tmpdir(), "libredb-deb-seed-assets-"));
     fixtureRoots.push(home);
     writeStubNode(join(home, "node/bin"));
     writeFileSync(join(home, "server.js"), "");
     const result = Bun.spawnSync([SH!, WRAPPER], {
-      env: { ...ambientEnv(), LIBREDB_STUDIO_HOME: home, HOME: home, INVOCATION_ID: "", ...env },
+      cwd: relativeHome ? dirname(home) : undefined,
+      env: {
+        ...ambientEnv(),
+        LIBREDB_STUDIO_HOME: relativeHome ? basename(home) : home,
+        HOME: home,
+        INVOCATION_ID: "",
+        ...env,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -76,6 +87,28 @@ describeIf(NO_SH, "packaging/linux/libredb-studio seed assets directory", () => 
   test("treats an empty SEED_ASSETS_DIR as unset", () => {
     const { output, home } = runWrapper({ SEED_ASSETS_DIR: "" });
     expect(output).toContain(`SEED_ASSETS_DIR=${join(home, "seed-assets")}\n`);
+  });
+
+  test("hands an absolute SEED_ASSETS_DIR when LIBREDB_STUDIO_HOME is relative", () => {
+    // server.js changes into its own directory before it reads SEED_ASSETS_DIR, so a relative value
+    // would resolve against the payload instead of the directory the wrapper was run from.
+    // realpath: on macOS the temp directory is a symlink, and `pwd -P` reports its target.
+    const { output, home } = runWrapper({}, { relativeHome: true });
+    expect(output).toContain(`SEED_ASSETS_DIR=${join(realpathSync(home), "seed-assets")}\n`);
+  });
+
+  test("stops with an error when a relative LIBREDB_STUDIO_HOME does not exist", () => {
+    const parent = mkdtempSync(join(tmpdir(), "libredb-deb-seed-assets-"));
+    fixtureRoots.push(parent);
+    const result = Bun.spawnSync([SH!, WRAPPER], {
+      cwd: parent,
+      env: { ...ambientEnv(), LIBREDB_STUDIO_HOME: "missing-home", HOME: parent, INVOCATION_ID: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout.toString()).toBe("");
+    expect(result.stderr.toString()).toContain("missing-home");
   });
 
   test("keeps an operator's SEED_ASSETS_DIR", () => {
