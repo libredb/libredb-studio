@@ -704,6 +704,18 @@ describe("an SSH tunnel", () => {
     expect(secret.dials()).toBe(0);
   });
 
+  /** The far end is the one fact read: a record that carries one is tunnelled whatever its switch says. */
+  test("is read from the far end the factory hands on, not from the switch", async () => {
+    const { provider, dials } = counted({
+      host: "broker.example.net",
+      password: CANARY,
+      ssl: { mode: "disable" },
+      [TUNNEL_FAR_END]: { host: "broker.example.net", port: 1883 },
+    });
+    await expect(provider.connect()).rejects.toThrow(/the dial is refused once it has been reached/);
+    expect(dials()).toBe(1);
+  });
+
   test("that the factory opened is dialled at the local end it handed on", async () => {
     const { provider, dials } = counted({
       host: "127.0.0.1",
