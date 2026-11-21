@@ -18,7 +18,9 @@
  */
 import { createSocket, type Socket } from "node:dgram";
 import { lookup as dnsLookup } from "node:dns";
+import { isIP } from "node:net";
 import {
+  assertNoLinkLocalDnsAnswer,
   assertNotLinkLocalLiteral,
   assertPublicDnsAnswers,
   assertPublicLiteralHost,
@@ -69,6 +71,11 @@ export class SnmpTransportError extends QueryError {
 export interface ResolvedTarget extends GuardedTarget {
   /** The name the user typed, kept so a message can name what they asked for. */
   readonly asked: string;
+  /**
+   * The family of `address`, which picks the socket: a udp4 socket cannot be connected to an
+   * IPv6 address, nor a udp6 socket to an IPv4 one.
+   */
+  readonly family: 4 | 6;
 }
 
 /**
@@ -77,13 +84,18 @@ export interface ResolvedTarget extends GuardedTarget {
  * An address literal is checked as a literal; a name is resolved with every answer checked
  * together, because a mixed answer that is half acceptable is not acceptable: the socket would
  * be free to pick the other half.
+ *
+ * A literal is what `isIP` reads as one, as in the shared guard. A dotted form such as `127.1`
+ * is not, although a resolver reads it as an address, so it is resolved here like any other
+ * name and the socket is connected to the address the checks saw.
  */
 export async function resolveTarget(host: string, port: number): Promise<ResolvedTarget> {
   const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-  if (/^[\d.]+$/.test(bare) || bare.includes(":")) {
+  const family = isIP(bare);
+  if (family === 4 || family === 6) {
     assertNotLinkLocalLiteral(bare);
     assertPublicLiteralHost(bare);
-    return { address: bare, port, asked: host };
+    return { address: bare, port, asked: host, family };
   }
   const answers = await new Promise<{ address: string; family: number }[]>((resolve, reject) => {
     dnsLookup(bare, { all: true }, (error, addresses) => {
@@ -102,9 +114,12 @@ export async function resolveTarget(host: string, port: number): Promise<Resolve
   // here refused every agent reached by name on a local network even with the flag off, which
   // is the common case; a test with a name rather than a literal is what found it.
   if (blockPrivateHosts()) assertPublicDnsAnswers(answers);
-  // The link-local refusal is not flag-dependent anywhere, so it runs either way.
-  for (const answer of answers) assertNotLinkLocalLiteral(answer.address);
-  return { address: answers[0].address, port, asked: host };
+  // The link-local refusal is not flag-dependent anywhere, so it runs either way. It also refuses
+  // an answer set with no usable address, or an answer whose family does not match its address,
+  // so the family below is the address's own.
+  assertNoLinkLocalDnsAnswer(answers);
+  const [first] = answers;
+  return { address: first.address, port, asked: host, family: first.family as 4 | 6 };
 }
 
 /**
@@ -156,9 +171,10 @@ export interface Exchange {
  */
 export async function openExchange(options: ExchangeOptions): Promise<Exchange> {
   const { target, community, deadlineMs, v3 } = options;
-  const createRawSocket = options.createRawSocket ?? (() => createSocket("udp4"));
+  const socketType = target.family === 6 ? "udp6" : "udp4";
+  const createRawSocket = options.createRawSocket ?? (() => createSocket(socketType));
   const factory = createGuardedSocketFactory({ target, createRawSocket });
-  const socket = factory.dgramModule.createSocket("udp4");
+  const socket = factory.dgramModule.createSocket(socketType);
   // Each waiting request keeps the means to send itself again, because a notInTimeWindow
   // Report is the engine saying "ask again with my clock", and a request that merely stopped
   // waiting would report silence for a question the engine was willing to answer.

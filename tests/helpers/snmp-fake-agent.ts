@@ -45,6 +45,8 @@ export interface FakeAgentOptions {
   readonly silentOn?: (request: number) => boolean;
   /** Replaces the n-th answer's varbinds, for answers no conforming agent sends. */
   readonly rewrite?: (request: number, varbinds: Array<[number[], FakeValue]>) => Array<[number[], FakeValue]>;
+  /** The loopback address the agent listens on: `::1` puts it on a udp6 socket. 127.0.0.1 when absent. */
+  readonly address?: "127.0.0.1" | "::1";
 }
 
 export interface FakeAgent {
@@ -95,7 +97,8 @@ export async function startFakeAgent(
   };
   const requests: FakeAgentRequest[] = [];
   const answerBytes: number[] = [];
-  const socket: Socket = createSocket("udp4");
+  const address = options.address ?? "127.0.0.1";
+  const socket: Socket = createSocket(address === "::1" ? "udp6" : "udp4");
   socket.on("message", (datagram, from) => {
     const bytes = Uint8Array.from(datagram);
     const [, communityField, pduField] = readChildren(bytes, readField(bytes, 0));
@@ -149,7 +152,7 @@ export async function startFakeAgent(
     answerBytes.push(answer.length);
     socket.send(answer, from.port, from.address);
   });
-  await new Promise<void>((resolve) => socket.bind(0, "127.0.0.1", () => resolve()));
+  await new Promise<void>((resolve) => socket.bind(0, address, () => resolve()));
   let open = true;
   const close = () => {
     if (open) socket.close();

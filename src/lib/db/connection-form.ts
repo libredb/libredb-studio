@@ -1279,8 +1279,8 @@ export const CONNECTION_FORM: {
     // one way only - an engine with this toggle on must have a scheme, and of the 36 engines
     // measured there was no exception.
     showConnectionStringToggle: false,
-    // AND NO SSL / TLS PANEL. The transport is bare UDP - `client.ts` opens `createSocket("udp4")`
-    // and nothing else - so there is no session for a certificate chain to secure. MEASURED: across
+    // AND NO SSL / TLS PANEL. The transport is bare UDP - `client.ts` opens a udp4 or a udp6
+    // socket, by the agent's address, and nothing else - so there is no session for a certificate chain to secure. MEASURED: across
     // the nineteen files of this provider, `sslMode`, `sslCa`, `sslCert`, `sslKey` and
     // `rejectUnauthorized` appear zero times, so every value the panel collected was written to the
     // connection and read by nothing.

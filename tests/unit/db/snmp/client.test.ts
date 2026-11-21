@@ -102,6 +102,29 @@ describe("a target is resolved and checked before a socket exists", () => {
   test("the name the user asked for is kept for the message", async () => {
     expect((await resolveTarget("127.0.0.1", 161)).asked).toBe("127.0.0.1");
   });
+  test("a literal carries its address family, which picks the socket", async () => {
+    expect((await resolveTarget("127.0.0.1", 161)).family).toBe(4);
+    expect(await resolveTarget("::1", 161)).toMatchObject({ address: "::1", family: 6 });
+    expect(await resolveTarget("[::1]", 161)).toMatchObject({ address: "::1", family: 6 });
+  });
+  test("a name carries the family of the answer the socket is connected to", async () => {
+    const target = await resolveTarget("localhost", 161);
+    expect(target.family).toBe(target.address.includes(":") ? 6 : 4);
+  });
+  test("a dotted host that is not an IP literal is resolved as a name and checked as one", async () => {
+    // `127.1` is not an IP literal (`isIP` answers 0), but a resolver reads it as 127.0.0.1. It is resolved here, so
+    // the socket is connected to the address the checks saw.
+    expect(await resolveTarget("127.1", 161)).toMatchObject({ address: "127.0.0.1", family: 4, asked: "127.1" });
+    const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
+    const before = process.env[flag];
+    process.env[flag] = "true";
+    try {
+      await expect(resolveTarget("127.1", 161)).rejects.toThrow(DatabaseConfigError);
+    } finally {
+      if (before === undefined) delete process.env[flag];
+      else process.env[flag] = before;
+    }
+  });
 });
 
 describe("a request goes out and its answer comes back", () => {

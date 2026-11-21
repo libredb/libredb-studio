@@ -1,0 +1,122 @@
+/**
+ * The provider's socket follows the address the host resolved to.
+ *
+ * An agent on IPv6 is reached over a udp6 socket: a udp4 socket cannot be connected to an IPv6 address, so before
+ * this the connect failed for `::1`, `[::1]` and every name that resolves to IPv6. The agent here listens on `::1`,
+ * which a udp4 socket cannot reach, so an answer read back is the proof that the socket was udp6.
+ *
+ * Its own file, because `node:dns` and `node:dgram` are replaced for the whole process here (`mock.module`), and the
+ * runner gives each file a process of its own. The DNS stub answers one test name with `::1`, so the name case does
+ * not depend on what a host's resolver says about `ip6-localhost` or `localhost`. The dgram stub hands out real
+ * sockets and records each one, its type and whether it was closed; a case that needs a socket to fail sets `fault`.
+ */
+import { afterEach, describe, expect, mock, test } from "bun:test";
+import type { LookupAddress } from "node:dns";
+import type { Socket, SocketType } from "node:dgram";
+import type { DatabaseConnection } from "@/lib/types";
+
+const realDns = { ...(await import("node:dns")) };
+const realDgram = { ...(await import("node:dgram")) };
+
+const SIX = "agent-six.test";
+const COMMUNITY = "socket-family-community";
+
+mock.module("node:dns", () => ({
+  ...realDns,
+  lookup(
+    hostname: string,
+    options: { all?: boolean },
+    callback: (error: NodeJS.ErrnoException | null, addresses: LookupAddress[]) => void,
+  ) {
+    if (hostname === SIX) callback(null, [{ address: "::1", family: 6 }]);
+    else realDns.lookup(hostname, { ...options, all: true }, callback);
+  },
+}));
+
+interface Opened {
+  readonly type: SocketType;
+  closed: boolean;
+}
+const opened: Opened[] = [];
+/** When set, makes the sockets handed out, so a case can give the provider one that fails. Set after the agent starts. */
+let fault: ((type: SocketType) => Socket) | undefined;
+
+mock.module("node:dgram", () => ({
+  ...realDgram,
+  createSocket: (type: SocketType) => {
+    const socket = fault?.(type) ?? realDgram.createSocket(type);
+    const entry: Opened = { type, closed: false };
+    const close = socket.close.bind(socket);
+    socket.close = ((callback?: () => void) => {
+      entry.closed = true;
+      return close(callback);
+    }) as Socket["close"];
+    opened.push(entry);
+    return socket;
+  },
+}));
+
+const { SnmpProvider } = await import("@/lib/db/providers/network/snmp");
+const { startFakeAgent, text } = await import("../../../helpers/snmp-fake-agent");
+type FakeAgent = Awaited<ReturnType<typeof startFakeAgent>>;
+
+const TREE = new Map([
+  ["1.3.6.1.2.1.1.1.0", text("an agent on IPv6")],
+  ["1.3.6.1.2.1.1.3.0", text("uptime")],
+]);
+
+let agent: FakeAgent | undefined;
+let provider: InstanceType<typeof SnmpProvider> | undefined;
+
+afterEach(async () => {
+  fault = undefined;
+  await provider?.disconnect();
+  provider = undefined;
+  agent?.close();
+  agent = undefined;
+});
+
+const connection = (host: string, port: number, allowInsecureAuth?: boolean): DatabaseConnection =>
+  ({
+    id: "socket-family",
+    name: "socket family",
+    type: "snmp",
+    host,
+    port,
+    password: COMMUNITY,
+    allowInsecureAuth,
+    createdAt: new Date(),
+  }) as unknown as DatabaseConnection;
+
+/** The sockets the provider asked for since `from`, the agent's own socket being made before it. */
+const since = (from: number): Opened[] => opened.slice(from);
+
+describe("an agent on IPv6 is reached over a udp6 socket", () => {
+  for (const [host, consent] of [
+    ["::1", undefined],
+    ["[::1]", undefined],
+    // A name is not loopback to the cleartext check, so it needs the consent any other agent needs.
+    [SIX, true],
+  ] as const) {
+    test(`${host} answers a get`, async () => {
+      agent = await startFakeAgent(TREE, { address: "::1" });
+      const from = opened.length;
+      provider = new SnmpProvider(connection(host, agent.port, consent), { queryTimeout: 2000 });
+      await provider.connect();
+      const result = await provider.query("get sysDescr.0");
+      expect(result.rows).toEqual([{ object: "1.3.6.1.2.1.1.1.0", value: "an agent on IPv6", type: "text" }]);
+      // The connect probe and the get, both received on ::1.
+      expect(agent.requests).toHaveLength(2);
+      expect(since(from).map((socket) => socket.type)).toEqual(["udp6"]);
+    });
+  }
+
+  test("an agent on IPv4 is still reached over a udp4 socket", async () => {
+    agent = await startFakeAgent(TREE);
+    const from = opened.length;
+    provider = new SnmpProvider(connection("127.0.0.1", agent.port), { queryTimeout: 2000 });
+    await provider.connect();
+    expect((await provider.query("get sysDescr.0")).rowCount).toBe(1);
+    expect(since(from).map((socket) => socket.type)).toEqual(["udp4"]);
+  });
+});

@@ -60,8 +60,8 @@ afterEach(async () => {
 });
 
 /** The replaying agent, and the list of requests it had no recording for. */
-async function recordedAgent(missed: string[]): Promise<number> {
-  agent = createSocket("udp4");
+async function recordedAgent(missed: string[], address: "127.0.0.1" | "::1" = "127.0.0.1"): Promise<number> {
+  agent = createSocket(address === "::1" ? "udp6" : "udp4");
   agent.on("message", (datagram, from) => {
     received += 1;
     const bytes = Uint8Array.from(datagram);
@@ -79,16 +79,16 @@ async function recordedAgent(missed: string[]): Promise<number> {
       from.address,
     );
   });
-  await new Promise<void>((resolve) => agent?.bind(0, "127.0.0.1", () => resolve()));
+  await new Promise<void>((resolve) => agent?.bind(0, address, () => resolve()));
   return (agent.address() as { port: number }).port;
 }
 
-function connectionTo(port: number): DatabaseConnection {
+function connectionTo(port: number, host = "127.0.0.1"): DatabaseConnection {
   return {
     id: "snmp-integration",
     name: "snmp integration",
     type: "snmp",
-    host: "127.0.0.1",
+    host,
     port,
     password: FIXTURE_COMMUNITY,
     createdAt: new Date().toISOString(),
@@ -154,6 +154,20 @@ describe("the provider reads what a real agent answered", () => {
       const missed: string[] = [];
       const provider = await open(missed);
       const result = await provider.query("get 1.3.6.1.2.1.1.5.0");
+      expect(missed).toEqual([]);
+      expect(result.rows).toEqual([{ object: "1.3.6.1.2.1.1.5.0", value: "live-test-agent", type: "text" }]);
+    },
+    CASE_BUDGET_MS,
+  );
+
+  test(
+    "an agent on IPv6 loopback is read the same way",
+    async () => {
+      const missed: string[] = [];
+      const port = await recordedAgent(missed, "::1");
+      opened = new SnmpProvider(connectionTo(port, "::1"), { queryTimeout: DEADLINE_MS });
+      await opened.connect();
+      const result = await opened.query("get 1.3.6.1.2.1.1.5.0");
       expect(missed).toEqual([]);
       expect(result.rows).toEqual([{ object: "1.3.6.1.2.1.1.5.0", value: "live-test-agent", type: "text" }]);
     },
