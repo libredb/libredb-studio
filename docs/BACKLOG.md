@@ -34,7 +34,7 @@ None of it is a GitHub issue.
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U202 · 187
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC37 · 31
-- [Release pipeline](#release-pipeline) — REL1-REL10 · 9
+- [Release pipeline](#release-pipeline) — REL1-REL11 · 10
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
@@ -7873,6 +7873,18 @@ Its docblock calls the list the bounds that pass through the helper today, and i
 Found 2026-11-05 while sizing a per-test bound for the standalone zip packing tests.
 
 **Done when:** every bound passed to `platformTimeoutMs` under `tests/` is held by those checks, either because `BOUNDS_IN_USE` lists it or because the test collects the bounds from the tests that pass them, and a new bound outside the list fails the test.
+
+### REL11. The tab management E2E fails when the main server's specs run at a local worker count
+
+Two runs of the main server's chromium project with 12 workers and no retries, on 2026-11-21 at `642ad97be` with the query budget raised for the suite, both failed the test "can switch between tabs" in `e2e/tab-management.spec.ts`, which did not find the "Query 2" tab, and one of them also failed "can close a tab when multiple exist".
+The first of those runs had no query limit at all, so the budget of REL7's former entry is not the cause.
+CI runs Playwright with one worker and two retries and has not shown it.
+Not diagnosed: every spec on that server signs in as the same account, so a tab state that the server or the browser keeps per account is one suspect, and worker load is another.
+The same runs saw `e2e/libsql-provider.spec.ts` time out once in its `beforeEach` wait for `/`, and `e2e/opcua-provider.spec.ts` hit `net::ERR_NETWORK_CHANGED` once on `goto` while other work on the machine created container networks; neither repeated.
+
+Found 2026-11-21 by the E2E flake fixes for REL7 and U145.
+
+**Done when:** the cause is measured, and `bunx playwright test e2e/tab-management.spec.ts --project=chromium --repeat-each=10 --retries=0` passes all its runs beside the rest of the main server's specs at the local default worker count.
 
 ---
 
