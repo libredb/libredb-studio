@@ -112,6 +112,15 @@ text is ASCII.
 per connection, and every surface below goes through it, so there is one place where a session is
 opened and one place where it is closed.
 
+A session that ends closes its connection to the device, whichever way it ended.
+A session that fails to open fails `connect()` with the sentence that names why, prefixed with the device's address, for example: the device's hello carried no session-id, offered no base version this client speaks, did not arrive within the hello deadline, or the device closed the channel.
+Any other ending during the open, such as a framing fault or a channel that failed, fails `connect()` with that ending's own sentence.
+A private key that cannot be read fails `connect()` as a configuration error, and the socket dialled for it is closed.
+The SSH connection to the device is already closed when `connect()` fails.
+A session that ends on its own after it opened, on a framing fault, a reply NETCONF does not allow, a channel the device closed or a channel that failed under it, fails the read in flight and every later read with that ending's sentence, and closes its SSH connection at that moment rather than at `disconnect()`.
+`disconnect()` after such an ending sends nothing to the device, because no session is left to close.
+A device that closes the channel before it sends its hello fails the open at once with `the device closed this session`, not after the hello deadline with the deadline's sentence.
+
 ## 3. Design decisions
 
 ### 3.1 A JSON read request, not a query language
@@ -204,12 +213,16 @@ Four further spellings were then measured and handled: an attribute on the eleme
 `>`, a space inside the closing tag, and `<capability xmlns=…>`, which had read back as zero
 capabilities.
 
-### 3.7 Four end reasons, not one
+### 3.7 Five end reasons, not one
 
 A session used to end with one reason, `protocol`, written nine times in seven different sentences,
 and one of those nine was OUR OWN defect ("a request is already in flight"). The reason is now
 `protocol`, `deadline`, `incompatible` or `internal`, and the compiler's exhaustive switch showed
 the cost of each existing call site immediately.
+
+`transport` is a fifth reason, in addition to those four.
+A channel that fails under the session, as the SSH library reports it with an `error` event on the channel or on its error stream, ends the session as `transport`, with the library's message in its sentence: `the channel to the device failed (...), so the session was ended`.
+The transport listens for that event from the moment the channel is handed over, and a failure that arrives before the session listens is kept and ends the session as soon as it does.
 
 ### 3.8 The read-only mode
 

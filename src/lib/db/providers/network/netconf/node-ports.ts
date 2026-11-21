@@ -53,8 +53,11 @@ export const nodeSocketPort: SocketPort = {
 export interface ChannelLike {
   write(text: string, encoding: "utf8"): unknown;
   on(event: "data", handler: (chunk: Buffer) => void): unknown;
+  on(event: "error", handler: (error: Error) => void): unknown;
   once(event: "close", handler: () => void): unknown;
   end(): unknown;
+  /** The channel's error stream, a stream of its own that can fail on its own. */
+  readonly stderr: { on(event: "error", handler: (error: Error) => void): unknown };
 }
 
 export interface ClientLike {
@@ -64,6 +67,22 @@ export interface ClientLike {
 
 export function transportOf(channel: ChannelLike, client: ClientLike): Transport {
   const decoder = new StringDecoder("utf8");
+  // The channel and its error stream are both streams, and an `error` event with no listener is
+  // thrown out of the emitter. ssh2 1.17.0 emits none on the channel, because it overrides the
+  // stream's own `destroy()`, but the error stream keeps the stream's own: data the device sends on
+  // it after the channel's end fails it. So both are listened to from the moment the transport
+  // exists, which is inside ssh2's subsystem callback, and not from the session's subscription,
+  // which runs later, in a promise continuation after the dial resolves. A failure that arrives
+  // before the session listens is kept, the first one, and handed over a microtask after it
+  // subscribes, once its hello wait is set up. The session ends with it as a named error.
+  let failed: ((error: Error) => void) | null = null;
+  let early: Error | null = null;
+  const fail = (error: Error): void => {
+    if (failed !== null) failed(error);
+    else early ??= error;
+  };
+  channel.on("error", fail);
+  channel.stderr.on("error", fail);
   return {
     write: (text) => void channel.write(text, "utf8"),
     onData: (handler) => {
@@ -79,6 +98,12 @@ export function transportOf(channel: ChannelLike, client: ClientLike): Transport
       channel.once("close", handler);
       client.once("close", handler);
     },
+    onError: (handler) => {
+      // The client's own errors have a listener for life in `nodeSshPort` below.
+      failed = handler;
+      const kept = early;
+      if (kept !== null) queueMicrotask(() => handler(kept));
+    },
     close: () => {
       channel.end();
       client.end();
@@ -89,19 +114,27 @@ export function transportOf(channel: ChannelLike, client: ClientLike): Transport
 export const nodeSshPort: SshPort = {
   connect: (options): SshSession => {
     const client = new Client();
-    client.connect({
-      sock: options.sock as never,
-      username: options.username,
-      readyTimeout: options.readyTimeout,
-      ...(options.password === undefined ? {} : { password: options.password }),
-      ...(options.privateKey === undefined ? {} : { privateKey: options.privateKey }),
-      ...(options.passphrase === undefined ? {} : { passphrase: options.passphrase }),
-      hostVerifier: options.hostVerifier,
-      // No agent, no keyboard-interactive and no host-based authentication: the connection's own
-      // credential is the only one offered, so nothing on the machine running Studio can be
-      // substituted for it (Y-S5, a security decision has one path).
-      tryKeyboard: false,
-    });
+    // ssh2 reads the private key before it takes the socket, and throws from here when it cannot
+    // read it. The socket was dialled for this client and nothing else will close it, so it is
+    // closed before the throw reaches the dial, which reports it as a configuration error.
+    try {
+      client.connect({
+        sock: options.sock as never,
+        username: options.username,
+        readyTimeout: options.readyTimeout,
+        ...(options.password === undefined ? {} : { password: options.password }),
+        ...(options.privateKey === undefined ? {} : { privateKey: options.privateKey }),
+        ...(options.passphrase === undefined ? {} : { passphrase: options.passphrase }),
+        hostVerifier: options.hostVerifier,
+        // No agent, no keyboard-interactive and no host-based authentication: the connection's own
+        // credential is the only one offered, so nothing on the machine running Studio can be
+        // substituted for it (Y-S5, a security decision has one path).
+        tryKeyboard: false,
+      });
+    } catch (error) {
+      (options.sock as Socket).destroy();
+      throw error;
+    }
     return {
       onReady: (handler) => void client.once("ready", handler),
       // `on` and not `once`, which is a defect this fixed rather than a preference. MEASURED on a

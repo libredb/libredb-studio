@@ -85,6 +85,7 @@ function ports(over: { library?: XmlElement; parseThrows?: boolean; socketError?
       queueMicrotask(() => onData?.(`${SERVER_HELLO}]]>]]>`));
     },
     onClose: () => {},
+    onError: () => {},
     close: () => void (seen.closed.count += 1),
   };
   return {

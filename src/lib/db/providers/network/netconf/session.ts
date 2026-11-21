@@ -31,6 +31,8 @@ export interface Transport {
   write(text: string): void;
   onData(handler: (chunk: string) => void): void;
   onClose(handler: () => void): void;
+  /** The channel under the session failed; the session ends with the error's message. */
+  onError(handler: (error: Error) => void): void;
   close(): void;
 }
 
@@ -65,6 +67,8 @@ export type SessionEnd =
   | { readonly reason: "deadline"; readonly detail: string }
   /** The device works and this client cannot speak to it. */
   | { readonly reason: "incompatible"; readonly detail: string }
+  /** The channel to the device failed under the session, as the SSH library reported it. */
+  | { readonly reason: "transport"; readonly detail: string }
   /** Our own defect. Never a claim about the device. */
   | { readonly reason: "internal"; readonly detail: string };
 
@@ -84,13 +88,14 @@ function describeEnd(end: SessionEnd): string {
       return "the device closed this session";
     case "framing":
       return `the device broke the NETCONF framing rules (${end.fault.kind}), so the session was ended`;
-    // The four below carry their own sentence for the same reason: it is written where the fault is
+    // The five below carry their own sentence for the same reason: it is written where the fault is
     // found, which is the only place that knows what happened. They are listed separately rather
     // than defaulted so that adding a reason to the union cannot compile until somebody has said
     // what a reader should be told.
     case "protocol":
     case "deadline":
     case "incompatible":
+    case "transport":
     case "internal":
       return end.detail;
   }
@@ -264,7 +269,7 @@ export class NetconfSession {
   private nextId = 1;
   private pending: Pending | null = null;
   private ended: SessionEnd | null = null;
-  private helloWaiter: ((message: string) => void) | null = null;
+  private helloWaiter: { resolve(message: string): void; reject(error: Error): void } | null = null;
   /** Notifications arrive when a subscription exists. This provider never subscribes, so one is a fault. */
   private notifications = 0;
 
@@ -277,29 +282,70 @@ export class NetconfSession {
     this.reader = new FrameReader("eom", limits);
     transport.onData((chunk) => this.onData(chunk));
     transport.onClose(() => this.end({ reason: "closed-by-peer" }));
+    transport.onError((error) =>
+      this.end({
+        reason: "transport",
+        detail: `the channel to the device failed (${error.message}), so the session was ended`,
+      }),
+    );
   }
 
-  /** Opens a session: sends the client hello, reads the server's, and settles the framing. */
+  /**
+   * Opens a session: sends the client hello, reads the server's, and settles the framing.
+   *
+   * A session that fails to open is ended before the failure is raised, and ending it closes its
+   * connection to the device: nothing above this holds the transport, so nothing else can close it.
+   */
   static async open(transport: Transport, limits: SessionLimits): Promise<{ session: NetconfSession; hello: Hello }> {
     const session = new NetconfSession(transport, limits);
-    const helloText = await session.awaitHello();
-    const hello = readHello(helloText);
-    session.framing = framingFor(hello);
-    if (session.framing === "chunked") session.reader.useChunked();
-    transport.write(frame(clientHello(), "eom"));
-    return { session, hello };
+    try {
+      const hello = readHello(await session.awaitHello());
+      session.framing = framingFor(hello);
+      // A device may send its hello and close the channel in one burst, as an OpenSSH subsystem
+      // that exits does. That session has ended, so it fails to open by its own ending, and no
+      // client hello is written into a channel the device already closed.
+      if (session.ended) throw new NetconfSessionError(session.ended);
+      if (session.framing === "chunked") session.reader.useChunked();
+      transport.write(frame(clientHello(), "eom"));
+      return { session, hello };
+    } catch (failure) {
+      session.end(
+        failure instanceof NetconfSessionError ? failure.end : { reason: "internal", detail: String(failure) },
+      );
+      throw failure;
+    }
   }
 
+  /**
+   * The device's hello, or the session's ending if it ends first.
+   *
+   * The deadline is one ending and a device closing the channel is another, and both reject the
+   * wait through `end`. A channel the device closed before its hello used to wait out the hello
+   * deadline and then fail with the deadline's sentence, naming the wrong thing.
+   *
+   * A session that ended before the wait was set up has nothing left to reject it, because `end`
+   * runs once, so the wait fails at once with that ending.
+   */
   private awaitHello(): Promise<string> {
+    if (this.ended) return Promise.reject(new NetconfSessionError(this.ended));
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.end({ reason: "deadline", detail: "the device sent no hello within the deadline" });
-        reject(new NetconfSessionError({ reason: "deadline", detail: "the device sent no hello within the deadline" }));
-      }, this.limits.helloMs);
-      this.helloWaiter = (message) => {
+      const timer = setTimeout(
+        () => this.end({ reason: "deadline", detail: "the device sent no hello within the deadline" }),
+        this.limits.helloMs,
+      );
+      const settled = (): void => {
         clearTimeout(timer);
         this.helloWaiter = null;
-        resolve(message);
+      };
+      this.helloWaiter = {
+        resolve: (message) => {
+          settled();
+          resolve(message);
+        },
+        reject: (error) => {
+          settled();
+          reject(error);
+        },
       };
     });
   }
@@ -328,7 +374,12 @@ export class NetconfSession {
     });
   }
 
-  /** `<close-session>`, then the transport. Never `<kill-session>`, requirement NC-S8. */
+  /**
+   * `<close-session>`, then the transport. Never `<kill-session>`, requirement NC-S8.
+   *
+   * A session that already ended has already closed its transport, so there is nothing to send and
+   * nothing left to close.
+   */
   async close(): Promise<void> {
     if (this.ended) return;
     try {
@@ -338,7 +389,6 @@ export class NetconfSession {
       // over either way, which is the only thing this method promises.
     }
     this.end({ reason: "closed-by-us" });
-    this.transport.close();
   }
 
   get notificationCount(): number {
@@ -366,7 +416,7 @@ export class NetconfSession {
 
   private onMessage(message: string): void {
     if (this.helloWaiter) {
-      this.helloWaiter(message);
+      this.helloWaiter.resolve(message);
       return;
     }
     const id = messageIdOf(message);
@@ -402,14 +452,24 @@ export class NetconfSession {
     pending.resolve(message);
   }
 
+  /**
+   * Ends the session, once, and closes its connection to the device.
+   *
+   * Every ending closes the transport, the device's as well as ours: a session that ended on a
+   * framing fault, a protocol fault or a channel the device closed is over, and its SSH connection
+   * has nothing left to carry. Closing it here rather than in `close()` is what reaches the endings
+   * no caller asked for.
+   */
   private end(end: SessionEnd): void {
     if (this.ended) return;
     this.ended = end;
+    this.helloWaiter?.reject(new NetconfSessionError(end));
     const pending = this.pending;
     if (pending) {
       clearTimeout(pending.timer);
       this.pending = null;
       pending.reject(new NetconfSessionError(end));
     }
+    this.transport.close();
   }
 }
