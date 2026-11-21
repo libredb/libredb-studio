@@ -206,6 +206,8 @@ parser - it calls `checkRead`, so a limit cannot pass in one file while it fails
 This section used to say that `query()` refused and `getHealth()` read only the map. Both now reach
 the device: the request is parsed, a socket is dialled for that read, the session serialises the
 exchanges, and the socket is destroyed in `finally`. Nothing is held between reads.
+A read of many blocks runs one exchange per block over that one socket.
+Each exchange removes its own `data`, `error` and `close` listeners when it settles, whether by an answer, an error, a close, its deadline or a frame the valve refuses, so a chunk reaches only the exchange that is waiting and the socket holds the dial's own `error` listener between exchanges.
 
 The order matters and is measured: a request the parser refuses costs NO connection, so a mistake
 in the console text never opens a socket. `tests/unit/db/modbus/wired.test.ts` runs the whole path

@@ -357,3 +357,59 @@ describe("nothing is held open between reads, which is what a single-client devi
     expect({ connections: dev.connections, closes: dev.closes }).toEqual({ connections: 3, closes: 3 });
   });
 });
+
+describe("a read of many blocks runs over one connection, one exchange at a time", () => {
+  /**
+   * Forty points at every other address cut forty blocks, so one read is forty exchanges on one
+   * socket. Each exchange removes its own listeners when it settles, so at each write the socket
+   * holds the dial's own `error` listener and the current exchange's three, and nothing of the
+   * exchanges before it. The counts are read at the provider's own writes to this device.
+   */
+  test("forty separate points answer every row and leave no earlier exchange listening", async () => {
+    delete process.env[FLAG];
+    const dev = await device();
+    const points = Array.from({ length: 40 }, (_, at) => ({
+      name: `p${at}`,
+      unitId: 1,
+      table: "holding_register",
+      address: at * 2,
+      type: "uint16",
+    }));
+    const engine = new ModbusProvider({
+      id: "m",
+      name: "device",
+      type: "modbus",
+      host: "127.0.0.1",
+      port: dev.port,
+      registerMap: JSON.stringify(points),
+    } as unknown as DatabaseConnection);
+
+    const atWrite: Array<{ data: number; error: number; close: number }> = [];
+    const warnings: string[] = [];
+    const onWarning = (warning: Error) => warnings.push(warning.name);
+    const originalWrite = Socket.prototype.write;
+    Socket.prototype.write = function (this: Socket, ...args: unknown[]) {
+      if (this.remotePort === dev.port)
+        atWrite.push({
+          data: this.listenerCount("data"),
+          error: this.listenerCount("error"),
+          close: this.listenerCount("close"),
+        });
+      return (originalWrite as (...a: unknown[]) => boolean).apply(this, args);
+    } as typeof Socket.prototype.write;
+    process.on("warning", onWarning);
+    let rows: Array<Record<string, unknown>>;
+    try {
+      rows = (await engine.query(JSON.stringify({ read: points.map((point) => point.name) }))).rows;
+      // A warning is emitted on a later tick than the listener that set it off.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      Socket.prototype.write = originalWrite;
+      process.off("warning", onWarning);
+    }
+
+    expect(rows.map((row) => row.value)).toEqual(points.map((point) => holding(point.address)));
+    expect(atWrite).toEqual(points.map(() => ({ data: 1, error: 2, close: 1 })));
+    expect(warnings).not.toContain("MaxListenersExceededWarning");
+  });
+});

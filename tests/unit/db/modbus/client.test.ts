@@ -14,7 +14,7 @@
  * unexercised, and a mutation there stays green while the branch is dead to the test.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { createServer, type Server } from "node:net";
+import { createServer, type Server, type Socket } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { ModbusFramingError } from "@/lib/db/providers/industrial/modbus/framing";
 import { ModbusValveDefect } from "@/lib/db/providers/industrial/modbus/valve";
@@ -27,6 +27,8 @@ import {
   ModbusDialTimeout,
   socketWire,
 } from "@/lib/db/providers/industrial/modbus/client";
+import { ModbusSession } from "@/lib/db/providers/industrial/modbus/session";
+import { fakeModbusDevice, readAdu } from "../../../helpers/modbus-fake-device";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const originalFlag = process.env[FLAG];
@@ -335,6 +337,10 @@ describe("the error event reaches the boundary too", () => {
       once(event: string, listener: (arg: never) => void) {
         return socket.on(event, listener);
       },
+      removeListener(event: string, listener: (arg: never) => void) {
+        handlers[event] = (handlers[event] ?? []).filter((held) => held !== listener);
+        return socket;
+      },
       setTimeout() {
         return socket;
       },
@@ -561,6 +567,9 @@ describe("the declared timers, on the path that reads them", () => {
       once() {
         return socket;
       },
+      removeListener() {
+        return socket;
+      },
       setTimeout() {
         return socket;
       },
@@ -605,6 +614,10 @@ describe("what ends an exchange besides an answer", () => {
       },
       once(event: string, listener: (arg: never) => void) {
         return socket.on(event, listener);
+      },
+      removeListener(event: string, listener: (arg: never) => void) {
+        handlers[event] = (handlers[event] ?? []).filter((held) => held !== listener);
+        return socket;
       },
       setTimeout() {
         return socket;
@@ -677,6 +690,201 @@ describe("what ends an exchange besides an answer", () => {
     // and the session logs it on its own side.
     wire.close("the read is over");
     expect(fake.destroys).toBe(1);
+  });
+});
+
+/**
+ * Each exchange removes its own listeners when it settles.
+ *
+ * A read of many blocks runs one exchange per block over ONE socket, and each exchange listens for
+ * `data`, `error` and `close` while it waits. Listeners an exchange left behind would stay on that
+ * socket for the rest of the read: every later chunk would also reach every earlier exchange's
+ * frame reader.
+ * Every ending is driven here, because a removal on one path says nothing about the others.
+ */
+describe("each exchange removes its own listeners when it settles", () => {
+  function countingSocket(): {
+    socket: unknown;
+    emit: (event: "close" | "error" | "data", arg?: unknown) => void;
+    held: () => { data: number; error: number; close: number };
+    written: Buffer[];
+  } {
+    const handlers: Record<string, ((arg: never) => void)[]> = {};
+    const written: Buffer[] = [];
+    const emit = (event: string, arg?: unknown) => {
+      for (const listener of [...(handlers[event] ?? [])]) (listener as (a: unknown) => void)(arg);
+    };
+    const socket = {
+      on(event: string, listener: (arg: never) => void) {
+        (handlers[event] ??= []).push(listener);
+        return socket;
+      },
+      once(event: string, listener: (arg: never) => void) {
+        return socket.on(event, listener);
+      },
+      removeListener(event: string, listener: (arg: never) => void) {
+        handlers[event] = (handlers[event] ?? []).filter((held) => held !== listener);
+        return socket;
+      },
+      setTimeout() {
+        return socket;
+      },
+      write(chunk: Buffer) {
+        written.push(chunk);
+        return true;
+      },
+      // As a real socket does, a destroy is announced with `close`.
+      destroy() {
+        emit("close");
+        return socket;
+      },
+      destroyed: false,
+    };
+    return {
+      socket,
+      emit,
+      written,
+      held: () => ({
+        data: handlers.data?.length ?? 0,
+        error: handlers.error?.length ?? 0,
+        close: handlers.close?.length ?? 0,
+      }),
+    };
+  }
+
+  /** One complete answer ADU for `request()`, two registers. */
+  function answer(transactionId: number, unitId = 1): Buffer {
+    const head = Buffer.alloc(7);
+    head.writeUInt16BE(transactionId, 0);
+    head.writeUInt16BE(0, 2);
+    head.writeUInt16BE(7, 4);
+    head[6] = unitId;
+    return Buffer.concat([head, Buffer.from([3, 4, 0, 7, 0, 14])]);
+  }
+
+  const NONE = { data: 0, error: 0, close: 0 };
+  const ENDINGS: ReadonlyArray<{
+    readonly name: string;
+    readonly end: (fake: ReturnType<typeof countingSocket>) => void;
+  }> = [
+    { name: "an answer", end: (fake) => fake.emit("data", answer(1)) },
+    { name: "the device's exception", end: (fake) => fake.emit("data", Buffer.from([0, 1, 0, 0, 0, 3, 1, 0x83, 2])) },
+    {
+      name: "a socket error",
+      end: (fake) => fake.emit("error", Object.assign(new Error("reset"), { code: "ECONNRESET" })),
+    },
+    { name: "a close", end: (fake) => fake.emit("close") },
+    { name: "a frame that cannot answer this request", end: (fake) => fake.emit("data", answer(1, 9)) },
+    {
+      name: "a chunk the reader refuses at the header",
+      end: (fake) => fake.emit("data", Buffer.from([0, 1, 0, 0, 0xff, 0xff, 1])),
+    },
+  ];
+
+  for (const ending of ENDINGS) {
+    test(`ended by ${ending.name}, the exchange leaves none of its listeners on the socket`, async () => {
+      const fake = countingSocket();
+      const pending = exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 5000 });
+      // The control: while it waits, the exchange does hold one listener of each kind.
+      expect(fake.held()).toEqual({ data: 1, error: 1, close: 1 });
+      ending.end(fake);
+      await pending.catch(() => undefined);
+      expect(fake.held()).toEqual(NONE);
+    });
+  }
+
+  test("ended by its own deadline, the exchange leaves none of its listeners on the socket", async () => {
+    const fake = countingSocket();
+    const error = await exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 20 }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(fake.held()).toEqual(NONE);
+  });
+
+  test("a frame the valve refuses is never written, and the close the session sends removes its listeners", async () => {
+    const fake = countingSocket();
+    const session = new ModbusSession(socketWire(fake.socket as never, { host: "h", port: 1 }));
+    const error = await session
+      .exchange((transactionId) => {
+        const write = request();
+        write.writeUInt16BE(transactionId, 0);
+        write[7] = 0x06; // Write Single Register
+        return write;
+      })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ModbusValveDefect);
+    expect(fake.written).toHaveLength(0);
+    expect(fake.held()).toEqual(NONE);
+  });
+
+  test("a frame the valve refuses, called with no session around it, leaves none of its listeners on the socket", async () => {
+    const fake = countingSocket();
+    const write = request();
+    write[7] = 0x06; // Write Single Register
+    const error = await exchangeOnce(fake.socket as never, write, { expect: EXPECT, timeoutMs: 5000 }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ModbusValveDefect);
+    expect(fake.written).toHaveLength(0);
+    // Nothing closed the socket here, so the exchange removed its listeners on its own.
+    expect(fake.held()).toEqual(NONE);
+  });
+
+  test("the next exchange on the same socket is the only one its chunk reaches", async () => {
+    const fake = countingSocket();
+    const wire = socketWire(fake.socket as never, { host: "h", port: 1 });
+    const first = wire.exchange(request(), { aborted: false });
+    fake.emit("data", answer(1));
+    await first;
+
+    const second = request();
+    second.writeUInt16BE(2, 0);
+    const pending = wire.exchange(second, { aborted: false });
+    // One data listener, the second exchange's own: the first exchange's reader is not fed.
+    expect(fake.held()).toEqual({ data: 1, error: 1, close: 1 });
+    fake.emit("data", answer(2));
+    const got = await pending;
+    if (got.kind !== "answer") throw new Error(`expected an answer and got ${got.kind}`);
+    expect(got.frame.transactionId).toBe(2);
+    expect(fake.held()).toEqual(NONE);
+  });
+
+  test("forty exchanges on one dialled socket leave it holding only the dial's own listeners", async () => {
+    delete process.env[FLAG];
+    const dev = await fakeModbusDevice({ holding: Array.from({ length: 80 }, (_, at) => 100 + at) });
+    const warnings: string[] = [];
+    const onWarning = (warning: Error) => warnings.push(warning.name);
+    process.on("warning", onWarning);
+    const endpoint = { host: "127.0.0.1", port: dev.port };
+    const socket = await dialModbus(endpoint);
+    const count = () => ({
+      data: (socket as unknown as Socket).listenerCount("data"),
+      error: (socket as unknown as Socket).listenerCount("error"),
+      close: (socket as unknown as Socket).listenerCount("close"),
+    });
+    const baseline = count();
+    const after: Array<ReturnType<typeof count>> = [];
+    const values: number[] = [];
+    try {
+      const wire = socketWire(socket, endpoint);
+      for (let at = 0; at < 40; at += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- one exchange at a time, as a read runs them on one socket.
+        const got = await wire.exchange(readAdu(at + 1, 1, 3, at * 2, 1), { aborted: false });
+        if (got.kind !== "answer") throw new Error(`expected an answer and got ${got.kind}`);
+        values.push(got.frame.body.readUInt16BE(1));
+        after.push(count());
+      }
+      // A warning is emitted on a later tick than the listener that set it off.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("warning", onWarning);
+      socket.destroy();
+      await dev.close();
+    }
+    expect(values).toEqual(Array.from({ length: 40 }, (_, at) => 100 + at * 2));
+    expect(after).toEqual(Array.from({ length: 40 }, () => baseline));
+    expect(warnings).not.toContain("MaxListenersExceededWarning");
   });
 });
 
