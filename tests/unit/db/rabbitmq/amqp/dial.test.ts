@@ -176,7 +176,9 @@ describe("plain dials", () => {
 
   test("an IPv6 literal dials without brackets and without a lookup", async () => {
     const v6 = await listen("plain", "::1");
-    const socket = await withEgressFlag(undefined, () => dialAmqp(endpoint("::1", v6.port), new AbortController().signal));
+    const socket = await withEgressFlag(undefined, () =>
+      dialAmqp(endpoint("::1", v6.port), new AbortController().signal),
+    );
     await until(() => v6.accepted === 1, "the server's accept");
     socket.destroy();
     expect(v6.accepted).toBe(1);

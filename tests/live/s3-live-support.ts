@@ -2406,8 +2406,7 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
   },
   A55: linkLocalSteps(),
   A55b: {
-    blocked: (run, wire) =>
-      withEgressFlag("true", () => testStep("blocked", { role: "root" })(run, wire)),
+    blocked: (run, wire) => withEgressFlag("true", () => testStep("blocked", { role: "root" })(run, wire)),
   },
   A63: {
     plain: (run, wire) => tunnelStep(run, wire, "plain", "silo", 9000, false),

@@ -1,10 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import {
-  egressDecision,
-  egressSetting,
-  forgetEgressDecision,
-  INVALID_EGRESS_SETTING,
-} from "@/lib/db/egress-decision";
+import { egressDecision, egressSetting, forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import { setEgressFlag } from "../../../helpers/egress-flag";

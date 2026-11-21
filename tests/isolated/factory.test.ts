@@ -5976,9 +5976,9 @@ describe("the egress decision comes before any cache, tunnel or provider (FND-2 
   });
 
   test("acquireExecutionProfileProvider refuses it before the profiled cache and before the tunnel", async () => {
-    await expect(
-      acquireExecutionProfileProvider(tunnelled("egress-profiled"), "agent-operations"),
-    ).rejects.toThrow(INVALID_EGRESS_SETTING);
+    await expect(acquireExecutionProfileProvider(tunnelled("egress-profiled"), "agent-operations")).rejects.toThrow(
+      INVALID_EGRESS_SETTING,
+    );
 
     expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
