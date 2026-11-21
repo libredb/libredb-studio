@@ -420,13 +420,19 @@ describe("a type outside the union is refused by name, never read as another eng
     expect(refusalThrownBy(() => providerOwner(typed(value), "alice-subject"))).toEqual(refusalOf(value));
   });
 
-  test.each(OUTSIDE_THE_UNION)("providerCacheKey refuses %s before it frames anything", async (_label, value) => {
-    for (const posture of [undefined, true, false]) {
+  /** Each value outside the union under each file-access posture a caller can pass. */
+  const underEachPosture = OUTSIDE_THE_UNION.flatMap(([label, value]) =>
+    [undefined, true, false].map((posture) => [label, value, posture] as const),
+  );
+
+  test.each(underEachPosture)(
+    "providerCacheKey refuses %s with posture %s before it frames anything",
+    async (_label, value, posture) => {
       expect(await refusalRejectedBy(() => providerCacheKey(typed(value), posture, "alice-subject"))).toEqual(
         refusalOf(value),
       );
-    }
-  });
+    },
+  );
 
   test("a type id keeps its owner and its key", async () => {
     expect(providerOwner(base, "alice-subject")).toBe("alice-subject");
