@@ -6,7 +6,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type { SavedQuery } from "@/lib/types";
-import { unknownTypeSentence } from "@/lib/db/type-id";
+import { ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { mockToastDefault, mockToastError, mockToastSuccess } from "../helpers/mock-sonner";
 
 const mockSavedQueries: SavedQuery[] = [
@@ -173,6 +173,91 @@ describe("SavedQueries", () => {
         ),
       );
       expect(mockImportSavedQueries).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("a saved query whose connection type names no provider (FND-1)", () => {
+    const pg = mockSavedQueries[0];
+    const acme = {
+      ...pg,
+      id: "acme",
+      name: "Acme query",
+      query: "FIND acme",
+      connectionType: "acmefoo",
+    } as unknown as SavedQuery;
+    const { connectionType: _connectionType, ...untypedFields } = { ...pg, id: "untyped", name: "Untyped query" };
+    const untyped = untypedFields as unknown as SavedQuery;
+    const malformed = {
+      ...pg,
+      id: "malformed",
+      name: "Malformed query",
+      connectionType: { id: "postgres" },
+    } as unknown as SavedQuery;
+    const library = [pg, acme, untyped, malformed];
+
+    test("lists a saved query whose type names no provider as Unavailable, with the reason, and offers no way to load or edit it", () => {
+      mockGetSavedQueries.mockReturnValue(library);
+      const onSelectQuery = mock(() => {});
+      const view = render(<SavedQueries onSelectQuery={onSelectQuery} />);
+
+      for (const sentence of [unknownTypeSentence("acmefoo"), ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE]) {
+        const marker = view.getByTitle(sentence);
+        expect(marker.textContent).toBe(`Unavailable: ${sentence}`);
+        expect(marker.querySelector(".sr-only")?.textContent).toBe(`: ${sentence}`);
+      }
+      expect(view.queryByText("acmefoo")).toBeNull();
+      expect(view.getByText("Acme query").closest("button")).toBeNull();
+      expect(view.queryByRole("button", { name: "Acme query" })).toBeNull();
+      expect(view.queryByRole("button", { name: "Edit Acme query" })).toBeNull();
+      expect(view.queryByRole("button", { name: "Edit Untyped query" })).toBeNull();
+      expect(view.queryByRole("button", { name: "Edit Malformed query" })).toBeNull();
+      expect(view.getByRole("button", { name: "Delete Acme query" })).toBeTruthy();
+      expect(view.getByText("FIND acme")).toBeTruthy();
+
+      fireEvent.click(view.getByText("Acme query"));
+      expect(onSelectQuery).not.toHaveBeenCalled();
+    });
+
+    test("it can still be deleted", () => {
+      mockGetSavedQueries.mockReturnValue(library);
+      const originalConfirm = globalThis.confirm;
+      globalThis.confirm = mock(() => true) as unknown as typeof confirm;
+      try {
+        const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
+        fireEvent.click(view.getByRole("button", { name: "Delete Acme query" }));
+        expect(mockDeleteSavedQuery).toHaveBeenCalledWith("acme");
+      } finally {
+        globalThis.confirm = originalConfirm;
+      }
+    });
+
+    test("a saved query of a type id still loads from its name and from Edit", () => {
+      mockGetSavedQueries.mockReturnValue(library);
+      const onSelectQuery = mock(() => {});
+      const view = render(<SavedQueries onSelectQuery={onSelectQuery} />);
+      fireEvent.click(view.getByRole("button", { name: "Active Users" }));
+      fireEvent.click(view.getByRole("button", { name: "Edit Active Users" }));
+      expect(onSelectQuery.mock.calls).toEqual([[pg.query], [pg.query]]);
+    });
+
+    test("Export all keeps it as stored", () => {
+      mockGetSavedQueries.mockReturnValue(library);
+      const view = render(<SavedQueries onSelectQuery={mock(() => {})} />);
+      fireEvent.click(view.getByRole("button", { name: "Export all saved queries as JSON" }));
+      expect(mockDownloadText).toHaveBeenCalledWith(
+        JSON.stringify(library, null, 2),
+        "application/json",
+        expect.stringMatching(/^saved_queries_\d+\.json$/),
+      );
+    });
+
+    test("a connection of another type does not list it", () => {
+      mockGetSavedQueries.mockReturnValue(library);
+      const view = render(<SavedQueries onSelectQuery={mock(() => {})} connectionType="postgres" />);
+      expect(view.getByText("Active Users")).toBeTruthy();
+      expect(view.queryByText("Acme query")).toBeNull();
+      expect(view.queryByText("Untyped query")).toBeNull();
+      expect(view.queryByText("Malformed query")).toBeNull();
     });
   });
 

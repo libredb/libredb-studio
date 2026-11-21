@@ -11,6 +11,7 @@ import { downloadText } from "@/lib/export/download";
 import { jsonText } from "@/lib/export/json";
 import { parseSavedQueries } from "@/lib/saved-query-import";
 import { unavailableSavedQueryNotice } from "@/lib/connection-availability";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import { toast } from "sonner";
 
 interface SavedQueriesProps {
@@ -138,69 +139,89 @@ export function SavedQueries({ onSelectQuery, connectionType, refreshTrigger }: 
         )}
         {filteredQueries.length > 0 && (
           <div className="grid grid-cols-1 gap-px bg-fill">
-            {filteredQueries.map((q) => (
-              <div
-                key={q.id}
-                className="relative bg-surface p-4 hover:bg-fill-subtle transition-colors group cursor-pointer"
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <h4 className="text-xs font-medium mb-1">
-                      {/* Stretched-link pattern: the button's ::after overlay makes the
-                          whole card clickable while nested action buttons stay above it */}
-                      <button
-                        type="button"
-                        className="text-brand group-hover:text-brand-bright transition-colors cursor-pointer text-left after:absolute after:inset-0"
-                        onClick={() => onSelectQuery(q.query)}
+            {filteredQueries.map((q) => {
+              // A saved query whose type names no provider (FND-1) is listed with the reason and offers no control
+              // that would load it into the editor; it can still be deleted.
+              const refusal = typeIdRefusal(q.connectionType);
+              return (
+                <div
+                  key={q.id}
+                  className={`relative bg-surface p-4 hover:bg-fill-subtle transition-colors group${refusal === null ? " cursor-pointer" : ""}`}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <h4 className="text-xs font-medium mb-1">
+                        {refusal === null ? (
+                          /* Stretched-link pattern: the button's ::after overlay makes the
+                           whole card clickable while nested action buttons stay above it */
+                          <button
+                            type="button"
+                            className="text-brand group-hover:text-brand-bright transition-colors cursor-pointer text-left after:absolute after:inset-0"
+                            onClick={() => onSelectQuery(q.query)}
+                          >
+                            {q.name}
+                          </button>
+                        ) : (
+                          <span className="text-fg-muted">{q.name}</span>
+                        )}
+                      </h4>
+                      {q.description && <p className="text-xs text-fg-muted line-clamp-1">{q.description}</p>}
+                    </div>
+                    <div className="relative z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+                      {refusal === null && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Edit ${q.name}`}
+                          className="h-6 w-6 text-fg-muted hover:text-fg-bright"
+                          onClick={() => onSelectQuery(q.query)}
+                        >
+                          <PenLine strokeWidth={1.5} className="w-3 h-3" />
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Delete ${q.name}`}
+                        className="h-6 w-6 text-fg-muted hover:text-danger"
+                        onClick={(e) => handleDelete(q.id, e)}
                       >
-                        {q.name}
-                      </button>
-                    </h4>
-                    {q.description && <p className="text-xs text-fg-muted line-clamp-1">{q.description}</p>}
+                        <Trash2 strokeWidth={1.5} className="w-3 h-3" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="relative z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Edit ${q.name}`}
-                      className="h-6 w-6 text-fg-muted hover:text-fg-bright"
-                      onClick={() => onSelectQuery(q.query)}
-                    >
-                      <PenLine strokeWidth={1.5} className="w-3 h-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`Delete ${q.name}`}
-                      className="h-6 w-6 text-fg-muted hover:text-danger"
-                      onClick={(e) => handleDelete(q.id, e)}
-                    >
-                      <Trash2 strokeWidth={1.5} className="w-3 h-3" />
-                    </Button>
+
+                  <div className="bg-canvas border border-hairline rounded-md p-2 mb-3">
+                    <pre className="text-xs font-mono text-fg-tertiary line-clamp-3">{q.query}</pre>
                   </div>
-                </div>
 
-                <div className="bg-canvas border border-hairline rounded-md p-2 mb-3">
-                  <pre className="text-xs font-mono text-fg-tertiary line-clamp-3">{q.query}</pre>
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="px-1.5 py-0.5 rounded bg-brand-tint/10 border border-brand-tint/20 text-[0.625rem] font-medium text-brand">
-                      {q.connectionType}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {refusal === null ? (
+                        <span className="px-1.5 py-0.5 rounded bg-brand-tint/10 border border-brand-tint/20 text-[0.625rem] font-medium text-brand">
+                          {q.connectionType}
+                        </span>
+                      ) : (
+                        <span
+                          className="px-1.5 py-0.5 rounded bg-fill text-[0.625rem] font-medium text-fg-muted"
+                          title={refusal.sentence}
+                        >
+                          Unavailable<span className="sr-only">: {refusal.sentence}</span>
+                        </span>
+                      )}
+                      {q.tags?.map((tag) => (
+                        <span key={tag} className="flex items-center gap-1 text-[0.625rem] text-fg-muted">
+                          <Tag strokeWidth={1.5} className="w-2.5 h-2.5" /> {tag}
+                        </span>
+                      ))}
+                    </div>
+                    <span className="text-[0.625rem] text-fg-subtle flex items-center gap-1 font-mono">
+                      <Calendar className="w-2.5 h-2.5" /> {format(q.updatedAt, "MMM d, yyyy")}
                     </span>
-                    {q.tags?.map((tag) => (
-                      <span key={tag} className="flex items-center gap-1 text-[0.625rem] text-fg-muted">
-                        <Tag strokeWidth={1.5} className="w-2.5 h-2.5" /> {tag}
-                      </span>
-                    ))}
                   </div>
-                  <span className="text-[0.625rem] text-fg-subtle flex items-center gap-1 font-mono">
-                    <Calendar className="w-2.5 h-2.5" /> {format(q.updatedAt, "MMM d, yyyy")}
-                  </span>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
