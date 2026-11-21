@@ -37,6 +37,12 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { QueryError } from "@/lib/db/errors";
+import {
+  byteBudgetSentence,
+  measureRowBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "@/lib/db/providers/sql/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider, ReadOnlyCatalogReading, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type {
@@ -493,6 +499,79 @@ describe("inspect_schema on mongo", () => {
     expect(budget.statementTimeoutMs).toBe(3_000);
     expect(budget.maxResultRows).toBe(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultRows);
     expect(budget.maxResultBytes).toBe(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultBytes);
+  });
+
+  test("a description with more fields than the run's row budget is refused in the row sentence, and none of it reaches the model", async () => {
+    const { maxResultRows } = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
+    const columns = Array.from({ length: maxResultRows + 1 }, (_, index) => ({ name: `marker_${index}`, type: "int" }));
+    const h = harness({}, undefined, async () => ({
+      kind: "described",
+      container: "app",
+      object: "wide",
+      objectKind: "collection",
+      columns,
+      indexes: [],
+      sampled: 1,
+    }));
+    const outcome = await mongoInspectSchemaTool(h.context, { table: "wide" }, null);
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({
+      class: "database-error",
+      message: rowBudgetSentence(maxResultRows + 1, maxResultRows),
+    });
+    expect(outcome.modelText).not.toContain("marker_");
+    expect(h.context.artifacts.size).toBe(0);
+  });
+
+  test("a description whose served rows pass the byte budget is refused in the byte sentence, measured as the rows the model would read", async () => {
+    // Measured on MongoDB 9.0.4: one document of 100 fields named with 2,000 U+0001 characters each fits the sample's
+    // BSON bound, and its served rows came to 1,202,922 bytes of JSON.
+    const { maxResultBytes } = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
+    const columns = Array.from({ length: 100 }, (_, index) => ({
+      name: `${"\u0001".repeat(2_000)}${index}`,
+      type: "int",
+    }));
+    const h = harness({}, undefined, async () => ({
+      kind: "described",
+      container: "app",
+      object: "ctrl",
+      objectKind: "collection",
+      columns,
+      indexes: [],
+      sampled: 1,
+    }));
+    let sum = 0;
+    for (const column of columns) {
+      sum += measureRowBytes({ name: column.name, type: column.type });
+      if (sum > maxResultBytes) break;
+    }
+    const outcome = await mongoInspectSchemaTool(h.context, { table: "ctrl" }, null);
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({
+      class: "database-error",
+      message: byteBudgetSentence(sum, maxResultBytes),
+    });
+    expect(h.context.artifacts.size).toBe(0);
+  });
+
+  test("a catalog read that does not answer within the statement timeout is refused in the time sentence, and counted until its provider call settles", async () => {
+    let settle: () => void = () => {};
+    const late = new Promise<ReadOnlyCatalogReading>((resolve) => {
+      settle = () => resolve(LISTED);
+    });
+    // 300 ms left on the run clamps the statement timeout to 300 ms.
+    const h = harness({ deadline: new AgentRunDeadline(300, frozenClock) }, undefined, () => late);
+    const outcome = await mongoInspectSchemaTool(h.context, {}, null);
+    if (outcome.kind !== "refused") throw new Error(`expected refused, got ${outcome.kind}`);
+    expect(outcome.refusal).toMatchObject({
+      class: "database-error",
+      message: `${TIME_BUDGET_PREFIX}: no answer within 300ms`,
+    });
+    expect(h.context.tracker.usage(h.context.runId).activeExecutions).toBe(1);
+    settle();
+    await late;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(h.context.tracker.usage(h.context.runId).activeExecutions).toBe(0);
   });
 
   test("a provider with no agent catalog read is a server fault named as one, never a fall back to the editor's", async () => {

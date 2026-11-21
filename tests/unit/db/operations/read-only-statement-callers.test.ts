@@ -238,8 +238,10 @@ describe("the protected read path", () => {
     expect(outside.length).toBeGreaterThan(0);
     const uses = outside.flatMap((file) => queryReadOnlyUses(file, readFileSync(join(ROOT, file), "utf8")));
     expect(uses.map(label)).toEqual([]);
-    // The one caller is still there, so the rule above is not vacuous.
-    expect(queryReadOnlyUses(CORE_CALLER, readFileSync(join(ROOT, CORE_CALLER), "utf8")).map(label)).toEqual([
+    // The one caller is still there, so the rule above is not vacuous: inside `runReadOnlyStatement`, in the read it
+    // hands `runReadOnlyReading`.
+    const core = queryReadOnlyUses(CORE_CALLER, readFileSync(join(ROOT, CORE_CALLER), "utf8"));
+    expect(core.map((use) => `${use.file} in ${use.functions.at(-1)}`)).toEqual([
       `${CORE_CALLER} in runReadOnlyStatement`,
     ]);
   });

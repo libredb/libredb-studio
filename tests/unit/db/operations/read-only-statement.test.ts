@@ -10,7 +10,7 @@ import {
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
 } from "@/lib/db/providers/sql/read-only-budget";
-import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
+import { runReadOnlyReading, runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import type { DatabaseProvider, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
 
@@ -443,5 +443,109 @@ describe("runReadOnlyStatement", () => {
     expect(error).toBeInstanceOf(QueryError);
     expect((error as QueryError).message).toContain("maxResultRows");
     expect(queryReadOnly).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The same hold for a provider read that is not a statement: the agent's catalog read on an engine whose catalog is
+ * not a composed statement (`readCatalogReadOnly`) and the two cluster readings (`readClusterUsage`,
+ * `readWorkloadProfile`). Their answers are not a `QueryResult`, so the caller names the rows it serves from one, and
+ * those rows are what core holds to the budget.
+ */
+describe("runReadOnlyReading", () => {
+  interface Reading {
+    readonly listed: readonly Record<string, unknown>[];
+  }
+
+  const reading = (count: number, row: (index: number) => Record<string, unknown> = (index) => ({ index })) => ({
+    listed: Array.from({ length: count }, (_, index) => row(index)),
+  });
+
+  const call = (read: () => Promise<Reading>, overrides: Record<string, unknown> = {}) => ({
+    type: "mongodb" as const,
+    statement: '{"object":"orders"}',
+    budget,
+    wait: "statement-timeout" as const,
+    read,
+    servedRows: (answer: Reading) => answer.listed,
+    maxRows: budget.maxResultRows,
+    ...overrides,
+  });
+
+  test("makes the read once and returns its answer unchanged when the rows it serves are within the budget", async () => {
+    const served = reading(budget.maxResultRows);
+    const read = mock(async () => served);
+    expect(await runReadOnlyReading(call(read))).toBe(served);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  test("refuses served rows past the row bound the caller names, in the row sentence every provider uses", async () => {
+    const error = await settled(runReadOnlyReading(call(async () => reading(4), { maxRows: 3 })));
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as QueryError).message).toBe(rowBudgetSentence(4, 3));
+    expect((error as QueryError).provider).toBe("mongodb");
+  });
+
+  test("holds the served rows to a row bound of the read's own above the budget's, where the caller names one", async () => {
+    const served = reading(budget.maxResultRows + 5);
+    expect(await runReadOnlyReading(call(async () => served, { maxRows: budget.maxResultRows + 5 }))).toBe(served);
+    const error = await settled(
+      runReadOnlyReading(call(async () => reading(budget.maxResultRows + 6), { maxRows: budget.maxResultRows + 5 })),
+    );
+    expect((error as QueryError).message).toBe(rowBudgetSentence(budget.maxResultRows + 6, budget.maxResultRows + 5));
+  });
+
+  test("refuses served rows whose UTF-8 JSON bytes, summed per row, pass the budget, in the byte sentence", async () => {
+    // Each row's UTF-16 length is under its UTF-8 size: only a byte measure refuses them.
+    const row = (index: number) => ({ name: `${"é".repeat(1_000)}${index}` });
+    const served = reading(6, row);
+    const crossing = served.listed.findIndex(
+      (_, index) =>
+        served.listed.slice(0, index + 1).reduce((sum, each) => sum + measureRowBytes(each), 0) > budget.maxResultBytes,
+    );
+    const sum = served.listed.slice(0, crossing + 1).reduce((total, each) => total + measureRowBytes(each), 0);
+    expect(JSON.stringify(served.listed).length).toBeLessThan(budget.maxResultBytes);
+    const error = await settled(runReadOnlyReading(call(async () => served)));
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as QueryError).message).toBe(byteBudgetSentence(sum, budget.maxResultBytes));
+  });
+
+  test("refuses in the read's own sentences where the caller names them", async () => {
+    const refuseRows = mock((rows: number, allowed: number) => new Error(`rows ${rows} of ${allowed}`));
+    const refuseBytes = mock((bytes: number, allowed: number) => new Error(`bytes ${bytes} of ${allowed}`));
+    const rows = await settled(
+      runReadOnlyReading(call(async () => reading(4), { maxRows: 3, refuseRows, refuseBytes })),
+    );
+    expect((rows as Error).message).toBe("rows 4 of 3");
+    const wide = { name: "w".repeat(budget.maxResultBytes) };
+    const bytes = await settled(
+      runReadOnlyReading(call(async () => reading(1, () => wide), { refuseRows, refuseBytes })),
+    );
+    expect((bytes as Error).message).toBe(`bytes ${measureRowBytes(wide)} of ${budget.maxResultBytes}`);
+  });
+
+  test("refuses a read that does not answer within the statement timeout, in the time sentence, and hands the call to the hold", async () => {
+    const pending = new Promise<Reading>(() => {});
+    const holdUntilSettled = mock<(call: PromiseLike<unknown>) => void>(() => {});
+    const warned = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const error = await settled(
+        runReadOnlyReading(call(() => pending, { budget: { ...budget, statementTimeoutMs: 5 }, holdUntilSettled })),
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as QueryError).message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 5ms`);
+      expect(holdUntilSettled).toHaveBeenCalledTimes(1);
+      expect(holdUntilSettled.mock.calls[0][0]).toBe(pending);
+    } finally {
+      warned.mockRestore();
+    }
+  });
+
+  test("refuses a malformed budget before the read is made", async () => {
+    const read = mock(async () => reading(1));
+    const error = await settled(runReadOnlyReading(call(read, { budget: { ...budget, statementTimeoutMs: 0 } })));
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as QueryError).message).toContain("statementTimeoutMs");
+    expect(read).not.toHaveBeenCalled();
   });
 });

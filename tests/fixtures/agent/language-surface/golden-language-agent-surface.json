@@ -3611,7 +3611,7 @@
             "reasonCode": "READING_OVER_BUDGET",
             "elapsedMs": 0
           },
-          "modelText": "That reading came to 300013 bytes, more than the 262144 bytes this run may carry, so none of it was kept. Ask again narrowed by a label selector, or for a smaller namespace."
+          "modelText": "That reading came to 300011 bytes, more than the 262144 bytes this run may carry, so none of it was kept. Ask again narrowed by a label selector, or for a smaller namespace."
         },
         "workloads over their row ceiling": {
           "kind": "refused",
@@ -3629,7 +3629,7 @@
             "reasonCode": "READING_OVER_BUDGET",
             "elapsedMs": 0
           },
-          "modelText": "That profile came to 300013 bytes, more than the 262144 bytes this run may carry, so none of it was kept. Profile a smaller namespace, or read the workloads in question with run_read_query."
+          "modelText": "That profile came to 300011 bytes, more than the 262144 bytes this run may carry, so none of it was kept. Profile a smaller namespace, or read the workloads in question with run_read_query."
         },
         "a resources card with a quantity that does not parse": {
           "kind": "unavailable",
