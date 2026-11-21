@@ -34,9 +34,10 @@ export interface TunnelInfo {
 }
 
 /**
- * One forward, as the pool's lookups ask for it: the route it goes through and the address it
- * reaches. Both, because both are in the key - a forward is only the same forward when the bytes
- * enter by the same bastion and leave at the same far end.
+ * One forward, as the pool's lookups ask for it: the route it goes through, the credential it was
+ * opened with (both read from `ssh`) and the address it reaches. All of them, because all of them are
+ * in the key - a forward is only the same forward when the bytes enter by the same bastion, under the
+ * same credential, and leave at the same far end.
  *
  * `farEnd` is {@link TunnelFarEnd} rather than a second `{ host, port }` of this module's own: it
  * is the same value the factory puts under `TUNNEL_FAR_END`, and one name for it keeps the pool
@@ -71,7 +72,7 @@ interface PooledTunnel {
 
 /**
  * Active pooled tunnels, keyed by connection id AND the whole forward: the bastion route it is
- * opened through and the far end it reaches.
+ * opened through, the far end it reaches and the credential it was opened with ({@link poolKey}).
  *
  * WHY THE FORWARD IS IN THE KEY (D86). Keyed by the connection id alone, this map answered a
  * lookup for `db-b:5432` with the forward a previous caller had opened to `db-a:5432`, and
@@ -100,10 +101,10 @@ interface PooledTunnel {
  * BY CONNECTION ID, and `closeSSHTunnel` closes every forward under it.
  *
  * WHAT THAT COSTS, stated rather than left to be found: one connection id may hold as many live
- * forwards as it has been asked for distinct (route, far end) pairs, each an open SSH client and
- * a listening loopback socket, and nothing here bounds that count. MEASURED: 50 far ends across
- * two bastions under one id gave 50 live servers and 50 live clients. Nothing in this map reaps a
- * superseded forward either - the provider cache miss that opens the next one disconnects the
+ * forwards as it has been asked for distinct (route, far end, credential) triples, each an open SSH
+ * client and a listening loopback socket, and nothing here bounds that count. MEASURED: 50 far
+ * ends across two bastions under one id gave 50 live servers and 50 live clients. Nothing in this
+ * map reaps a superseded forward either - the provider cache miss that opens the next one disconnects the
  * PROVIDER and leaves the forward pooled - so what takes them is the connection's own teardown,
  * `removeProvider` and the 30-minute idle sweep, both of which close BY CONNECTION ID and take
  * every forward with them, or the end of that forward's own SSH session. The count is therefore
@@ -134,21 +135,55 @@ const forwardClaims = new WeakMap<TunnelInfo, ForwardClaims>();
 
 /**
  * Length-framed, every component by the same `${length}:${value}` rule and none of them bare, so
- * no two different (id, far end, route) tuples can slide across a boundary and answer one key -
- * `connectionFingerprint`'s own rule, for its own reason: a connection id is a string the caller
+ * no two different (id, far end, route, credential) tuples can slide across a boundary and answer one
+ * key - `connectionFingerprint`'s own rule, for its own reason: a connection id is a string the caller
  * supplies, and so is a host.
  *
  * The route component is `tunnelRoute`'s output rather than a second reading of `SSHTunnelConfig`,
  * so the pool can only reuse a forward between two records the object-edit seal calls the same
- * server. That also decides what is NOT in the key: the tunnel's secrets and its pinned host key,
- * which `tunnelRoute` leaves out because they say who may reach the bastion and what this
- * connection trusts, not which machine it is - rotating a password must not strand the live
- * forward behind a second one.
+ * server.
+ *
+ * THE CREDENTIAL IS IN THE KEY TOO, as {@link tunnelCredentialDigest} of it: a forward is shared only
+ * by calls that present the credential it was opened with. A call that presents another one dials its
+ * own forward with that credential, and a dial that fails is that call's own failure.
+ *
+ * WHAT THAT COSTS, decided rather than left to be found: a changed credential opens its own forward,
+ * and the forward opened with the old one is not closed by the change. A provider opened on it keeps
+ * serving through it until the connection's own teardown, `removeProvider` and the idle sweep, which
+ * close every forward under the connection id; a forward no provider opened on closes on its last
+ * release; and either ends with its own SSH session. That is the same lifetime every superseded
+ * forward of the {@link activeTunnels} docblock already has, and the provider cache, whose key frames
+ * the tunnel credential as well, retires the provider on the old forward by the same teardown.
+ *
+ * Still NOT in the key: the pinned host key (`hostKeyFingerprint`), which records what a connection
+ * trusts rather than what it presents to the bastion.
  */
 function poolKey(connectionId: string, sshConfig: SSHTunnelConfig, remoteHost: string, remotePort: number): string {
-  return [connectionId, remoteHost, String(remotePort), tunnelRoute(sshConfig)]
+  return [connectionId, remoteHost, String(remotePort), tunnelRoute(sshConfig), tunnelCredentialDigest(sshConfig)]
     .map((value) => `${value.length}:${value}`)
     .join("");
+}
+
+/**
+ * A SHA-256 digest of the credential a tunnel presents to its bastion: the auth method, the password,
+ * the private key and its passphrase, length-framed by the rule {@link poolKey} follows, so no two
+ * credentials answer one digest by sliding a value across a boundary. It is the construction
+ * `credentialDigest` in `src/lib/db/provider-cache-key.ts` uses for the same four values, taken
+ * synchronously here because the pool's lookups are synchronous: {@link getTunnelInfo}, and the
+ * check in {@link createSSHTunnel} that must find a dial under way before it registers its own.
+ *
+ * A digest rather than the values themselves, so the pool's keys never hold the secret a second time.
+ */
+function tunnelCredentialDigest(sshConfig: SSHTunnelConfig): string {
+  const framed = [
+    String(sshConfig.authMethod),
+    sshConfig.password ?? "",
+    sshConfig.privateKey ?? "",
+    sshConfig.passphrase ?? "",
+  ]
+    .map((value) => `${value.length}:${value}`)
+    .join("");
+  return crypto.createHash("sha256").update(framed).digest("hex");
 }
 
 /**
@@ -242,7 +277,7 @@ export async function createSSHTunnel(
   const shared = options.shared !== false;
   const key = poolKey(connectionId, sshConfig, remoteHost, remotePort);
 
-  // Return the existing tunnel for THIS route and far end if one is already active.
+  // Return the existing tunnel for THIS route, far end and credential if one is already active.
   // A tunnel whose SSH session ssh2 has seen end is not here: that end runs its cleanup. A session that
   // drops without a FIN or an RST still is, and may be stale, since neither SSH nor TCP keepalive is configured.
   // A call made while the dial for this forward is still under way shares that dial.

@@ -1272,9 +1272,10 @@ export async function getOrCreateProvider(
   }
 
   // If SSH tunnel is configured, create tunnel first and rewrite connection.
-  // createSSHTunnel hands every caller for the same connection id, bastion route AND far end the
-  // one forward, pooled or still being dialled, so this call reports how its provider fared and the
-  // pool decides whether a failure closes the forward (another caller may connect or serve through it).
+  // createSSHTunnel hands every caller for the same connection id, bastion route, tunnel credential AND
+  // far end the one forward, pooled or still being dialled, so this call reports how its provider fared
+  // and the pool decides whether a failure closes the forward (another caller may connect or serve
+  // through it).
   let effectiveConnection = connection;
   let tunnel: TunnelInfo | null = null;
   if (connection.sshTunnel?.enabled && connection.host && connection.port) {
@@ -1679,8 +1680,8 @@ export async function acquireExecutionProfileProvider(
       }
     : connection;
 
-  // The SSH tunnel is keyed by connection id, bastion route and far end, and shared with the
-  // writable provider (createSSHTunnel hands every caller for that forward the one forward). This
+  // The SSH tunnel is keyed by connection id, bastion route, tunnel credential and far end, and shared
+  // with the writable provider (createSSHTunnel hands every caller for that forward the one forward). This
   // acquisition reports how its provider fared, and the pool decides whether a failure closes it.
   let tunnel: TunnelInfo | null = null;
   if (connection.sshTunnel?.enabled && connection.host && connection.port) {
