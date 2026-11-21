@@ -435,7 +435,8 @@ A write is refused by SQLite itself, and `query()` raises it as a `QueryError` t
 `query_only` is not set: this is the editor, and the file's permissions are the boundary, not the agent profile of [§12](#12-agent-read-only-execution-profile-328).
 
 A file already in WAL journal mode, with no `-shm` file beside it, still cannot be opened when its directory is unwritable: SQLite reads one only with a `-shm` file beside it, and has nowhere to make one (measured on `bun:sqlite` and `node:sqlite`, 2026-09-26).
-That includes any file this editor has written, because §3.2 leaves the file in WAL mode.
+That includes any file this editor has written, because §3.2 leaves the file in WAL mode, and the embedded sample, which the seed publishes in WAL mode with no `-shm` ([§4.1](#41-embedded-sample-database-standalone-mode)).
+Apple's libsqlite3, which `bun:sqlite` uses on macOS, refuses a read-only handle on such a file even in a writable directory, with "unable to open database file" (the seed tests on the macos-latest runner, 2026-11-21); a writable handle opens it there.
 `connect()` then fails with a `ConnectionError` that says so and names the two ways out: run `PRAGMA journal_mode = DELETE` on the file where it is writable, or make its directory writable.
 SQLite's own words for that refusal differ by build: the library bundled on Linux answers the file alone with "attempt to write a readonly database", Apple's libsqlite3 on macOS answers "unable to open database file", and so does Linux when a `-wal` is left beside the file with no `-shm` (measured on the macos-latest runner and on Linux, 2026-09-26).
 So the reason is not read from those words but from the file's header, where bytes 18 and 19 are 2 in WAL mode, and SQLite's words follow it.

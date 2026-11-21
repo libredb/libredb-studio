@@ -123,7 +123,9 @@ describe("sqlite-sample", () => {
     expect(await seedSqliteSampleFile(file)).toBe("seeded");
     expect(fs.existsSync(file)).toBe(true);
 
-    const db = new Database(file, { readonly: true });
+    // Writable: Apple's system SQLite, which bun:sqlite uses on macOS, cannot open a WAL file read-only without its
+    // -shm file (SQLITE_CANTOPEN on macos-latest), and the seed publishes the sample in WAL mode with no sidecar.
+    const db = new Database(file);
     try {
       const row = db.query("SELECT COUNT(*) AS n FROM employee").get() as { n: number };
       expect(row.n).toBeGreaterThan(0);
@@ -155,7 +157,9 @@ describe("sqlite-sample", () => {
 
     expect(fs.existsSync(file)).toBe(true);
     expect(fs.existsSync(tempPath)).toBe(false);
-    const db = new Database(file, { readonly: true });
+    // Writable: Apple's system SQLite, which bun:sqlite uses on macOS, cannot open a WAL file read-only without its
+    // -shm file (SQLITE_CANTOPEN on macos-latest), and the seed publishes the sample in WAL mode with no sidecar.
+    const db = new Database(file);
     try {
       expect((db.query("SELECT COUNT(*) AS n FROM employee").get() as { n: number }).n).toBeGreaterThan(0);
     } finally {
@@ -217,7 +221,9 @@ describe("sqlite-sample", () => {
   test("seedSqliteSampleFile: an open of the fresh sample succeeds while another connection is reading it", async () => {
     const file = tmpPath();
     await seedSqliteSampleFile(file);
-    const reader = new Database(file, { readonly: true });
+    // Writable: Apple's system SQLite, which bun:sqlite uses on macOS, cannot open a WAL file read-only without its
+    // -shm file (SQLITE_CANTOPEN on macos-latest); a read transaction holds the same read lock either way.
+    const reader = new Database(file);
     reader.exec("BEGIN");
     try {
       expect((reader.query("SELECT COUNT(*) AS n FROM employee").get() as { n: number }).n).toBeGreaterThan(0);
