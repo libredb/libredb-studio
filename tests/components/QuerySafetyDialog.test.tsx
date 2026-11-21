@@ -3530,6 +3530,14 @@ describe("Databend's REPLACE asks", () => {
   ])("does not ask for %j", (sql) => {
     expect(isDangerousQuery(sql, "databend")).toBe(false);
   });
+
+  test("a script led by BEGIN that calls replace() before an ON asks: inside a block the form is read anywhere", () => {
+    // The accepted cost of reading REPLACE with the ON that every REPLACE statement carries: in a block the gate reads
+    // the form anywhere in the code, and a join's ON after the call satisfies it, the fail-safe direction.
+    expect(
+      isDangerousQuery("BEGIN; SELECT replace(t.v, 'a', 'b') FROM t JOIN u ON t.id = u.id; COMMIT;", "databend"),
+    ).toBe(true);
+  });
 });
 
 describe("DuckDB's INSERT OR REPLACE asks", () => {
