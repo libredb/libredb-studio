@@ -14,7 +14,9 @@
  *  - on the object surface's own connection, the same header answering its `SELECT` or its read, or a reset in place
  *    of the answer to its read;
  *  - in a numbered database, a reset or the same header in place of the answer to the `SELECT` ioredis sends itself
- *    to select that database again on the connection that follows a reset.
+ *    to select that database again on the connection that follows a reset;
+ *  - in a numbered database, a command sent after the connection that follows a reset opens and before it is ready,
+ *    and that connection's `SELECT` of the database refused by the server, for good or only while the server is busy.
  *
  * Each case records what the caller got, what the next command got, the `[Redis]` warnings the provider logged, and
  * every error that escaped a call instead of reaching its caller (uncaughtException, unhandledRejection). The test runs this file twice, under Bun and, bundled
@@ -192,6 +194,8 @@ interface CaseReport {
   readonly delivered?: number;
   /** The database the next command ran in, by the last `SELECT` its connection received, when the case reads it. */
   readonly database?: string;
+  /** Whether the provider still reported itself connected after the call, when the case reads it. */
+  readonly connected?: boolean;
   readonly logged: string[];
   readonly escaped: string[];
 }
@@ -210,7 +214,7 @@ async function runCase(
   body: (
     provider: RedisProvider,
     peer: Peer,
-  ) => Promise<{ call: string; next?: string; delivered?: number; database?: string }>,
+  ) => Promise<{ call: string; next?: string; delivered?: number; database?: string; connected?: boolean }>,
   opening: Opening = {},
 ): Promise<CaseReport> {
   escaped.length = 0;
@@ -491,7 +495,8 @@ cases.push(
 /**
  * In database 1, resets the provider's idle connection; on the connection that follows, answers the first `SELECT`
  * with `reply` (or resets the connection when `reply` is `reset`), then reads which database the next `GET` ran in.
- * The `SELECT` it answers is one ioredis sends itself, with no caller awaiting it, to select the database again.
+ * The `SELECT` it answers is one ioredis sends itself for its `db` option, with no caller awaiting it, as each
+ * connection opens and before its ready check.
  */
 async function reselectCase(name: string, reply: string | "reset"): Promise<CaseReport> {
   return runCase(
@@ -514,8 +519,8 @@ async function reselectCase(name: string, reply: string | "reset"): Promise<Case
           return "silence";
         }
         if (verb === "SELECT") selected.set(connection, command[1] ?? "");
-        // The SELECT that puts the connection after the faulted one back in database 1, sent once it is ready: the
-        // escape, if any, has been recorded, and a command sent now is written after it.
+        // The SELECT that puts the connection after the faulted one back in database 1, sent before its ready check:
+        // the escape, if any, has been recorded, and a command sent now waits for that connection to be ready.
         if (verb === "SELECT" && index > 1) reachedNext();
         if (verb === "GET") database = selected.get(connection) ?? "0";
         return undefined;
@@ -548,7 +553,7 @@ cases.push(
         const verb = (command[0] ?? "").toUpperCase();
         const index = peer.connections.indexOf(connection);
         // The object read's own connection, in database 1: its SCAN is reset, and the SELECT ioredis then sends itself
-        // on the next connection, before the read's next command, is reset too.
+        // as the next connection opens is reset too, while the read's next command waits for a connection that is ready.
         if (verb === "SCAN" && index === 1 && !scanReset) {
           scanReset = true;
           connection.raw.resetAndDestroy();
@@ -565,6 +570,116 @@ cases.push(
       const next = await settle(4_000, () => provider.query("PING"));
       return { call, next };
     },
+  ),
+);
+
+cases.push(
+  await runCase(
+    "a command sent after the reconnect opens and before it is ready, in database 1",
+    false,
+    async (provider, peer) => {
+      await provider.connect();
+      const selected = new Map<PeerConnection, string>();
+      let database: string | undefined;
+      let answerReadyCheck: () => void = () => undefined;
+      let reachedReadyCheck: () => void = () => undefined;
+      const readyCheck = new Promise<void>((resolve) => (reachedReadyCheck = resolve));
+      peer.answer = (command, connection) => {
+        const verb = (command[0] ?? "").toUpperCase();
+        if (verb === "SELECT") selected.set(connection, command[1] ?? "");
+        // The ready check of the connection after the reset is held: the client is connected and not yet ready.
+        if (verb === "INFO" && peer.connections.indexOf(connection) === 1) {
+          answerReadyCheck = () => connection.socket.write(defaultAnswer(command));
+          reachedReadyCheck();
+          return "silence";
+        }
+        if (verb === "GET") database = selected.get(connection) ?? "0";
+        return undefined;
+      };
+      peer.connections[0].raw.resetAndDestroy();
+      await Promise.race([readyCheck, sleep(4_000)]);
+      const call = settle(4_000, () => provider.query("GET k"));
+      // The command reaches the driver's offline queue without any I/O, so it is queued once a timer fires.
+      await sleep(20);
+      answerReadyCheck();
+      return { call: await call, database };
+    },
+    { fields: { database: "1" } },
+  ),
+);
+/**
+ * In database 1, resets the provider's idle connection; the server answers the `SELECT` ioredis sends itself on the
+ * connection that follows with `reply` once a `GET` waits for that connection to be ready, and every later connection's
+ * `SELECT` with `later`. Then reads whether the provider still reports itself connected, connects it again, and sends
+ * the next `GET`.
+ */
+async function refusedReselectCase(name: string, reply: string, later: string | undefined): Promise<CaseReport> {
+  return runCase(
+    name,
+    false,
+    async (provider, peer) => {
+      await provider.connect();
+      const selected = new Map<PeerConnection, string>();
+      let database: string | undefined;
+      // Every GET after the first connection that ran in database 0, or anywhere before the refusal was answered.
+      let ran = 0;
+      // The answers of the connection after the reset are held from its SELECT on, the ready check's with them, so the
+      // client is connected and not yet ready; `refuse` writes them in order, the SELECT's first.
+      let held: string[] | undefined;
+      let refuse: () => void = () => undefined;
+      let reachedSelect: () => void = () => undefined;
+      const select = new Promise<void>((resolve) => (reachedSelect = resolve));
+      peer.answer = (command, connection) => {
+        const index = peer.connections.indexOf(connection);
+        if (index === 0) return undefined;
+        const verb = (command[0] ?? "").toUpperCase();
+        if (index === 1 && held !== undefined) {
+          held.push(defaultAnswer(command));
+          return "silence";
+        }
+        if (verb === "SELECT" && index === 1) {
+          held = [reply];
+          refuse = () => connection.socket.write((held ?? []).join(""));
+          reachedSelect();
+          return "silence";
+        }
+        if (verb === "SELECT" && later !== undefined) return later;
+        if (verb === "SELECT") selected.set(connection, command[1] ?? "");
+        if (verb === "GET") {
+          ran += 1;
+          database = selected.get(connection) ?? "0";
+        }
+        return undefined;
+      };
+      peer.connections[0].raw.resetAndDestroy();
+      await Promise.race([select, sleep(4_000)]);
+      const call = settle(4_000, () => provider.query("GET k"));
+      // The command reaches the driver's offline queue without any I/O, so it is queued once a timer fires.
+      await sleep(20);
+      refuse();
+      const settled = await call;
+      const delivered = ran;
+      const connected = provider.isConnected();
+      const reopened = await settle(4_000, () => provider.connect());
+      const next = reopened === "ok" ? await settle(4_000, () => provider.query("GET k")) : reopened;
+      return { call: settled, next, delivered, connected, ...(database === undefined ? {} : { database }) };
+    },
+    { fields: { database: "1" } },
+  );
+}
+
+cases.push(
+  await refusedReselectCase(
+    "the server refuses the reconnect's SELECT of database 1",
+    "-ERR DB index is out of range\r\n",
+    "-ERR DB index is out of range\r\n",
+  ),
+);
+cases.push(
+  await refusedReselectCase(
+    "the server answers the reconnect's SELECT of database 1 with BUSY, then selects it again",
+    "-BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.\r\n",
+    undefined,
   ),
 );
 
