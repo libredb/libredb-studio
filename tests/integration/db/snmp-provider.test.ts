@@ -37,6 +37,7 @@ import { createSocket, type Socket } from "node:dgram";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import { SnmpProvider } from "@/lib/db/providers/network/snmp/index";
 import type { DatabaseConnection } from "@/lib/types";
 import { FIXTURE_COMMUNITY } from "../../fixtures/snmp/identity";
@@ -337,7 +338,7 @@ describe("the private-destination setting", () => {
         () => null,
         (error: unknown) => error,
       );
-      expect(failure).toBeInstanceOf(Error);
+      expect(failure).toBeInstanceOf(DatabaseConfigError);
       expect((failure as Error).message).toContain(INVALID_EGRESS_SETTING);
       expect(received).toBe(before);
       expect(missed).toEqual([]);

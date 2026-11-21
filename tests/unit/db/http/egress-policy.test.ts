@@ -152,6 +152,9 @@ describe("the decision the guard reads (FND-2 slice 2a)", () => {
     process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
     expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
     expect(guardedNodeOptions("db.example.com")).toEqual({ lookup: publicAddressLookup, agent: false });
+    // The third reader, the fetch path of couchbase, clickhouse, druid, libsql, search, trino and prometheus: its
+    // literal check throws synchronously, before any socket.
+    expect(() => httpTransportFetch("http://127.0.0.1:9/")).toThrow(BLOCKED_HOST);
     forgetEgressDecision();
     expect(httpOrigin("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
   });

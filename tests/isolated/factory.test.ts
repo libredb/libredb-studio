@@ -5173,6 +5173,32 @@ describe("a connection whose type names no provider (FND-1)", () => {
     }
   });
 
+  test("an unknown type is refused for its type while DB_HTTP_BLOCK_PRIVATE_HOSTS is invalid, by every entry point, before the tunnel", async () => {
+    const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+    setEgressFlag("yes");
+    const run = mock(async () => "ran");
+    try {
+      const built = await rejection(() => createDatabaseProvider(makeConnection("acmefoo")));
+      expect(built).toBeInstanceOf(UnknownProviderError);
+      expect((built as Error).message).toBe(unknownTypeSentence("acmefoo"));
+      for (const refused of [
+        await rejection(() => getOrCreateProvider(tunnelled("acmefoo"))),
+        await rejection(() => acquireExecutionProfileProvider(tunnelled("acmefoo"), "agent-operations")),
+        await rejection(() => withOneShotTunnel(tunnelled("acmefoo"), run)),
+      ]) {
+        expect(refused).toBeInstanceOf(UnknownProviderError);
+        expect((refused as Error).message).toBe(unknownTypeSentence("acmefoo"));
+      }
+    } finally {
+      setEgressFlag(before);
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getProviderCacheStats().size).toBe(0);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
   test("a record with neither an id nor a type is refused for its type by both cached entry points", async () => {
     const connection = { name: "Neither", host: "db.internal", port: 5432 } as unknown as DatabaseConnection;
     const cached = await rejection(() => getOrCreateProvider(connection));
@@ -5941,6 +5967,13 @@ describe("the egress decision comes before any cache, tunnel or provider (FND-2 
   const buildLines = (log: { readonly mock: { readonly calls: readonly (readonly unknown[])[] } }) =>
     log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"));
 
+  /** The error a call rejects with, so a case can pin its class: `toThrow` with an instance compares only the message. */
+  const refusalOf = (run: () => Promise<unknown>): Promise<unknown> =>
+    run().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
   beforeEach(() => {
     setEgressFlag("yes");
   });
@@ -5952,9 +5985,9 @@ describe("the egress decision comes before any cache, tunnel or provider (FND-2 
   test("createDatabaseProvider refuses an invalid DB_HTTP_BLOCK_PRIVATE_HOSTS by name for an engine the guard does not cover, and builds nothing", async () => {
     const log = spyOn(console, "log").mockImplementation(() => {});
     try {
-      await expect(createDatabaseProvider(makeConnection("postgres"))).rejects.toThrow(
-        new DatabaseConfigError(INVALID_EGRESS_SETTING),
-      );
+      const refusal = await refusalOf(() => createDatabaseProvider(makeConnection("postgres")));
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
       expect(buildLines(log)).toEqual([]);
     } finally {
       log.mockRestore();
@@ -5964,7 +5997,9 @@ describe("the egress decision comes before any cache, tunnel or provider (FND-2 
   test("getOrCreateProvider refuses it before the cache and before the tunnel, and builds and opens nothing", async () => {
     const log = spyOn(console, "log").mockImplementation(() => {});
     try {
-      await expect(getOrCreateProvider(tunnelled("egress-tunnelled"))).rejects.toThrow(INVALID_EGRESS_SETTING);
+      const refusal = await refusalOf(() => getOrCreateProvider(tunnelled("egress-tunnelled")));
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
       expect(buildLines(log)).toEqual([]);
     } finally {
       log.mockRestore();
@@ -5976,9 +6011,11 @@ describe("the egress decision comes before any cache, tunnel or provider (FND-2 
   });
 
   test("acquireExecutionProfileProvider refuses it before the profiled cache and before the tunnel", async () => {
-    await expect(acquireExecutionProfileProvider(tunnelled("egress-profiled"), "agent-operations")).rejects.toThrow(
-      INVALID_EGRESS_SETTING,
+    const refusal = await refusalOf(() =>
+      acquireExecutionProfileProvider(tunnelled("egress-profiled"), "agent-operations"),
     );
+    expect(refusal).toBeInstanceOf(DatabaseConfigError);
+    expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
 
     expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
@@ -5988,7 +6025,9 @@ describe("the egress decision comes before any cache, tunnel or provider (FND-2 
   test("withOneShotTunnel refuses it before it dials, and never runs its callback", async () => {
     const run = mock(async () => "ran");
 
-    await expect(withOneShotTunnel(tunnelled("egress-one-shot"), run)).rejects.toThrow(INVALID_EGRESS_SETTING);
+    const refusal = await refusalOf(() => withOneShotTunnel(tunnelled("egress-one-shot"), run));
+    expect(refusal).toBeInstanceOf(DatabaseConfigError);
+    expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
 
     expect(run).not.toHaveBeenCalled();
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();

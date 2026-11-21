@@ -76,6 +76,16 @@ describe("config/egress-preflight verifyEgressDecisionAtBoot", () => {
     expect(banner).toContain("false, off, 0 or unset");
   });
 
+  test("quotes the value through JSON.stringify, so a newline or a quote in it cannot write a line of its own", () => {
+    const value = 'yes"\n LibreDB Studio is ready';
+    setEgressFlag(value);
+    const { exitCalls, banner } = run();
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain(`Got ${JSON.stringify(value)};`);
+    expect(banner).not.toContain("\n LibreDB Studio is ready");
+    expect(banner.split("\n")).toHaveLength(8);
+  });
+
   test("a refused boot reports no decision", () => {
     setEgressFlag("yes");
     run();
