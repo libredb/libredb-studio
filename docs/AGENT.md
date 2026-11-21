@@ -722,11 +722,10 @@ What a grounded plan run is given, and where each part comes from:
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
   is scanned and no value is read out of any row.
-  A `statistics` reading is supplied by the engine overlays of those two, libSQL (the same `sqlite_stat1`, after the same probe) and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and nothing else, and #414 added no engine to them: on the other thirty-nine `readSchemaStatistics` answers `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
-  so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
-  the two sentences the run is handed agree: the inventory is a record of what exists, and every
-  table's size is unknown rather than small. `AgentColumnProfile`'s "counts only" rule is
-  untouched. Statistics are **not** folded into the snapshot: an estimate is not schema, and the
+  A `statistics` reading is supplied by the engine overlays of those two, libSQL (the same `sqlite_stat1`, after the same probe) and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and nothing else, and #414 added no engine to them: on the other thirty-nine `readSchemaStatistics` answers `DIALECT_HAS_NO_STATISTICS`, *"this engine does not hold statistics this run knows how to read"*.
+  So **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and the two sentences the run is handed agree: the inventory is a record of what exists, and every table's size is unknown rather than small.
+  `AgentColumnProfile`'s "counts only" rule is untouched.
+  Statistics are **not** folded into the snapshot: an estimate is not schema, and the
   snapshot's fingerprint is its identity, so an `ANALYZE` would otherwise change the identity of a
   schema nobody changed.
   They are read under the profile the inventory is read under (`readStatisticsForGrounding` in `src/lib/agent/tools.ts`), on a fresh capture and on a reused one alike.
