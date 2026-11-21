@@ -3505,3 +3505,29 @@ describe("MariaDB's CREATE OR REPLACE TABLE asks on a mysql connection", () => {
     expect(isDangerousQuery(sql, "mysql")).toBe(false);
   });
 });
+
+describe("Databend's REPLACE asks", () => {
+  // REPLACE deletes the row a new one collides with on the key its ON clause names. Measured on Databend
+  // v1.2.951-nightly: REPLACE INTO turned (1, 'a', 'keep-me') into (1, 'new', NULL) from the editor with no dialog, INTO
+  // is optional (`REPLACE t ON (id) VALUES ...` replaced the row too), and ON is required ("expecting `ON`").
+  test.each([
+    "REPLACE INTO t ON (id) VALUES (1, 'a')",
+    "REPLACE t ON (id) VALUES (1, 'a')",
+    "REPLACE INTO t (id, v) ON (id) SELECT id, v FROM u",
+    "replace into t on (id) values (1, 'a')",
+    "-- refresh\nREPLACE /* c */ INTO t ON (id) VALUES (1, 'a')",
+    "SELECT 1; REPLACE INTO t ON (id) VALUES (1, 'a')",
+    "BEGIN; REPLACE INTO t ON (id) VALUES (1, 'a'); COMMIT;",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "databend")).toBe(true);
+  });
+
+  test.each([
+    "INSERT INTO t VALUES (1, 'a')",
+    "SELECT replace(v, 'a', 'b') FROM t",
+    "BEGIN; SELECT replace(v, 'a', 'b') FROM t; COMMIT;",
+    "SELECT 'REPLACE INTO t ON (id)' AS note",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "databend")).toBe(false);
+  });
+});
