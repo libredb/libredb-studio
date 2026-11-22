@@ -5,6 +5,7 @@ import type { ProviderCapabilities, TypedConfirmationAsk } from "@/lib/db/types"
 import {
   analyzeStatement,
   confirmationVerdict,
+  escalatedAsk,
   type OffsetRange,
   runsAsScript,
   type StatementAnalysis,
@@ -13,6 +14,7 @@ import {
   TYPED_NAME_MISSING_REFUSAL,
   type TypedConfirmation,
   typedConfirmationExpected,
+  typedConfirmationFor,
 } from "@/lib/editor/statement-analysis";
 import { editorLanguageOf } from "@/lib/editor/tab-language";
 import { hasUnreadableRun, isDangerousQuery } from "@/lib/sql/dangerous-query";
@@ -694,5 +696,128 @@ describe("confirmationVerdict", () => {
         });
       }
     }
+  });
+});
+
+describe("the connection's environment", () => {
+  const OTHER_ENVIRONMENTS = ["staging", "development", "local", "other", undefined] as const;
+
+  test("a write on a production connection asks for the connection's name", () => {
+    const name = crypto.randomUUID();
+    expect(confirmationVerdict("DELETE FROM t", "postgres", name, "production")).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: { type: "connection-name", expected: name, targets: [] },
+    });
+  });
+
+  test("a read on a production connection runs", () => {
+    expect(confirmationVerdict("SELECT 1", "postgres", crypto.randomUUID(), "production")).toStrictEqual({
+      decision: "run",
+    });
+  });
+
+  test("an unreadable run on production asks for the name and stays unreadable", () => {
+    const name = crypto.randomUUID();
+    expect(confirmationVerdict("SELECT E'\\'; DELETE FROM t", "postgres", name, "production")).toStrictEqual({
+      decision: "confirm",
+      unreadable: true,
+      typedConfirmation: { type: "connection-name", expected: name, targets: [] },
+    });
+  });
+
+  test("a row's text ask becomes the name on production, its text the one target", () => {
+    const name = crypto.randomUUID();
+    expect(confirmationVerdict("del /a /b", "etcd", name, "production")).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: { type: "connection-name", expected: name, targets: ["/a"] },
+    });
+  });
+
+  test("a row's name ask keeps its targets on production", () => {
+    const name = crypto.randomUUID();
+    expect(confirmationVerdict(ETCD_EVERY_KEY, "etcd", name, "production")).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: { type: "connection-name", expected: name, targets: ["every key"] },
+    });
+  });
+
+  test("a write on a nameless production connection is refused", () => {
+    for (const name of ["", undefined]) {
+      expect(confirmationVerdict("DELETE FROM t", "postgres", name, "production")).toStrictEqual({
+        decision: "refuse",
+        refusal: TYPED_NAME_MISSING_REFUSAL,
+      });
+    }
+  });
+
+  test("every other environment answers as before", () => {
+    const statements: ReadonlyArray<readonly [string, DatabaseType]> = [
+      ["SELECT 1", "postgres"],
+      ["DELETE FROM t", "postgres"],
+      ["SELECT E'\\'; DELETE FROM t", "postgres"],
+      ["del /a /b", "etcd"],
+      ["del /App/ --prefix", "etcd"],
+      [ETCD_EVERY_KEY, "etcd"],
+    ];
+    for (const environment of OTHER_ENVIRONMENTS) {
+      for (const [statement, type] of statements) {
+        for (const name of [ORDERS_ETCD, "", undefined]) {
+          expect(confirmationVerdict(statement, type, name, environment)).toStrictEqual(
+            confirmationVerdict(statement, type, name),
+          );
+        }
+      }
+    }
+  });
+
+  test("analyzeStatement answers the production ask when given the environment", () => {
+    const capabilities = capabilitiesOf.get("postgres");
+    if (capabilities === undefined) throw new Error("no capabilities were read for postgres");
+    const name = crypto.randomUUID();
+    const input: StatementAnalysisInput = {
+      text: "DELETE FROM t",
+      ...at(0),
+      databaseType: "postgres",
+      capabilities,
+      connectionName: name,
+    };
+    expect(analyzeStatement({ ...input, connectionEnvironment: "production" })).toStrictEqual(
+      confirm("DELETE FROM t", 0, 13, {
+        typedConfirmation: { type: "connection-name", expected: name, targets: [] },
+      }),
+    );
+    expect(analyzeStatement(input)).toStrictEqual(confirm("DELETE FROM t", 0, 13));
+    expect(analyzeStatement({ ...input, connectionEnvironment: "staging" })).toStrictEqual(
+      confirm("DELETE FROM t", 0, 13),
+    );
+  });
+
+  test("escalatedAsk reads no statement", () => {
+    const textAsk: TypedConfirmationAsk = { type: "text", text: "/a" };
+    const nameAsk: TypedConfirmationAsk = { type: "connection-name", targets: ["every key"] };
+    expect(escalatedAsk(textAsk, "production")).toStrictEqual({ type: "connection-name", targets: ["/a"] });
+    expect(escalatedAsk(nameAsk, "production")).toStrictEqual({ type: "connection-name", targets: ["every key"] });
+    expect(escalatedAsk(undefined, "production")).toStrictEqual({ type: "connection-name", targets: [] });
+    for (const environment of OTHER_ENVIRONMENTS) {
+      expect(escalatedAsk(textAsk, environment)).toBe(textAsk);
+      expect(escalatedAsk(nameAsk, environment)).toBe(nameAsk);
+      expect(escalatedAsk(undefined, environment)).toBeUndefined();
+    }
+  });
+
+  test("typedConfirmationFor answers the verdict's typed confirmation, and undefined where the name is missing", () => {
+    const name = crypto.randomUUID();
+    expect(typedConfirmationFor("DELETE FROM t", "postgres", name, "production")).toStrictEqual({
+      type: "connection-name",
+      expected: name,
+      targets: [],
+    });
+    expect(typedConfirmationFor("DELETE FROM t", "postgres", name, "development")).toBeNull();
+    expect(typedConfirmationFor("del /a /b", "etcd", name, undefined)).toStrictEqual({ type: "text", expected: "/a" });
+    expect(typedConfirmationFor("DELETE FROM t", "postgres", "", "production")).toBeUndefined();
+    expect(typedConfirmationFor(ETCD_EVERY_KEY, "etcd", undefined, "development")).toBeUndefined();
   });
 });
