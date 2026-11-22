@@ -269,6 +269,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [agent("tools.ts"), "runAuditedAgentCall", "withScrubbedWarnings"],
   [agent("tools.ts"), "runAuditedAgentCall", "fenceProviderText"],
   [agent("tools.ts"), "enumerateGroundingContainers", "scrubProviderText"],
+  [agent("tools.ts"), "walkObjectInventory", "scrubProviderText"],
   [agent("tools.ts"), "runStatement", "providerTextScrub"],
   [agent("languages", "kubectl", "tools.ts"), "runClusterUsage", "providerTextScrub"],
   [agent("languages", "kubectl", "tools.ts"), "runWorkloadProfile", "providerTextScrub"],

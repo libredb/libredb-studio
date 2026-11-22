@@ -2779,7 +2779,9 @@ async function walkObjectInventory(
     return {
       inventory: {
         objects: [],
-        kinds: declared.map((spec) => inventoryKind(spec, capabilities, { unavailable: needs })),
+        kinds: declared.map((spec) =>
+          inventoryKind(spec, capabilities, { unavailable: scrubProviderText(scrub, needs) }),
+        ),
       },
     };
   }
@@ -2814,7 +2816,7 @@ async function walkObjectInventory(
       // A kind whose names are withheld is counted and never listed, so no name of it reaches a model.
       if (kindNamesWithheld(spec)) {
         if (count === undefined) withheldUncounted.add(spec.id);
-        else if (isCountUnavailable(count)) unavailable.set(spec.id, count.unavailable);
+        else if (isCountUnavailable(count)) unavailable.set(spec.id, scrubProviderText(scrub, count.unavailable));
         else {
           withheld.set(spec.id, (withheld.get(spec.id) ?? 0) + count.count);
           if (isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
@@ -2824,7 +2826,7 @@ async function walkObjectInventory(
       // The exception the docblock names: the refusal this count met is the refusal the listing
       // would meet, so no listing is sent and the sentence travels on the kind (#1089 4.7).
       if (count !== undefined && isCountUnavailable(count) && kindCountIsListing(capabilities, spec.id)) {
-        unavailable.set(spec.id, count.unavailable);
+        unavailable.set(spec.id, scrubProviderText(scrub, count.unavailable));
         continue;
       }
       if (count !== undefined && isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);

@@ -178,6 +178,19 @@ describe("a kind whose names are withheld", () => {
     expect(secrets?.withheldCount).toBeUndefined();
   });
 
+  test("a refused count whose sentence carries the connection's credential is withheld", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({
+      containers: [{ path: ["default"], name: "default", level: 0, isSessionDefault: true }],
+      counts: () => ({ pods: { count: 1 }, secrets: { unavailable: `forbidden for the login ${password}` } }),
+      connection: { password },
+    });
+
+    expect(snapshot.kinds?.find((kind) => kind.id === "secrets")?.unavailable).toBe(PROVIDER_TEXT_WITHHELD);
+    expect(JSON.stringify(snapshot)).not.toContain(password);
+    for (const packed of packings(snapshot)) expect(packed).not.toContain(password);
+  });
+
   test("a sampled count is said as a floor", async () => {
     const { snapshot } = await captured({
       containers: [{ path: ["default"], name: "default", level: 0, isSessionDefault: true }],
@@ -241,6 +254,14 @@ describe("a kind whose names are withheld", () => {
  */
 describe("an inventory its provider cannot list without configuration", () => {
   const reason = "this connection keeps no map, so none of its objects can be listed";
+
+  test("a reason that carries the connection's credential is withheld on every kind", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({ needs: { reason: `no map for ${password}` }, connection: { password } });
+
+    expect(snapshot.kinds?.map((kind) => kind.unavailable)).toEqual([PROVIDER_TEXT_WITHHELD, PROVIDER_TEXT_WITHHELD]);
+    expect(JSON.stringify(snapshot)).not.toContain(password);
+  });
 
   test("is read from the provider's declaration, lists nothing and carries the reason on every kind", async () => {
     const { snapshot, harness } = await captured({ needs: { reason } });
