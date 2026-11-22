@@ -22,7 +22,12 @@ import {
 } from "../audit";
 import { mcpConnectionUnavailable } from "../availability";
 import { metadataReadAnnotations } from "./annotations";
-import { DATABASE_ARGUMENT_DESCRIPTION, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
+import {
+  DATABASE_ARGUMENT_DESCRIPTION,
+  databaseRequiredAnswer,
+  McpDatabaseChoiceError,
+  providerInDatabase,
+} from "./database-choice";
 import { MCP_TIMEOUT_BOUNDS_MS, raceDeadline } from "./read-query-limits";
 import { type McpStatementTool, mcpTablelessReadTool } from "./statement-arms";
 import {
@@ -458,6 +463,10 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
         "mcp_execution_failed",
       );
     }
+    // The databases the call could name are database content: behind the notice naming the provider, never spliced
+    // into Studio's sentence.
+    if (choice.kind === "database-required")
+      return finish(databaseRequiredAnswer(choice, author), "mcp_execution_failed");
     if (call.signal.aborted) return finish(ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled");
     const { result, failure } = await readPage(choice.provider, args, call.signal, step, scrub, author);
     return finish(result, failure);

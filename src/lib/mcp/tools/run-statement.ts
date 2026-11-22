@@ -49,7 +49,7 @@ import {
   type ToolResult,
 } from "../output";
 import { redactErrorMessage, safeSerialize } from "../serializer";
-import { McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
+import { databaseRequiredAnswer, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
 import {
   classifyReadQueryFailure,
   nextPageHint,
@@ -352,6 +352,11 @@ async function executeOpened(
         providerTextError(DATABASE_REFUSED_LEAD, choice.error, scrub, providerAuthor(call.type)),
         "mcp_execution_failed",
       ];
+    }
+    // The databases the call could name are database content: behind the notice naming the provider, never spliced
+    // into Studio's sentence.
+    if (choice.kind === "database-required") {
+      return [databaseRequiredAnswer(choice, providerAuthor(call.type)), "mcp_execution_failed"];
     }
     provider = choice.provider;
   } catch (error) {
