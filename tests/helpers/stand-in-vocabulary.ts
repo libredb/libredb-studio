@@ -30,6 +30,11 @@ const SHIPS_A_STAND_IN_ROW = Object.hasOwn(NON_SQL_DESTRUCTIVE_VOCABULARY, STAND
 
 /** The fields a stand-in row declares; the rest of the row asks about nothing and decides alone. */
 export interface StandInFields {
+  /**
+   * The row's reader: the operations the text names, or undefined where it cannot read them, which the gate asks
+   * about. The stand-in reads nothing (`[]`) unless a test passes one, such as a reader that throws.
+   */
+  readonly read?: (text: string) => readonly string[] | undefined;
   readonly typedConfirmation?: (text: string) => TypedConfirmationAsk | undefined;
   readonly safetyAnalysis?: false;
   readonly refuse?: (text: string) => string | undefined;
