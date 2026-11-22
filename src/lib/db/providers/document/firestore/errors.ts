@@ -14,6 +14,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { holdsSecretForm } from "@/lib/db/utils/server-text";
 import { FIRESTORE_TYPE, type FirestoreTarget, LIMITS, SENTENCES } from "./constants";
 
 /**
@@ -234,7 +235,7 @@ function lead(error: GoogleError, status: number, forms: readonly string[]): str
   const suffix = code === undefined ? "." : ` (${code}).`;
   if (!hasMessage(error)) return `${ERROR_SENTENCES.httpStatus(status)}${suffix}`;
   const raw = (error.message ?? "").trim();
-  const message = forms.some((form) => form !== "" && raw.includes(form))
+  const message = holdsSecretForm(raw, forms)
     ? ERROR_SENTENCES.withheld
     : raw.slice(0, GOOGLE_MESSAGE_MAX_CHARS).replace(/[\ud800-\udbff]$/, "");
   return `${message.replace(/[.\s]+$/u, "")}${suffix}`;

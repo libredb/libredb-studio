@@ -510,7 +510,7 @@ Set `telemetry_disabled` if the server should not report to the vendor, and note
 - TLS mode `require` sends the API key to an unverified peer.
 - An empty tree is what a scoped token, an alias-only token and an empty server all produce.
 - A vendor address pasted into the connection-string box instead of the Host box still selects ClickHouse.
-- A hostile or impersonated endpoint holds the key it receives and can return it in an encoding Studio does not list, so Studio withholds only the forms it sends.
+- A hostile or impersonated endpoint holds the key it receives and can return it in an encoding Studio does not list, so Studio withholds only the forms it lists.
 
 ## Migration DDL
 

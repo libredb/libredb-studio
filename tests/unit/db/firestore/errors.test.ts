@@ -22,6 +22,7 @@ import {
   mapTransportFailure,
   readGoogleError,
 } from "@/lib/db/providers/document/firestore/errors";
+import { secretForms } from "@/lib/db/utils/server-text";
 
 const T: FirestoreTarget = { projectId: "demo-libredb", databaseId: "(default)" };
 const STATEMENT: ErrorContext = { phase: "statement", credential: "service_account", target: T };
@@ -401,6 +402,17 @@ describe("mapGoogleError: the rows of spec 8.1 in order", () => {
       { ...STATEMENT, credential: "access_token", secretForms: ["", "ya29.secret-token"] },
     );
     expect(result.message).not.toContain("ya29.secret-token");
+    expect(
+      result.message.startsWith("Google's message was withheld because it quotes the credential (UNAUTHENTICATED)."),
+    ).toBe(true);
+  });
+
+  test("a message quoting the credential JSON-escaped is withheld", () => {
+    const credential = `${crypto.randomUUID()}"\\${crypto.randomUUID()}`;
+    const result = mapped(
+      { httpStatus: 401, status: "UNAUTHENTICATED", message: JSON.stringify(`Token ${credential} is invalid.`) },
+      { ...STATEMENT, credential: "access_token", secretForms: secretForms([credential]) },
+    );
     expect(
       result.message.startsWith("Google's message was withheld because it quotes the credential (UNAUTHENTICATED)."),
     ).toBe(true);

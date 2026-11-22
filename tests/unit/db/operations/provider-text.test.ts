@@ -123,6 +123,18 @@ describe("providerTextScrub", () => {
     expect(scrubProviderText(scrub, `header ${form}.`)).toBe(PROVIDER_TEXT_WITHHELD);
   });
 
+  test.each<[string, (value: string) => string]>([
+    ["at a Basic offset", (value) => `Authorization: Basic ${Buffer.from(`user:${value}`, "utf8").toString("base64")}`],
+    ["JSON-escaped", (value) => JSON.stringify(JSON.stringify(`rejected ${value}`))],
+    ["with control characters between its characters", (value) => `rejected ${value.split("").join("\u0000")}`],
+  ])("withholds a provider text holding the credential %s", (_label, spell) => {
+    const value = `${generated()}"\\`;
+    const scrub = providerTextScrub(connectionWith({ password: value }), "profiled");
+    expect(scrubProviderText(scrub, spell(value))).toBe(PROVIDER_TEXT_WITHHELD);
+    const error = new QueryError("failed", "postgres", undefined, undefined, spell(value));
+    expect(withholdProviderError(scrub, error)).toBeInstanceOf(ProviderTextWithheldError);
+  });
+
   test("withholds each segment of a JWT-shaped value", () => {
     const scrub = providerTextScrub(connectionWith({ password: token }), "profiled");
     for (const segment of token.split(".")) {

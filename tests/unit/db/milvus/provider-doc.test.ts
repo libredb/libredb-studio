@@ -287,7 +287,7 @@ const E23_FRAGMENTS: readonly string[] = [
   "REST `entities/get` and `entities/delete` by a VarChar id holding a quote differ from Studio's template on 3.0.2.",
   "A vendor address pasted into the connection-string box instead of the Host box still selects ClickHouse.",
   "Zilliz users should prefer a cluster-scoped user or key to a project-wide key",
-  "Studio withholds only the forms it sends.",
+  "Studio withholds only the forms it lists.",
   "The management port 9091 answers without authentication on 3.0.2, so the operator keeps it off the network.",
 ];
 

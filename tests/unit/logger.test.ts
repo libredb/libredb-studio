@@ -1,6 +1,7 @@
 import "../setup";
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import type { Mock } from "bun:test";
+import { withoutDroppedControls } from "@/lib/logged-text";
 import { logger } from "@/lib/logger";
 
 describe("logger", () => {
@@ -213,5 +214,19 @@ describe("logger", () => {
     expect(line).toContain("user-controlled %s message");
     expect(line).toContain("TypeError");
     expect(call[2] as string).toContain("boom with %s and %d specifiers");
+  });
+
+  // ─── Control characters ───────────────────────────────────────────────────
+
+  test("drops the same control characters the credential scrub reads past", () => {
+    const controls = Array.from({ length: 0x20 }, (_, code) => String.fromCharCode(code)).join("");
+    const message = `before ${controls} after`;
+    logger.info(message);
+    expect(infoSpy.mock.calls[0][0] as string).toEndWith(` ${withoutDroppedControls(message.replace(/[\r\n]/g, " "))}`);
+
+    const err = new Error("failed");
+    err.stack = `Error: failed ${controls}\n    at frame (file.js:1:1)`;
+    logger.error("stack", err);
+    expect(errorSpy.mock.calls[0][2] as string).toBe(withoutDroppedControls(err.stack));
   });
 });

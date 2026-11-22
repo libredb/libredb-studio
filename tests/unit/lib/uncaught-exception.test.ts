@@ -198,6 +198,7 @@ describe("the module's imports", () => {
     const closure = valueImportClosure("src/lib/uncaught-exception.ts");
 
     expect(closure.modules).toEqual([
+      "src/lib/logged-text.ts",
       "src/lib/logger.ts",
       "src/lib/mcp/serializer.ts",
       "src/lib/non-finite.ts",
