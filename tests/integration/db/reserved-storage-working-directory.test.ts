@@ -106,4 +106,41 @@ describe("the files Studio protects and the file a provider opens do not move wi
       delete process.env.LIBREDB_OPCUA_PKI_ROOT;
     }
   });
+
+  test("an OPC UA provider built after the working directory changed, with LIBREDB_OPCUA_PKI_ROOT unset, takes its default root from the storage location, not from the new working directory", async () => {
+    process.chdir(later);
+    const provider = await createDatabaseProvider(
+      connection("opcua", { host: "opc.tcp://127.0.0.1:1", securityMode: "None" } as Partial<DatabaseConnection>),
+    );
+    expect(markersReachableFrom(provider, [path.join(first, "data", "opcua-pki")])).not.toEqual([]);
+    expect(markersReachableFrom(provider, [later])).toEqual([]);
+  });
+});
+
+describe("the first provider built takes the storage location, whatever its engine (FND-2 slice 3)", () => {
+  afterAll(() => {
+    process.chdir(first);
+    forgetStorageLocation();
+    storageLocation();
+  });
+
+  test.each([
+    ["a postgres connection", { type: "postgres", host: "127.0.0.1", port: 1, database: "app" }],
+    ["a SQLite :memory: connection", { type: "sqlite", database: ":memory:" }],
+  ] as const)(
+    "after %s is built first and the working directory changes, a connection to the storage database is still refused",
+    async (_label, fields) => {
+      process.chdir(first);
+      forgetStorageLocation();
+      await createDatabaseProvider(connection(fields.type, fields as Partial<DatabaseConnection>));
+      process.chdir(later);
+      const refused = await createDatabaseProvider(
+        connection("sqlite", { database: path.join(first, "data", "libredb-storage.db") }),
+      ).then(
+        () => null,
+        (error: unknown) => (error as Error).message,
+      );
+      expect(refused).toBe(RESERVED_STORAGE_PATH);
+    },
+  );
 });

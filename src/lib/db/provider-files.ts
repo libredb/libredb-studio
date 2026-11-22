@@ -34,6 +34,15 @@ export const NUL_IN_DATABASE_PATH = "Invalid database path: NUL bytes are not al
 /** The refusal of a file name that is not text, which no stored or posted connection the forms write carries. */
 export const FILE_NAME_NOT_TEXT = "Invalid database path: the file a connection names must be text";
 
+/** The refusal of a SQLite connection string that is `file:` and nothing after it, which names no file. */
+export const NO_FILE_AFTER_SCHEME = "Invalid database path: the connection string names no file after file:";
+
+/**
+ * The start of the refusal of a path the reserved check could not read, followed by the filesystem's own reason: the
+ * check resolves the path's real location, and the filesystem answered something other than "no such file".
+ */
+export const PATH_NOT_CHECKED = "This connection's file could not be checked against the server's own storage files";
+
 /** The one in-memory name the local-file engines share, exactly as written; any other spelling is a file name. */
 const IN_MEMORY = ":memory:";
 
@@ -58,11 +67,15 @@ function withoutAdmittedFile<T extends DatabaseConnection>(connection: T): T {
  * 3. Absent or empty: the connection without an admitted file, so the provider's own `validate()` refuses it with its
  *    own sentence, or its connect refuses it as not admitted.
  * 4. Not text: refused by name (`FILE_NAME_NOT_TEXT`).
- * 5. Exactly `:memory:`: admitted as `:memory:`.
- * 6. Holding a NUL byte: refused by name (`NUL_IN_DATABASE_PATH`), before anything is resolved.
- * 7. Resolved against the working directory now; one of Studio's own storage files (`isReservedStoragePath`) is refused
- *    by name (`RESERVED_STORAGE_PATH`).
- * 8. Otherwise admitted as that absolute path.
+ * 5. A connection string that is `file:` and nothing after it: refused by name (`NO_FILE_AFTER_SCHEME`), since the
+ *    provider's `validate()` accepts a non-empty string and the string names no file.
+ * 6. Exactly `:memory:`: admitted as `:memory:`.
+ * 7. Holding a NUL byte: refused by name (`NUL_IN_DATABASE_PATH`), before anything is resolved.
+ * 8. Resolved against the working directory now; one of Studio's own storage files (`isReservedStoragePath`) is refused
+ *    by name (`RESERVED_STORAGE_PATH`). A path the check cannot read, where the filesystem answers anything but "no
+ *    such file" (a path through a regular file, a symbolic link loop, a directory the server cannot search), is refused
+ *    by name too (`PATH_NOT_CHECKED`, followed by the filesystem's message, the original error kept as `cause`).
+ * 9. Otherwise admitted as that absolute path.
  *
  * The copy is an object spread, so every other marker survives, and `database` and `connectionString` stay as the
  * record holds them; the caller's record is never written, and an `ADMITTED_FILE` a caller set never survives. Every
@@ -75,12 +88,31 @@ export function admittedFileConnection<T extends DatabaseConnection>(connection:
   if (named === undefined || named === null || named === "") return withoutAdmittedFile(connection);
   if (typeof named !== "string") throw new DatabaseConfigError(FILE_NAME_NOT_TEXT, connection.type);
   const file = named === fromString && named.startsWith(FILE_SCHEME) ? named.slice(FILE_SCHEME.length) : named;
-  if (file === "") return withoutAdmittedFile(connection);
+  if (file === "") throw new DatabaseConfigError(NO_FILE_AFTER_SCHEME, connection.type);
   if (file === IN_MEMORY) return { ...connection, [ADMITTED_FILE]: IN_MEMORY };
   if (file.includes("\0")) throw new DatabaseConfigError(NUL_IN_DATABASE_PATH, connection.type);
   const absolute = path.resolve(file);
-  if (isReservedStoragePath(absolute)) throw new DatabaseConfigError(RESERVED_STORAGE_PATH, connection.type);
+  if (reservedOrUnchecked(absolute, connection.type)) {
+    throw new DatabaseConfigError(RESERVED_STORAGE_PATH, connection.type);
+  }
   return { ...connection, [ADMITTED_FILE]: absolute };
+}
+
+/**
+ * Whether `absolute` is one of Studio's own storage files (`isReservedStoragePath`). A filesystem error the check
+ * raises, one that carries an error code, is raised again as a `DatabaseConfigError` naming `type`, with the
+ * filesystem's message after `PATH_NOT_CHECKED` and the original as `cause`: the connection is refused either way, and
+ * the caller is told why. Any other error is raised as it is.
+ */
+function reservedOrUnchecked(absolute: string, type: DatabaseType): boolean {
+  try {
+    return isReservedStoragePath(absolute);
+  } catch (error) {
+    if (typeof (error as NodeJS.ErrnoException).code !== "string") throw error;
+    const refusal = new DatabaseConfigError(`${PATH_NOT_CHECKED}: ${(error as Error).message}`, type);
+    refusal.cause = error;
+    throw refusal;
+  }
 }
 
 /**

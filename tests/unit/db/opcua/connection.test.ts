@@ -77,13 +77,15 @@ describe("the identity", () => {
   });
 
   test("a username is a username session", () => {
-    const options = readConnection(connection({ user: "okuyucu", password: "s3cret" }), PKI_ROOT);
+    const password = crypto.randomUUID();
+    const options = readConnection(connection({ user: "okuyucu", password }), PKI_ROOT);
     expect(options.identity).toBe("username");
     expect(options.user).toBe("okuyucu");
   });
 
   test("a password with no username names no identity, and is refused", () => {
-    expect(() => readConnection(connection({ password: "s3cret" }), PKI_ROOT)).toThrow(/names no identity/);
+    const password = crypto.randomUUID();
+    expect(() => readConnection(connection({ password }), PKI_ROOT)).toThrow(/names no identity/);
   });
 });
 

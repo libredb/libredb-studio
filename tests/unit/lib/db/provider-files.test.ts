@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, te
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import * as dataDir from "@/lib/data-dir";
 import { forgetStorageLocation, storageLocation } from "@/lib/data-dir";
 import { OPENS_LOCAL_FILE } from "@/lib/db/compatibility";
 import { DatabaseConfigError } from "@/lib/db/errors";
@@ -9,10 +10,12 @@ import { createDatabaseProvider } from "@/lib/db/factory";
 import {
   admittedFileConnection,
   FILE_NAME_NOT_TEXT,
+  NO_FILE_AFTER_SCHEME,
   NUL_IN_DATABASE_PATH,
   OPCUA_PKI_DIRECTORY,
   OPCUA_PKI_ROOT_ENV,
   opcuaPkiRoot,
+  PATH_NOT_CHECKED,
   RESERVED_STORAGE_PATH,
 } from "@/lib/db/provider-files";
 import type { DatabaseConnection } from "@/lib/db/types";
@@ -148,14 +151,24 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
       expect(ADMITTED_FILE in copy).toBe(false);
       expect(admitted(marked)).toBe("/caller/chose.db");
     }
-    const emptyAfterScheme = admittedFileConnection(connection("sqlite", { connectionString: "file:" }));
-    expect(admitted(emptyAfterScheme)).toBeUndefined();
     const refused = await createDatabaseProvider(connection("sqlite", { database: "" })).then(
       () => null,
       (error: unknown) => error,
     );
     expect(refused).toBeInstanceOf(DatabaseConfigError);
     expect((refused as Error).message).toContain("Database file path is required for SQLite");
+  });
+
+  test("a SQLite connection string that names no file after file: is refused by name when the provider is built, with or without a database", async () => {
+    for (const fields of [{ connectionString: "file:" }, { connectionString: "file:", database: "x.db" }]) {
+      const refused = await createDatabaseProvider(connection("sqlite", fields)).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(refused).toBeInstanceOf(DatabaseConfigError);
+      expect((refused as DatabaseConfigError).message).toBe(NO_FILE_AFTER_SCHEME);
+      expect((refused as DatabaseConfigError).provider).toBe("sqlite");
+    }
   });
 
   test("a name that is not text is refused by name", () => {
@@ -186,6 +199,84 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
       expect(refused).toBeInstanceOf(DatabaseConfigError);
       expect((refused as DatabaseConfigError).message).toBe(RESERVED_STORAGE_PATH);
       expect((refused as DatabaseConfigError).provider).toBe(type);
+    }
+  });
+
+  /**
+   * A path the reserved check cannot read: the filesystem answers something other than "no such file" while the check
+   * resolves it. Each case is built through createDatabaseProvider, as every route builds, and is refused by name with
+   * the filesystem's own reason and the original error as its cause.
+   */
+  const unreadable: [string, string, () => string | null][] = [
+    [
+      "a path that runs through a regular file",
+      "ENOTDIR",
+      () => {
+        const plain = path.join(scratch, "plain-file");
+        fs.writeFileSync(plain, "");
+        return path.join(plain, "x.db");
+      },
+    ],
+    [
+      "a symbolic link loop",
+      "ELOOP",
+      () => {
+        // Windows makes a symbolic link only with a privilege the runner may lack.
+        if (process.platform === "win32") return null;
+        const loop = path.join(scratch, "loop-a");
+        fs.rmSync(loop, { force: true });
+        fs.rmSync(path.join(scratch, "loop-b"), { force: true });
+        fs.symlinkSync(path.join(scratch, "loop-b"), loop);
+        fs.symlinkSync(loop, path.join(scratch, "loop-b"));
+        return path.join(loop, "x.db");
+      },
+    ],
+    [
+      "a path under a directory the server cannot search",
+      "EACCES",
+      () => {
+        // Windows has no search permission bit, and root searches every directory.
+        if (process.platform === "win32" || process.getuid?.() === 0) return null;
+        const locked = path.join(scratch, "locked");
+        fs.mkdirSync(locked, { recursive: true });
+        fs.chmodSync(locked, 0o000);
+        return path.join(locked, "x.db");
+      },
+    ],
+  ];
+
+  test.each(unreadable)(
+    "%s (%s) is refused by name when the provider is built, naming the connection's type and the filesystem's reason",
+    async (_label, code, make) => {
+      const database = make();
+      if (database === null) return;
+      try {
+        for (const type of FILE_TYPES) {
+          const refused = await createDatabaseProvider(connection(type, { database })).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          expect(refused).toBeInstanceOf(DatabaseConfigError);
+          const error = refused as DatabaseConfigError;
+          expect(error.provider).toBe(type);
+          expect(error.message.startsWith(`${PATH_NOT_CHECKED}: ${code}: `)).toBe(true);
+          expect((error.cause as NodeJS.ErrnoException).code).toBe(code);
+        }
+      } finally {
+        if (code === "EACCES") fs.chmodSync(path.join(scratch, "locked"), 0o700);
+      }
+    },
+  );
+
+  test("an error the reserved check raises without a filesystem error code is raised as it is", () => {
+    const fault = new TypeError("not a filesystem answer");
+    const check = spyOn(dataDir, "isReservedStoragePath").mockImplementation(() => {
+      throw fault;
+    });
+    try {
+      expect(refusalOf(connection("sqlite", { database: path.join(scratch, "any.db") }))).toBe(fault);
+    } finally {
+      check.mockRestore();
     }
   });
 

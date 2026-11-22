@@ -150,8 +150,10 @@ Every cached path passes the server-derived `allowExternalFileAccess` posture, a
 ### 3.1 File path resolution & the admin-trusted path model
 
 Studio's provider factory decides the target before the provider is built (`admittedFileConnection` in [`provider-files.ts`](../../src/lib/db/provider-files.ts)): `connectionString` with a leading `file:` removed, else `database`; a connection that names neither is refused by `validate()`.
+A connection string that is `file:` and nothing after it names no file, and the factory refuses it by name ("Invalid database path: the connection string names no file after file:"), whatever `database` holds.
 Exactly `:memory:` is kept as it is; any other name is resolved with `path.resolve()` against the working directory when the provider is built.
 A name holding a NUL byte, or naming one of Studio's own storage files, is **refused there with a `DatabaseConfigError`**, so no provider exists to connect.
+So is a path the reserved check cannot read, where the filesystem answers anything but "no such file" (a path through a regular file, a symbolic link loop, a directory the server cannot search): the refusal names the filesystem's reason.
 The provider opens the absolute path it is handed (`getDatabasePath()` in [`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) and resolves nothing itself, so a later change of the working directory does not move the file a built provider opens; a provider built without the factory holds no admitted file, and its connect is refused by name.
 
 A missing parent folder is created on connect, one level at a time, by `createMissingDirectories` ([`create-directory.ts`](../../src/lib/db/utils/create-directory.ts)), shared with the DuckDB provider.
@@ -1445,6 +1447,8 @@ the result codes of a refused statement from the `sqlite` row of `DRIVER_ERROR_C
 |-----------|-------|
 | Missing `database` and `connectionString` | `DatabaseConfigError` |
 | NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed"), raised by the provider factory before the provider is built |
+| A connection string that is `file:` and nothing after it | `DatabaseConfigError` ("Invalid database path: the connection string names no file after file:"), raised by the provider factory before the provider is built |
+| A path the reserved check cannot read (a path through a regular file, a symbolic link loop, a directory the server cannot search) | `DatabaseConfigError` ("This connection's file could not be checked against the server's own storage files: " and the filesystem's message), raised by the provider factory before the provider is built |
 | Selected driver unavailable (no `bun:sqlite` / `node:sqlite` on this runtime) | `DatabaseConfigError` ("SQLite driver … is not available…") |
 | Open failure, a missing folder the filesystem refuses to create and a path or a file beside it that is not a regular file included, on connect and on a worker restart | `ConnectionError` |
 | Write check on an existing file fails with anything but `EACCES` / `EPERM` / `EROFS` | `ConnectionError` with the filesystem's message |

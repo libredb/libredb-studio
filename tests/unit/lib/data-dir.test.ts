@@ -46,7 +46,7 @@ describe("data-dir reserved storage paths", () => {
   let origStoragePath: string | undefined;
 
   // Each test sets STORAGE_SQLITE_PATH before its first check, so the location this process keeps is forgotten around
-  // it and taken again by that check.
+  // it and taken again by that check; a test that sets the variable more than once forgets the location after each set.
   beforeEach(() => {
     origStoragePath = process.env.STORAGE_SQLITE_PATH;
     forgetStorageLocation();
@@ -134,6 +134,7 @@ describe("data-dir reserved storage paths", () => {
       [decomposed, composed],
     ]) {
       process.env.STORAGE_SQLITE_PATH = `${configured}/storage.db`;
+      forgetStorageLocation();
       for (const name of [
         "storage.db",
         "storage.db-wal",
@@ -260,6 +261,16 @@ describe("Studio's storage location is taken once per process (FND-2 slice 3)", 
       storageFile: path.join(scratch, "own.db"),
       dataDirectory: scratch,
     });
+  });
+
+  test("the kept location lives on globalThis under a registered symbol, so every copy of this module reads one location", () => {
+    // Next.js bundles the instrumentation apart from the route handlers, so one server process loads this module twice.
+    const slot = Symbol.for("libredb-studio.storage-location");
+    process.env.STORAGE_SQLITE_PATH = path.join(scratch, "own.db");
+    const location = storageLocation();
+    expect((globalThis as Record<symbol, unknown>)[slot]).toBe(location);
+    forgetStorageLocation();
+    expect(slot in globalThis).toBe(false);
   });
 
   test("forgetStorageLocation makes the next read take it again", () => {

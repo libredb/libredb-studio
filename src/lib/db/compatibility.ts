@@ -532,9 +532,11 @@ export const READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> = Obj
 
 /**
  * Which shipped engines refuse to open a handle at all when its file-access posture is denied, rather
- * than confining it. SQLite's `connect()` refuses before any file I/O because its drivers cannot confine
+ * than confining it. SQLite's `connect()` refuses before it opens anything because its drivers cannot confine
  * statement-level file access, while DuckDB, the other engine that reads the posture, opens the handle
- * with external access off. A true row is always a `READS_FILE_ACCESS_POSTURE` engine.
+ * with external access off. A true row is always a `READS_FILE_ACCESS_POSTURE` engine. The provider
+ * factory's reserved-path check (`admittedFileConnection` in `./provider-files`) runs before this refusal,
+ * when the provider is built, and reads the named path's real location on the host filesystem to do so.
  *
  * Static because MCP decides before any provider exists: `list_connections` and `inspect_schema` ask,
  * through `mcpConnectionUnavailable` in `src/lib/mcp/availability.ts`, whether any open of a listed

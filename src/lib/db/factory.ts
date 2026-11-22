@@ -22,6 +22,7 @@ import {
   assertTunnelRecordIsPlainData,
   providerConnection,
 } from "./provider-connection";
+import { storageLocation } from "@/lib/data-dir";
 import { egressDecision } from "./egress-decision";
 import { trustMaterial } from "./trust-material";
 import { admittedFileConnection, opcuaPkiRoot } from "./provider-files";
@@ -51,9 +52,9 @@ import * as path from "path";
  *   first call of a process with no boot hook reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and keeps it, and an invalid value is
  *   refused on every call. A SQLite, DuckDB or LibreDB connection is then admitted (`admittedFileConnection` in
  *   ./provider-files): the provider is handed, under `ADMITTED_FILE`, the file the connection names resolved against
- *   the working directory of this call, and opens that; `database` and `connectionString` stay as passed. The first
- *   such call, or the first OPC UA build, of a process with no boot hook takes Studio's storage location
- *   (`storageLocation` in @/lib/data-dir) and keeps it.
+ *   the working directory of this call, and opens that; `database` and `connectionString` stay as passed. Studio's
+ *   storage location (`storageLocation` in @/lib/data-dir) is taken beside the egress decision, so the first call of
+ *   a process with no boot hook takes it and keeps it, whatever engine that call builds.
  * @param options - Optional provider options (pooling, timeout, etc.)
  * @param execution - Server-injected execution context (#328, non-admin DuckDB file access). Never built
  *   from caller-supplied options. `acquireExecutionProfileProvider` passes the agent
@@ -89,7 +90,8 @@ import * as path from "path";
  *   ./trust-material): the first such build of a process with no boot hook reads the file and keeps the outcome, and an
  *   invalid file refuses every such build, before the log line, while every other engine is built as before
  * @throws DatabaseConfigError if a SQLite, DuckDB or LibreDB connection names one of Studio's own storage files, a
- *   path holding a NUL byte or a file name that is not text, before the provider is built (see admittedFileConnection),
+ *   path holding a NUL byte, a file name that is not text, a path the reserved check cannot read or, for SQLite, a
+ *   connection string with no file after `file:`, before the provider is built (see admittedFileConnection),
  *   or if an OPC UA connection is built while `LIBREDB_OPCUA_PKI_ROOT` is relative (see opcuaPkiRoot)
  *
  * @example
@@ -267,6 +269,10 @@ export async function createDatabaseProvider(
   assertExecutionContextIsPlainData(execution);
   assertOwnerPoolHonoured(connection, execution);
   const egress = egressDecision();
+  // Studio's storage location, taken here on every call so the first provider built in a process with no boot hook
+  // takes it, whatever its engine, before a later working directory could move it (FND-2 slice 3, docs/SECURITY.md
+  // 3.45). On a standalone server the boot took it already, so this reads the kept location.
+  storageLocation();
   // Every provider is built from the connection `providerConnection` answers: the record with its `sshTunnel` reduced to
   // the public fields, so no provider holds the tunnel's password, private key or passphrase (FND-2,
   // docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider, acquireExecutionProfileProvider,
@@ -839,10 +845,10 @@ const providerCache = new Map<string, CachedProvider>();
  * is per-handle by definition - there is no file to share, no lock to work around, and
  * therefore nothing a borrow could buy.
  *
- * The comparison is EXACT, matching `DuckDBProvider.getDatabasePath()` character for
- * character: that method treats `:memory:` and nothing else as in-memory, and resolves
- * every other spelling - `:MEMORY:`, ` :memory:`, DuckDB's own `:memory:named` - as a
- * relative file path. Two connections spelling one of those the same way really do
+ * The comparison is EXACT, matching `admittedFileConnection` in `./provider-files`
+ * character for character: the admission treats `:memory:` and nothing else as
+ * in-memory, and resolves every other spelling - `:MEMORY:`, ` :memory:`, DuckDB's own
+ * `:memory:named` - as a relative file path, which is the file the provider opens. Two connections spelling one of those the same way really do
  * point at one file, and must keep matching. The narrowing here is only ever as wide as
  * the provider's own reading of the value.
  */

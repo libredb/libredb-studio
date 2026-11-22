@@ -1169,6 +1169,7 @@ The provider raises the shared error classes from
 | Situation | Error |
 |-----------|-------|
 | Missing `database` path at construction | `DatabaseConfigError` |
+| A path the reserved check cannot read (a path through a regular file, a symbolic link loop, a directory the server cannot search) | `DatabaseConfigError` (*"This connection's file could not be checked against the server's own storage files: "* and the filesystem's message), raised by the provider factory before the provider is built |
 | `@libredb/libredb` package not installed | `DatabaseConfigError` — install instructions in message |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails to open the file | `ConnectionError` |

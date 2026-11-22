@@ -4,7 +4,8 @@
  * `createDatabaseProvider` decides the file a SQLite, DuckDB or LibreDB connection names before it builds the provider
  * (`admittedFileConnection` in `src/lib/db/provider-files.ts`): resolved against the working directory then, and
  * refused when it is one of Studio's own storage files. The provider reads the outcome here and resolves no path and
- * reads no setting itself, so neither the working directory at connect nor a provider of its own can move what it opens.
+ * reads neither `STORAGE_SQLITE_PATH` nor the working directory itself, so neither the working directory at connect
+ * nor a provider of its own can move what it opens.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { ADMITTED_FILE, type DatabaseConnection, type DatabaseType, type WithAdmittedFile } from "@/lib/types";

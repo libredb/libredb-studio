@@ -78,7 +78,7 @@ does not install. Three errors, and no others.
 | `session-pool.ts` | One session per connection, opened once, closed on every path out |
 | `connection.ts` | The dialog's fields read into options, every refusal before the dial |
 | `security.ts` | Endpoint, identity policy, certificate pin |
-| `pki.ts` | Where the client's own key pair and trust store live |
+| `pki.ts` | Whether the client's own certificate is supplied or generated; the PKI root is core's |
 | `node-id.ts` | Node-id grammar; the escaped browse path the Keys panel walks |
 | `limits.ts` | Chunk sizes: ours first, the server's only when smaller and real |
 | `key-scan.ts` | One level is one Browse; the capability the panel reads |

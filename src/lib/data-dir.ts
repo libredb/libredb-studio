@@ -9,8 +9,8 @@
  *
  * Studio's storage location, the storage file the variable names resolved against the working directory and the
  * directory that holds it, is taken once per process (`storageLocation`): at boot on a standalone server, after the
- * shutdown handler and before the auth bootstrap (`src/instrumentation.ts`), and at the first file admission or OPC UA
- * build of the provider factory where no boot runs (the published package, the VS Code backend). The reserved set
+ * shutdown handler and before the auth bootstrap (`src/instrumentation.ts`), and at the first call of the provider
+ * factory, whatever engine it builds, where no boot runs (the published package, the VS Code backend). The reserved set
  * below is derived from it, so a later change of the working directory or of the variable moves neither the files
  * Studio protects nor what a connection is compared with. The location lives on `globalThis` under a registered
  * symbol, not in a module-level variable, because Next.js bundles the instrumentation apart from the route handlers,

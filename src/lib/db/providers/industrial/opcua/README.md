@@ -54,9 +54,6 @@ name and can throw (see `hostname-guard.ts`).
 - 41 of 6,769 nodes have more than one PARENT, and 215 therefore have more than one PATH, giving
   7,040 paths in all. More rows than nodes is correct.
 - asyncua never hands back a history continuation point, so paging falls back to the timestamp.
-- The product image's `HOME` is `/nonexistent` and cannot be created, so the LIBRARY's own default
-  PKI root can never be used. The root defaults to `<data directory>/opcua-pki` instead, and
-  `LIBREDB_OPCUA_PKI_ROOT` overrides it: requiring the variable meant the engine could not be
-  connected at all in a default install, which a browser run measured. Studio's provider factory
-  decides the root (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`) and hands it to the provider,
-  which reads no environment of its own.
+- The product image's `HOME` is `/nonexistent` and cannot be created, so the LIBRARY's own default PKI root can never be used.
+  The root defaults to `<data directory>/opcua-pki` instead, and `LIBREDB_OPCUA_PKI_ROOT` overrides it: requiring the variable meant the engine could not be connected at all in a default install, which a browser run measured.
+  Studio's provider factory decides the root (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`) and hands it to the provider, which reads no environment of its own.

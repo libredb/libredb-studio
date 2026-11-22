@@ -505,8 +505,8 @@ The first Db2 build of a process reads the file and keeps its certificates for t
 A file that is missing, unreadable, empty, holds a block under the legacy `X509 CERTIFICATE` label, holds no certificate block or leaves one unclosed is refused with a `DatabaseConfigError` naming the variable, on that Db2 build and every later one, and nothing is built; other engines are built as before.
 A standalone Studio reads the file at boot instead, and refuses to start on such a file.
 
-`createDatabaseProvider` decides the file a SQLite, DuckDB or LibreDB connection names before it builds the provider: a relative path is resolved against the working directory of that call, a path with a NUL byte and one of Studio's own storage files are refused with a `DatabaseConfigError` and nothing is built, and the provider opens the absolute path; `provider.config.database` stays as passed.
-The first such call, or the first OPC UA build, takes Studio's storage location from `STORAGE_SQLITE_PATH` and the working directory, logs it once at info and keeps it for the life of the process.
+`createDatabaseProvider` decides the file a SQLite, DuckDB or LibreDB connection names before it builds the provider: a relative path is resolved against the working directory of that call, a path with a NUL byte, one of Studio's own storage files and a path the reserved check cannot read are refused with a `DatabaseConfigError` and nothing is built, and the provider opens the absolute path; `provider.config.database` stays as passed.
+The first call of a process, whatever engine it builds, takes Studio's storage location from `STORAGE_SQLITE_PATH` and the working directory, logs it once at info and keeps it for the life of the process.
 
 ### DuckDB file access and the execution context
 

@@ -1208,7 +1208,7 @@ The count moved from 58 to 59 on 2026-11-04 with `tests/api/db/inline-connection
 The count moved from 59 to 60 on 2026-11-15 with `tests/api/db/demoted-seed.test.ts`, which demotes a BigQuery seed from `managed: true` to `managed: false` through `POST /api/db/query`: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 The count moved from 60 to 61 on 2026-11-15 with `tests/api/db/literal-seed-server-identity.test.ts`, which opens the BigQuery and Firestore rows of a seed file read in literal mode through `POST /api/db/query`: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 The count moved from 61 to 62 on 2026-11-20 with `tests/api/seed/unavailable-seed-entry.test.ts`, which sends every connection route and the agent run and classify routes a seed whose type names no provider: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
-The count moved from 62 to 63 on 2026-11-22 with `tests/api/db/reserved-storage-routes.test.ts`, which sends Test Connection and provider-meta an inline SQLite connection to Studio's own storage database: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
+The count moved from 63 to 64 on 2026-11-22 with `tests/api/db/reserved-storage-routes.test.ts`, which sends Test Connection and provider-meta an inline SQLite connection to Studio's own storage database: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 
 `src/lib/auth.ts` re-exports three names from `src/lib/auth-cookies.ts` that every hand-written stub lacks:
 `resetCookieSecurityWarning`, `readCookieSecureOverride` and `isLoopbackHost`, re-measured 2026-10-30.
@@ -2561,7 +2561,7 @@ Deferred by Spec A (seed sources), which refuses a connection string only where 
 
 `ProviderCapabilities.supportsConnectionString` in `src/lib/db/types.ts` has no docblock and no reader in `src` outside the providers, so each provider has given it its own meaning.
 mssql declares `true` in `src/lib/db/providers/sql/mssql.ts` because the connection form splits a pasted `mssql://` or `sqlserver://` URI into fields, while its `buildConfig` never reads `connectionString` and defaults the server to `localhost` (`docs/providers/mssql.md` section 4.4).
-sqlite declares `false` in `src/lib/db/providers/sql/sqlite.ts` while its `getDatabasePath` opens `connectionString` as the database file path, with a `file:` prefix removed.
+sqlite declares `false` in `src/lib/db/providers/sql/sqlite.ts` while `admittedFileConnection` in `src/lib/db/provider-files.ts` takes `connectionString` as the database file path it opens, with a `file:` prefix removed.
 `CONNECTION_STRING_ACCEPTED` in `src/lib/db/compatibility.ts` follows what each provider reads, so it carries both as declared exceptions to the flag, each pinned by a behavioural test in `tests/unit/db/connection-string-records.test.ts` instead of by the census there.
 
 Deferred by Spec A (seed sources), which needed the providers' reading for its refusal and left both flags as they are.
@@ -4384,7 +4384,7 @@ Found 2026-11-02 while verifying the fix for D160.
 
 ### D425. A file engine's open error names the server's absolute path, and LibreDB's says "agent" to every caller
 
-`describeOpenError` in `src/lib/db/providers/embedded/libredb.ts` answers an `ENOENT` with "The LibreDB file <path> does not exist. The agent opens an existing file only and creates none.", where `<path>` is `resolveDatabasePath()`, the absolute path on the Studio server.
+`describeOpenError` in `src/lib/db/providers/embedded/libredb.ts` answers an `ENOENT` with "The LibreDB file <path> does not exist. The agent opens an existing file only and creates none.", where `<path>` is `admittedDatabasePath()`, the absolute path on the Studio server.
 Its comment says only an agent profile's open can meet a missing file, and that no longer holds on two paths.
 - **MCP:** `inspect_schema` and `run_libredb_read` on a LibreDB seed whose file is missing are answered with that sentence, so an MCP client is told about "the agent" and is shown the server's file system layout.
 - **The editor:** An editor open of `/proc/self/environ` fails with the same sentence, because the kernel's `.lock` sidecar cannot be created there and its `ENOENT` takes this branch; the file exists, and no agent is involved (measured 2026-11-03 with `new LibreDBProvider(...).connect()` under no execution profile).
