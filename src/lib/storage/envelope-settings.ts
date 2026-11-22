@@ -18,10 +18,11 @@ export type ResealSetting = "off" | "reseal" | "leave-unopened";
 
 /**
  * Logged as the refusal when STORAGE_ENCRYPTION_REQUIRE_V2 is set and the store does not record that version 1 is
- * retired: by initialize, and by the boot check after the re-seal.
+ * retired: by initialize, and by the boot check after the re-seal. A missing row does not say which of the three cases
+ * the store is in, so the refusal names them and when to re-seal rather than restore.
  */
 export const VERSION_TWO_NOT_RECORDED =
-  "STORAGE_ENCRYPTION_REQUIRE_V2 is set, but the store holds no credential_envelope row recording that version 1 is retired, so it has not been re-sealed: start once with STORAGE_ENCRYPTION_RESEAL=true as well, which re-seals the store and records it (docs/STORAGE.md, Re-sealing the store).";
+  "STORAGE_ENCRYPTION_REQUIRE_V2 is set, but the store holds no credential_envelope row recording that version 1 is retired. A store that was never re-sealed holds none, and neither does one restored from a copy taken before its re-seal or one whose row was deleted. Re-seal only a store whose contents you know, by starting once with STORAGE_ENCRYPTION_RESEAL=true as well, which seals every version 1 and unsealed value it holds for the record and field that hold it and records the row; otherwise restore the store from a backup taken after its re-seal (docs/STORAGE.md, Requiring version 2).";
 
 /** A credential envelope setting whose value is none of its spellings. */
 export class InvalidStorageSetting extends Error {

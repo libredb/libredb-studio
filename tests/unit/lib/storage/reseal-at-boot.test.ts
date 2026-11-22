@@ -167,7 +167,7 @@ describe("resealStoreAtBoot", () => {
     const lines = warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"));
     expect(lines).toEqual([
       `STORAGE_ENCRYPTION_RESEAL: backed up the store to ${join(dir, backup!)}, re-sealed 1 value(s) and kept 0 already sealed for their place; version 1 is retired.`,
-      "STORAGE_ENCRYPTION_RESEAL: remove it now; every start re-checks the store while it is set.",
+      "STORAGE_ENCRYPTION_RESEAL: remove it now; while it is set, every start that finds no credential_envelope row re-seals the store as it is then.",
     ]);
     const db = new Database(path);
     try {
@@ -256,7 +256,7 @@ describe("resealStoreAtBoot", () => {
 
     expect(result).toBe(true);
     expect(warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"))).toEqual([
-      "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up. Remove STORAGE_ENCRYPTION_RESEAL now.",
+      "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up. Remove STORAGE_ENCRYPTION_RESEAL now; while it is set, every start that finds no credential_envelope row re-seals the store as it is then.",
     ]);
     expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual(backups);
   });

@@ -99,8 +99,14 @@ describe("STORAGE_ENCRYPTION_RESEAL", () => {
   });
 });
 
-test("the missing-marker refusal names the setting, the missing row and the re-seal that records it", () => {
+test("the missing-marker refusal names the setting and the missing row, and says when to re-seal and when to restore instead", () => {
   expect(VERSION_TWO_NOT_RECORDED).toContain("STORAGE_ENCRYPTION_REQUIRE_V2 is set");
   expect(VERSION_TWO_NOT_RECORDED).toContain("credential_envelope");
-  expect(VERSION_TWO_NOT_RECORDED).toContain("STORAGE_ENCRYPTION_RESEAL=true");
+  // A missing row does not tell a store never re-sealed from one restored or whose row was deleted.
+  expect(VERSION_TWO_NOT_RECORDED).not.toContain("has not been re-sealed");
+  expect(VERSION_TWO_NOT_RECORDED).toContain("restored from a copy taken before its re-seal");
+  expect(VERSION_TWO_NOT_RECORDED).toContain(
+    "Re-seal only a store whose contents you know, by starting once with STORAGE_ENCRYPTION_RESEAL=true as well",
+  );
+  expect(VERSION_TWO_NOT_RECORDED).toContain("otherwise restore the store from a backup taken after its re-seal");
 });

@@ -1,7 +1,8 @@
 /**
  * STORAGE_ENCRYPTION_RESEAL, the operator's re-seal of the server store (docs/STORAGE.md, "Re-sealing the store").
  *
- * Set on every server once every server runs this version, and removed after one restart: the first start backs the
+ * Set on every server once every server runs this version, and removed after one restart (while it is set, every start
+ * that finds no credential_envelope row re-seals the store as it is then): the first start backs the
  * store up completely, re-seals every stored credential as a version 2 envelope bound to its place, and records that
  * version 1 is retired; any other replica starting at the same time waits on the store's lock and finds nothing to do.
  * It follows ADMIN_PASSWORD_RESET (an environment variable plus a restart) and the boot preflights (a banner and exit
@@ -124,7 +125,7 @@ async function resealAtBoot(leaveUnopened: boolean): Promise<boolean> {
     const report = await resealStore(provider, new Date(), { leaveUnopened });
     if (report.kind === "already-retired") {
       logger.warn(
-        "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up. Remove STORAGE_ENCRYPTION_RESEAL now.",
+        "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up. Remove STORAGE_ENCRYPTION_RESEAL now; while it is set, every start that finds no credential_envelope row re-seals the store as it is then.",
         { route: "storage-reseal" },
       );
       return true;
@@ -157,9 +158,10 @@ async function resealAtBoot(leaveUnopened: boolean): Promise<boolean> {
         { route: "storage-reseal" },
       );
     }
-    logger.warn("STORAGE_ENCRYPTION_RESEAL: remove it now; every start re-checks the store while it is set.", {
-      route: "storage-reseal",
-    });
+    logger.warn(
+      "STORAGE_ENCRYPTION_RESEAL: remove it now; while it is set, every start that finds no credential_envelope row re-seals the store as it is then.",
+      { route: "storage-reseal" },
+    );
     return true;
   } catch (error) {
     return refuse([
