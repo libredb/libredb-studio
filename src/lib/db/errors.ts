@@ -388,6 +388,36 @@ export class ExecutionProfileError extends Error {
   }
 }
 
+/**
+ * An execution profile refusal Studio's own code wrote: the factory's acquisition checks, MCP's open, the statement
+ * review and the core read path. It exists only to mark Studio's sentence apart from a provider's, which raises the
+ * parent class, so the agent and MCP say this one in Studio's voice and fence a provider's as the provider's text.
+ * Its `name` stays `ExecutionProfileError`, so a log line and a reader of the name see no difference. No provider
+ * constructs it; tests/unit/db/operations/provider-text-census.test.ts holds that.
+ */
+export class StudioProfileRefusal extends ExecutionProfileError {
+  constructor(message: string, reasonCode: ExecutionProfileDenyCode) {
+    super(message, reasonCode);
+    this.name = "ExecutionProfileError";
+    Object.setPrototypeOf(this, StudioProfileRefusal.prototype);
+  }
+}
+
+/**
+ * What core answers in place of a provider's error whose text held a credential of the calling connection, when the
+ * error leaves core for a renderer that does not hold the connection (an error response, a route's log line). Its
+ * message is the withheld sentence and it carries none of the original's text or stack; the original is never
+ * changed, because providers throw shared error instances. Constructed only by `withholdProviderError`
+ * (src/lib/db/operations/provider-text.ts).
+ */
+export class ProviderTextWithheldError extends DatabaseError {
+  constructor(message: string, provider: DatabaseType) {
+    super(message, provider);
+    this.name = "ProviderTextWithheldError";
+    Object.setPrototypeOf(this, ProviderTextWithheldError.prototype);
+  }
+}
+
 // ============================================================================
 // Type Guards
 // ============================================================================

@@ -5,7 +5,7 @@
  * mask still shows the secret's length and its neighbours.
  */
 import { describe, expect, test } from "bun:test";
-import { secretForms, serverText } from "@/lib/db/utils/server-text";
+import { holdsSecretForm, secretForms, serverText } from "@/lib/db/utils/server-text";
 
 const WITHHELD = "(the server's text was withheld because it contained the configured credential)";
 const base64 = (value: string) => Buffer.from(value, "utf8").toString("base64");
@@ -83,5 +83,16 @@ describe("serverText", () => {
 
   test("serverText ignores an empty form", () => {
     expect(serverText("the server's own sentence", [""])).toBe("the server's own sentence");
+  });
+});
+
+describe("holdsSecretForm", () => {
+  test("holdsSecretForm is the predicate serverText applies", () => {
+    const forms = secretForms(["s3cr3t/pass word"]);
+    for (const raw of ["auth failed for s3cr3t/pass word", "Secret rejected", "no form here", ""]) {
+      expect(holdsSecretForm(raw, forms)).toBe(serverText(raw, forms) === WITHHELD);
+    }
+    expect(holdsSecretForm("anything", [""])).toBe(false);
+    expect(holdsSecretForm("rejected s3cr3t/pass word", forms)).toBe(true);
   });
 });
