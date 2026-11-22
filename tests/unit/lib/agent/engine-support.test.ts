@@ -8,17 +8,20 @@ import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 
 /**
- * `AGENT_EXECUTION_ENGINES` is a CLAIM about the providers, not a second source of truth.
- * Since the `POST /api/agent/runs` pre-flight started refusing on it, a stale entry is no
- * longer a wrong sentence on the login hero - it is a 400 on a run the factory would have
- * executed, or a run admitted that the factory then kills with
- * `PROFILE_UNSUPPORTED_BY_PROVIDER`. The factory's real gate is
- * `acquisition.requiresReadOnlyStatements && typeof provider.queryReadOnly !== "function"`
- * (`src/lib/db/factory.ts`).
+ * `AGENT_EXECUTION_ENGINES` (`src/lib/db/compatibility.ts`) is Studio's review record of the engines
+ * agent and MCP statements run on, and every statement gate reads it at run time: the start of a run,
+ * the factory's statement profiles and the core read path refuse an engine it does not list with
+ * `PROFILE_ENGINE_NOT_REVIEWED`, whatever its provider implements. A provider's `queryReadOnly` is a
+ * second precondition, required and never enough.
  *
- * So this file measures the providers instead of reciting the list a second time - a test
- * that repeats `["postgres", "sqlite"]` on both sides pins nothing. It closes the loop over
- * EVERY id in the `DatabaseType` union, and derives all three inputs from source:
+ * So this file holds the first-party providers to the record in both directions. A reviewed engine
+ * always has the protected read path, so no engine on the record is refused for want of one; and a
+ * first-party provider that gains one fails here until a review row is written, rather than shipping
+ * a path every gate would refuse.
+ *
+ * It measures the providers instead of reciting the list a second time - a test that repeats
+ * `["postgres", "sqlite"]` on both sides pins nothing. It closes the loop over EVERY id in the
+ * `DatabaseType` union, and derives all three inputs from source:
  *
  * 1. the union itself, parsed out of `src/lib/types.ts` (the ids are erased at runtime);
  * 2. the module specifier and class name per id, parsed out of the `createProvider` switch

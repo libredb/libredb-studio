@@ -2548,6 +2548,7 @@ through `queryReadOnly()`, where the DATABASE — not a SQL parser — is the bo
 - The profiled cache is physically separate from `getOrCreateProvider`'s cache: an agent
   acquisition never returns, inserts, or touches a shared writable entry (unit-tested in both
   directions), so an agent execution can never be handed the editor's pool — and vice versa.
+- An engine Studio's review record (`AGENT_EXECUTION_ENGINES` in [compatibility.ts](../../src/lib/db/compatibility.ts)) does not list is refused first, with `PROFILE_ENGINE_NOT_REVIEWED`, before anything is built or dialled, even when its provider implements `queryReadOnly`.
 - Provider types without a read-only statement path (`queryReadOnly`) are refused with
   `PROFILE_UNSUPPORTED_BY_PROVIDER`; there is no fallback to `query()`. A provider that supports the
   profile but cannot apply it to *this* target refuses with `PROFILE_UNSUPPORTED_TARGET` (SQLite

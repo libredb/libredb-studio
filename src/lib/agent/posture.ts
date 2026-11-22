@@ -7,7 +7,7 @@
  * the single reading, in four levels, and it is the ONLY thing the safety strip renders.
  *
  * It states nothing new. Every claim here is a claim some other module enforces:
- * `AGENT_EXECUTION_ENGINES` mirrors the factory's profile gate, the figures come from the
+ * `AGENT_EXECUTION_ENGINES` is the review record the profile gate reads, the figures come from the
  * workflow policy rows and from `AGENT_HANDOVER_BUDGET`, and the hand-over paragraph IS the
  * sentence the consent step shows - `autoExecuteTerms` below is that one source, exported so
  * the strip and the consent card cannot drift into two versions of a sentence a user agrees

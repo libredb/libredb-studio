@@ -582,21 +582,25 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
 });
 
 /**
- * The engines on which **agent mode** executes statements itself.
+ * The engines on which **agent mode** executes statements itself: Studio's review record of the
+ * engines agent and MCP statements run on.
  *
- * This mirrors - it does not implement - the factory's gate. A profiled acquisition is
- * refused unless the provider exposes a read-only statement path
- * (`acquisition.requiresReadOnlyStatements && typeof provider.queryReadOnly !== "function"`,
- * `src/lib/db/factory.ts`), which throws `PROFILE_UNSUPPORTED_BY_PROVIDER` and ends the run
- * `engine-unsupported`. `queryReadOnly` exists on the providers this list names, each under a
+ * Every agent and MCP statement gate reads this record at run time, and an engine it does not
+ * list is refused by name, whatever its provider implements: the start of a statement-sending
+ * agent run (`workflowAvailability`, `src/lib/agent/agent-manifest.ts`), the factory's
+ * `agent-read-only` and `agent-handover` acquisition and the core read path every agent,
+ * hand-over and MCP statement passes (`runReadOnlyReading`), both through
+ * `assertStatementsReviewed` (`src/lib/db/statement-review.ts`, `PROFILE_ENGINE_NOT_REVIEWED`),
+ * and MCP's served set (`src/lib/mcp/tools/served-engines.ts`). A provider's read-only
+ * statement path is a second precondition, required and never enough: an engine on the record
+ * whose provider has no `queryReadOnly` is still refused `PROFILE_UNSUPPORTED_BY_PROVIDER`,
+ * never served `query()`. `queryReadOnly` exists on the providers this list names, each under a
  * boundary it declares (`providers/sql/postgres.ts`, `providers/sql/sqlite.ts`,
  * `providers/sql/duckdb/`, `providers/sql/mssql.ts`, `providers/sql/mysql.ts`,
  * `providers/platform/kubernetes/`, `providers/document/mongodb/index.ts`,
  * `providers/sql/clickhouse/index.ts`, `providers/sql/libsql/index.ts`,
  * `providers/timeseries/influxdb/sql-provider.ts`, `providers/sql/search/index.ts`,
- * `providers/sql/db2/index.ts`), and that probe
- * stays the real rule: replacing it with this list would let the list go stale against the
- * drivers.
+ * `providers/sql/db2/index.ts`).
  *
  * They do not draw the boundary the same way, and the list deliberately says nothing about that.
  * PostgreSQL, SQLite, DuckDB, SQL Server and MySQL bound a statement with the engine's own
@@ -675,9 +679,10 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
  * refused; Studio's reader admits the database, collection, schema, statistics, load state, partition, index and alias
  * reads in the connection's own database, so no search runs a function on the server, and every answer carries names,
  * counts and flags only. Each provider's own `queryReadOnly` argues its own case.
- * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
- * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
- * factory would construct, and fails if this array and the drivers diverge in either direction.
+ * `tests/unit/lib/agent/engine-support.test.ts` holds the first-party providers to this record in
+ * both directions - it walks EVERY id in the `DatabaseType` union and reads `queryReadOnly` off the
+ * real provider class the factory would construct - so a reviewed engine always has its protected
+ * read path, and a provider that gains one fails there until its review row is written here.
  *
  * Two things it deliberately does NOT say, because user-facing copy that compresses them
  * overclaims (docs/AGENT.md, the "Agent mode requires" paragraph that opens it):
