@@ -122,7 +122,7 @@ It prints one banner that names every variable to fix and never prints a secret,
 - `LIBREDB_MCP_ENABLED` or `LIBREDB_AGENT_ENABLED` is set to anything but empty or a value that switches it off: `false`, `off` or `0`.
 - `GOVERNANCE_POSTGRES_URL`, `GOVERNANCE_INSTANCE_ID`, `GOVERNANCE_PRIVATE_KEYS_FILE` or `STORAGE_POSTGRES_SCHEMA` is missing.
 - The keyring file does not load, for one of the reasons [keyring](#keyring) lists.
-- A variable of the table above has an invalid value, `GOVERNANCE_SOURCE` included, or `GOVERNANCE_ALLOWED_ENGINES` names an engine Studio has no connection type for.
+- A variable of the table above has an invalid value, `GOVERNANCE_SOURCE` included, or `GOVERNANCE_ALLOWED_ENGINES` names an engine this Studio has no provider for, which the banner names in the sentence Studio refuses such a connection type with, such as `No provider for the connection type "postgress" is installed in this LibreDB Studio.`
 
 ### What governance mode switches off
 
@@ -543,7 +543,8 @@ A control plane reads `bridge.studio_instance` to show its Studio instances:
 ## Versioning and upgrade order
 
 - `bridge.contract` keeps its shape forever.
-- Within a version the only changes allowed are nullable columns appended to a view with `CREATE OR REPLACE VIEW`, new engines, new allowlisted settings and new sources of rows with the same meaning.
+- Within a version the only changes allowed are nullable columns appended to a view with `CREATE OR REPLACE VIEW`, new engines, new allowlisted settings, new skip codes and new sources of rows with the same meaning.
+- A new skip code can take over cases an older code covered, as `PROVIDER_UNKNOWN` took the engines that name no provider from `ENGINE_UNSUPPORTED`: the manifest of the release that first writes it lists it, the control plane vendors that release before Studio is upgraded, and an instance of an earlier release reports those rows under the older code until it is upgraded.
 - Anything else is a new version, published as `_v2` objects next to the `_v1` ones, with `bridge.contract` listing both.
 - Studio declares the versions it supports, `[1]` in this release, uses the highest version both sides have, and reports it in its heartbeat and in `GET /api/ready`.
 - A control plane keeps version 1 until its `sunset_after` has passed and no heartbeat has reported version 1 for 7 days.
@@ -556,7 +557,7 @@ A control plane reads `bridge.studio_instance` to show its Studio instances:
 Studio checks each `bridge.connections_v1` row in order and skips a row with a code instead of failing the whole snapshot:
 
 1. `connection_id` has the published format, and no id appears twice.
-2. The engine is in `GOVERNANCE_ALLOWED_ENGINES` (by default `postgres,mysql,mssql,oracle,mongodb,redis`) and opens no local file: `sqlite`, `duckdb` and `libredb` are never governed.
+2. The engine names a provider this Studio has, opens no local file (`sqlite`, `duckdb` and `libredb` are never governed), and is in `GOVERNANCE_ALLOWED_ENGINES` (by default `postgres,mysql,mssql,oracle,mongodb,redis`).
 3. A PostgreSQL definition without a `database` is skipped, because a server-level connection opens sessions to every database the credential can reach.
 4. The definition holds only keys of the allowlist below, each with a value in its domain.
 5. The read envelope opens, and the record merged from the row and the read credential passes Studio's own connection validation.
@@ -566,6 +567,7 @@ Studio checks each `bridge.connections_v1` row in order and skips a row with a c
    A write envelope that does not open, or whose record fails, keeps the row with read access only.
 
 A row reports only its first fault, checked in this order: the id, the engine, the definition, the read envelope with the record merged from it, then the write envelope with its record.
+Within the engine, one that names no provider is reported before one that opens a local file, and that before one outside `GOVERNANCE_ALLOWED_ENGINES`.
 Within the definition, a credential key is reported as `DEFINITION_HAS_SECRET` before any other key is checked.
 A skip at the write level, one that carries `"level": "write"`, is the only one whose row stays admitted, with read access only; every other skip leaves the row out.
 
@@ -575,7 +577,8 @@ A skip at the write level, one that carries `"level": "write"`, is the only one 
 | `WRITE_SECRET_UNOPENABLE` | The write envelope did not open, so the row is kept with read access only. |
 | `DEFINITION_INVALID` | The id, a definition key or a value is not one the contract admits. |
 | `DEFINITION_HAS_SECRET` | The definition carries a credential, which belongs in an envelope. |
-| `ENGINE_UNSUPPORTED` | The engine is not a Studio type id, or it opens a local file. |
+| `PROVIDER_UNKNOWN` | The engine names no provider this Studio has: it is not one of its connection type ids, such as a misspelt engine or one only a newer Studio serves. |
+| `ENGINE_UNSUPPORTED` | The engine is a Studio type id that opens a local file, which governance never serves. |
 | `ENGINE_NOT_ALLOWED` | The engine is a Studio type id outside `GOVERNANCE_ALLOWED_ENGINES`. |
 | `SERVER_LEVEL_NOT_ALLOWED` | A PostgreSQL definition has no `database`. |
 | `SETTING_INVALID` | A runtime setting's value is outside its key's domain, so Studio ignores it. |

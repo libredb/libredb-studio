@@ -587,6 +587,7 @@ describe("contract-v1.json", () => {
       "ENGINE_NOT_ALLOWED",
       "SERVER_LEVEL_NOT_ALLOWED",
       "SETTING_INVALID",
+      "PROVIDER_UNKNOWN",
     ]);
     expect(manifest.codes.envelope).toEqual([
       "FORMAT",

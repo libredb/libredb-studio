@@ -51,7 +51,8 @@ export const PING_CHANNEL_PREFIX = "libredb_bridge_ping_";
 
 /**
  * Why Studio left a row out of its snapshot (docs/GOVERNANCE.md#row-admission-and-skip-codes). A skip carries ids,
- * levels, paths and codes, never values.
+ * levels, paths and codes, never values. A later code is appended here under the same contract version, as
+ * docs/GOVERNANCE.md#versioning-and-upgrade-order allows, and the manifest is regenerated in the same commit.
  */
 export const SKIP_CODES = [
   "READ_SECRET_UNOPENABLE",
@@ -62,6 +63,7 @@ export const SKIP_CODES = [
   "ENGINE_NOT_ALLOWED",
   "SERVER_LEVEL_NOT_ALLOWED",
   "SETTING_INVALID",
+  "PROVIDER_UNKNOWN",
 ] as const;
 
 /** Why a sealed `lsb1` envelope did not open (docs/GOVERNANCE.md#sealed-credentials-lsb1). */

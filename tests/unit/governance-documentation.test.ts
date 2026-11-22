@@ -44,14 +44,14 @@ describe("docs/GOVERNANCE.md", () => {
       ...MANIFEST.conformanceFiles.filter((file) => !named(file)),
     ];
     expect(missing).toEqual([]);
-    // Non-vacuity: eleven objects, eight keys, eight codes, three shapes and three files.
+    // Non-vacuity: eleven objects, eight keys, nine codes, three shapes and three files.
     expect(
       MANIFEST.objects.length +
         MANIFEST.settings.length +
         MANIFEST.codes.skip.length +
         Object.keys(MANIFEST.heartbeat).length +
         MANIFEST.conformanceFiles.length,
-    ).toBe(33);
+    ).toBe(34);
     // The control plane's database role is `libredb_platform`, a fixed name of the contract; the product is not named.
     expect(DOC).not.toMatch(/libredb[- ]platform/i);
   });

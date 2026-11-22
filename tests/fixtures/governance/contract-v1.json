@@ -1854,7 +1854,8 @@
       "ENGINE_UNSUPPORTED",
       "ENGINE_NOT_ALLOWED",
       "SERVER_LEVEL_NOT_ALLOWED",
-      "SETTING_INVALID"
+      "SETTING_INVALID",
+      "PROVIDER_UNKNOWN"
     ],
     "envelope": [
       "FORMAT",
@@ -1933,7 +1934,8 @@
                 "ENGINE_UNSUPPORTED",
                 "ENGINE_NOT_ALLOWED",
                 "SERVER_LEVEL_NOT_ALLOWED",
-                "SETTING_INVALID"
+                "SETTING_INVALID",
+                "PROVIDER_UNKNOWN"
               ]
             }
           },

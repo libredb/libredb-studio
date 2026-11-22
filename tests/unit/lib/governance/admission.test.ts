@@ -11,6 +11,7 @@ import { afterAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { OPENS_LOCAL_FILE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   type AdmissionOptions,
   type AdmissionResult,
@@ -25,6 +26,7 @@ import { type Keyring, type OpenedSecret, openSealedSecret, type SecretBinding }
 import { openGovernedSecret } from "@/lib/governance/secrets";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/governance/keyring-file";
 import { sealSecret } from "../../../helpers/governance/lsb1-seal";
+import { OUTSIDE_THE_UNION } from "../../../helpers/outside-the-union";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -253,13 +255,31 @@ describe("admitConnectionRows", () => {
       skipItem("embedded", "ENGINE_UNSUPPORTED"),
     ]);
     expect(named.admitted.map((connection) => connection.id)).toEqual(["db2"]);
+  });
 
-    // A name that is no Studio type id is unsupported too, and so is an engine column that is not text.
-    const unknown = admit([
-      connectionRow({ id: "typo", engine: "postgress" }),
-      connectionRow({ columns: { engine: 5 } }),
-    ]);
-    expect(itemsOf(unknown)).toEqual([skipItem("typo", "ENGINE_UNSUPPORTED"), skipItem(ID, "ENGINE_UNSUPPORTED")]);
+  test("a row whose engine names no provider is PROVIDER_UNKNOWN, never ENGINE_UNSUPPORTED, before any envelope is opened, whatever GOVERNANCE_ALLOWED_ENGINES names", () => {
+    const rows: readonly (readonly [string, unknown])[] = [["a typo of a type id", "postgress"], ...OUTSIDE_THE_UNION];
+    const allowedEngines = [...OPTIONS.allowedEngines, "postgress", "acmefoo", "constructor"];
+    for (const [label, engine] of rows) {
+      opened.length = 0;
+      const result = admit([connectionRow({ columns: { engine } })], { allowedEngines });
+      expect([label, result.admitted, itemsOf(result)]).toEqual([label, [], [skipItem(ID, "PROVIDER_UNKNOWN")]]);
+      expect([label, SKIPPED_SHAPE.safeParse(itemsOf(result)).success]).toEqual([label, true]);
+      expect([label, opened]).toEqual([label, []]);
+    }
+  });
+
+  test("every engine that opens a local file stays ENGINE_UNSUPPORTED, named in GOVERNANCE_ALLOWED_ENGINES or not", () => {
+    const files = SHIPPED_DATABASE_TYPES.filter((type) => OPENS_LOCAL_FILE[type]);
+    expect(files).toEqual(expect.arrayContaining(["sqlite", "duckdb", "libredb"]));
+    for (const allowedEngines of [OPTIONS.allowedEngines, [...OPTIONS.allowedEngines, ...files]]) {
+      const result = admit(
+        files.map((engine) => connectionRow({ id: engine, engine, definition: { database: `/srv/orders.${engine}` } })),
+        { allowedEngines },
+      );
+      expect(itemsOf(result)).toEqual(files.map((engine) => skipItem(engine, "ENGINE_UNSUPPORTED")));
+    }
+    expect(opened).toEqual([]);
   });
 
   test("an unopenable write envelope keeps the row with read access and records WRITE_SECRET_UNOPENABLE", () => {
@@ -656,6 +676,7 @@ describe("admitConnectionRows", () => {
       connectionRow({ id: "twice", definition }),
       connectionRow({ id: "file", engine: "sqlite", definition: { database: "/srv/file-value.db" } }),
       connectionRow({ id: "db2", engine: "db2", definition }),
+      connectionRow({ id: "no-provider", engine: "acmefoo", definition }),
       connectionRow({ id: "server", definition: { host: "host-value.example.internal", port: 5432 } }),
       connectionRow({ id: "leak", definition: { ...definition, password: leaked } }),
       connectionRow({ id: "timeout", definition: { ...definition, queryTimeout: 60000 } }),

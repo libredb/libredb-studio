@@ -152,7 +152,7 @@ interface SeedConnection {
   readonly readToUnknownKey?: true;
 }
 
-/** One row of each fate admission can give a row: admitted with both levels, read only, and four skips. */
+/** One row of each fate admission can give a row: admitted with both levels, read only, and five skips. */
 const CONNECTIONS: readonly SeedConnection[] = [
   { id: "live-both", write: true },
   { id: "live-read-only", write: "foreign" },
@@ -160,6 +160,7 @@ const CONNECTIONS: readonly SeedConnection[] = [
   { id: "live-secret-in-definition", definition: { ...DEFINITION, password: "example-only-inline-password" } },
   { id: "live-server-level", definition: { host: "orders.db.example.internal", port: 5432 } },
   { id: "live-file-engine", engine: "sqlite", definition: { database: "/data/orders.db" } },
+  { id: "live-no-provider", engine: "acmefoo" },
 ];
 
 const GRANTS = [
@@ -330,6 +331,7 @@ const CASES: readonly LiveCase[] = [
           ],
           [{ kind: "connection", id: "live-server-level", path: "database", code: "SERVER_LEVEL_NOT_ALLOWED" }, null],
           [{ kind: "connection", id: "live-file-engine", code: "ENGINE_UNSUPPORTED" }, null],
+          [{ kind: "connection", id: "live-no-provider", code: "PROVIDER_UNKNOWN" }, null],
         ],
         "skipped rows",
       );
