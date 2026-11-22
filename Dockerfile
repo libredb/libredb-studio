@@ -162,6 +162,12 @@ ENV NODE_OPTIONS="--max-old-space-size=384"
 # which is the documented trade, not a silent one.
 ENV WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow
 
+# Studio's shutdown handler owns the exit on SIGTERM and SIGINT: it closes the
+# HTTP server, waits for the requests in flight, inserts the queued query events
+# and closes the providers before it exits (docs/DISTRIBUTION.md, "Stopping the
+# server"). Set it to the empty string to leave the exit to Next.js's handler.
+ENV NEXT_MANUAL_SIG_HANDLE=true
+
 COPY --from=builder /usr/src/app/public ./public
 
 # Set the correct permission for prerender cache and storage

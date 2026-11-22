@@ -373,6 +373,21 @@ describe("published image variants", () => {
     },
   );
 
+  test.each(VARIANTS)(
+    "%s sets NEXT_MANUAL_SIG_HANDLE=true in its runner stage, so Studio's shutdown handler owns the exit",
+    (variant) => {
+      // With the variable set, Next.js installs no signal handler and Studio's own drains the requests in flight,
+      // inserts the queued query events and closes the providers before it exits (docs/DISTRIBUTION.md,
+      // "Stopping the server"). Only the runner stage runs the server, so no other stage sets it.
+      const [before, runner] = readRepoFile(variant).split(/^FROM .* AS runner$/m);
+      const settings = (text: string) =>
+        instructions(text ?? "").filter((line) => /^ENV\s+NEXT_MANUAL_SIG_HANDLE\b/.test(line));
+
+      expect(settings(runner)).toEqual(["ENV NEXT_MANUAL_SIG_HANDLE=true"]);
+      expect(settings(before)).toEqual([]);
+    },
+  );
+
   test("the Docker build matrix builds every variant, and only those", () => {
     expect(
       matrixVariants()
