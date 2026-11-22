@@ -34,6 +34,7 @@ import {
   TEST_TRANSPORT_OPTIONS,
   xmlAnswer,
 } from "../../../helpers/s3-fake-transport";
+import { errorKind } from "@/lib/db/error-record";
 
 const MARKER = "tenant-marker";
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 100, maxResultBytes: 1_000_000 };
@@ -187,6 +188,7 @@ describe("the bucket listing", () => {
     const failure = await over.run({ op: "list-buckets" }, { ...BUDGET, maxResultRows: 2 }).catch((e: unknown) => e);
     expect(failure).toBeInstanceOf(QueryError);
     expect((failure as Error).message.startsWith(ROW_BUDGET_PREFIX)).toBe(true);
+    expect(errorKind(failure)).toBe("row-budget-refusal");
   });
 
   test("a listing the server cut is refused rather than answered in part, with no HEAD sent", async () => {
@@ -286,6 +288,7 @@ describe("the whole-bucket summary", () => {
       .catch((e: unknown) => e);
     expect((failure as Error).message).toBe(S3_AGENT_FAILURE_SENTENCES.summaryOverRows(2));
     expect((failure as Error).message.startsWith(ROW_BUDGET_PREFIX)).toBe(true);
+    expect(errorKind(failure)).toBe("row-budget-refusal");
     expect(over.fake.lines()).toHaveLength(1);
   });
 
@@ -471,6 +474,7 @@ describe("the budgets of an answer", () => {
       }
     })();
     expect((over as Error).message.startsWith(BYTE_BUDGET_PREFIX)).toBe(true);
+    expect(errorKind(over)).toBe("byte-budget-refusal");
   });
 
   test("the capability states every operation's columns and kinds", () => {
@@ -532,6 +536,8 @@ describe("the wording of a failure", () => {
     const expected = `${TIME_BUDGET_PREFIX}: no answer within 5000ms`;
     expect(s3AgentFailure(new TransportError("timeout", "x"), BUDGET)?.message).toBe(expected);
     expect(s3AgentFailure(new DOMException("t", "TimeoutError"), BUDGET)?.message).toBe(expected);
+    expect(errorKind(s3AgentFailure(new TransportError("timeout", "x"), BUDGET))).toBe("time-budget-refusal");
+    expect(errorKind(s3AgentFailure(new DOMException("t", "TimeoutError"), BUDGET))).toBe("time-budget-refusal");
   });
 
   test("a transport failure is worded by its kind, never by its message", () => {

@@ -50,22 +50,13 @@ const PROVIDERS = join("src", "lib", "db", "providers");
  * Relative to src/lib/db/providers.
  */
 const PENDING: readonly string[] = [
-  "document/couchbase",
   "document/firestore",
-  "document/mongodb",
-  "embedded/libredb.ts",
-  "graph/neo4j",
   "industrial/modbus",
   "industrial/mtconnect",
   "industrial/opcua",
   "industrial/sparkplug",
-  "keyvalue/etcd",
-  "keyvalue/mqtt",
-  "keyvalue/oxia",
-  "keyvalue/redis-metadata-read.ts",
   "network/netconf",
   "network/snmp",
-  "objectstore/s3",
   "platform/kubernetes",
   "stream/kafka",
   "stream/rabbitmq",

@@ -16,6 +16,7 @@ import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
 import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { principalCapture, REDIS_CAPTURE_VERSIONS, stepFor } from "../../../helpers/redis-agent";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 200, maxResultBytes: 65_536, statementTimeoutMs: 5_000 };
 
@@ -123,6 +124,16 @@ describe("the projection refuses a reply that does not fit", () => {
     expect(() => redisAgentResult("DBSIZE", "1", { ...BUDGET, maxResultBytes: 2 }, "DBSIZE", 1)).toThrow(
       BYTE_BUDGET_PREFIX,
     );
+    const kindOf = (budget: typeof BUDGET) => {
+      try {
+        redisAgentResult("DBSIZE", "1", budget, "DBSIZE", 1);
+      } catch (error) {
+        return errorKind(error);
+      }
+      throw new Error("expected a refusal");
+    };
+    expect(kindOf({ ...BUDGET, maxResultRows: 0 })).toBe("row-budget-refusal");
+    expect(kindOf({ ...BUDGET, maxResultBytes: 2 })).toBe("byte-budget-refusal");
   });
 
   test("the capability states every operation's columns and kinds, and nothing that reads", () => {
@@ -200,6 +211,7 @@ describe("the wording of a failure", () => {
     expect(redisAgentFailure(new Error("Command timed out"), BUDGET, "DBSIZE")?.message).toBe(
       `${TIME_BUDGET_PREFIX}: no answer within 5000ms`,
     );
+    expect(errorKind(redisAgentFailure(new Error("Command timed out"), BUDGET, "DBSIZE"))).toBe("time-budget-refusal");
     const projection = new MetadataProjectionError("keys", "count");
     expect(redisAgentFailure(projection, BUDGET, "DBSIZE")?.message).toBe(projection.message);
   });

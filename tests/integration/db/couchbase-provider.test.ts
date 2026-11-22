@@ -48,6 +48,7 @@ import { loadTlsFixtures } from "../../helpers/tls-fixtures";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind } from "@/lib/db/error-record";
 
 /** The notice an answer carrying database content opens with on this file's couchbase connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("couchbase"));
@@ -2945,36 +2946,50 @@ describe("CouchbaseProvider agent read-only profile", () => {
     const cluster = agentCluster();
     cluster.statement = () => ({ status: 200, payload: queryPayload([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]) });
     const provider = await agentProvider(cluster);
-    await expect(provider.queryReadOnly("SELECT d.n FROM `_default` AS d", BUDGET)).rejects.toThrow(
-      new QueryError("Read-only execution exceeded the row budget: 4 rows > 3 allowed", "couchbase"),
-    );
+    const refused = await provider
+      .queryReadOnly("SELECT d.n FROM `_default` AS d", BUDGET)
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("refuses a result past the byte budget, as rows and as an answer cut by the transport", async () => {
     const cluster = agentCluster();
     cluster.statement = () => ({ status: 200, payload: queryPayload([{ text: "x".repeat(5000) }]) });
     const provider = await agentProvider(cluster);
-    await expect(provider.queryReadOnly("SELECT d.text FROM `_default` AS d", BUDGET)).rejects.toThrow(
+    const asRows = await provider
+      .queryReadOnly("SELECT d.text FROM `_default` AS d", BUDGET)
+      .catch((caught: unknown) => caught);
+    expect((asRows as Error).message).toMatch(
       /^Read-only execution exceeded the byte budget: 50\d\d bytes > 4096 allowed$/,
     );
+    expect(errorKind(asRows)).toBe("byte-budget-refusal");
 
     cluster.statement = () => new TransportError("too-large", "The answer passed its byte cap");
-    await expect(provider.queryReadOnly("SELECT d.text FROM `_default` AS d", BUDGET)).rejects.toThrow(
+    const cut = await provider
+      .queryReadOnly("SELECT d.text FROM `_default` AS d", BUDGET)
+      .catch((caught: unknown) => caught);
+    expect((cut as Error).message).toBe(
       "Read-only execution exceeded the byte budget: 73728 bytes > 4096 allowed; the server's answer passed that many bytes and was not read further",
     );
+    expect(errorKind(cut)).toBe("byte-budget-refusal");
   });
 
   test("refuses on the time budget at its own deadline and at the server's timeout", async () => {
     const cluster = agentCluster();
     const provider = await agentProvider(cluster);
     cluster.statement = () => new TransportError("timeout", "no answer");
-    await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET)).rejects.toThrow(
+    const ownDeadline = await provider.queryReadOnly("SELECT 1 AS a", BUDGET).catch((caught: unknown) => caught);
+    expect((ownDeadline as Error).message).toBe(
       "Read-only execution exceeded the time budget: no answer within 5000ms",
     );
+    expect(errorKind(ownDeadline)).toBe("time-budget-refusal");
     cluster.statement = () => ({ status: 200, payload: errorPayload(1080, "Timeout 5s exceeded") });
-    await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET)).rejects.toThrow(
+    const serverTimeout = await provider.queryReadOnly("SELECT 1 AS a", BUDGET).catch((caught: unknown) => caught);
+    expect((serverTimeout as Error).message).toBe(
       "Read-only execution exceeded the time budget: no answer within 5000ms",
     );
+    expect(errorKind(serverTimeout)).toBe("time-budget-refusal");
   });
 
   test("a statement the user's role does not allow is the statement's failure, so the agent can repair it", async () => {

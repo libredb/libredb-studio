@@ -19,6 +19,7 @@ import {
   readRedisCapture,
   stepFor,
 } from "../../../helpers/redis-agent";
+import { errorKind } from "@/lib/db/error-record";
 
 const VERSION = "8.10.2";
 
@@ -296,9 +297,9 @@ describe("one agent command", () => {
   test("a connection that failed while connecting, or a SELECT nobody answered, is raised as the client's own failure", async () => {
     const provider = await opened_({ database: "3" });
     connectingError = new Error("Command timed out");
-    expect(((await failureOf(provider.queryReadOnly("DBSIZE", BUDGET))) as Error).message).toBe(
-      "Read-only execution exceeded the time budget: no answer within 4000ms",
-    );
+    const timedOut = await failureOf(provider.queryReadOnly("DBSIZE", BUDGET));
+    expect((timedOut as Error).message).toBe("Read-only execution exceeded the time budget: no answer within 4000ms");
+    expect(errorKind(timedOut)).toBe("time-budget-refusal");
     expect(opened[0].pipelines).toEqual([]);
     expect(opened[0].disconnected).toBe(true);
     connectingError = new Error("read ECONNRESET");
@@ -368,9 +369,9 @@ describe("one agent command", () => {
     readOverride = { error: dropped };
     expect(await failureOf(provider.queryReadOnly("TYPE agent:hash", BUDGET))).toBe(dropped);
     readOverride = { error: new Error("Command timed out") };
-    expect(((await failureOf(provider.queryReadOnly("DBSIZE", BUDGET))) as Error).message).toBe(
-      "Read-only execution exceeded the time budget: no answer within 4000ms",
-    );
+    const timedOut = await failureOf(provider.queryReadOnly("DBSIZE", BUDGET));
+    expect((timedOut as Error).message).toBe("Read-only execution exceeded the time budget: no answer within 4000ms");
+    expect(errorKind(timedOut)).toBe("time-budget-refusal");
   });
 });
 

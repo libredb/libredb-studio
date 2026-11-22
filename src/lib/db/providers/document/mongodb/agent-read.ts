@@ -45,7 +45,14 @@ import {
 // The BSON parser, reached through a namespace import for the reason `index.ts` gives: bun does not see `BSON` as a
 // named export of the driver's CommonJS entry.
 import * as mongodbDriver from "mongodb";
-import { ConnectionError, QueryError, RefusedBeforeSendError } from "../../../errors";
+import {
+  ByteBudgetRefusal,
+  ConnectionError,
+  QueryError,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "../../../errors";
 import { mapDatabaseError } from "../../../map-database-error";
 import {
   assertReadOnlyBudget,
@@ -161,16 +168,16 @@ export function rowBudgetRefusal(
   const total = stoppedAtBound
     ? `; the read stops one row past the budget, so at least ${rows} documents match and the total is not known (count it with "operation": "count", or narrow the read)`
     : "";
-  return new QueryError(`${rowBudgetSentence(rows, budget.maxResultRows)}${total}`, "mongodb", statement);
+  return new RowBudgetRefusal(`${rowBudgetSentence(rows, budget.maxResultRows)}${total}`, "mongodb", statement);
 }
 
 /** The byte-budget refusal, same sentence, counted in BSON bytes. */
 function byteBudgetRefusal(bytes: number, budget: ReadOnlyStatementBudget, statement: string): QueryError {
-  return new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "mongodb", statement);
+  return new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "mongodb", statement);
 }
 
 function killedAtDeadline(budget: ReadOnlyStatementBudget, statement: string): QueryError {
-  return new QueryError(
+  return new TimeBudgetRefusal(
     `Read-only execution exceeded the statement deadline of ${budget.statementTimeoutMs}ms and was killed server-side`,
     "mongodb",
     statement,
@@ -267,7 +274,7 @@ export async function runUnderAgentDeadline<T>(
     const outcome = await Promise.race([read, abandoned]);
     if (outcome.settled === "abandoned") {
       if (isTransportFailure(killFailure)) throw connectionLost(killFailure);
-      throw new QueryError(
+      throw new TimeBudgetRefusal(
         `Read-only execution exceeded the statement deadline of ${budget.statementTimeoutMs}ms and the server did not end it, so the client stopped waiting`,
         "mongodb",
         statement,

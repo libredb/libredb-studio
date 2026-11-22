@@ -14,7 +14,7 @@
  * budget, are refused, and a summary reads each page with the server's own continuation token, held here for the one
  * read and never returned, so nothing of one read reaches the next.
  */
-import { QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, RowBudgetRefusal, TimeBudgetRefusal } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   byteBudgetSentence,
@@ -202,7 +202,7 @@ async function summarize(client: S3AgentClient, bucket: string, context: S3Agent
     objects += page.keys.length;
     for (const listed of page.keys) bytes += listed.size;
     if (!page.isTruncated) return { op: "summary", bucket, objects, bytes };
-    if (objects >= limit) throw new QueryError(S3_AGENT_FAILURE_SENTENCES.summaryOverRows(limit), S3_TYPE);
+    if (objects >= limit) throw new RowBudgetRefusal(S3_AGENT_FAILURE_SENTENCES.summaryOverRows(limit), S3_TYPE);
     // The client refuses a truncated page with no token, so a truncated page has one.
     const next = page.nextToken as string;
     if (used.has(next)) throw new QueryError(S3_AGENT_FAILURE_SENTENCES.repeatedToken, S3_TYPE);
@@ -236,7 +236,7 @@ async function listBuckets(client: S3AgentClient, context: S3AgentReadContext): 
     return { op: "list-buckets", buckets: [{ name: context.pinnedBucket }], pinned: true };
   const { buckets, withheld, invalidNames } = await readableBuckets(client, context.call);
   const allowed = context.budget.maxResultRows;
-  if (buckets.length > allowed) throw new QueryError(rowBudgetSentence(buckets.length, allowed), S3_TYPE);
+  if (buckets.length > allowed) throw new RowBudgetRefusal(rowBudgetSentence(buckets.length, allowed), S3_TYPE);
   return {
     op: "list-buckets",
     buckets,
@@ -362,7 +362,7 @@ export function s3AgentResult(
   const { projected, warnings } = project(answer);
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), S3_TYPE, statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), S3_TYPE, statement);
   }
   return {
     fields: projected.fields,
@@ -420,7 +420,11 @@ export function s3AgentFailure(
     (error instanceof TransportError && error.kind === "timeout") ||
     (error instanceof DOMException && error.name === "TimeoutError");
   if (deadline) {
-    return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, S3_TYPE, statement);
+    return new TimeBudgetRefusal(
+      `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+      S3_TYPE,
+      statement,
+    );
   }
   if (error instanceof DOMException && error.name === "AbortError")
     return new QueryError(S3_AGENT_FAILURE_SENTENCES.closed, S3_TYPE, statement);

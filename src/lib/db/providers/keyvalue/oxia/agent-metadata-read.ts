@@ -10,7 +10,7 @@
  * field would look. The answers are those of tests/fixtures/oxia/0.18.0/agent-boundary/open.json: 64-bit integers come
  * as decimal strings and timestamps as epoch milliseconds.
  */
-import { QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, TimeBudgetRefusal } from "@/lib/db/errors";
 import {
   byteBudgetSentence,
   measureResultBytes,
@@ -139,7 +139,7 @@ export function oxiaAgentResult(
   const projected = project(answer);
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), OXIA_TYPE, statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), OXIA_TYPE, statement);
   }
   return { fields: projected.fields, rows: projected.rows, rowCount: projected.rows.length, executionTime };
 }
@@ -194,7 +194,7 @@ export function oxiaAgentFailure(
     (error instanceof OxiaError && error.category === "deadline-exceeded") ||
     (error instanceof DOMException && error.name === "TimeoutError");
   if (deadline) {
-    return new QueryError(
+    return new TimeBudgetRefusal(
       `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
       OXIA_TYPE,
       statement,
