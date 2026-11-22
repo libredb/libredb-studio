@@ -12,8 +12,11 @@
  * request the client aborts and through a drain with a request in flight on a kept-alive connection. On a second
  * server it drives a drain over two raw connections whose next request has begun, which Node.js does not count as
  * idle: one pipelines the first byte of its next request behind the answer in flight, the other has sent part of a
- * request's headers. A write is known to have reached the server when the server's side of the connection has read
- * it (`bytesRead`).
+ * request's headers. On a third server it drives one drain over four raw connections: two complete requests pipelined
+ * behind no answer yet, a request pipelined behind an answer in flight once the drain has begun, a request pipelined
+ * behind an answer that went out with the drain's Connection: close, which Node.js never answers, and a kept-alive
+ * connection whose answer's headers went out before the drain, which only `closeIdleConnections()` ends. A write is
+ * known to have reached the server when the server's side of the connection has read it (`bytesRead`).
  *
  * No Bun child: Bun's node:http publishes nothing on the channel (measured on Bun 1.4.4, none of four requests), so
  * the drain has nothing to watch there, and `exitOwnerAtBoot()` in src/lib/shutdown-handler.ts refuses Studio's exit
@@ -63,6 +66,16 @@ interface Report {
     readonly outcome: { servers: number; cut: number };
     readonly pipelined: Wire;
     readonly partial: Wire;
+    readonly servedAfterDrain: string[];
+  };
+  readonly pipeline: {
+    readonly outcome: { servers: number; cut: number };
+    readonly unanswered: number;
+    readonly queuedEndedAtDrain: boolean;
+    readonly queued: Wire;
+    readonly late: Wire;
+    readonly sent: Wire;
+    readonly flushed: Wire;
     readonly servedAfterDrain: string[];
   };
 }
@@ -193,9 +206,10 @@ async function runCases(
   await new Promise<void>((resolve) => secondServer.listen(0, "127.0.0.1", () => resolve()));
   const secondPort = (secondServer.address() as { port: number }).port;
 
-  const open = async () => {
-    const accepted = serverSockets.length;
-    const socket = net.connect(secondPort, "127.0.0.1");
+  // A raw client connection to the server on `port`, whose accepted sockets `accepted` collects.
+  const connect = async (port: number, sockets: netModule.Socket[]) => {
+    const accepted = sockets.length;
+    const socket = net.connect(port, "127.0.0.1");
     let text = "";
     let ended = false;
     socket.on("data", (chunk) => {
@@ -209,8 +223,8 @@ async function runCases(
     );
     socket.on("error", () => {});
     await new Promise<void>((resolve) => socket.once("connect", () => resolve()));
-    while (serverSockets.length === accepted) await new Promise((resolve) => setImmediate(resolve));
-    const server = serverSockets[accepted] as netModule.Socket;
+    while (sockets.length === accepted) await new Promise((resolve) => setImmediate(resolve));
+    const server = sockets[accepted] as netModule.Socket;
     // Settles once the server's side of the connection has read `total` bytes: the signal that a write reached it.
     const readBy = async (total: number) => {
       while (server.bytesRead < total && !server.destroyed) await new Promise((resolve) => setImmediate(resolve));
@@ -232,6 +246,7 @@ async function runCases(
     });
     return { socket, closed, send, untilAnswers, wire };
   };
+  const open = () => connect(secondPort, serverSockets);
   const warm = "GET /warm HTTP/1.1\r\nHost: drain\r\n\r\n";
 
   const pipelined = await open();
@@ -268,12 +283,96 @@ async function runCases(
   secondServer.close();
   second.stop();
 
+  // Four raw connections across one drain on a third server. `queued` has two complete requests pipelined behind no
+  // answer yet, both held in flight. `late` has an answer held in flight, and a complete request pipelined behind it
+  // once the drain has begun. `sent` has an answer held in flight whose headers go out during the drain, with the
+  // Connection: close the drain gave it, and then a request pipelined behind it, which Node.js dispatches and never
+  // answers. `flushed` is kept alive with an answer whose headers went out before the drain and that ends during it.
+  const third = track();
+  let thirdDrainedAt = false;
+  const servedAfterThirdDrain: string[] = [];
+  const thirdArrived = new Map<string, () => void>();
+  const thirdHeld = new Map<string, httpModule.ServerResponse>();
+  const thirdServer = http.createServer((request, response) => {
+    const path = request.url ?? "";
+    if (thirdDrainedAt) servedAfterThirdDrain.push(path);
+    if (path === "/flushed") response.flushHeaders();
+    if (["/first", "/queued", "/late", "/sent", "/flushed"].includes(path)) thirdHeld.set(path, response);
+    else response.end("fast");
+    thirdArrived.get(path)?.();
+  });
+  const thirdSockets: netModule.Socket[] = [];
+  thirdServer.on("connection", (socket) => thirdSockets.push(socket));
+  await new Promise<void>((resolve) => thirdServer.listen(0, "127.0.0.1", () => resolve()));
+  const thirdPort = (thirdServer.address() as { port: number }).port;
+  const reaches = (path: string) => new Promise<void>((resolve) => thirdArrived.set(path, resolve));
+  const answer = (path: string) => (thirdHeld.get(path) as httpModule.ServerResponse).end(path);
+
+  const queued = await connect(thirdPort, thirdSockets);
+  const bothQueued = Promise.all([reaches("/first"), reaches("/queued")]);
+  await queued.send("GET /first HTTP/1.1\r\nHost: drain\r\n\r\nGET /queued HTTP/1.1\r\nHost: drain\r\n\r\n");
+  await bothQueued;
+  const late = await connect(thirdPort, thirdSockets);
+  const lateArrived = reaches("/late");
+  await late.send("GET /late HTTP/1.1\r\nHost: drain\r\n\r\n");
+  await lateArrived;
+  const sent = await connect(thirdPort, thirdSockets);
+  const sentArrived = reaches("/sent");
+  await sent.send("GET /sent HTTP/1.1\r\nHost: drain\r\n\r\n");
+  await sentArrived;
+  const flushed = await connect(thirdPort, thirdSockets);
+  const flushedArrived = reaches("/flushed");
+  await flushed.send("GET /flushed HTTP/1.1\r\nHost: drain\r\n\r\n");
+  await flushedArrived;
+  await flushed.untilAnswers(1);
+
+  let queuedEndedAtDrain = false;
+  const thirdDrained = third.drain().then((outcome) => {
+    queuedEndedAtDrain = (thirdHeld.get("/queued") as httpModule.ServerResponse).writableEnded;
+    return outcome;
+  });
+  const lateNextArrived = reaches("/late-next");
+  await late.send("GET /late-next HTTP/1.1\r\nHost: drain\r\n\r\n");
+  await lateNextArrived;
+  answer("/late");
+  (thirdHeld.get("/sent") as httpModule.ServerResponse).flushHeaders();
+  await sent.untilAnswers(1);
+  const behindArrived = reaches("/behind");
+  await sent.send("GET /behind HTTP/1.1\r\nHost: drain\r\n\r\n");
+  await behindArrived;
+  answer("/sent");
+  answer("/flushed");
+  answer("/first");
+  await queued.untilAnswers(1);
+  answer("/queued");
+  const pipelineOutcome = await thirdDrained;
+  thirdDrainedAt = true;
+  await Promise.all([queued, late, sent, flushed].map(ends));
+  if (!flushed.wire().ended) {
+    await flushed.send("GET /after HTTP/1.1\r\nHost: drain\r\n\r\n");
+    await flushed.untilAnswers(2);
+  }
+  const pipeline = {
+    outcome: pipelineOutcome,
+    unanswered: third.unanswered(),
+    queuedEndedAtDrain,
+    queued: queued.wire(),
+    late: late.wire(),
+    sent: sent.wire(),
+    flushed: flushed.wire(),
+    servedAfterDrain: servedAfterThirdDrain,
+  };
+  for (const connection of [queued, late, sent, flushed]) connection.socket.destroy();
+  thirdServer.close();
+  third.stop();
+
   return {
     runtime: process.version,
     shapes: shapes.slice(0, shapesBeforeDrain),
     abort: { inFlightWhileOpen, inFlightAfterAbort },
     drain: { trackedAtDrain, fresh, held: heldAnswer, outcome, afterOnKeptAlive, serverClosed, messagesAfterDrain },
     begun: { outcome: begunOutcome, ...begun },
+    pipeline,
   };
 }
 
@@ -387,6 +486,41 @@ describe("the request drain on every listed Node", () => {
             ended: true,
           },
           servedAfterDrain: ["/partial"],
+        },
+      });
+    }
+  });
+
+  test("on every listed Node the drain answers every request pipelined behind an answer in flight and waits for each, ends a kept-alive connection whose answer's headers went out before it with that answer, and a request pipelined behind an answer that went out with Connection: close is never answered", () => {
+    for (const { runtime, pipeline } of runs) {
+      expect({ runtime, pipeline }).toEqual({
+        runtime,
+        pipeline: {
+          outcome: { servers: 1, cut: 0 },
+          // The request behind the answer that went out with Connection: close.
+          unanswered: 1,
+          // The drain settled only once the handler had answered the queued request.
+          queuedEndedAtDrain: true,
+          // Only the newest request on the connection carries Connection: close, so the one before it keeps the
+          // connection for it.
+          queued: {
+            statuses: ["HTTP/1.1 200", "HTTP/1.1 200"],
+            connection: ["connection: keep-alive", "connection: close"],
+            ended: true,
+          },
+          // The request pipelined during the drain took Connection: close from the answer before it, which then went
+          // out with no Connection header, so the HTTP/1.1 connection persisted for the request behind it.
+          late: {
+            statuses: ["HTTP/1.1 200", "HTTP/1.1 200"],
+            connection: ["connection: close"],
+            ended: true,
+          },
+          // Node.js ends the connection after the answer that went out with Connection: close, so the request behind
+          // it reaches its handler but gets no answer.
+          sent: { statuses: ["HTTP/1.1 200"], connection: ["connection: close"], ended: true },
+          // The answer's headers went out keep-alive before the drain; its server closes the idle connection after it.
+          flushed: { statuses: ["HTTP/1.1 200"], connection: ["connection: keep-alive"], ended: true },
+          servedAfterDrain: [],
         },
       });
     }

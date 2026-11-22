@@ -73,7 +73,7 @@ describe("docs/DISTRIBUTION.md, Stopping the server", () => {
     expect(text).toContain(
       `\`${MANUAL_SIGNAL_HANDLING_VARIABLE}=true\` with the server on Bun: the server refuses to start`,
     );
-    for (const count of ["responsesCut", "responsesInFlightAtExit", "queryEventsLost"]) {
+    for (const count of ["responsesCut", "responsesInFlightAtExit", "requestsUnanswered", "queryEventsLost"]) {
       expect(text).toContain(`\`${count}\``);
     }
   });

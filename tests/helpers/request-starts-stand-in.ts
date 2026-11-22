@@ -7,7 +7,8 @@
  * handler still subscribed, synchronously, as Node.js does. The server records each `close` and
  * `closeIdleConnections` call; the response is an EventEmitter whose `end()` emits `close` once, as a finished
  * response does, and whose `abort()` emits it too, as a response whose client went away does. It records each header
- * set on it, and `sendHeaders()` marks its headers sent, after which `setHeader()` throws, as Node.js's does.
+ * set on it and drops each one removed, and `sendHeaders()` marks its headers sent, after which `setHeader()` and
+ * `removeHeader()` throw, as Node.js's do. A message names a socket, a plain object that stands for one connection.
  */
 import { EventEmitter } from "node:events";
 import type { RequestStarts } from "@/lib/shutdown-drain";
@@ -78,6 +79,8 @@ export interface StandInResponse extends EventEmitter {
   headersSent: boolean;
   /** Sets a header, as long as the headers have not gone out. */
   setHeader(name: string, value: string): void;
+  /** Removes a header, as long as the headers have not gone out. */
+  removeHeader(name: string): void;
   /** Sends the headers: from then on `setHeader()` throws. */
   sendHeaders(): void;
   /** Every header set, by name. */
@@ -103,6 +106,10 @@ export function standInResponse(): StandInResponse {
       if (response.headersSent) throw new Error("Cannot set headers after they are sent to the client");
       headers[name] = value;
     },
+    removeHeader(name: string) {
+      if (response.headersSent) throw new Error("Cannot remove headers after they are sent to the client");
+      delete headers[name];
+    },
     sendHeaders() {
       response.headersSent = true;
     },
@@ -110,7 +117,19 @@ export function standInResponse(): StandInResponse {
   return response;
 }
 
-/** A message as the channel publishes it, with the two fields the drain reads. */
-export function requestStart(server: StandInServer, response: StandInResponse): { server: unknown; response: unknown } {
-  return { server, response };
+/** A connection: the drain only tells one from another. */
+export function standInSocket(): object {
+  return {};
+}
+
+/**
+ * A message as the channel publishes it, with the three fields the drain reads; without `socket`, the request comes on
+ * a connection of its own.
+ */
+export function requestStart(
+  server: StandInServer,
+  response: StandInResponse,
+  socket: object = standInSocket(),
+): { server: unknown; response: unknown; socket: unknown } {
+  return { server, response, socket };
 }

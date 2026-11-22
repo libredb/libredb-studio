@@ -17,6 +17,7 @@ import {
   requestStartsStandIn,
   standInResponse,
   standInServer,
+  standInSocket,
 } from "../../helpers/request-starts-stand-in";
 
 let spies: ReturnType<typeof spyOn>[] = [];
@@ -78,6 +79,7 @@ describe("trackRequests", () => {
     finished.end();
     aborted.abort();
     expect(drain.tracked()).toEqual({ servers: 1, inFlight: 1 });
+    expect(drain.unanswered()).toBe(0);
     expect(server.calls).toEqual([]);
   });
 
@@ -262,26 +264,118 @@ describe("trackRequests", () => {
     expect(drain.tracked()).toEqual({ servers: 1, inFlight: 1 });
   });
 
+  test("at the drain only the newest response in flight on each connection is given Connection: close, so a request pipelined behind another is answered before the connection ends", async () => {
+    const { source, drain } = tracker();
+    const server = standInServer();
+    const connection = standInSocket();
+    const first = standInResponse();
+    const queued = standInResponse();
+    const alone = standInResponse();
+    source.publish(requestStart(server, first, connection));
+    source.publish(requestStart(server, queued, connection));
+    source.publish(requestStart(server, alone));
+
+    const run = drain.drain();
+    expect(first.headers).toEqual({});
+    expect(queued.headers).toEqual({ Connection: "close" });
+    expect(alone.headers).toEqual({ Connection: "close" });
+    first.end();
+    alone.end();
+    expect(drain.tracked()).toEqual({ servers: 1, inFlight: 1 });
+    queued.end();
+
+    expect(await run).toEqual({ servers: 1, cut: 0 });
+    expect(drain.unanswered()).toBe(0);
+  });
+
+  test("a request that starts during the drain behind a response whose headers have not gone out takes Connection: close from it, and one behind a response whose headers went out before the drain is given it", async () => {
+    const { source, drain } = tracker();
+    const server = standInServer();
+    const waitingConnection = standInSocket();
+    const streamingConnection = standInSocket();
+    const waiting = standInResponse();
+    const streaming = standInResponse();
+    source.publish(requestStart(server, waiting, waitingConnection));
+    source.publish(requestStart(server, streaming, streamingConnection));
+    streaming.sendHeaders();
+
+    const run = drain.drain();
+    expect(waiting.headers).toEqual({ Connection: "close" });
+    const behindWaiting = standInResponse();
+    const behindStreaming = standInResponse();
+    source.publish(requestStart(server, behindWaiting, waitingConnection));
+    source.publish(requestStart(server, behindStreaming, streamingConnection));
+
+    expect(waiting.headers).toEqual({});
+    expect(behindWaiting.headers).toEqual({ Connection: "close" });
+    expect(streaming.headers).toEqual({});
+    expect(behindStreaming.headers).toEqual({ Connection: "close" });
+    for (const response of [waiting, behindWaiting, streaming, behindStreaming]) response.end();
+    expect(await run).toEqual({ servers: 1, cut: 0 });
+    expect(drain.unanswered()).toBe(0);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test("a request that starts behind a response that went out or ended with the drain's Connection: close is counted unanswered and warned about, and so is every later one on that connection", async () => {
+    const { source, drain } = tracker();
+    const server = standInServer();
+    const sentConnection = standInSocket();
+    const endedConnection = standInSocket();
+    const sent = standInResponse();
+    const ended = standInResponse();
+    source.publish(requestStart(server, sent, sentConnection));
+    source.publish(requestStart(server, ended, endedConnection));
+
+    const run = drain.drain();
+    sent.sendHeaders();
+    ended.end();
+    const behindSent = standInResponse();
+    const afterIt = standInResponse();
+    const behindEnded = standInResponse();
+    source.publish(requestStart(server, behindSent, sentConnection));
+    source.publish(requestStart(server, afterIt, sentConnection));
+    source.publish(requestStart(server, behindEnded, endedConnection));
+
+    expect(drain.unanswered()).toBe(3);
+    expect(logger.warn).toHaveBeenCalledTimes(3);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "A request pipelined behind an answer that ends its connection is never answered",
+      { route: "shutdown" },
+    );
+    // Node.js closes each of them when it closes their connection.
+    for (const response of [sent, behindSent, afterIt, behindEnded]) response.abort();
+    expect(await run).toEqual({ servers: 1, cut: 0 });
+    expect(drain.unanswered()).toBe(3);
+  });
+
   test("a message without the server or the response it uses throws an error naming the channel", () => {
     const { source } = tracker();
     const server = standInServer();
     const response = standInResponse();
+    const socket = standInSocket();
 
     for (const message of [
       undefined,
       null,
       "not a message",
       {},
-      { server, response: {} },
-      { server, response: { once: response.once, headersSent: false } },
-      { server, response: { once: response.once, setHeader: response.setHeader } },
-      { server: {}, response },
-      { server: { close() {} }, response },
-      { response },
-      { server },
+      { server, response: {}, socket },
+      { server, response: { once: response.once, headersSent: false, removeHeader: response.removeHeader }, socket },
+      {
+        server,
+        response: { once: response.once, setHeader: response.setHeader, removeHeader: response.removeHeader },
+        socket,
+      },
+      { server, response: { once: response.once, setHeader: response.setHeader, headersSent: false }, socket },
+      { server: {}, response, socket },
+      { server: { close() {} }, response, socket },
+      { server, response },
+      { server, response, socket: null },
+      { response, socket },
+      { server, socket },
     ]) {
       expect(() => source.publish(message)).toThrow(
-        "A message on http.server.request.start has no server with close() and closeIdleConnections() or no response with once(), setHeader() and headersSent: the experimental channel changed in this Node.js release (src/lib/shutdown-drain.ts)",
+        "A message on http.server.request.start has no server with close() and closeIdleConnections(), no response with once(), setHeader(), removeHeader() and headersSent, or no socket: the experimental channel changed in this Node.js release (src/lib/shutdown-drain.ts)",
       );
     }
   });

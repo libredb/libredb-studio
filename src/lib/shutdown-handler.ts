@@ -17,9 +17,9 @@
  *   drains them itself where it owns the exit, so there nothing subscribes.
  * - The steps. On the first signal it logs one line naming the signal and the owner. Where Studio owns the exit the
  *   line also counts the servers the drain closes and the responses in flight, and the drain runs first: it closes
- *   every server seen to new connections, answers with `Connection: close` each request whose headers have not gone
- *   out, ends each kept-alive connection as its response ends, and waits at most 5 s for the requests in flight, so
- *   their query events are queued before the flush. Then it runs the shutdown hooks
+ *   every server seen to new connections, answers with `Connection: close` the last request on each connection whose
+ *   headers have not gone out, ends each kept-alive connection as its last response ends, and waits at most 5 s for
+ *   the requests in flight, so their query events are queued before the flush. Then it runs the shutdown hooks
  *   (`runShutdownHooks()` in src/lib/shutdown.ts, at most 5 s), which insert the queued query events and close the
  *   governance pool. Where Studio owns the exit it then runs every registered provider cache close at once
  *   (`closeProviderCaches()`, at most 15 s), logs one end line and exits, 25 s at most after the signal. Where Next.js
@@ -27,15 +27,17 @@
  *   use the providers, and its exit ends the process and the pools with it. There it attaches an `exit` listener at
  *   the signal, which Node.js runs inside `process.exit`, and logs one line as the process exits, counting the query
  *   events left unsent and naming the hooks still running.
- * - The exit code where Studio owns the exit: 0 when every request in flight ended within the drain's deadline and
- *   none is in flight at the exit, every hook and every close settled without failing in time and no query event is
- *   left in the sink's queue (`queuedQueryEventCount()`, read without loading the sink); otherwise 128 plus the
- *   signal's number, 143 for SIGTERM and 130 for SIGINT, the codes Next.js's own handler exits with, and the end line
- *   names what was cut or failed and counts `responsesCut`, `responsesInFlightAtExit` and `queryEventsLost`. A request
- *   in flight at the exit is one the drain's deadline cut, or one that started after the drain on a connection it
- *   could not end (src/lib/shutdown-drain.ts, "Limits"). A provider close fails when a provider did not close
- *   completely (`closeCachesAtShutdown` in src/lib/db/factory.ts). A step that rejects is logged and counts as
- *   incomplete; the exit runs anyway.
+ * - The exit code where Studio owns the exit: 0 when every request in flight ended within the drain's deadline, none
+ *   is in flight at the exit and none went unanswered, every hook and every close settled without failing in time
+ *   and no query event is left in the sink's queue (`queuedQueryEventCount()`, read without loading the sink);
+ *   otherwise 128 plus the signal's number, 143 for SIGTERM and 130 for SIGINT, the codes Next.js's own handler exits
+ *   with, and the end line names what was cut or failed and counts `responsesCut`, `responsesInFlightAtExit`,
+ *   `requestsUnanswered` and `queryEventsLost`. A request in flight at the exit is one the drain's deadline cut, or
+ *   one that started after the drain on a connection it could not end (src/lib/shutdown-drain.ts, "Limits"). An
+ *   unanswered request is one pipelined behind an answer that ended its connection with the drain's
+ *   `Connection: close`: its handler ran, and Node.js sent it no answer. A provider close fails when a provider did
+ *   not close completely (`closeCachesAtShutdown` in src/lib/db/factory.ts). A step that rejects is logged and counts
+ *   as incomplete; the exit runs anyway.
  * - Repeated signals start nothing, do not cut the run and do not change the code; the first is logged. `npx` delivers
  *   every Ctrl+C twice, once from the terminal and once from the launcher's forward, and so do `bun dev` and
  *   `bun start` through scripts/next-with-seed-assets.mjs, so a second signal must not force the exit. On Windows that
@@ -184,10 +186,13 @@ async function shutDown(
   // Responses the exit cuts: those the drain's deadline cut, and those that started after the drain on a connection it
   // could not end, such as one whose next request had begun.
   const responsesInFlightAtExit = requests.tracked().inFlight;
+  // Requests whose handlers ran with no answer to send, behind an answer that ended their connection.
+  const requestsUnanswered = requests.unanswered();
   const complete =
     stepsFailed.length === 0 &&
     drain.value.cut === 0 &&
     responsesInFlightAtExit === 0 &&
+    requestsUnanswered === 0 &&
     hooks.value.cut.length === 0 &&
     hooks.value.failed.length === 0 &&
     closes.value.cut === 0 &&
@@ -202,6 +207,7 @@ async function shutDown(
       signal,
       responsesCut: counted(drain.value.cut),
       responsesInFlightAtExit: counted(responsesInFlightAtExit),
+      requestsUnanswered: counted(requestsUnanswered),
       hooksCut: named(hooks.value.cut),
       hooksFailed: named(hooks.value.failed),
       cacheClosesCut: counted(closes.value.cut),

@@ -17,23 +17,30 @@
  *   deliver nothing: the runtime test fails on it, and the handler's start line shows `servers=0` on a running server.
  * - What it does. `trackRequests()` subscribes at once and keeps every server it has seen and every response in
  *   flight until the response's `close`, which a finished response and one whose client went away both emit.
- *   `drain()` gives each response in flight whose headers have not gone out `Connection: close`, and so does every
- *   request that starts from then on, so Node.js ends that connection after the answer whatever the client has begun
- *   sending on it. It calls `server.close()` on every server seen, which refuses new connections and closes the idle
- *   ones; from then on each tracked response that closes calls `closeIdleConnections()` on its own server, so a
- *   kept-alive connection whose answer's headers went out before the drain ends with its last answer too. It settles
- *   once no response is in flight, a request that started during the drain on a connection already open included,
- *   or after `DRAIN_DEADLINE_MS`, warning with the count still in flight. It runs once per tracker and never rejects.
- *   `tracked()` goes on counting until `stop()`, so the handler reads at the exit what is still in flight.
+ *   It also keeps the newest response on each connection, by the message's `socket`: Node.js answers a connection's
+ *   pipelined requests in order, so that response is the connection's last answer. `drain()` gives it
+ *   `Connection: close` when its headers have not gone out, so Node.js ends that connection after it whatever the
+ *   client has begun sending on it. A request that starts from then on becomes its connection's last answer: it takes
+ *   the header from the answer before it, which then goes out with no Connection header and so keeps an HTTP/1.1
+ *   connection open for it. Only the last answer may carry the header: Node.js never answers a request queued behind
+ *   an answer that ends its connection. So a request that starts behind an answer that has gone out or ended with
+ *   the drain's header is counted in `unanswered()` and warned about, since its handler runs with no answer to send.
+ *   `drain()` calls `server.close()` on every server seen, which refuses new connections and closes the idle ones;
+ *   from then on each tracked response that closes calls `closeIdleConnections()` on its own server, so a kept-alive
+ *   connection whose answer's headers went out before the drain ends with its last answer too. It settles once no
+ *   response is in flight, a request that started during the drain on a connection already open included, or after
+ *   `DRAIN_DEADLINE_MS`, warning with the count still in flight. It runs once per tracker and never rejects.
+ *   `tracked()` and `unanswered()` go on counting until `stop()`, so the handler reads them at the exit.
  * - Limits. A request that reached a server before the subscription, in the first fraction of a second of the boot,
  *   is not seen. A server that has received no request since the subscription is not known, so it keeps accepting
  *   connections until the exit. A response still running at the deadline keeps running until the exit cuts it.
  *   Busy connections are never cut: `closeAllConnections()` would only move the cut earlier. A connection whose next
- *   request has begun at the drain, part of its headers or its first byte received, is not idle by Node.js's
- *   definition, so neither `close()` nor `closeIdleConnections()` ends it: it serves that one request, with
- *   `Connection: close`, even after the drain has settled. On Node.js 24 so does an accepted connection that has sent
- *   nothing yet, which Node.js 26 closes at `close()`. tests/unit/lib/shutdown-drain-runtimes.test.ts holds the begun
- *   request on every listed Node. A WebSocket upgrade is not a response, and Studio serves none.
+ *   request has begun at the drain, part of its headers or its first byte received, or whose request was answered
+ *   before all of its body arrived, is not idle by Node.js's definition, so neither `close()` nor
+ *   `closeIdleConnections()` ends it: it serves that one request, with `Connection: close`, even after the drain has
+ *   settled. On Node.js 24 so does an accepted connection that has sent nothing yet, which Node.js 26 closes at
+ *   `close()`. tests/unit/lib/shutdown-drain-runtimes.test.ts holds the begun request, the pipelined requests and the
+ *   unanswered one on every listed Node. A WebSocket upgrade is not a response, and Studio serves none.
  * - Node only. Bun's node:http publishes nothing on the channel (measured on Bun 1.4.4), so on Bun the drain would see
  *   no server and no request. The server runs on Bun under `bun --bun run start` and `bunx --bun`, and under
  *   `bun start` and `bunx` on a host without Node.js, since package.json `start` and bin/studio.js spawn
@@ -71,6 +78,11 @@ export interface DrainOutcome {
 export interface RequestDrain {
   /** The servers seen and the responses in flight now. */
   tracked(): { servers: number; inFlight: number };
+  /**
+   * How many requests have started behind an answer that went out, or ended, with the drain's `Connection: close` on
+   * their connection: Node.js ends the connection after that answer, so it never answers them while their handlers run.
+   */
+  unanswered(): number;
   /** Closes every server seen and waits for the responses in flight; once per tracker, a later call joins the run. */
   drain(): Promise<DrainOutcome>;
   /** Unsubscribes. */
@@ -88,51 +100,91 @@ interface DrainResponse {
   once(event: "close", listener: () => void): unknown;
   readonly headersSent: boolean;
   setHeader(name: string, value: string): unknown;
+  removeHeader(name: string): unknown;
 }
 
 function malformed(): Error {
   return new Error(
-    `A message on ${REQUEST_START_CHANNEL} has no server with close() and closeIdleConnections() or no response with once(), setHeader() and headersSent: the experimental channel changed in this Node.js release (src/lib/shutdown-drain.ts)`,
+    `A message on ${REQUEST_START_CHANNEL} has no server with close() and closeIdleConnections(), no response with once(), setHeader(), removeHeader() and headersSent, or no socket: the experimental channel changed in this Node.js release (src/lib/shutdown-drain.ts)`,
   );
 }
 
-/**
- * Asks Node.js to end the response's connection once the response ends, whatever the client has begun sending on it
- * since (RFC 9112 section 9.6); a response whose headers have gone out keeps them.
- */
-function closeWithAnswer(response: DrainResponse): void {
-  if (!response.headersSent) response.setHeader("Connection", "close");
-}
-
-/** The server and the response a message names, or an Error naming the channel when either is not what it uses. */
-function fieldsOf(message: unknown): { server: DrainServer; response: DrainResponse } {
+/** The server, the response and the socket a message names, or an Error naming the channel when one is not usable. */
+function fieldsOf(message: unknown): { server: DrainServer; response: DrainResponse; socket: object } {
   if (typeof message !== "object" || message === null) throw malformed();
-  const { server, response } = message as { server?: Partial<DrainServer>; response?: Partial<DrainResponse> };
+  const { server, response, socket } = message as {
+    server?: Partial<DrainServer>;
+    response?: Partial<DrainResponse>;
+    socket?: unknown;
+  };
   if (
     typeof server?.close !== "function" ||
     typeof server.closeIdleConnections !== "function" ||
     typeof response?.once !== "function" ||
     typeof response.setHeader !== "function" ||
-    typeof response.headersSent !== "boolean"
+    typeof response.removeHeader !== "function" ||
+    typeof response.headersSent !== "boolean" ||
+    typeof socket !== "object" ||
+    socket === null
   ) {
     throw malformed();
   }
-  return { server: server as DrainServer, response: response as DrainResponse };
+  return { server: server as DrainServer, response: response as DrainResponse, socket };
 }
 
 /** Subscribes to the request starts at once and answers the drain over the servers and responses they name. */
 export function trackRequests(starts: RequestStarts = nodeRequestStarts): RequestDrain {
   const servers = new Set<DrainServer>();
-  const inFlight = new Set<DrainResponse>();
+  // Each response in flight, with the socket of its connection.
+  const inFlight = new Map<DrainResponse, object>();
+  // The newest response on each connection: Node.js answers a connection's requests in order, so it is the last answer.
+  const newest = new WeakMap<object, DrainResponse>();
+  // The responses the drain gave `Connection: close`.
+  const closing = new WeakSet<DrainResponse>();
+  let unanswered = 0;
   let draining = false;
   let drained: () => void = () => {};
   let run: Promise<DrainOutcome> | undefined;
 
+  /**
+   * Asks Node.js to end the response's connection once the response ends, whatever the client has begun sending on it
+   * since (RFC 9112 section 9.6); a response whose headers have gone out keeps them.
+   */
+  function closeWithAnswer(response: DrainResponse): void {
+    if (response.headersSent) return;
+    response.setHeader("Connection", "close");
+    closing.add(response);
+  }
+
+  /**
+   * A request that starts while draining: it becomes its connection's last answer, taking `Connection: close` from the
+   * answer before it while that one's headers have not gone out. Behind an answer that went out or ended with it,
+   * Node.js never answers the request, so it is counted and warned about, and the connection keeps that answer as its
+   * newest.
+   */
+  function startWhileDraining(response: DrainResponse, socket: object): void {
+    const previous = newest.get(socket);
+    if (previous !== undefined && closing.has(previous)) {
+      if (previous.headersSent || !inFlight.has(previous)) {
+        unanswered += 1;
+        logger.warn("A request pipelined behind an answer that ends its connection is never answered", {
+          route: "shutdown",
+        });
+        return;
+      }
+      previous.removeHeader("Connection");
+      closing.delete(previous);
+    }
+    newest.set(socket, response);
+    closeWithAnswer(response);
+  }
+
   const unsubscribe = starts((message) => {
-    const { server, response } = fieldsOf(message);
+    const { server, response, socket } = fieldsOf(message);
     servers.add(server);
-    inFlight.add(response);
-    if (draining) closeWithAnswer(response);
+    inFlight.set(response, socket);
+    if (draining) startWhileDraining(response, socket);
+    else newest.set(socket, response);
     response.once("close", () => {
       inFlight.delete(response);
       if (!draining) return;
@@ -144,7 +196,7 @@ export function trackRequests(starts: RequestStarts = nodeRequestStarts): Reques
   async function drainAll(): Promise<DrainOutcome> {
     draining = true;
     const closed = servers.size;
-    for (const response of inFlight) closeWithAnswer(response);
+    for (const [response, socket] of inFlight) if (newest.get(socket) === response) closeWithAnswer(response);
     for (const server of servers) server.close();
     if (inFlight.size > 0) {
       let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -161,6 +213,7 @@ export function trackRequests(starts: RequestStarts = nodeRequestStarts): Reques
 
   return {
     tracked: () => ({ servers: servers.size, inFlight: inFlight.size }),
+    unanswered: () => unanswered,
     drain() {
       run ??= drainAll();
       return run;

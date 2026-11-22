@@ -39,6 +39,7 @@ import {
   requestStartsStandIn,
   standInResponse,
   standInServer,
+  standInSocket,
 } from "../../helpers/request-starts-stand-in";
 import { shutdownStandIn } from "../../helpers/shutdown-stand-in";
 import { standInProcess } from "../../helpers/uncaught-exception-stand-in";
@@ -221,6 +222,7 @@ describe("installShutdownHandler", () => {
       signal: "SIGTERM",
       responsesCut: 1,
       responsesInFlightAtExit: 1,
+      requestsUnanswered: undefined,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -331,6 +333,7 @@ describe("installShutdownHandler", () => {
       signal: "SIGTERM",
       responsesCut: undefined,
       responsesInFlightAtExit: undefined,
+      requestsUnanswered: undefined,
       hooksCut: ["stuck"],
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -355,6 +358,7 @@ describe("installShutdownHandler", () => {
       signal: "SIGTERM",
       responsesCut: undefined,
       responsesInFlightAtExit: undefined,
+      requestsUnanswered: undefined,
       hooksCut: undefined,
       hooksFailed: ["fails"],
       cacheClosesCut: undefined,
@@ -383,6 +387,7 @@ describe("installShutdownHandler", () => {
       signal: "SIGTERM",
       responsesCut: undefined,
       responsesInFlightAtExit: undefined,
+      requestsUnanswered: undefined,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: 1,
@@ -414,6 +419,7 @@ describe("installShutdownHandler", () => {
       signal: "SIGTERM",
       responsesCut: undefined,
       responsesInFlightAtExit: undefined,
+      requestsUnanswered: undefined,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -439,6 +445,7 @@ describe("installShutdownHandler", () => {
       signal: "SIGTERM",
       responsesCut: undefined,
       responsesInFlightAtExit: undefined,
+      requestsUnanswered: undefined,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -468,6 +475,44 @@ describe("installShutdownHandler", () => {
       signal: "SIGTERM",
       responsesCut: undefined,
       responsesInFlightAtExit: 1,
+      requestsUnanswered: undefined,
+      hooksCut: undefined,
+      hooksFailed: undefined,
+      cacheClosesCut: undefined,
+      cacheClosesFailed: undefined,
+      stepsFailed: undefined,
+      queryEventsLost: undefined,
+    });
+  });
+
+  test("a request pipelined behind an answer that went out with the drain's Connection: close is never answered, so it makes the exit code 143 and the end line counts it", async () => {
+    const source = requestStartsStandIn();
+    const server = standInServer();
+    const connection = standInSocket();
+    const sent = standInResponse();
+    const behind = standInResponse();
+    onShutdown("hook", async () => {
+      source.publish(requestStart(server, behind, connection));
+      // Node.js closes it when it closes the connection, while its handler runs on.
+      behind.abort();
+    });
+    const proc = shutdownStandIn();
+    installShutdownHandler(proc, "studio", source.starts);
+    source.publish(requestStart(server, sent, connection));
+
+    proc.signal("SIGTERM");
+    await settle();
+    expect(sent.headers).toEqual({ Connection: "close" });
+    sent.sendHeaders();
+    sent.end();
+
+    expect(await proc.exited).toBe(143);
+    expect(logger.warn).toHaveBeenCalledWith("Shutdown incomplete, exiting with 143", {
+      route: "shutdown",
+      signal: "SIGTERM",
+      responsesCut: undefined,
+      responsesInFlightAtExit: undefined,
+      requestsUnanswered: 1,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -655,6 +700,7 @@ describe("installShutdownHandler", () => {
     const closesFailure = new Error("closes run failed");
     const drain = spyOn(drainModule, "trackRequests").mockImplementation(() => ({
       tracked: () => ({ servers: 0, inFlight: 0 }),
+      unanswered: () => 0,
       drain: () => Promise.reject(drainFailure),
       stop: () => {},
     }));
@@ -686,6 +732,7 @@ describe("installShutdownHandler", () => {
         signal: "SIGTERM",
         responsesCut: undefined,
         responsesInFlightAtExit: undefined,
+        requestsUnanswered: undefined,
         hooksCut: undefined,
         hooksFailed: undefined,
         cacheClosesCut: undefined,
