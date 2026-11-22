@@ -175,7 +175,9 @@ describe("InfluxDB 3.12.0 Core, replayed", () => {
     const preview = capture("sql-preview-home");
     const { provider, wire } = recordedServer({ [(preview.request.body as { q: string }).q]: preview });
     await provider.connect();
-    const prepared = provider.prepareQuery(generateTableQuery(["home"], provider.getCapabilities()), { limit: 50 });
+    const prepared = provider.prepareQuery(generateTableQuery(["home"], "influxdb3", provider.getCapabilities()), {
+      limit: 50,
+    });
     expect(prepared.query).toBe((preview.request.body as { q: string }).q);
     const result = await provider.query(prepared.query);
     expect(body(wire.requests.at(-1) as RecordedInfluxRequest)).toEqual(

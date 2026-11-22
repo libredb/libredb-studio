@@ -565,6 +565,7 @@ const { default: Studio } = await import("@/components/Studio");
 import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions";
+import type { CreateTableNames } from "@/components/CreateTableModal";
 
 // =============================================================================
 // Test data
@@ -2454,6 +2455,22 @@ describe("Studio", () => {
     expect(mockHandleDiscardChanges).toHaveBeenCalled();
   });
 
+  test("the Create Table form is handed the active connection's name quoting, by its type", () => {
+    // The declaration names PostgreSQL's port, so only the connection's type can quote with backticks.
+    connMgrOverride = { activeConnection: { ...pgConn, type: "mysql" as const } };
+    capabilitiesOverride = { defaultPort: 5432 };
+    render(<Studio />);
+    const names = capturedCreateTableProps.names as CreateTableNames;
+    expect(names.typed("a b")).toBe("`a b`");
+    expect(names.container(["app db"])).toBe("`app db`");
+  });
+
+  test("with no active connection the form is handed no names", () => {
+    connMgrOverride = { activeConnection: null };
+    render(<Studio />);
+    expect(capturedCreateTableProps.names).toBeUndefined();
+  });
+
   // --- Inline-edit capability gate (#269) ---
   test("asks the connection pulse about the active connection once its metadata answers, and shows its answer in both headers", () => {
     connMgrOverride = { activeConnection: pgConn };
@@ -3243,6 +3260,14 @@ describe("Studio", () => {
     const fn = capturedQueryEditorProps.onContentChange as (val: string) => void;
     act(() => fn("SELECT 2"));
     expect(mockUpdateTabById).toHaveBeenCalledWith("tab-1", { query: "SELECT 2" });
+  });
+
+  test("QueryEditor, the Test Data dialog and the import dialog are handed the active connection's type, which picks an SQL engine's quoting", () => {
+    connMgrOverride = { activeConnection: { ...pgConn, type: "mysql" } };
+    render(<Studio />);
+    expect(capturedQueryEditorProps.databaseType).toBe("mysql");
+    expect(capturedTestDataProps.databaseType).toBe("mysql");
+    expect(capturedDataImportProps.databaseType).toBe("mysql");
   });
 
   test("QueryEditor onExplain executes explain query", () => {

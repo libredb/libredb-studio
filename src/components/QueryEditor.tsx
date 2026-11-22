@@ -21,7 +21,7 @@ import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
 import { useMonacoInstance } from "@/hooks/use-monaco-instance";
 import { logger } from "@/lib/logger";
-import { assertDatabaseType } from "@/lib/db/type-id";
+import { assertConnectionType } from "@/lib/db/type-id";
 import { setLineNumbersPreference, useLineNumbersPreference } from "@/hooks/use-line-numbers-preference";
 import { writeToClipboard } from "@/components/copy-button";
 import { toast } from "sonner";
@@ -84,9 +84,13 @@ interface QueryEditorProps {
    * A value outside `DatabaseType`, which only a caller outside TypeScript's checks can
    * pass, is refused by name as the editor renders: it throws `UnknownProviderError`
    * before any hook or reader runs with it, so the host's error boundary receives it.
+   * It also decides the SQL engine's own identifier quoting that completion writes, so `capabilities` handed without
+   * it are refused the same way, with a sentence that says the call needs the connection's type; with neither, the
+   * editor reads as with no connection open.
    */
   databaseType?: DatabaseType;
   schemaContext?: string;
+  /** The connection's declaration, handed with its `databaseType`. */
   capabilities?: import("@/lib/db/types").ProviderCapabilities;
   /**
    * The container the session resolves a bare name in, as the object inventory reported it.
@@ -162,8 +166,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     ref,
   ) => {
     // Before every hook and reader, so a refused value never reaches a grammar, a completion or a policy profile
-    // (FND-1). The throw is the same on every render that has the value, so the hook order never changes.
-    if (databaseType !== undefined) assertDatabaseType(databaseType);
+    // (FND-1), and capabilities without a type never reach completion's quoting. The throw is the same on every render
+    // that has the values, so the hook order never changes.
+    assertConnectionType(databaseType, capabilities);
     const monaco = useMonacoInstance();
     const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
@@ -351,13 +356,13 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         ...(capabilities === undefined
           ? {}
           : {
-              quoteSegment: (segment: string) => quoteIdentifier(segment, capabilities),
+              quoteSegment: (segment: string) => quoteIdentifier(segment, databaseType, capabilities),
               // Only an engine that spells a container segment itself has one; every other engine
               // keeps writing a qualified name segment by segment.
-              containerSpelling: containerSpellingOf(capabilities),
+              containerSpelling: containerSpellingOf(databaseType, capabilities),
             }),
       };
-    }, [parsedSchema, defaultContainer, capabilities]);
+    }, [parsedSchema, defaultContainer, databaseType, capabilities]);
 
     // The formatter of the tab's language, from its editor language row: SQL's, the JSON one MongoDB and
     // Kafka share, or none, in which case the toolbar draws no Format button and the shortcut does nothing.

@@ -167,6 +167,13 @@ export const REGISTRIES: readonly Listed[] = [
     reason: "the parameter type of the per-engine table it is handed, which holds no row here",
   },
   {
+    path: "src/lib/db/query-generators/index.ts",
+    declaration: "SQL_ENGINE_GENERATORS",
+    count: 1,
+    reason:
+      "the SQL forms of each SQL engine that writes its own, a partial registry whose rows are declared beside their providers",
+  },
+  {
     path: "src/lib/db/graph-policy-profiles.ts",
     declaration: "GRAPH_POLICY_PROFILES",
     count: 1,

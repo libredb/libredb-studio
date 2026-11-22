@@ -13,6 +13,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { applicableKinds, declaredLevels, enumerableKinds } from "@/lib/db/object-kinds";
 import type { KindCount } from "@/lib/db/types";
 import { quoteObjectPath } from "@/lib/query-generators";
+import type { DatabaseType } from "@/lib/types";
 import { BackendClient, BackendError } from "../../src/host/backend-client";
 import type { BackendCrash, BackendLink } from "../../src/host/backend-supervisor";
 import { ENTER_CREDENTIALS, ProfileConnectionSource } from "../../src/host/connections/connection-source";
@@ -694,52 +695,57 @@ describe("the Connections tree against PostgreSQL, SQL Server, MySQL and MongoDB
     }
 
     /** What quoteObjectPath writes for the object on its connection, and the terminator part 3's rule appends. */
-    const predicted = (connectionId: string, path: readonly string[]): string => {
+    const predicted = (connectionId: string, type: DatabaseType, path: readonly string[]): string => {
       const capabilities = capabilitiesOf(connectionId);
-      return `SELECT * FROM ${quoteObjectPath(path, capabilities)}${capabilities.statementTerminator ?? ";"}`;
+      return `SELECT * FROM ${quoteObjectPath(path, type, capabilities)}${capabilities.statementTerminator ?? ";"}`;
     };
 
     // Part 3 predicted every segment quoted; quoteObjectPath quotes a segment only where it does not read bare, as
     // the measured texts show on all three engines.
     const SELECT_ROWS_CASES: readonly {
       title: string;
+      type: DatabaseType;
       id: string;
       path: () => readonly string[];
       text: () => string;
     }[] = [
       {
         title: "postgres",
+        type: "postgres",
         id: profileId("postgres"),
         path: () => ["public"],
         text: () => "SELECT * FROM public.it_tree_pk;",
       },
       {
         title: "postgres at server level",
+        type: "postgres",
         id: PG_SERVER,
         path: () => [engineOf("postgres").environment.POSTGRES_DB, "public"],
         text: () => `SELECT * FROM ${engineOf("postgres").environment.POSTGRES_DB}.public.it_tree_pk;`,
       },
       {
         title: "mysql",
+        type: "mysql",
         id: profileId("mysql"),
         path: () => engineFixture("mysql").tableContainer,
         text: () => "SELECT * FROM libredb_it.it_tree_pk;",
       },
       {
         title: "mssql",
+        type: "mssql",
         id: profileId("mssql"),
         path: () => engineFixture("mssql").tableContainer,
         text: () => "SELECT * FROM master.dbo.it_tree_pk;",
       },
     ];
 
-    for (const { title, id, path, text } of SELECT_ROWS_CASES) {
+    for (const { title, type, id, path, text } of SELECT_ROWS_CASES) {
       it(`Select Rows on ${title}'s it_tree_pk opens its SELECT and pages it by libredb.query.rowLimit (criterion 11)`, async () => {
         settings.set("libredb.query.rowLimit", 2);
         const { object } = await objectIn(await containerAt(await connectionNode(id), path()), "it_tree_pk");
         const { document, from } = await selectRowsOn(object);
         console.log(`${title}: Select Rows wrote ${JSON.stringify(document.getText())}`);
-        assert.equal(document.getText(), predicted(id, object.object.path), "part 3's rule");
+        assert.equal(document.getText(), predicted(id, type, object.object.path), "part 3's rule");
         assert.equal(document.getText(), text());
         assert.equal(document.languageId, "sql");
         const { run: started, page } = succeeded(from);

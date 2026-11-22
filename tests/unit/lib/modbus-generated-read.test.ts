@@ -18,7 +18,7 @@ const NAMES: ReadonlySet<string> = new Set(["volts"]);
 
 describe("a click on a point", () => {
   test("writes a read of that point by name, and the provider parses it as one", () => {
-    const text = generateTableQuery(["1", "volts"], caps);
+    const text = generateTableQuery(["1", "volts"], "modbus", caps);
 
     expect(JSON.parse(text)).toEqual({ read: ["volts"] });
     expect(parseReadRequest(text, NAMES)).toEqual({ kind: "points", names: ["volts"] });
@@ -27,7 +27,7 @@ describe("a click on a point", () => {
 
 describe("a click on a unit, where there is no point to name", () => {
   test("writes the one shape that needs no map: a range by address, with the unit filled in", () => {
-    const text = generateTableQuery(["10"], caps);
+    const text = generateTableQuery(["10"], "modbus", caps);
 
     expect(JSON.parse(text)).toEqual({ unit: 10, table: "holding_register", address: 0, count: 1 });
     expect(parseReadRequest(text, NAMES)).toEqual({
@@ -43,11 +43,11 @@ describe("a click on a unit, where there is no point to name", () => {
     // An empty segment, a word and a fraction are the three ways the segment can fail to be a unit
     // id, and a request carrying `NaN` would not be JSON at all.
     for (const segment of ["", "all", "1.5"]) {
-      expect(JSON.parse(generateTableQuery([segment], caps)).unit).toBe(1);
+      expect(JSON.parse(generateTableQuery([segment], "modbus", caps)).unit).toBe(1);
     }
   });
 
   test("the select generator answers the same line, because the line is correct wherever it lands", () => {
-    expect(generateSelectQuery(["10"], [], caps)).toBe(generateTableQuery(["10"], caps));
+    expect(generateSelectQuery(["10"], [], "modbus", caps)).toBe(generateTableQuery(["10"], "modbus", caps));
   });
 });

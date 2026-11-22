@@ -1248,7 +1248,7 @@ describe("ClickHouseProvider query preparation", () => {
    * one. The second is the point of the change; the first is its price.
    */
   test("the generated preview plus a user FORMAT clause runs unbounded and cannot be paged", () => {
-    const generated = generateTableQuery(["events"], provider().getCapabilities());
+    const generated = generateTableQuery(["events"], "clickhouse", provider().getCapabilities());
     expect(generated).toBe("SELECT * FROM events;");
 
     const edited = "SELECT * FROM events FORMAT TSV";

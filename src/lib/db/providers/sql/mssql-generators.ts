@@ -1,11 +1,8 @@
 /**
- * SQL Server's generator forms, collected as its row by `SQL_PORT_GENERATORS` in
- * `src/lib/db/query-generators/index.ts`, keyed by the port its declaration names.
+ * SQL Server's generator forms, collected as its row of `SQL_ENGINE_GENERATORS` in
+ * `src/lib/db/query-generators/index.ts`, read under its type id.
  */
-import type { SqlPortGenerators } from "@/lib/db/query-generators/types";
-
-/** The SQL Server port, the capability signal for its forms. */
-const MSSQL_PORT = 1433;
+import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 
 /**
  * SQL Server: case-insensitive, so only a name with special characters is bracket-quoted. Generate Query spells its
@@ -13,8 +10,7 @@ const MSSQL_PORT = 1433;
  * `COUNT` returns an int, and `COUNT_BIG` preserves billion-row counts.
  */
 export const MSSQL_SQL_GENERATORS = Object.freeze({
-  port: MSSQL_PORT,
   quote: (name, always) => (!always && /^[A-Za-z_]\w*$/.test(name) ? name : `[${name.replaceAll("]", "]]")}]`),
   selectList: (table, cols) => `SELECT TOP 100\n${cols}\nFROM ${table}\nWHERE 1=1;`,
   countExpression: "COUNT_BIG(*)",
-} satisfies SqlPortGenerators);
+} satisfies SqlEngineGenerators);

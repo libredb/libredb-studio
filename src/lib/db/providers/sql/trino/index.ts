@@ -474,10 +474,9 @@ export class TrinoProvider extends SQLBaseProvider {
       // deployment serves on whatever port its operator chose, and inventing a
       // well-known HTTPS port would send credentials somewhere nothing is listening.
       defaultPort: this.dialect.defaultPort,
-      // Declared rather than derived from the port (#424 Phase 1's lesson): 8080 is a
-      // generic HTTP port and the query generators must not have to guess a dialect
-      // from it. Trino quotes identifiers with `"` and a backtick is not a quote
-      // character at all in its grammar.
+      // Declared so a later edit of the query generators' default cannot move it:
+      // Trino has no row of its own in `SQL_ENGINE_GENERATORS`. Trino quotes identifiers
+      // with `"` and a backtick is not a quote character at all in its grammar.
       identifierQuoting: "double",
       // Measured: `SELECT 1;` is a syntax error. The terminator is not in the
       // grammar, so the generators must not emit one.

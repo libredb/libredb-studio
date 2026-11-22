@@ -137,7 +137,7 @@ describe("editable count queries (#702)", () => {
       const capabilities = await censusCapabilities(type);
       const expected = EXPECTED_COUNT[type];
       expect(offersCountQuery(capabilities)).toBe(expected !== null);
-      expect(generators.generateCountQuery(censusPath(capabilities), capabilities)).toBe(expected);
+      expect(generators.generateCountQuery(censusPath(capabilities), type, capabilities)).toBe(expected);
     },
   );
 
@@ -152,7 +152,7 @@ describe("editable count queries (#702)", () => {
       containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
     });
     const collection = 'Order.Items"\n';
-    expect(JSON.parse(generators.generateCountQuery(["shop", collection], capabilities)!)).toEqual({
+    expect(JSON.parse(generators.generateCountQuery(["shop", collection], "mongodb", capabilities)!)).toEqual({
       database: "shop",
       collection,
       operation: "count",
@@ -165,11 +165,11 @@ describe("editable count queries (#702)", () => {
     // LibreDB are refused by their dialect first. The grouping alone must be enough.
     const derived = caps({ tablesAreDerivedGroupings: true });
     expect(offersCountQuery(derived)).toBe(false);
-    expect(generators.generateCountQuery(["user:*"], derived)).toBeNull();
+    expect(generators.generateCountQuery(["user:*"], "postgres", derived)).toBeNull();
   });
 
   test("refuses an empty object address", () => {
-    expect(() => generators.generateCountQuery([], caps())).toThrow("no segments");
+    expect(() => generators.generateCountQuery([], "postgres", caps())).toThrow("no segments");
   });
 
   test("counts a real million-row table, and the generated query accepts a filter", () => {
@@ -179,7 +179,7 @@ describe("editable count queries (#702)", () => {
       db.exec(
         'WITH RECURSIVE rows(id) AS (SELECT 1 UNION ALL SELECT id + 1 FROM rows WHERE id < 1553900) INSERT INTO "Order.Items" SELECT id FROM rows',
       );
-      const query = generators.generateCountQuery(["Order.Items"], caps({ defaultPort: null }))!;
+      const query = generators.generateCountQuery(["Order.Items"], "sqlite", caps({ defaultPort: null }))!;
       expect(db.query(query).get()).toEqual({ row_count: 1553900 });
       expect(db.query(query.replace(/;$/, " WHERE id <= 7;")).get()).toEqual({ row_count: 7 });
       expect(formatting.formatRowCount(1553900)).toBe("1.6M");

@@ -937,8 +937,8 @@ describe("Completion of a container name the engine spells itself", () => {
         segment,
         qualify: true,
       })),
-      quoteSegment: (segment) => quoteIdentifier(segment, caps),
-      containerSpelling: containerSpellingOf(caps),
+      quoteSegment: (segment) => quoteIdentifier(segment, dialect, caps),
+      containerSpelling: containerSpellingOf(dialect, caps),
     });
     registerSQLCompletionProvider(monaco, cache, dialect);
     return monaco._getProvider()!.provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1))

@@ -478,7 +478,7 @@ export function useTabManager({
       // A group's readable pieces ride on its schema entry, and only the etcd arm reads them (#1089 4.7).
       const generate = (marked: boolean) =>
         capabilities
-          ? generateTableQuery(path, capabilities, columns, {
+          ? generateTableQuery(path, activeConnection?.type, capabilities, columns, {
               readRanges: table?.readRanges,
               ...(marked ? { namesKey: true } : {}),
             })
@@ -577,7 +577,7 @@ export function useTabManager({
       const scope = { readRanges: table?.readRanges, readOnly: activeConnection?.readOnly === true };
       const newQuery = generatedOrRefused(() =>
         capabilities
-          ? generateSelectQuery(path, columns, capabilities, scope)
+          ? generateSelectQuery(path, columns, activeConnection?.type, capabilities, scope)
           : `SELECT\n${columns.map((c) => `  ${c.name}`).join(",\n") || "  *"}\nFROM ${path.join(".")}\nWHERE 1=1\nLIMIT 100;`,
       );
       if (newQuery === undefined) return;
@@ -605,7 +605,7 @@ export function useTabManager({
     (path: readonly string[]) => {
       const capabilities = metadata?.capabilities;
       if (capabilities === undefined) return;
-      const query = generateCountQuery(path, capabilities);
+      const query = generateCountQuery(path, activeConnection?.type, capabilities);
       if (query === null) return;
       const id = newLocalId();
       setTabs((prev) => [
@@ -621,7 +621,7 @@ export function useTabManager({
       ]);
       setActiveTabId(id);
     },
-    [metadata],
+    [activeConnection, metadata],
   );
 
   /**

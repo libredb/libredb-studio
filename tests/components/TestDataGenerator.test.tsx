@@ -7,6 +7,7 @@ import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TestDataGenerator } from "@/components/TestDataGenerator";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import { UNTYPED_CAPABILITIES_SENTENCE } from "@/lib/db/type-id";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { OUTSIDE_THE_UNION, refusalOf } from "../helpers/outside-the-union";
 
@@ -127,13 +128,14 @@ describe("TestDataGenerator", () => {
   // CQL's INSERT takes one row: on Cassandra 5.0.9 a multi-row VALUES list answered "mismatched input ','
   // expecting EOF" (#1410), so an engine declaring no multi-row insert gets one statement per row.
   test("writes one INSERT per row where the engine declares no multi-row insert", () => {
-    const renderWith = (capabilities: ProviderCapabilities): string => {
+    const renderWith = (databaseType: string, capabilities: ProviderCapabilities): string => {
       const { container } = render(
         <TestDataGenerator
           isOpen
           onClose={mock(() => {})}
           tablePath={["shop", "employees"]}
           tableSchema={schema}
+          databaseType={databaseType}
           capabilities={capabilities}
           onExecuteQuery={mock(() => {})}
         />,
@@ -142,13 +144,13 @@ describe("TestDataGenerator", () => {
       cleanup();
       return text;
     };
-    const single = renderWith(capsOf({ defaultPort: 9042, supportsMultiRowInsert: false }));
+    const single = renderWith("cassandra", capsOf({ defaultPort: 9042, supportsMultiRowInsert: false }));
     const inserts = single.match(/INSERT INTO shop\.employees/g) ?? [];
     expect(inserts.length).toBeGreaterThan(1);
     expect(single.match(/VALUES/g)?.length).toBe(inserts.length);
     expect(single).not.toContain("),");
 
-    const multi = renderWith(postgresCaps);
+    const multi = renderWith("postgres", postgresCaps);
     expect(multi.match(/INSERT INTO/g)?.length).toBe(1);
     expect(multi).toContain("),");
   });
@@ -169,6 +171,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "employees"]}
         tableSchema={awkward}
+        databaseType="mysql"
         capabilities={capsOf({ defaultPort: 3306 })}
         onExecuteQuery={mock(() => {})}
       />,
@@ -186,11 +189,94 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "employees"]}
         tableSchema={awkward}
+        databaseType="mssql"
         capabilities={mssqlCaps}
         onExecuteQuery={mock(() => {})}
       />,
     );
     expect(container.textContent ?? "").toContain("[order date]");
+  });
+
+  test("quotes by the connection's type, never the port its declaration names", () => {
+    const awkward: DetailedObject = {
+      ...schema,
+      columns: [{ name: "order date", type: "VARCHAR(50)", nullable: false, isPrimary: false }],
+    };
+    const { container } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "Order Items"]}
+        tableSchema={awkward}
+        databaseType="mysql"
+        capabilities={capsOf({ defaultPort: 5432 })}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("INSERT INTO shop.`Order Items` (`order date`)");
+    expect(text).not.toContain('"order date"');
+  });
+
+  test("capabilities without a databaseType draw the refusal by name, whatever port or quoting they declare", () => {
+    const awkward: DetailedObject = {
+      ...schema,
+      columns: [{ name: "order date", type: "VARCHAR(50)", nullable: false, isPrimary: false }],
+    };
+    // MySQL's port names no engine, a declared quoting does not stand in for the type, and a JSON language's
+    // document insert is the type's writing row: each needs the connection's type.
+    for (const capabilities of [
+      capsOf({ defaultPort: 3306 }),
+      capsOf({ defaultPort: 3306, identifierQuoting: "backtick" }),
+      jsonCaps,
+    ]) {
+      const { container, getByTestId, queryByTestId, queryByText } = render(
+        <TestDataGenerator
+          isOpen
+          onClose={mock(() => {})}
+          tablePath={["shop", "Order Items"]}
+          tableSchema={awkward}
+          capabilities={capabilities}
+          onExecuteQuery={mock(() => {})}
+        />,
+      );
+      expect(getByTestId("test-data-refusal").textContent).toBe(`This connection: ${UNTYPED_CAPABILITIES_SENTENCE}`);
+      expect(container.textContent).not.toContain("INSERT");
+      expect(container.textContent).not.toContain("insertMany");
+      expect(queryByTestId("test-data-copy")).toBeNull();
+      expect(queryByText("Execute")).toBeNull();
+      cleanup();
+    }
+  });
+
+  test("an equal declaration in a new object keeps the statement, and one that quotes differently rewrites it", () => {
+    // The statement holds random values, so a host that builds its declaration in render must not regenerate
+    // every row on each re-render: the memo reads the declaration's content, not its identity.
+    const awkward: DetailedObject = {
+      ...schema,
+      columns: [
+        { name: "order date", type: "VARCHAR(50)", nullable: false, isPrimary: false },
+        { name: "salary", type: "DECIMAL(10,2)", nullable: true, isPrimary: false },
+      ],
+    };
+    const view = (capabilities: ProviderCapabilities) => (
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["shop", "employees"]}
+        tableSchema={awkward}
+        databaseType="postgres"
+        capabilities={capabilities}
+        onExecuteQuery={mock(() => {})}
+      />
+    );
+    const { container, rerender } = render(view(capsOf({ defaultPort: 5432 })));
+    const first = container.textContent ?? "";
+    expect(first).toContain('INSERT INTO shop.employees ("order date", salary)');
+    rerender(view(capsOf({ defaultPort: 5432 })));
+    expect(container.textContent ?? "").toBe(first);
+    rerender(view(capsOf({ defaultPort: 5432, identifierQuoting: "backtick" })));
+    expect(container.textContent ?? "").toContain("INSERT INTO shop.employees (`order date`, salary)");
   });
 
   test("quotes a generated value that does not match its column's numeric type", () => {
@@ -374,7 +460,7 @@ describe("TestDataGenerator", () => {
           onExecuteQuery={mock(() => {})}
         />,
       ),
-    ).toThrow("declares no document insert");
+    ).toThrow("Cannot generate test data: the redis writing row declares no document insert.");
   });
 
   test("generates MongoDB insertMany JSON when queryLanguage is json", () => {
@@ -948,6 +1034,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["shop", "dbo", "customers"]}
         tableSchema={customers}
+        databaseType="mssql"
         capabilities={mssqlCaps}
         onExecuteQuery={mock(() => {})}
       />,
@@ -965,6 +1052,7 @@ describe("TestDataGenerator", () => {
         onClose={mock(() => {})}
         tablePath={["demo", "a.b"]}
         tableSchema={dotted}
+        databaseType="postgres"
         capabilities={postgresCaps}
         onExecuteQuery={mock(() => {})}
       />,
@@ -1681,8 +1769,8 @@ describe("TestDataGenerator Oracle literals (#1400)", () => {
 
 // A host hands this published dialog the connection's type as a plain string (FND-1, Q2). A value that is not a type
 // id, the empty string and null included, is refused by name in place of the statement, so nothing is written under
-// another engine's rules or the SQL defaults and nothing can be copied or run. An omitted databaseType is no
-// connection, as before.
+// another engine's rules or the SQL defaults and nothing can be copied or run. An omitted databaseType beside
+// capabilities is refused the same way; with neither, the dialog writes as with no connection, as before.
 describe("TestDataGenerator and a databaseType outside the union (FND-1)", () => {
   afterEach(() => {
     cleanup();
@@ -1755,9 +1843,25 @@ describe("TestDataGenerator and a databaseType outside the union (FND-1)", () =>
     expect(getByText("Execute")).not.toBeNull();
   });
 
-  test("an omitted databaseType writes the statement as with no connection, as before", () => {
-    const { container, queryByTestId } = renderWithType(undefined);
-    expect(container.textContent).toContain("INSERT INTO");
+  test("an omitted databaseType beside capabilities is refused by name, since the call needs the connection's type", () => {
+    const { container, getByTestId, queryByTestId } = renderWithType(undefined);
+    expect(getByTestId("test-data-refusal").textContent).toBe(`This connection: ${UNTYPED_CAPABILITIES_SENTENCE}`);
+    expect(container.textContent).not.toContain("INSERT");
+    expect(queryByTestId("test-data-copy")).toBeNull();
+  });
+
+  test("with neither a databaseType nor capabilities the statement is written as with no connection, as before", () => {
+    const { container, queryByTestId } = render(
+      <TestDataGenerator
+        isOpen
+        onClose={mock(() => {})}
+        tablePath={["employees"]}
+        tableSchema={schema}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    expect(container.textContent).toContain("INSERT INTO employees");
     expect(queryByTestId("test-data-refusal")).toBeNull();
+    expect(queryByTestId("test-data-copy")).not.toBeNull();
   });
 });

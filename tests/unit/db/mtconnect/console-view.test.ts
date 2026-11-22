@@ -202,7 +202,7 @@ describe("the shared parser accepts what the agent answers", () => {
 describe("the generated request line against a hostile name", () => {
   const capabilities = { queryLanguage: "json", queryDialect: "mtconnect" } as unknown as ProviderCapabilities;
   const run = (name: string): string => {
-    const text = generateTableQuery(["Mazak", name], capabilities);
+    const text = generateTableQuery(["Mazak", name], "mtconnect", capabilities);
     try {
       return `accepted:${guardRequestLine(text, { rowCap: 10_000, knownDevices: new Set(["Mazak"]) }).op}`;
     } catch (error) {
@@ -237,12 +237,15 @@ describe("the generated request line against a hostile name", () => {
    * the wrong mistake to whoever clicked.
    */
   test("an empty device name asks the agent's own current, with the gap said out loud", () => {
-    expect(generateTableQuery([""], capabilities)).toBe("# A request names a device from the tree.\nGET /current");
+    expect(generateTableQuery([""], "mtconnect", capabilities)).toBe(
+      "# A request names a device from the tree.\nGET /current",
+    );
     // And it is a line the guard accepts, which is the point of not writing `GET //current`.
     expect(
-      guardRequestLine(generateTableQuery([""], capabilities), { rowCap: 10_000, knownDevices: new Set() }).op,
+      guardRequestLine(generateTableQuery([""], "mtconnect", capabilities), { rowCap: 10_000, knownDevices: new Set() })
+        .op,
     ).toBe("current");
     // The empty address is refused one layer up, before any dialect is asked.
-    expect(() => generateTableQuery([], capabilities)).toThrow(/no segments/);
+    expect(() => generateTableQuery([], "mtconnect", capabilities)).toThrow(/no segments/);
   });
 });

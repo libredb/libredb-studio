@@ -312,9 +312,9 @@ export class CassandraProvider extends SQLBaseProvider {
       // pastes.
       supportsConnectionString: false,
       defaultPort: CASSANDRA_DEFAULT_PORT,
-      // `identifierQuoting` is deliberately ABSENT: the field exists for engines whose
-      // port cannot answer for their dialect, and 9042 is Cassandra's alone. The
-      // generators' default branch is already measured-correct here - `SELECT "id"
+      // `identifierQuoting` is deliberately ABSENT: Cassandra has no row of its own in
+      // `SQL_ENGINE_GENERATORS`, and the generators' default branch is already
+      // measured-correct here - `SELECT "id"
       // FROM probe.customers` returns the column and the bare form works too.
       //
       // `statementTerminator` is absent for the same reason: measured, `SELECT id FROM

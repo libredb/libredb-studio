@@ -825,7 +825,7 @@ async function unusualGrants(fixture: Fixture): Promise<void> {
           const scope = readableScope(permissions.map((p) => ({ type: p.type, key: p.key, rangeEnd: p.rangeEnd })));
           const notes: string[] = [];
           for (const group of groups) {
-            const text = generateTableQuery(group.path, provider.getCapabilities(), undefined, {
+            const text = generateTableQuery(group.path, "etcd", provider.getCapabilities(), undefined, {
               readRanges: group.readRanges,
             });
             // A group whose every readable piece starts or ends at a key that is not UTF-8 lists no piece
@@ -1553,8 +1553,10 @@ async function strainedKeys(fixture: Fixture): Promise<void> {
       for (const group of groups) {
         const expected = prefixRange(group.name.slice(0, -1));
         for (const text of [
-          generateTableQuery(group.path, provider.getCapabilities(), undefined, { readRanges: group.readRanges }),
-          generateSelectQuery(group.path, [], provider.getCapabilities(), { readRanges: group.readRanges }),
+          generateTableQuery(group.path, "etcd", provider.getCapabilities(), undefined, {
+            readRanges: group.readRanges,
+          }),
+          generateSelectQuery(group.path, [], "etcd", provider.getCapabilities(), { readRanges: group.readRanges }),
         ]) {
           const first = parseEtcdCommand(text, limits);
           must(

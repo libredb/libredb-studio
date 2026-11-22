@@ -526,8 +526,11 @@ The published `ConnectionModal`, handed such a connection to edit, shows the sam
 Handed such a connection while closed, it draws nothing and does not fail.
 The published `QuerySafetyDialog` and `TestDataGenerator` take the connection's type as a plain `databaseType` string.
 Handed one that names no provider in that version of the package, an empty string, `null`, or a value that is not text, they draw the same **Connection unavailable** notice in place of the safety analysis or the generated statement: the safety dialog sends nothing to be analysed and keeps Execute disabled, and the test data dialog offers neither Copy nor Execute.
-Without a `databaseType` both read the statement as they do with no connection open.
+Without a `databaseType` the safety dialog reads the statement as it does with no connection open, and so does the test data dialog when it is handed no `capabilities` either.
 The published `QueryEditor` and `ResultsGrid` type `databaseType` as one of the package's type ids, and handed any other value they throw an error named `UnknownProviderError`, with the same sentence, while they render, before they read anything with it, so the host's error boundary receives it.
+An SQL engine's identifier quoting and the forms the test data dialog and editor completion write follow the connection's type, never the port its declaration names, so a declaration alone cannot say how to write for its engine.
+So `TestDataGenerator` and `QueryEditor` handed a connection's `capabilities` without its `databaseType` refuse it the same way, the dialog with the notice and the editor with `UnknownProviderError`, with a sentence that says the call needs the connection's type.
+With neither, the editor reads as it does with no connection open.
 
 ## Saved queries whose type this Studio has no provider for
 

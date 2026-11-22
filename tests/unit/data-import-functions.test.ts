@@ -362,7 +362,7 @@ describe("generateImportSQL", () => {
       totalRows: 1,
     };
     const mapping = { when: "when", "Order Date": "Order Date", user: "user" };
-    const cases: Array<[string, ProviderCapabilities, string, string]> = [
+    const cases: Array<[string, ProviderCapabilities, string, string, "postgres" | "mysql" | "mssql"]> = [
       [
         "PostgreSQL",
         {
@@ -372,6 +372,7 @@ describe("generateImportSQL", () => {
         } as unknown as ProviderCapabilities,
         'CREATE TABLE "imp_csv" (\n  "when" TEXT,\n  "Order Date" TEXT,\n  "user" TEXT\n);',
         'INSERT INTO "imp_csv" ("when", "Order Date", "user")',
+        "postgres",
       ],
       [
         "MySQL",
@@ -382,6 +383,7 @@ describe("generateImportSQL", () => {
         } as unknown as ProviderCapabilities,
         "CREATE TABLE `imp_csv` (\n  `when` TEXT,\n  `Order Date` TEXT,\n  `user` TEXT\n);",
         "INSERT INTO `imp_csv` (`when`, `Order Date`, `user`)",
+        "mysql",
       ],
       [
         "SQL Server",
@@ -392,15 +394,28 @@ describe("generateImportSQL", () => {
         } as unknown as ProviderCapabilities,
         "CREATE TABLE [imp_csv] (\n  [when] TEXT,\n  [Order Date] TEXT,\n  [user] TEXT\n);",
         "INSERT INTO [imp_csv] ([when], [Order Date], [user])",
+        "mssql",
       ],
     ];
-    for (const [engine, capabilities, create, insert] of cases) {
+    for (const [engine, capabilities, create, insert, type] of cases) {
       test(engine, () => {
-        const sql = generateImportSQL(reserved, { kind: "new", name: "imp_csv" }, mapping, undefined, capabilities);
+        const sql = generateImportSQL(reserved, { kind: "new", name: "imp_csv" }, mapping, type, capabilities);
         expect(sql).toContain(create);
         expect(sql).toContain(insert);
       });
     }
+
+    test("quotes by the dialect it is handed, never the port its declaration names", () => {
+      const declaring = (defaultPort: number) =>
+        ({ queryLanguage: "sql", defaultPort, createTable: TEST_CREATE_TABLE_SPEC }) as unknown as ProviderCapabilities;
+      const target = { kind: "new", name: "imp_csv" } as const;
+      expect(generateImportSQL(reserved, target, mapping, "mysql", declaring(5432))).toContain(
+        "CREATE TABLE `imp_csv`",
+      );
+      expect(generateImportSQL(reserved, target, mapping, "postgres", declaring(3306))).toContain(
+        'CREATE TABLE "imp_csv"',
+      );
+    });
 
     test("a dotted name is a table in a container", () => {
       const pg = {

@@ -93,9 +93,9 @@ export function db2Capabilities(base: ProviderCapabilities): ProviderCapabilitie
     },
     // A `db2://` URL pasted into the form fills its fields.
     supportsConnectionString: true,
-    // Declared rather than left to the query generators' port heuristic, which has no arm for
-    // 50000: its PostgreSQL fall-through quotes the same way today, and a declaration cannot
-    // change under a later edit of that heuristic.
+    // Declared rather than left to the query generators' default: Db2 has no row of its own in
+    // `SQL_ENGINE_GENERATORS`, the PostgreSQL-shaped default quotes the same way today, and a
+    // declaration cannot change under a later edit of that default.
     identifierQuoting: "double",
     containerLevels: DB2_CONTAINER_LEVELS,
     // Only the declared depth is an address: a partial path would leave the schema unbound.

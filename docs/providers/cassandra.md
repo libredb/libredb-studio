@@ -1340,10 +1340,7 @@ because there are no table statistics to list at all.)
 }
 ```
 
-`identifierQuoting` and `statementTerminator` are both **absent**, and each absence is measured
-rather than assumed: 9042 is Cassandra's alone, so the generators' port heuristic is not being asked
-to answer for two dialects and its default `"…"` branch is already correct here; and `SELECT id FROM
-probe.customers WHERE id = 1;` returns the row, so the `;` the generators already emit is valid CQL.
+`identifierQuoting` and `statementTerminator` are both **absent**, and each absence is measured rather than assumed: Cassandra has no row of its own in the generators' `SQL_ENGINE_GENERATORS`, and their default `"…"` branch is already correct here; and `SELECT id FROM probe.customers WHERE id = 1;` returns the row, so the `;` the generators already emit is valid CQL.
 
 `entityName`, `rowName` and the action labels are CQL's own words and are left inherited.
 `statementLanguage` is declared — *"CQL (Cassandra Query Language) - no JOIN, no subquery, no

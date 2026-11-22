@@ -237,7 +237,7 @@ These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](htt
 | Foreign keys | Yes | Inherited |
 | Maintenance | Yes | Run Statistics and Reorganize Table, per table only |
 | Connection string | Yes | A `db2://` paste fills the fields |
-| Identifier quoting | Double quotes | Declared, because port 50000 would otherwise fall to the PostgreSQL heuristic |
+| Identifier quoting | Double quotes | Declared, so a later edit of the generators' default cannot move it: Db2 has no row of its own in `SQL_ENGINE_GENERATORS` |
 | Statement terminator | Not declared | A generated statement ends with `;`, the default when none is declared; a trailing `;` is accepted |
 | Container levels | Schema | |
 | Container path shapes | Exact | Like Oracle |

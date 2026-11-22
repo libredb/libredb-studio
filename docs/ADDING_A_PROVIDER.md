@@ -1228,9 +1228,7 @@ Those three reach code and tests only; the four prose greps of the published blo
       The `Record<ExplainFormat, …>` registry is exhaustive, so this and the next item must land
       together or neither compiles
 - [ ] `src/lib/explain/index.ts` — register the strategy
-- [ ] `src/lib/db/query-generators/index.ts`: only if the engine needs its own forms or quoting, a
-      `SqlPortGenerators` row beside the provider, keyed by its default port; the default is
-      PostgreSQL-shaped, so check before assuming it fits
+- [ ] `src/lib/db/query-generators/index.ts`: only if the engine needs its own forms or quoting, an `SqlEngineGenerators` row beside the provider, under its type id in `SQL_ENGINE_GENERATORS`; the default is PostgreSQL-shaped, so check before assuming it fits
 - [ ] `src/lib/db/driver-errors/index.ts`: only if the driver's errors carry code fields or words of their own,
       a `<provider>-driver-errors.ts` row beside the provider (`DriverErrorClassifier`,
       `src/lib/db/driver-errors/types.ts`), added to `DRIVER_ERROR_CLASSIFIERS` in its fixed order;

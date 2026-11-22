@@ -1212,6 +1212,13 @@ describe("StudioWorkspace", () => {
     expect(capturedQueryToolbarProps.onToggleEditing).toBeUndefined();
   });
 
+  test("hands the active connection's type to the import dialog", () => {
+    connAdapterOverride = { activeConnection: { ...dbConn, type: "mysql" as const } };
+    renderWorkspace();
+    act(() => (capturedQueryToolbarProps.onImport as () => void)());
+    expect(capturedDataImportModalProps.databaseType).toBe("mysql");
+  });
+
   test("toolbar onImport opens the import modal which delegates and closes", async () => {
     const { queryByTestId } = renderWorkspace();
     expect(queryByTestId("dataimportmodal")).toBeNull();
@@ -1328,7 +1335,7 @@ describe("StudioWorkspace", () => {
       // The generator the tab manager runs, fed the metadata this shell actually
       // passed it: with `null` it fell through to `SELECT * FROM user:* LIMIT 50;`.
       const capabilities = (capturedTabManagerArgs.metadata as ProviderMetadata).capabilities;
-      const query = generateTableQuery(["user:*"], capabilities, []);
+      const query = generateTableQuery(["user:*"], "redis", capabilities, []);
       expect(query.startsWith("SCAN ")).toBe(true);
       expect(query).not.toContain("SELECT");
     });

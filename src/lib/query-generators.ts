@@ -1,11 +1,16 @@
 import { declaredLevels } from "@/lib/db/object-kinds";
 import { registeredDialect } from "@/lib/db/query-dialects";
-import { DIALECT_GENERATORS, languageGenerators, sqlPortGenerators } from "@/lib/db/query-generators";
+import { DIALECT_GENERATORS, languageGenerators, sqlEngineGenerators } from "@/lib/db/query-generators";
 import { commentName, objectSegment } from "@/lib/db/query-generators/shared";
-import type { DialectGenerators, GeneratorScope, SqlFormContext } from "@/lib/db/query-generators/types";
+import type {
+  DialectGenerators,
+  GeneratorScope,
+  SqlEngineGenerators,
+  SqlFormContext,
+} from "@/lib/db/query-generators/types";
 import type { QueryDialect } from "@/lib/db/query-dialects";
 import { offersCountQuery, type PreviewTimeWindow, type ProviderCapabilities } from "@/lib/db/types";
-import type { ColumnSchema } from "@/lib/types";
+import type { ColumnSchema, DatabaseType } from "@/lib/types";
 
 export { escapeGlob, objectSegment } from "@/lib/db/query-generators/shared";
 export type { DialectGenerators, GeneratorScope } from "@/lib/db/query-generators/types";
@@ -14,9 +19,15 @@ export type { DialectGenerators, GeneratorScope } from "@/lib/db/query-generator
  * The query generators, the engine-agnostic dispatcher: what a tree click runs, what Generate Query and Generate Count
  * Query write, what a declared row action runs, and how a name or an address is quoted. Every text one engine writes is
  * a row declared beside its provider and collected by the registry in `src/lib/db/query-generators/index.ts`, read
- * here by what the declaration says: its query dialect, its query language, or the default port an SQL engine's forms
- * have always been keyed by. Nothing here names an engine; `tests/unit/lib/query-generators-isolation.test.ts` holds
- * that.
+ * here by what the declaration says, its query dialect or its query language, or, for an SQL engine's own forms, by the
+ * connection's type id.
+ * Each of the seven that can read an SQL engine's forms (`quoteIdentifier`, `quoteTypedName`, `quoteObjectPath`,
+ * `containerSpellingOf`, `generateTableQuery`, `generateSelectQuery`, `generateCountQuery`) takes that type and reads
+ * it once, as it is called, so a value outside the union is refused by name whatever the declaration says; `undefined`
+ * is no connection, and no SQL engine's own forms are read for it. `generateRowActionQuery` reads only a dialect row
+ * and `requestAddress` only a language row, so neither takes a type.
+ * The declared `defaultPort` is never read. Nothing here names an engine;
+ * `tests/unit/lib/query-generators-isolation.test.ts` holds that.
  */
 
 /** Backtick-quote an identifier, doubling any backtick it contains. */
@@ -50,10 +61,10 @@ const DECLARED_QUOTING: Record<
  * SQL stays readable and existing behavior is preserved; mixed-case / special /
  * fold-sensitive names get the dialect's quoting.
  *
- * The rule is read from the provider capabilities, in order: a language that spells names its own way quotes with
- * its row in `LANGUAGE_GENERATORS`; a declared `identifierQuoting` comes next; then the SQL engine whose default port
- * the declaration names, with its row in `SQL_PORT_GENERATORS`; and every other engine gets the default below, where
- * an unquoted name folds to lowercase, so a name is quoted unless it is plain lower case.
+ * The rule is read in order: a language that spells names its own way quotes with its row in `LANGUAGE_GENERATORS`;
+ * a declared `identifierQuoting` comes next; then the SQL engine of `type`, with its row in `SQL_ENGINE_GENERATORS`;
+ * and every other engine, or no `type` at all, gets the default below, where an unquoted name folds to lowercase, so a
+ * name is quoted unless it is plain lower case.
  *
  * An engine that never folds case and quotes with the double quote needs no row of its own: the default is already
  * exactly right for it, as both `SELECT "id" FROM "probe"` and the bare form parse (issue #264).
@@ -68,22 +79,32 @@ const DECLARED_QUOTING: Record<
 
 export function quoteIdentifier(
   name: string,
+  type: DatabaseType | undefined,
   capabilities: ProviderCapabilities,
   { always = false }: { always?: boolean } = {},
+): string {
+  return quoteName(name, sqlEngineGenerators(type), capabilities, always);
+}
+
+/** `quoteIdentifier` with the engine's row already read, so a generator reads the type once, as it is called. */
+function quoteName(
+  name: string,
+  engine: SqlEngineGenerators | undefined,
+  capabilities: ProviderCapabilities,
+  always: boolean,
 ): string {
   // A language that spells names its own way quotes them with its own rule, the JSON language's engines included:
   // they don't use SQL identifier quoting (#1088, #1089).
   const language = languageGenerators(capabilities);
   if (language?.quote !== undefined) return language.quote(name);
 
-  // An explicit declaration wins over the port, because the port stopped being a faithful proxy for the dialect:
-  // two search engines ship on one port and disagree about the quote character, and where a double-quoted
-  // identifier is a STRING LITERAL the generated query answers 200 with zero rows instead of failing, so the
-  // default would produce silently wrong results there, not an error. See `ProviderCapabilities.identifierQuoting`.
+  // An explicit declaration wins over the engine's row: two search engines share one provider and disagree about the
+  // quote character, and where a double-quoted identifier is a STRING LITERAL the generated query answers 200 with
+  // zero rows instead of failing, so the default would produce silently wrong results there, not an error.
+  // See `ProviderCapabilities.identifierQuoting`.
   const declared = capabilities.identifierQuoting;
   if (declared !== undefined) return DECLARED_QUOTING[declared](name, always);
 
-  const engine = sqlPortGenerators(capabilities);
   if (engine !== undefined) return engine.quote(name, always);
   // The default: an unquoted name folds to lowercase.
   return !always && /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
@@ -108,8 +129,13 @@ const PORTABLE_BARE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * list to consult: the one reserved-word list in the repo is PostgreSQL's alone
  * (`src/lib/db/providers/sql/postgres-sql-grammar.ts`).
  */
-export function quoteTypedName(name: string, capabilities: ProviderCapabilities): string {
-  return PORTABLE_BARE_NAME.test(name) ? name : quoteIdentifier(name, capabilities, { always: true });
+export function quoteTypedName(
+  name: string,
+  type: DatabaseType | undefined,
+  capabilities: ProviderCapabilities,
+): string {
+  const engine = sqlEngineGenerators(type);
+  return PORTABLE_BARE_NAME.test(name) ? name : quoteName(name, engine, capabilities, true);
 }
 
 /** The quote character of each declared quoting, which an engine-spelled segment is read with. */
@@ -171,12 +197,13 @@ function spelledQuote(capabilities: ProviderCapabilities): '"' | "`" {
 /** Quote an engine-spelled segment part by part, or as one name where it does not read as a spelling. */
 function quoteSpelledSegment(
   segment: string,
+  engine: SqlEngineGenerators | undefined,
   capabilities: ProviderCapabilities,
-  options: { always?: boolean },
+  always: boolean,
 ): string {
   const parts = readSpelledParts(segment, spelledQuote(capabilities));
-  if (parts === undefined) return quoteIdentifier(segment, capabilities, options);
-  return parts.map((part) => quoteIdentifier(part, capabilities, options)).join(".");
+  if (parts === undefined) return quoteName(segment, engine, capabilities, always);
+  return parts.map((part) => quoteName(part, engine, capabilities, always)).join(".");
 }
 
 /**
@@ -212,8 +239,19 @@ function quoteSpelledSegment(
 
 export function quoteObjectPath(
   path: readonly string[],
+  type: DatabaseType | undefined,
   capabilities: ProviderCapabilities,
-  options: { always?: boolean } = {},
+  { always = false }: { always?: boolean } = {},
+): string {
+  return quotePath(path, sqlEngineGenerators(type), capabilities, always);
+}
+
+/** `quoteObjectPath` with the engine's row already read. */
+function quotePath(
+  path: readonly string[],
+  engine: SqlEngineGenerators | undefined,
+  capabilities: ProviderCapabilities,
+  always: boolean,
 ): string {
   // A language that addresses an object its own way writes the address with its own rule.
   const language = languageGenerators(capabilities);
@@ -222,8 +260,8 @@ export function quoteObjectPath(
   return path
     .map((segment, index) =>
       index === spelled
-        ? quoteSpelledSegment(segment, capabilities, options)
-        : quoteIdentifier(segment, capabilities, options),
+        ? quoteSpelledSegment(segment, engine, capabilities, always)
+        : quoteName(segment, engine, capabilities, always),
     )
     .join(".");
 }
@@ -244,12 +282,16 @@ export interface ContainerSpelling {
 }
 
 /** The engine's `ContainerSpelling`, or `undefined` where it does not declare `containerNameSpelling`. */
-export function containerSpellingOf(capabilities: ProviderCapabilities): ContainerSpelling | undefined {
+export function containerSpellingOf(
+  type: DatabaseType | undefined,
+  capabilities: ProviderCapabilities,
+): ContainerSpelling | undefined {
+  const engine = sqlEngineGenerators(type);
   if (capabilities.containerNameSpelling !== "engine") return undefined;
   const quote = spelledQuote(capabilities);
   return {
     quote,
-    quotePath: (path) => quoteObjectPath(path, capabilities),
+    quotePath: (path) => quotePath(path, engine, capabilities, false),
     pathNames: (path) => {
       const spelled = spelledSegmentIndex(path, capabilities);
       return path.map((segment, index) =>
@@ -280,8 +322,8 @@ function terminator(capabilities: ProviderCapabilities): string {
 }
 
 /** What an SQL row reads of the declaration it writes for: its quoting and its terminator. */
-function sqlFormContext(capabilities: ProviderCapabilities): SqlFormContext {
-  return { quote: (name) => quoteIdentifier(name, capabilities), terminator: terminator(capabilities) };
+function sqlFormContext(engine: SqlEngineGenerators | undefined, capabilities: ProviderCapabilities): SqlFormContext {
+  return { quote: (name) => quoteName(name, engine, capabilities, false), terminator: terminator(capabilities) };
 }
 
 /**
@@ -310,10 +352,12 @@ function sqlFormContext(capabilities: ProviderCapabilities): SqlFormContext {
 
 export function generateTableQuery(
   path: readonly string[],
+  type: DatabaseType | undefined,
   capabilities: ProviderCapabilities,
   columns?: readonly ColumnSchema[],
   scope?: GeneratorScope,
 ): string {
+  const engine = sqlEngineGenerators(type);
   // Refuses an empty address before any row spells it.
   objectSegment(path);
   // A query dialect's own command, from its `DIALECT_GENERATORS` record, BEFORE its language's row below.
@@ -322,19 +366,19 @@ export function generateTableQuery(
   // A language an engine writes its own text in, from its `LANGUAGE_GENERATORS` record.
   const language = languageGenerators(capabilities);
   if (language !== undefined) return language.table(path, columns, capabilities);
-  const table = quoteObjectPath(path, capabilities);
-  // An SQL engine whose click reads a projection of its own, from its `SQL_PORT_GENERATORS` record.
-  const engineTable = sqlPortGenerators(capabilities)?.table;
-  if (engineTable !== undefined) return engineTable(table, sqlFormContext(capabilities));
+  const table = quotePath(path, engine, capabilities, false);
+  // An SQL engine whose click reads a projection of its own, from its `SQL_ENGINE_GENERATORS` row.
+  const engineTable = engine?.table;
+  if (engineTable !== undefined) return engineTable(table, sqlFormContext(engine, capabilities));
   // An engine whose driver misreads some column types declares how its preview reads each one
   // (#786), so the preview names its columns rather than asking for `*`.
   const projection = capabilities.previewProjection;
   if (projection !== undefined) {
-    return projectedPreview(table, projection, columns ?? [], capabilities);
+    return projectedPreview(table, projection, columns ?? [], engine, capabilities);
   }
   // An engine whose preview reads a recent window, newest first (InfluxDB spec 6.6, I20).
   const window = capabilities.previewTimeWindow;
-  if (window !== undefined) return windowedPreview(table, window, capabilities);
+  if (window !== undefined) return windowedPreview(table, window, engine, capabilities);
   // Every other SQL dialect. Some once had branches of their own only to spell their row bound, and with no bound to
   // spell, one statement serves all of them. Issue #264's rule, that a bound must sit after any `FORMAT` or
   // `SETTINGS` clause, is moot for the same reason: there is no generated bound to misplace.
@@ -346,8 +390,13 @@ export function generateTableQuery(
  * window under the declaration's note, with no `LIMIT` in the text, so the limiter appends the preview cap after
  * `ORDER BY ... DESC` and Load More pages (finding F5).
  */
-function windowedPreview(table: string, window: PreviewTimeWindow, capabilities: ProviderCapabilities): string {
-  const column = quoteIdentifier(window.column, capabilities);
+function windowedPreview(
+  table: string,
+  window: PreviewTimeWindow,
+  engine: SqlEngineGenerators | undefined,
+  capabilities: ProviderCapabilities,
+): string {
+  const column = quoteName(window.column, engine, capabilities, false);
   return `-- ${window.note}\nSELECT * FROM ${table} WHERE ${column} >= ${window.since} ORDER BY ${column} DESC${terminator(capabilities)}`;
 }
 
@@ -360,10 +409,11 @@ function windowExamples(
   table: string,
   window: PreviewTimeWindow,
   columns: readonly ColumnSchema[],
+  engine: SqlEngineGenerators | undefined,
   capabilities: ProviderCapabilities,
 ): string[] {
   const numeric = columns.find((c) => c.type === "float" || c.type === "integer");
-  const column = quoteIdentifier(numeric?.name ?? "value", capabilities);
+  const column = quoteName(numeric?.name ?? "value", engine, capabilities, false);
   return window.examples.map(
     (example) =>
       `-- ${example
@@ -390,6 +440,7 @@ function projectedPreview(
   table: string,
   projection: NonNullable<ProviderCapabilities["previewProjection"]>,
   columns: readonly ColumnSchema[],
+  engine: SqlEngineGenerators | undefined,
   capabilities: ProviderCapabilities,
 ): string {
   const rules = projection.rules.map((rule) => ({ pattern: new RegExp(rule.type), expression: rule.expression }));
@@ -397,7 +448,7 @@ function projectedPreview(
   const omitted: string[] = [];
   for (const column of columns) {
     const rule = rules.find((candidate) => candidate.pattern.test(column.type));
-    const quoted = quoteIdentifier(column.name, capabilities);
+    const quoted = quoteName(column.name, engine, capabilities, false);
     if (rule === undefined) {
       read.push(quoted);
     } else if (rule.expression === null) {
@@ -437,9 +488,11 @@ function projectedPreview(
 export function generateSelectQuery(
   path: readonly string[],
   columns: readonly ColumnSchema[],
+  type: DatabaseType | undefined,
   capabilities: ProviderCapabilities,
   scope?: GeneratorScope,
 ): string {
+  const engine = sqlEngineGenerators(type);
   // Refuses an empty address before any row spells it.
   objectSegment(path);
   // A query dialect's own text, from its `DIALECT_GENERATORS` record, BEFORE its language's row below.
@@ -448,23 +501,23 @@ export function generateSelectQuery(
   // A language an engine writes its own text in, from its `LANGUAGE_GENERATORS` record.
   const language = languageGenerators(capabilities);
   if (language !== undefined) return language.select(path, columns, capabilities);
-  const table = quoteObjectPath(path, capabilities);
-  const engine = sqlPortGenerators(capabilities);
-  // An SQL engine whose starter statement is its own, from its `SQL_PORT_GENERATORS` record.
-  if (engine?.select !== undefined) return engine.select(table, columns, sqlFormContext(capabilities));
+  const table = quotePath(path, engine, capabilities, false);
+  // An SQL engine whose starter statement is its own, from its `SQL_ENGINE_GENERATORS` row.
+  if (engine?.select !== undefined) return engine.select(table, columns, sqlFormContext(engine, capabilities));
   // The windowed preview with its example lines below it (InfluxDB spec 6.6, I20).
   const window = capabilities.previewTimeWindow;
   if (window !== undefined) {
-    return [windowedPreview(table, window, capabilities), ...windowExamples(table, window, columns, capabilities)].join(
-      "\n",
-    );
+    return [
+      windowedPreview(table, window, engine, capabilities),
+      ...windowExamples(table, window, columns, engine, capabilities),
+    ].join("\n");
   }
   // Columns the engine refuses to project in a SELECT list (e.g. search mapped types like `flattened`, #1459)
   // are omitted so the starter query runs; an index holding only unprojectable columns falls back to `*`.
   const projectable = columns.filter((c) => c.projectable !== false);
-  const cols = projectable.map((c) => `  ${quoteIdentifier(c.name, capabilities)}`).join(",\n") || "  *";
-  // An SQL engine that spells its row bound its own way, from its `SQL_PORT_GENERATORS` record.
-  if (engine?.selectList !== undefined) return engine.selectList(table, cols, sqlFormContext(capabilities));
+  const cols = projectable.map((c) => `  ${quoteName(c.name, engine, capabilities, false)}`).join(",\n") || "  *";
+  // An SQL engine that spells its row bound its own way, from its `SQL_ENGINE_GENERATORS` row.
+  if (engine?.selectList !== undefined) return engine.selectList(table, cols, sqlFormContext(engine, capabilities));
   // A grammar with no constant predicate (CQL, #1410) gets no WHERE clause rather than one it refuses.
   const where = capabilities.supportsConstantPredicate === false ? "" : "\nWHERE 1=1";
   return `SELECT\n${cols}\nFROM ${table}${where}\nLIMIT 100${terminator(capabilities)}`;
@@ -502,9 +555,11 @@ export function generateRowActionQuery(
  */
 export function generateCountQuery(
   path: readonly string[],
+  type: DatabaseType | undefined,
   capabilities: ProviderCapabilities,
   registry: Readonly<Partial<Record<QueryDialect, DialectGenerators>>> = DIALECT_GENERATORS,
 ): string | null {
+  const engine = sqlEngineGenerators(type);
   if (!offersCountQuery(capabilities)) return null;
   // Refuses an empty address before any dialect or language spells it.
   objectSegment(path);
@@ -519,9 +574,9 @@ export function generateCountQuery(
   // A language that writes its own count, from its `LANGUAGE_GENERATORS` record.
   const languageCount = languageGenerators(capabilities)?.count;
   if (languageCount !== undefined) return languageCount(path, capabilities);
-  // An SQL engine whose count is not `COUNT(*)`, from its `SQL_PORT_GENERATORS` record.
-  const countExpression = sqlPortGenerators(capabilities)?.countExpression ?? "COUNT(*)";
-  return `SELECT ${countExpression} AS row_count\nFROM ${quoteObjectPath(path, capabilities)}${terminator(capabilities)}`;
+  // An SQL engine whose count is not `COUNT(*)`, from its `SQL_ENGINE_GENERATORS` row.
+  const countExpression = engine?.countExpression ?? "COUNT(*)";
+  return `SELECT ${countExpression} AS row_count\nFROM ${quotePath(path, engine, capabilities, false)}${terminator(capabilities)}`;
 }
 
 /**

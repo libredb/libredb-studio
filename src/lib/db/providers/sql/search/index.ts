@@ -282,10 +282,10 @@ interface SearchProduct {
    * anything - it reports "no rows" for data that exists, which is worse than an
    * error because nothing tells the reader to distrust it.
    *
-   * This crosses into `ProviderCapabilities.identifierQuoting` because
-   * `query-generators.ts` derives the dialect from the DEFAULT PORT, and both
-   * products ship on 9200 - the first time in this codebase that one port has had
-   * to answer for two dialects.
+   * This crosses into `ProviderCapabilities.identifierQuoting` because one provider
+   * serves both products, and the query generators keep no row per product: their
+   * SQL engine rows are keyed by type id, and this declaration is what tells the
+   * two products' quoting apart.
    */
   readonly identifierQuoting: "double" | "backtick";
 
@@ -923,8 +923,8 @@ abstract class SearchProvider extends SQLBaseProvider {
       // the shared connection-string parser.
       supportsConnectionString: false,
       defaultPort: SEARCH_DEFAULT_PORT,
-      // Declared because the port cannot say: both products are 9200 and they
-      // disagree. See SearchProduct.identifierQuoting for the measurement.
+      // Declared per product: one provider serves both and they disagree, and the
+      // generators keep no row per product. See SearchProduct.identifierQuoting for the measurement.
       identifierQuoting: this.product.identifierQuoting,
       // One answer for both products, and the safe one rather than the tolerant one.
       // Elasticsearch has no `;` in its grammar: the generator's own

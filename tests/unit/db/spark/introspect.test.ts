@@ -1055,9 +1055,9 @@ describe("every listed name round-trips to the statement that reads it", () => {
     expect(nameParts(tail("SHOW TABLES IN "))).toStrictEqual(["lake", ...parts]);
     expect(nameParts(tail("DESCRIBE TABLE "))).toStrictEqual(expected);
     expect(nameParts(tail("SHOW CREATE TABLE "))).toStrictEqual(expected);
-    const path = quoteObjectPath(object.path, SPARK_CAPS);
+    const path = quoteObjectPath(object.path, "spark", SPARK_CAPS);
     expect(nameParts(path)).toStrictEqual(expected);
-    expect(generateCountQuery(object.path, SPARK_CAPS)).toContain(`FROM ${path}`);
+    expect(generateCountQuery(object.path, "spark", SPARK_CAPS)).toContain(`FROM ${path}`);
     // The session's USE NAMESPACE writes the connection's namespace with the same spelling.
     expect(parseNamespaceSpelling(spellNamespace(parts))).toStrictEqual(parts);
   });

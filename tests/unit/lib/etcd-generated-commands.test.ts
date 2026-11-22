@@ -85,7 +85,7 @@ const sampleKey = (prefix: string): string => `${prefix}example`;
 
 describe("Generate Command runs its read as is, and each commented form parses once uncommented (#1089 6.4)", () => {
   test.each(PREFIXES)("a prefix holding %s", (_label, prefix) => {
-    const text = generateSelectQuery([`${prefix}*`], [], CAPABILITIES);
+    const text = generateSelectQuery([`${prefix}*`], [], "etcd", CAPABILITIES);
     const { read, forms } = partsOf(text);
     expect(text).not.toMatch(UNKEPT);
 
@@ -131,11 +131,11 @@ describe("Generate Command runs its read as is, and each commented form parses o
     for (const text of ["watch -- -app/ --prefix", "watch --prefix -- -app/", "watch -app/ --prefix"]) {
       expect(parseEtcdCommand(text, LIMITS).ok).toBe(false);
     }
-    expect(generateSelectQuery(["-app/*"], [], CAPABILITIES)).not.toContain("watch");
+    expect(generateSelectQuery(["-app/*"], [], "etcd", CAPABILITIES)).not.toContain("watch");
   });
 
   test("the read-only form is the read alone, with its pieces (E6)", () => {
-    const text = generateSelectQuery(["/app/config/*"], [], CAPABILITIES, { readOnly: true });
+    const text = generateSelectQuery(["/app/config/*"], [], "etcd", CAPABILITIES, { readOnly: true });
     expect(partsOf(text)).toEqual({ read: "get /app/config/ --prefix --limit=50", forms: [] });
   });
 });
@@ -178,7 +178,7 @@ function expectReads(command: EtcdCommand, piece: ObjectReadRange): void {
 describe("the click reads each piece a user who is not root may read, as is or once uncommented (#1089 4.7, 6.4)", () => {
   test.each(PIECES)("the first piece, %s, runs, and the others parse once uncommented", (_label, first) => {
     const others = PIECES.map(([, piece]) => piece).filter((piece) => piece !== first);
-    const text = generateTableQuery(["/config/*"], CAPABILITIES, [], { readRanges: [first, ...others] });
+    const text = generateTableQuery(["/config/*"], "etcd", CAPABILITIES, [], { readRanges: [first, ...others] });
     const { read, forms } = partsOf(text);
     expect(text).not.toMatch(UNKEPT);
     expectReads(commandOf(text), first);
@@ -232,7 +232,7 @@ const WRITTEN: readonly (readonly [label: string, text: string])[] = [
  * every physical line of a form that spans lines included, and the read line removed.
  */
 const GENERATED: readonly (readonly [label: string, text: string])[] = PREFIXES.flatMap(([label, prefix]) => {
-  const text = generateSelectQuery([`${prefix}*`], [], CAPABILITIES);
+  const text = generateSelectQuery([`${prefix}*`], [], "etcd", CAPABILITIES);
   const { forms } = partsOf(text);
   const asGenerated: readonly [string, string] = [`Generate Command for a prefix holding ${label}, as generated`, text];
   const uncommented = forms.map((_form, index): readonly [string, string] => [

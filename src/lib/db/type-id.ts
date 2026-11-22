@@ -7,7 +7,8 @@
  *
  * The provider factory, `resolveConnection`, the `db-ui-config` lookups, the Studio connection lists, the connection
  * hook, the embedded workspace's connection adapter and the connection form hook ask this module first; so do the five
- * contract registry lookups (through `typeIdRow`) and the migration's dialect header, and the published
+ * contract registry lookups and the query generators' SQL engine rows (through `typeIdRow`) and the migration's dialect
+ * header, and the published
  * `QuerySafetyDialog`, `TestDataGenerator`, `QueryEditor` and `ResultsGrid`, the components that read a per-engine fact
  * with a type a host hands them. The capability tables are read through `typeIdRow` as well: `WRITE_REACH` by the
  * read-only marker and the connection form hook, `READ_ONLY_ENFORCED` by the provider factory,
@@ -95,10 +96,42 @@ export function assertDatabaseType(value: unknown): asserts value is DatabaseTyp
 }
 
 /**
+ * The refusal of a published component handed a connection's capabilities without the connection's type. An SQL
+ * engine's own identifier quoting and forms, and a document language's insert, are read by the type, so the
+ * declaration alone cannot say how to write for its engine.
+ */
+export const UNTYPED_CAPABILITIES_SENTENCE =
+  "This connection's capabilities were handed over without its type, and the call needs the connection's type (databaseType) to write for its engine.";
+
+/**
+ * Why a published component cannot write for the connection a host describes with `databaseType` and `capabilities`,
+ * or `null` when it can: a type id, with or without capabilities, or neither value, which is no connection open.
+ * Capabilities without a type are refused as `absent` with `UNTYPED_CAPABILITIES_SENTENCE`; any other type as
+ * `typeIdRefusal` refuses it.
+ */
+export function connectionTypeRefusal(databaseType: unknown, capabilities: unknown): TypeIdRefusal | null {
+  if (databaseType === undefined) {
+    return capabilities === undefined ? null : { reason: "absent", sentence: UNTYPED_CAPABILITIES_SENTENCE };
+  }
+  return typeIdRefusal(databaseType);
+}
+
+/**
+ * Refuses, with `UnknownProviderError`, the connection `connectionTypeRefusal` refuses.
+ *
+ * @throws {UnknownProviderError} When capabilities come without a type, or the type is not a type id.
+ */
+export function assertConnectionType(databaseType: unknown, capabilities: unknown): void {
+  const refusal = connectionTypeRefusal(databaseType, capabilities);
+  if (refusal !== null) throw new UnknownProviderError(refusal);
+}
+
+/**
  * Reads `table`'s row for `value` after `assertDatabaseType`, so a value that is not a type id is refused by name
- * before the table is read, and a prototype key such as `"constructor"` never reaches an `Object.prototype` member. A
- * total table answers its row; a partial table answers `undefined` for a type id it has no row for. The table is an
- * argument, so any module holding a per-engine table reads it through this one function.
+ * before the table is read, and a prototype key such as `"constructor"` never reaches an `Object.prototype` member. It
+ * reads only a table's own rows: a total table answers its row, and a partial table answers `undefined` for a type id
+ * it holds no row of its own for. The table is an argument, so any module holding a per-engine table reads it through
+ * this one function.
  *
  * @throws {UnknownProviderError} When `value` is absent, not text, or names no provider.
  */
@@ -107,5 +140,5 @@ export function typeIdRow<T extends Readonly<Partial<Record<DatabaseType, unknow
   value: unknown,
 ): T[DatabaseType] {
   assertDatabaseType(value);
-  return table[value];
+  return Object.hasOwn(table, value) ? table[value] : undefined;
 }

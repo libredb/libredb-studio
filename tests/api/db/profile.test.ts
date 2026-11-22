@@ -234,6 +234,30 @@ describe("POST /api/db/profile", () => {
     expect(emitted).not.toContain("column_name");
   });
 
+  test("quotes the address and the columns by the provider's type, never the port its declaration names", async () => {
+    // The declaration names PostgreSQL's port; only the provider's type can write MySQL's backticks.
+    const mysqlProvider = createMockProvider({
+      type: "mysql",
+      capabilities: { queryLanguage: "sql", defaultPort: 5432 },
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => mysqlProvider);
+    const req = createMockRequest("/api/db/profile", {
+      method: "POST",
+      body: {
+        connection: { ...validConnection, type: "mysql" },
+        tablePath: ["app", "Order Items"],
+        columns: ["Order Date"],
+      },
+    });
+
+    await POST(req as never);
+
+    const emitted = (mysqlProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => String(call[0]));
+    expect(emitted).toContain("SELECT COUNT(*) AS total FROM app.`Order Items`");
+    expect(emitted.some((sql) => sql.startsWith("SELECT `Order Date` FROM app.`Order Items`"))).toBe(true);
+    expect(emitted.join("\n")).not.toContain('"Order');
+  });
+
   // E2E-007's root cause: one PostgreSQL-only statement for every engine. Every statement
   // the route writes is now plain SQL with no cast, so it is checked here on an engine that
   // is not PostgreSQL, through the real provider: SQLite rejected `::text` outright.

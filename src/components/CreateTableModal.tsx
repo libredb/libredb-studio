@@ -11,7 +11,6 @@ import { Plus, Trash2, Table as TableIcon, Type, Settings2 } from "lucide-react"
 import { toast } from "sonner";
 import type { CreateTableSpec, ProviderCapabilities } from "@/lib/db/types";
 import { objectPathLabel } from "@/lib/db/object-path";
-import { quoteObjectPath, quoteTypedName } from "@/lib/query-generators";
 
 interface ColumnDefinition {
   name: string;
@@ -35,11 +34,25 @@ interface CreateTableModalProps {
    */
   container?: readonly string[];
   /**
-   * The connection's capabilities: the create-table grammar the form writes (`createTable`), and
-   * the quoting every name is written in. Optional only because the modal stays mounted before
+   * The connection's capabilities: the create-table grammar the form writes (`createTable`) and
+   * the identifier length it checks. Optional only because the modal stays mounted before
    * they load; opening it without them, or for a connection that declares no `createTable`, throws.
    */
   capabilities?: ProviderCapabilities;
+  /**
+   * How the connection writes the names in the statement, bound by the shell to the connection's type and declaration,
+   * so the form holds no type and reads none (#1822).
+   * Optional for the reason `capabilities` is; opening the form without it throws.
+   */
+  names?: CreateTableNames;
+}
+
+/** The two spellings the form writes a name in, each bound by the shell to one connection. */
+export interface CreateTableNames {
+  /** A name the user typed, the table's or a column's: `quoteTypedName`. */
+  readonly typed: (name: string) => string;
+  /** The container the table is created in, a catalog address: `quoteObjectPath`. */
+  readonly container: (path: readonly string[]) => string;
 }
 
 /**
@@ -88,14 +101,19 @@ function lengthError(name: string, kind: "Table" | "Column", maxBytes: number | 
  * The modal is mounted for every connection (`StudioOverlays`), so a connection whose
  * capabilities have not loaded, or that declares no `createTable`, renders nothing while
  * closed. OPENING it before the capabilities have loaded throws: every name is written in the
- * connection's own quoting, and there is none to write in. Opening it for a connection that
- * declares no `createTable` is a caller that skipped that gate, and throws for the same
- * reason: the form has no grammar to write for it.
+ * connection's own quoting, and there is none to write in. Opening it without the shell's name
+ * quoting (`names`) throws for the same reason. Opening it for a connection that
+ * declares no `createTable` is a caller that skipped that gate, and throws because the form has
+ * no grammar to write for it.
  */
 export function CreateTableModal(props: CreateTableModalProps) {
-  const { capabilities } = props;
+  const { capabilities, names } = props;
   if (capabilities === undefined) {
     if (props.isOpen) throw new Error("CreateTableModal: opened without the connection's capabilities");
+    return null;
+  }
+  if (names === undefined) {
+    if (props.isOpen) throw new Error("CreateTableModal: opened without the connection's name quoting");
     return null;
   }
   const spec = capabilities.createTable;
@@ -103,7 +121,7 @@ export function CreateTableModal(props: CreateTableModalProps) {
     if (props.isOpen) throw new Error("CreateTableModal: this connection declares no createTable");
     return null;
   }
-  return <CreateTableForm {...props} capabilities={capabilities} spec={spec} />;
+  return <CreateTableForm {...props} capabilities={capabilities} names={names} spec={spec} />;
 }
 
 function CreateTableForm({
@@ -112,8 +130,9 @@ function CreateTableForm({
   onTableCreated,
   container = NO_CONTAINER,
   capabilities,
+  names,
   spec,
-}: CreateTableModalProps & { capabilities: ProviderCapabilities; spec: CreateTableSpec }) {
+}: CreateTableModalProps & { capabilities: ProviderCapabilities; names: CreateTableNames; spec: CreateTableSpec }) {
   const [tableName, setTableName] = useState("");
   const [columns, setColumns] = useState<ColumnDefinition[]>(() => defaultColumns(spec));
   const tableNameError = tableName.trim()
@@ -163,7 +182,7 @@ function CreateTableForm({
 
   // Every typed name, the table's and each column's, is written the way the SQL editor reads
   // the same text: bare where it is a regular ASCII identifier, quoted exactly otherwise.
-  const typedName = (name: string) => quoteTypedName(name, capabilities);
+  const typedName = (name: string) => names.typed(name);
   // Qualified only when a folder click supplied a container; the flat button creates the table
   // in the session's default one.
   //
@@ -174,7 +193,7 @@ function CreateTableForm({
   // table a later `SELECT * FROM orders` does not find.
   const qualified = container.length > 0;
   const nameInContainer = (name: string) =>
-    qualified ? `${quoteObjectPath(container, capabilities)}.${typedName(name)}` : typedName(name);
+    qualified ? `${names.container(container)}.${typedName(name)}` : typedName(name);
 
   const generateSQL = () => {
     if (tableNameError || columnNameErrors.some(Boolean)) return "";

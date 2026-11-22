@@ -2035,8 +2035,8 @@ describe("isDangerousQuery", () => {
     ["Update"],
     ["DROP"],
   ])("does not prompt when the tree runs a metric named %s on prometheus", (name) => {
-    const click = generateTableQuery([name], prometheusCapabilities);
-    const buffer = generateSelectQuery([name], [], prometheusCapabilities);
+    const click = generateTableQuery([name], "prometheus", prometheusCapabilities);
+    const buffer = generateSelectQuery([name], [], "prometheus", prometheusCapabilities);
     // The premise: the click runs the bare name, and both texts read as a write under SQL.
     expect(click).toBe(name);
     expect(isDangerousQuery(click)).toBe(true);
@@ -2131,8 +2131,8 @@ describe("isDangerousQuery", () => {
   test.each<[string]>([["delete"], ["drop"], ["update"], ["truncate"], ["DROP"]])(
     "does not prompt when the tree reads a topic named %s on kafka",
     (name) => {
-      const click = generateTableQuery([name], kafkaCapabilities);
-      const buffer = generateSelectQuery([name], [], kafkaCapabilities);
+      const click = generateTableQuery([name], "kafka", kafkaCapabilities);
+      const buffer = generateSelectQuery([name], [], "kafka", kafkaCapabilities);
       // The premise: both texts are read requests naming the topic, and neither is a MongoDB command.
       expect(JSON.parse(click).topic).toBe(name);
       expect(JSON.parse(buffer).topic).toBe(name);

@@ -291,8 +291,8 @@ describe("declarations (spec 6.3)", () => {
       { name: "room", type: "tag", nullable: true, isPrimary: false },
       { name: "temp", type: "float", nullable: true, isPrimary: false },
     ];
-    expect(generateTableQuery(["home"], capabilities)).toBe(PREVIEW);
-    expect(generateSelectQuery(["home"], columns, capabilities)).toBe(
+    expect(generateTableQuery(["home"], "influxdb3", capabilities)).toBe(PREVIEW);
+    expect(generateSelectQuery(["home"], columns, "influxdb3", capabilities)).toBe(
       `${PREVIEW}\n` +
         "-- A wider window: WHERE \"time\" >= now() - INTERVAL '1 day'\n" +
         '-- One row per minute: SELECT date_bin(INTERVAL \'1 minute\', "time") AS minute, avg("temp") FROM "home" WHERE "time" >= now() - INTERVAL \'1 hour\' GROUP BY 1 ORDER BY 1\n' +
@@ -305,12 +305,12 @@ describe("declarations (spec 6.3)", () => {
 
   test("R41: double-always quotes every name, so the Count of a$b passes the policy", () => {
     const capabilities = harness([]).provider.getCapabilities();
-    expect(quoteIdentifier("time", capabilities)).toBe('"time"');
-    expect(quoteObjectPath(["home"], capabilities)).toBe('"home"');
-    const count = generateCountQuery(["a$b"], capabilities) as string;
+    expect(quoteIdentifier("time", "influxdb3", capabilities)).toBe('"time"');
+    expect(quoteObjectPath(["home"], "influxdb3", capabilities)).toBe('"home"');
+    const count = generateCountQuery(["a$b"], "influxdb3", capabilities) as string;
     expect(count).toBe('SELECT COUNT(*) AS row_count\nFROM "a$b"');
     expect(evaluateInfluxSql(count).allowed).toBe(true);
-    expect(evaluateInfluxSql(generateTableQuery(['we"ird name;x'], capabilities)).allowed).toBe(true);
+    expect(evaluateInfluxSql(generateTableQuery(['we"ird name;x'], "influxdb3", capabilities)).allowed).toBe(true);
   });
 
   test("the labels are the InfluxDB 3 labels, as a copy", () => {

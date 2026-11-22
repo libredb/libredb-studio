@@ -683,7 +683,12 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
     );
   }
 
-  const inventory = addressInventory(read.inventory, read.defaultContainer, context.capabilities);
+  const inventory = addressInventory(
+    read.inventory,
+    read.defaultContainer,
+    context.connection.type,
+    context.capabilities,
+  );
   return {
     kind: "captured",
     snapshot: {
@@ -725,10 +730,11 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
 function addressInventory(
   inventory: AgentInventory,
   defaultContainer: readonly string[] | undefined,
+  type: DatabaseType,
   capabilities: ProviderCapabilities,
 ): AgentInventory {
   const objects = inventory.objects.map((object) => {
-    const name = qualifiedName(object, capabilities);
+    const name = qualifiedName(object, { type, capabilities });
     return {
       ...object,
       name,
@@ -750,10 +756,13 @@ function addressInventory(
  * policy, so a run that copied it wrote a statement the server refuses. Any other path is no InfluxQL
  * measurement address and keeps the dotted spelling every engine shares.
  */
-function qualifiedName(object: AgentInventoryObject, capabilities?: ProviderCapabilities): string {
+function qualifiedName(
+  object: AgentInventoryObject,
+  declaration?: { readonly type: DatabaseType; readonly capabilities: ProviderCapabilities },
+): string {
   if (object.path === undefined) return object.name;
-  return capabilities?.queryLanguage === "influxql" && object.path.length === 2
-    ? quoteObjectPath(object.path, capabilities)
+  return declaration?.capabilities.queryLanguage === "influxql" && object.path.length === 2
+    ? quoteObjectPath(object.path, declaration.type, declaration.capabilities)
     : object.path.join(".");
 }
 

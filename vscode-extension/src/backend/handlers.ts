@@ -429,7 +429,11 @@ export function createHandlers(
         columns = (await provider.describeObject(object.path, object.kind)).columns;
       }
       try {
-        return { statement: generateTableQuery(object.path, capabilities, columns, { readRanges: object.readRanges }) };
+        return {
+          statement: generateTableQuery(object.path, provider.type, capabilities, columns, {
+            readRanges: object.readRanges,
+          }),
+        };
       } catch (error) {
         throw refusal(500, "INTERNAL_ERROR", (error as Error).message);
       }

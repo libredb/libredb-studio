@@ -37,20 +37,20 @@ describe("the tree's read requests run as is on the provider's read path, on any
     readMessages(client, parseReadRequest(text, DEFAULT_QUERY_LIMIT), LIMITS, AbortSignal.timeout(5000));
 
   test("Generate Read Request on a partition whose earliest offset retention moved to 1200 reads from 1200", async () => {
-    const out = await run(generateSelectQuery(["orders"], [], caps), retained(1200, 1500));
+    const out = await run(generateSelectQuery(["orders"], [], "kafka", caps), retained(1200, 1500));
     expect(out.rows).toHaveLength(50);
     expect(out.rows.map((row) => row.offset)).toEqual(Array.from({ length: 50 }, (_, i) => String(1200 + i)));
     expect(out.warnings).toEqual([]);
   });
 
   test("Generate Read Request on an empty partition answers no rows and no error", async () => {
-    const out = await run(generateSelectQuery(["orders"], [], caps), retained(1500, 1500));
+    const out = await run(generateSelectQuery(["orders"], [], "kafka", caps), retained(1500, 1500));
     expect(out.rows).toEqual([]);
     expect(out.warnings).toEqual([]);
   });
 
   test("the tree click reads the latest 50 messages there, the last 50 offsets below the end", async () => {
-    const out = await run(generateTableQuery(["orders"], caps), retained(1200, 1500));
+    const out = await run(generateTableQuery(["orders"], "kafka", caps), retained(1200, 1500));
     expect(out.rows.map((row) => row.offset)).toEqual(Array.from({ length: 50 }, (_, i) => String(1450 + i)));
   });
 
