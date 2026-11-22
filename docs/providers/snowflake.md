@@ -669,7 +669,7 @@ A binary cell is written by `binaryStandardHex`, which Snowflake reads as a BINA
 
 ## 9. The confirmation gate
 
-The gate is a browser confirmation, not a boundary: it asks before a statement runs from the editor, and the role decides what can happen.
+The gate is a confirmation, not a boundary: it asks before a statement runs from the editor, and the run routes read every submitted statement with the same readers ([API_DOCS.md](../API_DOCS.md#server-confirmation-of-a-run)), but the role decides what can happen.
 On top of the shared destructive keywords, `MERGE` among them, it asks for these Snowflake forms, at the top level and inside a block.
 Forms that replace, overwrite, unload or delete: `CREATE OR REPLACE`, `CREATE OR ALTER` (which drops the columns its new definition leaves out), `INSERT OVERWRITE`, `COPY`, `REMOVE` and `RM`.
 Forms that run text or work the gate cannot read: `EXECUTE IMMEDIATE`, `EXECUTE TASK`, `EXECUTE ALERT`, `EXECUTE NOTEBOOK`, `EXECUTE JOB SERVICE`, `EXECUTE DBT PROJECT` and `CALL`.

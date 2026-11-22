@@ -716,6 +716,70 @@ Chromium sends a POST answered 408 on a reused keep-alive connection again witho
 
 A deadline met while Studio opens the connection, before any statement is sent, is not a query timeout: it is answered with HTTP 503, code `CONNECTION_ERROR`, and "The connection got no answer after [seconds] seconds: check the address, the port, the network path and that the server is running."
 
+##### Server confirmation of a run
+
+`POST /api/db/query`, `POST /api/db/multi-query` and the `query` action of `POST /api/db/transaction` classify every statement they are sent, on the server, with the confirmation gate's readers: the ones the web editor's safety dialog and [`POST /api/db/statement/analyze`](#post-apidbstatementanalyze) read.
+A statement the gate asks about needs a confirmation before it runs.
+Whether a request without one is refused is the request's own choice in the default mode, and every caller's in `required` mode (`LIBREDB_RUN_CONFIRMATION`, see [Environment Variables](#environment-variables)).
+
+The request's `confirmation` field:
+
+| Value | Meaning |
+|---|---|
+| absent | The caller does not take part in the confirmation. |
+| `"ask"` | Answer 428 rather than run when the statement needs a confirmation, in either mode. The standalone web editor sends it on every run that is not an explain. |
+| `{ "token": "<string>" }` | A confirmed run: the token of a 428 answer, sent back with the same request. |
+
+Any other value is answered `400 { "error": "confirmation must be \"ask\" or { \"token\": string }" }` before anything is classified or built.
+
+| Mode | `confirmation` | The gate does not ask | The gate asks | The statement is confirmed by typing the connection's name, and the connection has none |
+|---|---|---|---|---|
+| `advisory` (default) | absent | runs | runs, and the answer carries `"confirmation": "unconfirmed"` | runs, and the answer carries `"confirmation": "unconfirmed"` |
+| `advisory` | `"ask"` | runs | `428` | `400` with that refusal |
+| `required` | absent or `"ask"` | runs | `428` | `400` with that refusal |
+| either | `{ "token" }` | the token is verified, then the statement runs | the token is verified, then the statement runs | `400` with that refusal |
+
+An advisory run the gate asks about also writes one warning line naming the route, the connection type and the user, never the statement.
+`POST /api/db/multi-query` reads the whole submitted script and its answer carries the same field; so does the transaction route's answer to a `query` action, a script included.
+An explain request (`explain` present) is not classified: the server builds the EXPLAIN only for a statement its strategy accepts and never runs the submitted statement.
+A later page (`options.offset` above 0) is classified like any run, because it runs the statement again.
+`begin`, `commit`, `rollback` and `status` on the transaction route are not classified.
+A request refused for its connection, its body or its fields keeps that answer whatever `confirmation` holds: the gate reads the request after those checks, after the `database` override of `POST /api/db/query`, and before the admission gate and any provider.
+
+**Response (428 Precondition Required):** nothing was built, opened or run, and no query event was recorded.
+```json
+{
+  "error": "This statement needs a confirmation before it runs: send the same request again with the confirmation token in this answer.",
+  "code": "CONFIRMATION_REQUIRED",
+  "confirmation": {
+    "token": "<token>",
+    "expiresAt": "2026-11-22T12:05:00.000Z",
+    "unreadable": false,
+    "typedConfirmation": null,
+    "classificationFailed": false
+  }
+}
+```
+
+`unreadable` says part of the statement could not be read, which is a reason the gate asks; `typedConfirmation` is what a person types before it runs, `{ "type": "text", "expected" }` or `{ "type": "connection-name", "expected", "targets" }`, as [`POST /api/db/statement/analyze`](#post-apidbstatementanalyze) answers it; `classificationFailed` says a reader failed on the statement, so the gate asks.
+The server does not check the typed value in this version: a client that shows the dialog checks it.
+
+The token lives five minutes and is accepted once in each server process.
+It confirms only the request it was issued for: the same session, the same server and catalog (after the `database` override), the same route, the same `sql` and bound `params`, and the same reading of the statement.
+A token that does not confirm the request is answered `400 { "error": "<reason>", "code": "CONFIRMATION_INVALID" }` and nothing runs, with one of these reasons:
+
+- `this confirmation could not be verified`
+- `this confirmation has expired`
+- `this confirmation was issued for another route`
+- `this confirmation was issued for another session`
+- `this confirmation was issued for another connection`
+- `this confirmation was issued for another statement`
+- `this confirmation was issued for another reading of the statement`
+- `this confirmation has already been used`
+
+A present token is verified even for a statement the gate does not ask about.
+The confirmation is an explicit second step, not an authorization check: any caller with a session can ask for a token and send it back ([`SECURITY.md`](./SECURITY.md#known-limits), control 3.47).
+
 ##### MongoDB Query Format
 
 For MongoDB connections, the `sql` field should contain a JSON query:
@@ -1070,7 +1134,8 @@ Redis is a key-value store, so the `sql` field carries a Redis command instead o
 What Run would do with the editor's text, decided as the web editor decides it: the statement to send, where it sits, whether the connection type refuses it, whether to ask before it runs and what to type, and which route it takes.
 It runs nothing and opens no database connection: it builds the connection's provider only to read its capabilities, as `POST /api/db/provider-meta` does.
 It records no query event and logs no part of the text, of the statement or of the refusal.
-It is advisory, like the web editor's confirmation dialog: it is not an authorization check, and `POST /api/db/query` does not require it.
+It is advisory, like the web editor's confirmation dialog: it is not an authorization check, and the run routes do not require it.
+They classify every run themselves with the same readers, and in `required` mode refuse a statement the gate asks about unless it carries a confirmation token they issued (see [Server confirmation of a run](#server-confirmation-of-a-run)).
 
 **Authentication:** Required, the `auth-token` cookie or, where that channel is on, a bearer access token (see [Authentication](#authentication)), and no admin role.
 Each request spends one slot of the `query` budget (see [Rate Limiting](#rate-limiting)).
@@ -2755,6 +2820,7 @@ interface ActiveSession {
 | `401` | Unauthorized - Missing or invalid authentication |
 | `403` | Forbidden - Insufficient permissions: a database refused a statement for a privilege its credential lacks (`PERMISSION_DENIED`), or Studio's own policy refused the request; or the request's Origin does not match this deployment (`ORIGIN_MISMATCH`) |
 | `413` | Payload Too Large - the request body, or one part's text, is above the object edit routes' own bound, or a statement is above the console text bound its connection type declares (`POST /api/db/query`) |
+| `428` | Precondition Required - the statement needs a confirmation before it runs (`CONFIRMATION_REQUIRED`): send the request again with the token in the answer (see [Server confirmation of a run](#server-confirmation-of-a-run)) |
 | `429` | Too Many Requests - Rate limit exceeded. Applies to `POST /api/auth/login` and every session-guarded route (see "Rate Limiting" below), not only the AI endpoints |
 | `499` | Client Closed Request - Query cancelled by the client |
 | `500` | Internal Server Error |
@@ -2789,7 +2855,9 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 |------|-------------|
 | `QUERY_ERROR` | SQL syntax or execution error (400) |
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
-| `CONFIG_ERROR` | Invalid database configuration (400) |
+| `CONFIG_ERROR` | Invalid database configuration (400), or a `LIBREDB_RUN_CONFIRMATION` value the run routes cannot read (400 on every run they classify) |
+| `CONFIRMATION_REQUIRED` | The statement needs a confirmation before it runs (428): the request asked, or `LIBREDB_RUN_CONFIRMATION` is `required`. Nothing ran; the body's `confirmation` carries the token. Answered by the run routes rather than `createErrorResponse`; see [Server confirmation of a run](#server-confirmation-of-a-run) |
+| `CONFIRMATION_INVALID` | The confirmation token the request sent does not confirm it (400): the sentence says whether it could not be verified, expired, was already used, or was issued for another route, session, connection, statement or reading of the statement. Nothing ran |
 | `PROVIDER_UNKNOWN` | The connection's `type` is absent, not text, or names no provider this Studio has (400), answered before any provider is built or any SSH tunnel opened, with a sentence that quotes the type when it is a non-empty string; the type ids are the `type DatabaseType` union this page lists |
 | `FACET_NOT_OFFERED` | The request names a maintenance operation the connection's engine does not offer (400), answered before any provider is built or any SSH tunnel opened, or one the connected server does not accept, answered after connect; the sentence names the operation and the engine (`POST /api/db/maintenance` and its preview) |
 | `AUTH_ERROR` | A database refused the credential (401), read from the driver's code as the paragraph above says |
@@ -3103,6 +3171,7 @@ async function streamAIExplanation(query: string, explainPlan: string) {
 | `USER_PASSWORD` | No | Optional lower-privilege account password; the `user` account exists only when this is set |
 | `USER_EMAIL` | No | Regular-user login email (default `user@libredb.org`, only used when `USER_PASSWORD` is set) |
 | `DB_HTTP_BLOCK_PRIVATE_HOSTS` | No | Off when unset or empty. `true`, `on`, or `1` (trimmed, any case) blocks the connections of the engines that [`SECURITY.md`](./SECURITY.md#known-limits) "Known limits" lists under the HTTP destination guard (their HTTP requests, the AMQP, MQTT, Modbus, NETCONF and Sparkplug B dials and SNMP's agent lookup) to loopback, private, link-local, unique-local and selected special-use addresses; `false`, `off`, or `0` allows them. DNS answers are checked at socket connection time. With it on, the transports that otherwise use `fetch` (ClickHouse, Druid, Trino, libSQL, Elasticsearch, OpenSearch, and Couchbase and Prometheus without TLS) send through Node's `http.request` or `https.request` and decode a gzip, deflate or br answer themselves: an answer with no body (204, 205, 304, or the answer to HEAD) is handed on without one and nothing is decoded, and a body that fails to decode fails the read with an error naming zlib's reason and code, such as `incorrect header check (Z_DATA_ERROR)`. Studio reads it once per process and logs the decision and whether it is the default in one info line, which a `LOG_LEVEL` of `warn` or `error` hides; any other value stops the server at boot, naming the variable, and in the published package and the VS Code extension refuses every provider call. Engines that list does not name, and SSH tunnel hosts, are outside this guard; HTTP and MQTT connections through an SSH tunnel are refused while it is enabled. MQTT's dial also refuses link-local and instance metadata addresses whatever the flag says. |
+| `LIBREDB_RUN_CONFIRMATION` | No | `advisory` when unset or empty, or `required` (trimmed, any case, one pair of quotes stripped). Decides who the run routes refuse when a statement the confirmation gate asks about carries no confirmation token: in `advisory` mode only a request that asks (`"confirmation": "ask"`), and in `required` mode every request. Any other value stops the server at boot, naming the variable, and is refused on every run the routes classify. See [Server confirmation of a run](#server-confirmation-of-a-run) |
 | `ALLOW_CUSTOM_CONNECTIONS` | No | On when unset, and off in governance mode whatever its value. `false`, `0`, `off` or `no`, or any unrecognised value (it fails closed and logs an error), refuses, with 403, every connection a request supplies that is not a seed, on every route that builds a database provider; see `GET /api/connections/policy` |
 | `LLM_PROVIDER` | No | AI provider: gemini, openai, ollama, custom |
 | `LLM_API_KEY` | No | AI provider API key |

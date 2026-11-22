@@ -299,6 +299,9 @@ Multi-statement queries execute sequentially via `POST /api/db/multi-query`, one
 
 The run target, the connection type's refusal, the confirmation and the route of a run are decided by the functions `analyzeStatement` in `src/lib/editor/statement-analysis.ts` composes in the web editor's order: the web editor calls them one by one, `POST /api/db/statement/analyze` answers `analyzeStatement` whole to a client outside the browser, and the VS Code extension's child calls the run target, the editor language and the gate.
 
+The server takes the confirmation decision again on every run (`src/lib/api/run-confirmation.ts`): `POST /api/db/query`, `POST /api/db/multi-query` and the `query` action of `POST /api/db/transaction` read the submitted statement with `confirmationVerdict`, the same verdict `analyzeStatement` composes, after their field checks and before the admission gate and any provider.
+A statement the gate asks about is answered 428 with a confirmation token (`src/lib/api/run-confirmation-token.ts`) when the request asks or `LIBREDB_RUN_CONFIRMATION` is `required`, and runs when it comes back with that token; the web editor asks on every run and keeps its own gate in front of the server's ([API_DOCS.md](API_DOCS.md#server-confirmation-of-a-run)).
+
 ### 4.4. Storage Abstraction Layer
 
 - **Write-through cache architecture**: localStorage (L1 cache) + optional server storage (L2 persistent)
@@ -347,8 +350,9 @@ On standalone boot it then:
    1. the auth-config preflight (`src/lib/config/auth-preflight.ts`, #227), which refuses an auth or storage setting the server could not work with, such as an unknown `NEXT_PUBLIC_AUTH_PROVIDER` or a `JWT_SECRET` that is set but shorter than 32 characters (length only, never the value); it runs *after* bootstrap so a generated secret is validated too;
    2. the private CA preflight (`src/lib/config/ca-bundle-preflight.ts`), which reads the file `NODE_EXTRA_CA_CERTS` names once for the process through `src/lib/db/trust-material.ts`, keeping its CA certificates for the providers whose TLS does not read Node's store, and refuses a missing, unreadable or empty file, or one that holds a block under the legacy `X509 CERTIFICATE` label, holds no certificate block or leaves one unclosed, where Node itself only warns or, for the legacy label, trusts it;
    3. the egress preflight (`src/lib/config/egress-preflight.ts`), which takes the `DB_HTTP_BLOCK_PRIVATE_HOSTS` decision, logs it once, and refuses a value other than `true`, `on`, `1`, `false`, `off`, `0` or empty, naming the variable;
-   4. the governance preflight (`src/lib/governance/preflight.ts`, [GOVERNANCE.md](GOVERNANCE.md#boot-checks)), which with `GOVERNANCE_SOURCE` set refuses an environment that contradicts governance mode, and checks nothing while governance is off;
-   5. the Kubernetes access review preflight (`src/lib/kubernetes-access/preflight.ts`, [SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#kubernetes-access-review)), which with `KUBERNETES_ACCESS_REVIEW` on refuses an environment that contradicts the review, and checks nothing while it is off.
+   4. the run confirmation preflight (`src/lib/config/run-confirmation-preflight.ts`), which refuses a `LIBREDB_RUN_CONFIRMATION` other than `advisory`, `required` or empty, naming the variable;
+   5. the governance preflight (`src/lib/governance/preflight.ts`, [GOVERNANCE.md](GOVERNANCE.md#boot-checks)), which with `GOVERNANCE_SOURCE` set refuses an environment that contradicts governance mode, and checks nothing while governance is off;
+   6. the Kubernetes access review preflight (`src/lib/kubernetes-access/preflight.ts`, [SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#kubernetes-access-review)), which with `KUBERNETES_ACCESS_REVIEW` on refuses an environment that contradicts the review, and checks nothing while it is off.
 
 3. **Re-seals and checks the stored credentials when asked** (`src/lib/storage/reseal-at-boot.ts`, [STORAGE.md](STORAGE.md#re-sealing-the-store)).
    With `STORAGE_ENCRYPTION_REQUIRE_V2` set, it first checks that the store records version 1 as retired, and runs no re-seal: while that is set, the re-seal runs only on a store that records it.

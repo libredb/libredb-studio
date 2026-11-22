@@ -438,7 +438,8 @@ describe("docs/providers/snowflake.md", () => {
     expect(exempt.length).toBeGreaterThan(0);
     expect(gate).toContain(`but ${exempt.join(" and ")},`);
     expect(gate).toContain("`ALTER SESSION POLICY` still asks");
-    expect(gate).toContain("a browser confirmation, not a boundary");
+    expect(gate).toContain("a confirmation, not a boundary");
+    expect(gate).toContain("the run routes read every submitted statement with the same readers");
     expect(gate).toContain("`IDENTIFIER()`");
   });
 
