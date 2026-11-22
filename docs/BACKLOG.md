@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D482, U17 · 355
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U220 · 205
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U221 · 206
 - [Dependencies](#dependencies) — P1-P14 · 12
 - [Documentation](#documentation) — DOC3-DOC37 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL11 · 10
@@ -7481,6 +7481,18 @@ The owner decided on 2026-11-21:
 Filed 2026-11-21 on the owner's decision, outside the provider-plugin program.
 
 **Done when:** a user can compare a table across two connections by chosen key columns, see the three kinds of difference, and run a reconciliation only through the confirmation gate, with tests for each kind of difference and for the gate.
+
+### U221. A connection whose type names no provider is `Unavailable` in Studio and `invalid` in the VS Code extension
+
+Studio lists such a connection with the word `Unavailable`, in the sidebar (`src/components/sidebar/ConnectionItem.tsx`) and in the command palette (`src/components/CommandPalette.tsx`), with `typeIdRefusal`'s sentence as its title.
+The VS Code extension refuses the same entry with the same sentence since FND-1 slice 5 (`refusalOf` in `vscode-extension/src/host/connections/profile.ts`), but shows it as `invalid`: the tree item's description in `vscode-extension/src/host/tree/tree-items.ts` and the remove command's quick pick in `pickId` of `vscode-extension/src/host/connections/remove-connection.ts`.
+That word covers every rule an entry can break, from a value that is not an object to a repeated id, so a user who sees both surfaces reads two words for one refusal.
+That slice kept `invalid`, because changing the word for one rule splits the invalid node and its menus.
+One way is to carry the reason class on the extension's invalid item, so the tree and the quick pick can say `Unavailable` for an entry whose type names no provider and `invalid` for the other rules.
+
+Found 2026-11-22 while planning FND-1 slice 5.
+
+**Done when:** the VS Code tree and quick pick show an entry whose type names no provider with the word Studio shows it with, every other refused entry keeps its word, and a unit test in the extension holds both words.
 
 ## Dependencies
 
