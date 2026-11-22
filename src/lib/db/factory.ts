@@ -280,8 +280,9 @@ export async function createDatabaseProvider(
   // opens none. A tunnel or record that is not plain data is refused here, by name, before the log line below.
   connection = providerConnection(connection);
   // A SQLite, DuckDB or LibreDB connection (`OPENS_LOCAL_FILE`) is handed the file core admitted, resolved against the
-  // working directory now; one of Studio's own storage files, a NUL byte or a name that is not text is refused here, by
-  // name, before any provider exists (FND-2 slice 3, docs/SECURITY.md 3.45). Every other connection passes unchanged.
+  // working directory now; one of Studio's own storage files, a path the reserved check cannot read, a NUL byte, a
+  // connection string that names no file after `file:` or a name that is not text is refused here, by name, before any
+  // provider exists (FND-2 slice 3, docs/SECURITY.md 3.45). Every other connection passes unchanged.
   connection = admittedFileConnection(connection);
   // What every provider that takes a context is handed: a copy of the caller's execution context, plain data as checked
   // above, the process's egress decision, which a guarded provider hands its guard, and, for an engine whose
@@ -848,9 +849,10 @@ const providerCache = new Map<string, CachedProvider>();
  * The comparison is EXACT, matching `admittedFileConnection` in `./provider-files`
  * character for character: the admission treats `:memory:` and nothing else as
  * in-memory, and resolves every other spelling - `:MEMORY:`, ` :memory:`, DuckDB's own
- * `:memory:named` - as a relative file path, which is the file the provider opens. Two connections spelling one of those the same way really do
- * point at one file, and must keep matching. The narrowing here is only ever as wide as
- * the provider's own reading of the value.
+ * `:memory:named` - as a relative file path, which is the file the provider opens. Two
+ * connections spelling one of those the same way really do point at one file, and must
+ * keep matching. The narrowing here is only ever as wide as the provider's own reading
+ * of the value.
  */
 const ANONYMOUS_IN_MEMORY_DATABASE = ":memory:";
 

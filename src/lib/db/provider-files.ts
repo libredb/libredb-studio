@@ -18,7 +18,7 @@
  * `@/lib/data-dir`.
  */
 import * as path from "path";
-import { isReservedStoragePath, storageLocation } from "@/lib/data-dir";
+import { reservedStorageCheck, storageLocation } from "@/lib/data-dir";
 import { ADMITTED_FILE, type DatabaseConnection, type DatabaseType } from "@/lib/types";
 import { CONNECTION_STRING_ACCEPTED, OPENS_LOCAL_FILE } from "./compatibility";
 import { DatabaseConfigError } from "./errors";
@@ -71,10 +71,11 @@ function withoutAdmittedFile<T extends DatabaseConnection>(connection: T): T {
  *    provider's `validate()` accepts a non-empty string and the string names no file.
  * 6. Exactly `:memory:`: admitted as `:memory:`.
  * 7. Holding a NUL byte: refused by name (`NUL_IN_DATABASE_PATH`), before anything is resolved.
- * 8. Resolved against the working directory now; one of Studio's own storage files (`isReservedStoragePath`) is refused
+ * 8. Resolved against the working directory now; one of Studio's own storage files (`reservedStorageCheck`) is refused
  *    by name (`RESERVED_STORAGE_PATH`). A path the check cannot read, where the filesystem answers anything but "no
  *    such file" (a path through a regular file, a symbolic link loop, a directory the server cannot search), is refused
  *    by name too (`PATH_NOT_CHECKED`, followed by the filesystem's message, the original error kept as `cause`).
+ *    An error reading Studio's own storage files is the server's, and is raised as it is.
  * 9. Otherwise admitted as that absolute path.
  *
  * The copy is an object spread, so every other marker survives, and `database` and `connectionString` stay as the
@@ -99,14 +100,16 @@ export function admittedFileConnection<T extends DatabaseConnection>(connection:
 }
 
 /**
- * Whether `absolute` is one of Studio's own storage files (`isReservedStoragePath`). A filesystem error the check
- * raises, one that carries an error code, is raised again as a `DatabaseConfigError` naming `type`, with the
- * filesystem's message after `PATH_NOT_CHECKED` and the original as `cause`: the connection is refused either way, and
- * the caller is told why. Any other error is raised as it is.
+ * Whether `absolute` is one of Studio's own storage files (`reservedStorageCheck`). An error reading Studio's own files
+ * is raised as it is, since it is the server's fault and not the connection's. A filesystem error the check raises on
+ * the connection's path, one that carries an error code, is raised again as a `DatabaseConfigError` naming `type`, with
+ * the filesystem's message after `PATH_NOT_CHECKED` and the original as `cause`: the connection is refused either way,
+ * and the caller is told why. Any other error is raised as it is.
  */
 function reservedOrUnchecked(absolute: string, type: DatabaseType): boolean {
+  const isReserved = reservedStorageCheck();
   try {
-    return isReservedStoragePath(absolute);
+    return isReserved(absolute);
   } catch (error) {
     if (typeof (error as NodeJS.ErrnoException).code !== "string") throw error;
     const refusal = new DatabaseConfigError(`${PATH_NOT_CHECKED}: ${(error as Error).message}`, type);

@@ -89,22 +89,33 @@ describe("the routes answer a connection whose file Studio cannot check or that 
     });
   });
 
-  test("Test Connection and provider-meta answer a path through a regular file with a client error naming the filesystem's reason", async () => {
-    const plain = join(workDir, "plain-file");
-    writeFileSync(plain, "");
-    const throughFile = { id: "inline-enotdir", name: "Through a file", type: "sqlite", database: join(plain, "x.db") };
-    for (const [route, post] of [
-      ["/api/db/test-connection", testConnectionPost],
-      ["/api/db/provider-meta", providerMetaPost],
-    ] as const) {
-      const response = await post(
-        createMockRequest(route, { method: "POST", body: { connection: throughFile } }) as never,
-      );
-      const body = await parseResponseJSON<Record<string, unknown>>(response);
-      expect([route, response.status, body.code]).toEqual([route, 400, "CONFIG_ERROR"]);
-      expect(String(body.error).startsWith(`${PATH_NOT_CHECKED}: ENOTDIR: `)).toBe(true);
-    }
-  });
+  // POSIX reports a path through a regular file as ENOTDIR; Windows reports it as absent (ENOENT), so the factory admits
+  // it there (measured in samples.test.ts, "a target through a regular file is refused as target-unreadable on POSIX
+  // and admitted on Windows").
+  test.skipIf(process.platform === "win32")(
+    "Test Connection and provider-meta answer a path through a regular file with a client error naming the filesystem's reason (POSIX)",
+    async () => {
+      const plain = join(workDir, "plain-file");
+      writeFileSync(plain, "");
+      const throughFile = {
+        id: "inline-enotdir",
+        name: "Through a file",
+        type: "sqlite",
+        database: join(plain, "x.db"),
+      };
+      for (const [route, post] of [
+        ["/api/db/test-connection", testConnectionPost],
+        ["/api/db/provider-meta", providerMetaPost],
+      ] as const) {
+        const response = await post(
+          createMockRequest(route, { method: "POST", body: { connection: throughFile } }) as never,
+        );
+        const body = await parseResponseJSON<Record<string, unknown>>(response);
+        expect([route, response.status, body.code]).toEqual([route, 400, "CONFIG_ERROR"]);
+        expect(String(body.error).startsWith(`${PATH_NOT_CHECKED}: ENOTDIR: `)).toBe(true);
+      }
+    },
+  );
 
   test("Test Connection answers a SQLite connection string that names no file after file: with that sentence", async () => {
     const bareScheme = { id: "inline-bare-scheme", name: "Bare scheme", type: "sqlite", connectionString: "file:" };

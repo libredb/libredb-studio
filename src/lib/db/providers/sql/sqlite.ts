@@ -1548,9 +1548,10 @@ export class SQLiteProvider extends SQLBaseProvider {
    * The file this connection opens: `:memory:` or an absolute path, as Studio's provider factory admitted it
    * (`admittedFileConnection` in `src/lib/db/provider-files.ts`), which read the connection string with a leading
    * `file:` removed, otherwise `database`, resolved it against the working directory when the provider was built, and
-   * refused a NUL byte and Studio's own storage files there. `..` segments are accepted by design: sqlite paths are
-   * trusted server-side paths (docs/providers/sqlite.md). A provider built without the factory holds no admitted file
-   * and is refused by name.
+   * refused there a connection string that names no file after `file:`, a NUL byte, Studio's own storage files and a
+   * path the reserved check cannot read. `..` segments are accepted by design: sqlite paths are trusted server-side
+   * paths (docs/providers/sqlite.md). A provider built without the factory holds no admitted file and is refused by
+   * name.
    */
   private getDatabasePath(): string {
     return requireAdmittedFile(this.config, "sqlite");

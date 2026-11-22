@@ -163,15 +163,26 @@ export function reservedStorageKey(): (key: string) => boolean {
  * real path names one of the server's own storage files with letter case and Unicode normalization folded
  * (`reservedStorageKey`), or, for a file that exists, when it is the same file (device and inode) as one of them, so a
  * hard link is refused too.
+ *
+ * Studio's own files are read here, and anything reading them throws is thrown here; the check this returns reads only
+ * the candidate, so what it throws is about the candidate's path.
  */
-export function isReservedStoragePath(candidate: string): boolean {
-  const resolved = canonicalPath(path.resolve(candidate));
-  if (reservedStorageKey()(foldPathKey(resolved))) return true;
-  const identity = fileIdentity(resolved);
-  if (identity === undefined) return false;
+export function reservedStorageCheck(): (candidate: string) => boolean {
+  const isReservedKey = reservedStorageKey();
   const bootstrap = canonicalPath(path.join(storageLocation().dataDirectory, BOOTSTRAP_FILE_NAME));
-  return [...reservedStoragePaths(), bootstrap, `${bootstrap}.bak`].some((file) => {
-    const other = fileIdentity(file);
-    return other !== undefined && identity.dev === other.dev && identity.ino === other.ino;
-  });
+  const identities = [...reservedStoragePaths(), bootstrap, `${bootstrap}.bak`]
+    .map(fileIdentity)
+    .filter((identity) => identity !== undefined);
+  return (candidate) => {
+    const resolved = canonicalPath(path.resolve(candidate));
+    if (isReservedKey(foldPathKey(resolved))) return true;
+    const identity = fileIdentity(resolved);
+    if (identity === undefined) return false;
+    return identities.some((other) => identity.dev === other.dev && identity.ino === other.ino);
+  };
+}
+
+/** Whether `candidate` is one of Studio's own storage files (`reservedStorageCheck`). Throws what that check throws. */
+export function isReservedStoragePath(candidate: string): boolean {
+  return reservedStorageCheck()(candidate);
 }

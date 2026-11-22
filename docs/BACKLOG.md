@@ -1195,7 +1195,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 64 hits, re-measured on 2026-11-22.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 65 hits, re-measured on 2026-11-22.
 The breakdown below is the one measured at 54 on 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
@@ -1208,7 +1208,7 @@ The count moved from 58 to 59 on 2026-11-04 with `tests/api/db/inline-connection
 The count moved from 59 to 60 on 2026-11-15 with `tests/api/db/demoted-seed.test.ts`, which demotes a BigQuery seed from `managed: true` to `managed: false` through `POST /api/db/query`: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 The count moved from 60 to 61 on 2026-11-15 with `tests/api/db/literal-seed-server-identity.test.ts`, which opens the BigQuery and Firestore rows of a seed file read in literal mode through `POST /api/db/query`: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 The count moved from 61 to 62 on 2026-11-20 with `tests/api/seed/unavailable-seed-entry.test.ts`, which sends every connection route and the agent run and classify routes a seed whose type names no provider: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
-The count moved from 63 to 64 on 2026-11-22 with `tests/api/db/reserved-storage-routes.test.ts`, which sends Test Connection and provider-meta an inline SQLite connection to Studio's own storage database: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
+The count moved from 64 to 65 on 2026-11-22 with `tests/api/db/reserved-storage-routes.test.ts`, which sends Test Connection and provider-meta an inline SQLite connection to Studio's own storage database: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 
 `src/lib/auth.ts` re-exports three names from `src/lib/auth-cookies.ts` that every hand-written stub lacks:
 `resetCookieSecurityWarning`, `readCookieSecureOverride` and `isLoopbackHost`, re-measured 2026-10-30.

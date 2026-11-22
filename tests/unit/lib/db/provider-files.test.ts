@@ -205,12 +205,18 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
   /**
    * A path the reserved check cannot read: the filesystem answers something other than "no such file" while the check
    * resolves it. Each case is built through createDatabaseProvider, as every route builds, and is refused by name with
-   * the filesystem's own reason and the original error as its cause.
+   * the filesystem's own reason and the original error as its cause. Each row names the platforms where the
+   * filesystem gives that answer, and is skipped elsewhere.
    */
-  const unreadable: [string, string, () => string | null][] = [
+  const onWindows = process.platform === "win32";
+  const unreadable: [string, string, boolean, () => string][] = [
     [
-      "a path that runs through a regular file",
+      // POSIX reports a path through a regular file as ENOTDIR; Windows reports it as absent (ENOENT), which the check
+      // reads as a file that does not exist yet, so it admits the connection (measured in samples.test.ts, "a target
+      // through a regular file is refused as target-unreadable on POSIX and admitted on Windows").
+      "a path that runs through a regular file (POSIX)",
       "ENOTDIR",
+      onWindows,
       () => {
         const plain = path.join(scratch, "plain-file");
         fs.writeFileSync(plain, "");
@@ -218,11 +224,11 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
       },
     ],
     [
-      "a symbolic link loop",
+      // Windows makes a symbolic link only with a privilege the runner may lack.
+      "a symbolic link loop (POSIX)",
       "ELOOP",
+      onWindows,
       () => {
-        // Windows makes a symbolic link only with a privilege the runner may lack.
-        if (process.platform === "win32") return null;
         const loop = path.join(scratch, "loop-a");
         fs.rmSync(loop, { force: true });
         fs.rmSync(path.join(scratch, "loop-b"), { force: true });
@@ -232,11 +238,11 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
       },
     ],
     [
-      "a path under a directory the server cannot search",
+      // Windows has no search permission bit, and root searches every directory.
+      "a path under a directory the server cannot search (POSIX, not root)",
       "EACCES",
+      onWindows || process.getuid?.() === 0,
       () => {
-        // Windows has no search permission bit, and root searches every directory.
-        if (process.platform === "win32" || process.getuid?.() === 0) return null;
         const locked = path.join(scratch, "locked");
         fs.mkdirSync(locked, { recursive: true });
         fs.chmodSync(locked, 0o000);
@@ -245,32 +251,59 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
     ],
   ];
 
-  test.each(unreadable)(
-    "%s (%s) is refused by name when the provider is built, naming the connection's type and the filesystem's reason",
-    async (_label, code, make) => {
-      const database = make();
-      if (database === null) return;
+  for (const [label, code, skip, make] of unreadable) {
+    test.skipIf(skip)(
+      `${label} (${code}) is refused by name when the provider is built, naming the connection's type and the filesystem's reason`,
+      async () => {
+        const database = make();
+        try {
+          for (const type of FILE_TYPES) {
+            const refused = await createDatabaseProvider(connection(type, { database })).then(
+              () => null,
+              (error: unknown) => error,
+            );
+            expect(refused).toBeInstanceOf(DatabaseConfigError);
+            const error = refused as DatabaseConfigError;
+            expect(error.provider).toBe(type);
+            expect(error.message.startsWith(`${PATH_NOT_CHECKED}: ${code}: `)).toBe(true);
+            expect((error.cause as NodeJS.ErrnoException).code).toBe(code);
+          }
+        } finally {
+          if (code === "EACCES") fs.chmodSync(path.join(scratch, "locked"), 0o700);
+        }
+      },
+    );
+  }
+
+  // POSIX reports a path through a regular file as ENOTDIR; Windows reports it as absent (see the rows above).
+  test.skipIf(onWindows)(
+    "a filesystem error from reading Studio's own storage files is raised as it is, not as the connection's file (POSIX)",
+    async () => {
+      const plain = path.join(scratch, "storage-under-a-file");
+      fs.writeFileSync(plain, "");
+      process.env.STORAGE_SQLITE_PATH = path.join(plain, "libredb-storage.db");
+      forgetStorageLocation();
       try {
         for (const type of FILE_TYPES) {
-          const refused = await createDatabaseProvider(connection(type, { database })).then(
+          const refused = await createDatabaseProvider(
+            connection(type, { database: path.join(scratch, "valid.db") }),
+          ).then(
             () => null,
             (error: unknown) => error,
           );
-          expect(refused).toBeInstanceOf(DatabaseConfigError);
-          const error = refused as DatabaseConfigError;
-          expect(error.provider).toBe(type);
-          expect(error.message.startsWith(`${PATH_NOT_CHECKED}: ${code}: `)).toBe(true);
-          expect((error.cause as NodeJS.ErrnoException).code).toBe(code);
+          expect([type, refused instanceof DatabaseConfigError]).toEqual([type, false]);
+          expect([type, (refused as NodeJS.ErrnoException).code]).toEqual([type, "ENOTDIR"]);
         }
       } finally {
-        if (code === "EACCES") fs.chmodSync(path.join(scratch, "locked"), 0o700);
+        process.env.STORAGE_SQLITE_PATH = path.join(scratch, "studio", "libredb-storage.db");
+        forgetStorageLocation();
       }
     },
   );
 
   test("an error the reserved check raises without a filesystem error code is raised as it is", () => {
     const fault = new TypeError("not a filesystem answer");
-    const check = spyOn(dataDir, "isReservedStoragePath").mockImplementation(() => {
+    const check = spyOn(dataDir, "reservedStorageCheck").mockImplementation(() => () => {
       throw fault;
     });
     try {
