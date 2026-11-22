@@ -106,6 +106,95 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/await-thenable": "error",
     },
   }),
+  // Provider source coupling lint (docs/TOOLCHAIN.md, "Provider source coupling lint"): a
+  // provider package's source reads no environment variable, no working directory, no
+  // process-global state and no console, so a provider takes every value from the connection
+  // and the context the host passes. It is a lint-time coupling check, not a security
+  // control: a driver under node_modules reading a proxy variable, `const p = process`, a
+  // `require` with a computed name, `createRequire(import.meta.url)("process")` and a dynamic
+  // `import("node:process")` pass it, and the kit's poisoned-environment run is what checks a
+  // provider at run time.
+  // There is no exception list, and noInlineConfig makes an eslint-disable comment inert here,
+  // because a per-line exception is an exception list too.
+  // Every value reference to globalThis and global is refused, not only an assignment to one of
+  // their properties: the one provider that writes process-global state today, the modbus
+  // agent pacing's processLanes, writes through an alias (`const holder = globalThis`), which a
+  // rule on the left-hand side of an assignment cannot see. A type-only `typeof globalThis` is
+  // not a value reference and stays allowed.
+  // console goes through no-restricted-globals rather than no-console, which misses
+  // `const { warn } = console`.
+  // The kit (packages/provider-kit) is outside: it is the tool that checks providers, its CLI
+  // reads its own environment, working directory and console by design, and the half of it
+  // that runs inside Studio is host code. The SDK (packages/provider-sdk) is loaded into
+  // Studio's process with every provider, so it is covered, as is any later provider-* package
+  // unless its own reviewed entry here says otherwise.
+  {
+    files: ["packages/provider-*/src/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"],
+    ignores: ["packages/provider-kit/**"],
+    linterOptions: { noInlineConfig: true },
+    rules: {
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "env",
+          message:
+            'A provider reads no environment variable, proxy variables included: take the value from the connection or the context the host passes (docs/TOOLCHAIN.md, "Provider source coupling lint").',
+        },
+        {
+          object: "process",
+          property: "cwd",
+          message:
+            'A provider does not depend on the working directory: take a path from the connection or the context the host passes (docs/TOOLCHAIN.md, "Provider source coupling lint").',
+        },
+      ],
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "globalThis",
+          message:
+            'A provider keeps no process-global state and reads none: keep state in the provider instance and take timers or clocks as parameters (docs/TOOLCHAIN.md, "Provider source coupling lint").',
+        },
+        {
+          name: "global",
+          message:
+            'A provider keeps no process-global state and reads none: keep state in the provider instance and take timers or clocks as parameters (docs/TOOLCHAIN.md, "Provider source coupling lint").',
+        },
+        {
+          name: "console",
+          message:
+            'A provider writes nothing to the console: report through the result, an error or the context the host passes (docs/TOOLCHAIN.md, "Provider source coupling lint").',
+        },
+      ],
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "process",
+              message:
+                'A provider does not import process: its environment and working directory are the host\'s (docs/TOOLCHAIN.md, "Provider source coupling lint").',
+            },
+            {
+              name: "node:process",
+              message:
+                'A provider does not import process: its environment and working directory are the host\'s (docs/TOOLCHAIN.md, "Provider source coupling lint").',
+            },
+            {
+              name: "console",
+              message:
+                'A provider writes nothing to the console: report through the result, an error or the context the host passes (docs/TOOLCHAIN.md, "Provider source coupling lint").',
+            },
+            {
+              name: "node:console",
+              message:
+                'A provider writes nothing to the console: report through the result, an error or the context the host passes (docs/TOOLCHAIN.md, "Provider source coupling lint").',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;
