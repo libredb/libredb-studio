@@ -66,6 +66,7 @@ describe("the files Studio protects and the file a provider opens do not move wi
         "auth-bootstrap.json",
       ]) {
         const database = path.join(first, "data", name);
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
         const refused = await createDatabaseProvider(connection(type, { database })).then(
           () => null,
           (error: unknown) => (error as Error).message,

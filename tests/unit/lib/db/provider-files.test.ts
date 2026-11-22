@@ -161,6 +161,7 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
 
   test("a SQLite connection string that names no file after file: is refused by name when the provider is built, with or without a database", async () => {
     for (const fields of [{ connectionString: "file:" }, { connectionString: "file:", database: "x.db" }]) {
+      // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
       const refused = await createDatabaseProvider(connection("sqlite", fields)).then(
         () => null,
         (error: unknown) => error,
@@ -258,6 +259,7 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
         const database = make();
         try {
           for (const type of FILE_TYPES) {
+            // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
             const refused = await createDatabaseProvider(connection(type, { database })).then(
               () => null,
               (error: unknown) => error,
@@ -285,6 +287,7 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
       forgetStorageLocation();
       try {
         for (const type of FILE_TYPES) {
+          // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
           const refused = await createDatabaseProvider(
             connection(type, { database: path.join(scratch, "valid.db") }),
           ).then(
@@ -329,6 +332,7 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
   test("every engine OPENS_LOCAL_FILE marks, built by createDatabaseProvider from its census connection, holds an absolute admitted file, and no other engine holds one", async () => {
     const holders: string[] = [];
     for (const type of Object.keys(CENSUS_CONNECTION) as DatabaseType[]) {
+      // oxlint-disable-next-line no-await-in-loop -- one build at a time, each read before the next.
       const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
       const file = admitted(provider.config);
       if (file === undefined) continue;
