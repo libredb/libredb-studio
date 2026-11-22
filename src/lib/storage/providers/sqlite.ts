@@ -20,6 +20,7 @@ import type {
   StoredAccount,
   StoredCredentialRewrite,
   StoredCredentialRewriteResult,
+  StoredFactorRow,
   StoredPasskey,
   CredentialEnvelopeState,
 } from "../types";
@@ -498,15 +499,17 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
   /**
    * The operator re-seal (`ServerStorageProvider.rewriteStoredCredentials`), in one IMMEDIATE
    * transaction, so the write lock is held from the marker read to the commit and every other
-   * writer, in this process or another, waits. The backup is `VACUUM INTO` the path
-   * `<store file>.<backupLabel>`, run on a second connection because SQLite refuses VACUUM inside a
-   * transaction; that connection reads the last committed state, which the held lock keeps equal to
-   * the state this transaction rewrites. The backup file is created first with `wx`, which refuses
-   * an existing target and an unwritable directory with an error that rolls everything back. A
-   * backup file a failed run left stays: a complete copy of the unchanged store when the copy
-   * finished and a later step failed, or an empty or partial file when the copy itself failed part
-   * way, which is no backup. Only the data and factor columns change: an account write that
-   * read its row before the re-seal still applies after it.
+   * writer, in this process or another, waits. Every row and account is passed to the rewrite and
+   * `beforeRetire` runs before anything is written, so a run the rewrite refuses or fails writes no
+   * backup either. The backup is `VACUUM INTO` the path `<store file>.<backupLabel>`, run on a
+   * second connection because SQLite refuses VACUUM inside a transaction; that connection reads the
+   * last committed state, which the held lock keeps equal to the state this transaction read. The
+   * backup file is created first with `wx`, which refuses an existing target and an unwritable
+   * directory with an error that rolls everything back. A backup file a failed run left stays: a
+   * complete copy of the unchanged store when the copy finished and a later write failed, or an
+   * empty or partial file when the copy itself failed part way, which is no backup. Only the data
+   * and factor columns change: an account write that read its row before the re-seal still applies
+   * after it.
    */
   async rewriteStoredCredentials(
     rewrite: StoredCredentialRewrite,
@@ -520,6 +523,23 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
     const fs = await import("fs");
     const run = this.db!.transaction((): StoredCredentialRewriteResult => {
       if (envelopeStateOf(this.readEnvelopeMarker()) === "v1-retired") return { kind: "already-retired" };
+      const rows = this.db!.prepare(
+        "SELECT user_id, data FROM user_storage WHERE collection = 'connections' ORDER BY user_id",
+      ).all() as { user_id: string; data: string }[];
+      const rowWrites: { userId: string; data: string }[] = [];
+      for (const row of rows) {
+        const next = rewrite.connections(row.user_id, row.data);
+        if (next !== null) rowWrites.push({ userId: row.user_id, data: next });
+      }
+      const accounts = this.db!.prepare(
+        "SELECT email, totp_secret, totp_pending FROM accounts ORDER BY email",
+      ).all() as { email: string; totp_secret: string | null; totp_pending: string | null }[];
+      const factorWrites: { email: string; next: Pick<StoredFactorRow, "totpSecret" | "totpPending"> }[] = [];
+      for (const row of accounts) {
+        const next = rewrite.factors({ email: row.email, totpSecret: row.totp_secret, totpPending: row.totp_pending });
+        if (next !== null) factorWrites.push({ email: row.email, next });
+      }
+      rewrite.beforeRetire();
       // Created first, empty, with the store file's own mode, so the copy of every credential is no more readable
       // than the store; `wx` refuses a target that already exists. VACUUM INTO accepts an empty target.
       fs.closeSync(fs.openSync(backup, "wx", fs.statSync(this.dbPath).mode & 0o777));
@@ -529,25 +549,12 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       } finally {
         copier.close();
       }
-      const rows = this.db!.prepare(
-        "SELECT user_id, data FROM user_storage WHERE collection = 'connections' ORDER BY user_id",
-      ).all() as { user_id: string; data: string }[];
       const updateRow = this.db!.prepare(
         "UPDATE user_storage SET data = ? WHERE user_id = ? AND collection = 'connections'",
       );
-      for (const row of rows) {
-        const next = rewrite.connections(row.user_id, row.data);
-        if (next !== null) updateRow.run(next, row.user_id);
-      }
-      const accounts = this.db!.prepare(
-        "SELECT email, totp_secret, totp_pending FROM accounts ORDER BY email",
-      ).all() as { email: string; totp_secret: string | null; totp_pending: string | null }[];
+      for (const { userId, data } of rowWrites) updateRow.run(data, userId);
       const updateFactors = this.db!.prepare("UPDATE accounts SET totp_secret = ?, totp_pending = ? WHERE email = ?");
-      for (const row of accounts) {
-        const next = rewrite.factors({ email: row.email, totpSecret: row.totp_secret, totpPending: row.totp_pending });
-        if (next !== null) updateFactors.run(next.totpSecret, next.totpPending, row.email);
-      }
-      rewrite.beforeRetire();
+      for (const { email, next } of factorWrites) updateFactors.run(next.totpSecret, next.totpPending, email);
       this.db!.prepare(
         `INSERT INTO storage_meta (key, value, updated_at) VALUES (?, ?, datetime('now'))
          ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,

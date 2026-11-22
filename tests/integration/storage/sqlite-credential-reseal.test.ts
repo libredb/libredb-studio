@@ -264,6 +264,8 @@ describe("re-sealing a real SQLite store", () => {
       "3 version 1 value(s) do not open under the key in use: alice c1 password, bob c2 password, ada@example.com totpSecret",
     );
     expect(dump()).toEqual(before);
+    // Refused before the backup, so a start refused again and again leaves no copy of the store each time.
+    expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual([]);
   });
 
   test("with leave-unopened, version 1 values the key in use does not open are left, named and retired", async () => {

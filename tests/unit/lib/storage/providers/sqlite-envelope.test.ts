@@ -169,7 +169,7 @@ describe("SQLiteStorageProvider credential envelope", () => {
     });
   });
 
-  test("a rewrite that throws part way leaves the store unchanged and v1 accepted, and keeps its backup file", async () => {
+  test("a rewrite that throws part way leaves the store unchanged and v1 accepted, and writes no backup file", async () => {
     await provider.setCollection("alice", "connections", [{ id: "c1" }] as never);
     await provider.setCollection("bob", "connections", [{ id: "c2" }] as never);
     const failure = new Error("rewrite failed on the second row");
@@ -188,10 +188,11 @@ describe("SQLiteStorageProvider credential envelope", () => {
 
     expect(await provider.getCollection("alice", "connections")).toEqual([{ id: "c1" }] as never);
     expect(await provider.readEnvelopeState()).toBe("v1-accepted");
-    expect(existsSync(`${path}.${LABEL}`)).toBe(true);
+    // The rewrite runs before the backup, so a run it stops leaves no copy of the store behind.
+    expect(existsSync(`${path}.${LABEL}`)).toBe(false);
   });
 
-  test("beforeRetire runs inside the transaction after every row and account and before the marker, and its throw rolls everything back", async () => {
+  test("beforeRetire runs inside the transaction after every row and account and before anything is written, the backup included, and its throw leaves the store as it was and no backup", async () => {
     await provider.setCollection("alice", "connections", [{ id: "c1" }] as never);
     await provider.insertAccount(account("ada@example.com", randomUUID()));
     const order: string[] = [];
@@ -207,7 +208,8 @@ describe("SQLiteStorageProvider credential envelope", () => {
       },
       beforeRetire: () => {
         order.push("beforeRetire");
-        expect(raw((db) => db.prepare("SELECT value FROM storage_meta").all())).toEqual([]);
+        // The backup comes after this call, and the rows and the marker after the backup.
+        expect(existsSync(`${path}.${LABEL}`)).toBe(false);
         throw refusal;
       },
     };
@@ -215,6 +217,7 @@ describe("SQLiteStorageProvider credential envelope", () => {
     await expect(provider.rewriteStoredCredentials(rewrite, LABEL)).rejects.toBe(refusal);
 
     expect(order).toEqual(["connections alice", "factors ada@example.com", "beforeRetire"]);
+    expect(existsSync(`${path}.${LABEL}`)).toBe(false);
     expect(await provider.getCollection("alice", "connections")).toEqual([{ id: "c1" }] as never);
     expect((await provider.getAccount("ada@example.com"))?.totpSecret).not.toBe("changed");
     expect(await provider.readEnvelopeState()).toBe("v1-accepted");

@@ -889,7 +889,8 @@ Restoring a full snapshot taken before the re-seal also restores "version 1 acce
 The re-seal is one transaction.
 An error, a lost database connection or a killed process before the commit leaves every row as it was and version 1 accepted, and the start stops with the reason.
 A connection lost during the commit itself can lose only the answer to a commit that happened, so the banner says that the run did not complete, not that the store is unchanged.
-A SQLite run that stopped after its backup leaves that file, a copy of the store as it was; delete it or keep it.
+A SQLite run that stopped after its backup was written leaves that file, a copy of the store as it was; delete it or keep it.
+A run the re-seal itself refuses, over a version 1 value the key in use does not open or a row it cannot handle, leaves no backup on either provider, so a start refused again and again adds none.
 Fix the cause and start again with `STORAGE_ENCRYPTION_RESEAL` still set: that run reports the store's state, retired already or re-sealed now.
 On PostgreSQL the re-seal blocks writes, not reads, for its duration; a start probe that kills a very slow re-seal makes it roll back and run again at the next start, so for a very large store run the first re-sealing start with one replica or a longer start probe.
 
