@@ -328,9 +328,9 @@ const budget = (): ReadOnlyStatementBudget => ({
 });
 
 /**
- * An agent-mode handle of one of the four whose agent read dials a socket of its own, and that read. `opens` is how many
- * connections `connect()` makes to the listener first: one handshake for MQTT and Sparkplug B, none for NETCONF, whose
- * device layer is the seam above, and none for Modbus, whose agent read needs no `connect()`, which is not called.
+ * An agent-mode handle of one of the four whose agent read dials a socket of its own, and that read.
+ * `connects` is whether the read needs `connect()` first: it does for MQTT, Sparkplug B and NETCONF, and not for
+ * Modbus, whose agent read dials on its own.
  */
 interface AgentHandle {
   readonly provider: DatabaseProvider;
@@ -340,6 +340,11 @@ interface AgentHandle {
 
 type AgentBuild = (port: number, context: Context) => AgentHandle;
 
+/**
+ * Each agent read with the handle that builds it. The number is how many connections `connect()` makes to the listener
+ * before the read: one handshake for MQTT and Sparkplug B, none for NETCONF, whose device layer is the seam above, and
+ * none for Modbus, whose `connect()` is not called.
+ */
 const AGENT_READS: readonly [string, number, AgentBuild][] = [
   [
     "MQTT",
@@ -462,6 +467,7 @@ describe("where a socket dial may connect, whatever the decision allows or block
         );
         return { provider, dial: () => provider.connect() };
       },
+      null,
     ],
     [
       "Modbus",
@@ -473,15 +479,18 @@ describe("where a socket dial may connect, whatever the decision allows or block
         );
         return { provider, dial: () => provider.connect() };
       },
+      BLOCKED_HOST,
     ],
   ] as const)(
     "%s handed a blocking decision refuses the name localhost at the lookup the socket dials through, so no socket reaches the listener",
-    async (_name, build) => {
+    async (_name, build, sentence) => {
       setEgressFlag(undefined);
       const listener = await countingListener();
       const failure = await dialled(build(listener.port));
-      // Sparkplug B words a refusal at the lookup as a dial that never opened (ledger note L1), so the count decides.
+      // Sparkplug B words a refusal at the lookup as a dial that never opened (ledger note L1), so for it the count
+      // decides; Modbus refuses with the shared sentence its provider doc names.
       expect(failure).toBeInstanceOf(Error);
+      if (sentence !== null) expect((failure as Error).message).toBe(sentence);
       expect(listener.accepted()).toBe(0);
     },
   );
