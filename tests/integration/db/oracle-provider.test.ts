@@ -1079,6 +1079,8 @@ describe("OracleProvider", () => {
         error: "Permission denied: ORA-01031: insufficient privileges",
         code: ApiErrorCode.PERMISSION_DENIED,
         statusCode: 403,
+        kind: "permission",
+        outcome: "unknown",
       });
     });
 

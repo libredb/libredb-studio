@@ -24,7 +24,9 @@ import {
   PoolExhaustedError,
   QueryCancelledError,
   QueryError,
+  RefusedBeforeSendError,
   TimeoutError,
+  connectPhase,
 } from "@/lib/db/errors";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema, QueryResult } from "@/lib/types";
@@ -290,7 +292,7 @@ describe("connection/test", () => {
         assert.deepEqual(toResponseError(error).toJson(), {
           code: 503,
           message: error.message,
-          data: { code: "CONNECTION_ERROR", retryable: true },
+          data: { code: "CONNECTION_ERROR", retryable: true, kind: "connection", outcome: "unknown" },
         });
         return true;
       });
@@ -1194,9 +1196,47 @@ describe("toResponseError", () => {
 
   it("puts only the defined ones of retryable, details and fixStatement beside a database error's code", () => {
     const bare = toResponseError(new QueryError("syntax error", "postgres"));
-    assert.deepEqual(Object.keys(bare.data ?? {}), ["code"]);
+    assert.deepEqual(Object.keys(bare.data ?? {}), ["code", "kind", "outcome"]);
     const timeout = toResponseError(new TimeoutError("Query timeout after 60000ms", "postgres", 60000));
-    assert.deepEqual(timeout.data, { code: "TIMEOUT_ERROR", retryable: true });
+    assert.deepEqual(timeout.data, { code: "TIMEOUT_ERROR", retryable: true, kind: "timeout", outcome: "unknown" });
+  });
+
+  it("puts a database error's kind and outcome beside its code", async () => {
+    const lost = toResponseError(new ConnectionError("Connection terminated unexpectedly", "postgres"));
+    assert.deepEqual(lost.data, {
+      code: "CONNECTION_ERROR",
+      retryable: true,
+      kind: "connection",
+      outcome: "unknown",
+    });
+    const failed = await connectPhase(() =>
+      Promise.reject(new ConnectionError("connect ECONNREFUSED", "postgres")),
+    ).catch((error: unknown) => error);
+    assert.deepEqual(toResponseError(failed).data, {
+      code: "CONNECTION_ERROR",
+      retryable: true,
+      kind: "connection",
+      outcome: "not-sent",
+    });
+    assert.deepEqual(toResponseError(new RefusedBeforeSendError("refused before sending", "postgres")).data, {
+      code: "QUERY_ERROR",
+      kind: "refused-before-send",
+      outcome: "not-sent",
+    });
+  });
+
+  it("an internal error and the extension's own refusals carry no kind and no outcome", () => {
+    for (const error of [
+      toResponseError(new Error("boom")),
+      toResponseError("boom"),
+      toResponseError(refusal(404, "CONNECTION_NOT_OPEN", "not open")),
+      toResponseError(refusal(413, "TEXT_TOO_LARGE", "too large")),
+    ]) {
+      const data = (error.data ?? {}) as object;
+      assert.equal(Object.hasOwn(data, "kind"), false);
+      assert.equal(Object.hasOwn(data, "outcome"), false);
+    }
+    assert.deepEqual(toResponseError(new Error("boom")).data, { code: "INTERNAL_ERROR" });
   });
 });
 
@@ -1276,15 +1316,20 @@ describe("registerHandlers", () => {
         new QueryCancelledError("The query was cancelled.", "postgres"),
         499,
         "The query was cancelled.",
-        { code: "QUERY_CANCELLED" },
+        { code: "QUERY_CANCELLED", kind: "cancelled", outcome: "unknown" },
       ],
       [
         new QueryError('syntax error at or near "FORM"', "postgres", undefined, 10, "near FORM"),
         400,
         'syntax error at or near "FORM"',
-        { code: "QUERY_ERROR", details: { position: 10, detail: "near FORM" } },
+        { code: "QUERY_ERROR", details: { position: 10, detail: "near FORM" }, kind: "query", outcome: "unknown" },
       ],
-      [new QueryError("syntax error", "postgres"), 400, "syntax error", { code: "QUERY_ERROR" }],
+      [
+        new QueryError("syntax error", "postgres"),
+        400,
+        "syntax error",
+        { code: "QUERY_ERROR", kind: "query", outcome: "unknown" },
+      ],
       [
         new DatabaseConfigError(
           "The sqlite provider is not available in this distribution of LibreDB Studio.",
@@ -1292,7 +1337,7 @@ describe("registerHandlers", () => {
         ),
         400,
         "The sqlite provider is not available in this distribution of LibreDB Studio.",
-        { code: "CONFIG_ERROR" },
+        { code: "CONFIG_ERROR", kind: "config", outcome: "unknown" },
       ],
       [
         new AuthenticationError('password authentication failed for user "app"', "postgres", {
@@ -1300,33 +1345,38 @@ describe("registerHandlers", () => {
         }),
         401,
         'password authentication failed for user "app"',
-        { code: "AUTH_ERROR", fixStatement: "ALTER ROLE app LOGIN;" },
+        { code: "AUTH_ERROR", fixStatement: "ALTER ROLE app LOGIN;", kind: "authentication", outcome: "unknown" },
       ],
       [
         new PermissionDeniedError("permission denied for table orders", "postgres"),
         403,
         "permission denied for table orders",
-        { code: "PERMISSION_DENIED" },
+        { code: "PERMISSION_DENIED", kind: "permission", outcome: "unknown" },
       ],
       [
         new TimeoutError("Query timeout after 60000ms", "postgres", 60000),
         504,
         TIMEOUT_SENTENCE,
-        { code: "TIMEOUT_ERROR", retryable: true },
+        { code: "TIMEOUT_ERROR", retryable: true, kind: "timeout", outcome: "unknown" },
       ],
       [
         new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres"),
         503,
         "connect ECONNREFUSED 127.0.0.1:5432",
-        { code: "CONNECTION_ERROR", retryable: true },
+        { code: "CONNECTION_ERROR", retryable: true, kind: "connection", outcome: "unknown" },
       ],
       [
         new PoolExhaustedError("No connection is free in the pool", "postgres", 10),
         503,
         "No connection is free in the pool",
-        { code: "POOL_EXHAUSTED", retryable: true },
+        { code: "POOL_EXHAUSTED", retryable: true, kind: "pool-exhausted", outcome: "unknown" },
       ],
-      [new DatabaseError("The driver failed", "postgres"), 500, "The driver failed", { code: "DATABASE_ERROR" }],
+      [
+        new DatabaseError("The driver failed", "postgres"),
+        500,
+        "The driver failed",
+        { code: "DATABASE_ERROR", kind: "database", outcome: "unknown" },
+      ],
       [new Error("boom"), 500, "boom", { code: "INTERNAL_ERROR" }],
     ];
     assert.equal(TIMEOUT_SENTENCE, "Query timed out. Please try a simpler query or increase timeout.");

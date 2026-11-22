@@ -115,7 +115,7 @@ describe("SQLite in the backend child", () => {
       refused.message,
       "Enter the SQLite database file as an absolute path: a relative path resolves inside the extension's own folder, which an update replaces.",
     );
-    assert.deepEqual(refused.data, { code: "CONFIG_ERROR" });
+    assert.deepEqual(refused.data, { code: "CONFIG_ERROR", kind: "config", outcome: "unknown" });
     assert.equal(existsSync(join(EXTENSION_ROOT, "it-relative.db")), false);
   });
 
@@ -123,7 +123,7 @@ describe("SQLite in the backend child", () => {
     const restricted = params(sqlite("restricted", join(dir, "restricted.db")), { allowExternalFileAccess: false });
     const refused = await errorOf(session.connection.sendRequest(METHODS.openConnection, restricted));
     assert.equal(refused.message, "Restricted Mode: LibreDB opens no SQLite database until you trust this workspace.");
-    assert.deepEqual(refused.data, { code: "CONFIG_ERROR" });
+    assert.deepEqual(refused.data, { code: "CONFIG_ERROR", kind: "config", outcome: "unknown" });
     assert.equal(existsSync(join(dir, "restricted.db")), false);
   });
 });

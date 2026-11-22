@@ -372,6 +372,8 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
         error: "The postgres provider is not available in this distribution of LibreDB Studio.",
         code: "CONFIG_ERROR",
         statusCode: 400,
+        kind: "config",
+        outcome: "unknown",
       },
       retryAfter: null,
     });
@@ -558,7 +560,13 @@ describe("POST /api/db/statement/analyze without governance", () => {
 
       expect(await analyze({ connection, text: TWO, ...at(19) })).toEqual({
         status: 400,
-        body: { error: sentence, code: "PROVIDER_UNKNOWN", statusCode: 400 },
+        body: {
+          error: sentence,
+          code: "PROVIDER_UNKNOWN",
+          statusCode: 400,
+          kind: "unknown-provider",
+          outcome: "unknown",
+        },
         retryAfter: null,
       });
       expect(readProviderDeclarations).not.toHaveBeenCalled();

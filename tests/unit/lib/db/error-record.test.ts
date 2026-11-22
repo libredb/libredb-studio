@@ -8,6 +8,8 @@
  * one.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import {
   ERROR_KINDS,
@@ -213,14 +215,14 @@ describe("outcome", () => {
   }
 
   test("a refusal before send answers not-sent wherever it is raised", async () => {
-    for (const make of [
+    const makers = [
       () => new RefusedBeforeSendError(marker(), "postgres"),
       () => new ReadAllowanceExceededError(marker(), "postgres"),
       () => new LocalRefusal(marker()),
-    ]) {
-      expect(errorOutcome(make())).toBe("not-sent");
-      expect(errorOutcome(await throughConnect(make()))).toBe("not-sent");
-    }
+    ];
+    for (const make of makers) expect(errorOutcome(make())).toBe("not-sent");
+    const raised = await Promise.all(makers.map((make) => throughConnect(make())));
+    for (const error of raised) expect(errorOutcome(error)).toBe("not-sent");
     expect(errorKind(new LocalRefusal(marker()))).toBe("refused-before-send");
   });
 
@@ -242,18 +244,22 @@ describe("round trip", () => {
   const roundTrip = (record: ErrorRecord) => readErrorRecord(JSON.parse(JSON.stringify(record)));
 
   test("every record built from a generated instance of every class crosses JSON and the reader unchanged", async () => {
+    const cases: Promise<{ readonly label: string; readonly error: unknown }>[] = [];
     for (const seed of SEEDS) {
       const random = mulberry32(seed);
       for (const [Class, , make] of CLASSES) {
         for (let n = 0; n < CASES_PER_SEED; n++) {
           const label = `seed ${seed}, ${Class.name}, case ${n}`;
-          let error: unknown = make(`${marker()} ${int(random, 1_000_000)}`);
+          const error = make(`${marker()} ${int(random, 1_000_000)}`);
           if (error instanceof DatabaseError && random() < 0.5) error.sqlstate = generatedSqlState(random);
-          if (random() < 0.5) error = await throughConnect(error);
-          const record = errorRecord(scrub, error);
-          expect(roundTrip(record), label).toEqual(record);
+          const raised = random() < 0.5 ? throughConnect(error) : Promise.resolve(error);
+          cases.push(raised.then((settled) => ({ label, error: settled })));
         }
       }
+    }
+    for (const { label, error } of await Promise.all(cases)) {
+      const record = errorRecord(scrub, error);
+      expect(roundTrip(record), label).toEqual(record);
     }
   });
 
@@ -345,14 +351,15 @@ describe("reader refuses", () => {
 describe("no text", () => {
   test("no record holds any text the error carries", async () => {
     const keys = new Set(["kind", "code", "sqlState", "engineCode", "outcome", "sessionState"]);
-    for (const [Class, , make] of CLASSES) {
-      const text = marker();
-      for (const error of [make(text), await throughConnect(make(text))]) {
+    const texts = CLASSES.map(() => marker());
+    const raised = await Promise.all(CLASSES.map(([, , make], index) => throughConnect(make(texts[index]))));
+    CLASSES.forEach(([Class, , make], index) => {
+      for (const error of [make(texts[index]), raised[index]]) {
         const record = errorRecord(scrub, error);
-        expect(JSON.stringify(record), Class.name).not.toContain(text);
+        expect(JSON.stringify(record), Class.name).not.toContain(texts[index]);
         for (const key of Object.keys(record)) expect(keys.has(key), `${Class.name}: ${key}`).toBe(true);
       }
-    }
+    });
   });
 });
 
@@ -405,5 +412,17 @@ describe("carries what today's branches read", () => {
         expect(errorCode(asSubclass(error))).toBe(reasonCode);
       }
     }
+  });
+});
+
+describe("docs", () => {
+  test("docs/API_DOCS.md names every kind and both outcomes", () => {
+    const doc = readFileSync(join(import.meta.dir, "../../../../docs/API_DOCS.md"), "utf8");
+    const start = doc.indexOf("\n### Error kind and outcome\n");
+    expect(start).toBeGreaterThan(-1);
+    const end = doc.indexOf("\n#", start + 1);
+    const section = doc.slice(start, end === -1 ? undefined : end);
+    for (const kind of ERROR_KINDS) expect(section, kind).toContain(`| \`${kind}\` |`);
+    for (const outcome of EXECUTE_OUTCOMES) expect(section, outcome).toContain(`\`${outcome}\``);
   });
 });

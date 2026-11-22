@@ -1243,6 +1243,8 @@ describe("PostgresProvider", () => {
         error: "Permission denied: permission denied for table orders",
         code: ApiErrorCode.PERMISSION_DENIED,
         statusCode: 403,
+        kind: "permission",
+        outcome: "unknown",
       });
     });
 

@@ -875,6 +875,8 @@ describe("MongoDBProvider", () => {
         error: `Permission denied: ${sentence}`,
         code: ApiErrorCode.PERMISSION_DENIED,
         statusCode: 403,
+        kind: "permission",
+        outcome: "unknown",
       });
     });
 

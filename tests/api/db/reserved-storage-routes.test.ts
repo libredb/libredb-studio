@@ -61,6 +61,8 @@ describe("the routes answer a connection to Studio's own storage database with t
       error: RESERVED_STORAGE_PATH,
       code: "CONFIG_ERROR",
       statusCode: 400,
+      kind: "config",
+      outcome: "unknown",
     });
     expect(existsSync(storageFile)).toBe(false);
   });
@@ -74,6 +76,8 @@ describe("the routes answer a connection to Studio's own storage database with t
       error: RESERVED_STORAGE_PATH,
       code: "CONFIG_ERROR",
       statusCode: 400,
+      kind: "config",
+      outcome: "unknown",
     });
     expect(existsSync(storageFile)).toBe(false);
   });
@@ -120,6 +124,8 @@ describe("the routes answer a connection whose file Studio cannot check or that 
       error: NO_FILE_AFTER_SCHEME,
       code: "CONFIG_ERROR",
       statusCode: 400,
+      kind: "config",
+      outcome: "unknown",
     });
   });
 });
@@ -162,7 +168,13 @@ describe("a role whose file-access posture SQLite refuses is answered with that 
           answers.push([route, database, response.status, await parseResponseJSON(response)]);
         }
       }
-      const refusal = { error: ADMINISTRATOR_REFUSAL, code: "CONFIG_ERROR", statusCode: 400 };
+      const refusal = {
+        error: ADMINISTRATOR_REFUSAL,
+        code: "CONFIG_ERROR",
+        statusCode: 400,
+        kind: "config",
+        outcome: "unknown",
+      };
       expect(answers).toEqual(paths.flatMap((database) => routes.map(([route]) => [route, database, 400, refusal])));
       const read = spies.flatMap((spy) =>
         spy.mock.calls.map((call) => String(call[0])).filter((file) => paths.some((named) => file.startsWith(named))),

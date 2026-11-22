@@ -38,7 +38,10 @@ const { unknownTypeSentence } = await import("@/lib/db/type-id");
 const { resetCache } = await import("@/lib/seed");
 
 const SENTENCE = unknownTypeSentence("acmefoo");
-const PROVIDER_UNKNOWN = { status: 400, body: { error: SENTENCE, code: "PROVIDER_UNKNOWN", statusCode: 400 } };
+const PROVIDER_UNKNOWN = {
+  status: 400,
+  body: { error: SENTENCE, code: "PROVIDER_UNKNOWN", statusCode: 400, kind: "unknown-provider", outcome: "unknown" },
+};
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-unavailable-seed-"));
 const ROUTE_MODULES = new Map(ALL_ROUTES);

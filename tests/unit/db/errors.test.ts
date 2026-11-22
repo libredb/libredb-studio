@@ -1139,10 +1139,12 @@ describe("connectPhase", () => {
       new DatabaseConfigError("bad config", "postgres"),
       new StudioProfileRefusal("refused", "PROFILE_UNSUPPORTED_TARGET"),
     ];
-    for (const error of raised) {
-      expect(await connectPhase(() => Promise.reject(error)).catch((e: unknown) => e)).toBe(error);
-      expect(error.outcome).toBe("not-sent");
-    }
+    const rejections = await Promise.all(
+      raised.map((error) => connectPhase(() => Promise.reject(error)).catch((e: unknown) => e)),
+    );
+    expect(rejections).toEqual(raised);
+    rejections.forEach((rejection, index) => expect(rejection).toBe(raised[index]));
+    for (const error of raised) expect(error.outcome).toBe("not-sent");
     const outside = new ConnectionError("Connection terminated unexpectedly", "postgres");
     expect(outside.outcome).toBeUndefined();
     expect(Object.keys(outside)).not.toContain("outcome");

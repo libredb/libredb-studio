@@ -16,6 +16,8 @@ describe("createErrorResponse: a statement's deadline", () => {
         code: "TIMEOUT_ERROR",
         statusCode: 504,
         retryable: true,
+        kind: "timeout",
+        outcome: "unknown",
       });
     } finally {
       warn.mockRestore();

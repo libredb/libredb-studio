@@ -1250,6 +1250,8 @@ describe("MySQLProvider", () => {
           error: `Permission denied: ${message}`,
           code: ApiErrorCode.PERMISSION_DENIED,
           statusCode: 403,
+          kind: "permission",
+          outcome: "unknown",
         });
       });
 

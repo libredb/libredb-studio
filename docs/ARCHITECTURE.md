@@ -435,6 +435,7 @@ Every other failure answers `unknown`, since the statement may have run.
 The record holds no text of the error: no message, detail, statement or identifier.
 The full record is built only by `errorRecord` in `src/lib/db/operations/provider-text.ts`, which applies the core scrub first, so a credential of the connection in the SQLSTATE withholds the error whole, as one in the message does; the withheld error keeps the replaced error's `outcome`.
 `readErrorRecord` reads a record strictly and refuses anything else with an `ErrorRecordError` that names the field, never its value.
+Every database error body the API routes answer (`databaseErrorBody` in `src/lib/api/error-body.ts`), and the `data` of the VS Code extension's error answers, carry `kind` and `outcome` ([`docs/API_DOCS.md`](API_DOCS.md#error-kind-and-outcome)).
 The module uses no Node-only global.
 
 ## 5. Directory Structure

@@ -1263,6 +1263,8 @@ describe("Db2Provider: query", () => {
       error: `Permission denied: ${words}`,
       code: ApiErrorCode.PERMISSION_DENIED,
       statusCode: 403,
+      kind: "permission",
+      outcome: "unknown",
     });
   });
 });

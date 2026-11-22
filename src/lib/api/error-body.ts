@@ -6,6 +6,7 @@
  */
 
 import { ApiErrorCode } from "./error-codes";
+import { type ErrorKind, type ExecuteOutcome, errorKind, errorOutcome } from "@/lib/db/error-record";
 import {
   DatabaseError,
   DatabaseConfigError,
@@ -32,6 +33,13 @@ export interface ApiErrorResponse {
   details?: unknown;
   /** On a 401 only: a statement the user can copy and run to fix the refusal, when the provider knows one. */
   fixStatement?: string;
+  /**
+   * On every database error: the error's kind and whether the statement may have reached the database, as its error
+   * record (src/lib/db/error-record.ts) says. Closed vocabularies, never the error's text. A body without them is not
+   * a database error's.
+   */
+  kind?: ErrorKind;
+  outcome?: ExecuteOutcome;
 }
 
 /** The log line a caller writes for a database error: `error` lines also carry the error itself. */
@@ -56,8 +64,18 @@ export interface DatabaseErrorAnswer {
 
 export const TIMEOUT_SENTENCE = "Query timed out. Please try a simpler query or increase timeout.";
 
-/** The answer for a database error, or `null` when `error` is not one and the caller goes on to its own branches. */
+/**
+ * The answer for a database error, with its error kind and outcome on the body, or `null` when `error` is not one and
+ * the caller goes on to its own branches.
+ */
 export function databaseErrorBody(error: unknown): DatabaseErrorAnswer | null {
+  const answer = classifiedAnswer(error);
+  if (answer === null) return null;
+  return { body: { ...answer.body, kind: errorKind(error), outcome: errorOutcome(error) }, log: answer.log };
+}
+
+/** The status, code, words and log line of each database error class, most derived first. */
+function classifiedAnswer(error: unknown): DatabaseErrorAnswer | null {
   // --- Query Cancelled ---
   if (error instanceof QueryCancelledError) {
     return {
