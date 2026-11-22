@@ -3317,6 +3317,10 @@ the role's own grants are the whole boundary (A3).
 - **B172**: an operational reading and the plan-mode statistics read are held to the byte budget by the length of their JSON text, not its UTF-8 bytes, so a reading of text outside ASCII can pass at up to three times the budget, and a bigint cell in one fails the call instead of being measured.
 - **B173**: the hand-over route answers an execution-profile refusal at replay, an engine off the review record or a principal whose privileges are too broad among them, as a `500` `INTERNAL_ERROR` logged as an unhandled error, because `createErrorResponse` has no branch for `ExecutionProfileError`, so a refusal that is the boundary working reads as a server fault.
 - **B174**: the resume sweep stops at a run ledger it cannot parse, a malformed line or an event kind no pack declares, so no stale run listed after it is resumed, on that pass or any later one.
+- **B175**: stopping a run that still has a statement in flight answers `500` `INTERNAL_ERROR`, logged as an unhandled error, where pausing it answers the same refusal `409`, because the stop route passes `AgentRunServiceError` to `createErrorResponse`.
+- **B176**: a ledger line whose event kind no pack declares is refused as carrying the unknown kind `"event"`, so the message names the entry's kind and not the event kind that failed.
+- **B177**: a drive of a paused run resolves its connection and builds a provider before the run is seen to be paused, so both are spent on a run that takes no turn.
+- **B178**: a continuation from another user's run whose ledger the store refuses as malformed is declined `"error"`, where one from another user's run naming an id this Studio does not have is declined `"unavailable"`.
 - **B146**: database assessment opens on every engine with a catalog read, an engine with no table profile composition included, where its verdict can never be met: measured on OpenSearch 3.8.0, the run ends with "No table was profiled", and Elasticsearch, Oracle and Db2 open it by the same requirement.
 
 **What machine redaction leaves unmasked on Kubernetes.**
