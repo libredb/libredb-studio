@@ -43,8 +43,10 @@ export type SecretFieldRecord = Omit<DatabaseConnection, "createdAt"> & { create
  * how safely it travels (TLS and SSH verification, consent to plaintext, a mechanism that sends the
  * secret itself).
  *
- * The identity set is part of the stored envelope format. Adding a NEW field as `identity` is safe:
- * records written before it do not carry it, so their digest is unchanged. Moving an EXISTING field
+ * The identity set is part of the stored envelope format. Adding a NEW field as `identity` is safe
+ * for upgrades: records written before it do not carry it, so their digest is unchanged. It is a
+ * downgrade boundary, as a new envelope version is: an older version leaves the field out of the
+ * digest, so it opens no sealed value of a record that carries it. Moving an EXISTING field
  * into or out of `identity`, or removing an identity field from the type, changes the digest of
  * every record that carries it, and every sealed value of those records then reads as
  * undecryptable. That is a new envelope version with its own re-seal, never an edit here;
@@ -341,6 +343,20 @@ export function identityFields<T extends SecretFieldRecord>(record: T): Record<s
     string,
     unknown
   >;
+  return projectIdentity(stored);
+}
+
+/**
+ * The same projection as `identityFields`, of `record` as it is given and without passing it through JSON, for a check
+ * that must not serialize the record (`connectionBindingProblem` in ./envelope-binding.ts). A record reaches the store
+ * from `JSON.parse` of a request body or of a stored row, so what it holds as given is what the store holds.
+ */
+export function identityFieldsAsGiven<T extends SecretFieldRecord>(record: T): Record<string, unknown> {
+  return projectIdentity(record as unknown as Record<string, unknown>);
+}
+
+/** The identity keys `stored` holds, and the identity keys of its `ssl` and `sshTunnel` containers. */
+function projectIdentity(stored: Record<string, unknown>): Record<string, unknown> {
   const identity: Record<string, unknown> = {};
   for (const key of CONNECTION_IDENTITY_KEYS) {
     if (Object.hasOwn(stored, key)) identity[key] = stored[key];

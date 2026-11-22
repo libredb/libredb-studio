@@ -66,13 +66,18 @@ async function put(data: unknown): Promise<number> {
 }
 
 async function putResponse(data: unknown): Promise<Response> {
+  return putBody(JSON.stringify({ data }));
+}
+
+/** PUT with `body` as the request's text, for a body JSON.stringify cannot write. */
+async function putBody(body: string): Promise<Response> {
   const warn = spyOn(logger, "warn").mockImplementation(() => {});
   try {
     return await PUT(
       new NextRequest("http://localhost/api/storage/connections", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data }),
+        body,
       }),
       { params: Promise.resolve({ collection: "connections" }) },
     );
@@ -185,5 +190,22 @@ describe("the storage routes seal for the session's place", () => {
       expect(((await response.json()) as { error: string }).error).toContain(message);
       expect(storedPassword("alice@example.com")).toBe(before);
     }
+  });
+
+  test("a connection nested deeper than JSON.stringify can write is refused through PUT with a 400, and nothing is stored", async () => {
+    const kept = randomUUID();
+    await put([connection(kept)]);
+    const before = storedPassword("alice@example.com");
+    const depth = 200_000;
+    const record = JSON.stringify(connection(randomUUID(), { host: "HOST" })).replace(
+      '"HOST"',
+      `${"[".repeat(depth)}"db.internal"${"]".repeat(depth)}`,
+    );
+
+    const response = await putBody(`{"data":[${JSON.stringify(connection(kept))},${record}]}`);
+
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toContain("connections[1] cannot be stored");
+    expect(storedPassword("alice@example.com")).toBe(before);
   });
 });

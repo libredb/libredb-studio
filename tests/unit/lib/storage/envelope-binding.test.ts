@@ -210,4 +210,22 @@ describe("the binding of a version 2 envelope", () => {
     expect(connectionBindingProblem(deepest)).toBeNull();
     expect(bindingAad(connectionBinding("alice", deepest).field("password")).length).toBeGreaterThan(0);
   });
+
+  test("a connection deeper than JSON.stringify can write is named too, because the check never serializes it", () => {
+    // JSON.parse builds such a value without limit, so a store row edited outside Studio can hold one.
+    const depth = 200_000;
+    const nested = (open: string, close: string): unknown =>
+      JSON.parse(`${open.repeat(depth)}"x"${close.repeat(depth)}`);
+    const problem = `The connection's id or identity fields nest deeper than ${MAX_BINDING_DEPTH} levels, which no connection does, so it has no binding.`;
+
+    for (const deep of [
+      connection({ id: nested("[", "]") }),
+      connection({ host: nested('{"a":', "}") }),
+      connection({ sshTunnel: { host: nested("[", "]") } }),
+    ]) {
+      expect(() => JSON.stringify(deep)).toThrow(RangeError);
+      expect(connectionBindingProblem(deep)).toBe(problem);
+      expect(() => connectionBinding("alice", deep)).toThrow(problem);
+    }
+  });
 });

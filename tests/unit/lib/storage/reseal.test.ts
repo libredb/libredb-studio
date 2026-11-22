@@ -247,6 +247,24 @@ describe("resealStore", () => {
     expect(decryptConnections("alice", [third], "v1-retired").connections[0].password).toBe(plain);
   });
 
+  test("names a connection nested deeper than JSON.stringify can write, leaves its row as it is, and completes", async () => {
+    const store = new MemoryStorageProvider();
+    const depth = 200_000;
+    const deep = JSON.stringify(connection("c1", { host: "HOST", password: randomUUID() })).replace(
+      '"HOST"',
+      `${"[".repeat(depth)}"c1.internal"${"]".repeat(depth)}`,
+    );
+    const row = `[${deep}]`;
+    store.putRow("alice", "connections", row);
+    store.putRow("bob", "connections", JSON.stringify([connection("c2", { password: sealVersionOne(randomUUID()) })]));
+
+    const report = await resealStore(store, NOW);
+
+    expect(report).toMatchObject({ kind: "rewritten", resealed: 1, unread: ["alice connections[0]"] });
+    expect(store.row("alice", "connections")).toBe(row);
+    expect(store.marker).toBe("v2");
+  });
+
   test("a re-seal under the wrong key retires version 1 over values it left, and the documented recovery reopens them", async () => {
     // docs/STORAGE.md, "Re-sealing the store": restore the key that sealed the store, delete the credential_envelope
     // row with every server stopped, and re-seal again.

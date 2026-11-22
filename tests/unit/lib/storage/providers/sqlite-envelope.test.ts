@@ -148,20 +148,23 @@ describe("SQLiteStorageProvider credential envelope", () => {
     expect(await provider.readEnvelopeState()).toBe("v1-accepted");
   });
 
-  test("the backup file takes the store file's mode, whatever the process umask allows", async () => {
-    await provider.setCollection("alice", "connections", [{ id: "c1", password: randomUUID() }] as never);
-    chmodSync(path, 0o600);
-    const rewrite: StoredCredentialRewrite = { connections: () => null, factors: () => null };
-    const umask = process.umask(0o022);
-    try {
-      await provider.rewriteStoredCredentials(rewrite, LABEL);
-    } finally {
-      process.umask(umask);
-    }
+  test.skipIf(process.platform === "win32")(
+    "the backup file takes the store file's mode, whatever the process umask allows (POSIX only: NTFS has no mode bits)",
+    async () => {
+      await provider.setCollection("alice", "connections", [{ id: "c1", password: randomUUID() }] as never);
+      chmodSync(path, 0o600);
+      const rewrite: StoredCredentialRewrite = { connections: () => null, factors: () => null };
+      const umask = process.umask(0o022);
+      try {
+        await provider.rewriteStoredCredentials(rewrite, LABEL);
+      } finally {
+        process.umask(umask);
+      }
 
-    expect(statSync(`${path}.${LABEL}`).mode & 0o777).toBe(0o600);
-    expect(raw((db) => db.prepare("SELECT data FROM user_storage").all(), `${path}.${LABEL}`)).toHaveLength(1);
-  });
+      expect(statSync(`${path}.${LABEL}`).mode & 0o777).toBe(0o600);
+      expect(raw((db) => db.prepare("SELECT data FROM user_storage").all(), `${path}.${LABEL}`)).toHaveLength(1);
+    },
+  );
 
   test("rewriteStoredCredentials refuses an in-memory store", async () => {
     const memory = new SQLiteStorageProvider(":memory:");

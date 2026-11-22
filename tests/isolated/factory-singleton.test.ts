@@ -131,6 +131,38 @@ describe("factory: getStorageProvider", () => {
     expect(mockInitialize).toHaveBeenCalledTimes(1);
   });
 
+  test("a provider whose initialize failed is closed before the next call builds another", async () => {
+    // Each failed request would otherwise leave an open store file or pool behind it.
+    process.env.STORAGE_PROVIDER = "sqlite";
+    mockInitialize.mockRejectedValueOnce(new Error("DB init failed"));
+
+    await expect(getStorageProvider()).rejects.toThrow("DB init failed");
+    expect(mockClose).toHaveBeenCalledTimes(1);
+
+    expect(await getStorageProvider()).not.toBeNull();
+    expect(mockClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failed initialize whose close fails too rejects with both errors", async () => {
+    process.env.STORAGE_PROVIDER = "sqlite";
+    const initError = new Error("DB init failed");
+    const closeError = new Error("DB close failed");
+    mockInitialize.mockRejectedValueOnce(initError);
+    mockClose.mockRejectedValueOnce(closeError);
+
+    const failure = await getStorageProvider().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).message).toBe(
+      "The storage provider failed to initialize, and closing it failed too.",
+    );
+    expect((failure as AggregateError).errors).toEqual([initError, closeError]);
+    expect((failure as AggregateError).cause).toBe(closeError);
+  });
+
   test("propagates error when initialize() throws", async () => {
     process.env.STORAGE_PROVIDER = "sqlite";
     mockInitialize.mockRejectedValueOnce(new Error("DB init failed"));

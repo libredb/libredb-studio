@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@/lib/governance/jcs";
-import { identityFields, type SecretFieldRecord } from "./secret-fields";
+import { identityFields, identityFieldsAsGiven, type SecretFieldRecord } from "./secret-fields";
 
 /**
  * Where a version 2 envelope may open (docs/STORAGE.md, "Where a sealed value opens").
@@ -82,9 +82,14 @@ function storedId<T extends SecretFieldRecord>(connection: T): unknown {
 
 const TOO_DEEP = `The connection's id or identity fields nest deeper than ${MAX_BINDING_DEPTH} levels, which no connection does, so it has no binding.`;
 
-/** Why `connection` has no binding (its id or identity fields nest deeper than `MAX_BINDING_DEPTH` levels), or null. */
+/**
+ * Why `connection` has no binding (its id or identity fields nest deeper than `MAX_BINDING_DEPTH` levels), or null.
+ * Measured on the record as given (`identityFieldsAsGiven`), never through JSON, so the check serializes nothing it
+ * refuses, whatever the depth.
+ */
 export function connectionBindingProblem<T extends SecretFieldRecord>(connection: T): string | null {
-  return nestsTooDeep(storedId(connection)) || nestsTooDeep(identityFields(connection)) ? TOO_DEEP : null;
+  const id = (connection as { id?: unknown }).id;
+  return nestsTooDeep(id) || nestsTooDeep(identityFieldsAsGiven(connection)) ? TOO_DEEP : null;
 }
 
 /**

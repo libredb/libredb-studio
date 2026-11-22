@@ -476,9 +476,11 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
    * writer, in this process or another, waits. The backup is `VACUUM INTO` the path
    * `<store file>.<backupLabel>`, run on a second connection because SQLite refuses VACUUM inside a
    * transaction; that connection reads the last committed state, which the held lock keeps equal to
-   * the state this transaction rewrites. VACUUM INTO refuses an existing target and an unwritable
-   * directory with an error, which rolls everything back. A backup file a failed run wrote stays,
-   * a copy of the unchanged store. Only the data and factor columns change: an account write that
+   * the state this transaction rewrites. The backup file is created first with `wx`, which refuses
+   * an existing target and an unwritable directory with an error that rolls everything back. A
+   * backup file a failed run left stays: a complete copy of the unchanged store when the copy
+   * finished and a later step failed, or an empty or partial file when the copy itself failed part
+   * way, which is no backup. Only the data and factor columns change: an account write that
    * read its row before the re-seal still applies after it.
    */
   async rewriteStoredCredentials(

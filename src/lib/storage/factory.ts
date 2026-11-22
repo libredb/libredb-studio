@@ -82,11 +82,26 @@ export async function getStorageProvider(): Promise<ServerStorageProvider | null
   })();
 
   // A failed initialization must not be memoized: the next request should
-  // retry from scratch rather than await a rejected promise forever.
+  // retry from scratch rather than await a rejected promise forever. The
+  // provider that failed may already hold an open store file or pool, so it is
+  // closed before it is forgotten; otherwise every failed request leaks one.
   try {
     return await _initPromise;
   } catch (error) {
     _initPromise = null;
+    const failed = _provider;
+    _provider = null;
+    if (failed) {
+      try {
+        await failed.close();
+      } catch (closeError) {
+        throw new AggregateError(
+          [error, closeError],
+          "The storage provider failed to initialize, and closing it failed too.",
+          { cause: closeError },
+        );
+      }
+    }
     throw error;
   }
 }
