@@ -48,11 +48,9 @@ describe("governance keeps no type-id list of its own", () => {
 
   test("row admission and the boot preflight import the canonical check from the type-id module", () => {
     for (const path of [`${GOVERNANCE}/admission.ts`, `${GOVERNANCE}/preflight.ts`]) {
-      const source = MODULES.find((candidate) => candidate.path === path);
-      expect([path, valueSpecifiers(source?.text ?? "").some((specifier) => TYPE_ID_MODULE.has(specifier))]).toEqual([
-        path,
-        true,
-      ]);
+      // Read by path, so a module moved away throws ENOENT naming it rather than reading as one with no import.
+      const text = readFileSync(join(ROOT, path), "utf8");
+      expect([path, valueSpecifiers(text).some((specifier) => TYPE_ID_MODULE.has(specifier))]).toEqual([path, true]);
     }
   });
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { typeIdRefusal } from "@/lib/db/type-id";
+import { HELD_BACK } from "../../../src/host/channel";
 import {
   type ProfileEntry,
   readProfiles,
@@ -108,7 +109,9 @@ describe("readProfiles", () => {
   });
 
   it("keeps every external type id, the ones the channel does not enable included (rule 5)", () => {
-    assert.equal(EXTERNAL_DATABASE_TYPES.length, 42);
+    const heldBack = Object.keys(HELD_BACK);
+    assert.ok(heldBack.length > 0);
+    for (const type of heldBack) assert.ok((EXTERNAL_DATABASE_TYPES as readonly string[]).includes(type), type);
     for (const type of EXTERNAL_DATABASE_TYPES) {
       assert.deepEqual(invalid({ ...PG, type }), valid({ ...PG, type }), type);
     }
