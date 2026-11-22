@@ -31,10 +31,14 @@ import { READ_ONLY_REFUSAL_OPENINGS, type ReadOnlyRefusalKind } from "@/lib/db/p
  * function or of the file initialised from one, or through a property of an object literal declared at the file's top
  * level (read as `TABLE.prop`, or through `const F = TABLE`) whose initialiser holds one. Such a construction must
  * reference exactly one budget, must not be a conditional with a branch that holds none (one construction, one class),
- * and must construct that budget's class, a `RefusedBeforeSendError` or a `TimeoutError`.
+ * and must construct that budget's class, a `RefusedBeforeSendError` or a `TimeoutError`. A class declared in the same
+ * file is read as the class it extends, through every same-file class between them, as `errorKind` reads an error by
+ * its nearest class: Modbus's `class ModbusAgentRefusal extends RefusedBeforeSendError` is a refusal before send, and a
+ * same-file `class LocalError extends QueryError` constructing a budget sentence is refused by its own name.
  *
- * What escapes it: a sentence that reaches a construction through a function's return value, a `let`, another file's
- * table or a computed property (`FAILURES[error.category]`), and a budget refusal worded without these identifiers
+ * What escapes it: a sentence that reaches a construction through a function's return value, a parameter of a
+ * same-file wrapper (`fail(sentence)`), a `let`, another file's table or a computed property
+ * (`FAILURES[error.category]`), and a budget refusal worded without these identifiers
  * (MySQL's and MongoDB's "exceeded the statement deadline", SQL Server's "could not hold this query plan"). The tests
  * that provoke each such refusal in its provider's own test file assert its kind, and hold those.
  *
@@ -50,14 +54,7 @@ const PROVIDERS = join("src", "lib", "db", "providers");
  * recognise. Each moves to the budget classes with a categorizer that passes them through, and this list is then
  * deleted. Relative to src/lib/db/providers.
  */
-const PENDING: readonly string[] = [
-  "document/firestore",
-  "industrial/modbus",
-  "industrial/mtconnect",
-  "industrial/opcua",
-  "network/netconf",
-  "network/snmp",
-];
+const PENDING: readonly string[] = ["network/netconf", "network/snmp"];
 
 /** The class each budget kind is raised as. Typed by the kind, so a kind added to the openings fails typecheck here. */
 const CLASS_OF_KIND: Readonly<Record<ReadOnlyRefusalKind, string>> = {
@@ -168,8 +165,16 @@ function scopesAround(node: ts.Node): ts.Node[] {
 /** What one expression holds: the budget kinds it references, and whether it is a conditional with a branch of none. */
 type Holding = { readonly kinds: Set<ReadOnlyRefusalKind>; mixed: boolean };
 
-/** A construction of `className` whose first argument holds `holding`, in the declaration it was found in. */
-type BudgetConstruction = { readonly className: string; readonly where: string; readonly holding: Holding };
+/**
+ * A construction of `className` whose first argument holds `holding`, in the declaration it was found in; `readAs` is
+ * the class it is read as, `className` itself or, for a class declared in the same file, the class it extends.
+ */
+type BudgetConstruction = {
+  readonly className: string;
+  readonly readAs: string;
+  readonly where: string;
+  readonly holding: Holding;
+};
 
 function scan(file: string, text: string): { constructions: BudgetConstruction[]; references: boolean } {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -254,6 +259,28 @@ function scan(file: string, text: string): { constructions: BudgetConstruction[]
     return holding;
   };
 
+  /** Each class declared in the file that extends a class named by an identifier, and the class it extends. */
+  const parentOf = new Map<string, string>();
+  const collectClasses = (node: ts.Node) => {
+    if (ts.isClassDeclaration(node) && node.name !== undefined) {
+      const parent = node.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0]
+        ?.expression;
+      if (parent !== undefined && ts.isIdentifier(parent)) parentOf.set(node.name.text, parent.text);
+    }
+    ts.forEachChild(node, collectClasses);
+  };
+  collectClasses(source);
+  /** The class `className` is read as: the nearest class outside the file it extends, through same-file classes. */
+  const readAs = (className: string): string => {
+    let at = className;
+    const passed = new Set<string>();
+    for (let parent = parentOf.get(at); parent !== undefined && !passed.has(at); parent = parentOf.get(at)) {
+      passed.add(at);
+      at = parent;
+    }
+    return at;
+  };
+
   const constructions: BudgetConstruction[] = [];
   let references = false;
   const visit = (node: ts.Node) => {
@@ -263,6 +290,7 @@ function scan(file: string, text: string): { constructions: BudgetConstruction[]
       if (holding.kinds.size > 0) {
         constructions.push({
           className: node.expression.text,
+          readAs: readAs(node.expression.text),
           where: `${file}: ${enclosingDeclaration(node)}`,
           holding,
         });
@@ -275,12 +303,12 @@ function scan(file: string, text: string): { constructions: BudgetConstruction[]
 }
 
 /** Why a budget construction is refused, or undefined when it constructs its budget's class. */
-function fault({ className, holding }: BudgetConstruction): string | undefined {
+function fault({ className, readAs, holding }: BudgetConstruction): string | undefined {
   const kinds = [...holding.kinds].sort();
   if (kinds.length > 1) return `references ${kinds.join(" and ")}, more than one budget`;
   if (holding.mixed) return `is a conditional with a branch that holds no ${kinds[0]} budget sentence`;
   const expected = CLASS_OF_KIND[kinds[0]];
-  if (className === expected || KEPT_CLASSES.has(className)) return undefined;
+  if (readAs === expected || KEPT_CLASSES.has(readAs)) return undefined;
   return `constructs ${className} for a ${kinds[0]} budget refusal, not ${expected}`;
 }
 
@@ -299,7 +327,7 @@ const FILES = sourceFiles(PROVIDERS).map((file) => {
 });
 
 describe("a provider's budget refusal is constructed as its budget's class", () => {
-  test("the scan finds a budget construction through an alias, a table and a conditional, and not a comment", () => {
+  test("the scan finds a budget construction through an alias, a table, a conditional and a same-file subclass, and not a comment", () => {
     const planted = [
       "// throw new QueryError(rowBudgetSentence(1, 0));",
       "/** new QueryError(BYTE_BUDGET_PREFIX) */",
@@ -312,6 +340,11 @@ describe("a provider's budget refusal is constructed as its budget's class", () 
       "function both(rows: boolean) { throw new QueryError(rows ? rowBudgetSentence(2, 1) : byteBudgetSentence(2, 1)); }",
       "function kept() { throw new RefusedBeforeSendError(rowBudgetSentence(2, 1)); }",
       "function twice(c: boolean) { const w = `${TIME_BUDGET_PREFIX}: 5 ms`; throw new TimeBudgetRefusal(c ? w : `${w}; x`); }",
+      "class LocalRefusal extends RefusedBeforeSendError {}",
+      "class DeeperRefusal extends LocalRefusal {}",
+      "class LocalError extends QueryError {}",
+      "function localKept() { throw new DeeperRefusal(rowBudgetSentence(2, 1)); }",
+      "function localWrong() { throw new LocalError(rowBudgetSentence(2, 1)); }",
     ].join("\n");
     const found = scan("planted.ts", planted).constructions.map((construction) => [
       construction.where,
@@ -326,6 +359,8 @@ describe("a provider's budget refusal is constructed as its budget's class", () 
       ["planted.ts: both", "QueryError", "references bytes and rows, more than one budget"],
       ["planted.ts: kept", "RefusedBeforeSendError", undefined],
       ["planted.ts: twice", "TimeBudgetRefusal", undefined],
+      ["planted.ts: localKept", "DeeperRefusal", undefined],
+      ["planted.ts: localWrong", "LocalError", "constructs LocalError for a rows budget refusal, not RowBudgetRefusal"],
     ]);
   });
 

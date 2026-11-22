@@ -594,6 +594,24 @@ export function isQueryError(error: unknown): error is QueryError {
 }
 
 /**
+ * Whether `error` is a budget refusal raised after the read began, a provider's or Studio's: an instance of one of the
+ * five budget classes, Studio's three subclasses included. A provider's categorizer passes one through as it is, so it
+ * keeps its class and its error kind. A refusal before send and a timeout are not budget refusals here: each already
+ * keeps its own class.
+ */
+export function isBudgetRefusal(
+  error: unknown,
+): error is RowBudgetRefusal | ByteBudgetRefusal | TimeBudgetRefusal | CutValueRefusal | SerialisedResultRefusal {
+  return (
+    error instanceof RowBudgetRefusal ||
+    error instanceof ByteBudgetRefusal ||
+    error instanceof TimeBudgetRefusal ||
+    error instanceof CutValueRefusal ||
+    error instanceof SerialisedResultRefusal
+  );
+}
+
+/**
  * A wait in milliseconds as the words a sentence names it with: tenths below 10 s and never fewer than 0.1, so a
  * deadline of a few milliseconds does not read as no wait at all; whole seconds from 10 s up; "1 second" in the
  * singular.

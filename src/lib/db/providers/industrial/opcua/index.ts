@@ -20,7 +20,13 @@
  * through the same `queryReadOnly`, beneath the same roots.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import {
+  DatabaseConfigError,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+  TimeBudgetRefusal,
+} from "@/lib/db/errors";
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
@@ -56,7 +62,6 @@ import {
   opcuaAgentResult,
   preflight,
   runOpcuaAgentRead,
-  OpcuaAgentError,
   OPCUA_AGENT_FAILURE_SENTENCES,
   type OpcuaAgentAnswer,
 } from "./agent-read";
@@ -355,7 +360,7 @@ export class OpcuaProvider extends BaseDatabaseProvider {
     })();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new OpcuaAgentError(OPCUA_AGENT_FAILURE_SENTENCES.time(ms))), ms);
+      timer = setTimeout(() => reject(new TimeBudgetRefusal(OPCUA_AGENT_FAILURE_SENTENCES.time(ms), OPCUA_TYPE)), ms);
     });
     try {
       return await Promise.race([work, deadline]);

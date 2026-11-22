@@ -4,13 +4,19 @@
  * worded by their category, never by Google's words.
  */
 import { describe, expect, test } from "bun:test";
+import { errorKind } from "@/lib/db/error-record";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
+  CutValueRefusal,
   DatabaseConfigError,
   QueryCancelledError,
   QueryError,
   ReadAllowanceExceededError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  SerialisedResultRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
@@ -117,7 +123,9 @@ describe("the collection id listing", () => {
 
   test("more ids than the row budget are refused, never cut", async () => {
     const { answer } = run(() => ({ collectionIds: ["a", "b", "c", "d"] }), { op: "list-collections", parent: [] });
-    expect((await rejected(answer)).message).toBe(`${ROW_BUDGET_PREFIX}: 4 rows > 3 allowed`);
+    const error = await rejected(answer);
+    expect(error.message).toBe(`${ROW_BUDGET_PREFIX}: 4 rows > 3 allowed`);
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a repeated page token is refused rather than read again", async () => {
@@ -158,7 +166,9 @@ describe("the count", () => {
 
   test("a count that reaches one past the budget is refused, never cut", async () => {
     const { answer } = run(counted("4"), { op: "count", source: { kind: "collection", path: ["users"] } });
-    expect((await rejected(answer)).message).toBe(F.countOverRows(3));
+    const error = await rejected(answer);
+    expect(error.message).toBe(F.countOverRows(3));
+    expect(errorKind(error)).toBe("row-budget-refusal");
     expect(F.countOverRows(3).startsWith(ROW_BUDGET_PREFIX)).toBe(true);
   });
 });
@@ -255,6 +265,7 @@ describe("the result", () => {
       throw new Error("expected a refusal");
     })();
     expect(error.message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 5 allowed$/);
+    expect(errorKind(error)).toBe("byte-budget-refusal");
     expect(firestoreAgentFailure(error, BUDGET, "s", false)).toBeUndefined();
   });
 
@@ -285,6 +296,7 @@ describe("the wording of a failure", () => {
   ])("Google's %d is worded by its status, never by its message", (status, grpc, sentence) => {
     const worded = statusOf(status, grpc);
     expect(worded).toBeInstanceOf(QueryError);
+    expect(errorKind(worded)).toBe("query");
     expect(worded?.message).toBe(sentence);
     expect(worded?.message).not.toContain("alice");
   });
@@ -309,8 +321,24 @@ describe("the wording of a failure", () => {
 
   test("the read's own deadline and a transport timeout are the time budget's refusal", () => {
     const sentence = `${TIME_BUDGET_PREFIX}: no answer within 5000ms`;
-    expect(firestoreAgentFailure(new QueryCancelledError("x"), BUDGET, "s", true)?.message).toBe(sentence);
-    expect(firestoreAgentFailure(new TimeoutError("x", "firestore"), BUDGET, "s", false)?.message).toBe(sentence);
+    for (const refusal of [
+      firestoreAgentFailure(new QueryCancelledError("x"), BUDGET, "s", true),
+      firestoreAgentFailure(new TimeoutError("x", "firestore"), BUDGET, "s", false),
+    ]) {
+      expect(refusal?.message).toBe(sentence);
+      expect(errorKind(refusal)).toBe("time-budget-refusal");
+      expect(refusal?.query).toBe("s");
+    }
+  });
+
+  test.each(
+    [RowBudgetRefusal, ByteBudgetRefusal, TimeBudgetRefusal, CutValueRefusal, SerialisedResultRefusal].map(
+      (Class) => [Class.name, Class] as const,
+    ),
+  )("a budget refusal passes through as it is, even with the deadline fired: %s", (_name, Class) => {
+    const refusal = new Class(`refused ${crypto.randomUUID()}`, "firestore");
+    expect(firestoreAgentFailure(refusal, BUDGET, "s", true)).toBeUndefined();
+    expect(firestoreAgentFailure(refusal, BUDGET, "s", false)).toBeUndefined();
   });
 
   test("a cancel, a refused token, a transport failure and any other failure are worded by category", () => {

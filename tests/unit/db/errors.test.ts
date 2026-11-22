@@ -23,6 +23,9 @@ import {
   StudioRowBudgetRefusal,
   StudioByteBudgetRefusal,
   StudioTimeBudgetRefusal,
+  StudioTimeoutRefusal,
+  ReadAllowanceExceededError,
+  isBudgetRefusal,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -34,6 +37,7 @@ import {
 import * as errorsModule from "@/lib/db/errors";
 import { errorKind } from "@/lib/db/error-record";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import {
   describeOracleClientLoadFailure,
   describeOracleThinModeRefusal,
@@ -429,6 +433,42 @@ describe("isQueryError", () => {
 
   test("returns false for non-QueryError", () => {
     expect(isQueryError(new ConnectionError("err"))).toBe(false);
+  });
+});
+
+describe("isBudgetRefusal", () => {
+  const ALL_BUDGET_REFUSALS = [
+    RowBudgetRefusal,
+    ByteBudgetRefusal,
+    TimeBudgetRefusal,
+    CutValueRefusal,
+    SerialisedResultRefusal,
+    StudioRowBudgetRefusal,
+    StudioByteBudgetRefusal,
+    StudioTimeBudgetRefusal,
+  ] as const;
+
+  test("is true for each budget refusal class, a provider's or Studio's, and for a subclass of each", () => {
+    for (const Class of ALL_BUDGET_REFUSALS) {
+      const Subclass = class extends Class {};
+      expect(isBudgetRefusal(new Class(`refused ${crypto.randomUUID()}`, "postgres")), Class.name).toBe(true);
+      expect(isBudgetRefusal(new Subclass(`refused ${crypto.randomUUID()}`, "postgres")), Class.name).toBe(true);
+    }
+  });
+
+  test("is false for a refusal before send, a timeout, Studio's statistics timeout, a plain QueryError and anything else", () => {
+    for (const error of [
+      new QueryError("refused", "postgres"),
+      new RefusedBeforeSendError(rowBudgetSentence(3, 2), "postgres"),
+      new ReadAllowanceExceededError("too many reads", "postgres"),
+      new TimeoutError("timed out", "postgres", 50),
+      new StudioTimeoutRefusal("timed out", "postgres", 50),
+      new Error("plain"),
+      "a string",
+      undefined,
+    ]) {
+      expect(isBudgetRefusal(error), String(error)).toBe(false);
+    }
   });
 });
 
