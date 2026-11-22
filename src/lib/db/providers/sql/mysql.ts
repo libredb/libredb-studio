@@ -5054,11 +5054,11 @@ export class MySQLProvider extends SQLBaseProvider {
    *
    * measured on MySQL 26.7.0 with a user holding only `SELECT ON d32.*` plus `PROCESS`.
    * Letting that reject is what puts the reason in front of the operator: it becomes
-   * `errors.slowQueries` in `getMonitoringData()` (src/lib/db/base-provider.ts), which
-   * reads every panel with `Promise.allSettled` and records a rejected one by name, and
+   * `errors.slowQueries` in `getMonitoringData()` (src/lib/db/engine-facets/monitoring.ts),
+   * which reads each offered panel independently and records a rejected one by name, and
    * `QueriesTab` renders it through `PanelUnavailable` carrying the server's own
-   * sentence. One rejected panel costs nothing else: that method throws only when all
-   * four core reads reject. This is also what the PostgreSQL provider already does - it
+   * sentence. One rejected panel costs nothing else: that method rejects only when every
+   * panel it read rejected. This is also what the PostgreSQL provider already does - it
    * falls back to `pg_stat_activity` and lets a failure of THAT propagate.
    */
   public async getSlowQueries(options?: { limit?: number }): Promise<SlowQueryStats[]> {

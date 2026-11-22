@@ -936,23 +936,23 @@ passed, because each was right that the list is empty.
 
 They now reject with one sentence, `An OPC UA server holds an address space of nodes rather than
 tables, and publishes no table, index or size statistics: there is nothing here to measure. The nodes
-themselves are in the Keys panel.` `base-provider.ts` settles each panel separately and records a
-rejected one under `errors[panel]`, which the dashboard draws in the engine's own words.
+themselves are in the Keys panel.`
 
-**The two CORE panels keep their empty arrays**, because four rejections are read as a dead
-connection: slow queries and sessions say why through `getLabels()` instead, the member ten other
-providers use for exactly this. Their defaults are written for a SQL server, and that is not a
-theoretical mismatch — the Queries panel told an OPC UA reader to install `pg_stat_statements`, a
-PostgreSQL extension, and the Sessions panel said "No active sessions found." against a server that
-was holding this very session.
+**`getSlowQueries()` and `getActiveSessions()` keep their empty arrays**, and say why through
+`getLabels()`, the member ten other providers use for exactly this. The defaults are written for a
+SQL server, and that was not a theoretical mismatch: the Queries panel told an OPC UA reader to
+install `pg_stat_statements`, a PostgreSQL extension, and the Sessions panel said "No active sessions
+found." against a server that was holding this very session.
 
-Since the engine facets registry only the overview panel is offered in OPC UA's `ENGINE_FACETS` row ([Engine facets](#engine-facets)).
-`getMonitoringData` reads none of the six other panels and lists them in `notOffered`, so the dashboard draws the Overview tab and the pool view only; the refusals and empty arrays above are what each method answers when called directly.
+Only the overview panel is offered in OPC UA's `ENGINE_FACETS` row ([Engine facets](#engine-facets)).
+`getMonitoringData` reads none of the six other panels and lists them in `notOffered`, so the dashboard draws the Overview tab and the pool view only, and none of the refusals or labels above is drawn.
+The refusals and empty arrays above are what each method answers when called directly.
 
 ### Engine facets
 
 Which of the seven monitoring panels `opcua` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/opcua/engine-facets.ts).
-A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|

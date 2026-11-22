@@ -807,7 +807,7 @@ control that only emits invalid input. That is the defect class
 The same honesty rule governs monitoring: **a source the connected user cannot read returns empty,
 it never throws.** Monitoring catalogs are frequently permission-gated, so a denial is the normal
 case for a restricted user and must not break an otherwise working connection.
-A panel the engine cannot read at all is a different case: it is declared not offered in the engine's `ENGINE_FACETS` row rather than answered empty, a constant or a refusal, so core never calls its method and no surface draws it.
+A panel the engine cannot read at all is a different case: it is declared not offered in the engine's `ENGINE_FACETS` row rather than answered empty, a constant or a refusal, so `getMonitoringData` never calls its method and no surface draws it.
 
 ### The `createTable` grammar
 

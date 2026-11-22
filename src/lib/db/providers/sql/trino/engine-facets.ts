@@ -1,7 +1,9 @@
 import type { EngineFacets } from "@/lib/db/engine-facets/types";
 
 /**
- * `trino`: the monitoring panels whose reads ask the engine. Each panel not offered is never read and not drawn:
+ * `trino`: the monitoring panels whose reads ask the engine, now or from what it said at connect. `getMonitoringData`
+ * never reads a panel not offered and no surface draws it, though the agent's `inspect_operations` tool still calls
+ * the session, slow-query, table, index and storage members on every engine:
  *
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
  */

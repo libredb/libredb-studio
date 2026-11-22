@@ -2001,10 +2001,11 @@ measured zero, and that reading is published as `0`/`"0 B"`.
   answers 0 rows without raising — it is the source being *unreadable*: no `performance_schema`
   database (`ERROR 1049`), or the grant denied on it (`ERROR 1142`). Letting that reject is what
   puts the reason on screen: `getMonitoringData()`
-  ([`base-provider.ts`](../../src/lib/db/base-provider.ts)) reads every panel with
-  `Promise.allSettled` and records a rejected one under `errors.slowQueries`, and `QueriesTab`
+  ([`base-provider.ts`](../../src/lib/db/base-provider.ts), orchestrated by
+  [`engine-facets/monitoring.ts`](../../src/lib/db/engine-facets/monitoring.ts)) reads each
+  offered panel independently and records a rejected one under `errors.slowQueries`, and `QueriesTab`
   renders that through `PanelUnavailable` carrying the server's own sentence. One refused panel
-  costs only itself; that method throws only when all four core reads reject.
+  costs only itself; that method rejects only when every panel it read rejected.
 - `getPerformanceMetrics()`: **every field is omitted rather than defaulted.** A server with
   `performance_schema` OFF answers the `global_status` sub-selects with NULL instead of failing, so
   each reading is taken through `measuredNumber()` and a field with nothing behind it is left out of
@@ -2178,7 +2179,8 @@ that is what MySQL itself calls index bytes.
 ### Engine facets
 
 Which of the seven monitoring panels `mysql` offers is its row in `ENGINE_FACETS`, declared in [`mysql-engine-facets.ts`](../../src/lib/db/providers/sql/mysql-engine-facets.ts).
-A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|

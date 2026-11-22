@@ -1,7 +1,9 @@
 /**
  * The engine facets contract (FND-4): what each engine offers, declared in one row beside its provider and collected
- * by `ENGINE_FACETS` in `./index.ts`. Core reads a row before it calls a provider member, so a member the engine does
- * not offer is never called.
+ * by `ENGINE_FACETS` in `./index.ts`. `getMonitoringData`, the dashboard, the admin Operations page and fleet health
+ * read a row before they call a provider member, so none of them calls a member the engine does not offer. The
+ * agent's `inspect_operations` tool does not read the row yet: it still calls `getActiveSessions`, `getSlowQueries`,
+ * `getTableStats`, `getIndexStats` and `getStorageStats` on every engine.
  *
  * This module loads nothing: a row module imports it only as types, and the one value here is the panel vocabulary.
  */
@@ -26,8 +28,8 @@ export type MonitoringPanel = (typeof MONITORING_PANELS)[number];
 
 /**
  * Whether an engine offers a facet. `"offered"`: its read asks the engine (or an embedded engine's own file), now or
- * from what the engine said at connect. `"not-offered"`: the engine has nothing to read for it, so core never calls
- * the member and no surface draws it; a member that would answer a stub empty, a constant or a refusal without asking
+ * from what the engine said at connect. `"not-offered"`: the engine has nothing to read for it, so `getMonitoringData`
+ * never calls the member and no surface draws it; a member that would answer a stub empty, a constant or a refusal without asking
  * the engine is declared not offered.
  */
 export type FacetOffer = "offered" | "not-offered";

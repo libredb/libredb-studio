@@ -2427,6 +2427,7 @@ Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ 
 Each connection is resolved the way the db routes resolve one: a managed seed by its `seedId`, a copy that claims a `seed:` id by the operator's record (so a seed that no longer exists is an `error` row), and an inline connection as sent, or as an `error` row while `ALLOW_CUSTOM_CONNECTIONS` is off.
 `status` is `healthy`, `degraded` (the check took over 5 s), `error`, or `not-checked`.
 `databaseSizeBytes` comes from the engine's overview panel, read only where the engine's `ENGINE_FACETS` row offers it; elsewhere the field is absent and no overview is read.
+It is also absent where the engine offers the overview but the overview read failed: the row does not report that failure, and its `status` still comes from the health read alone.
 A `not-checked` row is a connection whose provider declares `resumesBilledCompute`: the route reads that from an unconnected provider and answers with `latencyMs: 0`, caching no provider and sending no statement, since a check would resume compute the engine bills for (a suspended Databend Cloud warehouse).
 The admin Overview shows it as not checked and keeps it out of the health score and the average latency.
 

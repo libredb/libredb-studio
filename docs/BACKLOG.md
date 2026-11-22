@@ -6183,9 +6183,10 @@ Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
 
 ### U87. Monitoring's Overview and Storage tiles name tables, indexes and a buffer pool on key-value and streaming engines
 
-The Overview and Storage tabs draw the same SQL-shaped tiles for every engine, so a Redis connection reads "Tables 23 · 0 indexes" (23 is `DBSIZE`), "Buffer Pool", "Deadlocks" and "Checkpoint" as "Not measured", and Storage "Tables 0 B / Indexes 0 B / WAL N/A"; Kafka and Redpanda put every byte of topic data under "Other (unattributed)" beside "Tables 0 B 0.0%".
+The Overview and Storage tabs draw SQL-shaped tiles for every engine that offers their panels, so a Redis connection reads "Tables 23 · 0 indexes" (23 is `DBSIZE`), "Buffer Pool", "Deadlocks" and "Checkpoint" as "Not measured", and Storage "WAL N/A".
 Measured on Redis 8.10.2, Kafka 4.3.1 and Redpanda v26.2.3.
-The labels are fixed strings in `src/components/monitoring/tabs/OverviewTab.tsx` (`{overview?.indexCount ?? 0} indexes` and "Buffer Pool") and `src/components/monitoring/tabs/StorageTab.tsx` ("Tables", "Indexes", "WAL" and "Other (unattributed)").
+Since the engine facets registry (FND-4), the Storage tab draws its Tables and Indexes tiles, the Storage Breakdown and Largest Tables only where the engine offers table statistics, so Redis no longer reads "Tables 0 B / Indexes 0 B" there, and Kafka and Redpanda no longer put topic data under "Other (unattributed)" beside "Tables 0 B 0.0%".
+The labels that remain are fixed strings in `src/components/monitoring/tabs/OverviewTab.tsx` (`{overview?.indexCount ?? 0} indexes` and "Buffer Pool") and `src/components/monitoring/tabs/StorageTab.tsx` ("WAL").
 U71 is the same gap on the Tables tab.
 
 Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.

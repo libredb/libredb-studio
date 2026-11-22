@@ -395,13 +395,15 @@ Each label in a count statement is backticked by the quoting module and checked 
 The monitoring reads run through the same READ session path without the user's policy, and a unit test checks every one against the policy: every monitoring read but the transactions read passes it.
 The transactions read stays out of the user allowlist (section 3.2), since a user's `SHOW TRANSACTIONS YIELD *` returns other sessions' query text and parameters, and the monitoring read keeps a fixed column list that names no `parameters` column.
 A read the server refuses yields that panel's empty answer, never a throw, while an unreachable server, a timeout or a cancel is raised; a refused overview figure is shown as unreadable and leaves the others standing.
-The Slow queries panel says "Neo4j Community keeps no query log, and this version does not read the Enterprise query log." and the Active sessions panel with nothing running says "No transaction is running."
+The slow-query panel is not offered, so the dashboard draws no Queries tab; its empty-state label, "Neo4j Community keeps no query log, and this version does not read the Enterprise query log.", is what a caller of `getSlowQueries` is told the empty answer means.
+The Active sessions panel with nothing running says "No transaction is running."
 Health answers healthy after the connectivity check and the ping, or raises; Bolt reports no cache ratio, size or uptime, so those read "N/A".
 
 ### Engine facets
 
 Which of the seven monitoring panels `neo4j` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/graph/neo4j/engine-facets.ts).
-A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|

@@ -587,7 +587,8 @@ Auto-refresh is off until the user starts it, as on every engine, and since `res
 #### Engine facets
 
 Which of the seven monitoring panels `snowflake` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/snowflake/engine-facets.ts).
-A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|

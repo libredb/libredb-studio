@@ -293,22 +293,22 @@ SELECT * FROM duckdb_queries();      -- Catalog Error: Table Function with name 
 SELECT * FROM duckdb_connections();  -- Catalog Error: Table Function with name duckdb_connections does not exist!
 ```
 
-Both therefore answer `[]`, and neither fabricates a zero. **Both empties are DuckDB's own words on
-screen**, through the two `ProviderLabels` fields the provider declares:
+Both therefore answer `[]` without asking the engine, and neither fabricates a zero.
+The two `ProviderLabels` fields the provider declares say why each answer is empty:
 
-- `getSlowQueries()` returns `[]` and the provider declares `slowQueriesEmptyState`, so the Queries
-  panel prints *"DuckDB keeps no store of finished statements — it publishes no `duckdb_queries()`
-  table function — so there is nothing to enable."* Without it that panel tells every engine to
-  install `pg_stat_statements`, which for DuckDB is nonsense (#463).
-- `getActiveSessions()` returns `[]` and the provider declares `sessionsEmptyState`, so `SessionsTab`
-  and `OperationsTab` print *"DuckDB publishes no session list — there is no `duckdb_connections()`
-  table function — so this panel can never show a row."* in place of the generic **"No active
-  sessions found."** they used for every provider until D48. That generic sentence reads as "nothing
+- `getSlowQueries()` returns `[]` and the provider declares `slowQueriesEmptyState`: *"DuckDB keeps
+  no store of finished statements — it publishes no `duckdb_queries()` table function — so there is
+  nothing to enable."* Without it the Queries panel told every engine to install
+  `pg_stat_statements`, which for DuckDB is nonsense (#463).
+- `getActiveSessions()` returns `[]` and the provider declares `sessionsEmptyState`: *"DuckDB
+  publishes no session list — there is no `duckdb_connections()` table function — so this panel can
+  never show a row."* It replaced the generic **"No active sessions found."** that `SessionsTab` and
+  `OperationsTab` used for every provider until D48. That generic sentence reads as "nothing
   is running right now", which is a different claim from "this panel can never show a row". A
   provider that declares neither label keeps the generic wording. (The `sessionsUnavailable` path
   beside it is a third fact again: it renders a reason only when the reading *failed*.)
 
-Neither panel is offered in DuckDB's `ENGINE_FACETS` row ([Engine facets](#engine-facets)), so core never reads them, and neither the monitoring dashboard nor the admin Operations page draws them.
+Neither panel is offered in DuckDB's `ENGINE_FACETS` row ([Engine facets](#engine-facets)), so `getMonitoringData` never reads them, and neither the monitoring dashboard nor the admin Operations page draws them.
 The two sentences above are no longer shown on either page.
 
 `sqlite.ts` answers this panel with a row describing its own handle. That row would be true here
@@ -1304,7 +1304,8 @@ it has no file, and still reports its memory usage (§3.5).
 ### Engine facets
 
 Which of the seven monitoring panels `duckdb` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/duckdb/engine-facets.ts).
-A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|

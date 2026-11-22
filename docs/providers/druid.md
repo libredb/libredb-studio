@@ -1495,10 +1495,9 @@ statement, so the row cap can only ever be a positive integer in the generated S
 
 The honest empties, each with its reason:
 
-- **`getPerformanceMetrics()` is zeroed** because Druid's metrics do not reach SQL. `cacheHitRatio` is
-  required by the type so it carries a neutral `0`; every other metric in that type is *optional*, so
-  absence is expressible and they are left out entirely — a zero would read as a measurement of zero,
-  which is a different and false claim.
+- **`getPerformanceMetrics()` is `{}`** because Druid's metrics do not reach SQL. Every metric in that
+  type is *optional*, `cacheHitRatio` included, so absence is expressible and they are left out
+  entirely: a zero would read as a measurement of zero, which is a different and false claim.
 - **`getHealth().cacheHitRatio` is the string `"N/A"`.** That field is a `string`, so it can say
   "not measured" — which is the truth. A fabricated low number would trip the cache-ratio threshold
   alert into reporting a fault that does not exist. `sqlite.ts` and `oracle/index.ts` already spell an
@@ -1510,13 +1509,15 @@ The honest empties, each with its reason:
   ([§6](#6-schema-introspection)).
 
 Those two empty arrays were re-checked on **2026-08-25** against the ABSENT-is-not-EMPTY rule
-`MonitoringData` states (the rule that converted five Cassandra panels and one Trino one). Both stay
-EMPTY, and the distinction is which fact the panel is reporting: **an absent panel means the engine
-could not answer; an empty one means zero is a real measurement.** Druid has no query log and no index
-object, so the count of listable rows really is zero and an empty panel states it correctly — the
-`slowQueriesEmptyState` label carries the reason into the tab besides. The Cassandra panels were
-different: its tables and secondary indexes *exist* and the schema tree lists them in the same frame,
-so `[]` there denied objects the product was showing.
+`MonitoringData` states (the rule that converted five Cassandra panels and one Trino one). Both
+methods still answer EMPTY, and the distinction is which fact the answer reports: **an absent panel
+means the engine could not answer; an empty one means zero is a real measurement.** Druid has no
+query log and no index object, so the count of listable rows really is zero. The Cassandra panels
+were different: its tables and secondary indexes *exist* and the schema tree lists them in the same
+frame, so `[]` there denied objects the product was showing.
+Since neither answer asks the engine, the performance, slow-query and index panels are not offered
+(see Engine facets below): `getMonitoringData` never reads them and the dashboard draws no
+Performance or Queries tab for Druid.
 - **`maxConnections` is `0`** because Druid publishes no connection limit anywhere in SQL — it has no
   pool. A number here would be invented.
 - **`uptime` says `"unknown"`, not `"0ms"`**, when either clock reading is missing: an uptime of zero
@@ -1573,7 +1574,8 @@ counts live in `getTableStats()`, where a denial costs one panel instead of the 
 ### Engine facets
 
 Which of the seven monitoring panels `druid` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/druid/engine-facets.ts).
-A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -1688,9 +1690,9 @@ Three overrides:
 - `entityName` → **"Datasource"**, `entityNamePlural` → **"Datasources"**. Datasource is the Druid
   word for a table, and the sidebar is where a user meets it.
 - `slowQueriesEmptyState` → **"Druid keeps no query log: no system table and no endpoint holds
-  finished queries."** `getSlowQueries()` is empty by design, so the monitoring Queries panel is
-  **always** empty here, and its hardcoded sentence used to tell the reader to enable
-  `pg_stat_statements` (#463).
+  finished queries."** `getSlowQueries()` is empty by design, so the slow-query panel is not
+  offered and the dashboard draws no Queries tab here; before that, the panel was **always** empty,
+  and its hardcoded sentence used to tell the reader to enable `pg_stat_statements` (#463).
 
 Everything else is inherited on purpose. **A Druid row is a row**, so renaming it would only make the
 grid speak a dialect the cluster does not. The maintenance labels are irrelevant here

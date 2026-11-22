@@ -46,11 +46,11 @@ generic components render LibreDB-appropriate wording.
 | `query(input)` | A command (`get`/`put`/`delete`/`prefix`/`range`) | `kv` lens methods |
 | `getHealth()` / `getOverview()` | File stats | `fs.statSync` + prefix count |
 | `getStorageStats()` | File path and size on disk | `fs.statSync` |
-| `getSlowQueries()` | Not applicable | returns `[]`, and the Queries panel shows the engine's own sentence ([§9](#getlabels)) |
-| `getActiveSessions()` | Not applicable (single embedded process) | **refuses** — the panel is absent with its reason |
+| `getSlowQueries()` | Not applicable | returns `[]`; the panel is not offered, so the dashboard draws no Queries tab ([Engine facets](#engine-facets)) |
+| `getActiveSessions()` | Not applicable (single embedded process) | **refuses** with its reason; the panel is not offered, so no surface draws it |
 | `runMaintenance(type)` | Not supported (throws) | — |
 | `getTableStats()` | One key-count per namespace | the schema tree's own `kv.range` scan |
-| `getIndexStats()` | No index object exists | **refuses** — the panel is absent with its reason |
+| `getIndexStats()` | No index object exists | **refuses** with its reason; the panel is not offered, so no surface draws it |
 
 ---
 
@@ -255,8 +255,9 @@ keeps the stored text too. Every other JSON value is pretty-printed as before.
 Unlike Redis (`INFO`) or PostgreSQL (system catalogs), LibreDB has no server introspection API.
 Overview, table and storage stats derive entirely from `fs.statSync` (file size in bytes) and one
 `kv.range` scan of the keyspace (per-namespace key counts). There is no session list and no index
-object — those two panels are **absent with a sentence** rather than answered empty
-([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)) — and no cache statistics
+object: those two methods **refuse with a sentence** rather than answer empty, and neither panel is
+offered, so neither is read by `getMonitoringData` or drawn
+([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)). There are no cache statistics
 either, so there is no cache hit ratio to report
 ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-never-will-be)).
 
@@ -607,8 +608,9 @@ A `Database` handle publishes exactly `close` and `transact`. A `Kv` publishes
 constraint anywhere in it.** None of those is declared, and none is declared-and-zero: a kind
 the engine cannot have draws a folder whose zero badge reads as a measurement of an empty
 database rather than as the absence of the concept (standing ruling 4). The same fact is
-already stated on the monitoring side, where the Indexes panel is ABSENT with its own sentence
-rather than empty ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)).
+already stated on the monitoring side, where `getIndexStats()` refuses with its own sentence
+rather than answering empty, and the index panel is not offered
+([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)).
 
 **But the answer is NOT "keys and nothing else", which is what it would have been before
 0.0.2.** Read cold, a database carries a persisted catalog, and that catalog is a registry of
@@ -1017,10 +1019,10 @@ separately:
   database has no indexes yet*, which invites creating one; this engine can never have one.
   `getOverview().indexCount: 0` is not the same claim and stays — there genuinely are zero index
   objects, and that is a measurement.
-- **`getSlowQueries()` — stays empty, deliberately.** `QueriesTab` renders
-  `ProviderLabels.slowQueriesEmptyState` in place of an empty list and this provider declares one
-  ([§9](#getlabels)), so LibreDB's own sentence already reaches the user without an error. This is
-  the one always-empty panel that is allowed to stay empty.
+- **`getSlowQueries()` stays empty, deliberately.** This provider declares
+  `ProviderLabels.slowQueriesEmptyState` ([§9](#getlabels)), which says why the answer is empty.
+  It is the one always-empty answer that is allowed to stay empty; since it asks the engine nothing,
+  the panel is not offered and `QueriesTab` is not drawn for LibreDB.
 
 None of the three panels with no source (performance, slow queries and sessions) nor the index panel is offered in LibreDB's `ENGINE_FACETS` row ([Engine facets](#engine-facets)): `getMonitoringData` never calls these methods and lists the panels in `notOffered`, and the dashboard draws no Performance, Queries or Sessions tab.
 The refusals and the label above are what each method and label answers when read directly.
@@ -1058,7 +1060,8 @@ fields on a failed read — a required-field limitation, not an oversight.
 ### Engine facets
 
 Which of the seven monitoring panels `libredb` offers is its row in `ENGINE_FACETS`, declared in [`libredb-engine-facets.ts`](../../src/lib/db/providers/embedded/libredb-engine-facets.ts).
-A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly, so such a method in a `No` row answers there as its Why cell says.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -1147,9 +1150,9 @@ is this engine's grouping, so every entry under it is reached with `prefix users
 One label is about the monitoring tab instead: `slowQueriesEmptyState` -> *"LibreDB keeps no
 statistics about finished statements in this version."* `getSlowQueries()` answers `[]`
 unconditionally ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)), so the
-Queries panel is always empty here — and this label is why that emptiness is allowed to stand where
-the Sessions and Indexes panels refuse instead. Its sentence was hardcoded to PostgreSQL's
-`pg_stat_statements` advice (#463).
+slow-query panel is not offered and the dashboard draws no Queries tab here; this label is why that
+empty answer is allowed to stand where `getActiveSessions()` and `getIndexStats()` refuse instead.
+Its sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice (#463).
 
 ### SQL writing
 
