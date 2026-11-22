@@ -554,7 +554,13 @@ describe("POST /api/agent/runs", () => {
       throw new AgentRunUnavailableError(
         runId,
         { sessionId: "ada", role: "user" },
-        { field: "statementLanguage", reason: "unknown", id: "cobol", sentence: "This run was recorded in cobol." },
+        {
+          field: "statementLanguage",
+          reason: "unknown",
+          id: "cobol",
+          named: 'the statement language "cobol"',
+          sentence: "This run was recorded in cobol.",
+        },
       );
     });
 
@@ -569,7 +575,13 @@ describe("POST /api/agent/runs", () => {
       throw new AgentRunUnavailableError(
         runId,
         { sessionId: "bob", role: "user" },
-        { field: "verifier", reason: "unknown", id: "agent-x.1", sentence: "This run is judged by agent-x.1." },
+        {
+          field: "verifier",
+          reason: "unknown",
+          id: "agent-x.1",
+          named: 'the goal rule "agent-x.1"',
+          sentence: "This run is judged by agent-x.1.",
+        },
       );
     });
 

@@ -1,6 +1,6 @@
 /**
- * A run whose ledger header names a statement language or goal rule this Studio does not have, or has retired
- * (FND-1), driven through the real route handlers.
+ * A run whose ledger header names a statement language, workflow or goal rule this Studio does not have, or has
+ * retired (FND-1), driven through the real route handlers.
  *
  * Real: every per-run route, the drive route, the access gate, the run service and the store over a real
  * `@workflow/world-local` in a temporary directory. Replaced: the session read, which needs a request scope, the
@@ -181,6 +181,7 @@ const ROUTES: Readonly<Record<string, Call>> = {
 };
 
 let warn: ReturnType<typeof spyOn<typeof logger, "warn">>;
+let logError: ReturnType<typeof spyOn<typeof logger, "error">>;
 
 beforeEach(() => {
   delete process.env[AGENT_ENABLED_ENV];
@@ -189,10 +190,12 @@ beforeEach(() => {
   reached.length = 0;
   sessionUser = OWNER;
   warn = spyOn(logger, "warn").mockImplementation(() => {});
+  logError = spyOn(logger, "error").mockImplementation(() => {});
 });
 
 afterEach(() => {
   warn.mockRestore();
+  logError.mockRestore();
   restoreAgentModel();
 });
 
@@ -211,12 +214,21 @@ describe("a run whose ledger names an id this Studio does not have", () => {
     ["POST drive", "running", "verifier"],
     ["POST drive", "paused", "cobol"],
     ["PATCH resume", "paused", "verifier"],
+    ["GET", "finished", "workflow"],
+    ["POST drive", "running", "workflow"],
+    ["PATCH resume", "paused", "workflow"],
   ] as const)(
     "%s on a %s run (%s) answers the run's owner 409 AGENT_RUN_UNAVAILABLE by name and reaches nothing",
     async (route, state, id) => {
       const runId = `arun_${route.replace(" ", "")}_${state}_${id}`.toLowerCase();
-      const header = id === "cobol" ? { statementLanguage: "cobol" } : { verifier: "agent-nonexistent.1" };
-      await open(runId, header, id === "cobol" ? "data-analysis" : "investigation");
+      const header =
+        id === "cobol"
+          ? { statementLanguage: "cobol" }
+          : id === "workflow"
+            ? { statementLanguage: "rediscli" }
+            : { verifier: "agent-nonexistent.1" };
+      const workflowType = id === "verifier" ? "investigation" : "data-analysis";
+      await open(runId, header, workflowType);
       if (state === "finished") await finished(runId);
       if (state === "paused") await paused(runId);
       if (state === "running") await started(runId);
@@ -226,17 +238,20 @@ describe("a run whose ledger names an id this Studio does not have", () => {
 
       expect(response.status).toBe(409);
       expect(await response.json()).toEqual({
-        error: runHeaderRefusal(header)?.sentence,
+        error: runHeaderRefusal({ mode: "agent", workflowType, ...header })?.sentence,
         code: "AGENT_RUN_UNAVAILABLE",
         statusCode: 409,
       });
       expect(reached).toEqual([]);
       expect(await chunkCount(runId)).toBe(before);
+      // A refused drive records no failed ending: the status read that refuses it comes before the drive's own
+      // failure recording, which would log at error.
+      expect(logError).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0]?.[0]).toBe("Agent run unavailable");
       expect(warn.mock.calls[0]?.[1]).toMatchObject({
         runId,
-        field: id === "cobol" ? "statementLanguage" : "verifier",
+        field: { cobol: "statementLanguage", workflow: "workflowType", verifier: "verifier" }[id],
         reason: "unknown",
       });
     },

@@ -746,6 +746,45 @@ describe("AgentRunStore — refuses a ledger it cannot trust", () => {
     );
   });
 
+  test("refuses an agent-mode header whose workflow has no variant on its language, naming both", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun({
+      ...OPEN_INPUT,
+      workflowType: "data-analysis",
+      statementLanguage: "rediscli",
+    });
+
+    const error = await captureStoreError(() => store.read(runId));
+
+    expect(error).toBeInstanceOf(AgentRunUnavailableError);
+    expect((error as AgentRunUnavailableError).refusal).toMatchObject({
+      field: "workflowType",
+      reason: "unknown",
+      id: "data-analysis",
+    });
+    expect(error.message).toBe(
+      `agent run "${runId}" names the workflow "data-analysis" in the statement language "rediscli", which this LibreDB Studio does not have`,
+    );
+  });
+
+  test("refuses a header whose workflow this build does not hold", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun({ ...OPEN_INPUT, mode: "planning", workflowType: "schema-review" as never });
+
+    const error = await captureStoreError(() => store.read(runId));
+
+    expect(error.message).toBe(
+      `agent run "${runId}" names the workflow "schema-review", which this LibreDB Studio does not have`,
+    );
+  });
+
+  test("reads a planning header that names the planning verifier, which judges every plan", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun({ ...OPEN_INPUT, mode: "planning", verifier: "agent-planning.1" });
+
+    expect((await store.read(runId))?.record).toMatchObject({ mode: "planning", verifier: "agent-planning.1" });
+  });
+
   test("names the header's language before an event kind no pack declares", async () => {
     const dataDir = freshDataDir();
     const world = worldAt(dataDir);
@@ -768,6 +807,8 @@ describe("AgentRunStore — refuses a ledger it cannot trust", () => {
     ["statementLanguage", null],
     ["statementLanguage", {}],
     ["statementLanguage", []],
+    ["workflowType", 5],
+    ["workflowType", null],
     ["verifier", 5],
     ["verifier", null],
     ["verifier", {}],

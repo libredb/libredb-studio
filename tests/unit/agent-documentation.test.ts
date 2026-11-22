@@ -735,7 +735,7 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   });
 
   test("docs/API_DOCS.md quotes the sentence a run recorded in a statement language this Studio does not have is refused with", () => {
-    const sentence = runHeaderRefusal({ statementLanguage: "cobol" })?.sentence;
+    const sentence = runHeaderRefusal({ mode: "agent", statementLanguage: "cobol" })?.sentence;
     expect(sentence).toBeDefined();
     expect(read("docs/API_DOCS.md")).toContain(`"error": ${JSON.stringify(sentence)}`);
   });
