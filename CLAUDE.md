@@ -72,7 +72,7 @@ Run the required-check gate set locally before claiming done. [`.github/workflow
   && bun run test && bun run build
 ```
 
-A clean local pass is still not a guarantee: the same job also runs `build:lib` + `attw` and `gofmt`/`go vet`/`go test` over `packaging/windows/launcher`, and the coverage gate below lives in a separate required job.
+A clean local pass is still not a guarantee: the same job also runs `build:lib`, `attw`, `lib:closure`, `lib:load` and `gofmt`/`go vet`/`go test` over `packaging/windows/launcher`, and the coverage gate below lives in a separate required job.
 
 > **100% line coverage is a hard CI gate — work TDD, always.** `scripts/check-coverage.mjs` fails the required `Unit & Integration Tests` job below 100%, so every change that adds or alters executable lines lands with its tests **in the same PR** — write the failing test first, even unasked. `bun run test:coverage && bun run coverage:check` prints the exact uncovered file:line ranges. Measurement rationale: [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md).
 

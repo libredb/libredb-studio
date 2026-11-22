@@ -10,9 +10,11 @@
  * The test runner's discovery (`tests/runner/discover.ts`), the focused-test guard
  * (`scripts/only-check.mjs`), the coverage merge (`scripts/merge-lcov.mjs`) and the
  * coverage gate (`scripts/check-coverage.mjs`) read the layout from here, and
- * `tests/unit/docker-workspace-install.test.ts` holds each Dockerfile to the listing.
+ * `tests/unit/docker-workspace-install.test.ts` holds each Dockerfile to the listing. The library
+ * build (`tsup.config.ts`) bundles every package it names, and the packed library check
+ * (`scripts/check-lib-load.mjs`) reads the package manifests from here too.
  */
-import { existsSync, lstatSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 /** The directory every workspace package lives under, as root package.json's `workspaces` names it. */
@@ -61,4 +63,31 @@ export function workspacePackageDirectories(root) {
     directories.push(directory);
   }
   return directories.sort();
+}
+
+/**
+ * Every workspace package under `root` with its parsed `package.json`, as `{ directory, manifest }`, in the order
+ * of {@link workspacePackageDirectories}. The one reader of package manifests the other listings use.
+ */
+export function workspacePackageManifests(root) {
+  return workspacePackageDirectories(root).map((directory) => ({
+    directory,
+    manifest: JSON.parse(readFileSync(path.join(root, directory, "package.json"), "utf8")),
+  }));
+}
+
+/**
+ * The manifest `name` of every workspace package under `root`, in the order of {@link workspacePackageDirectories}.
+ * Throws, naming the file, on a manifest whose `name` is missing or not a string, because a package without a name
+ * cannot be bundled or recognised by name.
+ */
+export function workspacePackageNames(root) {
+  return workspacePackageManifests(root).map(({ directory, manifest }) => {
+    if (typeof manifest.name !== "string") {
+      throw new Error(
+        `${directory}/package.json has no string name, so the library build cannot bundle the package by name. Give it a "name".`,
+      );
+    }
+    return manifest.name;
+  });
 }

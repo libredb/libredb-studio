@@ -13,6 +13,8 @@ import {
   isPackageSourcePath,
   isPackageTestPath,
   workspacePackageDirectories,
+  workspacePackageManifests,
+  workspacePackageNames,
 } from "../../scripts/workspace-packages.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dir, "../..");
@@ -71,6 +73,41 @@ describe("workspacePackageDirectories", () => {
 
   test("the repository lists no package today", () => {
     expect(workspacePackageDirectories(repositoryRoot)).toEqual([]);
+  });
+});
+
+describe("workspacePackageNames", () => {
+  test("workspacePackageNames returns no name when packages/ is absent", () => {
+    expect(workspacePackageNames(root({ "package.json": "{}" }))).toEqual([]);
+  });
+
+  test("workspacePackageNames lists each package's manifest name in directory order", () => {
+    const scratch = root({
+      "packages/zeta/package.json": JSON.stringify({ name: "@libredb/first" }),
+      "packages/alpha/package.json": JSON.stringify({ name: "planted-second" }),
+    });
+
+    expect(workspacePackageNames(scratch)).toEqual(["planted-second", "@libredb/first"]);
+  });
+
+  test("workspacePackageNames refuses a package manifest without a string name, naming the file", () => {
+    expect(() => workspacePackageNames(root({ "packages/planted/package.json": "{}" }))).toThrow(
+      "packages/planted/package.json has no string name",
+    );
+    expect(() => workspacePackageNames(root({ "packages/planted/package.json": JSON.stringify({ name: 7 }) }))).toThrow(
+      "packages/planted/package.json has no string name",
+    );
+  });
+
+  test("workspacePackageManifests returns each package's directory and manifest", () => {
+    const manifest = { name: "@libredb/planted", types: "./src/index.ts" };
+    const scratch = root({ "packages/planted/package.json": JSON.stringify(manifest) });
+
+    expect(workspacePackageManifests(scratch)).toEqual([{ directory: "packages/planted", manifest }]);
+  });
+
+  test("the repository names no workspace package today", () => {
+    expect(workspacePackageNames(repositoryRoot)).toEqual([]);
   });
 });
 

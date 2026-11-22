@@ -34,6 +34,20 @@ A wildcard `COPY` would flatten the directories, so each package has its own lin
 `tests/unit/docker-workspace-install.test.ts` fails when a Dockerfile lacks one.
 The builder stage asserts that `.next/standalone/packages` does not exist, and `scripts/lib/prune-standalone-payload.sh` removes `packages/` from every standalone payload.
 
+## Library
+
+`@libredb/studio` on npm cannot depend on an unpublished package, so the library build (`tsup.config.ts`) bundles every workspace package, its code and its declarations, by the names `scripts/workspace-packages.mjs` lists.
+A package sets `"types"` to a path under its `src/`, such as `"./src/index.ts"`, because tsup's declaration resolver reads that field and not `exports`.
+A package is never a root `dependencies`, `peerDependencies` or `optionalDependencies` entry, since a consumer's install would look for it on the registry; the root may list it under `devDependencies`.
+Every `dependencies` and `peerDependencies` name of a package is also a root `dependencies` or `peerDependencies` name, because the bundled package's drivers are the library's own.
+`bun run lib:load` enforces all of this on the packed package (`docs/TOOLCHAIN.md`, "The packed library loads (`lib:load`)").
+
+## Planes
+
+Tests resolve source: a package's `exports`, `main`, `module` and `types` point under its `src/`, and no test under `tests/` or `packages/<name>/tests/` imports a `dist/` path, `@libredb/studio` by name or a package's `dist/` subpath.
+`bun run lib:load` is the only path through a built artifact.
+`tests/unit/source-plane.test.ts` holds both rules.
+
 ## Gates
 
 Every gate that finds its files by a `src/` or `tests/` path also reads a package:
@@ -46,6 +60,7 @@ Every gate that finds its files by a `src/` or `tests/` path also reads a packag
 - oxlint and ESLint lint the whole tree, and the type-aware ESLint block also covers `packages/*/src/**/*.ts`.
 - knip analyses each package as a workspace, through the root `package.json` `workspaces`.
 - The root `tsc` checks every `.ts` file under the root, packages included.
+- The packed library check (`bun run lib:load`) fails on a dist or a packed manifest that names a package, and on a package dependency the root does not declare.
 - The VS Code extension's bundle checks (`vscode-extension/scripts/bundle-checks.mjs`) refuse package code in the host bundle, and let the webview bundle a package file only when a sql-grammar row reaches it.
 
 `tests/unit/package-gates.test.ts` plants a violation in a throwaway package for the install, Biome, ESLint and knip, and fails when one of them stops seeing it.
