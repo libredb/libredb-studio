@@ -37,6 +37,7 @@ import { guardRoute } from "@/lib/api/require-session";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { logger } from "@/lib/logger";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "@/lib/db/operations/provider-text";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -217,6 +218,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "The agent runtime is not enabled on this server" }, { status: 404 });
   }
 
+  // Set once the connection resolves: from then on a provider may be built (the database the run reads, through
+  // `editorProvider`), so a failure answered below passes core's scrub of that connection's credential first.
+  let scrub: ProviderTextScrub | undefined;
   try {
     let body: Record<string, unknown>;
     try {
@@ -312,6 +316,7 @@ export async function POST(req: Request) {
     }
 
     const connection = await resolveConnection({ connectionId }, guard.session);
+    scrub = providerTextScrub(connection);
 
     /*
       An engine whose provider implements no read-only statement path,
@@ -623,6 +628,8 @@ export async function POST(req: Request) {
       { status: 202 },
     );
   } catch (error) {
-    return createErrorResponse(error, { route: "api/agent/runs" });
+    return createErrorResponse(scrub === undefined ? error : withholdProviderError(scrub, error), {
+      route: "api/agent/runs",
+    });
   }
 }

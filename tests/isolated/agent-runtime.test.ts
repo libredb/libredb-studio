@@ -21,8 +21,17 @@ import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import * as realRunStore from "@/lib/agent/run-store";
 import { AgentRunServiceError } from "@/lib/agent/run-service";
 import { LLMAuthError, LLMConfigError, LLMRateLimitError } from "@/lib/llm/types";
-import { type ExecutionProfileDenyCode, ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  type ExecutionProfileDenyCode,
+  ExecutionProfileError,
+  ProviderTextWithheldError,
+  UnknownProviderError,
+} from "@/lib/db/errors";
 import { assertDatabaseType } from "@/lib/db/type-id";
+import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { secretForms } from "@/lib/db/utils/server-text";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import { seedRolesOf } from "@/lib/seed/roles";
@@ -620,6 +629,95 @@ describe("a drive that fails before the loop", () => {
     });
 
     await expect(driveAgentRun("arun_doublefault")).rejects.toThrow(LLMConfigError);
+  });
+});
+
+describe("driveAgentRun, a failure whose text carries the connection's credential", () => {
+  const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+  const credentialed = { ...CONNECTION, password } as DatabaseConnection;
+
+  async function finishedReason(runId: string): Promise<unknown> {
+    const report = await (await getAgentRunService()).status(runId);
+    return (report?.record.events.find((event) => event.kind === "run-finished") as { reason?: unknown } | undefined)
+      ?.reason;
+  }
+
+  const failures: [string, (text: string) => Error][] = [
+    ["a ConnectionError at acquisition", (text) => new ConnectionError(text, "postgres")],
+    [
+      "an ExecutionProfileError from the provider's connect",
+      (text) => new ExecutionProfileError(text, "PROFILE_PRIVILEGES_TOO_BROAD"),
+    ],
+  ];
+
+  test.each(failures.flatMap(([label, make]) => secretForms([password]).map((form) => [label, form, make] as const)))(
+    "a drive whose provider fails with the connection's credential in its text rejects with the withheld error and records the same failure reason: %s, %s",
+    async (label, form, make) => {
+      const suffix = `${label.length}_${form.length}_${Math.floor(Math.random() * 1e9)}`;
+      const plainRun = `arun_plain_${suffix}`;
+      const leakyRun = `arun_leaky_${suffix}`;
+      await openRun(plainRun);
+      await openRun(leakyRun);
+      mockResolveConnection.mockImplementation(async () => credentialed);
+      try {
+        mockRunInvestigation.mockImplementationOnce(async () => {
+          throw make("could not connect to the server");
+        });
+        await driveAgentRun(plainRun).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        mockRunInvestigation.mockImplementationOnce(async () => {
+          throw make(`could not connect with ${form}`);
+        });
+        const error = await driveAgentRun(leakyRun).then(
+          () => null,
+          (thrown: unknown) => thrown,
+        );
+
+        expect(error).toBeInstanceOf(ProviderTextWithheldError);
+        expect((error as Error).message).toBe(PROVIDER_TEXT_WITHHELD);
+        for (const each of secretForms([password])) expect(String((error as Error).stack)).not.toContain(each);
+        expect(await finishedReason(leakyRun)).toBe(await finishedReason(plainRun));
+      } finally {
+        mockResolveConnection.mockImplementation(async () => CONNECTION);
+      }
+    },
+  );
+
+  test("a failure that holds no credential is rethrown as the same error", async () => {
+    await openRun("arun_samefailure");
+    mockResolveConnection.mockImplementation(async () => credentialed);
+    const failure = new ConnectionError("could not connect to the server", "postgres");
+    try {
+      mockRunInvestigation.mockImplementationOnce(async () => {
+        throw failure;
+      });
+      const error = await driveAgentRun("arun_samefailure").then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+      expect(error).toBe(failure);
+    } finally {
+      mockResolveConnection.mockImplementation(async () => CONNECTION);
+    }
+  });
+
+  test("a provider constructor error in the drive's capability read is withheld too", async () => {
+    await openRun("arun_constructor");
+    mockResolveConnection.mockImplementation(async () => credentialed);
+    try {
+      mockCreateDatabaseProvider.mockImplementationOnce(async () => {
+        throw new DatabaseConfigError(`bad configuration ${password}`, "postgres");
+      });
+      const error = await driveAgentRun("arun_constructor").then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+      expect(error).toBeInstanceOf(ProviderTextWithheldError);
+    } finally {
+      mockResolveConnection.mockImplementation(async () => CONNECTION);
+    }
   });
 });
 
