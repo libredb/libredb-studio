@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D482, U17 · 355
+- [Drivers and connections](#drivers-and-connections) — D1-D483, U17 · 356
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U221 · 206
@@ -3428,6 +3428,20 @@ CI lists one Node in every step that sets the variable, so the required checks d
 Found 2026-11-22 while running the shutdown tests under two Node binaries.
 
 **Done when:** each binary's describe starts its own peers or reads the dial count its own child added, and the file passes with `NODE_TRANSPORT_NODES` listing two binaries.
+
+### D483. Tests still write fabricated credentials as literals
+
+The rule since 2026-11-21 is that a fabricated password, token, key or passphrase in a test is generated at run time, never written into the source as a literal.
+Tests written before it still carry such literals, and nothing fails on a new one.
+
+Measured on 2026-11-22 with a first heuristic sweep of `tests/`: a non-empty string literal assigned to a key or variable whose name ends in `password`, `passwd`, `token`, `secret`, `passphrase`, `apiKey`, `accessKey` or `privateKey`, leaving out masked values such as `***` and `[REDACTED]`, template literals that interpolate, and the Monaco theme tests, whose `token` keys name syntax tokens.
+It found 1,843 such literals in 531 files; the count includes some values that are not credentials, such as expected error text, so the census that closes this entry sets the exact bound.
+The largest are `tests/isolated/factory.test.ts` (65), `tests/live/spark-evidence-plan.ts` (54), `tests/unit/seed/discovery-fingerprint.test.ts` (39) and `tests/api/auth/login.test.ts` (37).
+Smaller examples: `tests/integration/mcp/run-read-query.test.ts` (`"stand-in-token"`), `tests/unit/lib/governance/admission.test.ts` and `tests/live/governance-live-check.ts` (the `example-only-read-password` and `example-only-write-password` markers).
+
+Found 2026-11-22 while reviewing FND-1 slice 5, which adds no such literal.
+
+**Done when:** every fabricated credential in a test is generated at run time, and a census test over `tests/` fails on a new credential literal, with a vacuity case that shows its pattern sees each shape it bans.
 
 ### D332. The seed plaintext warning knows only `password`
 
