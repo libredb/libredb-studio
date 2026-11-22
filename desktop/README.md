@@ -64,6 +64,7 @@ Notes on the choices, since they are easy to get wrong later:
 - **The sidecar cannot outlive the shell.** Window close and app exit both run a
   SIGTERM-then-SIGKILL shutdown, `Drop` repeats it, and on Linux the child gets
   `PR_SET_PDEATHSIG` so even a killed shell takes the server with it.
+  The shell starts the server with `NEXT_MANUAL_SIG_HANDLE=true` and gives it 30 s between SIGTERM and SIGKILL, over the 25 s Studio's shutdown handler may take (docs/DISTRIBUTION.md, "Stopping the server").
 - **No shell plugin, no IPC surface.** The child process is spawned from Rust
   with `std::process`, so the webview has no command it could invoke.
 - **`productName` stays space-free.** It names the bundled resource directory

@@ -64,7 +64,30 @@ describe("docs/DISTRIBUTION.md, Stopping the server", () => {
 
     expect(text).toContain(`The three images set \`${MANUAL_SIGNAL_HANDLING_VARIABLE}=true\``);
     expect(text).toContain(`\`docker run -e ${MANUAL_SIGNAL_HANDLING_VARIABLE}= ...\``);
-    expect(text).toContain("npx and the other launchers do not set it yet");
+  });
+
+  test("it names every launcher that sets the variable, that each keeps an operator's value, and that npx and bun start add none on Bun", () => {
+    const text = section();
+
+    for (const launcher of [
+      "`bin/studio.js`",
+      "`scripts/next-with-seed-assets.mjs`",
+      "`/usr/bin/libredb-studio`",
+      "`libredb-studio.exe`",
+    ]) {
+      expect(text).toContain(launcher);
+    }
+    expect(text).toContain(
+      "Every launcher but the desktop app sets it only when it is absent and keeps a value the operator set, the empty one included",
+    );
+    expect(text).toContain("so on Bun they add nothing");
+    expect(text).toContain(
+      "`bun start` stops with exit code 1, before it starts the Next.js CLI, when the variable is absent from its environment and a `.env` file Next.js loads for `start` sets it",
+    );
+  });
+
+  test("it names the test that holds every stop grace this repository sets", () => {
+    expect(section()).toContain("tests/unit/stop-grace.test.ts");
   });
 
   test("it says the server refuses Studio's exit on Bun, and names the end line's counts", () => {

@@ -43,7 +43,7 @@ None of it is a GitHub issue.
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B173 · 84
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 24
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV34 · 33
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV34 · 32
 
 ---
 
@@ -10403,7 +10403,7 @@ This is an enhancement rather than a defect: the skip is reported, and nothing i
 The flush's first batch takes its client before the pool closes, and `pool.end()` waits for it.
 A later batch, when more than 500 events are queued or when the flush first waits for one already in flight, finds the pool gone, and `governancePool()` in the same file builds a new one that nothing closes, connecting again inside the flush's 4 seconds.
 `docs/GOVERNANCE.md` says Studio first inserts the query events and then closes the pool, and nothing in the code orders the two.
-Alone this rarely loses a row (a connect queued on a full pool when `end()` runs is never served, so that batch dies at the deadline); the larger loss, where Next.js's handler owns the exit, is GOV32's.
+Alone this rarely loses a row (a connect queued on a full pool when `end()` runs is never served, so that batch dies at the deadline); the larger loss is where Next.js's handler owns the exit, on Bun or with `NEXT_MANUAL_SIG_HANDLE` set to the empty string, since its exit cuts the flush (`docs/DISTRIBUTION.md`, "Stopping the server").
 
 **Done when:** the governance pool closes only after the query event hook has settled, `governancePool()` refuses to build a pool once shutdown has begun, and a test with more than 500 queued events shows every batch inserted through the original pool before it closes.
 
@@ -10606,19 +10606,6 @@ The agent and MCP are off under governance in this contract version, so nothing 
 Found 2026-11-03 while adding the seed agent credential, and left out of it by decision.
 
 **Done when:** the envelope gains an agent credential key, admission merges it into the record and the manifest publishes it, a governed connection's agent signs in under it, and an admission test pins both the merge and the refusal of the pair in the definition.
-
-### GOV32. No launcher sets `NEXT_MANUAL_SIG_HANDLE`, so outside the images Next.js's own SIGTERM handler still ends the server before Studio's shutdown
-
-The three images set `NEXT_MANUAL_SIG_HANDLE=true`, so in a container Studio's shutdown handler (`src/lib/shutdown-handler.ts`) closes the HTTP server, waits for the requests in flight, inserts the query events Studio holds and closes the providers before it exits (`docs/DISTRIBUTION.md`, "Stopping the server").
-No launcher that starts the standalone server sets it: npx (`bin/studio.js`), the .deb, .rpm and AUR packages (`packaging/linux/libredb-studio` and `packaging/linux/libredb-studio.service`), Homebrew (`packaging/homebrew/libredb-studio.rb.tmpl`), Snap (`snap/local/launch.sh`), the Windows launcher (`launcherEnv` in `packaging/windows/launcher/launch.go`), the desktop sidecar (`sidecar_env` in `desktop/src-tauri/src/sidecar.rs`) and package.json `start` (`scripts/next-with-seed-assets.mjs`).
-There Next.js's handler, `cleanup` in `next/dist/server/lib/start-server.js`, ends the process with 143 or 130, within milliseconds on an idle server, while Studio's hooks are still inserting the query events Studio holds, and those rows are lost.
-Under systemd the .deb, .rpm, AUR and Snap services record every such stop as a failed unit, since only 0 is a clean stop there.
-The desktop shell kills the server 5 s after its SIGTERM (`SHUTDOWN_GRACE` in `desktop/src-tauri/src/sidecar.rs`), less than the 25 s Studio's handler may take where it owns the exit.
-
-A launcher must not hand the variable to a server running on Bun: Bun publishes nothing on the channel the request drain reads (`src/lib/shutdown-drain.ts`), so `exitOwnerAtBoot` in `src/lib/shutdown-handler.ts` refuses `true` there with exit code 1.
-npx (`bin/studio.js`) and package.json `start` spawn `process.execPath`, which is Bun under `bunx --bun` and `bun --bun run start`, and under `bunx` and `bun start` on a host without Node.js.
-
-**Done when:** each launcher above starts the server with `NEXT_MANUAL_SIG_HANDLE=true` where the server runs on Node.js, and leaves it unset where it runs on Bun, the desktop's grace covers Studio's bounds, a test per launcher shows the variable in the environment it starts the server with, `docs/DISTRIBUTION.md` "Stopping the server" says so, and a stop of the Linux service ends with exit code 0.
 
 ### GOV33. The Helm chart does not write `NEXT_MANUAL_SIG_HANDLE` itself
 

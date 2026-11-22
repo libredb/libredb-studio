@@ -127,3 +127,40 @@ test("the Railway template drains for RAILWAY_DEPLOYMENT_DRAINING_SECONDS, and P
   expect(studio?.variableDescriptions.RAILWAY_DEPLOYMENT_DRAINING_SECONDS).toBeString();
   expect(read("deploy/railway/PUBLISH.md")).toContain(`| \`RAILWAY_DEPLOYMENT_DRAINING_SECONDS\` | \`${value}\` |`);
 });
+
+/** The row of docs/DISTRIBUTION.md's grace table ("Stopping the server") whose first cell starts with `label`. */
+function graceRow(label: string): string {
+  const doc = read("docs/DISTRIBUTION.md");
+  const start = doc.indexOf("\n| Platform | Grace before SIGKILL |\n", doc.indexOf("\n## Stopping the server\n"));
+  if (start === -1) throw new Error("docs/DISTRIBUTION.md: no grace table in Stopping the server");
+  const table = doc.slice(start + 1, doc.indexOf("\n\n", start + 1));
+  const row = table.split("\n").find((line) => line.startsWith(`| ${label}`));
+  if (row === undefined) throw new Error(`docs/DISTRIBUTION.md: no grace table row starting with ${label}`);
+  return row;
+}
+
+test("docs/DISTRIBUTION.md's grace table states each grace this repository sets", () => {
+  const desktop = /^pub const SHUTDOWN_GRACE: Duration = Duration::from_secs\((\d+)\);$/m.exec(
+    read("desktop/src-tauri/src/sidecar.rs"),
+  )?.[1];
+  const brew = /^\s*stop_timeout (\d+)$/m.exec(read("packaging/homebrew/libredb-studio.rb.tmpl"))?.[1];
+  const { kill_timeout } = Bun.TOML.parse(read("fly.toml")) as { kill_timeout: number };
+  const railway = (
+    JSON.parse(read("deploy/railway/template.json")) as {
+      services: { name: string; variables: Record<string, string> }[];
+    }
+  ).services.find((service) => service.name === "libredb-studio")?.variables.RAILWAY_DEPLOYMENT_DRAINING_SECONDS;
+  const vm = /--stop-timeout (\d+)\b/.exec(read("deploy/aws/ami/files/etc/systemd/system/libredb-studio.service"))?.[1];
+  const compose = (
+    Bun.YAML.parse(read("docker-compose.example.yml")) as { services: Record<string, { stop_grace_period: string }> }
+  ).services["libredb-studio"].stop_grace_period;
+
+  expect(graceRow("Desktop app")).toContain(`| ${desktop} s |`);
+  expect(graceRow("Homebrew service")).toContain(`${brew} s: \`stop_timeout ${brew}\``);
+  expect(graceRow("Fly.io")).toContain(`${kill_timeout} s: \`kill_timeout = ${kill_timeout}\``);
+  expect(graceRow("Railway")).toContain(`${railway} s: \`RAILWAY_DEPLOYMENT_DRAINING_SECONDS\``);
+  expect(graceRow("AWS, DigitalOcean and Azure")).toContain(
+    `${vm} s: their unit starts the container with \`--stop-timeout ${vm}\``,
+  );
+  expect(graceRow("`docker stop`")).toContain(`\`stop_grace_period: ${compose}\``);
+});
