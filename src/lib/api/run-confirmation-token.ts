@@ -10,6 +10,10 @@
  * HS256 through `jose` under HMAC(JWT_SECRET, `RUN_CONFIRMATION_KEY_LABEL`), the derivation the object edit plan token
  * and the agent drive token use under their own labels, so neither a session cookie nor any other token of this server
  * verifies as a run confirmation, and a run confirmation is neither of those.
+ *
+ * The payload of a JWS is readable by whoever holds the token, so each binding claim (`sid`, `cid`, `sd`, `vd`) is
+ * keyed: HMAC under HMAC(JWT_SECRET, `RUN_CONFIRMATION_BINDING_LABEL`) of the SHA-256 of the framed binding text.
+ * Without the server key a claim says nothing about the session, the connection, the statement or the verdict.
  */
 import { SignJWT, jwtVerify } from "jose";
 import type { UserPayload } from "@/lib/auth";
@@ -30,6 +34,12 @@ export const RUN_CONFIRMATION_TTL_SECONDS = 300;
  * intended cost of a `v2` if the claim set ever changes shape.
  */
 const RUN_CONFIRMATION_KEY_LABEL = "libredb.run-confirmation.v1";
+
+/**
+ * The label the binding claims' key is derived under: its own label rather than the signing key, so the key that
+ * signs a token and the key that seals its claims are never the same bytes.
+ */
+const RUN_CONFIRMATION_BINDING_LABEL = "libredb.run-confirmation.binding.v1";
 
 /** The claim set's version, checked on every verification. */
 const CLAIMS_VERSION = 1;
@@ -102,7 +112,7 @@ export async function mintRunConfirmation(
     cid: await connectionDigest(binding.connection, binding.catalog),
     rt: binding.route,
     sd: await statementDigest(binding.statement, binding.params),
-    vd: await sha256Hex(verdictText(binding.verdict)),
+    vd: await keyedDigest(verdictText(binding.verdict)),
   })
     .setProtectedHeader({ alg: "HS256" })
     .setJti(crypto.randomUUID())
@@ -145,7 +155,7 @@ export async function verifyRunConfirmation(
   if (claims.sd !== (await statementDigest(binding.statement, binding.params))) {
     return { valid: false, reason: "this confirmation was issued for another statement" };
   }
-  if (claims.vd !== (await sha256Hex(verdictText(binding.verdict)))) {
+  if (claims.vd !== (await keyedDigest(verdictText(binding.verdict)))) {
     return { valid: false, reason: "this confirmation was issued for another reading of the statement" };
   }
   const used = usedTokens();
@@ -172,7 +182,7 @@ async function sessionDigest(session: UserPayload & { readonly iat?: number }): 
   if (typeof session.iat !== "number") {
     throw new Error("The session carries no issue time, so a run confirmation cannot be bound to it");
   }
-  return sha256Hex(frame(session.username) + frame(session.role) + frame(String(session.iat)));
+  return keyedDigest(frame(session.username) + frame(session.role) + frame(String(session.iat)));
 }
 
 /**
@@ -181,7 +191,7 @@ async function sessionDigest(session: UserPayload & { readonly iat?: number }): 
  */
 async function connectionDigest(connection: DatabaseConnection, catalog: string | undefined): Promise<string> {
   const server = await connectionFingerprint(connection);
-  return sha256Hex(frame(server) + (catalog === undefined ? frame("catalog:none") : frame(`catalog:${catalog}`)));
+  return keyedDigest(frame(server) + (catalog === undefined ? frame("catalog:none") : frame(`catalog:${catalog}`)));
 }
 
 /**
@@ -193,7 +203,7 @@ async function statementDigest(statement: string, params: readonly unknown[] | u
     params === undefined
       ? frame("params:none")
       : frame(`params:${params.length}`) + params.map((value) => frame(`${typeof value}:${String(value)}`)).join("");
-  return sha256Hex(frame(statement) + values);
+  return keyedDigest(frame(statement) + values);
 }
 
 /** The verdict, field by field, in a fixed order. */
@@ -212,15 +222,38 @@ function verdictText(verdict: RunVerdict): string {
 }
 
 /**
+ * A binding claim: HMAC-SHA-256, lowercase hex, under the binding key, of `sha256Hex(text)`. The inner digest keeps the
+ * one definition of a string's bytes (UTF-16 code units, lone surrogates included) in `sha256Hex`; the HMAC keys it.
+ */
+async function keyedDigest(text: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    (await derivedKey(RUN_CONFIRMATION_BINDING_LABEL)).buffer as ArrayBuffer,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const tag = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(await sha256Hex(text)));
+  return Array.from(new Uint8Array(tag))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** The signing key: HMAC(JWT_SECRET, `RUN_CONFIRMATION_KEY_LABEL`). */
+function runConfirmationKey(): Promise<Uint8Array> {
+  return derivedKey(RUN_CONFIRMATION_KEY_LABEL);
+}
+
+/**
  * HMAC(JWT_SECRET, label), derived per call rather than cached, for the reason `planSigningKey` in
  * src/lib/api/object-edit-plan-token.ts records: a cache would hold a key that outlived a rotated secret.
  */
-async function runConfirmationKey(): Promise<Uint8Array> {
+async function derivedKey(label: string): Promise<Uint8Array> {
   // Copied into its own buffer: `BufferSource` requires an `ArrayBuffer`, and a Uint8Array's backing store is typed as
   // possibly shared.
   const raw = getJwtSecret().slice().buffer as ArrayBuffer;
   const base = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const derived = await crypto.subtle.sign("HMAC", base, new TextEncoder().encode(RUN_CONFIRMATION_KEY_LABEL));
+  const derived = await crypto.subtle.sign("HMAC", base, new TextEncoder().encode(label));
   return new Uint8Array(derived);
 }
 

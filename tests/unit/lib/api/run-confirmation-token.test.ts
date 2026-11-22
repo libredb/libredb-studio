@@ -7,8 +7,10 @@ import {
   type RunConfirmationBinding,
   verifyRunConfirmation,
 } from "@/lib/api/run-confirmation-token";
+import { sha256Hex } from "@/lib/api/utf16-digest";
 import { signJWT } from "@/lib/auth";
 import { getJwtSecret } from "@/lib/config/auth-env";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import type { DatabaseConnection } from "@/lib/types";
 
 /** One clock for a whole test: a token is minted and verified at the moment the test names. */
@@ -42,6 +44,18 @@ function binding(): RunConfirmationBinding {
 
 async function minted(from: RunConfirmationBinding = binding()): Promise<string> {
   return (await mintRunConfirmation(from, at(NOW))).token;
+}
+
+/** The claims a token carries, read without its key, as anyone holding the token can. */
+function claimsOf(token: string): Record<string, unknown> {
+  return JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")) as Record<string, unknown>;
+}
+
+/** HMAC-SHA-256 of `text` under `key`, lowercase hex. */
+async function hmacHex(key: BufferSource, text: string): Promise<string> {
+  const imported = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const tag = await crypto.subtle.sign("HMAC", imported, new TextEncoder().encode(text));
+  return Buffer.from(tag).toString("hex");
 }
 
 async function refusal(token: string, offered: RunConfirmationBinding, clock = at(NOW)): Promise<string | undefined> {
@@ -246,5 +260,33 @@ describe("the run confirmation token (FND-5)", () => {
     expect(await refusal(await resigned(2), binding())).toBe("this confirmation could not be verified");
     // The control: the same claims at version 1 under the same key verify, so the version alone was refused.
     expect(await refusal(await resigned(1), binding())).toBeUndefined();
+  });
+
+  test("no binding claim can be reproduced from the binding without the server key", async () => {
+    // A token's payload is readable by whoever holds it, so each binding claim is keyed: without the server key the
+    // payload says nothing about the session, the connection, the statement or the verdict it was minted for.
+    const target: DatabaseConnection = {
+      ...connection(),
+      type: "mongodb",
+      connectionString: `mongodb://app:${crypto.randomUUID()}@db.internal:27017/shop`,
+    };
+    const offered: RunConfirmationBinding = { ...binding(), connection: target };
+    const claims = claimsOf(await minted(offered));
+    const frame = (value: string) => `${value.length}:${value}`;
+    const server = await connectionFingerprint(target);
+    const unkeyed = {
+      sid: await sha256Hex(frame("alice") + frame("user") + frame("1700000000")),
+      cid: await sha256Hex(frame(server) + frame("catalog:none")),
+      sd: await sha256Hex(frame("DELETE FROM t") + frame("params:none")),
+      vd: await sha256Hex(frame("confirm") + frame("false") + frame("false") + frame("typed:none")),
+    };
+    for (const [name, digest] of Object.entries(unkeyed)) expect(claims[name]).not.toBe(digest);
+    // The control: under the binding key, HMAC(JWT_SECRET, its label), each claim is the HMAC of that same digest, so
+    // the key and nothing else is what a reader of the token lacks.
+    const bindingKey = Buffer.from(
+      await hmacHex(getJwtSecret().slice().buffer as ArrayBuffer, "libredb.run-confirmation.binding.v1"),
+      "hex",
+    );
+    for (const [name, digest] of Object.entries(unkeyed)) expect(claims[name]).toBe(await hmacHex(bindingKey, digest));
   });
 });
