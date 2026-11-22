@@ -89,9 +89,11 @@ const eslintConfig = defineConfig([
   // eslint-config-next still owns all React/Next/hooks linting above; this
   // only adds promise safety. src/lib/storage/** joined this list in Phase 3
   // (0.10.0): the credential-encryption decorator wraps async provider
-  // methods, which is exactly the shape this layer exists to catch.
+  // methods, which is exactly the shape this layer exists to catch. A workspace
+  // package's source (packages/<name>/src/, packages/README.md) is provider code
+  // staged out of src/lib/db, so it joins the same block.
   ...tseslint.config({
-    files: ["src/app/api/**/*.ts", "src/lib/db/**/*.ts", "src/lib/storage/**/*.ts"],
+    files: ["src/app/api/**/*.ts", "src/lib/db/**/*.ts", "src/lib/storage/**/*.ts", "packages/*/src/**/*.ts"],
     languageOptions: {
       parserOptions: {
         projectService: true,

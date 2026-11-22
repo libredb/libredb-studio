@@ -32,6 +32,9 @@
   },
   "license": "MIT",
   "private": false,
+  "workspaces": [
+    "packages/*"
+  ],
   "publishConfig": {
     "access": "public"
   },
