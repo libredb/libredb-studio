@@ -6,6 +6,7 @@ import type { ApiErrorCode } from "@/lib/api/error-codes";
 import type { TestConnectionAnswer } from "@/lib/api/test-connection";
 import type { ParsedConnection } from "@/lib/connection-string-parser";
 import type { ConnectionField, FieldPlacement } from "@/lib/db/connection-fields";
+import type { ErrorKind, ExecuteOutcome } from "@/lib/db/error-record";
 import type {
   Container,
   DatabaseObject,
@@ -43,6 +44,9 @@ export interface BackendErrorData {
   retryable?: boolean;
   details?: unknown;
   fixStatement?: string;
+  /** On a database error only: its kind and whether the statement may have reached the database, as the route body. */
+  kind?: ErrorKind;
+  outcome?: ExecuteOutcome;
 }
 
 export interface InitializeParams {

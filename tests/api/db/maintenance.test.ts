@@ -23,7 +23,6 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 
@@ -110,7 +109,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
 }));
 
@@ -595,7 +593,13 @@ describe("POST /api/db/maintenance", () => {
         body: { type: "vacuum", connection: { ...validConnection, type: "kafka", port: 9092 } },
       }) as never,
     );
-    const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
+    const data = await parseResponseJSON<{
+      error: string;
+      code: string;
+      statusCode: number;
+      kind: string;
+      outcome: string;
+    }>(res);
 
     expect(res.status).toBe(400);
     expect(data).toEqual({
@@ -603,6 +607,8 @@ describe("POST /api/db/maintenance", () => {
         '"vacuum" is not a maintenance operation LibreDB Studio offers on Apache Kafka, which offers none; no connection was opened and nothing was run.',
       code: "FACET_NOT_OFFERED",
       statusCode: 400,
+      kind: "not-offered",
+      outcome: "unknown",
     });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
     expect(mockProvider.runMaintenance).not.toHaveBeenCalled();

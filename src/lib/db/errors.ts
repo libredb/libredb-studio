@@ -3,6 +3,7 @@
  * Custom error types for database operations
  */
 
+import type { ExecuteOutcome } from "./error-record";
 import type { DatabaseType } from "./types";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 
@@ -22,6 +23,16 @@ export class DatabaseError extends Error {
    * no response carries it.
    */
   declare sqlstate?: string;
+
+  /**
+   * `not-sent` when the statement this error answers never reached the database: set by the constructor of
+   * `RefusedBeforeSendError`, so every refusal before send carries it, and by `connectPhase` on what a provider's
+   * connect raised, its one writer outside a constructor. Absent otherwise, which `errorOutcome` in ./error-record
+   * reads as `unknown`, because the statement may have run. An own field only when set, so every other error keeps
+   * the own keys it had. An instance a failed connect raised is never raised by a later statement: the factory keeps
+   * no provider whose connect failed.
+   */
+  declare outcome?: ExecuteOutcome;
 
   constructor(
     message: string,
@@ -249,6 +260,7 @@ export class RefusedBeforeSendError extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
     super(message, provider, query);
     this.name = "RefusedBeforeSendError";
+    this.outcome = "not-sent";
     Object.setPrototypeOf(this, RefusedBeforeSendError.prototype);
   }
 }
@@ -431,6 +443,9 @@ export type ExecutionProfileDenyCode =
  * (#329+) is where that decision belongs.
  */
 export class ExecutionProfileError extends Error {
+  /** As `DatabaseError.outcome`: `not-sent` when `connectPhase` saw a provider's connect raise this refusal. */
+  declare outcome?: ExecuteOutcome;
+
   constructor(
     message: string,
     public readonly reasonCode: ExecutionProfileDenyCode,
@@ -502,18 +517,26 @@ export function waitedSeconds(ms: number): string {
  * was reached and did not answer the connect, and a driver cannot always tell which. So a TimeoutError from the
  * connect is a ConnectionError naming the wait it made, on every route that connects, never the query sentence and
  * never the query timeout answer. The deadline is kept as its cause; every other failure passes as raised.
+ *
+ * Nothing the connect raised reached the database as a statement, so the error it rejects with answers `outcome`
+ * `not-sent`: the ConnectionError a deadline becomes, and every database error or execution profile refusal, marked on
+ * the instance as raised. A value of any other class passes unmarked and answers `unknown`.
  */
 export async function connectPhase(connect: () => Promise<void>): Promise<void> {
   const started = Date.now();
   try {
     await connect();
   } catch (error) {
-    if (!(error instanceof TimeoutError)) throw error;
+    if (!(error instanceof TimeoutError)) {
+      if (error instanceof DatabaseError || error instanceof ExecutionProfileError) error.outcome = "not-sent";
+      throw error;
+    }
     const failure = new ConnectionError(
       `The connection got no answer after ${waitedSeconds(Date.now() - started)}: check the address, the port, the network path and that the server is running.`,
       error.provider,
     );
     failure.cause = error;
+    failure.outcome = "not-sent";
     throw failure;
   }
 }
@@ -528,40 +551,4 @@ export function isAuthenticationError(error: unknown): error is AuthenticationEr
 
 export function isQueryCancelledError(error: unknown): error is QueryCancelledError {
   return error instanceof QueryCancelledError;
-}
-
-// ============================================================================
-// Error Mapping Utilities
-// ============================================================================
-
-/**
- * Check if an error is retryable
- */
-export function isRetryableError(error: unknown): boolean {
-  if (!isDatabaseError(error)) {
-    // Network errors are typically retryable
-    if (error instanceof TypeError && error.message.includes("fetch")) {
-      return true;
-    }
-    return false;
-  }
-
-  // Auth, privilege, config and facet-not-offered errors are not retryable
-  if (
-    error instanceof AuthenticationError ||
-    error instanceof PermissionDeniedError ||
-    error instanceof DatabaseConfigError ||
-    error instanceof FacetNotOfferedError ||
-    error instanceof TransactionLostError
-  ) {
-    return false;
-  }
-
-  // Query syntax errors are not retryable
-  if (error instanceof QueryError && error.position !== undefined) {
-    return false;
-  }
-
-  // Connection and timeout errors may be retryable
-  return true;
 }

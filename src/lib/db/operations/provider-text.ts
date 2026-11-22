@@ -12,11 +12,14 @@
  * the whole of it, an echo in a different case, and database content, which is never scrubbed.
  *
  * It also says who wrote a refusal: `providerAuthor` names the provider for a fence or a notice, and
- * `isStudioRefusal` tells Studio's own refusals apart by class, never by text or code.
+ * `isStudioRefusal` tells Studio's own refusals apart by class, never by text or code. And it is the only builder of
+ * an error's full record (`errorRecord`), whose string fields therefore never hold a form.
  */
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
+import { type ErrorRecord, errorCode, errorKind, errorOutcome } from "@/lib/db/error-record";
 import {
   AuthenticationError,
+  DatabaseError,
   ProviderTextWithheldError,
   QueryError,
   ReadAllowanceExceededError,
@@ -101,11 +104,13 @@ function stackHeader(stack: string): string {
 
 /**
  * Every text a renderer reads from a thrown value: an error's name, message and stack header, a QueryError's detail,
- * a fix statement; anything else as `String(value)`, which is how the logger renders it.
+ * a fix statement, and a database error's SQLSTATE, which its error record carries; anything else as
+ * `String(value)`, which is how the logger renders it.
  */
 function renderedTexts(error: unknown): string[] {
   if (!(error instanceof Error)) return [String(error)];
   const texts = [error.name, error.message, stackHeader(error.stack ?? "")];
+  if (error instanceof DatabaseError && error.sqlstate !== undefined) texts.push(error.sqlstate);
   if (error instanceof QueryError && error.detail !== undefined) texts.push(error.detail);
   if (error instanceof AuthenticationError && error.fixStatement !== undefined) texts.push(error.fixStatement);
   return texts;
@@ -128,12 +133,32 @@ function replacedClass(scrub: ProviderTextScrub, error: unknown): string {
 /**
  * For a thrown value leaving core to a renderer that does not hold the connection (an error response, a route's log
  * line): the same value when none of the texts a renderer reads holds a form, otherwise a `ProviderTextWithheldError`
- * naming the connection's type, whose message names the class it replaced and says its text was withheld. The value
+ * naming the connection's type, whose message names the class it replaced and says its text was withheld, and which
+ * keeps the replaced error's `outcome`: whether a statement reached the database is no text of the error. The value
  * given is never changed, because providers throw shared instances.
  */
 export function withholdProviderError(scrub: ProviderTextScrub, error: unknown): unknown {
   if (!renderedTexts(error).some((text) => holdsSecretForm(text, scrub.forms))) return error;
-  return new ProviderTextWithheldError(withheldErrorMessage(replacedClass(scrub, error)), scrub.type);
+  const withheld = new ProviderTextWithheldError(withheldErrorMessage(replacedClass(scrub, error)), scrub.type);
+  if (errorOutcome(error) === "not-sent") withheld.outcome = "not-sent";
+  return withheld;
+}
+
+/**
+ * The error record of a thrown value (src/lib/db/error-record.ts), built from what `withholdProviderError` answers for
+ * it, so a credential in any text the record would carry withholds the error whole and the record is the withheld
+ * error's. `kind`, `code` and `outcome` are closed vocabularies; `sqlState` is the only string field an error carries
+ * today, and `renderedTexts` reads it.
+ */
+export function errorRecord(scrub: ProviderTextScrub, error: unknown): ErrorRecord {
+  const answered = withholdProviderError(scrub, error);
+  const sqlState = answered instanceof DatabaseError ? answered.sqlstate : undefined;
+  return {
+    kind: errorKind(answered),
+    code: errorCode(answered),
+    ...(sqlState === undefined ? {} : { sqlState }),
+    outcome: errorOutcome(answered),
+  };
 }
 
 /** The author a fence or a notice names for a provider's own text: the engine's form label, bundled with Studio. */

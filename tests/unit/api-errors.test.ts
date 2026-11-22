@@ -88,6 +88,8 @@ describe("createErrorResponse", () => {
       code: "AUTH_ERROR",
       statusCode: 401,
       fixStatement: "ALTER USER ADD KEY PAIR k PUBLIC_KEY = 'b'",
+      kind: "authentication",
+      outcome: "unknown",
     });
     const plain = createErrorResponse(new AuthenticationError("refused"));
     expect(Object.keys(await plain.json())).not.toContain("fixStatement");
@@ -105,6 +107,8 @@ describe("createErrorResponse", () => {
       error: "Permission denied: permission denied for table orders",
       code: "PERMISSION_DENIED",
       statusCode: 403,
+      kind: "permission",
+      outcome: "unknown",
     });
   });
 

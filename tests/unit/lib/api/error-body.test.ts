@@ -14,14 +14,21 @@ import {
   DatabaseConfigError,
   DatabaseError,
   FacetNotOfferedError,
+  OffsetUnsupportedError,
   PermissionDeniedError,
   PoolExhaustedError,
+  ProviderTextWithheldError,
   QueryCancelledError,
   QueryError,
+  ReadAllowanceExceededError,
+  RefusedBeforeSendError,
   TimeoutError,
   TransactionLostError,
   UnknownProviderError,
 } from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
+import { errorRecord, type ProviderTextScrub } from "@/lib/db/operations/provider-text";
+import { secretForms } from "@/lib/db/utils/server-text";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
 
 interface Row {
@@ -35,7 +42,13 @@ const ROWS: readonly Row[] = [
   {
     name: "QueryCancelledError",
     error: new QueryCancelledError("Query was cancelled", "postgres", "SELECT 1"),
-    body: { error: "Query was cancelled", code: ApiErrorCode.QUERY_CANCELLED, statusCode: 499 },
+    body: {
+      error: "Query was cancelled",
+      code: ApiErrorCode.QUERY_CANCELLED,
+      statusCode: 499,
+      kind: "cancelled",
+      outcome: "unknown",
+    },
     log: { level: "info", message: "Query cancelled", context: { provider: "postgres" } },
   },
   {
@@ -46,19 +59,33 @@ const ROWS: readonly Row[] = [
       code: ApiErrorCode.QUERY_ERROR,
       statusCode: 400,
       details: { position: 1, detail: "the detail" },
+      kind: "query",
+      outcome: "unknown",
     },
     log: { level: "warn", message: "Query error", context: { provider: "postgres" } },
   },
   {
     name: "QueryError with neither",
     error: new QueryError("Incorrect syntax near 'FROM'.", "mssql"),
-    body: { error: "Incorrect syntax near 'FROM'.", code: ApiErrorCode.QUERY_ERROR, statusCode: 400 },
+    body: {
+      error: "Incorrect syntax near 'FROM'.",
+      code: ApiErrorCode.QUERY_ERROR,
+      statusCode: 400,
+      kind: "query",
+      outcome: "unknown",
+    },
     log: { level: "warn", message: "Query error", context: { provider: "mssql" } },
   },
   {
     name: "DatabaseConfigError",
     error: new DatabaseConfigError("Host is required", "mysql"),
-    body: { error: "Host is required", code: ApiErrorCode.CONFIG_ERROR, statusCode: 400 },
+    body: {
+      error: "Host is required",
+      code: ApiErrorCode.CONFIG_ERROR,
+      statusCode: 400,
+      kind: "config",
+      outcome: "unknown",
+    },
     log: { level: "warn", message: "Database config error", context: { provider: "mysql" } },
   },
   {
@@ -72,6 +99,8 @@ const ROWS: readonly Row[] = [
       error: 'No provider for the connection type "acmefoo" is installed in this LibreDB Studio.',
       code: ApiErrorCode.PROVIDER_UNKNOWN,
       statusCode: 400,
+      kind: "unknown-provider",
+      outcome: "unknown",
     },
     log: { level: "warn", message: "Unknown provider", context: { reason: "unknown", type: '"acmefoo"' } },
   },
@@ -85,6 +114,8 @@ const ROWS: readonly Row[] = [
       error: "This connection names no type, so no provider in this LibreDB Studio can open it.",
       code: ApiErrorCode.PROVIDER_UNKNOWN,
       statusCode: 400,
+      kind: "unknown-provider",
+      outcome: "unknown",
     },
     log: { level: "warn", message: "Unknown provider", context: { reason: "absent" } },
   },
@@ -100,6 +131,8 @@ const ROWS: readonly Row[] = [
         "This connection's type is not text, so it is not a type id, and no provider in this LibreDB Studio can open it.",
       code: ApiErrorCode.PROVIDER_UNKNOWN,
       statusCode: 400,
+      kind: "unknown-provider",
+      outcome: "unknown",
     },
     log: { level: "warn", message: "Unknown provider", context: { reason: "malformed" } },
   },
@@ -115,6 +148,8 @@ const ROWS: readonly Row[] = [
       error: '"vacuum" is not a maintenance operation LibreDB Studio offers on Apache Kafka, which offers none.',
       code: ApiErrorCode.FACET_NOT_OFFERED,
       statusCode: 400,
+      kind: "not-offered",
+      outcome: "unknown",
     },
     log: { level: "warn", message: "Facet not offered", context: { provider: "kafka" } },
   },
@@ -128,25 +163,46 @@ const ROWS: readonly Row[] = [
       code: ApiErrorCode.AUTH_ERROR,
       statusCode: 401,
       fixStatement: "ALTER USER ADD KEY PAIR k PUBLIC_KEY = 'b'",
+      kind: "authentication",
+      outcome: "unknown",
     },
     log: { level: "warn", message: "Database auth error", context: { provider: "postgres" } },
   },
   {
     name: "AuthenticationError without one",
     error: new AuthenticationError("bad password", "mongodb"),
-    body: { error: "bad password", code: ApiErrorCode.AUTH_ERROR, statusCode: 401 },
+    body: {
+      error: "bad password",
+      code: ApiErrorCode.AUTH_ERROR,
+      statusCode: 401,
+      kind: "authentication",
+      outcome: "unknown",
+    },
     log: { level: "warn", message: "Database auth error", context: { provider: "mongodb" } },
   },
   {
     name: "PermissionDeniedError",
     error: new PermissionDeniedError("permission denied for table orders", "postgres"),
-    body: { error: "permission denied for table orders", code: ApiErrorCode.PERMISSION_DENIED, statusCode: 403 },
+    body: {
+      error: "permission denied for table orders",
+      code: ApiErrorCode.PERMISSION_DENIED,
+      statusCode: 403,
+      kind: "permission",
+      outcome: "unknown",
+    },
     log: { level: "warn", message: "Database permission denied", context: { provider: "postgres" } },
   },
   {
     name: "TimeoutError",
     error: new TimeoutError("query took too long", "postgres", 30000),
-    body: { error: TIMEOUT_SENTENCE, code: ApiErrorCode.TIMEOUT_ERROR, statusCode: 504, retryable: true },
+    body: {
+      error: TIMEOUT_SENTENCE,
+      code: ApiErrorCode.TIMEOUT_ERROR,
+      statusCode: 504,
+      retryable: true,
+      kind: "timeout",
+      outcome: "unknown",
+    },
     log: { level: "warn", message: "Query timeout", context: { provider: "postgres", duration: 30000 } },
   },
   {
@@ -157,6 +213,8 @@ const ROWS: readonly Row[] = [
       code: ApiErrorCode.CONNECTION_ERROR,
       statusCode: 503,
       retryable: true,
+      kind: "connection",
+      outcome: "unknown",
     },
     log: { level: "error", message: "Connection error", context: { provider: "postgres" } },
   },
@@ -167,25 +225,40 @@ const ROWS: readonly Row[] = [
       error: "The transaction was lost: its database session ended (x).",
       code: ApiErrorCode.TRANSACTION_LOST,
       statusCode: 503,
+      kind: "transaction-lost",
+      outcome: "unknown",
     },
     log: { level: "warn", message: "Transaction lost", context: { provider: "postgres" } },
   },
   {
     name: "PoolExhaustedError",
     error: new PoolExhaustedError("no connections available", "mssql", 10),
-    body: { error: "no connections available", code: ApiErrorCode.POOL_EXHAUSTED, statusCode: 503, retryable: true },
+    body: {
+      error: "no connections available",
+      code: ApiErrorCode.POOL_EXHAUSTED,
+      statusCode: 503,
+      retryable: true,
+      kind: "pool-exhausted",
+      outcome: "unknown",
+    },
     log: { level: "error", message: "Pool exhausted", context: { provider: "mssql" } },
   },
   {
     name: "DatabaseError without a code",
     error: new DatabaseError("could not roll back", "postgres"),
-    body: { error: "could not roll back", code: ApiErrorCode.DATABASE_ERROR, statusCode: 500 },
+    body: {
+      error: "could not roll back",
+      code: ApiErrorCode.DATABASE_ERROR,
+      statusCode: 500,
+      kind: "database",
+      outcome: "unknown",
+    },
     log: { level: "error", message: "Database error", context: { provider: "postgres" } },
   },
   {
     name: "DatabaseError with a code of its own",
     error: new DatabaseError("odd", "mysql", ApiErrorCode.QUERY_ERROR),
-    body: { error: "odd", code: ApiErrorCode.QUERY_ERROR, statusCode: 500 },
+    body: { error: "odd", code: ApiErrorCode.QUERY_ERROR, statusCode: 500, kind: "database", outcome: "unknown" },
     log: { level: "error", message: "Database error", context: { provider: "mysql" } },
   },
 ];
@@ -195,6 +268,36 @@ describe("databaseErrorBody", () => {
     expect(JSON.parse(JSON.stringify(databaseErrorBody(row.error)))).toEqual(
       JSON.parse(JSON.stringify({ body: row.body, log: row.log })),
     );
+  });
+
+  test("the body's code is the record's code for every database error class", () => {
+    const scrub: ProviderTextScrub = { type: "postgres", forms: secretForms([crypto.randomUUID()]) };
+    const errors = [
+      new DatabaseError("failed", "postgres"),
+      new DatabaseConfigError("bad config", "postgres"),
+      new UnknownProviderError({ reason: "absent", sentence: "no type" }),
+      new FacetNotOfferedError("not offered", "mysql", "maintenance", "vacuum"),
+      new ConnectionError("lost", "postgres"),
+      new TransactionLostError("lost", "postgres"),
+      new AuthenticationError("refused", "postgres"),
+      new PermissionDeniedError("denied", "postgres"),
+      new PoolExhaustedError("pool", "postgres", 10),
+      new QueryError("syntax", "postgres"),
+      new OffsetUnsupportedError("no offset", "cassandra"),
+      new RefusedBeforeSendError("refused", "postgres"),
+      new ReadAllowanceExceededError("over the allowance", "postgres"),
+      new TimeoutError("timed out", "postgres", 1000),
+      new QueryCancelledError("cancelled", "postgres"),
+      new ProviderTextWithheldError("withheld", "postgres"),
+    ];
+    expect(new Set(errors.map((error) => errorKind(error))).size).toBe(16);
+    for (const error of errors) {
+      const record = errorRecord(scrub, error);
+      const body = databaseErrorBody(error)!.body;
+      expect(body.code, error.name).toBe(record.code as ApiErrorCode);
+      expect(body.kind, error.name).toBe(record.kind);
+      expect(body.outcome, error.name).toBe(record.outcome);
+    }
   });
 
   test("a refusal with no fix statement carries no fixStatement key", () => {
@@ -217,6 +320,14 @@ describe("databaseErrorBody", () => {
 });
 
 describe("internalErrorBody", () => {
+  test("an internal error body carries no kind and no outcome", () => {
+    for (const error of [new Error("boom"), "boom", undefined]) {
+      const body = internalErrorBody(error);
+      expect(Object.hasOwn(body, "kind")).toBe(false);
+      expect(Object.hasOwn(body, "outcome")).toBe(false);
+    }
+  });
+
   test("an Error answers 500 INTERNAL_ERROR with its message", () => {
     expect(internalErrorBody(new Error("boom"))).toEqual({
       error: "boom",
@@ -276,6 +387,7 @@ describe("the error body is Next-free", () => {
       "src/lib/api/error-body.ts",
       "src/lib/api/error-codes.ts",
       "src/lib/db/compatibility.ts",
+      "src/lib/db/error-record.ts",
       "src/lib/db/errors.ts",
       "src/lib/db/type-id.ts",
     ]);

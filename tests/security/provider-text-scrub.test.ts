@@ -13,8 +13,13 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { foldLedgerEntries } from "@/components/agent/timeline";
 import type { AgentLedgerEntry } from "@/lib/agent/run-store";
-import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
-import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { ExecutionProfileError, ProviderTextWithheldError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import {
+  errorRecord,
+  PROVIDER_TEXT_WITHHELD,
+  providerTextScrub,
+  withholdProviderError,
+} from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { logger } from "@/lib/logger";
@@ -255,5 +260,26 @@ describe("on MCP", () => {
     expect(answer.structuredContent?.notes).toEqual([PROVIDER_TEXT_WITHHELD, "a note of its own"]);
     expectNoForm("an answer", JSON.stringify(answer));
     expectNoForm("a log line", written.join("\n"));
+  });
+});
+
+describe("an error's SQLSTATE", () => {
+  test("a credential in an error's SQLSTATE is withheld with the error", () => {
+    // A five-character credential shaped as a SQLSTATE, generated at run time: upper-case hex with a digit.
+    const shaped =
+      `${Math.floor(Math.random() * 10)}${crypto.randomUUID().replace(/-/g, "").slice(0, 4)}`.toUpperCase();
+    const scrub = providerTextScrub(
+      { id: "c1", name: "Prod", type: "postgres", password: shaped, createdAt: new Date(0) },
+      "any",
+    );
+    const error = new QueryError("relation does not exist", "postgres");
+    error.sqlstate = shaped;
+
+    const withheld = withholdProviderError(scrub, error);
+    expect(withheld).toBeInstanceOf(ProviderTextWithheldError);
+    const record = errorRecord(scrub, error);
+    expect(record.sqlState).toBeUndefined();
+    expect(JSON.stringify(record)).not.toContain(shaped);
+    expect(JSON.stringify(withheld)).not.toContain(shaped);
   });
 });

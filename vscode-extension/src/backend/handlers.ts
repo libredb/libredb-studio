@@ -476,7 +476,7 @@ export function createHandlers(
 
 /**
  * Part 1 "Error classification": a ResponseError passes through; a database error answers P3's status, sentence and
- * code; anything else is 500 INTERNAL_ERROR.
+ * code, with its error kind and outcome as the route body carries them; anything else is 500 INTERNAL_ERROR.
  */
 export function toResponseError(error: unknown): ResponseError<BackendErrorData | void> {
   if (error instanceof ResponseError) return error;
@@ -487,6 +487,8 @@ export function toResponseError(error: unknown): ResponseError<BackendErrorData 
     retryable,
     details,
     fixStatement,
+    kind,
+    outcome,
   } = databaseErrorBody(error)?.body ?? internalErrorBody(error);
   return new ResponseError<BackendErrorData>(statusCode, message, {
     // Both bodies always carry a code; the type leaves it optional for the routes' other answers.
@@ -494,6 +496,8 @@ export function toResponseError(error: unknown): ResponseError<BackendErrorData 
     ...(retryable !== undefined && { retryable }),
     ...(details !== undefined && { details }),
     ...(fixStatement !== undefined && { fixStatement }),
+    ...(kind !== undefined && { kind }),
+    ...(outcome !== undefined && { outcome }),
   });
 }
 

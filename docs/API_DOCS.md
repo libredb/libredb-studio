@@ -55,7 +55,7 @@ Responses are JSON. There is **no global envelope** — each endpoint returns it
 { "ok": true }
 
 // Errors
-{ "error": "Human-readable message" }   // route handlers that call createErrorResponse also add "code" and "statusCode" (and sometimes "retryable" / "details"); handlers that return errors inline may send just "error"
+{ "error": "Human-readable message" }   // route handlers that call createErrorResponse also add "code" and "statusCode" (and sometimes "retryable" / "details"), and for a database error "kind" and "outcome"; handlers that return errors inline may send just "error"
 ```
 
 ---
@@ -706,7 +706,9 @@ Three refusals, each a 400 that runs nothing:
   "error": "Query timed out. Please try a simpler query or increase timeout.",
   "code": "TIMEOUT_ERROR",
   "statusCode": 504,
-  "retryable": true
+  "retryable": true,
+  "kind": "timeout",
+  "outcome": "unknown"
 }
 ```
 
@@ -715,6 +717,7 @@ Chromium sends a POST answered 408 on a reused keep-alive connection again witho
 `retryable` is a hint for the person reading the error: no Studio client sends the request again on it.
 
 A deadline met while Studio opens the connection, before any statement is sent, is not a query timeout: it is answered with HTTP 503, code `CONNECTION_ERROR`, and "The connection got no answer after [seconds] seconds: check the address, the port, the network path and that the server is running."
+That answer carries `outcome` `not-sent` ([Error kind and outcome](#error-kind-and-outcome)).
 
 ##### MongoDB Query Format
 
@@ -2830,6 +2833,47 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 The Origin-mismatch 403 (see "CSRF: Origin Check" below) is not in this table: it is returned
 directly by the request middleware (`src/proxy.ts`), before a request ever reaches
 `createErrorResponse`, and carries `code: "ORIGIN_MISMATCH"` instead of one of the codes above.
+
+### Error kind and outcome
+
+Every database error body `createErrorResponse` answers carries `kind` and `outcome` beside `code`.
+An answer without them is not a database error's: an unhandled error (`INTERNAL_ERROR`) and the codes a route or the middleware answers itself carry neither.
+Both are closed vocabularies and never hold the error's text.
+
+`kind` names the class of failure, so a client can branch on it without reading the sentence:
+
+| Kind | Failure |
+|------|---------|
+| `database` | A database error no narrower kind names |
+| `config` | The connection's configuration is missing or refused |
+| `unknown-provider` | The connection's type names no provider this Studio has |
+| `not-offered` | The request names a facet member the engine does not offer |
+| `connection` | The connection could not be opened, or broke |
+| `transaction-lost` | The database session of the open transaction has ended |
+| `authentication` | The database refused the credential |
+| `permission` | The database refused the statement for a privilege the credential lacks |
+| `pool-exhausted` | No connection was free in the pool |
+| `query` | The statement failed on the database, or a bound Studio set on it refused it |
+| `offset-unsupported` | The engine's query language cannot page a result by offset |
+| `refused-before-send` | Studio or the provider refused the statement before sending it |
+| `read-allowance-exceeded` | The read would spend more billed reads than the run has left |
+| `studio-budget-refusal` | Studio's own row, byte or time budget refused a provider's answer on the agent, hand-over or MCP read path |
+| `timeout` | The statement reached its time limit |
+| `studio-timeout-refusal` | A time limit Studio set on its own read ran out, such as the agent's statistics read |
+| `cancelled` | The statement was cancelled |
+| `execution-profile` | A provider refused the read-only execution profile |
+| `studio-profile-refusal` | Studio refused the read-only execution profile |
+| `provider-text-withheld` | Studio withheld the error's text because it held a credential of the connection |
+| `internal` | Any other failure |
+
+No route body carries `execution-profile`, `studio-profile-refusal` or `internal`: the routes answer those failures as `INTERNAL_ERROR`, which carries no kind.
+
+`outcome` says whether the statement may have reached the database:
+
+- `not-sent`: the provider's connect failed, or Studio refused the statement before sending it, so the database never received it.
+- `unknown`: any other failure. The statement may have reached the database and run even though the answer is an error, so check the data before running work that changes it again.
+
+Neither value makes any Studio client send the request again, as for `retryable`.
 
 ---
 

@@ -248,6 +248,7 @@ Separately, the `query/run` request carries a JSON-RPC cancellation token: the c
 The child never answers a raw exception.
 `toResponseError` in `src/backend/handlers.ts` passes through its own refusals, maps a database error class through `databaseErrorBody`, and answers anything else as `INTERNAL_ERROR`; the JSON-RPC error code is the HTTP status the route would answer, and `data.code` is a `BackendErrorCode`.
 `BackendErrorCode` is Studio's `ApiErrorCode` plus six of the extension's own: `CONNECTION_NOT_OPEN`, `SHUTTING_DOWN`, `PROTOCOL_MISMATCH`, `RUNTIME_UNSUPPORTED`, `TEXT_TOO_LARGE` and `CANCEL_UNSUPPORTED`.
+For a database error, `data` also carries `kind` and `outcome`, as the route body does ([API reference](API_DOCS.md#error-kind-and-outcome)); an `INTERNAL_ERROR` and the extension's own refusals carry neither.
 
 On the host, `toBackendError` turns the answer into a `BackendError` with `status` and `code`, or into a `BackendExitedError` when the request died with its child.
 Decisions read the class and `code`, never the message text.

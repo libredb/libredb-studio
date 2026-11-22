@@ -2552,8 +2552,7 @@ the shared hierarchy:
 The two refusals are read from the SQLSTATE and never from the words, so `column "password" does not exist` (`42703`) is a `QueryError`.
 Only an error `pg` raises itself, which carries no SQLSTATE, is read by its words, such as `SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string`.
 
-`isRetryableError()` treats connection/timeout errors as retryable, but not auth, privilege, config, or
-syntax errors.
+A connect that fails answers `outcome` `not-sent`, and so does a statement Studio refuses before sending it; a statement that fails after it was sent answers `unknown`, because PostgreSQL may have run it ([API reference](../API_DOCS.md#error-kind-and-outcome)).
 
 ---
 

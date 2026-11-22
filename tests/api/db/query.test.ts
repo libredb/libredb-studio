@@ -22,12 +22,12 @@ import {
   AuthenticationError,
   PoolExhaustedError,
   QueryCancelledError,
+  connectPhase,
   isDatabaseError,
   isConnectionError,
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { DatabaseConnection } from "@/lib/types";
@@ -125,7 +125,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
   BaseDatabaseProvider: class {},
 }));
@@ -685,6 +684,52 @@ describe("POST /api/db/query", () => {
 
     expect(res.status).toBe(500);
     expect(data.error).toBe("Something unexpected happened");
+  });
+
+  test("a connect that failed answers kind connection and outcome not-sent", async () => {
+    const failed = await connectPhase(() =>
+      Promise.reject(new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres")),
+    ).catch((error: unknown) => error);
+    mockGetOrCreateProvider.mockImplementationOnce(() => Promise.reject(failed));
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
+    });
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(503);
+    expect(await parseResponseJSON(res)).toEqual({
+      error: "connect ECONNREFUSED 127.0.0.1:5432",
+      code: "CONNECTION_ERROR",
+      statusCode: 503,
+      retryable: true,
+      kind: "connection",
+      outcome: "not-sent",
+    });
+    expect(mockProvider.query).not.toHaveBeenCalled();
+  });
+
+  test("a connection lost during the statement answers kind connection and outcome unknown", async () => {
+    (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new ConnectionError("Connection terminated unexpectedly", "postgres"),
+    );
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
+    });
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(503);
+    expect(await parseResponseJSON(res)).toEqual({
+      error: "Connection terminated unexpectedly",
+      code: "CONNECTION_ERROR",
+      statusCode: 503,
+      retryable: true,
+      kind: "connection",
+      outcome: "unknown",
+    });
   });
 
   // The probe adds one to the limit, so a limit that is not a number would be concatenated, not added.

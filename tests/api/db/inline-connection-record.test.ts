@@ -68,7 +68,7 @@ const NO_PROVIDER: ReadonlyArray<readonly [string, Record<string, unknown>, stri
 
 const providerUnknown = (sentence: string) => ({
   status: 400,
-  body: { error: sentence, code: "PROVIDER_UNKNOWN", statusCode: 400 },
+  body: { error: sentence, code: "PROVIDER_UNKNOWN", statusCode: 400, kind: "unknown-provider", outcome: "unknown" },
 });
 
 const MALFORMED: ReadonlyArray<readonly [string, Record<string, unknown>]> = [

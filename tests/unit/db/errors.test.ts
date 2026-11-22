@@ -13,12 +13,12 @@ import {
   UnknownProviderError,
   FacetNotOfferedError,
   TransactionLostError,
+  StudioProfileRefusal,
   isDatabaseError,
   isConnectionError,
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   waitedSeconds,
   connectPhase,
 } from "@/lib/db/errors";
@@ -142,10 +142,6 @@ describe("UnknownProviderError", () => {
     expect(err.message).toBe("not text");
     expect(err.code).toBe(ApiErrorCode.PROVIDER_UNKNOWN);
   });
-
-  test("it is not retryable", () => {
-    expect(isRetryableError(new UnknownProviderError({ reason: "unknown", typeId: "acmefoo", sentence }))).toBe(false);
-  });
 });
 
 describe("FacetNotOfferedError", () => {
@@ -163,10 +159,6 @@ describe("FacetNotOfferedError", () => {
     expect(err).toBeInstanceOf(FacetNotOfferedError);
     expect(err).toBeInstanceOf(DatabaseError);
     expect(err).not.toBeInstanceOf(DatabaseConfigError);
-  });
-
-  test("isRetryableError: a facet not offered is not retryable", () => {
-    expect(isRetryableError(new FacetNotOfferedError(sentence, "mysql", "maintenance", "vacuum"))).toBe(false);
   });
 });
 
@@ -375,52 +367,6 @@ describe("isAuthenticationError", () => {
 });
 
 // ============================================================================
-// isRetryableError
-// ============================================================================
-
-describe("isRetryableError", () => {
-  test("ConnectionError is retryable", () => {
-    expect(isRetryableError(new ConnectionError("fail"))).toBe(true);
-  });
-
-  test("TimeoutError is retryable", () => {
-    expect(isRetryableError(new TimeoutError("timed out"))).toBe(true);
-  });
-
-  test("AuthenticationError is NOT retryable", () => {
-    expect(isRetryableError(new AuthenticationError("bad creds"))).toBe(false);
-  });
-
-  test("TransactionLostError is NOT retryable: the transaction it names is gone", () => {
-    expect(isRetryableError(new TransactionLostError("The transaction was lost"))).toBe(false);
-  });
-
-  test("PermissionDeniedError is NOT retryable", () => {
-    expect(isRetryableError(new PermissionDeniedError("permission denied for table orders"))).toBe(false);
-  });
-
-  test("DatabaseConfigError is NOT retryable", () => {
-    expect(isRetryableError(new DatabaseConfigError("bad config"))).toBe(false);
-  });
-
-  test("QueryError with position is NOT retryable", () => {
-    expect(isRetryableError(new QueryError("syntax", "postgres", "q", 5))).toBe(false);
-  });
-
-  test("plain Error is NOT retryable", () => {
-    expect(isRetryableError(new Error("generic"))).toBe(false);
-  });
-
-  test('TypeError with "fetch" IS retryable (network error)', () => {
-    expect(isRetryableError(new TypeError("fetch failed"))).toBe(true);
-  });
-
-  test("PoolExhaustedError is retryable (inherits from DatabaseError)", () => {
-    expect(isRetryableError(new PoolExhaustedError("pool"))).toBe(true);
-  });
-});
-
-// ============================================================================
 // mapDatabaseError
 // ============================================================================
 
@@ -491,7 +437,6 @@ describe("mapDatabaseError", () => {
     );
     const result = mapDatabaseError(err, "oracle");
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
   });
 
@@ -505,7 +450,6 @@ describe("mapDatabaseError", () => {
     // The driver's own text contains "password", so the generic authentication
     // branch would swallow this one if the Oracle check did not run first.
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
     // The DBA-side way out, which needs no Instant Client at all.
     expect(result.message).toContain("12C");
@@ -518,7 +462,6 @@ describe("mapDatabaseError", () => {
     );
     const result = mapDatabaseError(err, "oracle");
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
   });
 
@@ -526,7 +469,6 @@ describe("mapDatabaseError", () => {
     const err = new Error("NJS-089: Kerberos authentication is not supported by node-oracledb in Thin mode");
     const result = mapDatabaseError(err, "oracle");
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
   });
 
@@ -536,7 +478,6 @@ describe("mapDatabaseError", () => {
     const err = new Error("NJS-529: Invalid wallet content format. Supported format is PEM");
     const result = mapDatabaseError(err, "oracle");
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
     expect(result.message).toContain("PEM");
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
   });
@@ -545,7 +486,6 @@ describe("mapDatabaseError", () => {
     const err = new Error("LDAP naming is not supported by node-oracledb in Thin mode");
     const result = mapDatabaseError(err, "oracle");
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
   });
 
   test('MSSQL "login failed" maps to AuthenticationError', () => {
@@ -1190,5 +1130,34 @@ describe("connectPhase", () => {
     const denied = new AuthenticationError("bad token", "kubernetes");
     expect(await connectPhase(() => Promise.reject(refused)).catch((e: unknown) => e)).toBe(refused);
     expect(await connectPhase(() => Promise.reject(denied)).catch((e: unknown) => e)).toBe(denied);
+  });
+
+  test("a failure the connect raises keeps its identity and answers not-sent", async () => {
+    const raised = [
+      new ConnectionError("No answer from db.test:5432", "postgres"),
+      new AuthenticationError("bad token", "kubernetes"),
+      new DatabaseConfigError("bad config", "postgres"),
+      new StudioProfileRefusal("refused", "PROFILE_UNSUPPORTED_TARGET"),
+    ];
+    const rejections = await Promise.all(
+      raised.map((error) => connectPhase(() => Promise.reject(error)).catch((e: unknown) => e)),
+    );
+    expect(rejections).toEqual(raised);
+    rejections.forEach((rejection, index) => expect(rejection).toBe(raised[index]));
+    for (const error of raised) expect(error.outcome).toBe("not-sent");
+    const outside = new ConnectionError("Connection terminated unexpectedly", "postgres");
+    expect(outside.outcome).toBeUndefined();
+    expect(Object.keys(outside)).not.toContain("outcome");
+    const raw = new Error("socket hang up");
+    expect(await connectPhase(() => Promise.reject(raw)).catch((e: unknown) => e)).toBe(raw);
+    expect(Object.keys(raw)).toEqual([]);
+  });
+
+  test("a connect deadline becomes a ConnectionError that answers not-sent", async () => {
+    const deadline = new TimeoutError("The API server did not answer the request within 10 s.", "kubernetes", 10000);
+    const error = await connectPhase(() => Promise.reject(deadline)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as ConnectionError).outcome).toBe("not-sent");
+    expect(deadline.outcome).toBeUndefined();
   });
 });

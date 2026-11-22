@@ -16,7 +16,6 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { SYNTHETIC_ENTITY_CAPABILITIES, SYNTHETIC_PREVIEW } from "../../fixtures/maintenance-entity-operations";
@@ -99,7 +98,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
 }));
 
@@ -246,11 +244,15 @@ describe("POST /api/db/maintenance/preview", () => {
     const res = await preview({ type: "optimize", target: "orders", connection: validConnection });
 
     expect(res.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res)).toEqual({
+    expect(
+      await parseResponseJSON<{ error: string; code: string; statusCode: number; kind: string; outcome: string }>(res),
+    ).toEqual({
       error:
         '"optimize" is not a maintenance operation LibreDB Studio offers on etcd, which offers compact, defragment, disarm; no connection was opened and nothing was run.',
       code: "FACET_NOT_OFFERED",
       statusCode: 400,
+      kind: "not-offered",
+      outcome: "unknown",
     });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
     expect(calledMethods()).toEqual([]);
@@ -264,11 +266,15 @@ describe("POST /api/db/maintenance/preview", () => {
     });
 
     expect(res.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res)).toEqual({
+    expect(
+      await parseResponseJSON<{ error: string; code: string; statusCode: number; kind: string; outcome: string }>(res),
+    ).toEqual({
       error:
         '"compact" is not a maintenance operation LibreDB Studio offers on Apache Kafka, which offers none; no connection was opened and nothing was run.',
       code: "FACET_NOT_OFFERED",
       statusCode: 400,
+      kind: "not-offered",
+      outcome: "unknown",
     });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
     expect(calledMethods()).toEqual([]);
@@ -284,11 +290,15 @@ describe("POST /api/db/maintenance/preview", () => {
 
     // The row offers compact on etcd, so the refusal comes from the connected server, after connect.
     expect(res.status).toBe(400);
-    expect(await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res)).toEqual({
+    expect(
+      await parseResponseJSON<{ error: string; code: string; statusCode: number; kind: string; outcome: string }>(res),
+    ).toEqual({
       error:
         '"compact" is not a maintenance operation the etcd server this connection reaches accepts, which accepts none; nothing was run.',
       code: "FACET_NOT_OFFERED",
       statusCode: 400,
+      kind: "not-offered",
+      outcome: "unknown",
     });
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
     expect(mockPreviewMaintenance).not.toHaveBeenCalled();
