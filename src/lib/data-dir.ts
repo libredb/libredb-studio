@@ -135,7 +135,7 @@ export const BOOTSTRAP_FILE_NAME = "auth-bootstrap.json";
  * The start of the label the credential re-seal gives the backup of the store it writes beside the store file, as
  * `<store file>.<label>` (`resealBackupLabel` in `src/lib/storage/reseal.ts`, docs/STORAGE.md).
  */
-export const STORE_BACKUP_LABEL_PREFIX = "pre-reseal-";
+const STORE_BACKUP_LABEL_PREFIX = "pre-reseal-";
 
 /**
  * The re-seal backups of the store that exist now: every entry of the data directory whose name, letter case and
