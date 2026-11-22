@@ -503,7 +503,7 @@ The load refuses, naming the connection and the field and never the value:
 On S3, MCP reads only under the agent credential: an S3 connection with `mcp: true` and no `agentUser` and `agentPassword` is refused at load, naming `mcp`, and a connection that reaches MCP without one past the load is refused when a tool opens it, so MCP never reads S3 under the connection's own key ([providers/s3.md](providers/s3.md), section 15.7).
 A refused entry fails the whole file, as any invalid field does, so one such entry takes every connection of that file off the list until it is fixed.
 A reference is unknown at load, so a field written as one passes there, and the factory checks the resolved credential against the engine's form when the connection opens, before it connects.
-One limit of the resolved value: an `agentPassword` whose text before the first colon is `v` and digits, such as `v2:x`, is read as a sealed secret and refused at open with `AGENT_CREDENTIAL_UNRESOLVABLE`, where the same text as `password` opens.
+One limit of the resolved value: an `agentPassword` whose text before the first colon is `v` and digits, such as `v2:x`, is read as a storage envelope and refused at open with `AGENT_CREDENTIAL_UNRESOLVABLE` without being opened, because a value the server store sealed opens only in that store, for the record and field it was sealed for; the same text as `password` opens.
 
 ### An OPC UA connection's read roots
 

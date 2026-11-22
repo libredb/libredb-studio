@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D485, U17 · 357
+- [Drivers and connections](#drivers-and-connections) — D1-D485, U17 · 358
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U221 · 206
@@ -1195,7 +1195,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 63 hits, re-measured on 2026-11-22.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 64 hits, re-measured on 2026-11-22.
 The breakdown below is the one measured at 54 on 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
@@ -4549,12 +4549,12 @@ Found 2026-11-03 while adding the seed agent credential.
 
 ### D445. A seed's plaintext agent password that starts with `v` and digits and a colon is read as a sealed envelope
 
-`resolveAgentCredential` in `src/lib/db/factory.ts` reads `agentPassword` through `readSecret` (`src/lib/storage/encryption.ts`), which takes any value whose text before the first colon matches `/^v\d+$/` for a sealed envelope.
-A seed delivers its agent password as plaintext once resolved, so a plaintext such as `v2:x` is refused at open with `AGENT_CREDENTIAL_UNRESOLVABLE`, or opened as an envelope, while the same text as `password` opens.
+`resolveAgentCredential` in `src/lib/db/factory.ts` refuses an `agentPassword` that `isEnvelopeClaim` (`src/lib/storage/envelope-claim.ts`) calls a storage envelope, any value whose text before the first colon matches `/^v\d+$/`, and opens none: a value the server store sealed opens only in that store, for the record and field it was sealed for.
+A seed delivers its agent password as plaintext once resolved, so a plaintext such as `v2:x` is refused at open with `AGENT_CREDENTIAL_UNRESOLVABLE`, while the same text as `password` opens.
 The refusal is explicit and names no value, and `docs/SEED_CONNECTIONS.md` states the limit.
 Found 2026-11-03 while adding the seed agent credential.
 
-**Done when:** a seed-delivered agent password skips `readSecret`, through a marker on the projected connection the factory trusts and nothing a caller can set, with a factory test that a seeded `v2:x` opens and a stored sealed value still opens, and the limit is gone from `docs/SEED_CONNECTIONS.md`.
+**Done when:** a seeded `v2:x` agent password opens as the plaintext it is, through a marker on the projected connection the factory trusts and nothing a caller can set, a storage envelope is still refused, a factory test pins both, and the limit is gone from `docs/SEED_CONNECTIONS.md`.
 
 ### D446. The factory runs an agent under an Elasticsearch API key that stands beside its agent credential
 
@@ -4791,6 +4791,24 @@ The owner decided on 2026-11-21:
 Filed 2026-11-21 on the owner's decision, outside the provider-plugin program.
 
 **Done when:** a connection can declare jump hosts and a SOCKS5 or HTTP proxy layer, every tunnelled provider reaches its engine through them, a missing or refused hop fails naming that hop with no direct dial, nothing in `src` reads `~/.ssh/config`, and tests drive a two-hop route and each proxy kind against in-process servers.
+
+### D484. The browser holds every saved connection's secrets in the clear
+
+In `sqlite` and `postgres` modes the server store seals each credential, but `GET /api/storage` returns them opened to their owner, and the browser keeps them in `localStorage` as the copy it renders from and pushes back (`src/hooks/use-storage-sync.ts`).
+In `local` mode `localStorage` is the only copy, and it holds them in the clear too.
+`docs/SECURITY.md` states this under "Known limits".
+
+The direction decided on 2026-11-22:
+
+- in `sqlite` and `postgres` modes no secret field reaches the browser, and every route that takes a stored connection resolves it on the server by its id, as `seed:<id>` and the OpenShift token store already do;
+- the connection dialog replaces a saved secret instead of showing it again;
+- `local` mode keeps each secret sealed by a key the server holds and bound to the account.
+
+This comes after the provider-plugin program and before provider-declared secret fields ship.
+
+Filed 2026-11-22 on the direction decided that day, outside the provider-plugin program.
+
+**Done when:** in `sqlite` and `postgres` modes no response and no `localStorage` key carries a secret field of a stored connection, every route that opens a stored connection resolves it by id on the server, the dialog replaces a secret without reading it back, `local` mode stores each secret sealed and bound to the account, and tests hold all four.
 
 ## Value interpolation
 

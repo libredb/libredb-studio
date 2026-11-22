@@ -108,7 +108,7 @@ On the first API request, the SQLite provider:
 2. **Creates the database file** — `libredb-storage.db` is created by `better-sqlite3`
 3. **Enables WAL mode** — Write-Ahead Logging for better concurrent read performance
 4. **Turns foreign keys on**: `PRAGMA foreign_keys = ON`, read back, so passkeys follow their account; the start fails if the engine does not enable it
-5. **Creates the tables**: `user_storage`, `accounts` and the three passkey tables, with the schema below
+5. **Creates the tables**: `storage_meta`, `user_storage`, `accounts` and the three passkey tables, with the schema below
 
 No manual setup, no migrations, no SQL scripts needed.
 
@@ -161,6 +161,13 @@ curl http://localhost:3000/api/storage/config
 The table is auto-created, but if you prefer to create it yourself (e.g., for auditing or version control):
 
 ```sql
+-- Facts about the store itself, such as its credential envelope state.
+CREATE TABLE IF NOT EXISTS storage_meta (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS user_storage (
   user_id    TEXT NOT NULL,
   collection TEXT NOT NULL,
@@ -254,7 +261,7 @@ On the first API request, the PostgreSQL provider:
 
 1. **Creates a connection pool** — max 5 connections, 30s idle timeout
 2. **Handles idle-client failures** — the pool gets an `error` listener immediately (see below)
-3. **Creates the tables**: `user_storage`, `accounts` and the three passkey tables, with the schema below, via `CREATE TABLE IF NOT EXISTS` on every start
+3. **Creates the tables**: `storage_meta`, `user_storage`, `accounts` and the three passkey tables, with the schema below, via `CREATE TABLE IF NOT EXISTS` on every start
 
 The database itself must already exist. The **tables** are auto-created, but the **database** is not.
 
@@ -275,7 +282,7 @@ The PostgreSQL user specified in `STORAGE_POSTGRES_URL` needs:
 |-----------|-----|
 | `CREATE` on the schema | Every start runs `CREATE TABLE IF NOT EXISTS`, and PostgreSQL checks this privilege even when the table already exists |
 | `REFERENCES` on `accounts` | The passkey tables' foreign keys, only while the app creates those tables itself |
-| `SELECT`, `INSERT`, `UPDATE`, `DELETE` | Read and write the five tables; deleting an account or a passkey, and purging spent passkey challenges, delete rows |
+| `SELECT`, `INSERT`, `UPDATE`, `DELETE` | Read and write the six tables; deleting an account or a passkey, and purging spent passkey challenges, delete rows. The credential re-seal also takes `LOCK TABLE ... IN EXCLUSIVE MODE` on `storage_meta`, `accounts` and `user_storage`, which `UPDATE` covers, and creates its backup tables with the `CREATE` above ([Re-sealing the store](#re-sealing-the-store)) |
 
 The app user owns the tables it creates, which covers the data privileges on them.
 A default PostgreSQL 17 `public` schema grants other roles no `CREATE`, so grant it explicitly (`GRANT CREATE ON SCHEMA public TO libredb_app;`) when the app user does not own the schema.
@@ -391,6 +398,13 @@ The table is auto-created on first request. However, if you prefer to create it 
 
 ```sql
 -- PostgreSQL
+-- Facts about the store itself, such as its credential envelope state.
+CREATE TABLE IF NOT EXISTS storage_meta (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS user_storage (
   user_id    TEXT NOT NULL,
   collection TEXT NOT NULL,
@@ -444,12 +458,13 @@ CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_chal
 
 #### Minimal Privileges (When Table Already Exists)
 
-If a DBA creates all five tables, the app user needs no `REFERENCES`, but it still needs `CREATE` on the schema, because every start runs `CREATE TABLE IF NOT EXISTS` and PostgreSQL checks that privilege even for a table that exists:
+If a DBA creates all six tables, the app user needs no `REFERENCES`, but it still needs `CREATE` on the schema, because every start runs `CREATE TABLE IF NOT EXISTS` and PostgreSQL checks that privilege even for a table that exists:
 
 ```sql
 GRANT CREATE ON SCHEMA public TO libredb_app;
 -- DELETE: removing an account removes its user_storage rows in the same transaction,
 -- and passkey removals and the purge of spent challenges delete rows too.
+GRANT SELECT, INSERT, UPDATE, DELETE ON storage_meta TO libredb_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON user_storage TO libredb_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON accounts TO libredb_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON passkey_users TO libredb_app;
@@ -561,7 +576,7 @@ nothing to switch on and nothing to configure.
 
 ### What is encrypted
 
-Eleven fields, all on a saved connection (`src/lib/storage/secret-fields.ts` is the authority):
+Eleven fields on a saved connection, and an account's two second-factor fields (`src/lib/storage/secret-fields.ts` is the authority for the connection fields):
 
 | Field | What it is |
 |-------|------------|
@@ -575,6 +590,7 @@ Eleven fields, all on a saved connection (`src/lib/storage/secret-fields.ts` is 
 | `sshTunnel.password` | The SSH password |
 | `sshTunnel.privateKey` | The SSH private key |
 | `sshTunnel.passphrase` | The passphrase that unlocks the key above |
+| `accounts.totp_secret`, `accounts.totp_pending` | An account's confirmed TOTP secret, and an enrolment not yet confirmed |
 
 Everything else stays readable, deliberately: `host`, `port`, `user`, `agentUser`, `database`,
 `name` and the TLS certificates (`ssl.caCert`, `ssl.clientCert` — certificates are public by
@@ -583,9 +599,42 @@ operator holding a dump has to be able to answer "which of my databases is in he
 incident response, not a leak. No other collection is touched — `history` and `saved_queries` hold
 SQL text, which is the product's data rather than its secrets.
 
-Each value is stored as `v1:<iv>:<ciphertext>` using AES-256-GCM with a fresh random IV, so two
+Each value is stored as `v2:<iv>:<ciphertext>` using AES-256-GCM with a fresh random IV, so two
 identical passwords do not look identical in the store, and a tampered value is detected rather
 than silently decrypting to something else.
+The previous release wrote `v1:<iv>:<ciphertext>`; this one reads that form until the store is re-sealed ([Re-sealing the store](#re-sealing-the-store)) and never writes it.
+
+### Where a sealed value opens
+
+Each sealed value opens only in the place it was sealed for: the row owner, the connection (or the account), the field, and the connection's identity fields.
+Anywhere else it is omitted and named in the server log, exactly as a value the key cannot open is, and it is never returned raw.
+
+The place is the value's AES-256-GCM additional authenticated data: the UTF-8 of the RFC 8785 canonical JSON of `{d, f, o, r, s, t}` (`src/lib/storage/envelope-binding.ts`):
+
+| Member | Value |
+|--------|-------|
+| `s` | `"v2"`, the envelope format |
+| `t` | `"connections"` or `"accounts"`, where the value is stored |
+| `o` | The owner: the `user_id` of the `user_storage` row for a connection, the account's email for a factor |
+| `r` | The record: the connection's `id` as the store holds it (`null` when absent), the account's email for a factor |
+| `f` | The field path: `password`, `connectionString`, `privateKey`, `privateKeyPassphrase`, `agentPassword`, `apiKeyId`, `apiKeySecret`, `ssl.clientKey`, `sshTunnel.password`, `sshTunnel.privateKey`, `sshTunnel.passphrase`, `totpSecret` or `totpPending` |
+| `d` | The unpadded base64url SHA-256 of the UTF-8 canonical JSON of the connection's identity fields as the store holds them; for an account, of `{}` |
+
+The identity fields are the readable fields `src/lib/storage/secret-fields.ts` classifies `identity`: the ones that decide where a connection's credentials are sent, as whom they authenticate, and how safely they travel.
+There are thirty:
+
+| Where | Identity fields |
+|-------|-----------------|
+| The connection | `type`, `host`, `port`, `user`, `database`, `serviceName`, `instanceName`, `authSource`, `saslMechanism`, `allowInsecureAuth`, `dataServers`, `apiPath`, `tlsServerName`, `amqpPort`, `securityMode`, `securityPolicyUri`, `serverCertificateThumbprint`, `hostKeyFingerprint`, `clientCertificatePath`, `clientPrivateKeyPath`, `agentUser` |
+| `ssl` | `mode`, `rejectUnauthorized`, `caCert`, `clientCert` |
+| `sshTunnel` | `enabled`, `host`, `port`, `username`, `hostKeyFingerprint` |
+
+A change to an identity field made in Studio seals the connection's credentials again, because the browser sends them with the edit (see [Paths that change an identity field](#paths-that-change-an-identity-field)).
+A change made outside Studio leaves the sealed values bound to the old fields, so they read as omitted until the user enters them again.
+
+The identity set is part of the `v2` format.
+A field added later as identity changes nothing stored, because records written before it do not carry it.
+Moving an existing field into or out of the set would change the digest of every record that carries it, so it is a new envelope version with its own re-seal, never an edit.
 
 ### The key
 
@@ -613,8 +662,9 @@ What happens is bounded and recoverable:
 
 - The **connection survives**. Its name, host, port, user and database are still there.
 - The unreadable field is **omitted**, not replaced with garbage. The password box is empty.
-- A warning is written to the server log once per read: `Stored connection secrets could not be
-  decrypted: N field(s) were omitted.`
+- A warning is written to the server log once per read, naming each omitted value by its
+  connection id, its field and the reason: `Stored connection secrets could not be decrypted: N
+  field(s) were omitted: <id> <field> (unopenable), ...`, followed by what to do.
 - Nothing is deleted from the database by the read itself.
 
 To recover, restore the previous key and restart, **before** using the app. Reads happen on page
@@ -624,10 +674,128 @@ re-enter the affected passwords once and they are re-encrypted under the current
 
 ### Existing deployments migrate themselves
 
-Reads accept both plaintext and encrypted values, and writes always produce encrypted ones. An
-existing store therefore migrates as it is used, with no migration command, no downtime and no
-version column. A row that is never written again stays plaintext — which is why the
-`STORAGE_ENCRYPTION_KEY` upgrade is safe to roll back.
+Until the store is re-sealed, reads accept version 1 envelopes and values stored before encryption existed, and every write produces a `v2` envelope for the record as written.
+An existing store therefore moves to `v2` as it is used, with no downtime.
+A value that is never written again keeps its old form until the operator re-seal converts it.
+While the store still accepts version 1, each server logs one warning at its first use of the store that names the state and the command below.
+
+### Re-sealing the store
+
+Set `STORAGE_ENCRYPTION_RESEAL=true` (also `1` or `on`, in any letter case) on every server once every server runs this version, and restart them.
+At its start, before it serves, the first server:
+
+1. Takes the store's write lock for one transaction.
+2. Writes a complete backup of the store as it is.
+3. Seals every version 1 envelope and every unsealed value as `v2` for the place it is stored in, keeps every `v2` value that already opens there, and leaves a value that opens nowhere exactly as it is, naming it in the log.
+4. Records in `storage_meta` (`credential_envelope = v2`) that version 1 is retired, and commits.
+
+From then on a version 1 or unsealed value is refused by name, as `retired`, and omitted like any value that does not open.
+Every other server that starts while the first holds the lock waits for it, finds the store retired, and logs that nothing was read, written or backed up.
+Remove `STORAGE_ENCRYPTION_RESEAL` afterwards; a store that is already retired is never read, written or backed up again, but the variable has no further use.
+
+The backup:
+
+| Provider | Backup | Where |
+|----------|--------|-------|
+| `sqlite` | `VACUUM INTO` a standalone database file, taken on a second connection under the re-seal's write lock | `<STORAGE_SQLITE_PATH>.pre-reseal-<UTC yyyymmddThhmmssZ>`, beside the store file |
+| `postgres` | `CREATE TABLE <table>_pre_reseal_<stamp> AS TABLE <table>` for all six store tables, inside the re-seal transaction | In the store's own schema (`STORAGE_POSTGRES_SCHEMA` when set), for example `user_storage_pre_reseal_20261122t053000z` |
+
+The start refuses, with a banner and exit status 1, when:
+
+- the value is anything other than `true`, `1`, `on`, `false`, `0`, `off` or empty, because a requested re-seal that cannot be read must not be skipped;
+- `STORAGE_PROVIDER` is `local`, which has no server store;
+- the backup cannot be written (a target that already exists, a directory the process cannot write, or an in-memory SQLite store);
+- anything else fails during the re-seal.
+
+A refused or failed run leaves the store exactly as it was, and version 1 still accepted.
+
+The log lines, at warning level:
+
+```
+STORAGE_ENCRYPTION_RESEAL: backed up the store to <backup>, re-sealed N value(s) and kept M already sealed for their place; version 1 is retired.
+STORAGE_ENCRYPTION_RESEAL: left N value(s) as they were, because they open nowhere here: <owner> <connection id> <field>, ...
+STORAGE_ENCRYPTION_RESEAL: left N row(s) or element(s) unread, because they are not connections: <owner> connections, ...
+STORAGE_ENCRYPTION_RESEAL: remove it now; every start re-checks the store while it is set.
+```
+
+The second and third lines appear only when they have something to name.
+
+How to set it:
+
+| Channel | Where |
+|---------|-------|
+| Docker, Docker Compose | `-e STORAGE_ENCRYPTION_RESEAL=true`, or the service's `environment` |
+| `npx @libredb/studio`, packages | The environment of the process |
+| Helm chart | `extraEnv`, for example `--set 'extraEnv[0].name=STORAGE_ENCRYPTION_RESEAL' --set-string 'extraEnv[0].value=true'`; no chart change is needed |
+
+### Upgrading to envelope v2
+
+In this order:
+
+1. Back up the store as usual.
+   This version writes `v2` from its first save, which an older version cannot read.
+2. Upgrade every server.
+3. Once no older server runs, set `STORAGE_ENCRYPTION_RESEAL=true` on every server and restart them.
+   The first start backs up, re-seals and retires version 1; the others wait on the lock and find nothing to do.
+4. Remove `STORAGE_ENCRYPTION_RESEAL`.
+5. Keep the re-seal's backup until a downgrade is out of the question, then delete it: the file, or `DROP TABLE` each `*_pre_reseal_*` table.
+   It holds version 1 values.
+
+The chart's SQLite deployment runs one replica and stops the old pod before the new one starts, so the two versions never serve one store together.
+PostgreSQL deployments with several replicas roll pods one by one, so for a while both versions serve the same store:
+
+- A new server reads version 1 and unsealed values, and writes `v2`.
+- An old server omits a `v2` value as undecryptable, with its key-rotation warning.
+  A browser that loaded its connections from an old server and then saves a connection drops that value for good.
+- An account that a new server wrote cannot finish a TOTP sign-in on an old server, and an account change an old server makes in that window writes an unusable factor back, which an admin clears.
+
+To avoid that window, stop the old servers before new ones serve, for example `kubectl scale deployment <name> --replicas=0`, upgrade, then scale back.
+
+A process reads the store's envelope state once, at its first use of the store.
+A server that started before another one re-sealed keeps accepting version 1 until it restarts, which is why step 3 restarts every server.
+
+#### Downgrading
+
+Every value this version wrote, through any save, any account change or the re-seal, is unreadable to an older version: the field is omitted and the next save drops it, and an account with a second factor is locked until an admin clears it (the environment admin through `ADMIN_PASSWORD_RESET`).
+To downgrade, stop every server, restore the re-seal's backup, and start the older version.
+Every change made after the backup is lost.
+
+- SQLite: put the backup file in place of the store file, or point `STORAGE_SQLITE_PATH` at it.
+- PostgreSQL: run, with `<stamp>` the backup's suffix and every name schema-qualified when `STORAGE_POSTGRES_SCHEMA` is set:
+
+```sql
+BEGIN;
+DELETE FROM user_storage;
+INSERT INTO user_storage SELECT * FROM user_storage_pre_reseal_<stamp>;
+UPDATE accounts AS a SET totp_secret = b.totp_secret, totp_pending = b.totp_pending
+  FROM accounts_pre_reseal_<stamp> AS b WHERE a.email = b.email;
+DELETE FROM storage_meta WHERE key = 'credential_envelope';
+COMMIT;
+```
+
+Restoring a full snapshot taken before the re-seal also restores "version 1 accepted", so run the re-seal again after upgrading.
+
+#### An interrupted re-seal
+
+The re-seal is one transaction.
+An error, a lost database connection or a killed process leaves every row as it was and version 1 accepted, and the start stops with the reason.
+A SQLite run that stopped after its backup leaves that file, a copy of the unchanged store; delete it or keep it.
+Fix the cause and start again.
+On PostgreSQL the re-seal blocks writes, not reads, for its duration; a start probe that kills a very slow re-seal makes it roll back and run again at the next start, so for a very large store run the first re-sealing start with one replica or a longer start probe.
+
+### Paths that change an identity field
+
+| Path | Seals again | Why |
+|------|-------------|-----|
+| `PUT /api/storage/connections`: the connection dialog's save and edit, duplicate, import, client-side migrations, editable seed copies | Yes | The browser holds the plaintext `GET /api/storage` returned and sends whole records; each value is sealed for the record as written |
+| `POST /api/storage/migrate` | Yes | The same, for a whole localStorage dump |
+| The re-seal | Yes | Each value is sealed for the record as stored |
+| Account insert and update | Yes | Each factor is sealed for the account's email; an account's email never changes |
+| Server code that edits stored connections | None exists | Such code must seal again from the plaintext it opened (`src/lib/storage/secret-fields.ts` says so) |
+| Edits outside Studio: SQL, a file edit, a partial restore | No, by design | The value is omitted and named until the user enters it again |
+| Turning governance or OpenShift sign-in on or off, an OIDC email change without governance | Not applicable | Rows are not moved between owners; the user starts over under the new owner key, and the old rows stay bound to the old one ([Governance Mode](#governance-mode)) |
+| A browser holding a record without its secret, because it was omitted on read, saves an edit | Nothing to seal | The omitted value is lost on that write, as an undecryptable one is |
+| A server of an older version during a mixed rollout | No, it writes version 1 | Accepted until the re-seal retires version 1; the upgrade order above prevents it |
 
 ### What this does not protect
 
@@ -654,6 +822,10 @@ version column. A row that is never written again stays plaintext — which is w
   separate from the database that gets backed up.
 - **`GET /api/storage` returns credentials in plaintext to their authenticated owner.** It has to:
   the app must be able to redisplay a saved password for editing.
+- **Readable fields are neither sealed nor authenticated.** The binding protects the sealed values:
+  a change to an identity field outside Studio makes that connection's sealed values unreadable
+  rather than sending them on, but it does not make `host`, `name` or any other readable field
+  tamper-proof.
 
 ---
 
@@ -665,6 +837,7 @@ version column. A row that is never written again stays plaintext — which is w
 | `STORAGE_SQLITE_PATH` | No | `./data/libredb-storage.db` | Path to SQLite file. Directory and file are auto-created. |
 | `STORAGE_POSTGRES_URL` | **Yes** (postgres mode) | — | PostgreSQL connection string. **No default — app will error without it.** |
 | `STORAGE_POSTGRES_SCHEMA` | No | unset | Schema that holds the storage tables, such as `studio`. The schema must exist. Unset keeps the tables unqualified. See [A Named Schema](#a-named-schema-storage_postgres_schema). |
+| `STORAGE_ENCRYPTION_RESEAL` | No | unset | `true`, `1` or `on` re-seals every stored credential at start, after a complete backup, and retires version 1 envelopes. Set it once, restart, remove it. See [Re-sealing the store](#re-sealing-the-store). |
 
 > These are **server-side only** variables (no `NEXT_PUBLIC_` prefix). The client discovers the mode at runtime via `GET /api/storage/config`. This means one Docker image works for all modes. See [Why Not `NEXT_PUBLIC_*`?](#why-not-next_public_) for the rationale.
 
@@ -754,16 +927,27 @@ When `STORAGE_PROVIDER=sqlite` or `postgres`, each authenticated request checks 
 Look for this line in the server log:
 
 ```
-Stored connection secrets could not be decrypted: 3 field(s) were omitted.
+Stored connection secrets could not be decrypted: 3 field(s) were omitted: c1 password (unopenable), c1 sshTunnel.password (unopenable), c2 password (unopenable). ...
 ```
 
-The encryption key changed. Either `JWT_SECRET` was rotated (and `STORAGE_ENCRYPTION_KEY` is not
-set), or `STORAGE_ENCRYPTION_KEY` itself changed, or the data directory holding
+The line names each omitted value by its connection id, its field and the reason.
+For `unopenable`, the encryption key changed, or the value is not stored in the place it was sealed for (see [Where a sealed value opens](#where-a-sealed-value-opens)).
+For `retired`, see the next entry.
+
+The encryption key changes when `JWT_SECRET` is rotated (and `STORAGE_ENCRYPTION_KEY` is not
+set), when `STORAGE_ENCRYPTION_KEY` itself changes, or when the data directory holding
 `auth-bootstrap.json` was not persisted so a fresh `JWT_SECRET` was generated on start.
 
 Restore the previous key and restart **before** using the app — see
 [Rotating a key invalidates stored credentials](#rotating-a-key-invalidates-stored-credentials).
 If the key is gone, re-enter the affected passwords; everything else about the connection is intact.
+
+### "Values refused as retired after the re-seal"
+
+The warning line names a value with the reason `retired`, or an account's second factor stops working with `(retired)` in the log.
+The value is a version 1 envelope or an unsealed value, which the store refuses since `STORAGE_ENCRYPTION_RESEAL` retired version 1.
+It was written after the re-seal, by a server of an older version or by an edit outside Studio.
+Stop every older server, then re-enter the affected credentials; an admin clears an affected second factor.
 
 ### "Duplicate data after migration"
 
@@ -774,11 +958,17 @@ If the key is gone, re-enter the affected passwords; everything else about the c
 
 ## Database Schema Reference
 
-Both SQLite and PostgreSQL use the same five tables. They are auto-created on first request, but the full DDL is provided here for reference. `user_storage` holds each person's product data. `accounts` holds local email/password identities when the server store is on. `passkey_users`, `passkey_credentials` and `passkey_spent_challenges` hold passkeys ([PASSKEYS.md](./PASSKEYS.md)).
+Both SQLite and PostgreSQL use the same six tables. They are auto-created on first request, but the full DDL is provided here for reference. `storage_meta` holds facts about the store itself. `user_storage` holds each person's product data. `accounts` holds local email/password identities when the server store is on. `passkey_users`, `passkey_credentials` and `passkey_spent_challenges` hold passkeys ([PASSKEYS.md](./PASSKEYS.md)).
 
 ### SQLite
 
 ```sql
+CREATE TABLE IF NOT EXISTS storage_meta (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS user_storage (
   user_id    TEXT NOT NULL,
   collection TEXT NOT NULL,
@@ -833,6 +1023,12 @@ CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_chal
 ### PostgreSQL
 
 ```sql
+CREATE TABLE IF NOT EXISTS storage_meta (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS user_storage (
   user_id    TEXT NOT NULL,
   collection TEXT NOT NULL,
@@ -893,6 +1089,12 @@ CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_chal
 | `updated_at` | TEXT / TIMESTAMPTZ | Last modification timestamp |
 
 Each row stores **one user's one collection** as a JSON blob. Adding a new collection type requires no schema changes — just a new row.
+
+`storage_meta` holds one row per fact about the store itself:
+
+| `key` | `value` | Meaning |
+|-------|---------|---------|
+| `credential_envelope` | `v2` | The credential re-seal retired version 1 envelopes ([Re-sealing the store](#re-sealing-the-store)); no row means version 1 is still accepted, and any other value stops the start, as a store written by a newer version |
 
 The passkey tables:
 
@@ -1004,6 +1206,12 @@ this product does not rewrite it in place.
 Both SQLite and PostgreSQL use the same logical schema — `user_storage` holds collection-based JSON blobs, and `accounts` holds the local identity registry:
 
 ```sql
+CREATE TABLE IF NOT EXISTS storage_meta (
+  key        TEXT PRIMARY KEY,              -- 'credential_envelope'
+  value      TEXT NOT NULL,                 -- 'v2' once the re-seal retired version 1
+  updated_at TEXT/TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS user_storage (
   user_id    TEXT        NOT NULL,          -- JWT username (email)
   collection TEXT        NOT NULL,          -- 'connections', 'history', etc.
@@ -1017,7 +1225,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   password_hash TEXT NOT NULL,     -- scrypt encoding, never the password; for an account a launch created,
                                    --   launch-identity$<iss>$<sub> (base64url), which no password matches (LAUNCH.md)
   role          TEXT NOT NULL,     -- 'admin' or 'user'
-  totp_secret   TEXT,              -- confirmed TOTP secret, sealed like a connection password, or NULL
+  totp_secret   TEXT,              -- confirmed TOTP secret, sealed for this account like a connection password, or NULL
   totp_pending  TEXT,              -- enrolment not yet confirmed, sealed; login ignores it
   disabled      INTEGER NOT NULL,  -- 1 rejects login and keeps this user's rows
   session_version INTEGER NOT NULL, -- signed into each session; a change ends older sessions
@@ -1085,6 +1293,14 @@ src/lib/storage/
 ├── factory.ts            # Env-based provider instantiation (singleton)
 ├── owner-key.ts          # storageOwnerKey(): the user_id a session's rows are filed under
 ├── passkey-row.ts        # passkey_credentials row to StoredPasskey, refusing a malformed row
+├── secret-fields.ts      # Which connection fields are secret or identity, and the one walk over them
+├── encryption.ts         # The key, and sealSecret / openSecret / readStoredSecret under a binding
+├── envelope-binding.ts   # Where a v2 envelope opens: owner, record, field and identity digest
+├── envelope-claim.ts     # isEnvelopeClaim(): the version-tag shape rule, import-free
+├── connection-secrets.ts # Seals, opens and re-seals a connection list for its owner
+├── encrypting-provider.ts # withCredentialEncryption(): the decorator the factory installs
+├── reseal.ts             # resealStore(): the operator re-seal's rule for each stored value
+├── reseal-at-boot.ts     # STORAGE_ENCRYPTION_RESEAL, read by register() at start
 └── providers/
     ├── sqlite.ts         # better-sqlite3 implementation
     └── postgres.ts       # pg (Pool) implementation
@@ -1184,6 +1400,13 @@ interface ServerStorageProvider extends PasskeyStore {
   // AccountWriteConflict; resolves to the number of passkeys removed (clearPasskeys).
   updateAccount(account: StoredAccount, options: AccountUpdateOptions): Promise<number>;
   deleteAccount(email: string, options?: AccountWriteOptions): Promise<void>; // also user_storage rows; passkeys cascade
+  // storage_meta's credential_envelope: no row is "v1-accepted", "v2" is "v1-retired", any other value throws.
+  readEnvelopeState(): Promise<CredentialEnvelopeState>;
+  // The operator re-seal in one transaction under the write lock: a complete backup named with backupLabel, then
+  // each connections row and each account's factors through rewrite, then the marker; "already-retired" reads nothing.
+  rewriteStoredCredentials(
+    rewrite: StoredCredentialRewrite, backupLabel: string
+  ): Promise<StoredCredentialRewriteResult>;
 }
 
 interface AccountUpdateOptions {
