@@ -15,8 +15,10 @@ use std::time::{Duration, Instant};
 
 use crate::layout::Layout;
 
-/// How long a SIGTERM'd sidecar gets to exit before it is killed outright.
-pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// How long a SIGTERM'd sidecar gets to exit before it is killed outright: it
+/// covers the 25 s Studio's shutdown handler may take, with 5 s over
+/// (docs/DISTRIBUTION.md, "Stopping the server").
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
 
 /// The payload's directory of the built-in samples' assets, which the server reads from
 /// `SEED_ASSETS_DIR` (docs/DISTRIBUTION.md, "Built-in sample assets").
@@ -64,6 +66,9 @@ pub fn sidecar_env(port: u16, storage_db: &Path, seed_assets: &Path) -> Vec<(Str
         // The server binds to loopback only, so kubectl proxy (plain HTTP to this machine) may be reached.
         ("KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT".to_string(), "true".to_string()),
         ("SEED_ASSETS_DIR".to_string(), seed_assets.display().to_string()),
+        // The sidecar runs on the bundled Node.js, so Studio's shutdown handler
+        // ends it (docs/DISTRIBUTION.md, "Stopping the server").
+        ("NEXT_MANUAL_SIG_HANDLE".to_string(), "true".to_string()),
     ]
 }
 
@@ -150,8 +155,9 @@ impl Sidecar {
 
     /// Ask the sidecar to exit, then make sure it did.
     ///
-    /// SIGTERM first so Next.js can close listeners and better-sqlite3 can
-    /// finalize; SIGKILL only after the grace period. Returns true when the
+    /// SIGTERM first so Studio's shutdown handler can drain the requests in
+    /// flight, run its shutdown hooks and close its providers; SIGKILL only
+    /// after the grace period. Returns true when the
     /// process was still alive and had to be signalled.
     pub fn shutdown(&mut self, grace: Duration) -> bool {
         if !self.is_running() {
@@ -261,6 +267,21 @@ mod tests {
         assert_eq!(lookup("NODE_ENV"), Some("production"));
         assert_eq!(lookup("KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT"), Some("true"));
         assert_eq!(lookup("SEED_ASSETS_DIR"), Some("/app/lib/payload/seed-assets"));
+    }
+
+    #[test]
+    fn env_gives_studios_shutdown_handler_the_exit() {
+        let env = sidecar_env(
+            3000,
+            Path::new("/data/libredb-storage.db"),
+            Path::new("/app/lib/payload/seed-assets"),
+        );
+        let lookup = |key: &str| {
+            env.iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.as_str())
+        };
+        assert_eq!(lookup("NEXT_MANUAL_SIG_HANDLE"), Some("true"));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 /**
- * Unit tests for the exit owner the deb/rpm/AUR and Homebrew wrappers hand the server
+ * Unit tests for the exit owner the deb/rpm/AUR and Homebrew wrappers and the desktop shell hand the server
  * (docs/DISTRIBUTION.md, "Stopping the server"): NEXT_MANUAL_SIG_HANDLE=true, so Studio's shutdown handler ends it,
  * unless the operator set a value, which is kept as given, the empty one included. Each wrapper is exercised as a
  * real subprocess against a stub "node" binary that only echoes the variable it was started with, on the harness of
@@ -138,4 +138,17 @@ describeIf(NO_BASH, "packaging/homebrew/libredb-studio.rb.tmpl NEXT_MANUAL_SIG_H
   test("keeps an operator's other value for the server to refuse by name", () => {
     expect(runWrapper({ NEXT_MANUAL_SIG_HANDLE: "1" })).toContain("NEXT_MANUAL_SIG_HANDLE=1\n");
   });
+});
+
+/**
+ * The desktop shell's environment is a fixed contract (`sidecar_env`), so it always sets the variable. No Rust
+ * toolchain runs in this job: the behaviour is held by the Rust test `env_gives_studios_shutdown_handler_the_exit`
+ * in desktop/src-tauri/src/sidecar.rs, which the Flatpak Smoke workflow runs; this case holds the text here.
+ */
+test("the desktop sidecar's environment contract gives Studio's shutdown handler the exit", () => {
+  const source = readFileSync(join(REPO_ROOT, "desktop/src-tauri/src/sidecar.rs"), "utf8");
+  const body = /\npub fn sidecar_env\([^)]*\)[^{]*\{\n([\s\S]*?)\n\}\n/.exec(source)?.[1];
+  expect(body).toBeDefined();
+  expect(body).toContain('("NEXT_MANUAL_SIG_HANDLE".to_string(), "true".to_string())');
+  expect(source).toContain("fn env_gives_studios_shutdown_handler_the_exit()");
 });
