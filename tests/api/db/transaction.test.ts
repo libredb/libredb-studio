@@ -19,7 +19,6 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   TransactionLostError,
   NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
@@ -108,7 +107,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
 }));
 

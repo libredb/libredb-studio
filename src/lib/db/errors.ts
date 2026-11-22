@@ -529,39 +529,3 @@ export function isAuthenticationError(error: unknown): error is AuthenticationEr
 export function isQueryCancelledError(error: unknown): error is QueryCancelledError {
   return error instanceof QueryCancelledError;
 }
-
-// ============================================================================
-// Error Mapping Utilities
-// ============================================================================
-
-/**
- * Check if an error is retryable
- */
-export function isRetryableError(error: unknown): boolean {
-  if (!isDatabaseError(error)) {
-    // Network errors are typically retryable
-    if (error instanceof TypeError && error.message.includes("fetch")) {
-      return true;
-    }
-    return false;
-  }
-
-  // Auth, privilege, config and facet-not-offered errors are not retryable
-  if (
-    error instanceof AuthenticationError ||
-    error instanceof PermissionDeniedError ||
-    error instanceof DatabaseConfigError ||
-    error instanceof FacetNotOfferedError ||
-    error instanceof TransactionLostError
-  ) {
-    return false;
-  }
-
-  // Query syntax errors are not retryable
-  if (error instanceof QueryError && error.position !== undefined) {
-    return false;
-  }
-
-  // Connection and timeout errors may be retryable
-  return true;
-}

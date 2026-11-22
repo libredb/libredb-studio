@@ -17,7 +17,6 @@ import {
   isConnectionError,
   isDatabaseError,
   isQueryError,
-  isRetryableError,
   isTimeoutError,
   PoolExhaustedError,
   QueryCancelledError,
@@ -105,7 +104,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
 }));
 

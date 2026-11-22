@@ -16,7 +16,6 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { SYNTHETIC_ENTITY_CAPABILITIES, SYNTHETIC_PREVIEW } from "../../fixtures/maintenance-entity-operations";
@@ -99,7 +98,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
 }));
 

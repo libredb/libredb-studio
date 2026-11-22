@@ -825,9 +825,7 @@ mock.module("ioredis", () => {
 // ============================================================================
 
 const { RedisProvider } = await import("@/lib/db/providers/keyvalue/redis");
-const { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, isRetryableError } = await import(
-  "@/lib/db/errors"
-);
+const { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } = await import("@/lib/db/errors");
 const { logger } = await import("@/lib/logger");
 
 // ============================================================================
@@ -978,7 +976,6 @@ describe("RedisProvider", () => {
         );
         expect(error).toBeInstanceOf(ConnectionError);
         expect(error.message).toBe("Failed to connect to Redis: Invalid array length. Please report this.");
-        expect(isRetryableError(error)).toBe(true);
         expect(provider.isConnected()).toBe(false);
         expect(openedClients.every((client) => client.disconnected)).toBe(true);
       } finally {
@@ -1046,7 +1043,6 @@ describe("RedisProvider", () => {
         expect(error.message).toBe(
           "Failed to connect to Redis: WRONGPASS invalid username-password pair or user is disabled.",
         );
-        expect(isRetryableError(error)).toBe(false);
         // The driver's error, and with it the AUTH command, is carried nowhere.
         expect(error.message).not.toContain("not-the-password");
         expect(JSON.stringify(error)).not.toContain("not-the-password");
@@ -1066,7 +1062,6 @@ describe("RedisProvider", () => {
         const error = await refusal([networkError("connect ETIMEDOUT", "ETIMEDOUT")]);
         expect(error).toBeInstanceOf(ConnectionError);
         expect(error.message).toBe("Failed to connect to Redis: connect ETIMEDOUT");
-        expect(isRetryableError(error)).toBe(true);
       });
 
       test("no password against a server that requires one is an AuthenticationError", async () => {
@@ -1079,7 +1074,6 @@ describe("RedisProvider", () => {
         const error = await refusal([networkError("connect ECONNREFUSED 127.0.0.1:40009", "ECONNREFUSED")]);
         expect(error).toBeInstanceOf(ConnectionError);
         expect(error.message).toBe("Failed to connect to Redis: connect ECONNREFUSED 127.0.0.1:40009");
-        expect(isRetryableError(error)).toBe(true);
       });
 
       test("an unknown host is a ConnectionError naming the host", async () => {
@@ -1551,7 +1545,6 @@ describe("RedisProvider", () => {
         );
         expect(error).toBeInstanceOf(ConnectionError);
         expect(error.message).toBe("Failed to connect to Redis: Invalid array length. Please report this.");
-        expect(isRetryableError(error)).toBe(true);
         expect(openedClients).toEqual([{ database: 0, disconnected: true }]);
       } finally {
         selectFailure = null;
