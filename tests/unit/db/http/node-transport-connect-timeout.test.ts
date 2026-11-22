@@ -57,7 +57,14 @@ function textTransport(
 ) {
   const origin = httpOrigin(scheme, host, port, ALLOWS_PRIVATE_HOSTS);
   const tls = scheme === "https" ? nodeTlsMaterial({ mode: "verify-system" }, host) : null;
-  const transport = createNodeTransport({ origin, tls, maxSockets, headers: {}, reportsUnreachable });
+  const transport = createNodeTransport({
+    origin,
+    tls,
+    maxSockets,
+    egress: ALLOWS_PRIVATE_HOSTS,
+    headers: {},
+    reportsUnreachable,
+  });
   transports.push(transport);
   return (signal: AbortSignal) =>
     transport.request({ method: "GET", url: endpointUrl(origin, "/"), signal, maxResponseBytes: 1024 });
@@ -150,7 +157,13 @@ describe("a transport that did not ask", () => {
 
   test("the byte transport keeps timeout", async () => {
     const origin = httpOrigin("http", NEVER, 9000, ALLOWS_PRIVATE_HOSTS);
-    const transport = createNodeByteTransport({ origin, tls: null, maxSockets: 2, headers: {} });
+    const transport = createNodeByteTransport({
+      origin,
+      tls: null,
+      maxSockets: 2,
+      egress: ALLOWS_PRIVATE_HOSTS,
+      headers: {},
+    });
     transports.push(transport);
     const error = await failure(() =>
       transport.request({
@@ -170,6 +183,7 @@ describe("a transport that did not ask", () => {
         origin,
         tls: null,
         maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: {},
         reportsUnreachable: "yes" as unknown as boolean,
       }),

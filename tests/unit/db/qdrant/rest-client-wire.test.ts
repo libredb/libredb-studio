@@ -37,6 +37,7 @@ import {
 } from "@/lib/db/providers/vector/qdrant/connection-options";
 import { answerFailure, type QdrantErrorContext, toProviderError } from "@/lib/db/providers/vector/qdrant/errors";
 import { createRestQdrantClient } from "@/lib/db/providers/vector/qdrant/rest-client";
+import type { EgressDecision } from "@/lib/db/types";
 import { type DatabaseConnection, TUNNEL_FAR_END } from "@/lib/types";
 import {
   closeAll,
@@ -51,8 +52,7 @@ import {
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
 import { QDRANT_FIXTURE_ROUTES, QDRANT_SAMPLE_REQUESTS } from "../../../helpers/qdrant-routes";
-import { withEgressFlag } from "../../../helpers/egress-flag";
-import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -86,7 +86,11 @@ afterEach(async () => {
 
 const ok = jsonAnswer(200, '{"result":{"collections":[]},"status":"ok","time":0}');
 
-function options(port: number, overrides: Record<string, unknown> = {}): QdrantConnectionOptions {
+function options(
+  port: number,
+  overrides: Record<string, unknown> = {},
+  egress: EgressDecision = ALLOWS_PRIVATE_HOSTS,
+): QdrantConnectionOptions {
   return buildQdrantConnectionOptions(
     {
       id: "c1",
@@ -98,7 +102,7 @@ function options(port: number, overrides: Record<string, unknown> = {}): QdrantC
       createdAt: new Date(0),
       ...overrides,
     } as unknown as DatabaseConnection,
-    { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS },
+    { executionReadOnly: false, queryTimeout: 30_000, egress },
   );
 }
 
@@ -233,10 +237,9 @@ describe("what reaches the wire (QE2, QE4)", () => {
 
   test("with the egress guard on, a name that resolves to this machine is refused before any socket", async () => {
     const listener = await httpListener(ok);
-    const connection = options(listener.port, { host: "localhost" });
-    const error = await withEgressFlag("true", () =>
-      failure(() => connect(connection).send(request("get_collections"), deadline())),
-    );
+    // A blocking decision, which the connection options carry to the node transport; the variable is not written.
+    const connection = options(listener.port, { host: "localhost" }, BLOCKS_PRIVATE_HOSTS);
+    const error = await failure(() => connect(connection).send(request("get_collections"), deadline()));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect((error as Error).message).toContain("blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS");
     expect(toProviderError(error, context(connection))).toBe(error as Error);

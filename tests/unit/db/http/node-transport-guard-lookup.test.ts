@@ -53,7 +53,7 @@ function connect(scheme: "http" | "https", port: number, maxSockets = 4) {
   const origin = httpOrigin(scheme, "guard.test", port, ALLOWS_PRIVATE_HOSTS);
   const tls =
     scheme === "https" ? nodeTlsMaterial({ mode: "verify-full", caCert: certificates.ca }, "guard.test") : null;
-  const transport = createNodeTransport({ origin, tls, maxSockets, headers: {} });
+  const transport = createNodeTransport({ origin, tls, maxSockets, egress: ALLOWS_PRIVATE_HOSTS, headers: {} });
   transports.push(transport);
   const request = () =>
     transport.request({

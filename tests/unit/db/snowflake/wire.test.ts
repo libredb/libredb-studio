@@ -6,7 +6,8 @@
  * place of the one the Account field gives:
  *
  *   const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
- *   const transport = createSnowflakeTransport({ origin, tls: null, tokens: patTokenSource(PAT) }, snowflakeProductionDeps());
+ *   const egress = ALLOWS_PRIVATE_HOSTS;
+ *   const transport = createSnowflakeTransport({ origin, tls: null, tokens: patTokenSource(PAT), egress }, snowflakeProductionDeps());
  *   const statements = createSnowflakeStatements({ transport, origin, context, queryTimeoutMs, failure, secrets, deps });
  *
  * So the deps seam is not injected: the shared node transports, the clock, `sleep`, `random`, `newId` and `deadline` are
@@ -71,7 +72,7 @@ afterEach(async () => {
 /** The pieces `connect()` composes, on the production deps, aimed at `origin`. */
 function wire(origin: ReturnType<typeof httpOrigin>, queryTimeoutMs = 60_000): Statements {
   const transport = createSnowflakeTransport(
-    { origin, tls: null, tokens: patTokenSource(PAT) },
+    { origin, tls: null, tokens: patTokenSource(PAT), egress: ALLOWS_PRIVATE_HOSTS },
     snowflakeProductionDeps(),
   );
   const statements = createSnowflakeStatements({
@@ -257,7 +258,7 @@ describe("a name that resolves to the instance metadata address", () => {
 
   test("is refused on a status GET before any byte is sent", async () => {
     const transport = createSnowflakeTransport(
-      { origin: origin(), tls: null, tokens: patTokenSource(PAT) },
+      { origin: origin(), tls: null, tokens: patTokenSource(PAT), egress: ALLOWS_PRIVATE_HOSTS },
       snowflakeProductionDeps(),
     );
     try {
@@ -271,7 +272,7 @@ describe("a name that resolves to the instance metadata address", () => {
 
   test("is refused on a partition GET before any byte is sent", async () => {
     const transport = createSnowflakeTransport(
-      { origin: origin(), tls: null, tokens: patTokenSource(PAT) },
+      { origin: origin(), tls: null, tokens: patTokenSource(PAT), egress: ALLOWS_PRIVATE_HOSTS },
       snowflakeProductionDeps(),
     );
     try {

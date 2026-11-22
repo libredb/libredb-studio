@@ -42,6 +42,7 @@ async function call(host: string, listener: Listener, ssl: SSLConfig, identity =
     origin,
     tls: nodeTlsMaterial(ssl, identity),
     maxSockets: 2,
+    egress: ALLOWS_PRIVATE_HOSTS,
     headers: { "api-key": KEY_HEADER },
   });
   transports.push(transport);

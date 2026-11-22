@@ -134,6 +134,7 @@ function harness(overrides: Partial<ReadDependencies> = {}, connection: Partial<
       deadlineSignal: clock.factory,
       queryTimeoutMs,
       lifetime: lifetime.signal,
+      egress: ALLOWS_PRIVATE_HOSTS,
       limiters: { management: rabbitmqManagementLimiter(), bindings: rabbitmqBindingsLimiter() },
     }),
     readLimiter: rabbitmqReadLimiter(),

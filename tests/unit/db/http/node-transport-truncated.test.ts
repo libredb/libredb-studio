@@ -82,7 +82,13 @@ afterAll(async () => {
 
 function send(path: string, extra: Partial<NodeRequest> = {}, at = port) {
   const origin = httpOrigin("http", "127.0.0.1", at, ALLOWS_PRIVATE_HOSTS);
-  const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {} });
+  const transport = createNodeTransport({
+    origin,
+    tls: null,
+    maxSockets: 4,
+    egress: ALLOWS_PRIVATE_HOSTS,
+    headers: {},
+  });
   return transport
     .request({
       method: "GET",

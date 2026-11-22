@@ -174,7 +174,7 @@ async function runCase(deps: ChildDeps, shape: string, bombFile: string, hold: s
   const production = deps.snowflakeProductionDeps();
   const origin = deps.httpOrigin("http", "127.0.0.1", port, deps.allowsPrivateHosts);
   const transport = deps.createSnowflakeTransport(
-    { origin, tls: null, tokens: deps.patTokenSource("stand-in-pat") },
+    { origin, tls: null, tokens: deps.patTokenSource("stand-in-pat"), egress: deps.allowsPrivateHosts },
     production,
   );
   const statements = deps.createSnowflakeStatements({

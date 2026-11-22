@@ -134,6 +134,8 @@ async function runCase(deps: ChildDeps, shape: string): Promise<ChildReport> {
     deadlineSignal: () => new AbortController().signal,
     queryTimeoutMs: 60_000,
     lifetime: lifetime.signal,
+    // Written out, since runCase is stringified into the bundle and may import nothing.
+    egress: { blocksPrivateHosts: false, source: "set" },
     limiters: { management: deps.rabbitmqManagementLimiter(), bindings: deps.rabbitmqBindingsLimiter() },
   });
   const readers = {

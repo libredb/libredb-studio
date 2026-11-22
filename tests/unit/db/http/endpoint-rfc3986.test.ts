@@ -151,7 +151,13 @@ describe("originHost", () => {
   ])("equals the Host the runtime writes for %s", async (host, bind) => {
     const listener = await httpListener(jsonAnswer(200, "{}"), bind);
     const origin = httpOrigin("http", host, listener.port, ALLOWS_PRIVATE_HOSTS);
-    const transport = createNodeTransport({ origin, tls: null, maxSockets: 1, headers: {} });
+    const transport = createNodeTransport({
+      origin,
+      tls: null,
+      maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
+      headers: {},
+    });
     try {
       await transport.request({
         method: "GET",

@@ -23,7 +23,13 @@ afterEach(async () => {
 
 function connect(listener: Listener) {
   const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
-  const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: { authorization: SECRET } });
+  const transport = createNodeTransport({
+    origin,
+    tls: null,
+    maxSockets: 4,
+    egress: ALLOWS_PRIVATE_HOSTS,
+    headers: { authorization: SECRET },
+  });
   transports.push(transport);
   return { transport, url: (path: string, params?: URLSearchParams) => endpointUrl(origin, path, params) };
 }

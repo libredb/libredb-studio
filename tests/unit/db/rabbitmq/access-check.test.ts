@@ -43,6 +43,7 @@ function harness() {
     deadlineSignal: deadlines.factory,
     queryTimeoutMs: 10_000,
     lifetime: new AbortController().signal,
+    egress: ALLOWS_PRIVATE_HOSTS,
     limiters: { management: rabbitmqManagementLimiter(), bindings: rabbitmqBindingsLimiter() },
   });
   const run = () => testConnectionCautions(client, createTrackingProbe(client), deadlines.factory);
