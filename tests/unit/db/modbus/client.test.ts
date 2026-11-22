@@ -170,16 +170,23 @@ describe("one exchange on an open socket", () => {
    */
   test("a device that ends the connection before answering is a ConnectionError, either way", async () => {
     const port = await listener("close");
-    const socket = await dialModbus({ host: "127.0.0.1", port, egress: ALLOWS_PRIVATE_HOSTS }).catch(() => undefined);
-    if (socket === undefined) return;
-    const error = await exchangeOnce(socket, request(), {
-      expect: EXPECT,
-      timeoutMs: 500,
-      endpoint: { host: "127.0.0.1", port },
-    }).catch((e: unknown) => e);
+    // "Either way" is the race between the device's close and the dial: the close usually lands
+    // after the connect, so the exchange sees it, and under load it can land during the dial as a
+    // reset. Both are the device ending the connection. A dial refused for any other reason, the
+    // egress guard's DatabaseConfigError above all, is not, so it fails here instead of returning.
+    const error = await dialModbus({ host: "127.0.0.1", port, egress: ALLOWS_PRIVATE_HOSTS }).then(
+      (socket) =>
+        exchangeOnce(socket, request(), {
+          expect: EXPECT,
+          timeoutMs: 500,
+          endpoint: { host: "127.0.0.1", port },
+        }).catch((e: unknown) => e),
+      (e: unknown) => e,
+    );
     // The endpoint rides in the error's own fields rather than in its sentence, which is where a
-    // reader can use it. Asserting the message would have been asserting the wrong place.
+    // reader can use it. The sentence is asserted only for which side ended the connection.
     expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as ConnectionError).message).toMatch(/closed the connection before answering|ECONNRESET|EPIPE/);
     expect((error as ConnectionError).host).toBe("127.0.0.1");
     expect((error as ConnectionError).port).toBe(port);
   });
