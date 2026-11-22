@@ -278,8 +278,8 @@ skipping that check reports a failed statement as "0 rows".
 ### 3.6 `SELECT *` nests documents, so generated queries project the key explicitly
 
 `SELECT * FROM hotel` yields `[{ "hotel": { ... } }]` — the document is nested under the keyspace
-name, and the key is not part of the result at all. Generated queries therefore alias the keyspace
-and project the key ([`generators.ts`](../../src/lib/db/providers/document/couchbase/generators.ts), its row of `SQL_ENGINE_GENERATORS`):
+name, and the key is not part of the result at all.
+Generated queries therefore alias the keyspace and project the key ([`generators.ts`](../../src/lib/db/providers/document/couchbase/generators.ts), its row of `SQL_ENGINE_GENERATORS`):
 
 ```sql
 SELECT META(d).id AS __id, d.* FROM `travel`.`inventory`.`hotel` AS d;

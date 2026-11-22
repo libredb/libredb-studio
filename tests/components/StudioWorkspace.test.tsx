@@ -1212,6 +1212,13 @@ describe("StudioWorkspace", () => {
     expect(capturedQueryToolbarProps.onToggleEditing).toBeUndefined();
   });
 
+  test("hands the active connection's type to the import dialog", () => {
+    connAdapterOverride = { activeConnection: { ...dbConn, type: "mysql" as const } };
+    renderWorkspace();
+    act(() => (capturedQueryToolbarProps.onImport as () => void)());
+    expect(capturedDataImportModalProps.databaseType).toBe("mysql");
+  });
+
   test("toolbar onImport opens the import modal which delegates and closes", async () => {
     const { queryByTestId } = renderWorkspace();
     expect(queryByTestId("dataimportmodal")).toBeNull();
