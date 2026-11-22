@@ -646,7 +646,7 @@ describe("readStatisticsForGrounding", () => {
     const labelOf = async (h: Harness): Promise<string | undefined> => {
       const outcome = await readStatisticsForGrounding(h.context, "estimates");
       if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
-      return /\u2014 (.+), \d+ row\(s\); operation /.exec(outcome.modelText)?.[1];
+      return /CONTENT: (.+), \d+ row\(s\); relayed by /.exec(outcome.modelText)?.[1];
     };
     const operations = harness("mssql", answerMssql);
     const readOnly = harness("mssql", answerMssql, "agent", "sql");
@@ -664,7 +664,7 @@ describe("readStatisticsForGrounding", () => {
     const labelOf = async (h: Harness): Promise<string | undefined> => {
       const outcome = await readStatisticsForGrounding(h.context, "availability");
       if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
-      return /\u2014 (.+), \d+ row\(s\); operation /.exec(outcome.modelText)?.[1];
+      return /CONTENT: (.+), \d+ row\(s\); relayed by /.exec(outcome.modelText)?.[1];
     };
     const operations = harness("libsql", answerSqlite(true));
     const readOnly = harness("libsql", answerSqlite(true), "agent", "sql");
@@ -720,6 +720,16 @@ async function statisticsOf(h: Harness): Promise<AgentSchemaStatistics> {
 }
 
 describe("packSchemaStatistics", () => {
+  test("the statistics block is fenced naming the provider of the connection that read them", async () => {
+    const statistics = await statisticsOf(harness("mssql", answerMssql));
+
+    const packed = packSchemaStatistics(TABLES, statistics);
+
+    expect(packed).toContain(
+      "[UNTRUSTED DATABASE CONTENT: estimated table statistics; relayed by the SQL Server provider, bundled with Studio; operation agent/schema-stats; reference mssql engine estimates]",
+    );
+  });
+
   test("lists a table the engine holds no statistics for AS holding none", async () => {
     const statistics = await statisticsOf(harness("postgres", answerPostgres));
 

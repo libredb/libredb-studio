@@ -50,6 +50,7 @@ import { addressableObjects } from "./inventory-objects";
 import { engineServerDialect } from "./languages/engines/server";
 import { fenceUntrustedContent } from "./untrusted-content";
 import type { AgentInventory } from "./types";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import type { DatabaseType } from "@/lib/types";
 
 /** Why a run has no statistics. All four are states the run continues from. */
@@ -330,6 +331,8 @@ export function packSchemaStatistics(
     label: "estimated table statistics",
     operationId: "agent/schema-stats",
     reference: `${statistics.dialect} engine estimates`,
+    // The statistics were read through the run's connection, whose type `dialect` is.
+    relayedBy: providerAuthor(statistics.dialect),
   };
 
   const close = (body: string, omitted: number): string =>

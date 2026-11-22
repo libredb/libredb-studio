@@ -34,6 +34,7 @@ import {
 import { draftedStatement, profileTable } from "@/lib/agent/investigation";
 import { UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
@@ -913,6 +914,26 @@ describe("profile_table on mongo", () => {
     expect(profiled?.kind === "table-profiled" && profiled.artifact.operationId).toBe("mongo.table.profile");
   });
 
+  test("a profiled collection's name and findings are fenced naming the MongoDB provider", async () => {
+    const h = harness(undefined, async () => ({
+      rows: [{ row_count: 40, present_0: 10, present_1: 40, present_2: 40 }],
+      fields: ["row_count", "present_0", "present_1", "present_2"],
+      rowCount: 1,
+      executionTime: 3,
+    }));
+    const { service } = serviceOver(snapshotOf([orders], ["app"]));
+
+    const result = await profileTable(service, h.context, { input: { table: "orders" } }, new Set());
+
+    const text = result.kind === "answered" ? result.text : "";
+    expect(text).toContain(
+      "[UNTRUSTED DATABASE CONTENT: profiled collection name; relayed by the MongoDB provider, bundled with Studio; operation mongo.table.profile;",
+    );
+    expect(text).toContain(
+      "profile finding(s); relayed by the MongoDB provider, bundled with Studio; operation mongo.table.profile; reference server-derived]",
+    );
+  });
+
   test("a finding is fenced under the mongo profile's operation, the one its read ran under", async () => {
     // 30 of 40 documents carry no customer, which crosses the high-null threshold.
     const h = harness(undefined, async () => ({
@@ -927,7 +948,9 @@ describe("profile_table on mongo", () => {
 
     const text = result.kind === "answered" ? result.text : "";
     expect(text).toContain("high_null");
-    expect(text).toContain("profile finding(s); operation mongo.table.profile; reference server-derived");
+    expect(text).toContain(
+      `profile finding(s); relayed by the ${providerAuthor("mongodb")}; operation mongo.table.profile; reference server-derived`,
+    );
     expect(text).not.toContain("operation sql.table.profile");
   });
 
@@ -1109,6 +1132,24 @@ describe("recommend_change on mongo", () => {
     const events = [captured(snapshot), ...drafted("s1", outcome.artifact, JSON.stringify(command))];
     return { h, events, plan: outcome.artifact.correlationId };
   }
+
+  test("a document-index recommendation fences its collection naming the MongoDB provider", async () => {
+    const { h, events, plan } = await runHoldingAPlan();
+    const outcome = recommendChangeTool(
+      h.context,
+      { runId: "run-1", events },
+      {
+        change: "document-index",
+        collection: "orders",
+        keys: { customer: 1 },
+        evidence: [{ source: "artifact", correlationId: plan }],
+      },
+    );
+    if (outcome.kind !== "recommended") throw new Error(`expected a card, got ${outcome.reasonCode}`);
+    expect(outcome.modelText).toContain(
+      "[UNTRUSTED DATABASE CONTENT: indexed collection name; relayed by the MongoDB provider, bundled with Studio; operation mongo.plan.estimate; reference recommendation]",
+    );
+  });
 
   test("an index citing the plan it would change is a document-index card, in the database the run read", async () => {
     const { h, events, plan } = await runHoldingAPlan();

@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { captureContextSnapshot, packContextForTask, packOperationsInventory } from "@/lib/agent/context-snapshot";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -18,6 +19,9 @@ import { fakeCluster } from "../../../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../../helpers/kubernetes-markers";
 import { jsonAnswer, recordingKubernetesTransport, testSeams } from "../../../helpers/kubernetes-transport";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("kubernetes");
 
 /**
  * No value, label, annotation, env value, Secret name, ConfigMap key or Secret key of a Kubernetes cluster reaches a
@@ -184,8 +188,9 @@ beforeAll(async () => {
     "the task packer": packContextForTask(
       snapshot,
       `Which deployments run in shop, and is there a ${UNREAD_NAMESPACE}?`,
+      RELAYED_BY,
     ),
-    "the operations packer": packOperationsInventory(snapshot),
+    "the operations packer": packOperationsInventory(snapshot, RELAYED_BY),
   };
 });
 

@@ -34,6 +34,8 @@ export function fenceForPrompt(content: string, surface: AiSurface): string {
     label: SURFACE_LABEL[surface],
     operationId: `ai.${surface}`,
     reference: surface,
+    // The browser sent this context; no provider relayed it to the server on this request.
+    relayedBy: null,
   });
 }
 

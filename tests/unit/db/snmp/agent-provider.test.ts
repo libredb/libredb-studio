@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { fenceUntrustedContent, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { SNMP_PROVIDER_SENTENCES as S, SnmpProvider } from "@/lib/db/providers/network/snmp";
 import { SNMP_AGENT_FAILURE_SENTENCES as F, SnmpAgentError } from "@/lib/db/providers/network/snmp/agent-read";
 import {
@@ -138,6 +139,7 @@ describe("every request is pinned in full", () => {
       label: "result",
       operationId: "snmpget.query.read",
       reference: "r1",
+      relayedBy: providerAuthor("snmp"),
     });
     expect(fenced.split(UNTRUSTED_CONTENT_END)).toHaveLength(2);
     expect(fenced.endsWith(UNTRUSTED_CONTENT_END)).toBe(true);

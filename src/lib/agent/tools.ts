@@ -1994,6 +1994,7 @@ export async function runAuditedAgentCall(
                 label: "database error",
                 operationId: call.operationId,
                 reference: fingerprint,
+                relayedBy: providerAuthor(context.connection.type),
               }),
         // EVERY model, unlike the worked examples three tools below. Those are a whole call built
         // from the run's own ledger and long enough to crowd a small model's turn, so they stay
@@ -2056,6 +2057,7 @@ export async function runAuditedAgentCall(
           label: `${call.label ?? "result"} warnings`,
           operationId: artifact.operationId,
           reference: artifact.correlationId,
+          relayedBy: providerAuthor(context.connection.type),
         })}`;
   return {
     kind: "completed",
@@ -2070,6 +2072,7 @@ export async function runAuditedAgentCall(
       label: `${call.label ?? "result"}, ${result.rowCount} row(s)`,
       operationId: artifact.operationId,
       reference: artifact.correlationId,
+      relayedBy: providerAuthor(context.connection.type),
     })}${warned}`,
   };
 }
@@ -4030,8 +4033,9 @@ export async function profileTableTool(
         label: "profiled table name",
         operationId: "sql.table.profile",
         reference: outcome.artifact.correlationId,
+        relayedBy: providerAuthor(context.connection.type),
       }),
-      describeFindings(findings, "sql.table.profile"),
+      describeFindings(findings, "sql.table.profile", providerAuthor(context.connection.type)),
     ].join(" "),
   };
 }
@@ -4150,7 +4154,7 @@ export function recommendChangeTool(
       unverifiableCitation(run.events, [{ evidence: parsed.value.evidence }]),
     );
   }
-  return card.record(run.events, parsed.value);
+  return card.record(run.events, parsed.value, providerAuthor(context.connection.type));
 }
 
 /**
@@ -4502,8 +4506,11 @@ function isNumericColumn(rows: readonly Record<string, unknown>[], column: strin
   return numeric > values.length * 0.8;
 }
 
-/** The column-name refusal, listing the real names — engine text, so fenced. */
-function chartColumnRefusal(artifact: AgentArtifactReference): AgentAnswerOutcome & { kind: "unavailable" } {
+/** The column-name refusal, listing the real names — engine text, so fenced naming the provider that relayed them. */
+function chartColumnRefusal(
+  artifact: AgentArtifactReference,
+  relayedBy: string,
+): AgentAnswerOutcome & { kind: "unavailable" } {
   const names = artifact.summary.columnNames;
   return {
     kind: "unavailable",
@@ -4512,6 +4519,7 @@ function chartColumnRefusal(artifact: AgentArtifactReference): AgentAnswerOutcom
       label: `the ${names.length} column name(s) of result ${artifact.correlationId}`,
       operationId: artifact.operationId,
       reference: artifact.correlationId,
+      relayedBy,
     })}`,
   };
 }
@@ -4534,7 +4542,9 @@ function refuseChartSpec(
 ): (AgentAnswerOutcome & { kind: "unavailable" }) | null {
   const columns = new Set(artifact.summary.columnNames);
   const named = [spec.x, ...spec.y];
-  if (named.some((column) => !columns.has(column))) return chartColumnRefusal(artifact);
+  if (named.some((column) => !columns.has(column))) {
+    return chartColumnRefusal(artifact, providerAuthor(context.connection.type));
+  }
   if (artifact.summary.rowCount < 2) return unavailable("CHART_TOO_FEW_ROWS");
   if (spec.type === "pie" && spec.y.length !== 1) return unavailable("CHART_SHAPE_MISMATCH");
 

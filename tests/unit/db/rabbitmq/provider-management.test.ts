@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { captureContextSnapshot, packContextForTask } from "@/lib/agent/context-snapshot";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -49,6 +50,9 @@ import {
   segment,
 } from "../../../helpers/rabbitmq-management-stub";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("rabbitmq");
 
 /** The test connection's password, built at run time by the helper; no sentence may carry it. */
 const TEST_PASSWORD = rabbitmqConnection().password as string;
@@ -387,7 +391,7 @@ describe("machine surfaces", () => {
     const { provider: p } = await connected({ vhosts: { "/": { streams: [name] } } }, connection);
     const capture = await captureContextSnapshot(agentContext(p, connection));
     if (capture.kind !== "captured") throw new Error("expected a capture");
-    const text = packContextForTask(capture.snapshot, "list the streams");
+    const text = packContextForTask(capture.snapshot, "list the streams", RELAYED_BY);
     const begin = text.indexOf(UNTRUSTED_CONTENT_BEGIN);
     const end = text.lastIndexOf(UNTRUSTED_CONTENT_END);
     expect(begin).toBeGreaterThanOrEqual(0);
@@ -412,7 +416,7 @@ describe("machine surfaces", () => {
     for (const stream of streams) {
       expect(stream.columns?.map((column) => column.name)).toEqual(["offset", "body_bytes"]);
     }
-    const text = packContextForTask(capture.snapshot, "how many messages does st-orders hold");
+    const text = packContextForTask(capture.snapshot, "how many messages does st-orders hold", RELAYED_BY);
     for (const cell of ["payload", "routing_key", "headers", "properties", "payload_encoding"]) {
       expect(text).not.toContain(cell);
     }

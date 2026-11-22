@@ -34,6 +34,7 @@ import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { captureContextSnapshot, fingerprintInventory, packContextForTask } from "@/lib/agent/context-snapshot";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -62,6 +63,9 @@ import {
   type SparkCaptureEntry,
   type SparkCaptureName,
 } from "../../live/spark-evidence-plan";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("spark");
 
 function entry(name: SparkCaptureName): SparkCaptureEntry {
   const found = SPARK_CAPTURE_CATALOG.find((candidate) => candidate.name === name);
@@ -406,7 +410,7 @@ for (const version of ["4.2.0", "4.1.3"] as const) {
         if (capture.kind !== "captured") throw new Error(`expected a capture, got ${capture.kind}`);
         // The run is told which catalog was not read, in Spark's words.
         expect(
-          packContextForTask(capture.snapshot, "which tables hold orders")
+          packContextForTask(capture.snapshot, "which tables hold orders", RELAYED_BY)
             .split("\n")
             .filter((line) => line.includes("was not read")),
         ).toStrictEqual([

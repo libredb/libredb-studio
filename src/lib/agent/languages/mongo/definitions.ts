@@ -203,7 +203,7 @@ export const MONGO_DOCUMENT_INDEX_CARD = Object.freeze<
   AgentRecommendationCard<z.infer<typeof mongoIndexRecommendationSchema>>
 >({
   inputSchema: mongoIndexRecommendationSchema,
-  record(events, card) {
+  record(events, card, relayedBy) {
     const { collection, database } = documentIndexTarget(events, card.collection);
     if (indexExists(events, collection, database, Object.keys(card.keys))) return unavailable("INDEX_ALREADY_EXISTS");
     return {
@@ -218,7 +218,7 @@ export const MONGO_DOCUMENT_INDEX_CARD = Object.freeze<
         // Carried by the schema's `.min(1)`, as on the statement card.
         evidence: card.evidence as [AgentEvidenceReference, ...AgentEvidenceReference[]],
       },
-      modelText: `Recommendation recorded: one index, offered to the user and not created. It is theirs to apply, in their own tool. ${fenceUntrustedContent(`collection: ${collection}`, { label: "indexed collection name", operationId: "mongo.plan.estimate", reference: "recommendation" })}`,
+      modelText: `Recommendation recorded: one index, offered to the user and not created. It is theirs to apply, in their own tool. ${fenceUntrustedContent(`collection: ${collection}`, { label: "indexed collection name", operationId: "mongo.plan.estimate", reference: "recommendation", relayedBy })}`,
     };
   },
 });

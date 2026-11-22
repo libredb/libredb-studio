@@ -6,6 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { captureContextSnapshot, packContextForTask } from "@/lib/agent/context-snapshot";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { languageServerPack } from "@/lib/agent/languages/server";
@@ -22,6 +23,9 @@ import type { ProviderExecutionContext, QueryResult } from "@/lib/db/types";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
 import { firestoreConnection, googleServer, requestsOf, wire } from "../../../helpers/firestore-provider";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("firestore");
 
 const MARKER = "marker-field-value";
 
@@ -103,7 +107,7 @@ describe("grounding on Firestore", () => {
       "listCollectionIds",
     ]);
     expect(allowance.spent()).toBe(3);
-    const packed = packContextForTask(capture.snapshot, "how many users are there");
+    const packed = packContextForTask(capture.snapshot, "how many users are there", RELAYED_BY);
     expect(packed).not.toContain(MARKER);
   });
 
