@@ -21,7 +21,9 @@
  * previous version wrote are re-sealed as version 2 after a backup of every store table in `studio`;
  * a rewrite that throws part way and a run terminated while it waits for the lock leave the store as
  * it was; two runs at once serialize, one re-sealing and one finding nothing to do; and the documented
- * restore SQL brings the version 1 rows back, which a fresh provider opens again.
+ * restore SQL brings every table back as the backup holds it, an account created after the re-seal
+ * removed, with the version 1 rows a fresh provider opens again. Before the re-seal, six replicas
+ * initialize at once on a store without storage_meta, which all must survive.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in
  * `tests/runner/discover.ts`). CI runs it in the "Functional Smoke (PostgreSQL, RabbitMQ)" job of
@@ -347,6 +349,24 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
   } finally {
     await raw.close();
   }
+  // Replicas of this version starting together on a store an older version created: storage_meta is the one table
+  // missing, and initialize's advisory lock lets every one of them create or find it.
+  for (let round = 0; round < 5; round++) {
+    // oxlint-disable-next-line no-await-in-loop -- one round at a time, each from a store without storage_meta.
+    await asSuperuser(superuser, (client) => client.query(`DROP TABLE ${SCHEMA}.storage_meta`));
+    const replicas = Array.from({ length: 6 }, () => new PostgresStorageProvider(url));
+    // oxlint-disable-next-line no-await-in-loop -- the six initialize at once within a round.
+    const outcomes = await Promise.allSettled(replicas.map((replica) => replica.initialize()));
+    // oxlint-disable-next-line no-await-in-loop -- each round closes its replicas before the next one.
+    await Promise.all(replicas.map((replica) => replica.close()));
+    const failed = outcomes.filter((outcome) => outcome.status === "rejected") as PromiseRejectedResult[];
+    check(
+      failed.length === 0,
+      `six replicas initializing at once should all succeed, ${failed.length} failed: ${failed.map((outcome) => String(outcome.reason)).join("; ")}`,
+    );
+  }
+  console.log("ok   six replicas initializing at once on a store without storage_meta all succeed, in five rounds");
+
   const original = await storeState(superuser);
   check(
     original.backups.length === 0 && original.marker.length === 0,
@@ -471,20 +491,49 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
     `ok   two re-seals at once serialize: one re-seals after a backup of all ${TABLES.length} tables in ${SCHEMA}, one finds nothing to do`,
   );
 
-  // The documented restore (docs/STORAGE.md, "Downgrading"), as the role that owns the tables.
+  // An account created after the re-seal, which the restore must take away with every other later change.
+  const later = await sealingProvider(url);
+  try {
+    await later.insertAccount({
+      email: "after-reseal@example.com",
+      passwordHash: "scrypt$check",
+      role: "user",
+      totpSecret: randomUUID(),
+      totpPending: null,
+      disabled: false,
+      sessionVersion: 0,
+      createdAt: "t",
+      updatedAt: "t",
+    });
+  } finally {
+    await later.close();
+  }
+
+  // The documented restore (docs/STORAGE.md, "Downgrading"), as the role that owns the tables: every store table from
+  // its backup, children emptied before parents and parents filled before children.
   const backupOfRows = backups.find((row) => row.table_name.startsWith("user_storage_pre_reseal_"));
   check(backupOfRows !== undefined, "no backup of user_storage was written");
   const stamp = backupOfRows!.table_name.slice("user_storage_".length);
+  const order = [
+    "storage_meta",
+    "user_storage",
+    "accounts",
+    "passkey_users",
+    "passkey_credentials",
+    "passkey_spent_challenges",
+  ];
   const restorer = new Client({ connectionString: url });
   await restorer.connect();
   try {
     await restorer.query("BEGIN");
-    await restorer.query(`DELETE FROM ${SCHEMA}.user_storage`);
-    await restorer.query(`INSERT INTO ${SCHEMA}.user_storage SELECT * FROM ${SCHEMA}.user_storage_${stamp}`);
-    await restorer.query(
-      `UPDATE ${SCHEMA}.accounts AS a SET totp_secret = b.totp_secret, totp_pending = b.totp_pending FROM ${SCHEMA}.accounts_${stamp} AS b WHERE a.email = b.email`,
-    );
-    await restorer.query(`DELETE FROM ${SCHEMA}.storage_meta WHERE key = 'credential_envelope'`);
+    for (const table of [...order].reverse()) {
+      // oxlint-disable-next-line no-await-in-loop -- one statement at a time inside the restore transaction.
+      await restorer.query(`DELETE FROM ${SCHEMA}.${table}`);
+    }
+    for (const table of order) {
+      // oxlint-disable-next-line no-await-in-loop -- one statement at a time inside the restore transaction.
+      await restorer.query(`INSERT INTO ${SCHEMA}.${table} SELECT * FROM ${SCHEMA}.${table}_${stamp}`);
+    }
     await restorer.query("COMMIT");
   } finally {
     await restorer.end();
@@ -493,7 +542,7 @@ async function exerciseReseal(url: string, superuser: string): Promise<void> {
   check(JSON.stringify(restored.rows) === JSON.stringify(original.rows), "the restore did not bring the rows back");
   check(
     JSON.stringify(restored.factors) === JSON.stringify(original.factors),
-    "the restore did not bring the factors back",
+    "the restore did not bring the accounts and their factors back as they were",
   );
   check(restored.marker.length === 0, "the restore did not clear the marker");
   const fresh = await sealingProvider(url);

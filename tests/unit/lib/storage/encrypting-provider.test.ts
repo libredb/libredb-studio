@@ -404,6 +404,45 @@ describe("the binding through the decorator", () => {
 });
 
 describe("the warning", () => {
+  test("gives the cause and the remedy of each reason present: retired, mixed, not-text and unbindable", async () => {
+    const store = new MemoryStorageProvider();
+    store.marker = "v2";
+    let deep: unknown = "x";
+    for (let level = 0; level < 100; level++) deep = { inner: deep };
+    const envelope = sealedFor("u", connection, randomUUID());
+    store.putRow(
+      "u",
+      "connections",
+      JSON.stringify([
+        null,
+        { ...connection, password: envelope, connectionString: randomUUID(), apiKeyId: 7 },
+        { ...connection, id: "c2", host: deep, password: randomUUID() },
+        { ...connection, id: "c3", password: sealVersionOne(randomUUID()) },
+      ]),
+    );
+    const provider = await ready(store);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const data = await provider.getAllData("u");
+
+      expect(data.connections?.[0]).toBeNull();
+      const calls = ownWarnings(warn);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain(
+        "c1 apiKeyId (not-text), c1 connectionString (mixed), c2 password (unbindable), c3 password (retired)",
+      );
+      expect(calls[0]).toContain(
+        "deleting the store's storage_meta row credential_envelope with every server stopped and re-sealing under the key that sealed it",
+      );
+      expect(calls[0]).toContain("A value marked mixed is a version 1 or unsealed value");
+      expect(calls[0]).toContain("A value marked not-text is a number, a boolean, a list or an object");
+      expect(calls[0]).toContain("A value marked unbindable belongs to a connection");
+      expect(calls[0]).not.toContain("BEFORE the app writes again");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   test("names each loss and the recovery action exactly once per read", async () => {
     const sealed = sealedFor("u", connection, randomUUID());
     const inner = stubProvider({

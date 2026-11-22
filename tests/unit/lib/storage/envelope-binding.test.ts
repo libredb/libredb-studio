@@ -7,7 +7,14 @@
  */
 import { describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
-import { accountBinding, bindingAad, connectionBinding, type EnvelopeBinding } from "@/lib/storage/envelope-binding";
+import {
+  accountBinding,
+  bindingAad,
+  connectionBinding,
+  connectionBindingProblem,
+  type EnvelopeBinding,
+  MAX_BINDING_DEPTH,
+} from "@/lib/storage/envelope-binding";
 import {
   CONNECTION_FIELDS,
   type FieldClass,
@@ -169,5 +176,38 @@ describe("the binding of a version 2 envelope", () => {
     const outsideBinding: EnvelopeBinding = { aad: new Uint8Array([1]) };
 
     expect(outsideBinding).toBeDefined();
+  });
+
+  test("a binding the module did not build is refused at run time, a type assertion and an empty one included", () => {
+    const refusal = "A binding not built by connectionBinding or accountBinding was passed to a seal or an open.";
+    for (const outsideBinding of [
+      { aad: new Uint8Array(0) } as unknown as EnvelopeBinding,
+      { ...connectionBinding("alice", connection()).field("password") },
+    ]) {
+      expect(() => bindingAad(outsideBinding)).toThrow(refusal);
+    }
+    expect(bindingAad(accountBinding("ada@example.com").field("totpSecret")).length).toBeGreaterThan(0);
+  });
+
+  test("a connection whose id or identity fields nest deeper than the limit has no binding, and says so by name", () => {
+    const nested = (depth: number): unknown => {
+      let value: unknown = "x";
+      for (let level = 0; level < depth; level++) value = level % 2 === 0 ? [value] : { inner: value };
+      return value;
+    };
+    const problem = `The connection's id or identity fields nest deeper than ${MAX_BINDING_DEPTH} levels, which no connection does, so it has no binding.`;
+
+    // Far deeper than the limit, which the check must name without building the binding.
+    for (const deep of [
+      connection({ host: nested(3000) }),
+      connection({ id: nested(3000) }),
+      connection({ ssl: { caCert: nested(MAX_BINDING_DEPTH) } }),
+    ]) {
+      expect(connectionBindingProblem(deep)).toBe(problem);
+      expect(() => connectionBinding("alice", deep)).toThrow(problem);
+    }
+    const deepest = connection({ host: nested(MAX_BINDING_DEPTH - 1), ssl: { caCert: nested(MAX_BINDING_DEPTH - 2) } });
+    expect(connectionBindingProblem(deepest)).toBeNull();
+    expect(bindingAad(connectionBinding("alice", deepest).field("password")).length).toBeGreaterThan(0);
   });
 });

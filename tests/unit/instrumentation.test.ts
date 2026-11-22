@@ -515,10 +515,46 @@ describe("instrumentation register()", () => {
     }
 
     expect(exitCalls).toEqual([1]);
-    expect(banner).toContain("the credential re-seal failed");
+    expect(banner).toContain("the credential re-seal did not complete");
     expect(noSampleStarted()).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(output).not.toContain("Star the project");
+  });
+
+  test("the credential re-seal runs after the auth bootstrap and the preflights, so a refused boot never touched the store", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    process.env.STORAGE_PROVIDER = "sqlite";
+    process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "yes";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    let banner = "";
+    try {
+      await register();
+      banner = errorSpy.mock.calls.flat().join("\n");
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      warn.mockRestore();
+      info.mockRestore();
+      await closeStorageProvider();
+    }
+
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("DB_HTTP_BLOCK_PRIVATE_HOSTS is invalid");
+    expect(banner).not.toContain("credential re-seal");
+    // Neither the store nor a backup of it was created: the re-seal never ran.
+    expect(fs.readdirSync(tmpDir).filter((name) => name.startsWith("libredb-storage.db"))).toEqual([]);
   });
 
   /** Boots with both samples disabled and answers the egress decision lines logged, in order. */

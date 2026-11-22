@@ -95,7 +95,7 @@ describe("a sealed credential opens only where it was stored", () => {
   });
 
   /** The stored list of `owner`, edited by `edit` and written back with raw SQL. */
-  function editRow(owner: string, edit: (list: Record<string, Record<string, unknown>>[]) => void): void {
+  function editRow(owner: string, edit: (list: Record<string, unknown>[]) => void): void {
     const db = new Database(path);
     try {
       const row = db
@@ -194,6 +194,26 @@ describe("a sealed credential opens only where it was stored", () => {
     expect("password" in list[0]).toBe(false);
     expect(JSON.stringify(list)).not.toContain(secret.c1);
     expect(warnings).toEqual([expect.stringContaining("c1 password (unopenable)")]);
+  });
+
+  test("an unsealed or non-text value beside a v2 value of its record is never handed back", async () => {
+    const unsealedValue = randomUUID();
+    await provider.setCollection("alice", "connections", [record("c1", { password: secret.c1 })]);
+    editRow("alice", (list) => {
+      list[0].connectionString = unsealedValue;
+    });
+    const asText = await read("alice");
+    expect(asText.list[0].password).toBe(secret.c1);
+    expect("connectionString" in asText.list[0]).toBe(false);
+    expect(asText.warnings).toEqual([expect.stringContaining("c1 connectionString (mixed)")]);
+
+    editRow("alice", (list) => {
+      list[0].connectionString = [unsealedValue];
+    });
+    const asList = await read("alice");
+    expect("connectionString" in asList.list[0]).toBe(false);
+    expect(JSON.stringify(asList.list)).not.toContain(unsealedValue);
+    expect(asList.warnings).toEqual([expect.stringContaining("c1 connectionString (not-text)")]);
   });
 
   test("a value with one ciphertext bit flipped does not open", async () => {
@@ -312,7 +332,7 @@ describe("no seal or open site bypasses the binding", () => {
     expect(carriers).toEqual(["src/lib/storage/encryption.ts"]);
   }, 60_000);
 
-  test("encryption.ts exports exactly the version, the binding-taking seal and opens, the key reset and its messages", () => {
+  test("encryption.ts exports exactly the version, the binding-taking seal and opens, the read rule, the key check and reset, and its messages", () => {
     expect(Object.keys(encryption).sort()).toEqual(
       [
         "ENVELOPE_VERSION",
@@ -320,8 +340,10 @@ describe("no seal or open site bypasses the binding", () => {
         "STORAGE_ENCRYPTION_KEY_TOO_SHORT_MESSAGE",
         "openSecret",
         "readStoredSecret",
+        "requireStorageEncryptionKey",
         "resetStorageEncryptionKey",
         "sealSecret",
+        "storedSecretRead",
       ].sort(),
     );
   });

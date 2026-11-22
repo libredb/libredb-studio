@@ -3476,8 +3476,8 @@ describe("acquireExecutionProfileProvider", () => {
   });
 
   test("denies when the agent credential is configured but unresolvable (fail closed)", async () => {
-    // "v9:a:b" carries an envelope version tag this build does not recognise —
-    // readSecret classifies it undecryptable, never plaintext.
+    // "v9:a:b" is shaped like a storage envelope (isEnvelopeClaim), so the factory refuses it
+    // without opening it, and never uses it as a plaintext password.
     const conn = pgConn({ id: "pg-bad-cred", agentUser: "agent_ro", agentPassword: "v9:a:b" });
 
     const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
@@ -3488,8 +3488,9 @@ describe("acquireExecutionProfileProvider", () => {
   });
 
   /**
-   * A seed delivers its agent credential as plaintext once resolved, never sealed, and the factory reads it through
-   * readSecret as it reads a stored one. Projected from a seed, so the test fails if the projection drops a field.
+   * A seed delivers its agent credential as plaintext once resolved, never sealed, and the factory uses a value that is
+   * not shaped like an envelope as written (an envelope-shaped one is refused unopened, isEnvelopeClaim). Projected from
+   * a seed, so the test fails if the projection drops a field.
    */
   test("opens every profile of a seed connection under its resolved agent credential, and one without under its own", async () => {
     const seed = {

@@ -67,6 +67,11 @@ const STORE_TABLES = [
 
 /** A backup label becomes part of a table name, so it is held to letters, digits and dashes. */
 const BACKUP_LABEL = /^[A-Za-z0-9-]+$/;
+/**
+ * The key of the transaction-scoped advisory lock initialize takes around its table DDL: a fixed number, the bytes of
+ * "LibreDBS" read as a signed 64-bit integer, so it names this lock and nothing else in the database.
+ */
+const STORAGE_SCHEMA_LOCK = "5506040262901908051";
 
 // PostgreSQL SQLSTATE insufficient_privilege.
 const INSUFFICIENT_PRIVILEGE = "42501";
@@ -159,8 +164,13 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         }
       }
       // Create table. storage_meta records facts about the store itself, such as its credential
-      // envelope state.
+      // envelope state. The advisory lock comes first: PostgreSQL lets only one of several sessions
+      // running CREATE TABLE IF NOT EXISTS for a missing table at once create it, and the others fail
+      // on a unique index of pg_type, so replicas starting together would fail their first request.
+      // One query string runs as one implicit transaction, which holds the lock until every table is
+      // committed; the next replica then finds them all.
       await this.pool.query(`
+        SELECT pg_advisory_xact_lock(${STORAGE_SCHEMA_LOCK});
         CREATE TABLE IF NOT EXISTS ${this.tables.storageMeta} (
           key        TEXT PRIMARY KEY,
           value      TEXT NOT NULL,
@@ -578,8 +588,10 @@ export class PostgresStorageProvider implements ServerStorageProvider {
    * table, `CREATE TABLE <table>_<label> AS TABLE <table>` in the store's own schema, inside the
    * same transaction, so it is durable with the data and needs no file system; the label's dashes
    * become underscores and its letters lower case. Only the data and factor columns change: an
-   * account write that read its row before the re-seal still applies after it. Any error, a lost
-   * connection included, rolls back the backup tables, the rows and the marker alike.
+   * account write that read its row before the re-seal still applies after it. Any error before
+   * COMMIT, a lost connection included, rolls back the backup tables, the rows and the marker
+   * alike. A connection lost during COMMIT itself can lose only the answer to a commit that
+   * happened, so the caller is never told the store is unchanged; a later run reports its state.
    */
   async rewriteStoredCredentials(
     rewrite: StoredCredentialRewrite,

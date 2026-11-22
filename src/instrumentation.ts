@@ -68,9 +68,12 @@ export async function register(): Promise<void> {
 
   // Credential re-seal (docs/STORAGE.md, "Re-sealing the store"): with
   // STORAGE_ENCRYPTION_RESEAL set, back the server store up, re-seal every
-  // stored credential and retire version 1 before the server serves; a value
-  // it cannot read, local mode, or a re-seal that fails refuses the boot. It
-  // does nothing while the variable is unset.
+  // stored credential and retire version 1 before the server serves; a
+  // STORAGE_ENCRYPTION_RESEAL value it cannot read, local mode, or a re-seal
+  // that does not complete refuses the boot. It does nothing while the
+  // variable is unset. It runs after bootstrapAuth (the storage key may come
+  // from the JWT_SECRET that fills in) and after the preflights, so a boot they
+  // refuse never touches the store.
   const { resealStoreAtBoot } = await import("@/lib/storage/reseal-at-boot");
   if (!(await resealStoreAtBoot())) return;
 

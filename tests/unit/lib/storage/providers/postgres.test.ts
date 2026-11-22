@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { ServerStorageProvider } from "@/lib/storage/types";
 import { logger } from "@/lib/logger";
@@ -935,6 +936,16 @@ describe("PostgresStorageProvider", () => {
     );
   });
 
+  test("initialize takes a transaction-scoped advisory lock before the table DDL, so replicas starting together create the tables one at a time", async () => {
+    await provider.initialize();
+    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
+    const lock = sql.indexOf("SELECT pg_advisory_xact_lock(");
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(sql.indexOf("CREATE TABLE IF NOT EXISTS"));
+    // One simple-protocol query string runs as one implicit transaction, so the lock is held until every table exists.
+    expect(sql).not.toContain("BEGIN");
+  });
+
   test("readEnvelopeState answers v1-accepted without a row and v1-retired for v2, and refuses any other value by name", async () => {
     await provider.initialize();
     const read = "SELECT value FROM storage_meta WHERE key = $1";
@@ -954,6 +965,7 @@ describe("PostgresStorageProvider", () => {
 
   test("rewriteStoredCredentials locks storage_meta, accounts and user_storage in that order, backs up every store table in its schema, rewrites and marks v2 in one transaction", async () => {
     await provider.initialize();
+    const factor = randomUUID();
     const client = scriptedClient((sql) => {
       if (sql.startsWith("SELECT value FROM storage_meta")) return { rows: [] };
       if (sql.startsWith("SELECT user_id, data")) {
@@ -965,7 +977,7 @@ describe("PostgresStorageProvider", () => {
         };
       }
       if (sql.startsWith("SELECT email, totp_secret")) {
-        return { rows: [{ email: "ada@example.com", totp_secret: "a", totp_pending: null }] };
+        return { rows: [{ email: "ada@example.com", totp_secret: factor, totp_pending: null }] };
       }
       return {};
     });
@@ -999,7 +1011,7 @@ describe("PostgresStorageProvider", () => {
       { sql: "SELECT email, totp_secret, totp_pending FROM accounts ORDER BY email", params: [] },
       {
         sql: "UPDATE accounts SET totp_secret = $1, totp_pending = $2 WHERE email = $3",
-        params: ["a!", null, "ada@example.com"],
+        params: [`${factor}!`, null, "ada@example.com"],
       },
       {
         sql: expect.stringContaining("INSERT INTO storage_meta (key, value, updated_at) VALUES ($1, $2, NOW())"),

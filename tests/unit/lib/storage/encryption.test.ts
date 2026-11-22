@@ -5,6 +5,7 @@ import {
   ENVELOPE_VERSION,
   openSecret,
   readStoredSecret,
+  requireStorageEncryptionKey,
   resetStorageEncryptionKey,
   sealSecret,
   STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE,
@@ -324,6 +325,19 @@ describe("the key", () => {
     resetStorageEncryptionKey();
 
     expect(() => sealSecret("x", HERE())).toThrow(STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE);
+  });
+
+  test("requireStorageEncryptionKey throws by name when no usable key material exists, and passes when it does", () => {
+    expect(() => requireStorageEncryptionKey()).not.toThrow();
+
+    delete process.env.JWT_SECRET;
+    (process.env as Record<string, string>).NODE_ENV = "production";
+    resetStorageEncryptionKey();
+    expect(() => requireStorageEncryptionKey()).toThrow(STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE);
+
+    process.env.STORAGE_ENCRYPTION_KEY = generated().slice(0, 8);
+    resetStorageEncryptionKey();
+    expect(() => requireStorageEncryptionKey()).toThrow(STORAGE_ENCRYPTION_KEY_TOO_SHORT_MESSAGE);
   });
 
   test("a plaintext read needs no key at all, so a broken key never hides existing data", () => {

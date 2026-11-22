@@ -19,6 +19,7 @@ import {
 import { RateLimitError } from "@/lib/api/rate-limit";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { VaultError } from "@/lib/seed/vault-client";
+import { ConnectionWriteRefused } from "@/lib/storage/types";
 
 // ============================================================================
 // Types
@@ -64,6 +65,14 @@ export function createErrorResponse(error: unknown, context?: { route?: string }
       { error: error.message, code: ApiErrorCode.CONFIG_ERROR, statusCode: 400 },
       { status: 400 },
     );
+  }
+
+  // --- Storage: a connections list a write refused ---
+  // The client sent a connection that cannot be sealed for its place (a secret that is not text, or a record with no
+  // binding). The message names the list index and the field path, never a value, and nothing was written.
+  if (error instanceof ConnectionWriteRefused) {
+    logger.warn("Connection write refused", { route });
+    return NextResponse.json({ error: error.message, statusCode: 400 }, { status: 400 });
   }
 
   // --- DB: every DatabaseError class, answered by the Next-free error body ---

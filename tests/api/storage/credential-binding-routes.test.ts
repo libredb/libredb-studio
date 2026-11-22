@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 import { NextRequest } from "next/server";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
+import { sealVersionOne } from "../../helpers/storage-envelope-v1";
 
 /**
  * The storage routes over a real SQLite store (docs/STORAGE.md, "Where a sealed value opens"): every write seals each
@@ -61,9 +62,13 @@ function connection(password: string, overrides: Record<string, unknown> = {}) {
 }
 
 async function put(data: unknown): Promise<number> {
+  return (await putResponse(data)).status;
+}
+
+async function putResponse(data: unknown): Promise<Response> {
   const warn = spyOn(logger, "warn").mockImplementation(() => {});
   try {
-    const response = await PUT(
+    return await PUT(
       new NextRequest("http://localhost/api/storage/connections", {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -71,7 +76,6 @@ async function put(data: unknown): Promise<number> {
       }),
       { params: Promise.resolve({ collection: "connections" }) },
     );
-    return response.status;
   } finally {
     warn.mockRestore();
   }
@@ -128,12 +132,15 @@ describe("the storage routes seal for the session's place", () => {
   test("a v1 or v2 envelope sent as a password through PUT is stored and read back as the text it is", async () => {
     await put([connection(randomUUID(), { id: "elsewhere" })]);
     const foreignV2 = storedPassword("alice@example.com");
-    const v1Shaped = `v1:${randomBytes(12).toString("base64url")}:${randomBytes(32).toString("base64url")}`;
+    // A version 1 envelope that opens under the store's key: the write must seal it as text, never open it.
+    const versionOne = sealVersionOne(randomUUID());
 
-    for (const text of [foreignV2, v1Shaped]) {
+    for (const text of [foreignV2, versionOne]) {
+      // oxlint-disable-next-line no-await-in-loop -- one write and one read per value, in order.
       expect(await put([connection(text)])).toBe(200);
 
       expect(storedPassword("alice@example.com")).not.toBe(text);
+      // oxlint-disable-next-line no-await-in-loop -- the read of the write just made.
       expect((await get()).connections?.[0].password).toBe(text);
     }
   });
@@ -155,5 +162,28 @@ describe("the storage routes seal for the session's place", () => {
 
     expect(read.id).toBe("c1");
     expect("password" in read).toBe(false);
+  });
+
+  test("a connection that cannot be sealed for its place is refused through PUT with a 400 naming its index, and nothing is stored", async () => {
+    const kept = randomUUID();
+    await put([connection(kept)]);
+    const before = storedPassword("alice@example.com");
+    let deep: unknown = "db.internal";
+    for (let level = 0; level < 100; level++) deep = { inner: deep };
+
+    for (const [record, message] of [
+      [
+        connection(randomUUID(), { sshTunnel: { password: [randomUUID()] } }),
+        "connections[1] holds a value that is not text at sshTunnel.password",
+      ],
+      [connection(randomUUID(), { host: deep }), "connections[1] cannot be stored"],
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one request and one store read per case, in order.
+      const response = await putResponse([connection(kept), record]);
+      expect(response.status).toBe(400);
+      // oxlint-disable-next-line no-await-in-loop -- the body of the response just answered.
+      expect(((await response.json()) as { error: string }).error).toContain(message);
+      expect(storedPassword("alice@example.com")).toBe(before);
+    }
   });
 });

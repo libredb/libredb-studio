@@ -76,6 +76,9 @@ const GOVERNED: Readonly<Record<string, string | undefined>> = {
   LIBREDB_NO_BANNER: undefined,
   LIBREDB_EMBEDDED_SAMPLE: undefined,
   SQLITE_EMBEDDED_SAMPLE: undefined,
+  // register() re-seals the server store when this is set; a developer's .env must not make this test do it.
+  STORAGE_ENCRYPTION_RESEAL: undefined,
+  STORAGE_PROVIDER: undefined,
 };
 
 let saved: Record<string, string | undefined> = {};

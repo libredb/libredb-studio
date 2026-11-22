@@ -149,13 +149,15 @@ export const RETIRED_ENVELOPE_MARKER = "v2";
 /**
  * The state a `credential_envelope` row records: none is `v1-accepted`, `v2` is `v1-retired`, and
  * any other value throws by name, because a store written by a newer format must not be read as one
- * this version understands.
+ * this version understands. The state is read when the store is first opened, at the first request
+ * that needs it (or at boot when STORAGE_ENCRYPTION_RESEAL is set), so the throw fails those
+ * requests; the health and readiness routes do not open the store.
  */
 export function envelopeStateOf(marker: string | undefined): CredentialEnvelopeState {
   if (marker === undefined) return "v1-accepted";
   if (marker === RETIRED_ENVELOPE_MARKER) return "v1-retired";
   throw new Error(
-    `The store's storage_meta row ${CREDENTIAL_ENVELOPE_KEY} is ${JSON.stringify(marker)}, a credential envelope state this version does not know; it was written by a newer version, so this one refuses to start on it.`,
+    `The store's storage_meta row ${CREDENTIAL_ENVELOPE_KEY} is ${JSON.stringify(marker)}, a credential envelope state this version does not know; it was written by a newer version, so this one refuses to open the store, and every request that needs the store fails with this error.`,
   );
 }
 
@@ -208,6 +210,18 @@ export class AccountWriteConflict extends Error {
   constructor() {
     super("The account row changed after it was read");
     this.name = "AccountWriteConflict";
+  }
+}
+
+/**
+ * A connections list a write refused, because one of its connections cannot be sealed for its place: a secret that is
+ * not text, or a connection that has no binding. The message names the list index and never a value; the API answers it
+ * as a 400, since the request, not the server, is at fault. Nothing was written.
+ */
+export class ConnectionWriteRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConnectionWriteRefused";
   }
 }
 

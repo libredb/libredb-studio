@@ -20,8 +20,13 @@ import { identityFields, type SecretFieldRecord } from "./secret-fields";
  * for. The text is never empty (it always names the format), which matters: GCM treats an empty additional data exactly
  * as none, the form version 1 envelopes were sealed with.
  *
- * `EnvelopeBinding` carries a brand only this module attaches, so a caller cannot hand-assemble one: a seal or an open
- * always goes through `connectionBinding` or `accountBinding`.
+ * `EnvelopeBinding` carries a type brand, and this module records every binding it builds, so a caller cannot
+ * hand-assemble one: `bindingAad` throws for any object `connectionBinding` or `accountBinding` did not build, a type
+ * assertion included, so every seal or open goes through them.
+ *
+ * A connection whose id or identity fields nest deeper than `MAX_BINDING_DEPTH` levels has no binding
+ * (`connectionBindingProblem` says so, and `connectionBinding` throws it), because no connection holds such a value, so
+ * the binding is defined only up to that depth.
  */
 
 /** The envelope format the binding names, and the version tag of every value sealed under it. */
@@ -34,6 +39,15 @@ export interface EnvelopeBinding {
   readonly aad: Uint8Array;
 }
 
+/**
+ * The deepest a connection's id, or its identity fields, may nest. A real connection nests two levels (`ssl.caCert`,
+ * an address in `dataServers`); a far deeper value is no connection, so it is refused by name instead of bound.
+ */
+export const MAX_BINDING_DEPTH = 32;
+
+/** Every binding this module built; `bindingAad` refuses any other object. */
+const built = new WeakSet<object>();
+
 /** The secret fields of an account row that are sealed. */
 export type AccountFactorField = "totpSecret" | "totpPending";
 
@@ -43,20 +57,49 @@ function sha256(text: string): string {
 
 function bind(table: "connections" | "accounts", owner: string, record: unknown, field: string, digest: string) {
   const text = canonicalJson({ d: digest, f: field, o: owner, r: record, s: BINDING_FORMAT, t: table });
-  return { aad: new TextEncoder().encode(text) } as EnvelopeBinding;
+  const binding = { aad: new TextEncoder().encode(text) } as EnvelopeBinding;
+  built.add(binding);
+  return binding;
+}
+
+/** Whether `value` nests deeper than `MAX_BINDING_DEPTH` levels of arrays and objects, measured without recursion. */
+function nestsTooDeep(value: unknown): boolean {
+  const pending: [unknown, number][] = [[value, 0]];
+  while (pending.length > 0) {
+    const [current, depth] = pending.pop()!;
+    if (typeof current !== "object" || current === null) continue;
+    if (depth >= MAX_BINDING_DEPTH) return true;
+    for (const member of Object.values(current)) pending.push([member, depth + 1]);
+  }
+  return false;
+}
+
+/** The connection's id as the store holds it: through JSON, `null` when absent. */
+function storedId<T extends SecretFieldRecord>(connection: T): unknown {
+  const stored = JSON.parse(JSON.stringify({ id: connection.id })) as { id?: unknown };
+  return Object.hasOwn(stored, "id") ? stored.id : null;
+}
+
+const TOO_DEEP = `The connection's id or identity fields nest deeper than ${MAX_BINDING_DEPTH} levels, which no connection does, so it has no binding.`;
+
+/** Why `connection` has no binding (its id or identity fields nest deeper than `MAX_BINDING_DEPTH` levels), or null. */
+export function connectionBindingProblem<T extends SecretFieldRecord>(connection: T): string | null {
+  return nestsTooDeep(storedId(connection)) || nestsTooDeep(identityFields(connection)) ? TOO_DEEP : null;
 }
 
 /**
  * The bindings of one stored connection: `owner` is the user_storage row's `user_id`, and the record and the identity
  * digest are taken from `connection` as the store holds it, so a value bound for the record as written opens for the
- * record as read back. The digest is computed once per connection, not once per field.
+ * record as read back. The digest is computed once per connection, not once per field. Throws the
+ * `connectionBindingProblem` of a connection that has none.
  */
 export function connectionBinding<T extends SecretFieldRecord>(
   owner: string,
   connection: T,
 ): { field(path: string): EnvelopeBinding } {
-  const stored = JSON.parse(JSON.stringify({ id: connection.id })) as { id?: unknown };
-  const record = Object.hasOwn(stored, "id") ? stored.id : null;
+  const problem = connectionBindingProblem(connection);
+  if (problem !== null) throw new Error(problem);
+  const record = storedId(connection);
   const digest = sha256(canonicalJson(identityFields(connection)));
   return { field: (path) => bind("connections", owner, record, path, digest) };
 }
@@ -69,5 +112,8 @@ export function accountBinding(email: string): { field(name: AccountFactorField)
 
 /** The additional authenticated data of a binding: the UTF-8 of its canonical JSON. */
 export function bindingAad(binding: EnvelopeBinding): Uint8Array {
+  if (!built.has(binding)) {
+    throw new Error("A binding not built by connectionBinding or accountBinding was passed to a seal or an open.");
+  }
   return binding.aad;
 }

@@ -374,6 +374,39 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * The secret paths of `connection` that hold a value which is neither text nor null: a number, a boolean, a list or an
+ * object. No credential has that shape, and `walkSecretFields` visits text only, so such a value would pass every seal
+ * and every open unexamined; the server store refuses it by path (./connection-secrets.ts).
+ */
+export function nonTextSecretPaths<T extends SecretFieldRecord>(connection: T): string[] {
+  const record = connection as unknown as Record<string, unknown>;
+  const paths: string[] = [];
+  for (const [path, { container, key }] of SECRET_PATHS) {
+    const holder = container ? record[container] : record;
+    if (!isPlainObject(holder)) continue;
+    const value = holder[key];
+    if (value !== undefined && value !== null && typeof value !== "string") paths.push(path);
+  }
+  return paths;
+}
+
+/** A copy of `connection` without the values at `paths`, each one of `SECRET_PATHS`. The input is not changed. */
+export function withoutSecretPaths<T extends SecretFieldRecord>(connection: T, paths: readonly string[]): T {
+  const copy: Record<string, unknown> = { ...connection };
+  for (const path of paths) {
+    const { container, key } = SECRET_PATHS.get(path)!;
+    if (container) {
+      const holder = { ...(copy[container] as Record<string, unknown>) };
+      delete holder[key];
+      copy[container] = holder;
+    } else {
+      delete copy[key];
+    }
+  }
+  return copy as unknown as T;
+}
+
+/**
  * A copy of `connection` with each value of `values` written at its path, the inverse of
  * `secretFieldValues`. The call throws on a path the classification does not call secret (a public
  * field, a container, `__proto__`) or on one whose container the connection does not have as an

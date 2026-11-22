@@ -13,7 +13,7 @@ import Database from "better-sqlite3";
 import { logger } from "@/lib/logger";
 import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
 import { closeStorageProvider } from "@/lib/storage/factory";
-import { resealStoreAtBoot } from "@/lib/storage/reseal-at-boot";
+import { resealStoreAtBoot, UNOPENED_ADVICE } from "@/lib/storage/reseal-at-boot";
 import { sealVersionOne } from "../../../helpers/storage-envelope-v1";
 
 const ENV_KEYS = ["STORAGE_ENCRYPTION_RESEAL", "STORAGE_PROVIDER", "STORAGE_SQLITE_PATH", "JWT_SECRET"] as const;
@@ -176,7 +176,7 @@ describe("resealStoreAtBoot", () => {
     try {
       db.prepare("INSERT INTO user_storage VALUES ('bob', 'connections', '{not json', 't')").run();
       db.prepare("INSERT INTO user_storage VALUES ('carol', 'connections', ?, 't')").run(
-        JSON.stringify([{ id: "c9", password: "v2:broken:value" }]),
+        JSON.stringify([{ id: "c9", password: `v2:${randomUUID()}:${randomUUID()}`, apiKeyId: 7 }]),
       );
     } finally {
       db.close();
@@ -186,10 +186,17 @@ describe("resealStoreAtBoot", () => {
     const { warned } = await run();
 
     expect(warned).toContain(
-      "STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they open nowhere here: carol c9 password.",
+      `STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they open nowhere here: carol c9 password. ${UNOPENED_ADVICE}`,
+    );
+    expect(UNOPENED_ADVICE).toContain("a second re-seal finds nothing to do");
+    expect(UNOPENED_ADVICE).toContain(
+      "stop every server, restore that key, delete the store's storage_meta row credential_envelope and start again with STORAGE_ENCRYPTION_RESEAL set, or restore the backup above",
     );
     expect(warned).toContain(
-      "STORAGE_ENCRYPTION_RESEAL: left 1 row(s) or element(s) unread, because they are not connections: bob connections.",
+      "STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they are not text or sit beside a value sealed as v2: carol c9 apiKeyId (not-text).",
+    );
+    expect(warned).toContain(
+      "STORAGE_ENCRYPTION_RESEAL: left 1 row(s) or element(s) unread, because they are not connections or nest too deep to bind: bob connections.",
     );
   });
 
@@ -209,7 +216,7 @@ describe("resealStoreAtBoot", () => {
     expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual(backups);
   });
 
-  test("refuses the boot with the failure and the unchanged-store sentence when the re-seal throws", async () => {
+  test("refuses the boot with the failure, claiming no rollback it cannot know, when the re-seal does not complete", async () => {
     process.env.STORAGE_ENCRYPTION_RESEAL = "true";
     process.env.STORAGE_SQLITE_PATH = ":memory:";
 
@@ -217,9 +224,33 @@ describe("resealStoreAtBoot", () => {
 
     expect(result).toBe(false);
     expect(exits).toEqual([1]);
-    expect(banner).toContain("LibreDB Studio cannot start: the credential re-seal failed");
+    expect(banner).toContain("LibreDB Studio cannot start: the credential re-seal did not complete");
     expect(banner).toContain("An in-memory SQLite store cannot be backed up");
-    expect(banner).toContain("The store is as it was");
-    expect(banner).toContain("remove STORAGE_ENCRYPTION_RESEAL");
+    expect(banner).toContain("start again with STORAGE_ENCRYPTION_RESEAL still set");
+    expect(banner).toContain("retired already or re-sealed now");
+    // The failing process cannot tell a failure before the transaction, a rollback and a commit whose answer was lost
+    // apart, so the banner promises none of them.
+    expect(banner).not.toContain("The store is as it was");
+    expect(banner).not.toContain("version 1 is still accepted");
+  });
+
+  test("refuses the boot on a store whose envelope marker a newer version wrote, with the marker named", async () => {
+    previousVersionStore();
+    const db = new Database(path);
+    try {
+      db.exec("CREATE TABLE storage_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT)");
+      db.prepare("INSERT INTO storage_meta VALUES ('credential_envelope', 'v3', 't')").run();
+    } finally {
+      db.close();
+    }
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+
+    const { result, exits, banner } = await run();
+
+    expect(result).toBe(false);
+    expect(exits).toEqual([1]);
+    expect(banner).toContain('credential_envelope is "v3"');
+    expect(banner).toContain("refuses to open the store");
+    expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual([]);
   });
 });

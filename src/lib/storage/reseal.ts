@@ -1,6 +1,6 @@
 import { resealConnections } from "./connection-secrets";
-import { openSecret, sealSecret } from "./encryption";
-import { type AccountFactorField, accountBinding } from "./envelope-binding";
+import { openSecret, requireStorageEncryptionKey, sealSecret } from "./encryption";
+import { type AccountFactorField, accountBinding, connectionBindingProblem } from "./envelope-binding";
 import type { ServerStorageProvider, StoredFactorRow } from "./types";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -12,9 +12,14 @@ import type { DatabaseConnection } from "@/lib/types";
  * what happens to each stored value, synchronously inside that transaction: a v2 value that opens
  * for its place is kept; a version 1 envelope that opens, or an unsealed value, is sealed as v2 for
  * the place it is stored in; a value that opens as neither is left exactly as it is and named,
- * because it is already unreadable and the backup keeps it for a restored key. A row whose data is
- * not a JSON list, and a list element that is not an object, are left as they are and named. Once
- * the provider commits, the store records that version 1 is retired.
+ * because it is already unreadable and the backup keeps it for a restored key. A value that is not
+ * text, or a version 1 or unsealed value beside a v2 value of its record, is left as it is and
+ * named (./connection-secrets.ts). A row whose data is not a JSON list, a list element that is not
+ * an object, and a connection that has no binding are left as they are and named. Once the provider
+ * commits, the store records that version 1 is retired.
+ *
+ * The key is derived before anything is read: without usable key material every value would read
+ * as unopenable and be retired unopened, so the run throws by name instead.
  */
 
 export type ResealReport =
@@ -29,7 +34,12 @@ export type ResealReport =
       kept: number;
       /** Values left as they are because they open nowhere here: `<owner> <connection id> <field>` or `<email> <field>`. */
       unopened: string[];
-      /** Rows or list elements left as they are because they are not connections: `<owner> connections[<index>]`. */
+      /** Values left as they are because they are not text, or sit beside a v2 value: `<owner> <connection id> <field> (<reason>)`. */
+      refused: string[];
+      /**
+       * Rows or list elements left as they are because they are not connections, or have no binding: `<owner> connections`
+       * or `<owner> connections[<index>]`.
+       */
       unread: string[];
     };
 
@@ -55,9 +65,11 @@ function idText(id: unknown): string {
 
 /** Re-seals every stored credential of `provider` after a complete backup, and retires version 1. */
 export async function resealStore(provider: ServerStorageProvider, now: Date): Promise<ResealReport> {
+  requireStorageEncryptionKey();
   let resealed = 0;
   let kept = 0;
   const unopened: string[] = [];
+  const refused: string[] = [];
   const unread: string[] = [];
 
   const connections = (owner: string, data: string): string | null => {
@@ -74,7 +86,7 @@ export async function resealStore(provider: ServerStorageProvider, now: Date): P
     }
     let changed = false;
     const next = list.map((element: unknown, index) => {
-      if (!isConnectionRecord(element)) {
+      if (!isConnectionRecord(element) || connectionBindingProblem(element) !== null) {
         unread.push(`${owner} connections[${index}]`);
         return element;
       }
@@ -82,6 +94,7 @@ export async function resealStore(provider: ServerStorageProvider, now: Date): P
       resealed += result.resealed;
       kept += result.kept;
       for (const { id, path } of result.unopened) unopened.push(`${owner} ${idText(id)} ${path}`);
+      for (const { id, path, reason } of result.refused) refused.push(`${owner} ${idText(id)} ${path} (${reason})`);
       if (result.resealed > 0) changed = true;
       return result.connections[0];
     });
@@ -111,5 +124,5 @@ export async function resealStore(provider: ServerStorageProvider, now: Date): P
 
   const result = await provider.rewriteStoredCredentials({ connections, factors }, resealBackupLabel(now));
   if (result.kind === "already-retired") return result;
-  return { kind: "rewritten", backup: result.backup, resealed, kept, unopened, unread };
+  return { kind: "rewritten", backup: result.backup, resealed, kept, unopened, refused, unread };
 }

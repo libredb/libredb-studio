@@ -490,8 +490,12 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       throw new Error("An in-memory SQLite store cannot be backed up, so its credentials are not re-sealed");
     }
     const backup = `${this.dbPath}.${backupLabel}`;
+    const fs = await import("fs");
     const run = this.db!.transaction((): StoredCredentialRewriteResult => {
       if (envelopeStateOf(this.readEnvelopeMarker()) === "v1-retired") return { kind: "already-retired" };
+      // Created first, empty, with the store file's own mode, so the copy of every credential is no more readable
+      // than the store; `wx` refuses a target that already exists. VACUUM INTO accepts an empty target.
+      fs.closeSync(fs.openSync(backup, "wx", fs.statSync(this.dbPath).mode & 0o777));
       const copier = new Database(this.dbPath) as BetterSqlite3.Database;
       try {
         copier.prepare("VACUUM INTO ?").run(backup);

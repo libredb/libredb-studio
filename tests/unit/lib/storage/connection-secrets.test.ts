@@ -105,15 +105,16 @@ describe("the classification is exhaustive by construction", () => {
         "agentPassword",
         "agentReadRoots",
         "agentUser",
-        // Db2's consent to a cleartext password (#786). A choice about the transport, so `public`.
+        // Db2's consent to a cleartext password (#786). A choice about the transport, not a credential, so `identity`:
+        // readable, and bound into the record's sealed values.
         "allowInsecureAuth",
         // Elasticsearch's API key pair (#708). Unlike `user`, an id is one generated,
         // opaque half of a credential pair rather than a name an operator chose, so
         // both halves are classified secret below.
         "apiKeyId",
         "apiKeySecret",
-        // MongoDB's auth database. A database NAME, so `public`; the password
-        // checked against it is the secret and is classified below.
+        // MongoDB's auth database. A database NAME, not a credential, so `identity`: readable, and bound into the
+        // record's sealed values. The password checked against it is the secret and is classified below.
         "authSource",
         "color",
         "connectionString",
@@ -141,8 +142,8 @@ describe("the classification is exhaustive by construction", () => {
         // The S3 signing region. A region NAME (`us-east-1`) that decides how a request is signed and grants nothing.
         "region",
         // Kafka's SASL mechanism (#1088). A mechanism NAME (`SCRAM-SHA-512`), which the
-        // broker's own configuration lists in the clear, so `public`; the password it checks
-        // is the secret and is classified above.
+        // broker's own configuration lists in the clear, so `identity`: readable, and bound into the record's sealed
+        // values. The password it checks is the secret and is classified above.
         "saslMechanism",
         "seedId",
         // Whether this browser reads the catalog when the connection opens (#765). A
@@ -158,12 +159,13 @@ describe("the classification is exhaustive by construction", () => {
         "warehouse",
         // BigQuery's job location: a region name, which grants nothing, so `public`.
         "location",
-        // Kubernetes' API path, namespace list and TLS server name: where requests go and what the tree draws, so
-        // `public`; the token and the client key that authenticate them are classified as secrets.
+        // Kubernetes' API path, namespace list and TLS server name: where requests go and what the tree draws. The API
+        // path and the TLS server name are `identity` (readable, and bound into the record's sealed values), the
+        // namespace list is `public`; the token and the client key that authenticate them are classified as secrets.
         "apiPath",
         "namespaces",
         "tlsServerName",
-        // An AMQP port: an address, as port is, so `public`.
+        // An AMQP port: an address, as port is, so `identity`: readable, and bound into the record's sealed values.
         "amqpPort",
         // Snowflake's sign-in method and role: which credential is sent and what the statements may do, so `public`.
         // The PEM key and its passphrase are the credential and are classified as secrets.
@@ -172,7 +174,8 @@ describe("the classification is exhaustive by construction", () => {
         "privateKeyPassphrase",
         "role",
         // A security mode is a setting, and a thumbprint is the PUBLIC fingerprint of a public
-        // certificate: it identifies a server and authenticates nobody (#1677).
+        // certificate: it identifies a server and authenticates nobody (#1677). All three are `identity`: readable,
+        // and bound into the record's sealed values.
         "securityMode",
         "serverCertificateThumbprint",
         "hostKeyFingerprint",
@@ -392,15 +395,90 @@ describe("decryptConnections", () => {
     expect(result.connections[0].password).toBe("CANARY-DB-PASSWORD");
   });
 
-  test("reads a half-migrated record where only some fields were re-written", () => {
-    const encrypted = encryptConnections(OWNER, [fullConnection()])[0];
+  test("reads a record the previous version half-migrated, version 1 beside unsealed values, while v1 is accepted", () => {
+    const sealedBefore = randomUUID();
     const unsealed = randomUUID();
-    const halfMigrated = { ...encrypted, password: unsealed } as DatabaseConnection;
+    const halfMigrated = { ...fullConnection(), password: sealVersionOne(sealedBefore), agentPassword: unsealed };
     const result = decryptConnections(OWNER, [halfMigrated], "v1-accepted");
 
     expect(result.omitted).toEqual([]);
-    expect(result.connections[0].password).toBe(unsealed);
+    expect(result.connections[0].password).toBe(sealedBefore);
+    expect(result.connections[0].agentPassword).toBe(unsealed);
     expect(result.connections[0].sshTunnel?.privateKey).toBe("CANARY-SSH-PRIVATE-KEY");
+  });
+
+  test("a version 1 or unsealed value beside a v2 value of its record is omitted as mixed, in either state", () => {
+    const { connection, values } = generatedConnection();
+    const [sealed] = encryptConnections(OWNER, [connection]);
+    const unsealedValue = randomUUID();
+    const mixed = { ...sealed, connectionString: unsealedValue, agentPassword: sealVersionOne(randomUUID()) };
+
+    for (const state of ["v1-accepted", "v1-retired"] as const) {
+      const read = decryptConnections(OWNER, [mixed], state);
+      expect(read.omitted).toEqual([
+        { id: "c1", path: "connectionString", reason: "mixed" },
+        { id: "c1", path: "agentPassword", reason: "mixed" },
+      ]);
+      expect("connectionString" in read.connections[0]).toBe(false);
+      expect("agentPassword" in read.connections[0]).toBe(false);
+      expect(read.connections[0].password).toBe(values.password);
+    }
+  });
+
+  test("a secret that is neither text nor null is omitted as not-text on read and refused on write by index and path", () => {
+    const { connection, values } = generatedConnection();
+    const [sealed] = encryptConnections(OWNER, [connection]);
+    const nonTextRecord = {
+      ...sealed,
+      connectionString: [randomUUID()],
+      ssl: { ...sealed.ssl, clientKey: 7 },
+    };
+    const unset = { ...sealed, connectionString: null };
+
+    for (const state of ["v1-accepted", "v1-retired"] as const) {
+      const read = decryptConnections(OWNER, [nonTextRecord as unknown as DatabaseConnection], state);
+      expect(read.omitted).toEqual([
+        { id: "c1", path: "connectionString", reason: "not-text" },
+        { id: "c1", path: "ssl.clientKey", reason: "not-text" },
+      ]);
+      expect("connectionString" in read.connections[0]).toBe(false);
+      expect("clientKey" in (read.connections[0].ssl ?? {})).toBe(false);
+      expect(read.connections[0].password).toBe(values.password);
+    }
+    expect(decryptConnections(OWNER, [unset as unknown as DatabaseConnection], "v1-retired").omitted).toEqual([]);
+
+    expect(() =>
+      encryptConnections(OWNER, [connection, { ...connection, privateKey: { pem: randomUUID() } } as never]),
+    ).toThrow("connections[1] holds a value that is not text at privateKey; a credential is text.");
+  });
+
+  test("a list element that is not an object is left exactly as it is, on read and on write", () => {
+    const { connection, values } = generatedConnection();
+    const list = [null, 7, "text", [connection], connection] as unknown as DatabaseConnection[];
+
+    const written = encryptConnections(OWNER, list);
+    expect(written.slice(0, 4)).toEqual(list.slice(0, 4));
+    const read = decryptConnections(OWNER, JSON.parse(JSON.stringify(written)), "v1-retired");
+    expect(read.connections.slice(0, 4)).toEqual(JSON.parse(JSON.stringify(list.slice(0, 4))));
+    expect(read.omitted).toEqual([]);
+    expect(secretFieldValues(read.connections[4])).toEqual(values);
+  });
+
+  test("a connection with no binding keeps its record with every secret omitted as unbindable, and is refused on write", () => {
+    let deep: unknown = "db.internal";
+    for (let level = 0; level < 3000; level++) deep = { inner: deep };
+    const { connection } = generatedConnection();
+    const [sealed] = encryptConnections(OWNER, [connection]);
+    const unbindableRecord = { ...sealed, host: deep } as unknown as DatabaseConnection;
+
+    const read = decryptConnections(OWNER, [unbindableRecord], "v1-accepted");
+    expect(read.omitted).toEqual(SECRET_PATHS.map((path) => ({ id: "c1", path, reason: "unbindable" })));
+    expect(secretFieldValues(read.connections[0])).toEqual({});
+    expect(read.connections[0].name).toBe("Prod");
+
+    expect(() => encryptConnections(OWNER, [connection, { ...connection, host: deep } as never])).toThrow(
+      "connections[1] cannot be stored: The connection's id or identity fields nest deeper than 32 levels",
+    );
   });
 
   test("omits an unreadable secret, keeps the record, and names the loss", () => {
@@ -623,29 +701,48 @@ describe("the binding", () => {
 
   test("resealConnections re-seals v1 and unsealed values, keeps v2 values that open, and leaves and names the rest", () => {
     const { connection, values } = generatedConnection();
-    const [sealed] = encryptConnections(OWNER, [connection]);
     const unopenable = `v2:${randomBytes(12).toString("base64url")}:${randomBytes(32).toString("base64url")}`;
-    const stored = {
-      ...sealed,
+    const previous = {
+      ...connection,
       password: sealVersionOne(values.password),
-      agentPassword: values.agentPassword,
       apiKeyId: unopenable,
     } as DatabaseConnection;
+    const [sealed] = encryptConnections(OWNER, [{ ...connection, id: "c2" }]);
 
-    const result = resealConnections(OWNER, [stored]);
+    const result = resealConnections(OWNER, [previous, sealed]);
 
-    expect(result.resealed).toBe(2);
-    expect(result.kept).toBe(SECRET_PATHS.length - 3);
+    expect(result.resealed).toBe(SECRET_PATHS.length - 1);
+    expect(result.kept).toBe(SECRET_PATHS.length);
     expect(result.unopened).toEqual([{ id: "c1", path: "apiKeyId", reason: "unopenable" }]);
-    const [after] = result.connections;
+    expect(result.refused).toEqual([]);
+    const [after, kept] = result.connections;
     expect(after.apiKeyId).toBe(unopenable);
-    expect(after.privateKey).toBe(sealed.privateKey);
+    expect(kept).toEqual(sealed);
     expect(after.password?.startsWith("v2:")).toBe(true);
     expect(after.agentPassword?.startsWith("v2:")).toBe(true);
     const read = decryptConnections(OWNER, [after], "v1-retired");
     expect(read.connections[0].password).toBe(values.password);
     expect(read.connections[0].agentPassword).toBe(values.agentPassword);
     expect(read.omitted).toEqual([{ id: "c1", path: "apiKeyId", reason: "unopenable" }]);
+  });
+
+  test("resealConnections leaves and names a value beside a v2 value of its record, and a value that is not text, without sealing either", () => {
+    const { connection } = generatedConnection();
+    const [sealed] = encryptConnections(OWNER, [connection]);
+    const unsealedValue = randomUUID();
+    const envelope = sealVersionOne(randomUUID());
+    const stored = { ...sealed, connectionString: unsealedValue, agentPassword: envelope, apiKeyId: [randomUUID()] };
+
+    const result = resealConnections(OWNER, [stored as unknown as DatabaseConnection]);
+
+    expect(result.resealed).toBe(0);
+    expect(result.kept).toBe(SECRET_PATHS.length - 3);
+    expect(result.refused).toEqual([
+      { id: "c1", path: "apiKeyId", reason: "not-text" },
+      { id: "c1", path: "connectionString", reason: "mixed" },
+      { id: "c1", path: "agentPassword", reason: "mixed" },
+    ]);
+    expect(result.connections[0]).toEqual(stored as unknown as DatabaseConnection);
   });
 });
 

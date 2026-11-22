@@ -13,7 +13,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { logger } from "@/lib/logger";
 import { UNDECRYPTABLE_WARNING_PREFIX, withCredentialEncryption } from "@/lib/storage/encrypting-provider";
-import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
+import { resetStorageEncryptionKey, STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE } from "@/lib/storage/encryption";
 import { SQLiteStorageProvider } from "@/lib/storage/providers/sqlite";
 import { resealBackupLabel, resealStore } from "@/lib/storage/reseal";
 import type { ServerStorageProvider } from "@/lib/storage/types";
@@ -189,34 +189,41 @@ describe("re-sealing a real SQLite store", () => {
     await previousVersionStore();
     const before = dump();
     const target = `${path}.${resealBackupLabel(NOW)}`;
-    // A copy an earlier run left, and a file that is not a database at all: VACUUM INTO overwrites neither.
+    // A copy an earlier run left, and a file that is not a database at all: the run overwrites neither.
     raw((db) => db.prepare("VACUUM INTO ?").run(target));
     const store = await provider();
 
-    await expect(resealStore(store, NOW)).rejects.toThrow("output file already exists");
+    await expect(resealStore(store, NOW)).rejects.toThrow("EEXIST");
     expect(dump()).toEqual(before);
 
     rmSync(target);
     writeFileSync(target, "an operator's notes");
-    await expect(resealStore(store, NOW)).rejects.toThrow("file is not a database");
+    await expect(resealStore(store, NOW)).rejects.toThrow("EEXIST");
     expect(dump()).toEqual(before);
   });
 
-  test("a run that fails part way leaves the store unchanged and keeps its backup file", async () => {
+  test("a run without usable key material is refused by name before the backup, and leaves the store unchanged", async () => {
     await previousVersionStore();
+    // Only version 1 values: a missing key must not read them as unopenable and retire them unopened.
+    raw((db) =>
+      db
+        .prepare("UPDATE user_storage SET data = ? WHERE user_id = 'bob' AND collection = 'connections'")
+        .run(
+          JSON.stringify([
+            { id: "c2", name: "c2", type: "postgres", host: "b.internal", password: sealVersionOne(secrets.bob) },
+          ]),
+        ),
+    );
     const before = dump();
     const store = await provider();
-    // No key material in production: version 1 values no longer open, and the unsealed tunnel password cannot be
-    // sealed, so the rewrite throws after the backup was written.
     delete process.env.JWT_SECRET;
     (process.env as Record<string, string>).NODE_ENV = "production";
     resetStorageEncryptionKey();
 
-    await expect(resealStore(store, NOW)).rejects.toThrow("JWT_SECRET");
+    await expect(resealStore(store, NOW)).rejects.toThrow(STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE);
 
     expect(dump()).toEqual(before);
-    expect(existsSync(`${path}.${resealBackupLabel(NOW)}`)).toBe(true);
-    expect(dump(`${path}.${resealBackupLabel(NOW)}`)).toEqual(before);
+    expect(existsSync(`${path}.${resealBackupLabel(NOW)}`)).toBe(false);
   });
 
   test("a value that does not open is left as it is and named", async () => {

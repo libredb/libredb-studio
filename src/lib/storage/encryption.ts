@@ -101,6 +101,16 @@ function encryptionKey(): Buffer {
 }
 
 /**
+ * Derives the key now, and throws by name when no usable key material exists. An open turns a missing key into
+ * `unopenable` like any other key that does not open a value (`openBody`), which suits a read; the re-seal (./reseal.ts)
+ * calls this first instead, because a run that took every value for unopenable would retire version 1 over values the
+ * right key still opens.
+ */
+export function requireStorageEncryptionKey(): void {
+  encryptionKey();
+}
+
+/**
  * Seals a credential into `v2:<iv>:<ciphertext>`, bound to `binding`.
  *
  * The GCM authentication tag is appended to the ciphertext segment rather than given a fourth
@@ -197,7 +207,11 @@ export function readStoredSecret(
   binding: EnvelopeBinding,
   state: CredentialEnvelopeState,
 ): StoredSecretRead {
-  const read = openSecret(stored, binding);
+  return storedSecretRead(openSecret(stored, binding), state);
+}
+
+/** The read rule of `readStoredSecret`, for a value `openSecret` already opened. */
+export function storedSecretRead(read: StoredSecret, state: CredentialEnvelopeState): StoredSecretRead {
   if (read.kind === "unopenable") return { kind: "refused", reason: "unopenable" };
   if (read.kind === "v2" || state === "v1-accepted") return { kind: "opened", value: read.value };
   return { kind: "refused", reason: "retired" };

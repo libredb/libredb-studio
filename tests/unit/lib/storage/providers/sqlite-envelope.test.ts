@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -71,6 +71,7 @@ describe("SQLiteStorageProvider credential envelope", () => {
 
   test("rewriteStoredCredentials backs up with VACUUM INTO on a second connection inside the immediate transaction, then rewrites and marks v2", async () => {
     const before = randomUUID();
+    const after = randomUUID();
     await provider.setCollection("alice", "connections", [{ id: "c1", password: before }] as never);
     await provider.setCollection("alice", "history", [{ id: "h1" }] as never);
     await provider.insertAccount(account("ada@example.com", before));
@@ -85,7 +86,7 @@ describe("SQLiteStorageProvider credential envelope", () => {
             db.prepare("INSERT INTO storage_meta (key, value) VALUES ('probe', 'x')").run();
           }),
         ).toThrow("database is locked");
-        return data.replace(before, "after");
+        return data.replace(before, after);
       },
       factors: (row) => ({ totpSecret: `${row.totpSecret}-after`, totpPending: row.totpPending }),
     };
@@ -94,7 +95,7 @@ describe("SQLiteStorageProvider credential envelope", () => {
 
     expect(result).toEqual({ kind: "rewritten", backup: `${path}.${LABEL}` });
     expect(seen).toEqual([`alice [{"id":"c1","password":"${before}"}]`]);
-    expect(await provider.getCollection("alice", "connections")).toEqual([{ id: "c1", password: "after" }] as never);
+    expect(await provider.getCollection("alice", "connections")).toEqual([{ id: "c1", password: after }] as never);
     expect(await provider.getCollection("alice", "history")).toEqual([{ id: "h1" }] as never);
     const stored = await provider.getAccount("ada@example.com");
     expect(stored).toEqual({ ...account("ada@example.com", `${before}-after`) });
@@ -141,10 +142,25 @@ describe("SQLiteStorageProvider credential envelope", () => {
     const rewrite: StoredCredentialRewrite = { connections: () => "[]", factors: () => null };
     raw((db) => db.prepare("VACUUM INTO ?").run(`${path}.${LABEL}`));
 
-    await expect(provider.rewriteStoredCredentials(rewrite, LABEL)).rejects.toThrow("output file already exists");
+    await expect(provider.rewriteStoredCredentials(rewrite, LABEL)).rejects.toThrow("EEXIST");
 
     expect(await provider.getCollection("alice", "connections")).toEqual([{ id: "c1" }] as never);
     expect(await provider.readEnvelopeState()).toBe("v1-accepted");
+  });
+
+  test("the backup file takes the store file's mode, whatever the process umask allows", async () => {
+    await provider.setCollection("alice", "connections", [{ id: "c1", password: randomUUID() }] as never);
+    chmodSync(path, 0o600);
+    const rewrite: StoredCredentialRewrite = { connections: () => null, factors: () => null };
+    const umask = process.umask(0o022);
+    try {
+      await provider.rewriteStoredCredentials(rewrite, LABEL);
+    } finally {
+      process.umask(umask);
+    }
+
+    expect(statSync(`${path}.${LABEL}`).mode & 0o777).toBe(0o600);
+    expect(raw((db) => db.prepare("SELECT data FROM user_storage").all(), `${path}.${LABEL}`)).toHaveLength(1);
   });
 
   test("rewriteStoredCredentials refuses an in-memory store", async () => {

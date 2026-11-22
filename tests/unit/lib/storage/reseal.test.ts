@@ -5,7 +5,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
 import { decryptConnections } from "@/lib/storage/connection-secrets";
-import { openSecret, resetStorageEncryptionKey, sealSecret } from "@/lib/storage/encryption";
+import {
+  openSecret,
+  resetStorageEncryptionKey,
+  sealSecret,
+  STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE,
+} from "@/lib/storage/encryption";
 import { accountBinding, connectionBinding } from "@/lib/storage/envelope-binding";
 import { resealBackupLabel, resealStore } from "@/lib/storage/reseal";
 import type { StoredAccount } from "@/lib/storage/types";
@@ -112,7 +117,8 @@ describe("resealStore", () => {
     const elsewhere = sealSecret(randomUUID(), connectionBinding("bob", record).field("agentPassword"));
     store.putRow("alice", "connections", JSON.stringify([{ ...record, password: bound, agentPassword: elsewhere }]));
     const factor = sealSecret(randomUUID(), accountBinding("ada@example.com").field("totpSecret"));
-    store.accounts.set("ada@example.com", account("ada@example.com", factor, "v1:broken"));
+    const broken = `v1:${randomUUID()}`;
+    store.accounts.set("ada@example.com", account("ada@example.com", factor, broken));
 
     const report = await resealStore(store, NOW);
 
@@ -123,7 +129,7 @@ describe("resealStore", () => {
       unopened: ["alice c1 agentPassword", "ada@example.com totpPending"],
     });
     expect(rowOf(store, "alice")[0]).toMatchObject({ password: bound, agentPassword: elsewhere });
-    expect(store.accounts.get("ada@example.com")).toMatchObject({ totpSecret: factor, totpPending: "v1:broken" });
+    expect(store.accounts.get("ada@example.com")).toMatchObject({ totpSecret: factor, totpPending: broken });
   });
 
   test("leaves and names a row whose connections are not a JSON list", async () => {
@@ -168,6 +174,7 @@ describe("resealStore", () => {
       resealed: 0,
       kept: 0,
       unopened: [],
+      refused: [],
       unread: [],
     });
     expect(store.backups.map(({ label }) => label)).toEqual(["pre-reseal-20261122T053000Z"]);
@@ -184,16 +191,22 @@ describe("resealStore", () => {
     expect(store.backups).toEqual([]);
   });
 
-  test("a failure part way leaves the store unchanged", async () => {
+  test("a store re-sealed without usable key material is refused by name before anything is read, written or backed up", async () => {
     const store = new MemoryStorageProvider();
-    store.putRow("alice", "connections", JSON.stringify([connection("c1", { password: randomUUID() })]));
+    // Only version 1 values, which a missing key could otherwise take for unopenable and retire unopened.
+    store.putRow(
+      "alice",
+      "connections",
+      JSON.stringify([connection("c1", { password: sealVersionOne(randomUUID()) })]),
+    );
+    store.accounts.set("ada@example.com", account("ada@example.com", sealVersionOne(randomUUID())));
     const before = store.row("alice", "connections");
     const nodeEnv = process.env.NODE_ENV;
     delete process.env.JWT_SECRET;
     (process.env as Record<string, string>).NODE_ENV = "production";
     resetStorageEncryptionKey();
     try {
-      await expect(resealStore(store, NOW)).rejects.toThrow("JWT_SECRET");
+      await expect(resealStore(store, NOW)).rejects.toThrow(STORAGE_ENCRYPTION_KEY_MISSING_MESSAGE);
     } finally {
       if (nodeEnv === undefined) delete (process.env as Record<string, string | undefined>).NODE_ENV;
       else (process.env as Record<string, string>).NODE_ENV = nodeEnv;
@@ -201,6 +214,65 @@ describe("resealStore", () => {
 
     expect(store.row("alice", "connections")).toBe(before);
     expect(store.marker).toBeUndefined();
+    expect(store.backups).toEqual([]);
+  });
+
+  test("leaves and names a value that is not text or sits beside a v2 value, and a connection that has no binding", async () => {
+    const store = new MemoryStorageProvider();
+    const record = connection("c1");
+    const password = sealSecret(randomUUID(), connectionBinding("alice", record).field("password"));
+    const unsealedValue = randomUUID();
+    let deep: unknown = "x";
+    for (let level = 0; level < 3000; level++) deep = [deep];
+    const plain = randomUUID();
+    const row = JSON.stringify([
+      { ...record, password, connectionString: unsealedValue, apiKeyId: 7 },
+      connection("c2", { host: deep, password: randomUUID() }),
+      connection("c3", { password: plain }),
+    ]);
+    store.putRow("alice", "connections", row);
+
+    const report = await resealStore(store, NOW);
+
+    expect(report).toMatchObject({
+      kind: "rewritten",
+      resealed: 1,
+      kept: 1,
+      refused: ["alice c1 apiKeyId (not-text)", "alice c1 connectionString (mixed)"],
+      unread: ["alice connections[1]"],
+    });
+    const [first, second, third] = rowOf(store, "alice");
+    expect(first).toEqual(JSON.parse(row)[0]);
+    expect(second).toEqual(JSON.parse(row)[1]);
+    expect(decryptConnections("alice", [third], "v1-retired").connections[0].password).toBe(plain);
+  });
+
+  test("a re-seal under the wrong key retires version 1 over values it left, and the documented recovery reopens them", async () => {
+    // docs/STORAGE.md, "Re-sealing the store": restore the key that sealed the store, delete the credential_envelope
+    // row with every server stopped, and re-seal again.
+    const store = new MemoryStorageProvider();
+    const secret = randomUUID();
+    const sealingKey = process.env.JWT_SECRET;
+    store.putRow("alice", "connections", JSON.stringify([connection("c1", { password: sealVersionOne(secret) })]));
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
+    resetStorageEncryptionKey();
+
+    expect(await resealStore(store, NOW)).toMatchObject({ resealed: 0, unopened: ["alice c1 password"] });
+    expect(store.marker).toBe("v2");
+
+    process.env.JWT_SECRET = sealingKey;
+    resetStorageEncryptionKey();
+    const [stillStored] = rowOf(store, "alice");
+    // The key alone does not bring it back: version 1 is retired, and a second re-seal finds nothing to do.
+    expect(decryptConnections("alice", [stillStored], "v1-retired").omitted).toEqual([
+      { id: "c1", path: "password", reason: "retired" },
+    ]);
+    expect(await resealStore(store, NOW)).toEqual({ kind: "already-retired" });
+
+    store.marker = undefined;
+    expect(await resealStore(store, new Date("2026-11-22T06:00:00Z"))).toMatchObject({ resealed: 1, unopened: [] });
+    const [after] = rowOf(store, "alice");
+    expect(decryptConnections("alice", [after], "v1-retired").connections[0].password).toBe(secret);
   });
 
   test("the backup label is pre-reseal- and the UTC time to the second", () => {
