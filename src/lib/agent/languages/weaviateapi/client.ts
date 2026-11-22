@@ -3,22 +3,19 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on Weaviate: the boundary is the provider's closed table of read requests, which can name no write, and
  * before every request the server proves the key a viewer. Its answers carry metadata only: names, counts and flags,
  * never a stored object, property or vector.
  */
-function weaviateapiReadsPosture(bounds: StatementBudgets): AgentPosture {
+function weaviateapiReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `metadata only, ${rows} rows and ${seconds} s per request, from a key the server proves a viewer`,
     title: "Agent mode reads Weaviate's metadata, as a key the server proves a viewer",
     body: `Agent mode runs Weaviate reads it wrote itself, the meta, schema, shard, tenant, alias and node reads and an aggregate count, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Its answers carry names, counts and flags only, never a stored object, property or vector. Before every request Studio has the server prove the connection's key holds only the viewer role's read actions, so an administrator's key, a role that writes, a server with RBAC off and a connection with no key are refused. Studio's reader refuses object reads, searches, every module call and every write before anything is sent, and a COLD tenant is refused rather than woken. Nothing reaches your editor.`,
@@ -65,7 +62,6 @@ export const WEAVIATEAPI_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: weaviateapiReadsPosture,
-    widened: weaviateapiReadsPosture,
     handoverTerms: () =>
       "A Weaviate answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

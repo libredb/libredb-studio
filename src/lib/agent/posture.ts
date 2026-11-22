@@ -13,11 +13,15 @@
  * the strip and the consent card cannot drift into two versions of a sentence a user agrees
  * to.
  *
- * Three properties are load-bearing and easy to lose:
+ * Four properties are load-bearing and easy to lose:
  *
+ *  - **The tone and the headline are this module's.** A language pack supplies the qualifier, the
+ *    title and the body of its arms (`AgentPostureCopy` in `languages/pack.ts`) and cannot write a
+ *    tone or a headline; the arm decides both, and the arm is read here from the review record and
+ *    from the language's workflow variants, so no pack ranks its own claim.
  *  - **Client-safe imports only** - types, `AGENT_EXECUTION_ENGINES`, the manifest's
  *    `AGENT_STATEMENT_LANGUAGE`, the language packs' client facets (`languages/client.ts`, where each
- *    language's reads, widened and hand-over sentences live), the engines' client facets (`languages/engines/client.ts`), `getDBConfig` and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
+ *    language's reads, widened and hand-over words live), the engines' client facets (`languages/engines/client.ts`), `getDBConfig`, the type-id guard (`assertDatabaseType`) and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
  *    that must not have them, which is the rule the review record's docblock in `src/lib/db/compatibility.ts` records.
  *  - **Every engine name and every number is DERIVED.** Not one is typed as a literal, and
  *    not one is a count. The point of #425 is that "7+" was written when the answer was 7
@@ -30,13 +34,18 @@
  *    carries the full claim rather than the missing half.
  */
 
-import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
+import {
+  AGENT_STATEMENT_LANGUAGE,
+  type AgentStatementLanguageId,
+  notReviewedSentence,
+} from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
+import { assertDatabaseType } from "@/lib/db/type-id";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { languageClientPack } from "@/lib/agent/languages/client";
 import { enginesSupporting } from "@/lib/agent/languages/engines/client";
-import type { StatementBudgets } from "@/lib/agent/languages/pack";
+import type { AgentPostureCopy, StatementBudgets } from "@/lib/agent/languages/pack";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
@@ -58,6 +67,14 @@ export interface AgentPosture {
   readonly title: string;
   /** The popover's text, and the whole claim. */
   readonly body: string;
+}
+
+/**
+ * One arm's posture: core's tone and headline over a copy's three members, read by name. Not a spread, so a copy that
+ * carries anything else, a tone or a headline cast past `AgentPostureCopy` among it, carries none of it to the strip.
+ */
+function rendered(tone: AgentPostureTone, headline: string, copy: AgentPostureCopy): AgentPosture {
+  return { tone, headline, qualifier: copy.qualifier, title: copy.title, body: copy.body };
 }
 
 /**
@@ -121,15 +138,23 @@ function handoverTerms(budgets: StatementBudgets, language: AgentStatementLangua
   return languageClientPack(language).posture.handoverTerms(budgets);
 }
 
-/** Plan mode, on every engine, with or without the hand-over ticked. */
-function planPosture(): AgentPosture {
+/** The plan words every engine reads unless its language says its own. */
+function sharedPlanCopy(): AgentPostureCopy {
   return {
-    tone: "safe",
-    headline: "Executes nothing it drafts",
     qualifier: "one schema read grounds it, nothing else reaches the database",
     title: "Plan mode drafts, and never runs what it drafted",
     body: `Plan mode never executes the statement it wrote, on any engine — production included. Its one reach is the schema capture that grounds it: metadata only, no data rows, and it is where the inventory in Run details came from. On ${engineNames(CATALOG_CAPTURE_ENGINES)} that capture is itself a catalog read; on every other engine it asks the provider to describe its own schema.`,
   };
+}
+
+/**
+ * Plan mode, on every engine, with or without the hand-over ticked: the shared words, or the language's own where the
+ * shared ones are not true of it (its pack's `posture.plan`, Modbus's among them). Safe either way, because plan mode
+ * never executes what it drafts.
+ */
+function planPosture(language: AgentStatementLanguageId | null): AgentPosture {
+  const own = language === null ? undefined : languageClientPack(language).posture.plan?.();
+  return rendered("safe", "Executes nothing it drafts", own ?? sharedPlanCopy());
 }
 
 /**
@@ -157,6 +182,26 @@ function unsupportedPosture(engineLabel: string): AgentPosture {
     qualifier: "plan mode drafts here, and the operations workflow still runs",
     title: `Agent mode has no read-only statement path on ${engineLabel}`,
     body: `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${engineNames(AGENT_EXECUTION_ENGINES)}. On ${engineLabel} a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
+  };
+}
+
+/**
+ * Agent mode on an engine whose language would run its statements but which the review record does not list.
+ *
+ * The start route refuses such a run with `notReviewedSentence` (`workflowAvailability`'s `not-reviewed`), so the
+ * body is that sentence, and the strip and the refusal say one thing. The pill and the qualifier are the unsupported
+ * arm's, which are true here too; the title is not, because such an engine may well have a read-only statement path:
+ * what it lacks is Studio's review of it. No shipped engine reaches this arm, since an engine has a language exactly
+ * when the record lists it (`tests/unit/lib/agent/agent-manifest.test.ts`); a language registered for an engine the
+ * record does not list reads as blocked rather than as reads.
+ */
+function notReviewedPosture(engineLabel: string): AgentPosture {
+  return {
+    tone: "blocked",
+    headline: `Cannot execute on ${engineLabel}`,
+    qualifier: "plan mode drafts here, and the operations workflow still runs",
+    title: `Studio has not reviewed agent mode's read-only statement path on ${engineLabel}`,
+    body: notReviewedSentence(engineLabel),
   };
 }
 
@@ -197,33 +242,63 @@ function unresolvedPosture(): AgentPosture {
   };
 }
 
-/** Agent mode with the editor hand-over consented, in the language's own terms (its client pack's `widened`). */
-function widenedPosture(language: AgentStatementLanguageId): AgentPosture {
-  return languageClientPack(language).posture.widened(STATEMENT_BOUNDS);
+/**
+ * Whether a tick of the hand-over widens anything in this language: some workflow variant of it hands a statement to
+ * the editor. The same fact the start route refuses `autoExecute` from and the rail offers the tick from, read off the
+ * language's variants rather than off its posture words, so a pack cannot widen or narrow the strip by its copy.
+ */
+function offersHandover(language: AgentStatementLanguageId): boolean {
+  return Object.values(languageClientPack(language).variants).some((variant) => variant?.canAutoExecute === true);
 }
 
-/** Agent mode, executing on its own path and nowhere else, in the language's own terms (its client pack's `reads`). */
+/**
+ * Agent mode with the editor hand-over consented, in the language's own words (its client pack's `widened`).
+ *
+ * @throws {Error} When the language offers the hand-over and its pack supplies no widened words: its reads words
+ *   would say nothing reaches the editor, which is false under a consented hand-over.
+ */
+function widenedPosture(language: AgentStatementLanguageId): AgentPosture {
+  const widened = languageClientPack(language).posture.widened;
+  if (widened === undefined) {
+    throw new Error(
+      `The "${language}" language pack offers the editor hand-over and supplies no widened posture copy.`,
+    );
+  }
+  return rendered("widened", "Reads only, and one statement in your editor", widened(STATEMENT_BOUNDS));
+}
+
+/** Agent mode, executing on its own path and nowhere else, in the language's own words (its client pack's `reads`). */
 function readsPosture(language: AgentStatementLanguageId): AgentPosture {
-  return languageClientPack(language).posture.reads(STATEMENT_BOUNDS);
+  return rendered("reads", "Reads only", languageClientPack(language).posture.reads(STATEMENT_BOUNDS));
 }
 
 /**
  * The rail's reading of the selected mode, in the order the arms EXCLUDE each other.
  *
  * Plan mode first, because the hand-over cannot widen it - there is no statement of the run's
- * to hand over. It reads the same on every engine except where the engine's language pack
- * declares a plan posture of its own, because the shared one is not true of it (Modbus). Then the two arms that know no bounds to
- * state: no connection, and an engine agent mode cannot execute a statement on. Only then
- * does the hand-over matter, which is why a ticked hand-over on an unsupported engine still
- * reads as blocked rather than as widened.
+ * to hand over. It is safe on every engine, in the shared words except where the engine's language pack
+ * says its own, because the shared ones are not true of it (Modbus). Then the arms that know no bounds to
+ * state: no connection, an engine with no statement language, and an engine whose language the review
+ * record does not back. Only then does a refusal of this connection, and only then the hand-over, which
+ * is why a ticked hand-over on an unsupported engine still reads as blocked rather than as widened. The
+ * hand-over widens only in a language some of whose variants hand a statement over; elsewhere a tick
+ * consents to nothing and the reading stays the reads one.
  *
- * Whether the engine executes is `AGENT_STATEMENT_LANGUAGE`'s answer, the record the start
- * route refuses from, so the strip and the refusal cannot disagree about an engine. It and
- * `AGENT_EXECUTION_ENGINES`, which names the engines in the copy, are read on every call,
+ * Each arm decides its tone and its headline here; a language pack supplies the words of the plan,
+ * reads and widened arms and nothing that ranks them.
+ *
+ * Whether the engine executes is `AGENT_STATEMENT_LANGUAGE`'s answer and then
+ * `AGENT_EXECUTION_ENGINES`'s, in the order the start route refuses from them (`workflowAvailability`),
+ * so the strip and the refusal cannot disagree about an engine. Both are read on every call,
  * not folded into a constant at module load, so the copy follows the lists in the process
- * that is running. The same record's answer is also the language the executing arms speak
+ * that is running. The language is also what the executing arms speak
  * in, so a cluster's posture names Studio's allowlist and RBAC where a SQL engine's names
  * the database's read-only session.
+ *
+ * Before every arm, plan mode's included, an engine that is not a type id is refused by name, as the start route
+ * refuses it, so no arm answers for an engine that names no provider.
+ *
+ * @throws {UnknownProviderError} When `engine` is neither null nor a type id.
  */
 export function agentPosture(input: {
   readonly mode: AgentRunMode;
@@ -233,12 +308,12 @@ export function agentPosture(input: {
   /** The refusal the last run on THIS connection met for the connection itself, if it met one. */
   readonly refusedHere?: string | null;
 }): AgentPosture {
+  if (input.engine !== null) assertDatabaseType(input.engine);
   const language = input.engine === null ? null : AGENT_STATEMENT_LANGUAGE[input.engine];
-  if (input.mode === "planning") {
-    return (language === null ? undefined : languageClientPack(language).posture.plan?.()) ?? planPosture();
-  }
+  if (input.mode === "planning") return planPosture(language);
   if (input.engine === null) return unresolvedPosture();
   if (language === null) return unsupportedPosture(input.engineLabel);
+  if (!AGENT_EXECUTION_ENGINES.includes(input.engine)) return notReviewedPosture(input.engineLabel);
   if (typeof input.refusedHere === "string") return refusedPosture(input.engineLabel, input.refusedHere);
-  return input.handover ? widenedPosture(language) : readsPosture(language);
+  return input.handover && offersHandover(language) ? widenedPosture(language) : readsPosture(language);
 }

@@ -14,7 +14,6 @@ import type { AgentCatalogRead, AgentPlanEstimate } from "../composed-sql-primit
 import type { AgentGoalShortfall, VerifiableAgentRun } from "../goal-verifier";
 import type { AgentInventoryNoun } from "../inventory-noun";
 import type { PlanStatementIdentifiers } from "../plan-statement";
-import type { AgentPosture } from "../posture";
 import type { AgentStatisticsReading } from "../schema-stats";
 import type { AgentProfileComposition, AgentProfileDepth } from "../table-profile";
 import type { z } from "zod";
@@ -773,6 +772,26 @@ export interface AgentLanguageExecutionPack {
 export type StatementBudgets = { readonly maxResultRows: number; readonly statementTimeoutMs: number };
 
 /**
+ * What a language says of one arm of the safety strip's posture: the words, and nothing that ranks them.
+ *
+ * The tone and the headline are `posture.ts`'s, derived from the run's arm and the review record, so a pack cannot
+ * set either: the two `never` members make writing one a compile error in every form a pack declares its facet in,
+ * which the excess-property check alone does not (it passes an arrow checked by `satisfies` and a named function with
+ * no return annotation). `posture.ts` then reads the three members by name, so a value cast past the compiler carries
+ * nothing else to the strip.
+ */
+export type AgentPostureCopy = {
+  /** Beside the pill, always visible: the half a compressed headline would drop. */
+  readonly qualifier: string;
+  /** The popover's heading. */
+  readonly title: string;
+  /** The popover's text, and the whole claim. */
+  readonly body: string;
+  readonly tone?: never;
+  readonly headline?: never;
+};
+
+/**
  * What a language contributes to the browser: data a client bundle may hold, with no server code behind it. Reached
  * through `languageClientPack` in `client.ts`, and read whole by `agent-manifest.ts` through its projections.
  */
@@ -803,21 +822,26 @@ export interface AgentLanguageClientPack {
    * language's, total over `AgentPackVariantRequirement`, and `agent-manifest.ts` reads the merge.
    */
   readonly requirements: Readonly<Record<string, AgentVariantRequirementSpec>>;
-  /** What `posture.ts` says of an agent-mode run in this language. */
+  /**
+   * The words `posture.ts` renders for an agent-mode run in this language, and for plan mode where the shared plan
+   * words are not true of it. Each arm answers an `AgentPostureCopy`; the tone and the headline are core's.
+   */
   readonly posture: {
     /**
      * Agent mode, executing on its own path and nowhere else, under the boundary its language declares. Keyed by
      * language rather than compared, like the hand-over terms.
      */
-    readonly reads: (bounds: StatementBudgets) => AgentPosture;
+    readonly reads: (bounds: StatementBudgets) => AgentPostureCopy;
     /**
      * Agent mode with the editor hand-over consented: still read-only, and one statement wider.
      *
-     * Only SQL has a widened reading. On a cluster and on MongoDB no workflow variant offers the
-     * hand-over, so a tick there consents to nothing and the posture stays the reads one: a
-     * "widened" pill would claim an editor run the engine never performs.
+     * Present exactly where one of the language's workflow variants hands a statement to the editor
+     * (`canAutoExecute`), which `tests/unit/lib/agent/posture.test.ts` holds. Whether the arm is widened is core's
+     * reading of those variants, not this member's: on a language none of whose variants offers the hand-over, a tick
+     * consents to nothing and the posture stays the reads one, since a "widened" pill would claim an editor run the
+     * engine never performs. Only SQL has one.
      */
-    readonly widened: (bounds: StatementBudgets) => AgentPosture;
+    readonly widened?: (bounds: StatementBudgets) => AgentPostureCopy;
     /**
      * One consent sentence per statement language, keyed rather than compared, so a language
      * registered in the manifest does not compile until it says what its hand-over is.
@@ -828,7 +852,7 @@ export interface AgentLanguageClientPack {
      * whose grounding is a schema read of the engine; Modbus's grounding is the register map, which sends the device
      * nothing, while opening the connection dials it, so "nothing else reaches the database" would be false there.
      */
-    readonly plan?: () => AgentPosture;
+    readonly plan?: () => AgentPostureCopy;
   };
 }
 

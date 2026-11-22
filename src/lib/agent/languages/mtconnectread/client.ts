@@ -3,10 +3,9 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /** What is withheld and why, in the words the posture uses; the provider's sentence is the same rule. */
 const WITHHELD =
@@ -17,12 +16,10 @@ const WITHHELD =
  * GET, sent by a client with no method argument and no body parameter. Its answers carry the machine's observations
  * and asset documents, and never the adapter connections, which the body names.
  */
-function mtconnectreadReadsPosture(bounds: StatementBudgets): AgentPosture {
+function mtconnectreadReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `${rows} rows and ${seconds} s per read, one request at a time on this connection's agent-mode handle and four MTConnect requests at once across Studio, over a client that sends only GET of nine routes`,
     title: "Agent mode reads the MTConnect agent's device model, observations and assets, and never writes",
     body: `Agent mode runs MTConnect reads it wrote itself, each one request line of the console's: the device model (/probe), the current observations (/current), a page of the buffer (/sample), the assets (/assets) or assets by id (/asset/{assetIds}), for every device or one. It answers the machine's observations as the console renders them, value, timestamp and sequence, and each asset's document as XML text, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. ${WITHHELD} Each read reads the agent's device model first, and the reads of this agent-mode handle never overlap. Studio's agent client sends GET of nine routes and nothing else, so it cannot set an observation, add an asset, cancel a stream or open one. Nothing reaches your editor.`,
@@ -69,7 +66,6 @@ export const MTCONNECTREAD_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: mtconnectreadReadsPosture,
-    widened: mtconnectreadReadsPosture,
     handoverTerms: () =>
       "An MTConnect answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

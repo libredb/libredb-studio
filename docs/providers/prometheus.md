@@ -858,7 +858,7 @@ Both overlays are empty, so the engine resolves to the `promql` family pack itse
 The `promql` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `promql` statement-language family's own.
 The family offers the investigation and the data analysis, through `run_read_query` with one expression, and the operations workflow; it offers no query optimization or database assessment, since the server composes no plan an agent can be shown and Studio no table profile, and no workflow hands an answer to the editor.
-Plan mode's safety strip is the family's own (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/promql/client.ts)): "the server's read endpoints ground it, and no PromQL it drafted is evaluated", because the grounding is several read endpoints rather than one schema read; plan mode follows the provider's `statementLanguage` label, `PromQL`.
+Plan mode's safety strip says the family's own words (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/promql/client.ts)) beside core's pill, *Executes nothing it drafts*: "the server's read endpoints ground it, and no PromQL it drafted is evaluated", because the grounding is several read endpoints rather than one schema read; plan mode follows the provider's `statementLanguage` label, `PromQL`.
 The editor language id stays `promql`, and the fence alias `promql` names this engine.
 VictoriaMetrics is served by the same provider and the same type-id, so it takes the same agent path; it was measured beside Prometheus in the capture, and its own admin and import endpoints are not on the table either.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.

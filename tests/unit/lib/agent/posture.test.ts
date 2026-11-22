@@ -1,11 +1,25 @@
 import { describe, expect, mock, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import * as manifest from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
 import * as compatibility from "@/lib/db/compatibility";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import * as clientPacks from "@/lib/agent/languages/client";
+import { languageClientPack } from "@/lib/agent/languages/client";
 import { engineServerDialect } from "@/lib/agent/languages/engines/server";
+import type { AgentLanguageClientPack } from "@/lib/agent/languages/pack";
 import { agentPosture, autoExecuteTerms } from "@/lib/agent/posture";
+import {
+  POSTURE_ARMS,
+  POSTURE_ENGINES,
+  UNRESOLVED_ARMS,
+  postureOf,
+  unresolvedPostureOf,
+} from "../../../fixtures/agent/posture/golden-posture";
 import type { AgentRunWorkflowType } from "@/lib/agent/types";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
@@ -295,6 +309,26 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
     );
   });
 
+  test.each([
+    ["agent mode", "agent", false],
+    ["agent mode with the hand-over ticked", "agent", true],
+    ["plan mode", "planning", false],
+  ] as const)(
+    "an engine id that names no provider is refused with UnknownProviderError in %s",
+    (_label, mode, handover) => {
+      const engine = `nosuch-${crypto.randomUUID()}`;
+      let thrown: unknown;
+      try {
+        agentPosture({ mode, engine: engine as DatabaseType, engineLabel: "Nosuch", handover });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(UnknownProviderError);
+      expect((thrown as UnknownProviderError).reason).toBe("unknown");
+      expect((thrown as UnknownProviderError).message).toBe(unknownTypeSentence(engine));
+    },
+  );
+
   test("the unresolved reading never states an engine label, not even an empty one", () => {
     const posture = agentPosture({ mode: "agent", engine: null, engineLabel: "Postgres-shaped guess", handover: true });
 
@@ -550,6 +584,93 @@ describe("autoExecuteTerms", () => {
 });
 
 /**
+ * What the strip renders for every engine in every arm is what it rendered on the commit before core derived the tone
+ * and the headline: `tests/fixtures/agent/posture/golden-posture.json` was generated there, and its docblock says how
+ * to regenerate it for a change that means to move an answer.
+ */
+describe("every engine in every arm", () => {
+  const golden = JSON.parse(
+    readFileSync(
+      join(import.meta.dir, "..", "..", "..", "fixtures", "agent", "posture", "golden-posture.json"),
+      "utf8",
+    ),
+  ) as {
+    readonly engines: Record<string, Record<string, number>>;
+    readonly unresolved: Record<string, number>;
+    readonly answers: readonly unknown[];
+  };
+
+  test("the walk covers every engine the manifest lists, and the golden file no other", () => {
+    expect(Object.keys(golden.engines)).toEqual(POSTURE_ENGINES);
+  });
+
+  test.each(POSTURE_ENGINES)("%s renders in each arm what the golden file records", (engine) => {
+    for (const arm of POSTURE_ARMS) {
+      expect(postureOf(engine, arm), `${engine} ${arm}`).toEqual(golden.answers[golden.engines[engine][arm]] as never);
+    }
+  });
+
+  test("no resolved connection renders in each arm what the golden file records", () => {
+    for (const arm of UNRESOLVED_ARMS) {
+      expect(unresolvedPostureOf(arm), arm).toEqual(golden.answers[golden.unresolved[arm]] as never);
+    }
+  });
+});
+
+const LANGUAGES = Object.keys(clientPacks.projectClientPacks((pack) => pack)) as manifest.AgentStatementLanguageId[];
+const LANGUAGES_DIR = join(import.meta.dir, "..", "..", "..", "..", "src", "lib", "agent", "languages");
+
+/** Whether some workflow variant of the language hands a statement to the editor: the fact the start route reads. */
+const offersHandover = (pack: AgentLanguageClientPack): boolean =>
+  Object.values(pack.variants).some((variant) => variant?.canAutoExecute === true);
+
+/**
+ * A language pack supplies the words of its arms; the tone and the headline are core's, from the arm and the review
+ * record. The compiler holds the shape (`posture-copy-types.test.ts`); these hold what each shipped pack answers and
+ * what each client pack module is written as.
+ */
+describe("what a language pack supplies to the posture", () => {
+  test.each(LANGUAGES)(
+    "%s supplies the qualifier, the title and the body of each arm, and nothing else",
+    (language) => {
+      const posture = languageClientPack(language).posture;
+      for (const workflowType of WORKFLOW_TYPES) {
+        const bounds = AGENT_WORKFLOW_BUDGETS[workflowType].policy.budgets;
+        const copies = [posture.reads(bounds), posture.widened?.(bounds), posture.plan?.()];
+        for (const copy of copies.filter((each) => each !== undefined)) {
+          expect(Object.keys(copy).sort(), `${language} ${workflowType}`).toEqual(["body", "qualifier", "title"]);
+        }
+      }
+    },
+  );
+
+  test.each(LANGUAGES)(
+    "%s supplies a widened copy exactly where one of its variants hands a statement over",
+    (language) => {
+      const pack = languageClientPack(language);
+      expect(pack.posture.widened !== undefined).toBe(offersHandover(pack));
+    },
+  );
+
+  test("no client pack module names the posture module or writes a posture tone or headline", () => {
+    const modules = readdirSync(LANGUAGES_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name !== "engines")
+      .map((entry) => entry.name);
+    expect([...modules].sort()).toEqual([...LANGUAGES].sort());
+    for (const language of modules) {
+      const source = readFileSync(join(LANGUAGES_DIR, language, "client.ts"), "utf8");
+      expect(source, language).not.toMatch(/from "(?:\.\.\/\.\.\/|@\/lib\/agent\/)posture"/);
+      expect(source, language).not.toMatch(/\bAgentPosture(Tone)?\b/);
+      expect(source, language).not.toMatch(/\btone:\s*"(safe|reads|widened|blocked)"/);
+      // A pack's evidence events write a timeline headline each (`AgentEvidenceTimelineEntry`), and nothing else in a
+      // client pack module may: one more is a posture headline.
+      const headlines = source.match(/\bheadline:/g)?.length ?? 0;
+      expect(headlines, language).toBe(Object.keys(languageClientPack(language as never).evidenceEvents).length);
+    }
+  });
+});
+
+/**
  * Kept last in the file on purpose: `mock.module` is process-wide, so this substitution
  * would otherwise be read by every test after it. It is restored at the end regardless.
  */
@@ -642,5 +763,142 @@ describe("a connection whose last run was refused for the connection itself", ()
         refusedHere: refusal,
       }).headline,
     ).toContain("Apache Spark");
+  });
+});
+
+/**
+ * The tone and the headline are core's, from the arm and the review record, whatever a pack holds. Kept last beside
+ * the block above for the same reason: each test substitutes a module with `mock.module` and restores it at the end.
+ */
+describe("core decides the tone and the headline from the arm and the review record", () => {
+  const copy = (name: string) => ({ qualifier: `${name} qualifier`, title: `${name} title`, body: `${name} body` });
+
+  /** The real client packs, with `language`'s posture and variants replaced as given. */
+  async function withPack(
+    language: manifest.AgentStatementLanguageId,
+    change: (pack: AgentLanguageClientPack) => AgentLanguageClientPack,
+    check: (posture: typeof agentPosture) => void,
+  ): Promise<void> {
+    const real = { ...clientPacks };
+    try {
+      mock.module("@/lib/agent/languages/client", () => ({
+        ...real,
+        languageClientPack: (id: manifest.AgentStatementLanguageId) =>
+          id === language ? change(real.languageClientPack(id)) : real.languageClientPack(id),
+      }));
+      const { agentPosture: withChange } = await import("@/lib/agent/posture");
+      check(withChange);
+    } finally {
+      mock.module("@/lib/agent/languages/client", () => real);
+    }
+  }
+
+  test("a pack's copy carries no tone and no headline to the strip, even one cast past the compiler", async () => {
+    const claim = { tone: "safe", headline: "Executes nothing it drafts", extra: "not a posture member" };
+    await withPack(
+      "sql",
+      (pack) => ({
+        ...pack,
+        posture: {
+          ...pack.posture,
+          reads: () => ({ ...copy("reads"), ...claim }) as never,
+          widened: () => ({ ...copy("widened"), ...claim, tone: "reads", headline: "Reads only" }) as never,
+          plan: () => ({ ...copy("plan"), ...claim, tone: "blocked", headline: "Cannot execute" }) as never,
+        },
+      }),
+      (posture) => {
+        const base = { engine: "postgres" as const, engineLabel: "PostgreSQL" };
+        expect(posture({ ...base, mode: "agent", handover: false })).toEqual({
+          tone: "reads",
+          headline: "Reads only",
+          ...copy("reads"),
+        });
+        expect(posture({ ...base, mode: "agent", handover: true })).toEqual({
+          tone: "widened",
+          headline: "Reads only, and one statement in your editor",
+          ...copy("widened"),
+        });
+        expect(posture({ ...base, mode: "planning", handover: false })).toEqual({
+          tone: "safe",
+          headline: "Executes nothing it drafts",
+          ...copy("plan"),
+        });
+      },
+    );
+  });
+
+  test("the widened arm follows the language's variants, not the copy its pack holds", async () => {
+    // MongoDB offers no hand-over, so a tick reads as the reads arm even with a widened copy in the pack.
+    await withPack(
+      "mongo",
+      (pack) => ({ ...pack, posture: { ...pack.posture, widened: () => copy("widened") } }),
+      (posture) => {
+        const ticked = posture({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: true });
+        expect(ticked.tone).toBe("reads");
+        expect(ticked.headline).toBe("Reads only");
+        expect(ticked.title).not.toBe("widened title");
+      },
+    );
+    // The same language with a variant that hands a statement over widens, in its own copy.
+    await withPack(
+      "mongo",
+      (pack) => ({
+        ...pack,
+        variants: { ...pack.variants, investigation: { ...pack.variants.investigation!, canAutoExecute: true } },
+        posture: { ...pack.posture, widened: () => copy("widened") },
+      }),
+      (posture) => {
+        expect(posture({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: true })).toEqual({
+          tone: "widened",
+          headline: "Reads only, and one statement in your editor",
+          ...copy("widened"),
+        });
+      },
+    );
+  });
+
+  test("a language that hands a statement over and supplies no widened copy is a named error, never its reads copy", async () => {
+    await withPack(
+      "sql",
+      (pack) => ({ ...pack, posture: { reads: pack.posture.reads, handoverTerms: pack.posture.handoverTerms } }),
+      (posture) => {
+        expect(() => posture({ mode: "agent", engine: "postgres", engineLabel: "PostgreSQL", handover: true })).toThrow(
+          'The "sql" language pack offers the editor hand-over and supplies no widened posture copy.',
+        );
+      },
+    );
+  });
+
+  test("an engine with a statement language that the review record does not list is blocked, in the start route's words", async () => {
+    const real = { ...compatibility };
+    try {
+      mock.module("@/lib/db/compatibility", () => ({
+        ...real,
+        AGENT_EXECUTION_ENGINES: real.AGENT_EXECUTION_ENGINES.filter((engine) => engine !== "mongodb"),
+      }));
+      const { agentPosture: unreviewed } = await import("@/lib/agent/posture");
+      for (const handover of [false, true]) {
+        const posture = unreviewed({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover });
+        expect(posture).toEqual({
+          tone: "blocked",
+          headline: "Cannot execute on MongoDB",
+          qualifier: "plan mode drafts here, and the operations workflow still runs",
+          title: "Studio has not reviewed agent mode's read-only statement path on MongoDB",
+          body: manifest.notReviewedSentence("MongoDB"),
+        });
+        // The engine's refusal comes before the connection's, as the start route reads them.
+        expect(
+          unreviewed({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover, refusedHere: "Refused." }),
+        ).toEqual(posture);
+      }
+      expect(unreviewed({ mode: "planning", engine: "mongodb", engineLabel: "MongoDB", handover: false }).tone).toBe(
+        "safe",
+      );
+      expect(unreviewed({ mode: "agent", engine: "postgres", engineLabel: "PostgreSQL", handover: false }).tone).toBe(
+        "reads",
+      );
+    } finally {
+      mock.module("@/lib/db/compatibility", () => real);
+    }
   });
 });

@@ -1,0 +1,836 @@
+{
+  "engines": {
+    "postgres": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 3
+    },
+    "bigquery": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 4,
+      "widened": 4,
+      "refused": 4
+    },
+    "snowflake": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 5,
+      "widened": 5,
+      "refused": 5
+    },
+    "spark": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 6,
+      "widened": 6,
+      "refused": 6
+    },
+    "mysql": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 7
+    },
+    "sqlite": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 8
+    },
+    "libsql": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 9
+    },
+    "duckdb": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 10
+    },
+    "oracle": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 11
+    },
+    "db2": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 12
+    },
+    "mssql": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 13
+    },
+    "clickhouse": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 14
+    },
+    "druid": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 15
+    },
+    "trino": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 16
+    },
+    "cassandra": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 17
+    },
+    "elasticsearch": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 18
+    },
+    "opensearch": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 19
+    },
+    "mongodb": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 20,
+      "widened": 20,
+      "refused": 21
+    },
+    "couchbase": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 22
+    },
+    "redis": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 23,
+      "widened": 23,
+      "refused": 24
+    },
+    "prometheus": {
+      "plan": 25,
+      "plan-handover": 25,
+      "reads": 26,
+      "widened": 26,
+      "refused": 27
+    },
+    "kafka": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 28,
+      "widened": 28,
+      "refused": 29
+    },
+    "etcd": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 30,
+      "widened": 30,
+      "refused": 31
+    },
+    "neo4j": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 32,
+      "widened": 32,
+      "refused": 33
+    },
+    "milvus": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 34,
+      "widened": 34,
+      "refused": 35
+    },
+    "qdrant": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 36,
+      "widened": 36,
+      "refused": 37
+    },
+    "weaviate": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 38,
+      "widened": 38,
+      "refused": 39
+    },
+    "influxdb": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 40,
+      "widened": 40,
+      "refused": 41
+    },
+    "influxdb3": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 1,
+      "widened": 2,
+      "refused": 42
+    },
+    "oxia": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 43,
+      "widened": 43,
+      "refused": 44
+    },
+    "databend": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 45,
+      "widened": 45,
+      "refused": 45
+    },
+    "s3": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 46,
+      "widened": 46,
+      "refused": 47
+    },
+    "kubernetes": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 48,
+      "widened": 48,
+      "refused": 49
+    },
+    "mqtt": {
+      "plan": 50,
+      "plan-handover": 50,
+      "reads": 51,
+      "widened": 51,
+      "refused": 52
+    },
+    "firestore": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 53,
+      "widened": 53,
+      "refused": 54
+    },
+    "rabbitmq": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 55,
+      "widened": 55,
+      "refused": 56
+    },
+    "opcua": {
+      "plan": 57,
+      "plan-handover": 57,
+      "reads": 58,
+      "widened": 58,
+      "refused": 59
+    },
+    "mtconnect": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 60,
+      "widened": 60,
+      "refused": 61
+    },
+    "modbus": {
+      "plan": 62,
+      "plan-handover": 62,
+      "reads": 63,
+      "widened": 63,
+      "refused": 64
+    },
+    "netconf": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 65,
+      "widened": 65,
+      "refused": 66
+    },
+    "snmp": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 67,
+      "widened": 67,
+      "refused": 68
+    },
+    "sparkplug": {
+      "plan": 69,
+      "plan-handover": 69,
+      "reads": 70,
+      "widened": 70,
+      "refused": 71
+    },
+    "libredb": {
+      "plan": 0,
+      "plan-handover": 0,
+      "reads": 72,
+      "widened": 72,
+      "refused": 73
+    }
+  },
+  "unresolved": {
+    "plan": 0,
+    "agent": 74
+  },
+  "answers": [
+    {
+      "tone": "safe",
+      "headline": "Executes nothing it drafts",
+      "qualifier": "one schema read grounds it, nothing else reaches the database",
+      "title": "Plan mode drafts, and never runs what it drafted",
+      "body": "Plan mode never executes the statement it wrote, on any engine — production included. Its one reach is the schema capture that grounds it: metadata only, no data rows, and it is where the inventory in Run details came from. On PostgreSQL and SQLite that capture is itself a catalog read; on every other engine it asks the provider to describe its own schema."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per statement, enforced by the engine",
+      "title": "Agent mode reads, under a boundary the engine enforces",
+      "body": "Agent mode runs statements it wrote itself, in a read-only session the database enforces, bounded to 200 rows and 10 seconds each. Writes and DDL are refused by the engine rather than by reading the statement. Nothing reaches your editor unless you tick the hand-over when the run opens."
+    },
+    {
+      "tone": "widened",
+      "headline": "Reads only, and one statement in your editor",
+      "qualifier": "500 rows, no time limit, same read-only session",
+      "title": "Reads only, and one statement lands in your editor",
+      "body": "The run always produces its answer on its own read-only path, bounded to 200 rows and 10 seconds. Tick this and it will also put that statement in your editor and run it there — on the connection the run was opened on, at the editor's 500-row limit and with no time limit. It is the same database-enforced read-only session either way, so writes and DDL are refused by the engine rather than by reading the statement. Statements whose plan reads as expensive, or which the run measured as slow, are put in the editor without being run."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this PostgreSQL connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Cannot execute on BigQuery",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode has no read-only statement path on BigQuery",
+      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On BigQuery a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Cannot execute on Snowflake",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode has no read-only statement path on Snowflake",
+      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Snowflake a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Cannot execute on Apache Spark",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode has no read-only statement path on Apache Spark",
+      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this MySQL connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this SQLite connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this libSQL connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this DuckDB connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Oracle connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Db2 LUW connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this SQL Server connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this ClickHouse connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Apache Druid connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Trino connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Apache Cassandra connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Elasticsearch connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this OpenSearch connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per command, enforced by the server",
+      "title": "Agent mode reads, under a boundary the server enforces",
+      "body": "Agent mode runs commands it wrote itself, bounded to 200 rows and 10 seconds each: maxTimeMS is the server's own deadline, and Studio ends a command the server does not. On the server, find and aggregate stop one row past the budget. Before the first model turn of a run that sends commands, the server must report that this connection's user holds only read privileges on this database and must refuse a write from it: a user that can write, a server without authentication, or a server that is not MongoDB ends that run there. The fence refuses writes, write stages, server-side JavaScript and diagnostic stages before the engine is reached. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this MongoDB connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Couchbase connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, 200 rows and 10 s per command, as an ACL user the server refuses writes",
+      "title": "Agent mode reads Redis's metadata, as an ACL user the server refuses writes",
+      "body": "Agent mode runs Redis reads it wrote itself, the database's key count and, for one key a command names, its type, existence, time to live, length, encoding and memory use, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Key names count as stored values, so it never lists keys and never reads a value, field or member. Before every command, on that command's own connection, the server must refuse the connection's ACL user write, admin, dangerous, scripting and pubsub probes that change nothing, each as a command the user does not hold, so the default user, a connection naming no user and a user holding any probed command, even on its own key pattern only, are refused; a write the probes leave out is stopped by the reader, which sends none. Studio's reader refuses every other command before anything is sent. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Redis connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "safe",
+      "headline": "Executes nothing it drafts",
+      "qualifier": "the server's read endpoints ground it, and no PromQL it drafted is evaluated",
+      "title": "Plan mode drafts, and never runs what it drafted",
+      "body": "Plan mode never sends the PromQL it wrote. It is grounded on the server's own read endpoints, the metric names of the last hour and their label names, the rule groups and rules, and the scrape pools and targets, and that grounding is where the inventory in Run details came from. Studio reads the series' label sets to learn their label names and keeps the names alone; a target is named by its address without userinfo, and the server's flags are not read."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per read, over a transport whose only POST is the instant query",
+      "title": "Agent mode reads Prometheus with PromQL, and never writes",
+      "body": "Agent mode runs PromQL reads it wrote itself, each one expression evaluated as an instant query at the server's now, the way the console runs it, and answers the samples and labels as the console renders them: a vector one row per series, a matrix one row per sample, bounded to 200 rows and 10 seconds each, the server's time-out set from that budget, and refused past them rather than cut. Its inventory names the metrics and their label names, the rule groups and rules, and the scrape pools and targets. Withheld are the server's command-line flags, which carry paths, addresses and local configuration, and every URL's userinfo, query string and fragment in a target, rule or alert answer and in the labels of a PromQL answer, where a scrape token or a password can sit; a target, and an instance label, is named by its address without userinfo. The projection goes by a value's shape, so two reads reach what the server stores: a label value a read rewrites with label_replace so that it no longer reads as a URL or an address is answered as the read wrote it, and a label matcher selects on the value the server stores, so a read can test a value the projection withholds. Studio's transport builds requests to its own read endpoints only, so no admin, remote-write, OTLP or lifecycle call can be sent. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Prometheus connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, 200 rows and 10 s per read, over a client that holds only Metadata and ListOffsets",
+      "title": "Agent mode reads Kafka's topics, partitions, brokers and offsets, over a client that holds only two reads",
+      "body": "Agent mode runs Kafka metadata reads it wrote itself, each one JSON request for the topic list, the broker list, one topic's partitions or one topic's earliest and end offsets, and answers names, counts and offsets only: topic names, partition and replica counts, leader and replica node ids, broker node ids and racks and the cluster id, never a record's key, value, headers or timestamp, a broker's host and port, a config, a log directory or a consumer group, bounded to 200 rows and 10 seconds each and refused past them rather than cut. An offset span is reported as a span, never as a message count. Studio's agent client holds only the Metadata request, sent with topic auto-creation off, and the ListOffsets request at the earliest and latest offsets, so it cannot fetch, produce, create or delete a topic, commit an offset or change a config, and it never names an internal topic. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Apache Kafka connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, 200 rows and 10 s per command, as an etcd user whose roles grant READ only",
+      "title": "Agent mode reads etcd's metadata, as an etcd user whose roles grant READ only",
+      "body": "Agent mode runs etcd reads it wrote itself, the cluster's status, members, alarms and leases and, for one key a command names, its existence, revisions, version, lease and value size, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Key names count as stored values, so it never lists keys, reads a value or watches. Before every command the server must answer that authentication is on and that the connection's user is not root, holds no root role, and holds READ permissions only, on no range that holds every key or a key under a Kubernetes storage prefix such as /registry/, read from its own roles, so a user that may write even one key range, or could tell which Kubernetes Secrets exist, is refused, and the count of every key is refused by the server; a call the roles do not govern, such as granting a lease, is stopped by the reader, which sends none. Studio's reader refuses every other command before anything is sent. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this etcd connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per statement, enforced by a user proved read-only",
+      "title": "Agent mode reads, as a user the server proves cannot write",
+      "body": "Agent mode runs Cypher reads it wrote itself, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Before every statement Studio has the server prove the connection's user reads only: Neo4j Enterprise Edition, every privilege of every role a read, no LOAD, and no procedure or function beyond the server's built-ins, so an administrator, a user that writes or loads files and URLs, a server with an extension the user can run, and Community Edition are refused. Studio's reader refuses writes, LOAD CSV, USE and comments before anything is sent. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Neo4j connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, 200 rows and 10 s per request, as a user the server proves read-only",
+      "title": "Agent mode reads Milvus's metadata, as a user the server proves read-only",
+      "body": "Agent mode runs Milvus reads it wrote itself, the database, collection, schema, statistics, load state, partition, index and alias reads, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Its answers carry names, counts and flags only, never a stored field value or vector. Before every request Studio has the server prove the connection's user reads only: it must be refused the list of users, and every privilege its roles and public grant must be a read, so root, the admin role, a role that writes, loads or releases, and a server with authorization off are refused. Studio's reader refuses queries, gets, searches and every write before anything is sent, so no search runs a function on the server. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Milvus connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, 200 rows and 10 s per request, from a key the server proves read-only",
+      "title": "Agent mode reads Qdrant's metadata, as a key the server proves read-only",
+      "body": "Agent mode runs Qdrant reads it wrote itself, the version, collection, alias, count and cluster reads, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Its answers carry names, counts and flags only, never a stored payload or vector. Before every request Studio has the server refuse an empty alias update and an empty point delete on every collection the key lists, so the API key, a JWT that writes any collection, a server with no key configured and a connection with no key are refused. Studio's reader refuses point reads, scrolls, facets, every query and every write before anything is sent, so no inference call is made. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Qdrant connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, 200 rows and 10 s per request, from a key the server proves a viewer",
+      "title": "Agent mode reads Weaviate's metadata, as a key the server proves a viewer",
+      "body": "Agent mode runs Weaviate reads it wrote itself, the meta, schema, shard, tenant, alias and node reads and an aggregate count, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Its answers carry names, counts and flags only, never a stored object, property or vector. Before every request Studio has the server prove the connection's key holds only the viewer role's read actions, so an administrator's key, a role that writes, a server with RBAC off and a connection with no key are refused. Studio's reader refuses object reads, searches, every module call and every write before anything is sent, and a COLD tenant is refused rather than woken. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Weaviate connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per statement, enforced by a principal proved read-only",
+      "title": "Agent mode reads, as a principal the server proves cannot write",
+      "body": "Agent mode runs InfluxQL reads it wrote itself, a SELECT, a SHOW of the catalog or an EXPLAIN of a SELECT, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Before every statement Studio has the server prove the connection's principal reads only: it must be refused an administrator's read and a no-op write on every database it lists, so an administrator, a token that writes or a server with authentication off is refused. Studio's reader refuses INTO, every write and SHOW QUERIES before anything is sent. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this InfluxDB (InfluxQL) connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this InfluxDB 3 (SQL) connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, 200 rows and 10 s per command, over a client that holds only reads",
+      "title": "Agent mode reads Oxia's metadata, over a client that holds only reads",
+      "body": "Agent mode runs Oxia reads it wrote itself, the namespace's shard and leader counts, for one key a command names its existence, version, times, value size and whether it is ephemeral, and the count of every key in the namespace, never their names, bounded to 200 rows and 10 seconds each and refused past them rather than cut; a namespace holding more than 200 keys is refused rather than counted in part, and a count over a range or prefix a command names is refused, since narrower counts would reveal key names. Key names count as stored values, so it never lists keys, reads a value or follows notifications. Oxia has no authorization, so no reader can be proved: Studio's client holds only the four read calls and sends nothing in another namespace, under a partition key, by a secondary index or by comparison, and its reader refuses every other command before anything is sent. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Oxia connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Cannot execute on Databend",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode has no read-only statement path on Databend",
+      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Databend a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, 200 rows and 10 s per read, over a client that holds only GET and HEAD reads of bucket metadata",
+      "title": "Agent mode reads S3 bucket names, totals and named objects' metadata, never an object key or its contents",
+      "body": "Agent mode runs S3 metadata reads it wrote itself, each one AWS CLI command for the bucket list, one bucket's existence, region, location or versioning status, one whole bucket's object count and total size, or one object the request names in full, and answers names, counts and flags only: bucket names and creation times, regions, versioning status, totals, and a named object's existence, size, last-modified time and storage class, never an object key it was not given, a body, user metadata, a tag, an ETag, a version id, an owner, an ACL, a policy or the endpoint, bounded to 200 rows and 10 seconds each and refused past them rather than cut. A bucket is counted whole and never by prefix, since narrower counts would reveal key names. Studio's agent client holds only those six reads, each a GET or a HEAD, so it cannot read an object, list keys by prefix, delimiter or start position, write, delete or sign a URL; a bucket's summary reads its whole-bucket key pages, which Studio totals and never passes on. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this S3-compatible object storage connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per statement, enforced by Studio's request allowlist",
+      "title": "Agent mode reads, under a boundary Studio enforces",
+      "body": "Agent mode runs kubectl reads it wrote itself, bounded to 200 rows and 10 seconds each. Studio's request allowlist admits reads only, checked on the final request before it is sent, and the identity's RBAC decides what is visible: the agent runs on the connection's agent token when one is set, and on the connection's own token otherwise, so give it a token bound to view. Values Studio masks, such as env values, annotation values, ConfigMap data and Secret names and values, never reach the model. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Kubernetes connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "safe",
+      "headline": "Executes nothing it drafts",
+      "qualifier": "no topic is listed for it; opening the connection is a handshake that subscribes to nothing",
+      "title": "Plan mode plans, and never runs what it planned",
+      "body": "Plan mode writes its plan in prose and never subscribes to the broker. It drafts no read request, because an MQTT connection has no query console that runs one: agent mode alone sends the window and topic reads. MQTT has no command that lists topics, and topic names are withheld from agent mode, so no inventory grounds the plan: the topics it names are the ones the question names. Opening the connection is a handshake, a connect and a disconnect, which subscribes to nothing, so no topic, payload or $SYS reading is read."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, one row per read, each read one 3-second window within 10 s, over an encoder that cannot write a publish or a will",
+      "title": "Agent mode counts what an MQTT broker delivers in a window, and never publishes",
+      "body": "Agent mode runs MQTT reads it wrote itself, each one JSON request: the window read listens to every topic (the filter #) for 3 seconds and answers totals only, the distinct topics seen, the messages, the retained messages and the payload bytes; the topic read listens to one topic the request names in full and answers whether a message was seen on it and how many, and of the last message seen on it its retained flag, the QoS it was delivered at, its payload size and when it arrived. Every answer states how long it listened, why it stopped and that a topic not seen in the window may still exist, since MQTT has no command that lists topics. No answer names a topic or carries a payload, a user property or a $SYS reading, and a read whose time budget of 10 s cannot hold a whole window is refused rather than shortened. Each read is a fresh session that keeps nothing. Studio's MQTT encoder writes five packets and no publish, its connect has no will, and every outbound byte is checked again before it leaves, so agent mode cannot publish, register a will, take a shared subscription or write a topic filter of its own. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this MQTT connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, 200 rows and 10 s per read, each read charged to the run's read allowance, over a client that holds only collection id listings, whole-collection counts and named-document times",
+      "title": "Agent mode reads Firestore collection ids, whole-collection counts and named documents' times, never a document id, a field or a value",
+      "body": "Agent mode runs Firestore metadata reads it wrote itself, each one statement for the root collection ids, the subcollection ids of one document the request names in full, one whole collection's or collection group's document count, or whether one document the request names in full exists and when it was created and last updated, and answers collection ids, counts, flags and times only, never a document id or path it was not given, a field name or a field value, bounded to 200 rows and 10 seconds each and refused past them rather than cut. A collection is counted whole, never through a filter, an order, a cursor, an offset, a limit or a projection, since narrower counts would reveal stored values. Firestore bills every read, so each one, the grounding's collection id listings included, is charged to the run's read allowance before it is sent and refused once the allowance is spent. Studio's agent client holds only three kinds of request, a collection id listing, a count that nothing narrows and a read of one named document's times, so it cannot query documents, list document ids, read a field, run an aggregation over values, explain a query or write. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Firestore connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, 200 rows and 10 s per read, over a client that cannot take a message",
+      "title": "Agent mode reads RabbitMQ streams' offsets and sizes, over a client that cannot take a message",
+      "body": "Agent mode runs RabbitMQ stream reads it wrote itself, each one read request naming a virtual host, a stream, where to start and how many messages, and answers each message's offset and body size, never its body, headers, properties or routing key, bounded to 200 rows and 10 seconds each and refused past them rather than cut; a read that stops before its limit for any reason but the stream's end is refused rather than answered in part. The tree's virtual host, stream, queue and exchange names reach it as names. A read permission in RabbitMQ also lets an account take and purge messages, so no account can be the boundary: Studio's read client has no way to take, publish, purge or declare, a read asks the management API for the object's type and refuses a classic or quorum queue before any frame, and its consume carries a stream offset the broker refuses on any queue. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this RabbitMQ connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "safe",
+      "headline": "Executes nothing it drafts",
+      "qualifier": "nothing is read from the server to ground it, and the request it drafts is never sent",
+      "title": "Plan mode drafts, and never runs what it drafted",
+      "body": "Plan mode never sends the read request it wrote. An OPC UA address space is browsed one level at a time rather than listed, so no inventory grounds the plan and plan mode reads nothing from the server: the request is drafted from your question and the node ids it names."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per read, one session per read, over a client that sends only Browse, BrowseNext, Read and HistoryRead",
+      "title": "Agent mode reads the OPC UA server's values, history and address space, and never writes or calls a method",
+      "body": "Agent mode runs OPC UA reads it wrote itself, each one JSON request: the current values of the nodes it names, one node's raw history, or the children of one node. It answers the server's values as the console renders them, each with its node's engineering units and EU range as the server publishes them, or \"no units published\" where it publishes none, never a unit Studio guessed, bounded to 200 rows and 10 seconds each and refused past them rather than cut. It reads only beneath the read roots the connection's operator declared on its seed entry, and every other node, the server's configuration, roles and sessions among them, answers as a node the server does not hold, with nothing sent for it. Each read opens its own session and closes it, so nothing is held between reads. Studio's agent client holds only Browse, BrowseNext, Read and HistoryRead, so it cannot write a value, call a method, change a node or subscribe. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this OPC UA connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per read, one request at a time on this connection's agent-mode handle and four MTConnect requests at once across Studio, over a client that sends only GET of nine routes",
+      "title": "Agent mode reads the MTConnect agent's device model, observations and assets, and never writes",
+      "body": "Agent mode runs MTConnect reads it wrote itself, each one request line of the console's: the device model (/probe), the current observations (/current), a page of the buffer (/sample), the assets (/assets) or assets by id (/asset/{assetIds}), for every device or one. It answers the machine's observations as the console renders them, value, timestamp and sequence, and each asset's document as XML text, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Withheld are the agent's own adapter connections, the Adapter components under its Agent device, because their names, data item ids and ADAPTER_URI values carry the network address of the adapter the agent reads from; an answer counts what it withheld and lists none of it. Each read reads the agent's device model first, and the reads of this agent-mode handle never overlap. Studio's agent client sends GET of nine routes and nothing else, so it cannot set an observation, add an asset, cancel a stream or open one. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this MTConnect connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "safe",
+      "headline": "Executes nothing it drafts",
+      "qualifier": "the register map grounds it; opening the connection dials the device, and no request is sent to it",
+      "title": "Plan mode drafts, and never runs what it drafted",
+      "body": "Plan mode never sends the request it wrote. It is grounded on the connection's register map, which is read without a request to the device, and it is where the inventory in Run details came from. Opening the connection to read it dials the device's port and closes the connection again, and no Modbus request is sent to the device."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per read, one read at a time per device, over a client that sends only Read Coils, Read Discrete Inputs, Read Holding Registers, Read Input Registers and Read Device Identification",
+      "title": "Agent mode reads the Modbus device's coils, inputs, registers and identification objects, and never writes",
+      "body": "Agent mode runs Modbus reads it wrote itself, each one of the console's JSON read requests: points the connection's register map names, one block of one table, or the device identification objects. It answers the device's values as the console renders them, numbers and bits decoded as the register map declares them and identification objects as text only when their bytes are text, in hex otherwise, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Agent reads of one device never overlap, across every run on this server, and Studio waits one second after each before the next one dials, so the plant's own client can reach a device that serves one client at a time; one run sends at most 64 requests to Modbus devices. Studio's agent client builds only Read Coils, Read Discrete Inputs, Read Holding Registers, Read Input Registers and Read Device Identification, and every frame passes a check that refuses any other function code before it is sent, so it cannot write. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Modbus connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per read, over a client that sends only get, get-config, get-data and get-schema, with ietf-keystore, ietf-netconf-acm, nacm:default-deny-all nodes, crypt-hash leaves, ietf-crypto-types secrets, leafrefs to a withheld node, unresolved leafrefs and typedefs, and entries of lists keyed by a withheld leaf withheld",
+      "title": "Agent mode reads the NETCONF device's configuration and state, and never writes",
+      "body": "Agent mode runs NETCONF reads it wrote itself, each one JSON request: the configuration (get-config on running, candidate or startup) or the configuration and state (get-data on operational or intended) under one path, or one module's YANG text (get-schema), and answers the values as text, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Before every read it reads the YANG modules the device serves and withholds the ietf-keystore module whole, the ietf-netconf-acm module whole, every node a module marks nacm:default-deny-all, every leaf typed crypt-hash, the private-key-type, key-type and password-type choices of ietf-crypto-types, every leafref that may point at a withheld node, every unresolved leafref, every leaf whose type names a typedef no module the device serves declares, and every entry of a list keyed by a withheld leaf; a withheld node answers its path and reason, never its value, and a read whose modules cannot be read is refused. Studio's agent client sends only the get, get-config, get-data and get-schema reads and the close-session that ends its session, so it cannot send an edit-config, a lock or any other operation. The SSH credentials never reach an answer. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this NETCONF connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 rows and 10 s per read, over a client that sends only Get, GetNext and GetBulk, with the SNMP security modules withheld",
+      "title": "Agent mode reads the SNMP agent's values with get, next, walk and table, and never writes",
+      "body": "Agent mode runs SNMP reads it wrote itself, each one of the console's four commands, get, next, walk and table, and answers the device's values as the console renders them, text shown only when it is showable and bytes otherwise in hex, bounded to 200 rows and 10 seconds each and refused past them rather than cut. Withheld, because they hold community strings, user names, keys and access rules, are SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB, SNMP-COMMUNITY-MIB, SNMP-SSH-TM-MIB, SNMP-TSM-MIB, SNMP-TLS-TM-MIB, SNMP-USM-DH-OBJECTS-MIB and Net-SNMP's NET-SNMP-VACM-MIB, and, because a command line, a script's output or a copy's login can carry credentials, the running processes (HOST-RESOURCES-MIB::hrSWRun), the commands the agent runs and what they print (NET-SNMP-AGENT-MIB::nsExtensions, UCD-SNMP-MIB::extTable and UCD-SNMP-MIB::prErrFixCmd) and Cisco's file copies (CISCO-CONFIG-COPY-MIB and CISCO-FLASH-MIB::ciscoFlashCopyTable); an object inside one is answered withheld and never asked for, a walk that covers one steps over it and names it, and a walk inside one is refused. Studio's agent client holds only the Get, GetNext and GetBulk requests, and every datagram passes a check that refuses any other, so it cannot send a Set or a notification. The community never reaches an answer. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this SNMP connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "safe",
+      "headline": "Executes nothing it drafts",
+      "qualifier": "no group, edge node or device is listed for it; opening the connection is a handshake that subscribes to nothing",
+      "title": "Plan mode plans, and never runs what it planned",
+      "body": "Plan mode writes its plan in prose and never subscribes to the broker. It drafts no read request: the editor's console request reads metric values, which agent mode never reads, and agent mode alone sends the window, group, edge node and device reads. Sparkplug has no command that lists edge nodes or devices, and their ids are withheld from agent mode, so no inventory grounds the plan: the ids it names are the ones the question names. Opening the connection is a handshake, a connect and a disconnect, which subscribes to nothing, so no id, metric or stored certificate is read."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "metadata only, one row per read, each read one 3-second window within 10 s, over an encoder that cannot write a publish, a command or a will",
+      "title": "Agent mode counts what a Sparkplug plant publishes in a window, and never publishes",
+      "body": "Agent mode runs Sparkplug reads it wrote itself, each one JSON request: the window read listens to the whole spBv1.0 namespace (or, when the connection names one group, that group alone) for 3 seconds and answers totals only, the distinct groups, edge nodes and devices seen, the birth, death and data messages by type, the metrics they carried and their payload bytes; the group, edge node and device reads listen to one object the request names in full and answer whether it was seen, its messages by type, its metric count, whether a birth or a death was seen and when its last message arrived. Every answer states how long it listened, why it stopped and that an edge node or device not seen in the window may still exist, since a birth certificate is published at QoS 0 and not retained, and no answer says a node is online or offline. No answer names a group, edge node, device or host application, or carries a metric name, a value or a stored certificate, and a read whose time budget of 10 s cannot hold a whole window is refused rather than shortened. Each read is a fresh session that keeps nothing. Studio's Sparkplug encoder writes five packets and no publish, and its connect has no will, so agent mode cannot publish, send a command or a rebirth request, take a host application's role, register a will or write a topic filter of its own. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this Sparkplug B connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "reads",
+      "headline": "Reads only",
+      "qualifier": "200 keys and 10 s per command, enforced by a read-only file handle",
+      "title": "Agent mode reads, through a handle that cannot write",
+      "body": "Agent mode runs LibreDB reads it wrote itself, get, prefix and range, bounded to 200 keys each and refused past them rather than cut. Each read opens the file read-only on a handle of its own: it takes no lock, so your editor keeps the file and keeps writing, and no call on it can change the file. A read runs inside this server, so one that outruns 10 seconds is refused when it ends rather than stopped midway. Studio's reader refuses put and delete before the file is opened. Nothing reaches your editor."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Refused on this connection",
+      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "title": "Agent mode cannot run on this LibreDB connection as it is configured",
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+    },
+    {
+      "tone": "blocked",
+      "headline": "Cannot execute yet",
+      "qualifier": "no connection is resolved, so no engine has been established",
+      "title": "Agent mode has no connection to execute on",
+      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs wherever a connection does, and plan mode drafts on every engine."
+    }
+  ]
+}
