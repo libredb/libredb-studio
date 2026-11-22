@@ -495,6 +495,33 @@ describe("MonitoringDashboard", () => {
     expect(mockRefresh).toHaveBeenCalled();
   });
 
+  // A refresh that fails keeps the selection's earlier payload (useMonitoringData), so the failure must be drawn
+  // beside those panels: without it the dashboard shows a reading that is no longer current as if it were.
+  test("draws a failed read beside the panels the selection read before it", async () => {
+    mockUseMonitoringData.mockImplementation(() => ({ ...monitoringDataDefaults(), error: "refresh refused" }));
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+    const { queryByTestId, queryByText } = renderResult!;
+
+    expect(queryByText("Connection Error")).toBeNull();
+    expect(queryByTestId("monitoring-overviewtab")).not.toBeNull();
+    expect(queryByTestId("monitoring-read-failed")?.textContent).toBe(
+      "The last read failed, so the panels show the one before it: refresh refused",
+    );
+  });
+
+  test("draws no failed-read line while the last read answered", async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+
+    expect(renderResult!.queryByTestId("monitoring-read-failed")).toBeNull();
+  });
+
   test("tab switching works", async () => {
     const user = userEvent.setup();
     let renderResult: ReturnType<typeof render>;

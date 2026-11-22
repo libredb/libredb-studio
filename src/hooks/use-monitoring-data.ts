@@ -63,7 +63,10 @@ export function useMonitoringData(
   /** The database to monitor on a server-level connection (#1530); its panels are that database's. */
   catalog?: string,
 ): UseMonitoringDataReturn {
-  const [dataState, setData] = useState<MonitoringData | null>(null);
+  // The payload carries the selection that read it, as history does below: a switch reads
+  // as no payload until the new selection's own answer lands, so a connection whose read is
+  // refused shows its own error and never the previous connection's panels under its name.
+  const [dataState, setData] = useState<{ selection: number; data: MonitoringData } | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorState, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -187,7 +190,7 @@ export function useMonitoringData(
         result.overview.startTime = new Date(result.overview.startTime);
       }
 
-      setData(result);
+      setData({ selection: selectionSeq, data: result });
       setLastUpdated(new Date());
       setError(null);
 
@@ -208,7 +211,7 @@ export function useMonitoringData(
 
       const errorMessage = err instanceof Error ? err.message : "Unknown error";
       setError(errorMessage);
-      // Don't clear existing data on error, show stale data
+      // This selection's earlier payload is kept, and the dashboard draws this error beside it.
     } finally {
       if (isMountedRef.current) {
         setLoading(false);
@@ -218,7 +221,7 @@ export function useMonitoringData(
 
   // Initial fetch when connection changes
   useEffect(() => {
-    // Nothing is reset here: data and error are derived from `connection`, and
+    // Nothing is reset here: error is derived from `connection`, and data and
     // history from the selection counter renumbered above - all during render,
     // so an emptied or changed selection answers correctly on the very render
     // that changed it.
@@ -399,7 +402,7 @@ export function useMonitoringData(
   // Derived rather than reset in the connection effect: with no connection
   // there is nothing to report, and history belongs to one selection only.
   return {
-    data: connection === null ? null : dataState,
+    data: connection !== null && dataState?.selection === selection.seq ? dataState.data : null,
     loading,
     error: connection === null ? null : errorState,
     lastUpdated,

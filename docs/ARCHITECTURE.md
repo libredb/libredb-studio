@@ -204,6 +204,7 @@ The rolled-back notice's keyword and the agent consent card's deadline chip and 
 Which of the seven monitoring panels an engine offers is a row of `ENGINE_FACETS` in `src/lib/db/engine-facets/`, declared beside its provider and read through `engineFacetsFor`.
 `BaseDatabaseProvider.getMonitoringData` hands the row to `readDeclaredPanels`, which reads only the offered panels, so a panel is answered, failed (with its sentence under `errors`), not requested, or not offered (listed in `notOffered` and never read).
 The monitoring dashboard, the admin Operations page and fleet health read the same row by type id and draw or ask for nothing an engine does not offer.
+When the whole read fails, `useMonitoringData` keeps only the payload its own selection read before, so a switch shows the new connection's error and none of the previous connection's panels, and the dashboard names a failed refresh beside the panels it keeps.
 `tests/unit/lib/no-engine-branches.test.ts` is the guard: outside the provider layer, a type-id branch fails unless its closed lists name it as a registry or a false positive, and its debt list of branches still to move is empty.
 
 `src/lib/db/object-kinds.ts` is the kernel through which every provider reads its own declaration, and it takes only facts that follow from the declaration and hold for every engine.

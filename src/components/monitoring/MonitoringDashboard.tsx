@@ -385,6 +385,16 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                   {`Not offered by this engine: ${notOfferedTitles.join(", ")}.`}
                 </p>
               )}
+              {/* A failed refresh keeps this selection's earlier payload, so the failure is named beside it. */}
+              {error && (
+                <p
+                  className="px-3 py-1 text-xs text-destructive sm:px-4"
+                  role="alert"
+                  data-testid="monitoring-read-failed"
+                >
+                  {`The last read failed, so the panels show the one before it: ${error}`}
+                </p>
+              )}
             </div>
 
             <div className="flex-1 overflow-auto">
