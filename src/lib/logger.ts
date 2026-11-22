@@ -3,6 +3,8 @@
  * Isomorphic logger with level filtering and context support
  */
 
+import { withoutDroppedControls } from "@/lib/logged-text";
+
 type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface LogContext {
@@ -63,7 +65,7 @@ function extractError(error: unknown): { name: string; message: string; stack?: 
 
 /** Sanitize log message to prevent log injection (newlines, control chars) */
 function sanitizeLogValue(value: string): string {
-  return value.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+  return withoutDroppedControls(value.replace(/[\r\n]/g, " "));
 }
 
 function log(level: LogLevel, message: string, error?: unknown, context?: LogContext): void {
@@ -81,7 +83,7 @@ function log(level: LogLevel, message: string, error?: unknown, context?: LogCon
     const full = line + errLine;
     if (errInfo.stack) {
       // Stack traces contain intentional newlines — sanitize control chars only
-      const safeStack = errInfo.stack.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+      const safeStack = withoutDroppedControls(errInfo.stack);
       // Constant format string: %s/%d in user-controlled text must never be
       // interpreted as format specifiers (CodeQL js/tainted-format-string)
       console.error("%s\n%s", full, safeStack);

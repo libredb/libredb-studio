@@ -6,6 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { holdsSecretForm, secretForms, serverText } from "@/lib/db/utils/server-text";
+import { withoutDroppedControls } from "@/lib/logged-text";
 
 const WITHHELD = "(the server's text was withheld because it contained the configured credential)";
 const base64 = (value: string) => Buffer.from(value, "utf8").toString("base64");
@@ -152,5 +153,96 @@ describe("holdsSecretForm", () => {
     }
     expect(holdsSecretForm("anything", [""])).toBe(false);
     expect(holdsSecretForm(`rejected ${secret}`, forms)).toBe(true);
+  });
+
+  const escapable = () => `${hex(8)}"<>&\u00e9/\\${hex(8)}`;
+  const nested = (text: string, levels: number) => {
+    let current = text;
+    for (let level = 0; level < levels; level++) current = JSON.stringify(current);
+    return current;
+  };
+  const unicodeEscape = (char: string) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`;
+
+  test.each<[string, (text: string) => string]>([
+    ["by JSON.stringify", (text) => JSON.stringify({ message: text })],
+    ["with <, > and & as \\u escapes", (text) => JSON.stringify(text).replace(/[<>&]/g, unicodeEscape)],
+    [
+      "with non-ASCII characters as \\u escapes",
+      (text) => JSON.stringify(text).replace(/[^\x00-\x7f]/g, unicodeEscape),
+    ],
+    ["with / as \\/", (text) => JSON.stringify(text).replaceAll("/", "\\/")],
+    ["nested twice", (text) => nested(text, 2)],
+    ["nested 8 times", (text) => nested(text, 8)],
+  ])("withholds a text holding the secret JSON-escaped: %s", (_label, encode) => {
+    const secret = escapable();
+    expect(holdsSecretForm(encode(`login failed for ${secret}`), secretForms([secret]))).toBe(true);
+  });
+
+  test("does not read past 8 levels of escapes", () => {
+    const secret = escapable();
+    expect(holdsSecretForm(nested(`login failed for ${secret}`, 9), secretForms([secret]))).toBe(false);
+  });
+
+  test("a text with no backslash and no dropped control is read only as written", () => {
+    const secret = escapable();
+    const forms = secretForms([secret]);
+    expect(holdsSecretForm("collection not found: docs (code 100)", forms)).toBe(false);
+    expect(holdsSecretForm(`login failed for ${secret}`, forms)).toBe(true);
+  });
+
+  /** Generated digits, whose base64 holds a digit at most at every fourth character. */
+  const digits = () => Array.from({ length: 12 }, () => String(Math.floor(Math.random() * 10))).join("");
+  /** Generated letters outside the JSON escape letters, digits and the first base64 character of a lowercase letter. */
+  const letters = () => Array.from({ length: 12 }, () => "ghijkmopqsvwxyz"[Math.floor(Math.random() * 15)]).join("");
+  const interleaved = (secret: string, char: string) => secret.split("").join(char);
+
+  test.each<[string, (secret: string) => string]>([
+    ["a NUL", (secret) => `login failed for ${interleaved(secret, "\u0000")}`],
+    [
+      "a NUL, as UTF-16LE read as latin1",
+      (secret) => Buffer.from(`login failed for ${secret}`, "utf16le").toString("latin1"),
+    ],
+    ["a NUL written as a JSON escape", (secret) => JSON.stringify(`login failed for ${interleaved(secret, "\u0000")}`)],
+  ])(
+    "withholds a text holding the secret with a control character the logger drops between each of its characters: %s",
+    (_label, encode) => {
+      const secret = digits();
+      expect(holdsSecretForm(encode(secret), secretForms([secret]))).toBe(true);
+    },
+  );
+
+  test.each<[string, (text: string) => string]>([
+    [
+      "JSON.stringify, as UTF-16LE read as latin1",
+      (text) => Buffer.from(JSON.stringify({ message: text }), "utf16le").toString("latin1"),
+    ],
+    ['a NUL inside one \\" escape', (text) => JSON.stringify(text).replace('\\"', '\\\u0000"')],
+    [
+      "non-ASCII characters as \\u escapes, as UTF-16LE read as latin1",
+      (text) => Buffer.from(JSON.stringify(text).replace(/[^\x00-\x7f]/g, unicodeEscape), "utf16le").toString("latin1"),
+    ],
+  ])(
+    "withholds a text holding the secret JSON-escaped with a control character the logger drops inside its escapes: %s",
+    (_label, encode) => {
+      const secret = escapable();
+      expect(holdsSecretForm(encode(`login failed for ${secret}`), secretForms([secret]))).toBe(true);
+    },
+  );
+
+  test("reads a tab, a line feed or a carriage return between its characters as written", () => {
+    const secret = digits();
+    for (const char of ["\t", "\n", "\r"]) {
+      expect(holdsSecretForm(`login failed for ${interleaved(secret, char)}`, secretForms([secret]))).toBe(false);
+    }
+  });
+
+  test("removes exactly the characters the logger drops", () => {
+    for (let code = 0; code <= 0x9f; code++) {
+      const char = String.fromCharCode(code);
+      // A secret holds no character it is interleaved with, so only removing that character can find it.
+      const secret = /[0-9]/.test(char) ? letters() : digits();
+      const held = holdsSecretForm(`failed ${interleaved(secret, char)}`, secretForms([secret]));
+      expect([code, held]).toEqual([code, withoutDroppedControls(char) === ""]);
+    }
   });
 });
