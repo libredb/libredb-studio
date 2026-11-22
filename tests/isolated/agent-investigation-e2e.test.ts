@@ -677,7 +677,10 @@ const SQLITE_STATUS_ROWS: Record<string, unknown>[] = [
 async function seedSqliteFile(): Promise<string> {
   const dbPath = path.join(freshTempDir("agent-e2e-sqlite-"), "orders.db");
   const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
-  const writer = new SQLiteProvider({ id: "seed", name: "seed", type: "sqlite", database: dbPath, createdAt: TIME });
+  const { admittedFileConnection } = await import("@/lib/db/provider-files");
+  const writer = new SQLiteProvider(
+    admittedFileConnection({ id: "seed", name: "seed", type: "sqlite", database: dbPath, createdAt: TIME }),
+  );
   await writer.connect();
   try {
     for (const statement of SQLITE_DDL) await writer.query(statement);

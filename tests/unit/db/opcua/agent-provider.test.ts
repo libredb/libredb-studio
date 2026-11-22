@@ -27,12 +27,12 @@ import type {
   OpcuaReference,
 } from "@/lib/db/providers/industrial/opcua/client";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
-import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
 import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
-const ENV = { [OPCUA_PKI_ROOT_ENV]: "/app/data/opcua-pki" } as const;
+/** The PKI root Studio's provider factory would decide (`opcuaPkiRoot`), handed to the provider as it hands it. */
+const PKI_ROOT = "/app/data/opcua-pki";
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
 const OPERATIONS: ProviderExecutionContext = { readOnly: true };
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 5, maxResultBytes: 1_000_000, statementTimeoutMs: 2_000 };
@@ -287,7 +287,7 @@ async function agentHandle(
       record.opened += 1;
       return session(nodes, record, over);
     },
-    ENV,
+    PKI_ROOT,
   );
   await provider.connect();
   record.calls.length = 0;
@@ -322,7 +322,7 @@ describe("an agent-mode handle opens only on a connection that declares read roo
         opened += 1;
         return session(plant(), fresh());
       },
-      ENV,
+      PKI_ROOT,
     );
     const refused = provider.connect();
     await expect(refused).rejects.toBeInstanceOf(ExecutionProfileError);
@@ -343,7 +343,7 @@ describe("an agent-mode handle opens only on a connection that declares read roo
 describe("queryReadOnly answers only on a handle opened under the agent read-only profile", () => {
   test("an editor handle refuses it before anything is sent", async () => {
     const record = fresh();
-    const provider = new OpcuaProvider(connection(), {}, {}, async () => session(plant(), record), ENV);
+    const provider = new OpcuaProvider(connection(), {}, {}, async () => session(plant(), record), PKI_ROOT);
     await provider.connect();
     record.calls.length = 0;
     const refused = provider.queryReadOnly('{"read": ["ns=3;s=SlowUInt1"]}', BUDGET);
@@ -361,7 +361,7 @@ describe("queryReadOnly answers only on a handle opened under the agent read-onl
   });
 
   test("a handle that is not open refuses it", async () => {
-    const provider = new OpcuaProvider(connection(), {}, AGENT, async () => session(plant(), fresh()), ENV);
+    const provider = new OpcuaProvider(connection(), {}, AGENT, async () => session(plant(), fresh()), PKI_ROOT);
     await expect(provider.queryReadOnly('{"read": ["i=2256"]}', BUDGET)).rejects.toBeInstanceOf(DatabaseConfigError);
   });
 
@@ -905,7 +905,7 @@ describe("failures are worded by category, never in the server's or the library'
         if (calls > 1) throw new DatabaseConfigError(`This connection could not be opened to ${SERVER_TEXT}`);
         return session(plant(), fresh());
       },
-      ENV,
+      PKI_ROOT,
     );
     await provider.connect();
     const message = await provider.queryReadOnly('{"read": ["i=2256"]}', BUDGET).then(
@@ -941,7 +941,7 @@ describe("an agent-mode handle", () => {
         record.opened += 1;
         return session(plant(), record);
       },
-      ENV,
+      PKI_ROOT,
     );
     expect(provider.isConnected()).toBe(false);
     await provider.connect();
@@ -965,7 +965,7 @@ describe("an agent-mode handle", () => {
             throw new Error("gone");
           },
         }),
-      ENV,
+      PKI_ROOT,
     );
     await provider.connect();
     expect(provider.isConnected()).toBe(true);
@@ -973,7 +973,7 @@ describe("an agent-mode handle", () => {
   });
 
   test("a build with no transport refuses connect", async () => {
-    const provider = new OpcuaProvider(connection(), {}, AGENT, undefined, ENV);
+    const provider = new OpcuaProvider(connection(), {}, AGENT, undefined, PKI_ROOT);
     await expect(provider.connect()).rejects.toThrow("This build has no OPC UA transport wired in");
   });
 
@@ -1004,7 +1004,7 @@ describe("an agent-mode handle", () => {
   });
 
   test("a reading on a handle that is not open says so first", async () => {
-    const provider = new OpcuaProvider(connection(), {}, AGENT, async () => session(plant(), fresh()), ENV);
+    const provider = new OpcuaProvider(connection(), {}, AGENT, async () => session(plant(), fresh()), PKI_ROOT);
     await expect(provider.getHealth()).rejects.toBeInstanceOf(DatabaseConfigError);
   });
 });

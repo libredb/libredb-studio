@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D490, U17 · 363
+- [Drivers and connections](#drivers-and-connections) — D1-D492, U17 · 365
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -1195,7 +1195,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 64 hits, re-measured on 2026-11-22.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 65 hits, re-measured on 2026-11-22.
 The breakdown below is the one measured at 54 on 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
@@ -1208,6 +1208,7 @@ The count moved from 58 to 59 on 2026-11-04 with `tests/api/db/inline-connection
 The count moved from 59 to 60 on 2026-11-15 with `tests/api/db/demoted-seed.test.ts`, which demotes a BigQuery seed from `managed: true` to `managed: false` through `POST /api/db/query`: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 The count moved from 60 to 61 on 2026-11-15 with `tests/api/db/literal-seed-server-identity.test.ts`, which opens the BigQuery and Firestore rows of a seed file read in literal mode through `POST /api/db/query`: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 The count moved from 61 to 62 on 2026-11-20 with `tests/api/seed/unavailable-seed-entry.test.ts`, which sends every connection route and the agent run and classify routes a seed whose type names no provider: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
+The count moved from 64 to 65 on 2026-11-22 with `tests/api/db/reserved-storage-routes.test.ts`, which sends Test Connection and provider-meta an inline SQLite connection to Studio's own storage database: it spreads the real module and replaces only `getSession` and `readSession`, so it adds no copy of the five-key stub.
 
 `src/lib/auth.ts` re-exports three names from `src/lib/auth-cookies.ts` that every hand-written stub lacks:
 `resetCookieSecurityWarning`, `readCookieSecureOverride` and `isLoopbackHost`, re-measured 2026-10-30.
@@ -2560,7 +2561,7 @@ Deferred by Spec A (seed sources), which refuses a connection string only where 
 
 `ProviderCapabilities.supportsConnectionString` in `src/lib/db/types.ts` has no docblock and no reader in `src` outside the providers, so each provider has given it its own meaning.
 mssql declares `true` in `src/lib/db/providers/sql/mssql.ts` because the connection form splits a pasted `mssql://` or `sqlserver://` URI into fields, while its `buildConfig` never reads `connectionString` and defaults the server to `localhost` (`docs/providers/mssql.md` section 4.4).
-sqlite declares `false` in `src/lib/db/providers/sql/sqlite.ts` while its `getDatabasePath` opens `connectionString` as the database file path, with a `file:` prefix removed.
+sqlite declares `false` in `src/lib/db/providers/sql/sqlite.ts` while `admittedFileConnection` in `src/lib/db/provider-files.ts` takes `connectionString` as the database file path it opens, with a `file:` prefix removed.
 `CONNECTION_STRING_ACCEPTED` in `src/lib/db/compatibility.ts` follows what each provider reads, so it carries both as declared exceptions to the flag, each pinned by a behavioural test in `tests/unit/db/connection-string-records.test.ts` instead of by the census there.
 
 Deferred by Spec A (seed sources), which needed the providers' reading for its refusal and left both flags as they are.
@@ -3459,6 +3460,30 @@ That slice left the wording unchanged on purpose, as outside its goal.
 Found 2026-11-22 while handing the socket dials the egress decision their provider was built with.
 
 **Done when:** Sparkplug B and NETCONF both refuse a host name at the checked lookup with the same error class and sentence as a refused literal, each held by a test.
+
+### D491. Studio's own writers resolve `STORAGE_SQLITE_PATH` when they run, not from the storage location taken at boot
+
+Since FND-2 slice 3 the files a connection may never open are derived from Studio's storage location, which `storageLocation` in `src/lib/data-dir.ts` takes once per process: `STORAGE_SQLITE_PATH` resolved against the working directory at boot.
+Studio's own writers do not read it.
+The SQLite storage provider (`SQLiteStorageProvider` in `src/lib/storage/providers/sqlite.ts`) opens `getStorageSqlitePath()` when it is built, and the bootstrap credentials writer (`src/lib/auth-bootstrap.ts`) resolves `getDataDir()` when it runs, each against the working directory of that moment.
+They name the same files as the location unless the working directory changes after boot, which nothing in Studio does.
+The slice left them as they were because the storage encryption branch reworks the storage provider, and both branches' tests set `STORAGE_SQLITE_PATH` per test.
+
+Found 2026-11-22 while planning FND-2 slice 3.
+
+**Done when:** the storage provider and the bootstrap credentials writer both read the storage location, their tests take it again after they set the variable, and a test changes the working directory after the location is taken and finds both files where the reserved set says they are.
+
+### D492. In the VS Code extension, OPC UA's client identity and trust lists live in the extension's own folder
+
+OPC UA keeps its client key pair and trust lists under its PKI root, which the provider factory decides (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`): `LIBREDB_OPCUA_PKI_ROOT` when it is set, otherwise `opcua-pki` under the data directory of Studio's storage location.
+The extension's host forks the backend child with its own environment and four keys of its own (`backendForkOptions` in `vscode-extension/src/host/fork-options.ts`), setting neither `LIBREDB_OPCUA_PKI_ROOT` nor `STORAGE_SQLITE_PATH`, and the child's working directory is the extension's folder.
+Unless the environment VS Code was started with carries one of them, the storage location is `data/libredb-storage.db` resolved against that folder, and OPC UA's PKI root is `<extension folder>/data/opcua-pki`.
+An extension update installs a new folder and removes the old one, so the client certificate a server administrator trusted and the server certificates the user accepted are gone, and the next connect generates a new client identity that the server does not know.
+`docs/VSCODE_EXTENSION.md` says nothing of the PKI root.
+
+Found 2026-11-22 while planning FND-2 slice 3 (measurement M12 of that lane); pre-existing.
+
+**Done when:** the extension hands the child a PKI root outside the extension's folder, in storage VS Code keeps across updates (`ExtensionContext.globalStorageUri`), through `LIBREDB_OPCUA_PKI_ROOT` or the storage location, `docs/VSCODE_EXTENSION.md` names where it lives, and a test forks the child with the host's options and finds the root outside the extension's folder.
 
 ### D332. The seed plaintext warning knows only `password`
 
@@ -4371,7 +4396,7 @@ Found 2026-11-02 while verifying the fix for D160.
 
 ### D425. A file engine's open error names the server's absolute path, and LibreDB's says "agent" to every caller
 
-`describeOpenError` in `src/lib/db/providers/embedded/libredb.ts` answers an `ENOENT` with "The LibreDB file <path> does not exist. The agent opens an existing file only and creates none.", where `<path>` is `resolveDatabasePath()`, the absolute path on the Studio server.
+`describeOpenError` in `src/lib/db/providers/embedded/libredb.ts` answers an `ENOENT` with "The LibreDB file <path> does not exist. The agent opens an existing file only and creates none.", where `<path>` is `admittedDatabasePath()`, the absolute path on the Studio server.
 Its comment says only an agent profile's open can meet a missing file, and that no longer holds on two paths.
 - **MCP:** `inspect_schema` and `run_libredb_read` on a LibreDB seed whose file is missing are answered with that sentence, so an MCP client is told about "the agent" and is shown the server's file system layout.
 - **The editor:** An editor open of `/proc/self/environ` fails with the same sentence, because the kernel's `.lock` sidecar cannot be created there and its `ENOENT` takes this branch; the file exists, and no agent is involved (measured 2026-11-03 with `new LibreDBProvider(...).connect()` under no execution profile).

@@ -531,6 +531,9 @@ Set that row only for a provider whose TLS library does not read Node.js's trust
 Such a provider hands `requireTrustMaterial(context.trust)` from `src/lib/db/utils/require-trust-material.ts` to its TLS wherever a connection verifies against the system trust store, so built without it the provider refuses by name and dials nothing; `tests/security/provider-trust-material.test.ts` holds its row against what it holds.
 A provider never reads `NODE_EXTRA_CA_CERTS` or the file it names, and never imports `src/lib/db/trust-material.ts`; `tests/unit/lib/db/provider-environment-scan.test.ts` holds it.
 
+A provider whose engine opens a file on Studio's host (`OPENS_LOCAL_FILE` in `src/lib/db/compatibility.ts`) opens the file the factory admitted, `requireAdmittedFile(connection, type)` from `src/lib/db/utils/admitted-file.ts`, and never resolves the connection's `database` or connection string itself: the factory has resolved it against the working directory and refused Studio's own storage files before it builds the provider.
+Such a provider never reads `STORAGE_SQLITE_PATH` and never imports `src/lib/data-dir.ts`; `tests/unit/lib/db/provider-environment-scan.test.ts` holds it.
+
 ## Step 4: Add UI Configuration
 
 **Files:** `src/lib/db/connection-form.ts` and `src/lib/db-ui-config.ts`

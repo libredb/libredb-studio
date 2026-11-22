@@ -11,6 +11,7 @@ import type { OpcuaEndpoint } from "@/lib/db/providers/industrial/opcua/client";
 import type { OpcuaConnectionOptions } from "@/lib/db/providers/industrial/opcua/connection";
 import {
   openReadOnlySession,
+  OPCUA_PKI_ROOT_MISSING,
   OPCUA_TRANSPORT_SETTINGS,
   type OpcuaLibraryBridge,
 } from "@/lib/db/providers/industrial/opcua/session";
@@ -95,6 +96,36 @@ const fresh = () => ({
   browseNextRelease: [] as boolean[],
   history: [] as unknown[],
   options: [] as OpcuaConnectionOptions[],
+});
+
+/**
+ * The PKI root is decided by Studio's provider factory and handed to the provider (FND-2 slice 3), so a connection that
+ * reaches the session with none was built without the factory: refused by name, before GetEndpoints or anything else
+ * asks the library for a directory it would have to guess.
+ */
+describe("the PKI root", () => {
+  test("a connection with no PKI root is refused by name before the library is asked for anything", async () => {
+    const asked: string[] = [];
+    const library: OpcuaLibraryBridge = {
+      ...bridge([endpoint("None")], fresh()),
+      readEndpoints: async () => {
+        asked.push("readEndpoints");
+        return [endpoint("None")];
+      },
+      openSession: async () => {
+        asked.push("openSession");
+        throw new Error("should not have been reached");
+      },
+    };
+    const rootless: OpcuaConnectionOptions = { ...options({ mode: "None" }), pkiRoot: undefined };
+    const refused = await openReadOnlySession(library, rootless).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(refused).toBeInstanceOf(DatabaseConfigError);
+    expect((refused as Error).message).toBe(OPCUA_PKI_ROOT_MISSING);
+    expect(asked).toEqual([]);
+  });
 });
 
 describe("the security mode is never weakened", () => {

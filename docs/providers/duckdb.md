@@ -1448,6 +1448,7 @@ message do not accidentally select an unrelated shared classification.
 | Condition | Provider error | What the user sees |
 |---|---|---|
 | `INTERRUPT Error` | `QueryCancelledError` | `Query was cancelled` |
+| A path the reserved check cannot read (a path through a regular file on POSIX, a symbolic link loop, a directory the server cannot search), refused by the provider factory before the provider is built | `DatabaseConfigError` | `This connection's file could not be checked against the server's own storage files: <filesystem message>` |
 | Conflicting file lock | `ConnectionError` | `DuckDB file <path> is locked by <process>. DuckDB admits one operating-system process per database file, in read-only mode too, so the other process has to release it first. Engine message: <engine message>` |
 | A write in the editor on a file opened read-only because this process cannot write it (§3.15) | `QueryError` | `DuckDB database <path> is open read-only because this process cannot write the file or its directory: <engine message>` |
 | A Unicode space outside a string, a quoted name and a comment, refused before the engine reads the statement (§5) | `QueryError`, a `RefusedBeforeSendError` on `queryReadOnly()` | `This statement holds a non-breaking or other Unicode space outside a string. DuckDB reads it as a space and Studio's readers do not, so what Studio checks before it runs could differ from what DuckDB runs; replace it with an ordinary space.` |
@@ -1770,9 +1771,10 @@ Every refusal reason it can print, verbatim:
 - [`docs/providers/postgres.md`](postgres.md) — the canonical SQL-family walkthrough
 
 
-Connection targets reserve Studio's storage database, its WAL/SHM files and bootstrap
-credentials (including backups and temporary files). This applies to every role.
-Checks normalize paths, resolve symbolic links and compare existing file identities
-so hard links cannot alias reserved files. Other user database files beside them remain usable.
+Connection targets reserve Studio's storage database, its WAL/SHM files, the credential re-seal's backups of it (`<store file>.pre-reseal-<stamp>`) and bootstrap credentials (including backups and temporary files).
+This applies to every role.
+Studio's provider factory makes the check when it builds the provider, before any provider exists to connect, against the storage location the process took once (at boot, or at the first provider built where no boot runs), so a later change of the working directory or of `STORAGE_SQLITE_PATH` moves nothing ([SECURITY.md](../SECURITY.md) control 3.45).
+Checks normalize paths, resolve symbolic links and compare existing file identities so hard links cannot alias reserved files.
+Other user database files beside them remain usable.
 Names are compared with letter case and Unicode normalization (NFC against NFD) folded, on every OS, whether or not the file exists yet.
 macOS treats two spellings that differ only in letter case or only in normalization form as one file, and Windows treats two spellings that differ only in letter case as one file.

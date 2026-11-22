@@ -22,10 +22,17 @@ import {
   assertTunnelRecordIsPlainData,
   providerConnection,
 } from "./provider-connection";
+import { storageLocation } from "@/lib/data-dir";
 import { egressDecision } from "./egress-decision";
 import { trustMaterial } from "./trust-material";
+import { admittedFileConnection, opcuaPkiRoot } from "./provider-files";
 import { registerOwnerRemoval } from "./owner-removal";
-import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE, READS_TRUST_MATERIAL } from "./compatibility";
+import {
+  READ_ONLY_ENFORCED,
+  READS_FILE_ACCESS_POSTURE,
+  READS_TRUST_MATERIAL,
+  REFUSES_DENIED_FILE_ACCESS,
+} from "./compatibility";
 import { assertStatementsReviewed } from "./statement-review";
 import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
@@ -48,7 +55,11 @@ import * as path from "path";
  *   plain data, or a connection carrying one that is not, is refused with a `DatabaseConfigError` before anything is
  *   built. The process's egress decision is taken first too, where the other entry points call assertEgressDecided: the
  *   first call of a process with no boot hook reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and keeps it, and an invalid value is
- *   refused on every call.
+ *   refused on every call. A SQLite, DuckDB or LibreDB connection is then admitted (`admittedFileConnection` in
+ *   ./provider-files): the provider is handed, under `ADMITTED_FILE`, the file the connection names resolved against
+ *   the working directory of this call, and opens that; `database` and `connectionString` stay as passed. Studio's
+ *   storage location (`storageLocation` in @/lib/data-dir) is taken beside the egress decision, so the first call of
+ *   a process with no boot hook takes it and keeps it, whatever engine that call builds.
  * @param options - Optional provider options (pooling, timeout, etc.)
  * @param execution - Server-injected execution context (#328, non-admin DuckDB file access). Never built
  *   from caller-supplied options. `acquireExecutionProfileProvider` passes the agent
@@ -56,8 +67,9 @@ import * as path from "path";
  *   provider pass the editor file-access posture `editorExecutionContext` derived from
  *   the verified session and the resolved connection. What each provider establishes with `readOnly` and
  *   `sendsStatements` is stated once, on `ProviderExecutionContext` (types.ts); DuckDB reads
- *   `allowExternalFileAccess` on its editor handle, and SQLite refuses to open at all when it is
- *   `false`, a profiled handle included. On DuckDB, ABSENT MEANS DENY: called without a context, as an
+ *   `allowExternalFileAccess` on its editor handle, and a SQLite connection is refused when it is
+ *   `false`, a profiled handle included, here before the provider is built and before the file it names is read
+ *   (see assertFileAccessPostureHonoured). On DuckDB, ABSENT MEANS DENY: called without a context, as an
  *   embedder that predates the posture calls it, a DuckDB handle opens with
  *   `enable_external_access: 'false'`, so `read_csv`, `COPY`, `ATTACH` of a file and
  *   `INSTALL` are refused outside its private temp directory and its database's own file
@@ -75,14 +87,20 @@ import * as path from "path";
  *   checked, logged or built (FND-1; see `assertDatabaseType` in ./type-id)
  * @throws DatabaseConfigError if connection type is left out of a set
  *   `LIBREDB_ENABLED_PROVIDERS` (see assertProviderEnabled), if its `readOnly` cannot be
- *   honoured (see assertReadOnlyHonoured), or if an owner comes without a whole `ownerPoolMax`
- *   from 1 (see assertOwnerPoolHonoured), or if the execution context is not plain data: a class instance, a getter,
- *   an inherited field or a field that is not enumerable (see assertExecutionContextIsPlainData), or, for an engine
+ *   honoured (see assertReadOnlyHonoured), if an owner comes without a whole `ownerPoolMax`
+ *   from 1 (see assertOwnerPoolHonoured), if the execution context is not plain data: a class instance, a getter,
+ *   an inherited field or a field that is not enumerable (see assertExecutionContextIsPlainData), if its engine
+ *   refuses a denied file-access posture and `execution` denies it, before the file it names is read (see
+ *   assertFileAccessPostureHonoured), or, for an engine
  *   whose `READS_TRUST_MATERIAL` row is true, if the file `NODE_EXTRA_CA_CERTS` names is missing, unreadable, empty,
  *   holds a block under the legacy `X509 CERTIFICATE` label, holds no certificate block or leaves one unclosed
  *   (`Invalid NODE_EXTRA_CA_CERTS: <reason>`, see trustMaterial in
  *   ./trust-material): the first such build of a process with no boot hook reads the file and keeps the outcome, and an
  *   invalid file refuses every such build, before the log line, while every other engine is built as before
+ * @throws DatabaseConfigError if a SQLite, DuckDB or LibreDB connection names one of Studio's own storage files, a
+ *   path holding a NUL byte, a file name that is not text, a path the reserved check cannot read or, for SQLite, a
+ *   connection string with no file after `file:`, before the provider is built (see admittedFileConnection),
+ *   or if an OPC UA connection is built while `LIBREDB_OPCUA_PKI_ROOT` is relative (see opcuaPkiRoot)
  *
  * @example
  * // SQL Database
@@ -206,6 +224,21 @@ function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: Prov
 }
 
 /**
+ * Refuse a connection whose engine refuses a handle when its file-access posture is denied
+ * (`REFUSES_DENIED_FILE_ACCESS`) and whose execution context denies it (`allowExternalFileAccess: false`, the
+ * provider's own condition), with the sentence and the error the provider's `connect()` raises for it, before the
+ * storage location, the connection's file or the provider is touched: a connection the posture denies file access is
+ * refused before Studio reads the path it names (FND-2 slice 3, docs/SECURITY.md "Embedded file connection
+ * boundaries"). The row is read through `typeIdRow` and names no type id. An absent posture is not a denied one, as the
+ * provider reads it.
+ */
+function assertFileAccessPostureHonoured(connection: DatabaseConnection, execution: ProviderExecutionContext): void {
+  const refusal = typeIdRow(REFUSES_DENIED_FILE_ACCESS, connection.type);
+  if (refusal === null || execution.allowExternalFileAccess !== false) return;
+  throw new DatabaseConfigError(refusal, connection.type);
+}
+
+/**
  * Take the process's egress decision (`./egress-decision`) before anything is cached, dialled or built, refusing an
  * invalid `DB_HTTP_BLOCK_PRIVATE_HOSTS` with its `DatabaseConfigError`, on every call.
  *
@@ -258,13 +291,25 @@ export async function createDatabaseProvider(
   // answer differently from the object core reads here.
   assertExecutionContextIsPlainData(execution);
   assertOwnerPoolHonoured(connection, execution);
+  // Before the storage location and the file admission below, which read the host filesystem: a connection whose
+  // engine refuses a denied file-access posture, under a context that denies it, reads nothing.
+  assertFileAccessPostureHonoured(connection, execution);
   const egress = egressDecision();
+  // Studio's storage location, taken here on every call so the first provider built in a process with no boot hook
+  // takes it, whatever its engine, before a later working directory could move it (FND-2 slice 3, docs/SECURITY.md
+  // 3.45). On a standalone server the boot took it already, so this reads the kept location.
+  storageLocation();
   // Every provider is built from the connection `providerConnection` answers: the record with its `sshTunnel` reduced to
   // the public fields, so no provider holds the tunnel's password, private key or passphrase (FND-2,
   // docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider, acquireExecutionProfileProvider,
   // withOneShotTunnel), it dials with those before it calls this function; a caller that builds an unconnected provider
   // opens none. A tunnel or record that is not plain data is refused here, by name, before the log line below.
   connection = providerConnection(connection);
+  // A SQLite, DuckDB or LibreDB connection (`OPENS_LOCAL_FILE`) is handed the file core admitted, resolved against the
+  // working directory now; one of Studio's own storage files, a path the reserved check cannot read, a NUL byte, a
+  // connection string that names no file after `file:` or a name that is not text is refused here, by name, before any
+  // provider exists (FND-2 slice 3, docs/SECURITY.md 3.45). Every other connection passes unchanged.
+  connection = admittedFileConnection(connection);
   // What every provider that takes a context is handed: a copy of the caller's execution context, plain data as checked
   // above, the process's egress decision, which a guarded provider hands its guard, and, for an engine whose
   // `READS_TRUST_MATERIAL` row is true, the trust material core read from the file NODE_EXTRA_CA_CERTS names, which that
@@ -549,10 +594,20 @@ export async function createDatabaseProvider(
       // under Bun 1.4.2 it resolved to a zone-indexed link-local address
       // (`fe80::…%15`) and the error surfaced as an uncaught one. Constructing a provider must not
       // depend on that, so the import happens when a session is actually opened.
-      return new OpcuaProvider(connection, options, context, async (read) => {
-        const { openLibrarySession } = await import("./providers/industrial/opcua/library");
-        return openLibrarySession(read);
-      });
+      //
+      // The PKI root is core's decision (FND-2 slice 3): `LIBREDB_OPCUA_PKI_ROOT`, or `opcua-pki` under Studio's data
+      // directory, read now and handed over, so nothing the environment says at connect reaches the provider; a relative
+      // variable is refused here, before the provider is built.
+      return new OpcuaProvider(
+        connection,
+        options,
+        context,
+        async (read) => {
+          const { openLibrarySession } = await import("./providers/industrial/opcua/library");
+          return openLibrarySession(read);
+        },
+        opcuaPkiRoot(connection.type),
+      );
     }
 
     // MTConnect: an agent in front of machine tools, read over HTTP, read-only by its closed table of nine GET routes.
@@ -817,12 +872,13 @@ const providerCache = new Map<string, CachedProvider>();
  * is per-handle by definition - there is no file to share, no lock to work around, and
  * therefore nothing a borrow could buy.
  *
- * The comparison is EXACT, matching `DuckDBProvider.getDatabasePath()` character for
- * character: that method treats `:memory:` and nothing else as in-memory, and resolves
- * every other spelling - `:MEMORY:`, ` :memory:`, DuckDB's own `:memory:named` - as a
- * relative file path. Two connections spelling one of those the same way really do
- * point at one file, and must keep matching. The narrowing here is only ever as wide as
- * the provider's own reading of the value.
+ * The comparison is EXACT, matching `admittedFileConnection` in `./provider-files`
+ * character for character: the admission treats `:memory:` and nothing else as
+ * in-memory, and resolves every other spelling - `:MEMORY:`, ` :memory:`, DuckDB's own
+ * `:memory:named` - as a relative file path, which is the file the provider opens. Two
+ * connections spelling one of those the same way really do point at one file, and must
+ * keep matching. The narrowing here is only ever as wide as the provider's own reading
+ * of the value.
  */
 const ANONYMOUS_IN_MEMORY_DATABASE = ":memory:";
 
@@ -936,8 +992,8 @@ const profiledProviderCache = new Map<string, ProfiledCachedProvider>();
  * `agent-read-only` acquisition may never be served what `agent-operations` opened.
  *
  * The requester's file-access posture is in it too, for an engine that reads one, exactly as in
- * the writable key: SQLite refuses a denied requester at connect, so a handle a trusted requester
- * opened must never answer a denied requester's key. Absent reads as denied. So is the requester's
+ * the writable key: a denied SQLite requester is refused before its provider is built, so a handle a trusted
+ * requester opened must never answer a denied requester's key. Absent reads as denied. So is the requester's
  * owner (docs/GOVERNANCE.md#per-user-providers), as in the writable key: one user's acquisition is never served
  * another's.
  *
@@ -1235,8 +1291,8 @@ function ownerContext(owner: string | undefined, requester: EditorExecutionConte
  *   `COPY`, `ATTACH` of a file and `INSTALL` are refused outside its private temp directory and
  *   its database's own file names (docs/providers/duckdb.md section 3.16) while the database
  *   stays writable. Pass
- *   `{ allowExternalFileAccess: true }` for the full editor reach. SQLite refuses a denied handle at
- *   connect, since its drivers cannot confine a statement's file access; every other engine ignores it.
+ *   `{ allowExternalFileAccess: true }` for the full editor reach. A denied SQLite connection is refused before its
+ *   provider is built, since its drivers cannot confine a statement's file access; every other engine ignores it.
  *   With an `owner`, the provider is that user's own: cached apart from every other user's, opened
  *   with the pool of `ownerPoolMax`, and its entry records the owner; an engine that keeps one handle
  *   per file shares that handle whatever the owner (`providerOwner`).
@@ -1669,9 +1725,9 @@ function sameUser(agentUser: string | undefined, user: string | undefined): bool
  * `requester` is the editor posture of the caller this acquisition serves, as
  * `editorExecutionContext` derives it (non-admin DuckDB file access). It reaches the profiled
  * handle and its cache key, as the editor's posture does: SQLite's drivers cannot confine a
- * statement's file access even on a read-only handle, so a denied requester is refused at connect
- * here too, while DuckDB's read-only profile already closes file access whatever the posture. It
- * also decides which open single-writer handle an `agent-operations` acquisition may borrow:
+ * statement's file access even on a read-only handle, so a denied requester is refused before its
+ * provider is built here too, while DuckDB's read-only profile already closes file access whatever
+ * the posture. It also decides which open single-writer handle an `agent-operations` acquisition may borrow:
  * one opened under that same posture, so an admin's agent is grounded from the admin's
  * own editor handle as before, and a requester is never lent a handle wider than its own.
  * Absent means deny, like everywhere else on this channel. Its owner (docs/GOVERNANCE.md#per-user-providers) makes the

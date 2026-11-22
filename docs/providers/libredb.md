@@ -148,12 +148,10 @@ any path, so Test Connection answered "Connected successfully" and left a 0-byte
 named `:memory:` in the server's working directory; `validate()` now throws a `DatabaseConfigError`
 saying LibreDB has no in-memory mode.
 
-A relative path is resolved against the server's working directory, which is where the built-in
-sample connection lives (`./data/sample.libredb` under the default data directory). A path whose
-parent directory does not exist is refused before the file is opened, with "The directory <dir>
-does not exist": the kernel opens its `.lock` sidecar first, so that case used to read as an ENOENT
-about a `<file>.libredb.lock` the user never named. The directory is not created, unlike the SQLite
-provider, because a connection setting should not make directories on the server.
+A relative path is resolved against the server's working directory by Studio's provider factory when it builds the provider (`admittedFileConnection` in [`provider-files.ts`](../../src/lib/db/provider-files.ts)), which is where the built-in sample connection lives (`./data/sample.libredb` under the default data directory); the provider opens the absolute path it is handed and resolves nothing itself.
+A path holding a NUL byte is refused there too, with "Invalid database path: NUL bytes are not allowed", before the provider is built.
+A path whose parent directory does not exist is refused before the file is opened, with "The directory <dir> does not exist": the kernel opens its `.lock` sidecar first, so that case used to read as an ENOENT about a `<file>.libredb.lock` the user never named.
+The directory is not created, unlike the SQLite provider, because a connection setting should not make directories on the server.
 
 A path that exists and is not a regular file is refused before the kernel opens anything, by `assertRegularFilesOrMissing` ([`regular-file.ts`](../../src/lib/db/utils/regular-file.ts)), shared with the SQLite and DuckDB providers.
 It asks `stat`, which never opens the path and follows a symlink: the kernel opened a FIFO, took a `.lock` beside it and Test Connection answered "Connected" (measured on bun 1.4.2), while the same FIFO froze the DuckDB provider.
@@ -270,7 +268,7 @@ fields are ignored.
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `database` | Yes | Path to the `.libredb` file on the Studio server's filesystem, absolute or relative to the server's working directory; its directory must exist ([§3.2](#32-no-in-memory-connections)). Throws `DatabaseConfigError` if absent or `:memory:`. |
+| `database` | Yes | Path to the `.libredb` file on the Studio server's filesystem, absolute or relative to the server's working directory when the provider is built; its directory must exist ([§3.2](#32-no-in-memory-connections)). Throws `DatabaseConfigError` if absent or `:memory:`. |
 
 No `host`, `port`, `user`, `password`, or `connectionString` fields are used. The `supportsConnectionString`
 capability is `false`.
@@ -1174,6 +1172,7 @@ The provider raises the shared error classes from
 | Situation | Error |
 |-----------|-------|
 | Missing `database` path at construction | `DatabaseConfigError` |
+| A path the reserved check cannot read (a path through a regular file on POSIX, a symbolic link loop, a directory the server cannot search) | `DatabaseConfigError` (*"This connection's file could not be checked against the server's own storage files: "* and the filesystem's message), raised by the provider factory before the provider is built |
 | `@libredb/libredb` package not installed | `DatabaseConfigError` — install instructions in message |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails to open the file | `ConnectionError` |
@@ -1440,10 +1439,11 @@ The refusal reason it prints, verbatim:
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 
 
-Connection targets reserve Studio's storage database, its WAL/SHM files and bootstrap
-credentials (including backups and temporary files). This applies to every role.
-Checks normalize paths, resolve symbolic links and compare existing file identities
-so hard links cannot alias reserved files. Other user database files beside them remain usable.
+Connection targets reserve Studio's storage database, its WAL/SHM files, the credential re-seal's backups of it (`<store file>.pre-reseal-<stamp>`) and bootstrap credentials (including backups and temporary files).
+This applies to every role.
+Studio's provider factory makes the check when it builds the provider, before any provider exists to connect, against the storage location the process took once (at boot, or at the first provider built where no boot runs), so a later change of the working directory or of `STORAGE_SQLITE_PATH` moves nothing ([SECURITY.md](../SECURITY.md) control 3.45).
+Checks normalize paths, resolve symbolic links and compare existing file identities so hard links cannot alias reserved files.
+Other user database files beside them remain usable.
 Names are compared with letter case and Unicode normalization (NFC against NFD) folded, on every OS, whether or not the file exists yet.
 macOS treats two spellings that differ only in letter case or only in normalization form as one file, and Windows treats two spellings that differ only in letter case as one file.
 
@@ -1530,7 +1530,7 @@ The engine has no principal, so a LibreDB seed proves none and carries none, and
 |---|---|---|
 | Every key of the file the seed names, values included | Yes: this is the connection's data | None; opt in a seed whose file holds only what its roles may read |
 | Another file on the server | No | The tool takes no `database`, and a seed names one path, which the operator chooses and a client cannot change |
-| Studio's storage database, its `-wal` and `-shm` files, `auth-bootstrap.json` (with its `.bak` and temporary files): users, sessions, audit, saved connections and credentials | No | The target check at open (`isReservedStoragePath`, [`src/lib/data-dir.ts`](../../src/lib/data-dir.ts)), by resolved path with letter case and Unicode normalization folded and by file identity, so another case's spelling of one, or a symbolic or hard link to one, is refused too, before anything is opened |
+| Studio's storage database, its `-wal` and `-shm` files, the credential re-seal's backups of it (`<store file>.pre-reseal-<stamp>`), `auth-bootstrap.json` (with its `.bak` and temporary files): users, sessions, audit, saved connections and credentials | No | The provider factory's check before the provider is built (`admittedFileConnection`, [`src/lib/db/provider-files.ts`](../../src/lib/db/provider-files.ts)), by resolved path with letter case and Unicode normalization folded and by file identity, so another case's spelling of one, or a symbolic or hard link to one, is refused too, before anything is opened |
 | A file that is not a LibreDB file, such as a copy of the storage database | No | The kernel's own format check, which refuses it as `NOT_A_DATABASE` and leaves it untouched |
 | The file's reserved internal namespace (the catalog, under U+0000) | No | Each key read is dropped from the answer when `isReservedKey` holds for it, so a `get` of a catalog key and a `range` or `prefix` across it answer no reserved row |
 | A file that does not exist | No | Both tools open an existing file only: `run_libredb_read` through the read-only adapter, and `inspect_schema` through the same adapter under the writer's lock, which is taken only once the file was opened, so neither creates the file or its `.lock`, and a later read still meets the missing file |

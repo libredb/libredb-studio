@@ -80,7 +80,7 @@ import {
 } from "./libredb-read-only-file";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
-import { isReservedStoragePath } from "@/lib/data-dir";
+import { requireAdmittedFile } from "@/lib/db/utils/admitted-file";
 import * as path from "path";
 
 /** SQLite's in-memory database name, which LibreDB does not have (#1450). */
@@ -550,31 +550,19 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * Validate and resolve the configured file path, mirroring the SQLite provider
-   * (sql/sqlite.ts): resolve to an absolute, normalized path and reject
-   * traversal / null-byte inputs. Centralizing this guards every filesystem use
-   * (open, statSync) behind one barrier, so an untrusted connection config
-   * cannot open unexpected locations.
+   * The file this connection opens, an absolute path, as Studio's provider factory admitted it
+   * (`admittedFileConnection` in `src/lib/db/provider-files.ts`): `database` resolved against the working directory
+   * when the provider was built, with a NUL byte and Studio's own storage files refused there. Every filesystem use
+   * (open, statSync) reads it here, and nothing resolves the configured path again, so the working directory at connect
+   * cannot move it. A provider built without the factory holds no admitted file and is refused by name.
    */
-  private resolveDatabasePath(): string {
-    // `connect` runs `validate()` first, and that refuses an absent or empty path.
-    const configured = this.config.database as string;
-    const resolved = path.resolve(configured);
-    if (resolved !== path.normalize(resolved) || configured.includes("\0")) {
-      throw new DatabaseConfigError("Invalid database path: path traversal is not allowed", "libredb");
-    }
-    if (isReservedStoragePath(resolved)) {
-      throw new DatabaseConfigError(
-        "This path is reserved for the server's own storage and cannot be opened as a connection",
-        "libredb",
-      );
-    }
-    return resolved;
+  private admittedDatabasePath(): string {
+    return requireAdmittedFile(this.config, "libredb");
   }
 
   public async connect(): Promise<void> {
     this.validate(); // throws DatabaseConfigError if database path is missing
-    const dbPath = this.resolveDatabasePath(); // resolves + rejects traversal/null-byte
+    const dbPath = this.admittedDatabasePath();
     // The kernel opens its `.lock` sidecar first, so a missing directory surfaced as an ENOENT
     // about a `.lock` file the user never named (#1450). Said in the user's terms instead; the
     // directory is not created, because a connection setting should not make directories.
@@ -618,7 +606,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   private describeOpenError(lib: LibreDBModule, error: unknown): string {
     // Only an agent profile's open can meet a missing file: the editor's open creates it.
     if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
-      return `The LibreDB file ${this.resolveDatabasePath()} does not exist. The agent opens an existing file only and creates none.`;
+      return `The LibreDB file ${this.admittedDatabasePath()} does not exist. The agent opens an existing file only and creates none.`;
     }
     if (error instanceof LibreDBNotAStoreError) return LIBREDB_NOT_A_DATABASE;
     if (error instanceof lib.LibreDbError) {

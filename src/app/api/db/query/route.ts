@@ -6,6 +6,7 @@ import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-conne
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
@@ -190,8 +191,11 @@ export async function POST(req: NextRequest) {
        * unconnected provider `POST /api/db/provider-meta` reads them from (#457) answers the same
        * question. Checked after `getOrCreateProvider`, an unreachable Postgres answered 503 for a
        * request that was never valid, and a reachable one was connected only to be refused.
+       *
+       * Built under the session's editor posture, as provider-meta builds it, so a connection the
+       * posture denies file access is refused here before Studio reads the path it names.
        */
-      const declared = await createDatabaseProvider(connection);
+      const declared = await createDatabaseProvider(connection, {}, editorExecutionContext(guard.session, connection));
       const capabilities = declared.getCapabilities();
       if (capabilities.keyScan === undefined) {
         return NextResponse.json(

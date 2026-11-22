@@ -29,7 +29,6 @@ import { OPCUA_UNITS_OUTSIDE } from "@/lib/db/providers/industrial/opcua/agent-u
 import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
 import { openLibrarySession } from "@/lib/db/providers/industrial/opcua/library";
-import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -37,9 +36,10 @@ const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true 
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 50, maxResultBytes: 1_000_000, statementTimeoutMs: 15_000 };
 const PLANTED = "planted";
 const SCRATCH: string[] = [];
-const PKI_BEFORE = process.env[OPCUA_PKI_ROOT_ENV];
 
 let server: OPCUAServer;
+/** The client's PKI root, handed to each provider as Studio's provider factory hands the one it decided. */
+let pkiRoot: string;
 let provider: OpcuaProvider;
 /** A second connection, whose one root is a clean process folder that holds none of the shapes. */
 let clean: OpcuaProvider;
@@ -86,7 +86,7 @@ async function recordedSession(options: Parameters<typeof openLibrarySession>[0]
 }
 
 beforeAll(async () => {
-  process.env[OPCUA_PKI_ROOT_ENV] = scratch("opcua-vendor-client-pki-");
+  pkiRoot = scratch("opcua-vendor-client-pki-");
   server = new OPCUAServer({
     port: 0,
     resourcePath: "/libredb-vendor",
@@ -309,11 +309,11 @@ beforeAll(async () => {
       securityMode: "None",
       agentReadRoots: [root],
     }) as unknown as DatabaseConnection;
-  provider = new OpcuaProvider(connection(rootOf(ids.line)), {}, AGENT, recordedSession);
+  provider = new OpcuaProvider(connection(rootOf(ids.line)), {}, AGENT, recordedSession, pkiRoot);
   await provider.connect();
-  clean = new OpcuaProvider(connection(rootOf(ids.process)), {}, AGENT, recordedSession);
+  clean = new OpcuaProvider(connection(rootOf(ids.process)), {}, AGENT, recordedSession, pkiRoot);
   await clean.connect();
-  paged = new OpcuaProvider(connection(rootOf(ids.paged)), {}, AGENT, recordedSession);
+  paged = new OpcuaProvider(connection(rootOf(ids.paged)), {}, AGENT, recordedSession, pkiRoot);
   await paged.connect();
 });
 
@@ -322,8 +322,6 @@ afterAll(async () => {
   await clean?.disconnect();
   await paged?.disconnect();
   await server?.shutdown();
-  if (PKI_BEFORE === undefined) delete process.env[OPCUA_PKI_ROOT_ENV];
-  else process.env[OPCUA_PKI_ROOT_ENV] = PKI_BEFORE;
   for (const root of SCRATCH) rmSync(root, { recursive: true, force: true });
 });
 
@@ -461,6 +459,7 @@ describe("beneath a root the server lists a few references at a time", () => {
       {},
       undefined,
       openLibrarySession,
+      pkiRoot,
     );
     await editor.connect();
     try {

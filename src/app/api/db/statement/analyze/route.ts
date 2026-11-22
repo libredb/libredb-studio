@@ -109,7 +109,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: fields.error }, { status: fields.status });
     }
 
-    // The execution context, as every route that builds a provider passes it, although this one opens no handle.
+    // The execution context, as every route that builds a provider passes it, although this one opens no handle: the
+    // factory refuses with it a connection the caller's posture could never open (SQLite under a denied one).
     const provider = await createDatabaseProvider(connection, {}, editorExecutionContext(guard.session, connection));
 
     let analysis: StatementAnalysis;

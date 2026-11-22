@@ -12,8 +12,10 @@ import {
   LIBREDB_TABLE_STATS_TRUNCATED,
   LibreDBProvider,
 } from "@/lib/db/providers/embedded/libredb";
-import { ConnectionError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
+import { admittedFileConnection } from "@/lib/db/provider-files";
+import { ADMITTED_FILE_MISSING } from "@/lib/db/utils/admitted-file";
 import { describeIf } from "../../helpers/posix-tools";
 import {
   CHILD_TEST_TIMEOUT_MS,
@@ -44,8 +46,18 @@ function rmDbFile(file: string): void {
 
 let tmpFile: string;
 
+/**
+ * A LibreDB connection as Studio's provider factory hands it to the provider: admitted by `admittedFileConnection`, so
+ * it carries the file core decided, resolved against the working directory now (FND-2 slice 3).
+ */
 function makeConn(database: string | undefined): DatabaseConnection {
-  return { id: "libredb-test", name: "LibreDB Test", type: "libredb", database, createdAt: new Date() };
+  return admittedFileConnection({
+    id: "libredb-test",
+    name: "LibreDB Test",
+    type: "libredb",
+    database,
+    createdAt: new Date(),
+  });
 }
 
 function seed(file: string): void {
@@ -116,10 +128,23 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
-  test("connect() rejects a path containing a null byte (traversal guard)", async () => {
-    const provider = new LibreDBProvider(makeConn("/tmp/bad" + String.fromCharCode(0) + ".libredb"));
-    await expect(provider.connect()).rejects.toThrow(/traversal|invalid/i);
+  test("a provider built without the file Studio's factory admits refuses to connect by name and creates nothing", async () => {
+    const neverAdmitted = path.join(tmpDir, "never-admitted.libredb");
+    const provider = new LibreDBProvider({
+      id: "raw",
+      name: "raw",
+      type: "libredb",
+      database: neverAdmitted,
+      createdAt: new Date(),
+    });
+    const error = await provider.connect().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(ADMITTED_FILE_MISSING);
     expect(provider.isConnected()).toBe(false);
+    expect(fs.existsSync(neverAdmitted)).toBe(false);
   });
 
   // #1450: `path.resolve(":memory:")` named a file `:memory:` in the server's working directory,
@@ -585,7 +610,9 @@ describe("LibreDBProvider — 0.2.x error mapping & locking", () => {
     fs.writeFileSync(tmpFile, bytes);
     const before = fs.readFileSync(tmpFile);
 
-    const provider = new LibreDBProvider(makeConn(tmpFile));
+    const provider = new LibreDBProvider(
+      admittedFileConnection({ id: "raw", name: "raw", type: "libredb", database: tmpFile, createdAt: new Date() }),
+    );
     const error = await provider.connect().then(
       () => null,
       (e: unknown) => e,
@@ -1886,9 +1913,11 @@ describe("LibreDBProvider — the agent read-only profile", () => {
         const outcome = await runInChild(
           [
             `const { LibreDBProvider } = await import(${JSON.stringify(path.join(import.meta.dir, "../../../src/lib/db/providers/embedded/libredb.ts"))});`,
+            // The child builds its provider as the factory does: on the file `admittedFileConnection` admits.
+            `const { admittedFileConnection } = await import(${JSON.stringify(path.join(import.meta.dir, "../../../src/lib/db/provider-files.ts"))});`,
             `const { unlinkSync } = await import("node:fs");`,
             `const file = ${JSON.stringify(tmpFile)};`,
-            `const provider = new LibreDBProvider({ id: "fifo", name: "fifo", type: "libredb", database: file }, {}, { readOnly: true, sendsStatements: true });`,
+            `const provider = new LibreDBProvider(admittedFileConnection({ id: "fifo", name: "fifo", type: "libredb", database: file }), {}, { readOnly: true, sendsStatements: true });`,
             "await provider.connect();",
             "unlinkSync(file);",
             `const made = Bun.spawnSync(["mkfifo", "-m", "644", file]);`,

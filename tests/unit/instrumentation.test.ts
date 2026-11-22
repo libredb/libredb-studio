@@ -5,6 +5,8 @@ import * as path from "path";
 import { register } from "@/instrumentation";
 import { forgetEgressDecision } from "@/lib/db/egress-decision";
 import { forgetTrustMaterial } from "@/lib/db/trust-material";
+import * as dataDir from "@/lib/data-dir";
+import { forgetStorageLocation } from "@/lib/data-dir";
 import { logger } from "@/lib/logger";
 import { closeStorageProvider } from "@/lib/storage/factory";
 import { getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
@@ -92,10 +94,11 @@ describe("instrumentation register()", () => {
     // back in explicitly.
     process.env.LIBREDB_NO_BANNER = "1";
     resetSampleSeedStates();
-    // register() takes the egress decision and reads the trust material once per process; forgotten here, each boot
-    // below decides as a new one.
+    // register() takes the egress decision and Studio's storage location and reads the trust material once per
+    // process; forgotten here, each boot below takes them as a new one.
     forgetEgressDecision();
     forgetTrustMaterial();
+    forgetStorageLocation();
     // register() installs the uncaught-exception exit once per process; installed on a stand-in here first, its own
     // install attaches nothing, so no test in this file binds the real process.exit. The tests about that install
     // reset this one first.
@@ -132,6 +135,7 @@ describe("instrumentation register()", () => {
       resetSampleSeedStates();
       forgetEgressDecision();
       forgetTrustMaterial();
+      forgetStorageLocation();
       resetUncaughtExceptionExit();
       resetShutdownHandler();
     }
@@ -286,6 +290,37 @@ describe("instrumentation register()", () => {
       }
     },
   );
+
+  test("register() takes Studio's storage location after the shutdown handler and before the auth bootstrap", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    process.env.JWT_SECRET = "x".repeat(32);
+    const order: string[] = [];
+    const readOwner = shutdownHandler.exitOwnerAtBoot;
+    const takeLocation = dataDir.storageLocation;
+    const spies = [
+      // This file runs under Bun, where `true` refuses the boot: read the variable as on Node.js, where it is served.
+      spyOn(shutdownHandler, "exitOwnerAtBoot").mockImplementation(() => readOwner({ node: "24.22.1" })),
+      spyOn(shutdownHandler, "installShutdownHandler").mockImplementation(() => {
+        order.push("shutdown handler");
+      }),
+      spyOn(dataDir, "storageLocation").mockImplementation(() => {
+        order.push("storage location");
+        return takeLocation();
+      }),
+      spyOn(authBootstrap, "bootstrapAuth").mockImplementation(() => {
+        order.push("auth bootstrap");
+      }),
+    ];
+    try {
+      await register();
+      expect(order.slice(0, 3)).toEqual(["shutdown handler", "storage location", "auth bootstrap"]);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
 
   test("register() refuses a NEXT_MANUAL_SIG_HANDLE that is neither empty nor true, before installing the handler", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
@@ -599,6 +634,29 @@ describe("instrumentation register()", () => {
         { route: "egress-decision", variable: "DB_HTTP_BLOCK_PRIVATE_HOSTS", blocksPrivateHosts: true, source: "set" },
       ],
     ]);
+  });
+
+  test("reports the storage location once at boot", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      await register();
+      expect(info.mock.calls.filter((call) => call[1]?.route === "storage-location")).toEqual([
+        [
+          "Studio's storage location is taken for this process",
+          {
+            route: "storage-location",
+            storageFile: path.join(tmpDir, "libredb-storage.db"),
+            dataDirectory: tmpDir,
+          },
+        ],
+      ]);
+    } finally {
+      info.mockRestore();
+    }
   });
 
   test("hard-exits before seeding and the banner when the governance preflight refuses the environment", async () => {

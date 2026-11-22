@@ -81,9 +81,13 @@ export async function runInChild(body: string, hardLimitMs = CHILD_HARD_TIMEOUT_
   }
 }
 
+/** Studio's provider-files module, which admits a local-file connection's file as the provider factory does. */
+const PROVIDER_FILES_MODULE = join(import.meta.dir, "..", "..", "src", "lib", "db", "provider-files.ts");
+
 /**
- * Construct the provider `exportName` of the module at `modulePath` on `config`, connect it in a
- * child, and report the error's class and message, or that it connected.
+ * Construct the provider `exportName` of the module at `modulePath` on `config`, admitted as Studio's
+ * provider factory admits it (`admittedFileConnection`, FND-2 slice 3), connect it in a child, and
+ * report the error's class and message, or that it connected.
  */
 export function connectInChild(
   modulePath: string,
@@ -94,7 +98,8 @@ export function connectInChild(
   return runInChild(
     [
       `const { ${exportName}: Provider } = await import(${JSON.stringify(modulePath)});`,
-      `const provider = new Provider(${JSON.stringify(config)}, {}, ${JSON.stringify(execution)});`,
+      `const { admittedFileConnection } = await import(${JSON.stringify(PROVIDER_FILES_MODULE)});`,
+      `const provider = new Provider(admittedFileConnection(${JSON.stringify(config)}), {}, ${JSON.stringify(execution)});`,
       "try {",
       "  await provider.connect();",
       "  await provider.disconnect();",

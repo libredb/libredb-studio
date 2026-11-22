@@ -1,6 +1,9 @@
 import "../../../setup";
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "events";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -13,7 +16,9 @@ import type { DatabaseConnection } from "@/lib/types";
  * caller is still connecting through it and no provider opened on it.
  *
  * SQLite stands in for the provider because it ignores the rewritten host and port, so it connects
- * without a database server, and a NUL byte in its path makes its connect fail deterministically.
+ * without a database server, and a path that names an existing directory makes its connect fail deterministically:
+ * the provider is built, and its connect refuses a path that is not a regular file. (A NUL byte in the path no longer
+ * serves: Studio's provider factory refuses it before the provider is built, so no connect would start.)
  *
  * Every order here is set by signals, never by a clock: the fake bastion answers only when a test tells
  * it to, the factory's calls into the pool are announced as they happen, and each record's provider can
@@ -197,7 +202,11 @@ function record(database: string): DatabaseConnection {
 }
 
 const OPENS = ":memory:";
-const FAILS = "bad\u0000path.db";
+const FAILS = mkdtempSync(join(tmpdir(), "tunnel-share-directory-"));
+
+afterAll(() => {
+  rmSync(FAILS, { recursive: true, force: true });
+});
 
 /** A record whose provider opens. */
 const opens = () => getOrCreateProvider(record(OPENS), {}, { allowExternalFileAccess: true });

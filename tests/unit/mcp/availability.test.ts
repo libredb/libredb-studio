@@ -36,13 +36,13 @@ afterEach(() => {
 });
 
 describe("mcpConnectionUnavailable", () => {
-  test("answers null on an engine whose row is false, under a denied posture too", () => {
+  test("answers null on an engine whose row is null, under a denied posture too", () => {
     expect(mcpConnectionUnavailable(ADMIN, copyFor(ADMIN, "duckdb", ["*"]))).toBeNull();
     expect(mcpConnectionUnavailable(USER, copyFor(USER, "duckdb", ["*"]))).toBeNull();
   });
 
-  test("answers null wherever the record it is given holds the engine false", () => {
-    const refuses = { ...REFUSES_DENIED_FILE_ACCESS, sqlite: false };
+  test("answers null wherever the record it is given holds the engine null", () => {
+    const refuses = { ...REFUSES_DENIED_FILE_ACCESS, sqlite: null };
     expect(mcpConnectionUnavailable(USER, copyFor(USER, "sqlite", ["*"]), refuses)).toBeNull();
   });
 

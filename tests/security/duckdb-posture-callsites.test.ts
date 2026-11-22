@@ -97,15 +97,10 @@ function findUnposturedCalls(rootDir: string): UnposturedCall[] {
 
 /**
  * Every call allowed to open a provider without the execution context, with the exact number of such
- * calls the file may have. Both are capability-only reads that never call `connect()`, so no handle is
+ * calls the file may have. Each is a capability-only read that never calls `connect()`, so no handle is
  * opened and no posture applies; anything else is a bug (pass `editorExecutionContext`).
  */
 const UNPOSTURED_ALLOWLIST: Record<string, { calls: number; reason: string }> = {
-  "app/api/db/query/route.ts": {
-    calls: 1,
-    reason:
-      "a capability-only read for the key-walk database field: it builds the provider to read its keyScan declaration and containerDepth before any socket, and never connects, so no handle opens",
-  },
   "app/api/agent/runs/route.ts": {
     calls: 1,
     reason:

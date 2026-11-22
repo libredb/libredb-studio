@@ -745,10 +745,11 @@ describe("the estimating EXPLAIN agrees with the editor's strategy", () => {
   test.each(["postgres", "sqlite", "duckdb", "mysql", "clickhouse", "libsql"] as const)(
     "%s composes what the strategy of its declared format builds",
     async (type) => {
+      // A granted posture, since the factory refuses SQLite under a denied one; a declaration does not depend on it.
       const provider = await createDatabaseProvider(
         CENSUS_CONNECTION[type],
         {},
-        executionContextFor("agent-read-only"),
+        executionContextFor("agent-read-only", { allowExternalFileAccess: true }),
       );
       const strategy = getExplainStrategy(provider.getCapabilities().explainFormat);
       expect(strategy).not.toBeNull();

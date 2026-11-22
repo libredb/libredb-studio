@@ -195,8 +195,14 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     // Built under the agent-mode context and never as an editor handle: every profile a run acquires opens read-only,
     // and a provider may declare less on such a handle (Sparkplug declares no tree, since every level of it is a
     // withheld id), so the grounding walk lists only what the handle it acquires will answer. The operations context
-    // sends no statement, so no provider proves a statement boundary for a provider that is never connected.
-    const provider = await createDatabaseProvider(connection, {}, executionContextFor("agent-operations"));
+    // sends no statement, so no provider proves a statement boundary for a provider that is never connected. It carries
+    // the editor posture of the run's persisted actor, as the acquirer below does, so a connection that posture denies
+    // file access is refused here, before Studio reads the path it names, and one it grants is built.
+    const provider = await createDatabaseProvider(
+      connection,
+      {},
+      executionContextFor("agent-operations", editorExecutionContext(actor, connection)),
+    );
     const capabilities = provider.getCapabilities();
     const labels = provider.getLabels();
 

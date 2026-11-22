@@ -69,7 +69,7 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  *   branch below it. URI handling is also in
  *   `MySQLProvider.buildPoolConfig()` in `src/lib/db/providers/sql/mysql.ts` (`uri`),
  *   `OracleProvider.getConnectString()` in `src/lib/db/providers/sql/oracle/index.ts`,
- *   `SQLiteProvider.getDatabasePath()` in `src/lib/db/providers/sql/sqlite.ts`,
+ *   `admittedFileConnection()` in `src/lib/db/provider-files.ts` (SQLite's file),
  *   `MongoDBProvider.buildConnectionString()` in `src/lib/db/providers/document/mongodb/index.ts`,
  *   `resolveConnection()` in `src/lib/db/providers/sql/libsql/index.ts` and
  *   `src/lib/db/providers/sql/clickhouse/index.ts`, and

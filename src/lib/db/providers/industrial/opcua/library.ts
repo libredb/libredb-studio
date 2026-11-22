@@ -54,7 +54,7 @@ import {
 } from "node-opcua-client";
 import { OPCUA_LIMIT_NODES, OPCUA_POLICY_NONE, OPCUA_READ_ATTRIBUTES, OPCUA_WALK_ATTRIBUTES } from "./constants";
 import type { OpcuaDataValue, OpcuaEndpoint, OpcuaReadOnlyClient, OpcuaServerLimits } from "./client";
-import type { OpcuaConnectionOptions } from "./connection";
+import type { OpcuaConnectionOptions, OpcuaSessionOptions } from "./connection";
 import { openReadOnlySession, OPCUA_TRANSPORT_SETTINGS, type OpcuaLibraryBridge } from "./session";
 
 /**
@@ -166,7 +166,7 @@ async function hangUp(dial: Dial): Promise<void> {
  * `BadSecurityChecksFailed` because the unsecured channel presents no certificate to verify. So
  * the first dial is None+None, and the session's dial carries the policy of the endpoint chosen.
  */
-async function clientFor(options: OpcuaConnectionOptions, mode: MessageSecurityMode, policyUri: string): Promise<Dial> {
+async function clientFor(options: OpcuaSessionOptions, mode: MessageSecurityMode, policyUri: string): Promise<Dial> {
   const store = await certificateStore(options.pkiRoot);
   try {
     const client = OPCUAClient.create({

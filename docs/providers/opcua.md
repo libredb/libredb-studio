@@ -78,7 +78,7 @@ does not install. Three errors, and no others.
 | `session-pool.ts` | One session per connection, opened once, closed on every path out |
 | `connection.ts` | The dialog's fields read into options, every refusal before the dial |
 | `security.ts` | Endpoint, identity policy, certificate pin |
-| `pki.ts` | Where the client's own key pair and trust store live |
+| `pki.ts` | Whether the client's own certificate is supplied or generated; the PKI root is core's |
 | `node-id.ts` | Node-id grammar; the escaped browse path the Keys panel walks |
 | `limits.ts` | Chunk sizes: ours first, the server's only when smaller and real |
 | `key-scan.ts` | One level is one Browse; the capability the panel reads |
@@ -93,11 +93,9 @@ does not install. Three errors, and no others.
 
 ### 2.3 Registration & lifecycle
 
-`connect()` reads the connection first and opens the session second, so every refusal the dialog
-can earn happens **before a socket exists**: a wrong scheme, a password with no username, a pin
-that is not a thumbprint, a relative PKI root, a security mode the provider does not know. One
-configuration refusal arrives later and says so: a PKI root that cannot be written, because the
-certificate manager creates its directories lazily ([4.4](#44-the-pki-directory)).
+`connect()` reads the connection first and opens the session second, so every refusal the dialog can earn happens **before a socket exists**: a wrong scheme, a password with no username, a pin that is not a thumbprint, a security mode the provider does not know.
+A relative PKI root is refused earlier still, when the provider factory builds the provider ([4.4](#44-the-pki-directory)).
+One configuration refusal arrives later and says so: a PKI root that cannot be written, because the certificate manager creates its directories lazily ([4.4](#44-the-pki-directory)).
 `disconnect()` closes the session and never throws. `isConnected()` answers from the pool.
 
 ### 2.4 The client, and why
@@ -299,15 +297,11 @@ Exempt when the host is loopback or the connection is tunnelled, which is the ru
 
 ### 4.4 The PKI directory
 
-`LIBREDB_OPCUA_PKI_ROOT` defaults to `<data directory>/opcua-pki` — the directory Studio already
-owns and writes to, which holds the storage database — and the variable overrides it. It used to be
-REQUIRED, with no default, because the LIBRARY's default cannot work in the image (`os.homedir()` is
-`/nonexistent` there). That reasoning was right about the library and wrong about the remedy:
-measured end to end in a browser, a reader who installed Studio, picked OPC UA and pressed Test
-Connection was told the engine needs a directory nobody had mentioned, so the engine could not be
-used at all until they found an environment variable. A deployment that mounts its data directory
-(the chart's PVC, a Docker volume) gets what this section asks for without setting anything; a
-deployment that shares ONE client identity between replicas still sets the variable.
+`LIBREDB_OPCUA_PKI_ROOT` defaults to `<data directory>/opcua-pki`, the directory Studio already owns and writes to, which holds the storage database, and the variable overrides it.
+Studio's provider factory decides the root when it builds an OPC UA provider (`opcuaPkiRoot` in [`src/lib/db/provider-files.ts`](../../src/lib/db/provider-files.ts)) and hands it to the provider, which reads no environment of its own: a relative `LIBREDB_OPCUA_PKI_ROOT` is refused when the provider is built, before anything is opened, and the default lies under the data directory Studio took once per process, so a later change of the working directory does not move it.
+It used to be REQUIRED, with no default, because the LIBRARY's default cannot work in the image (`os.homedir()` is `/nonexistent` there).
+That reasoning was right about the library and wrong about the remedy: measured end to end in a browser, a reader who installed Studio, picked OPC UA and pressed Test Connection was told the engine needs a directory nobody had mentioned, so the engine could not be used at all until they found an environment variable.
+A deployment that mounts its data directory (the chart's PVC, a Docker volume) gets what this section asks for without setting anything; a deployment that shares ONE client identity between replicas still sets the variable.
 
 The client generates its own key pair
 and self-signed certificate on a first connect — even in `None` mode — and keeps `trusted`,

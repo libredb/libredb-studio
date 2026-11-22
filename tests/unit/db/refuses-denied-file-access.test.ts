@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { READS_FILE_ACCESS_POSTURE, REFUSES_DENIED_FILE_ACCESS, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider, type ExecutionProfile, executionContextFor } from "@/lib/db/factory";
-import type { ProviderExecutionContext } from "@/lib/db/types";
+import { admittedFileConnection } from "@/lib/db/provider-files";
+import type { DatabaseProvider, ProviderExecutionContext } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { createDuckdbFile, createSqliteFile } from "../../helpers/mcp-fixtures";
 
@@ -15,18 +16,24 @@ import { createDuckdbFile, createSqliteFile } from "../../helpers/mcp-fixtures";
  *
  * The record is static because MCP decides before any provider exists: `list_connections` and
  * `inspect_schema` ask it whether any open of a listed connection can succeed for its caller, and no
- * provider declares the fact. So the failure that matters is the record and `connect()` disagreeing:
- * a true row must refuse before any file I/O, with its provider's exact error, and a false row must open
- * a real file, under both MCP profiles. Each true row's refusal and a real file of each posture engine
- * are tables here, so a new posture engine fails until someone answers for it.
+ * provider declares the fact. So the failure that matters is the record, the provider factory and `connect()`
+ * disagreeing: a refusing row's sentence must be what the factory refuses with before the provider is built, and
+ * what the provider's own `connect()` raises for a handle built with that context, and a null row must open a real
+ * file, under both MCP profiles. How to build each refusing engine's provider without the factory and a real file of
+ * each posture engine are tables here, so a new posture engine fails until someone answers for it.
  */
 
 const MCP_PROFILES: readonly ExecutionProfile[] = ["agent-read-only", "agent-operations"];
 const POSTURE_ENGINES = SHIPPED_DATABASE_TYPES.filter((type) => READS_FILE_ACCESS_POSTURE[type]);
 
-/** Each true row's refusal, verbatim as its provider raises it. */
-const REFUSAL: Partial<Record<DatabaseType, string>> = {
-  sqlite: "SQLite connections require an administrator because this driver cannot confine statement-level file access",
+/** Each refusing engine's provider, built without the factory on the connection the factory admits. */
+const BUILD_DIRECTLY: Partial<
+  Record<DatabaseType, (connection: DatabaseConnection, context: ProviderExecutionContext) => Promise<DatabaseProvider>>
+> = {
+  sqlite: async (connection, context) => {
+    const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
+    return new SQLiteProvider(admittedFileConnection(connection), {}, context);
+  },
 };
 
 /** A real database file of each posture engine, which a false row must open. */
@@ -61,8 +68,25 @@ afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function refusalOf(type: DatabaseType, database: string, context: ProviderExecutionContext): Promise<unknown> {
-  const provider = await createDatabaseProvider(connectionOf(type, database), {}, context);
+/** What the provider factory settles to: the refusal it threw, or null when it built a provider. */
+async function buildRefusalOf(
+  type: DatabaseType,
+  database: string,
+  context: ProviderExecutionContext,
+): Promise<unknown> {
+  return createDatabaseProvider(connectionOf(type, database), {}, context).then(
+    () => null,
+    (error: unknown) => error,
+  );
+}
+
+/** What the provider's own `connect()` raises when it is built without the factory. */
+async function connectRefusalOf(
+  type: DatabaseType,
+  database: string,
+  context: ProviderExecutionContext,
+): Promise<unknown> {
+  const provider = await BUILD_DIRECTLY[type]!(connectionOf(type, database), context);
   const refusal = await provider.connect().then(
     () => null,
     (error: unknown) => error,
@@ -80,41 +104,50 @@ describe("REFUSES_DENIED_FILE_ACCESS", () => {
     expect(Object.isFrozen(REFUSES_DENIED_FILE_ACCESS)).toBe(true);
   });
 
-  test("is true only for an engine that reads the file-access posture", () => {
+  test("holds a sentence only for an engine that reads the file-access posture", () => {
     expect(
-      SHIPPED_DATABASE_TYPES.filter((type) => REFUSES_DENIED_FILE_ACCESS[type] && !READS_FILE_ACCESS_POSTURE[type]),
+      SHIPPED_DATABASE_TYPES.filter(
+        (type) => REFUSES_DENIED_FILE_ACCESS[type] !== null && !READS_FILE_ACCESS_POSTURE[type],
+      ),
     ).toEqual([]);
   });
 
   test("SQLite refuses a handle opened with file access denied, and DuckDB confines one", () => {
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => REFUSES_DENIED_FILE_ACCESS[type])).toEqual(["sqlite"]);
-    expect(REFUSES_DENIED_FILE_ACCESS.duckdb).toBe(false);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => REFUSES_DENIED_FILE_ACCESS[type] !== null)).toEqual(["sqlite"]);
+    expect(REFUSES_DENIED_FILE_ACCESS.sqlite).toBe(
+      "SQLite connections require an administrator because this driver cannot confine statement-level file access",
+    );
+    expect(REFUSES_DENIED_FILE_ACCESS.duckdb).toBeNull();
   });
 
-  test("the census knows each true row's refusal and a real file of each posture engine", () => {
-    expect(Object.keys(REFUSAL).sort()).toEqual(
-      SHIPPED_DATABASE_TYPES.filter((type) => REFUSES_DENIED_FILE_ACCESS[type]).sort(),
+  test("the census knows how to build each refusing engine without the factory and a real file of each posture engine", () => {
+    expect(Object.keys(BUILD_DIRECTLY).sort()).toEqual(
+      SHIPPED_DATABASE_TYPES.filter((type) => REFUSES_DENIED_FILE_ACCESS[type] !== null).sort(),
     );
     expect(Object.keys(WRITE_FILE).sort()).toEqual([...POSTURE_ENGINES].sort());
   });
 
   test.each(POSTURE_ENGINES.flatMap((type) => MCP_PROFILES.map((profile) => [type, profile] as const)))(
-    "%s under %s with file access denied: connect() answers what the row says",
+    "%s under %s with file access denied: the factory and connect() answer what the row says",
     async (type, profile) => {
       const context = executionContextFor(profile, { allowExternalFileAccess: false });
       expect(context).toMatchObject({ readOnly: true, allowExternalFileAccess: false });
-      if (REFUSES_DENIED_FILE_ACCESS[type]) {
-        // Refused before any file I/O: a path that does not exist gets the same refusal and is still absent
-        // after it, and a real file is refused alike, so the refusal is the posture's and not the file's.
+      const sentence = REFUSES_DENIED_FILE_ACCESS[type];
+      if (sentence !== null) {
+        // Refused by the factory before the provider is built, and by the provider's own connect() before it opens
+        // anything: a path that does not exist gets the same refusal and is still absent after it, and a real file is
+        // refused alike, so the refusal is the posture's and not the file's.
         const missing = join(dir, `missing-${type}-${profile}`);
         const refusals = await Promise.all([
-          refusalOf(type, missing, context),
-          refusalOf(type, realFile(type), context),
+          buildRefusalOf(type, missing, context),
+          buildRefusalOf(type, realFile(type), context),
+          connectRefusalOf(type, missing, context),
+          connectRefusalOf(type, realFile(type), context),
         ]);
         for (const refusal of refusals) {
           expect(refusal).toBeInstanceOf(DatabaseConfigError);
           const { message, provider } = refusal as DatabaseConfigError;
-          expect([message, provider]).toEqual([REFUSAL[type], type]);
+          expect([message, provider]).toEqual([sentence, type]);
         }
         expect(existsSync(missing)).toBe(false);
       } else {

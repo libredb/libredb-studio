@@ -50,7 +50,7 @@
  * panels are honest empties carrying a DuckDB-specific label.
  */
 
-import { isReservedStoragePath } from "@/lib/data-dir";
+import { requireAdmittedFile } from "@/lib/db/utils/admitted-file";
 import { SQLBaseProvider } from "../sql-base";
 import {
   type ActiveSessionDetails,
@@ -655,40 +655,24 @@ export class DuckDBProvider extends SQLBaseProvider {
   // ==========================================================================
 
   /**
-   * The resolved target: `:memory:` verbatim, or an absolute filesystem path.
+   * The resolved target: `:memory:` verbatim, or an absolute filesystem path, as Studio's provider factory admitted it
+   * (`admittedFileConnection` in `src/lib/db/provider-files.ts`): `database` resolved with `path.resolve` against the
+   * working directory when the provider was built, with a NUL byte and Studio's own storage files refused there. A
+   * provider built without the factory holds no admitted file and is refused by name.
    *
-   * Deliberately reads `config.database` and NOTHING else. `factory.ts`'s
-   * `fileIdentity` - which is what matches this connection against an already-open
-   * single-writer handle - computes `path.resolve(connection.database)` from the
-   * connection record, so any second source here (a `connectionString`, an
-   * environment default) would resolve to a path the factory never looks at and the
-   * borrow would silently stop matching. DuckDB declares
+   * Deliberately `database` and NOTHING else. `factory.ts`'s `fileIdentity` - which is what matches this connection
+   * against an already-open single-writer handle - computes `path.resolve(connection.database)` from the connection
+   * record in the same call, so any second source here (a `connectionString`, an environment default) would resolve to
+   * a path the factory never looks at and the borrow would silently stop matching. DuckDB declares
    * `supportsConnectionString: false`, so there is no second source to reconcile.
    *
-   * `..` segments are accepted by design: these are trusted server-side paths, the
-   * same position `docs/providers/sqlite.md` records. A NUL byte is not a path at all
-   * and is refused. DuckDB's own extra spellings - `md:` for MotherDuck, `s3://`,
-   * `:memory:named` - are NOT handled: this provider is local files only, and each of
-   * those would resolve here into a relative filesystem path, which is a worse answer
-   * than none.
+   * `..` segments are accepted by design: these are trusted server-side paths, the same position
+   * `docs/providers/sqlite.md` records. DuckDB's own extra spellings - `md:` for MotherDuck, `s3://`, `:memory:named` -
+   * are NOT handled: this provider is local files only, and each of those resolves into a relative filesystem path,
+   * which is a worse answer than none.
    */
   private getDatabasePath(): string {
-    const configured = this.config.database ?? MEMORY_TARGET;
-
-    if (configured === MEMORY_TARGET) return MEMORY_TARGET;
-
-    if (configured.includes("\0")) {
-      throw new DatabaseConfigError("Invalid database path: NUL bytes are not allowed", "duckdb");
-    }
-
-    const resolved = path.resolve(configured);
-    if (isReservedStoragePath(resolved)) {
-      throw new DatabaseConfigError(
-        "This path is reserved for the server's own storage and cannot be opened as a connection",
-        "duckdb",
-      );
-    }
-    return resolved;
+    return requireAdmittedFile(this.config, "duckdb");
   }
 
   public async connect(): Promise<void> {

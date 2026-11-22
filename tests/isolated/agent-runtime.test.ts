@@ -37,6 +37,7 @@ import { filterByRoles } from "@/lib/seed/connection-filter";
 import { seedRolesOf } from "@/lib/seed/roles";
 import type { SeedConnection } from "@/lib/seed/types";
 import * as realFactory from "@/lib/db/factory";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import type { AgentToolResources } from "@/lib/agent/investigation";
 import { TABLE_LABELS } from "../fixtures/provider-labels";
 import type { ProviderCapabilities } from "@/lib/db/types";
@@ -289,9 +290,15 @@ describe("driveAgentRun", () => {
 
     // A provider that declares less on an agent-mode handle than on an editor one (a tree whose every level is a
     // withheld value) is grounded on what the handle the run acquires declares, so the walk never lists a level the
-    // handle refuses. Every agent profile opens readOnly; the operations context sends no statement.
+    // handle refuses. Every agent profile opens readOnly; the operations context sends no statement. It carries the run
+    // actor's editor posture, the one its acquirer gets (tests/isolated/agent-runtime-file-posture.test.ts drives it
+    // through the real factory).
     expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(1);
-    expect(mockCreateDatabaseProvider.mock.calls[0]).toEqual([CONNECTION, {}, executionContextFor("agent-operations")]);
+    expect(mockCreateDatabaseProvider.mock.calls[0]).toEqual([
+      CONNECTION,
+      {},
+      executionContextFor("agent-operations", editorExecutionContext(ACTOR, CONNECTION)),
+    ]);
     expect(executionContextFor("agent-operations")).toMatchObject({ readOnly: true, sendsStatements: false });
   });
 

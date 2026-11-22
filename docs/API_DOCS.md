@@ -1121,6 +1121,8 @@ A statement confirmed by typing the connection's name answers `refuse` on a conn
 An inline connection whose type is absent, not text or names no provider, or a seed entry named by `connectionId` whose type has the shape of a type id and names no provider, is refused when the connection resolves, `400 PROVIDER_UNKNOWN` (see [`POST /api/db/query`](#post-apidbquery)).
 A seed entry whose type is absent, not text, or text of any other shape fails the whole seed file instead, so every `seed:` id of that file answers `500` ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)).
 A type `LIBREDB_ENABLED_PROVIDERS` leaves out, or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
+So is a connection whose engine refuses a denied file-access posture when the caller's posture is denied, SQLite for every role but `admin` and on any seed a non-admin role can use, `400 CONFIG_ERROR` with that engine's own sentence, before Studio reads the path the connection names.
+So is a file connection that names one of Studio's own storage files, or whose file Studio cannot check against them, `400 CONFIG_ERROR`.
 
 | Status | When |
 |--------|------|

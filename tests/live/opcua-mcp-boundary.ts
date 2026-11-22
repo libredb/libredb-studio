@@ -54,7 +54,7 @@ import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
 import { languageServer } from "@/lib/agent/languages/server";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import { OPCUA_ROOTS_WARNING } from "@/lib/db/providers/industrial/opcua/agent-roots";
-import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
+import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/provider-files";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { assertReadRootsWhereRequired, type McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_CANCELLED_TEXT, type ToolResult } from "@/lib/mcp/output";

@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { forgetStorageLocation } from "@/lib/data-dir";
 import { logger } from "@/lib/logger";
 import { getManagedConnections, getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
 import { resetSampleSeedStates, setSampleSeedState, startSampleSeeding, unavailableSentence } from "@/lib/seed/samples";
@@ -37,11 +38,14 @@ function useTempSamplePath(): string {
 
 beforeEach(() => {
   resetSampleSeedStates();
+  // The storage location is taken once per process; a test that sets STORAGE_SQLITE_PATH has it taken again from that.
+  forgetStorageLocation();
   // This file is about the SQLite sample: the LibreDB one is off unless a test sets its path and turns it back on.
   process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
 });
 
 afterEach(() => {
+  forgetStorageLocation();
   for (const d of tmpDirs) {
     try {
       fs.rmSync(d, { recursive: true, force: true });
