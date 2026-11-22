@@ -258,6 +258,7 @@ describe("GovernanceStatusCard", () => {
             },
             { kind: "connection", id: "crm", path: "password", code: "DEFINITION_HAS_SECRET" },
             { kind: "connection", id: "files", code: "ENGINE_UNSUPPORTED" },
+            { kind: "connection", id: "acme", code: "PROVIDER_UNKNOWN" },
           ],
         }),
       ),
@@ -268,6 +269,7 @@ describe("GovernanceStatusCard", () => {
       "billing [write]: WRITE_SECRET_UNOPENABLE (AUTH_FAILED)",
       "crm [password]: DEFINITION_HAS_SECRET",
       "files: ENGINE_UNSUPPORTED",
+      "acme: PROVIDER_UNKNOWN",
     ]);
   });
 
