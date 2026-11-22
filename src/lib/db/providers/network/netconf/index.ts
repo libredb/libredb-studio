@@ -199,9 +199,10 @@ export class NetconfProvider extends BaseDatabaseProvider {
    * The base class constructor is protected, so every provider declares its own.
    *
    * The device layer is injected rather than built here, which is what lets every rule in this
-   * class be tested without a network. The execution context comes third, as on every provider that
-   * reads it, so the injected device layer is fourth, and the agent's door, a session per read, fifth.
-   * Each opener is handed the connection and the egress decision the provider was built with.
+   * class be tested without a network. The build context comes third, the execution context plus the
+   * egress decision core took, as on every provider that reads it, so the injected device layer is
+   * fourth, and the agent's door, a session per read, fifth. Each opener is handed the connection and
+   * the egress decision from that build context.
    */
   public constructor(
     config: DatabaseConnection,

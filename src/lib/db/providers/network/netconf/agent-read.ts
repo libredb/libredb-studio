@@ -23,6 +23,7 @@
  * refusals as Studio's, and never by the device's own text or a credential.
  */
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { EGRESS_DECISION_MISSING } from "@/lib/db/http/egress-policy";
 import {
   byteBudgetSentence,
   measureResultBytes,
@@ -176,6 +177,8 @@ function categorized(error: unknown): unknown {
   if (error instanceof NetconfAgentError) return error;
   if (error instanceof MetadataProjectionError) return new NetconfAgentError(error.message);
   if (error instanceof AuthenticationError) return new NetconfAgentError(F.credential);
+  // A provider built without the egress decision is refused by name, as its connect() is, never as the settings.
+  if (error instanceof DatabaseConfigError && error.message === EGRESS_DECISION_MISSING) return error;
   if (error instanceof DatabaseConfigError) return new NetconfAgentError(F.settings);
   if (error instanceof ConnectionError || error instanceof NetconfSessionError)
     return new NetconfAgentError(F.unreachable);

@@ -307,8 +307,8 @@ test("the credential reaches ssh2 only as the connection supplied it", async () 
  * one: with an allowing decision, the one the flag off gives, is a device named by name on a local
  * network still reachable?
  *
- * It has to be. The flag is opt-in, and `blockPrivateHttpHosts` in `egress-policy.ts` says why: unset and false preserve
- * local-first connections. A NETCONF device sits on a management network nearly by definition, so a
+ * It has to be. The flag is opt-in, and the module docblock of `src/lib/db/egress-decision.ts` says why: unset, empty or
+ * blank keeps private destinations reachable as the documented default. A NETCONF device sits on a management network nearly by definition, so a
  * provider that hardened past the flag would refuse the ordinary case. This dial asks `socketEgress`
  * for the rule and installs its answer, and the rule decides by the egress decision the dial is handed
  * (`DialConfig.egress`, then `guardedNodeOptions` in `egress-policy.ts`), so the pair below drives the

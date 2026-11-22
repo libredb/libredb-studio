@@ -26,6 +26,7 @@
  * exception and an answer that cannot be read are each worded by their category, never by the device's bytes.
  */
 import { ConnectionError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { EGRESS_DECISION_MISSING } from "@/lib/db/http/egress-policy";
 import {
   byteBudgetSentence,
   measureResultBytes,
@@ -175,6 +176,8 @@ function categorized(error: unknown): unknown {
   if (error instanceof ModbusExceptionError) return new ModbusAgentError(F.refused(error.exceptionCode));
   if (error instanceof ModbusDecodeError) return new ModbusAgentError(F.decode);
   if (error instanceof ConnectionError) return new ModbusAgentError(F.unreachable);
+  // A provider built without the egress decision is refused by name, as its connect() is, never as the settings.
+  if (error instanceof DatabaseConfigError && error.message === EGRESS_DECISION_MISSING) return error;
   if (error instanceof DatabaseConfigError) return new ModbusAgentError(F.settings);
   if (error instanceof ModbusIdentificationError || error instanceof QueryError) {
     return new ModbusAgentError(F.unreadable);

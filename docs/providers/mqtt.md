@@ -556,7 +556,7 @@ decoder's import specifier is pinned, and the package root is loaded alongside i
 ### 11.2 Run it
 
 ```bash
-bun tests/run-tests.ts tests/unit/db/mqtt/ tests/integration/db/mqtt-provider.test.ts
+bun tests/run-tests.ts tests/unit/db/mqtt/ tests/integration/db/mqtt-provider.test.ts tests/security/provider-egress-decision.test.ts
 ```
 
 | File | What it holds |
@@ -567,12 +567,13 @@ bun tests/run-tests.ts tests/unit/db/mqtt/ tests/integration/db/mqtt-provider.te
 | `tests/unit/db/mqtt/inbound-limit.test.ts` | The 8 MiB skip, including a body spanning chunks and the heap it does not grow |
 | `tests/unit/db/mqtt/key-scan.test.ts` | The page, its truncation report and every end-reason sentence |
 | `tests/unit/db/mqtt/provider.test.ts` | The declarations, the refusals, the SSH tunnel's refusal, and the dial against a loopback server |
-| `tests/unit/db/mqtt/egress.test.ts` | Where the dial may connect: link-local and metadata addresses, the flag, and a tunnel |
+| `tests/unit/db/mqtt/egress.test.ts` | Where the dial may connect: link-local and metadata addresses, a blocking and an allowing egress decision, and a tunnel |
 | `tests/unit/db/mqtt/session-stats.test.ts` | What a read counts besides the tree, the handshake-only session, and each failure's kind |
 | `tests/unit/db/mqtt/agent-statement.test.ts` | Agent mode's closed table of two reads, and every request refused before the network |
 | `tests/unit/db/mqtt/agent-provider.test.ts` | The agent path through the provider: full packets, answers, budgets, failures and every surface |
 | `tests/unit/db/mqtt/agent-seam.test.ts` | That the agent path can send no PUBLISH and no Will |
 | `tests/integration/db/mqtt-provider.test.ts` | The four captures, replayed, and a tunnel that was not opened writing nothing |
+| `tests/security/provider-egress-decision.test.ts` | That the factory hands the provider the egress decision it takes from `DB_HTTP_BLOCK_PRIVATE_HOSTS` |
 | `tests/unit/key-browser-line-contrast.test.ts` | The panel's text colours, as contrast ratios |
 | `e2e/mqtt-provider.spec.ts` | The connection dialog in a browser |
 
