@@ -46,7 +46,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { egressDecision } from "@/lib/db/egress-decision";
-import { fakeTextScrub } from "../helpers/mcp-fixtures";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const PREFIX = "libredb_lm_";
 const DATA = `${PREFIX}data`;
@@ -226,7 +226,10 @@ async function cleanup(): Promise<void> {
   await write(`PRAGMA user_version = ${USER_VERSION}`);
 }
 
-/** The MCP refusal sentence a connection refused at open is answered with, around the profile's own message. */
+/**
+ * The MCP refusal sentence a connection refused at open is answered with, around the profile's own message: the
+ * libSQL provider wrote it, so it comes after the notice naming that provider (`providerRefusalText`).
+ */
 const refusedAtOpen = (text: string, says: string): boolean =>
   text.startsWith("run_read_query cannot run on this connection: ") &&
   text.endsWith(`It runs on ${ENGINES}.`) &&
@@ -274,10 +277,10 @@ async function main(): Promise<void> {
   ];
   for (const { label, connection, says } of refusedOpens) {
     const { result, acquired } = await mcp(connection, { sql: `SELECT id FROM "${DATA}"` }, RUN_READ_QUERY);
-    const text = textOf(result);
+    const text = providerRefusalText(result, "libsql");
     check(
       result.isError === true && acquired.join() === "agent-read-only" && refusedAtOpen(text, says),
-      `open: ${label} is refused through MCP -> ${text}`,
+      `open: ${label} is refused through MCP -> ${textOf(result)}`,
     );
   }
 

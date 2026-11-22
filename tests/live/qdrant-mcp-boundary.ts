@@ -55,7 +55,7 @@ import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
-import { fakeTextScrub } from "../helpers/mcp-fixtures";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -397,7 +397,7 @@ try {
     );
     const bypassed = await mcp(reader, { statement }, UNFENCED);
     check(
-      bypassed.result.isError === true && textOf(bypassed.result).startsWith(NOT_SENT),
+      bypassed.result.isError === true && providerRefusalText(bypassed.result, "qdrant").startsWith(NOT_SENT),
       `boundary: ${what}, the fence removed, is refused by the provider's reader before it is sent`,
     );
   }
@@ -436,8 +436,8 @@ try {
     const after = origin === AUTH ? await served() : before;
     const expected = `run_qdrant_read cannot run on this connection: ${sentence.replace(/\.+$/, "")}. It runs on Qdrant.`;
     check(
-      result.isError === true && textOf(result) === expected,
-      `open: ${what} is refused in the tool's sentence (${after - before} requests reached the keyed server)`,
+      result.isError === true && providerRefusalText(result, "qdrant") === expected,
+      `open: ${what} is refused in the tool's sentence, after the notice naming the Qdrant provider (${after - before} requests reached the keyed server)`,
     );
   }
   // A key that lists more than 32 collections is refused before it proves anything.

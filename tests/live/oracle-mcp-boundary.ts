@@ -40,11 +40,11 @@
 import oracledb from "oracledb";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE, type ToolResult } from "@/lib/mcp/output";
+import type { ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
-import { fakeTextScrub } from "../helpers/mcp-fixtures";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const PREFIX = "LIBREDB_LM_";
 const RO = `${PREFIX}RO`;
@@ -474,15 +474,13 @@ async function main(): Promise<void> {
       check(user.reads.answers.test(raw), `data scope: ${name}, signed in directly, reads ${user.reads.sql} -> ${raw}`);
     }
     const { result, acquired } = await mcp(name, { sql: `SELECT COUNT(*) AS N FROM ${DATA}` }, RUN_READ_QUERY);
-    const text = textOf(result);
+    const text = providerRefusalText(result, "oracle");
     check(
       result.isError === true &&
         acquired.join() === "agent-read-only" &&
-        result.content.length === 2 &&
-        result.content[0]?.text === MCP_UNTRUSTED_NOTICE &&
         text.startsWith(`${REFUSAL_OPENING} the Oracle user ${name}: `) &&
         text.includes(user.says),
-      `principal: ${name} is refused through MCP before its statement, behind the untrusted notice, naming ${user.says} -> ${text}`,
+      `principal: ${name} is refused through MCP before its statement, after the notice naming the Oracle provider, naming ${user.says} -> ${textOf(result)}`,
     );
     await clearProviderCache();
   }
@@ -491,9 +489,8 @@ async function main(): Promise<void> {
   ]);
   const linked = await mcp(RO, { sql: "SELECT 1 AS N FROM DUAL" }, RUN_READ_QUERY);
   check(
-    linked.result.content[0]?.text === MCP_UNTRUSTED_NOTICE &&
-      textOf(linked.result).startsWith(`${REFUSAL_OPENING} the Oracle user ${RO}: `) &&
-      textOf(linked.result).includes(`DROP PUBLIC DATABASE LINK "${PREFIX}LINK"`),
+    providerRefusalText(linked.result, "oracle").startsWith(`${REFUSAL_OPENING} the Oracle user ${RO}: `) &&
+      providerRefusalText(linked.result, "oracle").includes(`DROP PUBLIC DATABASE LINK "${PREFIX}LINK"`),
     `principal: while a PUBLIC database link exists the served user is refused through MCP -> ${textOf(linked.result)}`,
   );
   await setup("SYSTEM", [`DROP PUBLIC DATABASE LINK ${PREFIX}LINK`]);

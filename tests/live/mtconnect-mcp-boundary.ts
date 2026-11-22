@@ -50,7 +50,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
-import { fakeTextScrub } from "../helpers/mcp-fixtures";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const PORT = Number(process.env.MTCONNECT_MCP_PORT ?? "17422");
 const PUT_PORT = Number(process.env.MTCONNECT_MCP_PUT_PORT ?? "17423");
@@ -97,7 +97,7 @@ const UNFENCED: McpStatementArm = { ...FENCED, fence: () => null };
 
 /** The fence's refusal: the MCP admission's own words, the same for every form it refuses. */
 const FENCE_REFUSAL = "The request was refused before it reached the agent (request).";
-/** The provider's refusal of a form, before anything is sent, in its own words. */
+/** The provider's refusal of a form, before anything is sent, in its own words, after the notice naming the provider. */
 const providerRefusal = (reason: string): string =>
   `The statement was refused before it reached the database: ${reason}`;
 
@@ -283,7 +283,7 @@ for (const [statement, method] of WRITES) {
   const fenced = await mcp(fixture, statement);
   const unfenced = await mcp(fixture, statement, { arm: UNFENCED });
   const fencedRefusal = firstSentence(textOf(fenced.result));
-  const unfencedRefusal = firstSentence(textOf(unfenced.result));
+  const unfencedRefusal = firstSentence(providerRefusalText(unfenced.result, "mtconnect"));
   check(
     fenced.result.isError === true &&
       fencedRefusal === FENCE_REFUSAL &&
@@ -363,7 +363,7 @@ for (const [statement, fencedWords, unfencedWords] of REFUSED) {
   const fenced = await mcp(fixture, statement);
   const unfenced = await mcp(fixture, statement, { arm: UNFENCED });
   const fencedRefusal = firstSentence(textOf(fenced.result));
-  const unfencedRefusal = firstSentence(textOf(unfenced.result));
+  const unfencedRefusal = firstSentence(providerRefusalText(unfenced.result, "mtconnect"));
   check(
     fenced.result.isError === true &&
       fencedRefusal === fencedWords &&

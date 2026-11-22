@@ -56,7 +56,7 @@ import type { ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
-import { fakeTextScrub } from "../helpers/mcp-fixtures";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const PREFIX = "libredb_lmc_";
 const KS = `${PREFIX}data`;
@@ -456,14 +456,14 @@ async function main(): Promise<void> {
   ];
   for (const [connection, who, says] of refusedOpens) {
     const { result, acquired } = await mcp(connection, { sql: `SELECT id FROM ${connection.database}.customers` });
-    const text = textOf(result);
+    const text = providerRefusalText(result, "cassandra");
     check(
       result.isError === true &&
         acquired.join() === "agent-read-only" &&
         text.startsWith("run_read_query cannot run on this connection: The agent read-only execution profile ") &&
         text.endsWith(`It runs on ${ENGINES}.`) &&
         text.includes(says),
-      `open: ${who} is refused through MCP -> ${text}`,
+      `open: ${who} is refused through MCP, after the notice naming the Cassandra provider -> ${textOf(result)}`,
     );
   }
 
@@ -481,7 +481,7 @@ async function main(): Promise<void> {
       },
       arm,
     );
-    const text = textOf(result);
+    const text = providerRefusalText(result, "cassandra");
     check(
       result.isError === true &&
         acquired.join() === "agent-read-only" &&
@@ -489,7 +489,7 @@ async function main(): Promise<void> {
         text.includes("this connection names system_auth, one of the keyspaces Apache Cassandra keeps for itself") &&
         !BCRYPT.test(text) &&
         result.structuredContent === undefined,
-      `open: ${arm === UNFENCED ? "bypassed, " : ""}the role table read on a connection bound to system_auth is refused at open, and no hash is answered -> ${text}`,
+      `open: ${arm === UNFENCED ? "bypassed, " : ""}the role table read on a connection bound to system_auth is refused at open, and no hash is answered -> ${textOf(result)}`,
     );
   }
 
@@ -688,10 +688,10 @@ async function main(): Promise<void> {
       sql: `SELECT id FROM ${KS}.customers`,
     });
     check(
-      textOf(result).startsWith(
+      providerRefusalText(result, "cassandra").startsWith(
         "run_read_query cannot run on this connection: The agent read-only execution profile ",
       ) &&
-        textOf(result).includes(
+        providerRefusalText(result, "cassandra").includes(
           "needs a server that enforces its roles' grants (PasswordAuthenticator and CassandraAuthorizer)",
         ),
       `gates: AllowAllAuthorizer is refused at open through MCP -> ${textOf(result)}`,
@@ -706,9 +706,9 @@ async function main(): Promise<void> {
       sql: "SELECT release_version FROM system.local",
     });
     check(
-      textOf(result).startsWith(
+      providerRefusalText(result, "cassandra").startsWith(
         "run_read_query cannot run on this connection: The agent read-only execution profile ",
-      ) && textOf(result).includes("Apache Cassandra 5.0 only"),
+      ) && providerRefusalText(result, "cassandra").includes("Apache Cassandra 5.0 only"),
       `gates: ScyllaDB is refused at open through MCP -> ${textOf(result)}`,
     );
   }
