@@ -1,5 +1,5 @@
-import { TUNNEL_FAR_END } from "@/lib/types";
-import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/lib/types";
+import { TUNNEL_FAR_END, TUNNEL_ROUTE } from "@/lib/types";
+import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd, WithTunnelRoute } from "@/lib/types";
 
 /**
  * The bastion's ROUTE, length-framed inside its own field so a tunnel's four values cannot slide
@@ -24,6 +24,10 @@ import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/li
  * takes `connectionIdentity`'s field set: the pool must never hand one record's provider a forward
  * opened for a route this seal calls a different server, and two hand-kept lists of the same four
  * fields drift. Adding a field here narrows the pool key with it, which is the safe direction.
+ *
+ * AND FOR `providerConnection` (`src/lib/db/provider-connection.ts`), which frames the record's tunnel with it and hands
+ * the string to the provider under `TUNNEL_ROUTE` in place of `sshTunnel`, so the provider side of the seal, Databend's
+ * sign-in latch and the pool all key on one route.
  */
 export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
   if (tunnel === undefined) return "";
@@ -92,8 +96,8 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  *   before the provider is constructed, so with a tunnel enabled the bastion, and not the record's
  *   own `host`, decides which machine the sealed statement reaches. Only the four route values are
  *   framed, by `tunnelRoute` above. Live under the day-one editable set: any of the three engines
- *   can carry one. The provider side frames the same route because `providerConnection`
- *   (`src/lib/db/provider-connection.ts`) keeps the public tunnel fields, the route among them.
+ *   can carry one. The provider side frames the same route from `TUNNEL_ROUTE`, which `providerConnection`
+ *   (`src/lib/db/provider-connection.ts`) sets from the record's tunnel and hands the provider in place of `sshTunnel`.
  * - `instanceName` is a MSSQL NAMED INSTANCE, set by `MSSQLProvider.buildConfig()` in
  *   `src/lib/db/providers/sql/mssql.ts` and resolved by the SQL Server Browser to a different
  *   server process, typically on a port that is not the one in the record.
@@ -148,7 +152,9 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * `region` (S3) is NOT in the frame either: it changes how a request is signed, never which server receives it;
  * `src/lib/db/provider-cache-key.ts` frames it.
  */
-export async function connectionFingerprint(connection: DatabaseConnection & WithTunnelFarEnd): Promise<string> {
+export async function connectionFingerprint(
+  connection: DatabaseConnection & WithTunnelFarEnd & WithTunnelRoute,
+): Promise<string> {
   // The address this connection actually reaches: the tunnel's far end when the factory
   // rewrote the record, and the record's own otherwise. See the X23 paragraph above.
   const farEnd = connection[TUNNEL_FAR_END];
@@ -162,7 +168,9 @@ export async function connectionFingerprint(connection: DatabaseConnection & Wit
     connection.schema ?? "",
     connection.serviceName ?? "",
     connection.instanceName ?? "",
-    tunnelRoute(connection.sshTunnel),
+    // A provider's config carries the route under core's marker and no `sshTunnel`; a record carries `sshTunnel` and
+    // never a symbol key. See the `sshTunnel` bullet above.
+    connection[TUNNEL_ROUTE] ?? tunnelRoute(connection.sshTunnel),
     // Kubernetes: one host and port can serve many clusters (a Rancher proxy by path, an ingress by TLS name), so
     // both pick the server. Framed only when set and tagged, so every other connection's digest is unchanged.
     ...(connection.apiPath ? [`apiPath=${connection.apiPath}`] : []),

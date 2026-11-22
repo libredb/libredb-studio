@@ -9,8 +9,6 @@ import type { DatabaseConnection, SSHTunnelConfig, SSLConfig } from "@/lib/types
  * storage, and importing connection-secrets.ts would put `node:crypto` and
  * `@/lib/config/auth-env` in its bundle. connection-secrets.ts walks through this module, so the
  * server's encryption and the extension's split can never disagree about which fields they cover.
- * `providerConnection` (src/lib/db/provider-connection.ts) decides from `SSH_TUNNEL_FIELDS` which tunnel fields reach
- * a provider.
  *
  * This module's imports stay type-only and it re-exports nothing, so it pulls no runtime code into
  * whatever bundles it; tests/unit/lib/storage/secret-fields.test.ts holds both.

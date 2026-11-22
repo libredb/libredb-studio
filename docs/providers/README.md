@@ -238,12 +238,13 @@ Studio, not the provider, decides and dials the tunnel: `decideTunnel` in [`src/
 It refuses, by name and never quoting a value, an `sshTunnel` that is not plain data, an `enabled` that is not true, false or absent, a `host` or `username` that is not text, and, on a tunnel that is on, an empty bastion host, a bastion port that is not a whole number from 1 to 65535, an `authMethod` other than `password` or `privateKey`, an engine the row above refuses, and a connection that names no `host` and `port` to forward to.
 A tunnel that is switched off is never refused for its engine or for a missing host and port.
 On the paths that connect through one, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel`, core opens a tunnel that is on before it builds the provider.
-A provider built on those paths receives the tunnel's outcome: the local endpoint in `host` and `port`, the far end under `TUNNEL_FAR_END`, and the tunnel's readable fields in `sshTunnel` (`enabled`, `host`, `port`, `username`, `authMethod`, `hostKeyFingerprint`).
+A provider built on those paths receives the tunnel's outcome: the local endpoint in `host` and `port`, the far end under `TUNNEL_FAR_END`, and the tunnel's route under `TUNNEL_ROUTE`, and never `sshTunnel`.
+A provider built from a connection whose tunnel is switched off receives the route too, so its edit-plan seal matches the record's.
 `createDatabaseProvider`, the function an embedder of the package calls, builds no provider from a connection whose tunnel is on unless core opened that tunnel (`TUNNEL_FAR_END` present), so no provider can reach the database's own address past a tunnel the connection asked for ([Direct Provider Creation](../DATABASE_PROVIDERS.md#direct-provider-creation)).
 Studio's own reads of a provider's capabilities and labels, which never connect, go through `readProviderDeclarations`, which builds the provider from such a connection without opening its tunnel and hands back data, never the provider.
-No provider refuses a tunnel or reads `sshTunnel.enabled` to decide one.
-On every path the provider never receives the tunnel's password, private key or passphrase: `createDatabaseProvider` builds every provider from `providerConnection` in [`src/lib/db/provider-connection.ts`](../../src/lib/db/provider-connection.ts), which leaves them out ([SECURITY.md control 3.41](../SECURITY.md)).
-A provider that reads a tunnel credential therefore reads `undefined`.
+No provider reads `sshTunnel`, and a source scan holds it.
+On every path the provider receives no `sshTunnel`, so no tunnel credential: `createDatabaseProvider` builds every provider from `providerConnection` in [`src/lib/db/provider-connection.ts`](../../src/lib/db/provider-connection.ts), which leaves the field out ([SECURITY.md control 3.41](../SECURITY.md)).
+A provider that frames the route, as Databend's sign-in latch does, reads it through `requireTunnelRoute` in [`src/lib/db/utils/require-tunnel-route.ts`](../../src/lib/db/utils/require-tunnel-route.ts), which refuses a connection that carries a tunnel's far end without it.
 
 **The policy is trust-on-first-use (TOFU), pinned per connection.** Not "refuse anything unknown":
 requiring a pasted fingerprint before the first connection makes tunnelling unusable for someone

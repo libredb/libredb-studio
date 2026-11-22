@@ -5,7 +5,6 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { getAppVersion } from "@/lib/app-version";
-import { tunnelRoute } from "@/lib/db/connection-fingerprint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { authLatchKey } from "@/lib/db/providers/sql/databend/auth-latch";
 import {
@@ -21,8 +20,9 @@ import {
   DATABEND_STATEMENT_BYTES,
   DATABEND_SURFACE_TIMEOUT_MS,
 } from "@/lib/db/providers/sql/databend/connection-options";
+import { TUNNEL_ROUTE_MISSING } from "@/lib/db/utils/require-tunnel-route";
 import { secretForms } from "@/lib/db/utils/server-text";
-import { type DatabaseConnection, type SSHTunnelConfig, TUNNEL_FAR_END } from "@/lib/types";
+import { type DatabaseConnection, type SSHTunnelConfig, TUNNEL_FAR_END, TUNNEL_ROUTE } from "@/lib/types";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { setEgressFlag } from "../../../helpers/egress-flag";
 
@@ -70,9 +70,13 @@ const build = (overrides: Record<string, unknown> = {}, queryTimeout = QUERY_TIM
     egress: ALLOWS_PRIVATE_HOSTS,
   });
 
-function tunnelled(overrides: Record<string, unknown>, farEnd: { host: string; port: number }) {
+/** The route of `BASTION`, as core hands it under `TUNNEL_ROUTE`, written out by hand. */
+const BASTION_ROUTE = "4:true12:bastion.test2:224:jump";
+
+/** A connection as Studio's factory builds it through a tunnel: the local forward, the far end and the route, no sshTunnel. */
+function tunnelled(overrides: Record<string, unknown>, farEnd: { host: string; port: number }, route = BASTION_ROUTE) {
   return buildDatabendConnectionOptions(
-    Object.assign(connection({ sshTunnel: BASTION, ...overrides }), { [TUNNEL_FAR_END]: farEnd }),
+    Object.assign(connection(overrides), { [TUNNEL_FAR_END]: farEnd, [TUNNEL_ROUTE]: route }),
     { queryTimeout: QUERY_TIMEOUT, appVersion: VERSION, egress: ALLOWS_PRIVATE_HOSTS },
   );
 }
@@ -436,7 +440,7 @@ describe("the latch key [X03]", () => {
         scheme: "http",
         host: "databend.test",
         port: 8000,
-        route: tunnelRoute(BASTION),
+        route: BASTION_ROUTE,
         user: TEST_USER,
         password: TEST_PASSWORD,
       }),
@@ -446,11 +450,59 @@ describe("the latch key [X03]", () => {
   test("differs for another bastion route", () => {
     const farEnd = { host: "databend.test", port: 8000 };
     const first = tunnelled({ host: "127.0.0.1", port: 41001 }, farEnd);
-    const second = tunnelled(
-      { host: "127.0.0.1", port: 41001, sshTunnel: { ...BASTION, host: "bastion2.test" } },
-      farEnd,
-    );
+    const second = tunnelled({ host: "127.0.0.1", port: 41001 }, farEnd, "4:true13:bastion2.test2:224:jump");
     expect(first.latchKey).not.toBe(second.latchKey);
+  });
+
+  test("the latch key frames core's route marker and reads no sshTunnel (FND-2 slice 5b)", () => {
+    const farEnd = { host: "databend.test", port: 8000 };
+    const planted = { ...BASTION, host: "elsewhere.test", password: crypto.randomUUID() };
+    const options = tunnelled({ host: "127.0.0.1", port: 41001, password: TEST_PASSWORD, sshTunnel: planted }, farEnd);
+    expect(options.latchKey).toBe(
+      authLatchKey({
+        scheme: "http",
+        host: "databend.test",
+        port: 8000,
+        route: BASTION_ROUTE,
+        user: TEST_USER,
+        password: TEST_PASSWORD,
+      }),
+    );
+    expect(options.latchKey).toBe(
+      tunnelled({ host: "127.0.0.1", port: 41001, password: TEST_PASSWORD }, farEnd).latchKey,
+    );
+  });
+
+  test("a tunnel far end without core's route marker is refused by name (FND-2 slice 5b)", () => {
+    const unrouted = Object.assign(connection({ host: "127.0.0.1", port: 41001, sshTunnel: BASTION }), {
+      [TUNNEL_FAR_END]: { host: "databend.test", port: 8000 },
+    });
+    const refused = refusal(() =>
+      buildDatabendConnectionOptions(unrouted, {
+        queryTimeout: QUERY_TIMEOUT,
+        appVersion: VERSION,
+        egress: ALLOWS_PRIVATE_HOSTS,
+      }),
+    );
+    expect(refused.message).toBe(TUNNEL_ROUTE_MISSING);
+    expect(refused.message).not.toContain("bastion.test");
+  });
+
+  test("without a far end the route is empty, a marker or not (FND-2 slice 5b)", () => {
+    const plain = build({ password: TEST_PASSWORD, host: "127.0.0.1" });
+    expect(build({ password: TEST_PASSWORD, host: "127.0.0.1", [TUNNEL_ROUTE]: BASTION_ROUTE }).latchKey).toBe(
+      plain.latchKey,
+    );
+    expect(plain.latchKey).toBe(
+      authLatchKey({
+        scheme: "http",
+        host: "127.0.0.1",
+        port: 8000,
+        route: "",
+        user: TEST_USER,
+        password: TEST_PASSWORD,
+      }),
+    );
   });
 
   test("differs from the untunnelled connection to the same far end", () => {

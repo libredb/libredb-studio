@@ -1,16 +1,23 @@
 /**
  * `providerConnection`, the connection a provider is built from (FND-2, docs/SECURITY.md control 3.41).
  *
- * Core opens the SSH tunnel with the record's tunnel credentials, so the provider is handed the record with its
- * `sshTunnel` reduced to the fields `SSH_TUNNEL_FIELDS` does not classify secret. The expected tunnels below are written out by
- * hand, never derived from the classification, so a change to what reaches a provider fails here by name.
+ * Core decides and opens the SSH tunnel with the record's tunnel fields, so the provider is handed the record without
+ * its `sshTunnel` and with the tunnel's route under `TUNNEL_ROUTE` (slice 5b). The expected routes below are written out
+ * by hand, never derived with `tunnelRoute`, so a change to what reaches a provider fails here by name.
  */
 import { describe, expect, test } from "bun:test";
-import { connectionFingerprint, tunnelRoute } from "@/lib/db/connection-fingerprint";
+import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { assertTunnelRecordIsPlainData, providerConnection } from "@/lib/db/provider-connection";
 import type { DatabaseConnection } from "@/lib/db/types";
-import { LITERAL_SEED_FILE, TUNNEL_FAR_END, type WithLiteralSeedFile, type WithTunnelFarEnd } from "@/lib/types";
+import {
+  LITERAL_SEED_FILE,
+  TUNNEL_FAR_END,
+  TUNNEL_ROUTE,
+  type WithLiteralSeedFile,
+  type WithTunnelFarEnd,
+  type WithTunnelRoute,
+} from "@/lib/types";
 
 const TUNNEL_MARKER_ONE = "not-a-real-tunnel-marker-7f3a";
 const TUNNEL_MARKER_TWO = "not-a-real-tunnel-marker-91c2";
@@ -19,7 +26,7 @@ const DATABASE_MARKER = "not-a-real-database-marker-2b6d";
 const CLIENT_MARKER = "not-a-real-client-marker-0a9f";
 const BASTION_FINGERPRINT = "SHA256:bm90LWEtcmVhbC1iYXN0aW9uLWZpbmdlcnByaW50";
 
-type MarkedConnection = DatabaseConnection & WithTunnelFarEnd & WithLiteralSeedFile;
+type MarkedConnection = DatabaseConnection & WithTunnelFarEnd & WithLiteralSeedFile & WithTunnelRoute;
 
 /** A PostgreSQL record whose tunnel holds all nine fields, a marker in each secret one. */
 function record(overrides: Record<string, unknown> = {}): MarkedConnection {
@@ -79,34 +86,50 @@ function refusalOf(given: DatabaseConnection): DatabaseConfigError {
 }
 
 describe("providerConnection, the connection a provider is built from (FND-2)", () => {
-  test("leaves out every tunnel field the classification calls secret and keeps every other one as the record holds it", () => {
-    expect(providerConnection(record()).sshTunnel).toEqual({
-      enabled: true,
-      host: "bastion.example",
-      port: 22,
-      username: "jump",
-      authMethod: "privateKey",
-      hostKeyFingerprint: BASTION_FINGERPRINT,
-    });
-  });
-
-  test("adds no field the record lacks", () => {
-    const projected = providerConnection(record({ sshTunnel: { enabled: true } }));
-    expect(projected.sshTunnel).toEqual({ enabled: true } as DatabaseConnection["sshTunnel"]);
-    expect(Object.keys(projected.sshTunnel ?? {})).toEqual(["enabled"]);
-  });
-
-  test("keeps a malformed public value as it is, so a provider's own check still refuses it", () => {
-    const projected = providerConnection(
-      record({ sshTunnel: { enabled: "yes", port: "22", password: TUNNEL_MARKER_ONE } }),
+  test("hands a provider no sshTunnel, and the tunnel's route under core's marker, with the tunnel on and opened", () => {
+    const farEnd = { host: "db.internal", port: 5432 };
+    const projected: MarkedConnection = providerConnection(
+      record({ host: "127.0.0.1", port: 40000, [TUNNEL_FAR_END]: farEnd }),
     );
-    const tunnel: Record<string, unknown> = { ...projected.sshTunnel };
-    expect(tunnel).toEqual({ enabled: "yes", port: "22" });
+    expect(Object.hasOwn(projected, "sshTunnel")).toBe(false);
+    expect(projected[TUNNEL_ROUTE]).toBe("4:true15:bastion.example2:224:jump");
+    expect(projected[TUNNEL_FAR_END]).toBe(farEnd);
+    expect(projected.host).toBe("127.0.0.1");
+    expect(projected.port).toBe(40000);
   });
 
-  test("drops a tunnel key the classification does not name", () => {
-    const projected = providerConnection(record({ sshTunnel: { enabled: false, unclassified: "x" } }));
-    expect({ ...projected.sshTunnel }).toEqual({ enabled: false });
+  test("hands a provider no sshTunnel, and the tunnel's route under core's marker, with the tunnel off", () => {
+    const projected: MarkedConnection = providerConnection(
+      record({
+        sshTunnel: {
+          enabled: false,
+          host: "bastion.example",
+          port: 22,
+          username: "jump",
+          authMethod: "password",
+          password: crypto.randomUUID(),
+        },
+      }),
+    );
+    expect(Object.hasOwn(projected, "sshTunnel")).toBe(false);
+    expect(projected[TUNNEL_ROUTE]).toBe("5:false15:bastion.example2:224:jump");
+    expect(Object.getOwnPropertySymbols(projected)).toEqual([TUNNEL_ROUTE]);
+  });
+
+  test("the route marker is a symbol no caller can name, and does not survive JSON, so no stored or posted connection carries one", () => {
+    expect(typeof TUNNEL_ROUTE).toBe("symbol");
+    expect(Symbol.keyFor(TUNNEL_ROUTE)).toBeUndefined();
+    const projected: MarkedConnection = providerConnection(record());
+    const parsed = JSON.parse(JSON.stringify(projected)) as MarkedConnection;
+    expect(Object.getOwnPropertySymbols(parsed)).toEqual([]);
+    expect(parsed[TUNNEL_ROUTE]).toBeUndefined();
+  });
+
+  test("replaces a route marker the caller set with the route of its own tunnel", () => {
+    const projected: MarkedConnection = providerConnection(
+      record({ [TUNNEL_ROUTE]: "4:true16:bastion.internal2:224:jump" }),
+    );
+    expect(projected[TUNNEL_ROUTE]).toBe("4:true15:bastion.example2:224:jump");
   });
 
   test.each([[undefined], [null]])("hands on a record whose sshTunnel is %p as the same object", (sshTunnel) => {
@@ -146,16 +169,17 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
     expectTunnelRefused(record({ sshTunnel: tunnel }));
   });
 
-  test("accepts a tunnel with no prototype and keeps its public fields", () => {
+  test("accepts a tunnel with no prototype and frames its route", () => {
     const tunnel = Object.assign(Object.create(null) as Record<string, unknown>, {
       enabled: true,
       host: "bastion.example",
-      password: TUNNEL_MARKER_ONE,
+      port: 22,
+      username: "jump",
+      authMethod: "password",
+      password: crypto.randomUUID(),
     });
-    expect({ ...providerConnection(record({ sshTunnel: tunnel })).sshTunnel }).toEqual({
-      enabled: true,
-      host: "bastion.example",
-    });
+    const projected: MarkedConnection = providerConnection(record({ sshTunnel: tunnel }));
+    expect(projected[TUNNEL_ROUTE]).toBe("4:true15:bastion.example2:224:jump");
   });
 
   test("refuses a record with a tunnel whose own fields a copy would drop, and hands it on as it is without one", () => {
@@ -211,20 +235,21 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
 
   test("accepts a frozen record and a record with no prototype", () => {
     const frozen = Object.freeze(record());
-    expect(providerConnection(frozen).sshTunnel?.password).toBeUndefined();
+    expect(Object.hasOwn(providerConnection(frozen), "sshTunnel")).toBe(false);
     const bare = Object.assign(Object.create(null) as MarkedConnection, record());
     expect(providerConnection(bare).password).toBe(DATABASE_MARKER);
   });
 
-  test("keeps the far end and the literal seed marker", () => {
+  test("keeps the far end and the literal seed marker beside the route", () => {
     const farEnd = { host: "db.internal", port: 5432 };
     const marked = record({ host: "127.0.0.1", port: 40000, [TUNNEL_FAR_END]: farEnd, [LITERAL_SEED_FILE]: true });
     const projected: MarkedConnection = providerConnection(marked);
     expect(projected[TUNNEL_FAR_END]).toBe(farEnd);
     expect(projected[LITERAL_SEED_FILE]).toBe(true);
+    expect(projected[TUNNEL_ROUTE]).toBe("4:true15:bastion.example2:224:jump");
 
     const unmarked: MarkedConnection = providerConnection(record());
-    expect(Object.getOwnPropertySymbols(unmarked)).toEqual([]);
+    expect(Object.getOwnPropertySymbols(unmarked)).toEqual([TUNNEL_ROUTE]);
   });
 
   test("never writes to the caller's record", () => {
@@ -233,7 +258,7 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
     const snapshot = structuredClone({ ...given, sshTunnel: { ...given.sshTunnel } });
     const projected = providerConnection(given);
     expect(projected).not.toBe(given);
-    expect(projected.sshTunnel).not.toBe(tunnelBefore);
+    expect(Object.hasOwn(projected, "sshTunnel")).toBe(false);
     expect(given.sshTunnel).toBe(tunnelBefore);
     const after: Record<string, unknown> = { ...given };
     expect(after).toEqual(snapshot);
@@ -245,8 +270,11 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
   test("keeps every other field, the database password and the TLS client key included", () => {
     const given = record({ agentUser: "agent_ro" });
     const projected = providerConnection(given);
-    // With the record's own tunnel put back, the copy is the record: nothing but `sshTunnel` differs.
-    const restored: Record<string, unknown> = { ...projected, sshTunnel: given.sshTunnel };
+    // With the route marker taken off and the record's own tunnel put back, the copy is the record: nothing but the
+    // missing `sshTunnel` and the marker differ.
+    const restored: Record<string | symbol, unknown> = { ...projected, sshTunnel: given.sshTunnel };
+    delete restored[TUNNEL_ROUTE];
+    expect(Object.getOwnPropertySymbols(restored)).toEqual([]);
     expect(restored).toEqual({ ...given });
     expect(projected.password).toBe(DATABASE_MARKER);
     expect(projected.ssl).toBe(given.ssl);
@@ -257,6 +285,7 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
     [
       "on, with its far end",
       record({ host: "127.0.0.1", port: 40000, [TUNNEL_FAR_END]: { host: "db.internal", port: 5432 } }),
+      "4:true15:bastion.example2:224:jump",
     ],
     [
       "off, with its fields filled",
@@ -270,11 +299,15 @@ describe("providerConnection, the connection a provider is built from (FND-2)", 
           password: TUNNEL_MARKER_ONE,
         },
       }),
+      "5:false15:bastion.example2:224:jump",
     ],
-    ["absent", record({ sshTunnel: undefined })],
-  ])("frames the same seal and the same route as the record, with the tunnel %s", async (_case, given) => {
-    const projected = providerConnection(given);
-    expect(await connectionFingerprint(projected)).toBe(await connectionFingerprint(given));
-    expect(tunnelRoute(projected.sshTunnel)).toBe(tunnelRoute(given.sshTunnel));
-  });
+    ["absent", record({ sshTunnel: undefined }), undefined],
+  ])(
+    "frames the same seal as the record, and the route under core's marker, with the tunnel %s",
+    async (_case, given, route) => {
+      const projected: MarkedConnection = providerConnection(given);
+      expect(await connectionFingerprint(projected)).toBe(await connectionFingerprint(given));
+      expect(projected[TUNNEL_ROUTE]).toBe(route);
+    },
+  );
 });

@@ -183,6 +183,7 @@ Each Studio process holds a latch of its own, so several replicas each send a re
 A gateway's sign-in refusal latches over any HTTP status, 200 included, and only an answer proves a sign-in, never a refusal.
 Two connections with the same key share the latch, a disconnect does not clear it, and a restart does.
 The key is an HMAC-SHA-256, keyed by random bytes each process draws once, over the scheme, the far end, the SSH bastion route, the user and the password; no secret is kept, and a key seen outside the process cannot be used to test a guessed password.
+The bastion route is the one Studio hands the provider under `TUNNEL_ROUTE` when it opened a tunnel, and a connection that carries a tunnel's far end without it is refused before anything is sent.
 The far end's host is framed in one spelling: an IPv6 address however it is written, and a host name with or without its final dot, are one key, while an error still names the host as configured.
 Until a key has had an answer, one statement holds it and the others wait until it has sent its last request, its closes included, so a refused password is sent once.
 The latch holds 256 keys: a new one takes the place of an expired key first, then of the oldest proven one, and of the oldest latched one only when every key is latched and live; a proof never takes a latched key's place, so its key stays unproven.

@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
-import { TUNNEL_FAR_END } from "@/lib/types";
-import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/lib/types";
+import { providerConnection } from "@/lib/db/provider-connection";
+import { TUNNEL_FAR_END, TUNNEL_ROUTE } from "@/lib/types";
+import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd, WithTunnelRoute } from "@/lib/types";
 
 /**
  * The base connection every case below varies by exactly one field.
@@ -393,15 +394,62 @@ describe("the seal answers the digest main answered for a tunnel that is on, off
   });
 
   test("an opened tunnel's provider connection answers the record's digest", async () => {
+    // The copy a provider is built from (FND-2 slice 5b): the local endpoint, the far end, and the route under core's
+    // marker in place of `sshTunnel`.
+    const opened: DatabaseConnection & WithTunnelFarEnd & WithTunnelRoute = {
+      ...GOLDEN_BASE,
+      host: "127.0.0.1",
+      port: 40000,
+      [TUNNEL_FAR_END]: { host: "db.internal", port: 5432 },
+      [TUNNEL_ROUTE]: "4:true15:bastion.example2:224:jump",
+    };
+    expect(Object.hasOwn(opened, "sshTunnel")).toBe(false);
+    expect(await connectionFingerprint(opened)).toBe(
+      "c38eb156db750aba03eef3f457eb93bb2be1d68e8341c43eeedde4ee66a46194",
+    );
+  });
+
+  test("a connection carrying core's route marker and no sshTunnel answers the digest main answered, on and off", async () => {
+    const on: DatabaseConnection & WithTunnelRoute = {
+      ...GOLDEN_BASE,
+      [TUNNEL_ROUTE]: "4:true15:bastion.example2:224:jump",
+    };
+    const off: DatabaseConnection & WithTunnelRoute = {
+      ...GOLDEN_BASE,
+      [TUNNEL_ROUTE]: "5:false15:bastion.example2:224:jump",
+    };
+    expect(await connectionFingerprint(on)).toBe("c38eb156db750aba03eef3f457eb93bb2be1d68e8341c43eeedde4ee66a46194");
+    expect(await connectionFingerprint(off)).toBe("a56aedd6841c87b1e66be46ce88ab71dff6ad77f0901dd01ff69d6011bc190a2");
+  });
+
+  test("the connection a provider is built from answers the digest main answered, for a tunnel that is on and opened, off and absent", async () => {
     const opened: DatabaseConnection & WithTunnelFarEnd = {
       ...GOLDEN_BASE,
-      sshTunnel: GOLDEN_TUNNEL,
+      sshTunnel: { ...GOLDEN_TUNNEL, password: crypto.randomUUID() },
       host: "127.0.0.1",
       port: 40000,
       [TUNNEL_FAR_END]: { host: "db.internal", port: 5432 },
     };
-    expect(await connectionFingerprint(opened)).toBe(
+    expect(await connectionFingerprint(providerConnection(opened))).toBe(
       "c38eb156db750aba03eef3f457eb93bb2be1d68e8341c43eeedde4ee66a46194",
     );
+    expect(
+      await connectionFingerprint(
+        providerConnection({ ...GOLDEN_BASE, sshTunnel: { ...GOLDEN_TUNNEL, enabled: false } }),
+      ),
+    ).toBe("a56aedd6841c87b1e66be46ce88ab71dff6ad77f0901dd01ff69d6011bc190a2");
+    expect(await connectionFingerprint(providerConnection(GOLDEN_BASE))).toBe(
+      "0a6ad0c796153f04028d037f3008e2192fc193c18225f1ff4bd3d82ecb754568",
+    );
+  });
+
+  test("a route marker naming another bastion is another digest", async () => {
+    const elsewhere: DatabaseConnection & WithTunnelRoute = {
+      ...GOLDEN_BASE,
+      [TUNNEL_ROUTE]: "4:true16:bastion.internal2:224:jump",
+    };
+    const digest = await connectionFingerprint(elsewhere);
+    expect(digest).not.toBe("c38eb156db750aba03eef3f457eb93bb2be1d68e8341c43eeedde4ee66a46194");
+    expect(digest).not.toBe("0a6ad0c796153f04028d037f3008e2192fc193c18225f1ff4bd3d82ecb754568");
   });
 });

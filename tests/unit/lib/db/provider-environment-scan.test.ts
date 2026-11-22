@@ -269,3 +269,62 @@ describe("Studio's storage location and OPC UA's PKI root are read by core alone
     expect(reaching).toEqual([]);
   });
 });
+
+// The SSH tunnel is core's (FND-2 slice 5b, docs/SECURITY.md control 3.41): core decides and opens it, and builds every
+// provider from a copy of the connection without `sshTunnel`, the tunnel's local endpoint in `host` and `port`, its far
+// end under `TUNNEL_FAR_END` and its route under `TUNNEL_ROUTE`. So no provider module, and no shared module a provider
+// is built on, reads `sshTunnel`, with no exception. The scan is of direct reads and does not follow imports: core
+// modules a provider imports (`src/lib/db/connection-fingerprint.ts`, which frames a record's tunnel on the record side
+// of the edit-plan seal) read the field by design.
+const TUNNEL_FIELD = "sshTunnel";
+const TUNNEL_SCAN_ROOTS = [
+  PROVIDERS,
+  "src/lib/db/http/",
+  "src/lib/db/grpc/",
+  "src/lib/db/graph/",
+  "src/lib/db/utils/",
+  "src/lib/db/auth/",
+  "src/lib/db/vector/",
+  "src/lib/db/base-provider.ts",
+];
+
+/** Every tracked module under the roots the tunnel scan names. */
+function tunnelScanPopulation(): string[] {
+  return trackedSources(...TUNNEL_SCAN_ROOTS).filter((name) => /\.tsx?$/.test(name));
+}
+
+describe("no provider module reads sshTunnel: core hands the tunnel's outcome under its markers (FND-2 slice 5b)", () => {
+  test("the read detector finds sshTunnel in a property, an optional chain, an element, a destructuring and the name as a string literal, and ignores a comment and a sentence that names it", () => {
+    const reads = (source: string): boolean => readsTheSetting(source, "probe.ts", TUNNEL_FIELD);
+    expect(reads("const tunnel = config.sshTunnel;")).toBe(true);
+    expect(reads("const enabled = config?.sshTunnel?.enabled;")).toBe(true);
+    expect(reads('const tunnel = config["sshTunnel"];')).toBe(true);
+    expect(reads("const tunnel = config[`sshTunnel`];")).toBe(true);
+    expect(reads("const { sshTunnel } = config;")).toBe(true);
+    expect(reads("const { sshTunnel: tunnel } = config;")).toBe(true);
+    expect(reads('const present = Object.hasOwn(config, "sshTunnel");')).toBe(true);
+    expect(reads("// config.sshTunnel\n/* const { sshTunnel } = config; */")).toBe(false);
+    expect(reads('const SENTENCE = "Studio reads the sshTunnel before it builds a provider";')).toBe(false);
+    // The default variable is the egress one, so a read of the tunnel is not a read of it.
+    expect(readsTheSetting("const tunnel = config.sshTunnel;")).toBe(false);
+  });
+
+  test("no provider module, and no shared provider module, reads sshTunnel", () => {
+    // Each read shape spells the name, so only a file whose text names the field is parsed.
+    const readers = tunnelScanPopulation().filter((name) => {
+      const source = readFileSync(join(process.cwd(), name), "utf8");
+      return source.includes(TUNNEL_FIELD) && readsTheSetting(source, name, TUNNEL_FIELD);
+    });
+    expect(readers).toEqual([]);
+  });
+
+  test("the scanned population holds a tracked module under each directory it names", () => {
+    const population = tunnelScanPopulation();
+    for (const root of TUNNEL_SCAN_ROOTS) {
+      expect(
+        population.some((name) => name.startsWith(root)),
+        root,
+      ).toBe(true);
+    }
+  });
+});

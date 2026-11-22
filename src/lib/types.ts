@@ -295,9 +295,9 @@ export interface SSLConfig {
 }
 
 /**
- * An SSH tunnel to the database through a bastion. Core reads the secret fields (`password`, `privateKey`,
- * `passphrase`) to open the tunnel, and a provider is built with only the public ones (`providerConnection` in
- * `src/lib/db/provider-connection.ts`).
+ * An SSH tunnel to the database through a bastion. Core decides and opens the tunnel with these fields, the secret ones
+ * (`password`, `privateKey`, `passphrase`) included, and a provider receives none of it: Studio hands it the route under
+ * `TUNNEL_ROUTE` (`providerConnection` in `src/lib/db/provider-connection.ts`).
  */
 export interface SSHTunnelConfig {
   enabled: boolean;
@@ -371,6 +371,29 @@ export interface TunnelFarEnd {
  */
 export interface WithTunnelFarEnd {
   readonly [TUNNEL_FAR_END]?: TunnelFarEnd;
+}
+
+/**
+ * The SSH tunnel's route, `tunnelRoute` of the record's `sshTunnel` (`src/lib/db/connection-fingerprint.ts`): the
+ * switch, the bastion's host and port and the user name, length-framed. Studio hands it to a provider in place of the
+ * record's `sshTunnel`, so a provider frames the bastion it was built behind without ever receiving the tunnel's
+ * configuration or credentials (FND-2 slice 5b, docs/SECURITY.md control 3.41).
+ *
+ * Set in one place, `providerConnection` in `src/lib/db/provider-connection.ts`, which replaces any value a caller set,
+ * for every connection that carries a tunnel object, on or off: the edit-plan seal frames an off tunnel's route too, so
+ * the provider side must frame the same string as the record side. Read by `connectionFingerprint` (the provider side
+ * of the seal) and through `requireTunnelRoute` in `src/lib/db/utils/require-tunnel-route.ts`, which refuses a
+ * connection that carries a tunnel's far end and no route.
+ *
+ * A symbol key on the footing of {@link TUNNEL_FAR_END}, made with `Symbol()` and not `Symbol.for()`, so only code
+ * holding this export can write it: `JSON.parse` never produces one, so no seed file, request body or stored connection
+ * can carry it, and `JSON.stringify` drops it from every response.
+ */
+export const TUNNEL_ROUTE: unique symbol = Symbol("libredb.tunnelRoute");
+
+/** Carries {@link TUNNEL_ROUTE} alongside a connection, deliberately not a field of `DatabaseConnection`. */
+export interface WithTunnelRoute {
+  readonly [TUNNEL_ROUTE]?: string;
 }
 
 /**

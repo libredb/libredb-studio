@@ -515,7 +515,8 @@ export async function createDatabaseProvider(
 
 > **Important:** Use dynamic `import()` to keep the initial bundle small.
 
-The `connection` your constructor receives is the one `providerConnection` (`src/lib/db/provider-connection.ts`) builds: its `sshTunnel` holds no password, private key or passphrase, because Studio opens the tunnel itself ([what a provider receives of the tunnel](providers/README.md#ssh-tunnels-bastion-host-key-verification)).
+The `connection` your constructor receives is the one `providerConnection` (`src/lib/db/provider-connection.ts`) builds: it carries no `sshTunnel`, because Studio opens the tunnel itself ([what a provider receives of the tunnel](providers/README.md#ssh-tunnels-bastion-host-key-verification)).
+It carries the tunnel's far end under `TUNNEL_FAR_END` when Studio opened one, and the tunnel's route under `TUNNEL_ROUTE`; a provider that needs the route, for a key that tells two bastions apart, reads it through `requireTunnelRoute` in `src/lib/db/utils/require-tunnel-route.ts` and never frames one itself.
 Studio also decides the tunnel before it builds your provider: a provider that is built from a connection whose tunnel is on was given an opened tunnel, with the local endpoint in `host` and `port` and the far end under `TUNNEL_FAR_END`, so your provider dials `host` and `port` and never reads `sshTunnel.enabled` or refuses a tunnel itself.
 
 The third argument is the build context, `ProviderBuildContext` in `src/lib/db/types.ts`: a copy of the caller's execution context and `egress`, the egress decision core took from `DB_HTTP_BLOCK_PRIVATE_HOSTS`.

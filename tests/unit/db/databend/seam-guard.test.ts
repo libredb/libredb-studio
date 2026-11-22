@@ -14,9 +14,11 @@
  *    `x-databend-` header name, in any case.
  * 6. `index.ts` holds no `system.` SQL: every statement it sends comes from `objects.ts` or `introspect.ts`.
  * 7. A value is imported from outside this directory only from `@/lib/db/http/*`, `@/lib/db/errors`,
- *    `@/lib/db/utils/*`, `@/lib/sql/*`, `@/lib/types`, the base classes, `@/lib/db/object-kinds`, `tunnelRoute` of
- *    `@/lib/db/connection-fingerprint`, `@/lib/app-version` (I15), `@/lib/db/sql-grammar/shared` (the SQL grammar
- *    contract's building blocks, for `sql-grammar.ts`) and the runtime's `node:crypto`; types are free.
+ *    `@/lib/db/utils/*`, `@/lib/sql/*`, `@/lib/types`, the base classes, `@/lib/db/object-kinds`,
+ *    `@/lib/app-version` (I15), `@/lib/db/sql-grammar/shared` (the SQL grammar contract's building blocks, for
+ *    `sql-grammar.ts`) and the runtime's `node:crypto`; types are free. The SSH tunnel's route comes from core under
+ *    `TUNNEL_ROUTE`, read through `requireTunnelRoute` of `@/lib/db/utils/require-tunnel-route`, so no value of
+ *    `@/lib/db/connection-fingerprint` is allowed: this directory frames no route of its own (FND-2 slice 5b).
  *    `execution-ui.ts`, the engine's execution UI contract module, may also import values from
  *    `@/lib/db/execution-ui/shared`, its contract's shared building block, `migration-ddl.ts`, the engine's
  *    migration DDL contract module, from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
@@ -59,10 +61,6 @@ const OUTSIDE_VALUES = [
   "src/lib/app-version.ts",
   "src/lib/db/sql-grammar/shared.ts",
 ];
-/** A module a value may come from only under the names listed. */
-const OUTSIDE_NAMED: Readonly<Record<string, readonly string[]>> = {
-  "src/lib/db/connection-fingerprint.ts": ["tunnelRoute"],
-};
 /**
  * The per-engine contract modules, each with the contract module or directory whose shared building blocks it may
  * import as values (rule 7). No other file of this directory may.
@@ -234,11 +232,9 @@ function seamFindings(file: string, text: string): string[] {
       }
     }
     if (typeOnly || inDirectory(target)) continue;
-    const named = OUTSIDE_NAMED[target];
     const allowed =
       (Object.hasOwn(CONTRACT_VALUES, name) && target.startsWith(CONTRACT_VALUES[name])) ||
-      OUTSIDE_VALUES.some((prefix) => target.startsWith(prefix)) ||
-      (named !== undefined && names.length > 0 && names.every((bound) => named.includes(bound)));
+      OUTSIDE_VALUES.some((prefix) => target.startsWith(prefix));
     if (!allowed) findings.push(`rule 7: ${file} imports a value from ${specifier}, which this directory may not`);
   }
 
@@ -385,9 +381,10 @@ describe("the Databend directory holds its seams", () => {
       "createNodeTransport",
     );
     const options = references(`${DIR}/connection-options.ts`, read(`${DIR}/connection-options.ts`));
-    expect(options.find((reference) => reference.specifier === "@/lib/db/connection-fingerprint")?.names).toEqual([
-      "tunnelRoute",
+    expect(options.find((reference) => reference.specifier === "@/lib/db/utils/require-tunnel-route")?.names).toEqual([
+      "requireTunnelRoute",
     ]);
+    expect(options.find((reference) => reference.specifier === "@/lib/db/connection-fingerprint")).toBeUndefined();
     expect(literals(`${DIR}/routes.ts`, read(`${DIR}/routes.ts`))).toContain("/v1/query");
     expect(literals(`${DIR}/connection-options.ts`, read(`${DIR}/connection-options.ts`))).toContain(
       "x-databend-session",
@@ -513,6 +510,12 @@ describe("planted violations fail by name", () => {
       `rule 7: ${DIR}/connection-options.ts imports a value from @/lib/db/connection-fingerprint, which this directory may not`,
     ],
     [
+      "objects.ts",
+      "objects.ts",
+      'import { tunnelRoute } from "@/lib/db/connection-fingerprint";\n',
+      `rule 7: ${DIR}/objects.ts imports a value from @/lib/db/connection-fingerprint, which this directory may not`,
+    ],
+    [
       "index.ts",
       "labels.ts",
       'import { createDatabaseProvider } from "@/lib/db/factory";\n',
@@ -569,7 +572,6 @@ describe("planted violations fail by name", () => {
     ["index.ts", "labels.ts", 'import type { DatabaseProvider } from "@/lib/db/factory";\n'],
     ["index.ts", "labels.ts", 'const sentence = "The databases come from the system catalog, read elsewhere.";\n'],
     ["errors.ts", "errors.ts", 'import { TransportError } from "@/lib/db/http/node-transport";\n'],
-    ["objects.ts", "objects.ts", 'import { tunnelRoute } from "@/lib/db/connection-fingerprint";\n'],
     ["auth-latch.ts", "auth-latch.ts", 'import { randomUUID } from "node:crypto";\n'],
     ["decode.ts", "decode.ts", 'import type { Readable } from "node:stream";\n'],
     ["errors.ts", "errors.ts", 'const sentence = "Databend refused POST /v1/query before it ran.";\n'],
