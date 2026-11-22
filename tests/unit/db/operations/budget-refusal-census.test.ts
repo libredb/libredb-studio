@@ -45,26 +45,18 @@ const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const PROVIDERS = join("src", "lib", "db", "providers");
 
 /**
- * The provider paths that still raise their budget refusals as a plain `QueryError` or as their own worded `QueryError`
- * subclass. Each leaves this list when its refusals are raised as the budget classes, and the list is then deleted.
- * Relative to src/lib/db/providers.
+ * The provider directories that still raise their budget refusals as their own worded `QueryError` (a subclass of
+ * their own, or Firestore's marked `QueryError`), through a categorizer that rewords any `QueryError` it does not
+ * recognise. Each moves to the budget classes with a categorizer that passes them through, and this list is then
+ * deleted. Relative to src/lib/db/providers.
  */
 const PENDING: readonly string[] = [
   "document/firestore",
   "industrial/modbus",
   "industrial/mtconnect",
   "industrial/opcua",
-  "industrial/sparkplug",
   "network/netconf",
   "network/snmp",
-  "platform/kubernetes",
-  "stream/kafka",
-  "stream/rabbitmq",
-  "timeseries/influxdb",
-  "timeseries/prometheus",
-  "vector/milvus",
-  "vector/qdrant",
-  "vector/weaviate",
 ];
 
 /** The class each budget kind is raised as. Typed by the kind, so a kind added to the openings fails typecheck here. */

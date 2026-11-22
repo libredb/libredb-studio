@@ -18,6 +18,7 @@ import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBud
 import { agentAnswer, agentServer } from "../../../helpers/qdrant-agent";
 import { type RecordedAnswer, recordingQdrantTransport } from "../../../helpers/qdrant-transport";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { errorKind } from "@/lib/db/error-record";
 
 const KEY = "not-a-real-key";
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -409,6 +410,7 @@ describe("one agent request", () => {
         slow,
         message: "Read-only execution exceeded the time budget: no answer within 30ms",
       });
+      expect(errorKind(error)).toBe("time-budget-refusal");
     }
   });
 
@@ -423,9 +425,11 @@ describe("one agent request", () => {
 
   test("rows past the row budget are refused, never cut", async () => {
     const { provider } = await connected();
-    await expect(provider.queryReadOnly("GET /collections", { ...BUDGET, maxResultRows: 2 })).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 3 rows > 2 allowed",
-    );
+    const refused = await provider
+      .queryReadOnly("GET /collections", { ...BUDGET, maxResultRows: 2 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toBe("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 });
 

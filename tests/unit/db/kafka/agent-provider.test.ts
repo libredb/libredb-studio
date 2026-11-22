@@ -22,6 +22,7 @@ import { KAFKA_TOPIC_COLUMNS } from "@/lib/db/providers/stream/kafka/objects";
 import { ROW_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { errorKind } from "@/lib/db/error-record";
 
 const CONNECTION = {
   id: "k1",
@@ -163,6 +164,7 @@ describe("refused before anything is sent", () => {
     const error = await rejection(provider.queryReadOnly('{"read": "topics", "limit": 8}', budget));
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect((error as Error).message).toStartWith(ROW_BUDGET_PREFIX);
+    expect(errorKind(error)).toBe("refused-before-send");
     expect(calls).toEqual([]);
   });
 
@@ -171,6 +173,7 @@ describe("refused before anything is sent", () => {
     const error = await rejection(provider.queryReadOnly('{"read": "topics", "limit": 201}', BUDGET));
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect((error as Error).message).toStartWith(ROW_BUDGET_PREFIX);
+    expect(errorKind(error)).toBe("refused-before-send");
     expect(calls).toEqual([]);
   });
 });

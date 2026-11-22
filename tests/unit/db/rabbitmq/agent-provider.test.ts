@@ -44,6 +44,7 @@ import {
 } from "../../../helpers/rabbitmq-fake-peer";
 import { createManagementStub, type ManagementStub, manualDeadlines } from "../../../helpers/rabbitmq-management-stub";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { errorKind } from "@/lib/db/error-record";
 
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
 const OPERATIONS: ProviderExecutionContext = { readOnly: true, sendsStatements: false };
@@ -297,6 +298,7 @@ describe("refused before anything is sent", () => {
     const error = await refusal(h.provider.queryReadOnly(statement, { ...BUDGET, maxResultRows: allowed }));
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect(error.message).toBe(rowBudgetSentence(rows, allowed));
+    expect(errorKind(error)).toBe("refused-before-send");
     expect(h.stub.requests).toHaveLength(before);
     expect(h.dials()).toBe(0);
   });
@@ -398,6 +400,7 @@ describe("the type check before any frame", () => {
     h.deadlines.fire();
     const error = await pending;
     expect(error.message).toBe(RABBITMQ_AGENT_STOP_SENTENCES.timeout(BUDGET.statementTimeoutMs));
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect(h.dials()).toBe(0);
   });
 
@@ -503,6 +506,7 @@ describe("an admitted read, against a fake broker", () => {
     const error = await refusal(h.provider.queryReadOnly(READ("first", 1), { ...BUDGET, maxResultBytes: 4 }));
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe(byteBudgetSentence(30, 4));
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("an offset no number holds exactly refuses the whole answer", async () => {
@@ -548,6 +552,7 @@ describe("a stop the editor would answer in part is refused", () => {
     h.deadlines.fire();
     const error = await refusal(pending);
     expect(error.message).toBe(RABBITMQ_AGENT_STOP_SENTENCES.deadline(10_000));
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("the deadline before the broker started the read is the time budget's refusal, D the budget's time", async () => {
@@ -559,6 +564,7 @@ describe("a stop the editor would answer in part is refused", () => {
     const error = await refusal(pending);
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe("Read-only execution exceeded the time budget: no answer within 4000ms");
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("D is at most the read's own 30 s, whatever the budget allows", async () => {
@@ -567,9 +573,9 @@ describe("a stop the editor would answer in part is refused", () => {
     await until(() => h.dials() === 1, "the dial");
     expect(h.deadlines.asked.at(-1)).toBe(30_000);
     h.deadlines.fire();
-    expect((await refusal(pending)).message).toBe(
-      "Read-only execution exceeded the time budget: no answer within 30000ms",
-    );
+    const error = await refusal(pending);
+    expect(error.message).toBe("Read-only execution exceeded the time budget: no answer within 30000ms");
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("disconnect() during the read ends it with the cancel's refusal", async () => {

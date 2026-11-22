@@ -18,6 +18,7 @@ import {
 } from "../../../../helpers/kubernetes-console";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../../../helpers/kubernetes-markers";
 import { jsonAnswer, type KubernetesAnswerFn, statusAnswer } from "../../../../helpers/kubernetes-transport";
+import { errorKind } from "@/lib/db/error-record";
 
 const MACHINE = { maxRows: 200, maxBytes: 262_144 };
 
@@ -502,16 +503,22 @@ describe("events", () => {
       index % 2 === 0 ? "Normal" : "Info",
     );
     const agent = consoleContext(answer);
-    await expect(
-      runKubectl({ ...agent.context, machine: MACHINE }, "events -n shop --types=Normal,Warning"),
-    ).rejects.toThrow("Read-only execution exceeded the row budget: 201 rows > 200 allowed");
+    const refused = await runKubectl(
+      { ...agent.context, machine: MACHINE },
+      "events -n shop --types=Normal,Warning",
+    ).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 201 rows > 200 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("past 5,000 events under a budget above 5,000, the agent path refuses with the cap sentence", async () => {
     const agent = consoleContext(endlessEvents({}, "/api/v1/namespaces/shop/events", () => "Normal"));
-    await expect(
-      runKubectl({ ...agent.context, machine: { ...MACHINE, maxRows: 10_000 } }, "events -n shop"),
-    ).rejects.toThrow(EVENTS_CAP_SENTENCE);
+    const refused = await runKubectl(
+      { ...agent.context, machine: { ...MACHINE, maxRows: 10_000 } },
+      "events -n shop",
+    ).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(EVENTS_CAP_SENTENCE);
+    expect(errorKind(refused)).toBe("query");
   });
 });
 
@@ -527,15 +534,20 @@ describe("describe events past the read", () => {
 
   test("an object with more events than the budget is refused on the agent path", async () => {
     const agent = consoleContext(endlessEvents(map, "/api/v1/namespaces/shop/events", () => "Normal"));
-    await expect(runKubectl({ ...agent.context, machine: MACHINE }, "describe pod web -n shop")).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 201 rows > 200 allowed",
+    const refused = await runKubectl({ ...agent.context, machine: MACHINE }, "describe pod web -n shop").catch(
+      (caught: unknown) => caught,
     );
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 201 rows > 200 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("an object with more than 5,000 events under a budget above 5,000 is refused, never shown in part", async () => {
     const agent = consoleContext(endlessEvents(map, "/api/v1/namespaces/shop/events", () => "Normal"));
-    await expect(
-      runKubectl({ ...agent.context, machine: { ...MACHINE, maxRows: 10_000 } }, "describe pod web -n shop"),
-    ).rejects.toThrow("More than 5,000 events name this object");
+    const refused = await runKubectl(
+      { ...agent.context, machine: { ...MACHINE, maxRows: 10_000 } },
+      "describe pod web -n shop",
+    ).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("More than 5,000 events name this object");
+    expect(errorKind(refused)).toBe("query");
   });
 });

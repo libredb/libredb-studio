@@ -30,6 +30,7 @@ import type { WeaviatePlan } from "@/lib/db/providers/vector/weaviate/request";
 import type { WeaviatePath } from "@/lib/db/providers/vector/weaviate/versions";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { agentAnswer, agentCapture, agentCollectionAnswer, scopeAnswer } from "../../../helpers/weaviate-agent";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 100, maxResultBytes: 65_536 };
 const SECRET = "stored-";
@@ -50,6 +51,16 @@ const json = (value: unknown, status = 200): WeaviateAnswer => ({
   retryAfter: null,
   text: JSON.stringify(value),
 });
+
+/** The kind of the error `run` throws. */
+function kindOf(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return errorKind(error);
+  }
+  throw new Error("expected a refusal");
+}
 
 describe("the viewer proof, from what 1.40.2 answered", () => {
   test("the built-in viewer role is proved: every action it holds is one of the twelve it is measured with", () => {
@@ -537,6 +548,15 @@ describe("the budgets", () => {
         "GET /v1/schema/Tenanted/tenants",
       ),
     ).toThrow("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(
+      kindOf(() =>
+        shapeWeaviateAgentAnswer(
+          answered("GET /v1/schema/Tenanted/tenants", agentAnswer("tenants-viewer")),
+          { ...BUDGET, maxResultRows: 1 },
+          "GET /v1/schema/Tenanted/tenants",
+        ),
+      ),
+    ).toBe("row-budget-refusal");
   });
 
   test("bytes past the byte budget are refused, never cut", () => {
@@ -561,6 +581,7 @@ describe("the budgets", () => {
     expect(() => shaped(bytes - 1)).toThrow(
       `Read-only execution exceeded the byte budget: ${bytes} bytes > ${bytes - 1} allowed`,
     );
+    expect(kindOf(() => shaped(bytes - 1))).toBe("byte-budget-refusal");
   });
 });
 
@@ -621,6 +642,10 @@ describe("the agent's wording of a failure", () => {
     expect(weaviateAgentFailure(new TimeoutError("late"), BUDGET, "s", META)?.message).toBe(
       "Read-only execution exceeded the time budget: no answer within 5000ms",
     );
+    expect(errorKind(weaviateAgentFailure(new TransportError("timeout", "late"), BUDGET, "s", META))).toBe(
+      "time-budget-refusal",
+    );
+    expect(errorKind(weaviateAgentFailure(new TimeoutError("late"), BUDGET, "s", META))).toBe("time-budget-refusal");
   });
 
   test("anything else is left to the provider's own table", () => {

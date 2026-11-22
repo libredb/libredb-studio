@@ -42,6 +42,7 @@ import {
 } from "../../helpers/influxdb-fixtures";
 import { type RecordedInfluxRequest, recordingInfluxTransport } from "../../helpers/influxdb-transport";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { errorKind } from "@/lib/db/error-record";
 
 const S = INFLUX_ERROR_SENTENCES as unknown as Record<string, string & ((...parts: string[]) => string)>;
 
@@ -562,6 +563,7 @@ describe("the agent read-only profile", () => {
     const error = await rejection(provider.queryReadOnly("SHOW MEASUREMENTS", { ...BUDGET, maxResultRows: 1 }));
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toStartWith("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
     await provider.disconnect();
   });
 
@@ -580,6 +582,7 @@ describe("the agent read-only profile", () => {
     expect(error.message).toBe(
       `Read-only execution exceeded the byte budget: ${100 * 6 + 64 * 1024 + 1} bytes > 100 allowed`,
     );
+    expect(errorKind(error)).toBe("byte-budget-refusal");
     const forbidden = await rejection(provider.queryReadOnly('SELECT * FROM "edge".."edge"', BUDGET));
     expect(forbidden).toBeInstanceOf(QueryError);
     expect(forbidden.message).not.toContain("budget");

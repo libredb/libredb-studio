@@ -66,6 +66,7 @@ import {
   recordingInfluxTransport,
   type ScriptedAnswer,
 } from "../../../helpers/influxdb-transport";
+import { errorKind } from "@/lib/db/error-record";
 
 const CONNECTION: DatabaseConnection = {
   id: "influxdb3-unit",
@@ -1076,6 +1077,7 @@ describe("queryReadOnly, the agent read-only profile's statement path", () => {
     const error = await rejection(made.provider.queryReadOnly("SELECT i FROM t", BUDGET));
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a cell-budget overflow is refused, never truncated", async () => {
@@ -1084,12 +1086,14 @@ describe("queryReadOnly, the agent read-only profile's statement path", () => {
     const made = await agent([jsonl([wide, wide])]);
     const error = await rejection(made.provider.queryReadOnly("SELECT * FROM wide", budget));
     expect(error.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("rows past the byte budget are refused", async () => {
     const made = await agent([jsonl([{ v: "x".repeat(1_200) }])]);
     const error = await rejection(made.provider.queryReadOnly("SELECT v FROM t", BUDGET));
     expect(error.message).toBe("Read-only execution exceeded the byte budget: 1210 bytes > 1000 allowed");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("the request's response cap is taken from the byte budget, and an answer past it is the byte refusal", async () => {
@@ -1107,6 +1111,7 @@ describe("queryReadOnly, the agent read-only profile's statement path", () => {
     expect(error.message).toBe(
       `Read-only execution exceeded the byte budget: ${3_000 + 64 * 1024 + 1} bytes > 1000 allowed`,
     );
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("a statement past its deadline is the time refusal", async () => {
@@ -1114,6 +1119,7 @@ describe("queryReadOnly, the agent read-only profile's statement path", () => {
     const made = await agent([], hang);
     const error = await rejection(made.provider.queryReadOnly("SELECT 1", { ...BUDGET, statementTimeoutMs: 20 }));
     expect(error.message).toBe("Read-only execution exceeded the time budget: no answer within 20ms");
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("a write the planner refuses reaches the caller as a statement refusal in the server's words", async () => {

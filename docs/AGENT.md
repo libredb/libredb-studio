@@ -482,7 +482,10 @@ MCP answers a provider's refusal behind a notice naming the provider.
 It still counts a statement and a repair attempt, because the run spent the execution and the rewrite is the model's to author.
 
 **A provider's row or byte budget refusal is database content; Studio's own is Studio's.**
-A provider that refuses its own answer by the row or byte budget raises a plain `QueryError`, and the tool layer fences that sentence as database content relayed by the provider, as it fences any engine error.
+A provider that refuses its own answer by the row, byte or time budget raises the class of that budget (`RowBudgetRefusal`, `ByteBudgetRefusal`, `TimeBudgetRefusal`, and SQL Server's `CutValueRefusal` and `SerialisedResultRefusal` in `src/lib/db/errors.ts`), each a `QueryError` with an error kind of its own, and the tool layer fences that sentence as database content relayed by the provider, as it fences any engine error.
+Two refusals keep the class they had, as `docs/API_DOCS.md` states beside the error kinds: a budget refusal a provider makes before it sends anything stays a `RefusedBeforeSendError`, kind `refused-before-send`, and Prometheus's time refusal stays a `TimeoutError`, kind `timeout`.
+Firestore, MTConnect, NETCONF and SNMP still raise their budget refusals as their own worded `QueryError`, so their kind is `query`.
+Modbus and OPC UA raise a budget refusal they make before sending anything as a `RefusedBeforeSendError`, kind `refused-before-send`, and their other budget refusals as their own worded `QueryError`, kind `query`.
 Studio's core holds every answer to the same budgets and to the time the run granted (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), and raises its own refusals as `StudioBudgetRefusal`; the statistics read outlasting its time raises `StudioTimeoutRefusal`.
 Only core constructs either class, so the tool layer tells them apart by class, never by text, says the sentence unfenced in this server's voice, and records `refusedBy: "studio"` on the sent statement.
 A resumed run is told such a refusal in this server's words too, and any other failure of a sent statement fenced as the database's.

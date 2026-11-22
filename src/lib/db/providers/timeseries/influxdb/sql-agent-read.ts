@@ -14,7 +14,14 @@
  * in the `refuse` mode of `shapeJsonlBody`, so a row past the row budget, a row past the cell budget and rows past the
  * byte budget each throw the shared sentence of `read-only-budget.ts` before anything is returned.
  */
-import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import {
+  ByteBudgetRefusal,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   assertReadOnlyBudget,
@@ -160,12 +167,12 @@ export function shapeAgentAnswer(
     shaped = shapeJsonlBody(text, { rowCut: budget.maxResultRows, cellBudget: INFLUX_CELL_BUDGET }, "refuse");
   } catch (error) {
     if (!(error instanceof InfluxShapeOverflowError)) throw error;
-    throw new QueryError(rowBudgetSentence(error.rows, error.allowedRows), "influxdb3", sql);
+    throw new RowBudgetRefusal(rowBudgetSentence(error.rows, error.allowedRows), "influxdb3", sql);
   }
   const rows = [...shaped.rows];
   const bytes = measureResultBytes(rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "influxdb3", sql);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "influxdb3", sql);
   }
   return { fields: [...shaped.fields], rows };
 }
@@ -178,10 +185,18 @@ export function shapeAgentAnswer(
 export function agentReadFailure(error: unknown, budget: ReadOnlyStatementBudget, sql: string): QueryError | undefined {
   if (!(error instanceof TransportError)) return undefined;
   if (error.kind === "too-large") {
-    return new QueryError(byteBudgetSentence(agentResponseCap(budget) + 1, budget.maxResultBytes), "influxdb3", sql);
+    return new ByteBudgetRefusal(
+      byteBudgetSentence(agentResponseCap(budget) + 1, budget.maxResultBytes),
+      "influxdb3",
+      sql,
+    );
   }
   if (error.kind === "timeout") {
-    return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "influxdb3", sql);
+    return new TimeBudgetRefusal(
+      `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+      "influxdb3",
+      sql,
+    );
   }
   return undefined;
 }

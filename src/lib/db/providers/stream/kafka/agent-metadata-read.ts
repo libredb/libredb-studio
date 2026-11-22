@@ -14,7 +14,7 @@
  * and the byte budget against the projected rows here. A limit the request wrote below the answer's size is the
  * request's own page, so the answer says that more follow, and how to read on, without naming what follows.
  */
-import { QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, TimeBudgetRefusal } from "@/lib/db/errors";
 import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import {
   declareMetadataOnly,
@@ -250,7 +250,7 @@ export function kafkaAgentResult(
   const projected = project(answer);
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), KAFKA_TYPE, statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), KAFKA_TYPE, statement);
   }
   return {
     fields: projected.fields,
@@ -295,7 +295,12 @@ const FAILURES: Readonly<Record<KafkaErrorCategory, (deadlineMs: number) => stri
  */
 export function kafkaAgentFailure(error: unknown, deadlineMs: number, statement?: string): QueryError | undefined {
   if (error instanceof MetadataProjectionError) return new QueryError(error.message, KAFKA_TYPE, statement);
-  if (error instanceof AgentDeadlineError) return new QueryError(FAILURES.timeout(deadlineMs), KAFKA_TYPE, statement);
+  if (error instanceof AgentDeadlineError) {
+    return new TimeBudgetRefusal(FAILURES.timeout(deadlineMs), KAFKA_TYPE, statement);
+  }
+  if (error instanceof KafkaError && error.category === "timeout") {
+    return new TimeBudgetRefusal(FAILURES.timeout(deadlineMs), KAFKA_TYPE, statement);
+  }
   if (error instanceof KafkaError) return new QueryError(FAILURES[error.category](deadlineMs), KAFKA_TYPE, statement);
   return undefined;
 }

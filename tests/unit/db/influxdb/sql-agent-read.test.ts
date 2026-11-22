@@ -18,6 +18,7 @@ import {
   shapeAgentAnswer,
 } from "@/lib/db/providers/timeseries/influxdb/sql-agent-read";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 3, maxResultBytes: 1_000 };
 
@@ -140,6 +141,7 @@ describe("shapeAgentAnswer", () => {
     const error = thrown(() => shapeAgentAnswer('{"a":1}\n{"a":2}\n{"a":3}\n{"a":4}\n{"a":5}\n', BUDGET, "q"));
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe("Read-only execution exceeded the row budget: 5 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a row past the cell budget is refused as the row budget at the answer's width", () => {
@@ -149,11 +151,13 @@ describe("shapeAgentAnswer", () => {
       shapeAgentAnswer(body, { statementTimeoutMs: 5_000, maxResultRows: 5_000, maxResultBytes: 10_000_000 }, "q"),
     );
     expect(error.message).toBe("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("an answer past the byte budget is refused with the bytes the rows measure", () => {
     const error = thrown(() => shapeAgentAnswer(`{"a":"${"x".repeat(2_000)}"}\n`, BUDGET, "q"));
     expect(error.message).toBe("Read-only execution exceeded the byte budget: 2010 bytes > 1000 allowed");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("a line that is not a row is the shaping error, never a budget refusal", () => {
@@ -168,11 +172,13 @@ describe("agentReadFailure", () => {
     expect(error?.message).toBe(
       `Read-only execution exceeded the byte budget: ${agentResponseCap(BUDGET) + 1} bytes > 1000 allowed`,
     );
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("a request past its deadline is the time refusal", () => {
     const error = agentReadFailure(new TransportError("timeout", "timed out"), BUDGET, "q");
     expect(error?.message).toBe("Read-only execution exceeded the time budget: no answer within 5000ms");
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("anything else is left to the provider's error table", () => {

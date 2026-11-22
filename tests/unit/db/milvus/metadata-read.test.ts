@@ -28,6 +28,7 @@ import {
   scopeMilvusWire,
 } from "../../../helpers/milvus-agent";
 import { okStatus, type RecordedMilvusAnswer, statusError } from "../../../helpers/milvus-wire";
+import { errorKind } from "@/lib/db/error-record";
 
 const OPTIONS: MilvusConnectionOptions = {
   target: "dns:127.0.0.1:19530",
@@ -92,6 +93,16 @@ const scalar = (name: string, type: string, extra: object = {}) => ({
   function_output: false,
   ...extra,
 });
+
+/** The kind of the error `run` throws. */
+function kindOf(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return errorKind(error);
+  }
+  throw new Error("expected a refusal");
+}
 
 describe("each admitted route's metadata, from what 3.0.2 answered a reader", () => {
   test("databases/list answers each database's name", async () => {
@@ -446,6 +457,8 @@ describe("the agent's answer and its failures", () => {
   test("an answer past the row or byte budget is refused, never cut", () => {
     expect(() => milvusAgentResult(rows, { ...BUDGET, maxResultRows: 1 }, "s", 0)).toThrow(QueryError);
     expect(() => milvusAgentResult(rows, { ...BUDGET, maxResultBytes: 4 }, "s", 0)).toThrow(QueryError);
+    expect(kindOf(() => milvusAgentResult(rows, { ...BUDGET, maxResultRows: 1 }, "s", 0))).toBe("row-budget-refusal");
+    expect(kindOf(() => milvusAgentResult(rows, { ...BUDGET, maxResultBytes: 4 }, "s", 0))).toBe("byte-budget-refusal");
   });
 
   test("a server refusal is worded by its category, never the server's words", () => {
@@ -465,6 +478,7 @@ describe("the agent's answer and its failures", () => {
       new TimeoutError("late", "milvus"),
     ]) {
       expect(milvusAgentFailure(error, BUDGET, "s")?.message).toContain("5000ms");
+      expect(errorKind(milvusAgentFailure(error, BUDGET, "s"))).toBe("time-budget-refusal");
     }
   });
 

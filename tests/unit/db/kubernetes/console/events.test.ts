@@ -7,6 +7,7 @@ import { EVENTS_CAP_SENTENCE, eventTime, listEvents } from "@/lib/db/providers/p
 import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
 import { consoleContext, listAnswer, routes, sentLines } from "../../../../helpers/kubernetes-console";
 import { jsonAnswer } from "../../../../helpers/kubernetes-transport";
+import { errorKind } from "@/lib/db/error-record";
 
 type Events = Extract<KubectlStatement, { readonly command: "events" }>;
 
@@ -157,7 +158,9 @@ describe("events", () => {
       map[key] = page(start, String(start + 500));
     }
     const { context } = consoleContext(routes(map));
-    await expect(listEvents(context, events("events --for pod/web"))).rejects.toThrow(EVENTS_CAP_SENTENCE);
+    const refused = await listEvents(context, events("events --for pod/web")).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(EVENTS_CAP_SENTENCE);
+    expect(errorKind(refused)).toBe("query");
   });
 
   test("exactly 5,000 events with no continue left are shown", async () => {

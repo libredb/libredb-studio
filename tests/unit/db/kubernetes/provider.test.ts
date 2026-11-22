@@ -27,6 +27,7 @@ import {
   statusAnswer,
   testSeams,
 } from "../../../helpers/kubernetes-transport";
+import { errorKind } from "@/lib/db/error-record";
 
 function providerWith(answer: KubernetesAnswerFn, overrides?: Partial<DatabaseConnection>) {
   const transport = recordingKubernetesTransport(answer);
@@ -467,9 +468,9 @@ describe("queryReadOnly", () => {
     expect(result.warnings ?? []).toEqual([]);
     expect(result.pagination).toBeUndefined();
     // The same statement on the agent's path is refused rather than truncated past its 200 rows.
-    await expect(provider.queryReadOnly("get pods -n shop", BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the row budget",
-    );
+    const refused = await provider.queryReadOnly("get pods -n shop", BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("an estimated plan is refused before anything is sent", async () => {

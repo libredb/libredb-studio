@@ -17,7 +17,7 @@
  * read's time budget, never in the server's own text. A parse error keeps the server's sentence, which describes the
  * expression the model wrote. Every other failure keeps the provider's own classification.
  */
-import { QueryError, TimeoutError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, RowBudgetRefusal, TimeoutError } from "@/lib/db/errors";
 import {
   byteBudgetSentence,
   measureResultBytes,
@@ -78,7 +78,7 @@ export function prometheusAgentResult(
   const counted = answerRowCount(answer.value);
   if (answer.truncatedByServer || counted > budget.maxResultRows) {
     // A server that cut at the requested limit holds at least one series past the budget.
-    throw new QueryError(
+    throw new RowBudgetRefusal(
       rowBudgetSentence(Math.max(counted, budget.maxResultRows + 1), budget.maxResultRows),
       PROMETHEUS_TYPE,
     );
@@ -94,7 +94,7 @@ export function prometheusAgentResult(
   }
   const bytes = measureResultBytes(shaped.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), PROMETHEUS_TYPE);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), PROMETHEUS_TYPE);
   }
   const warnings: QueryWarning[] = shaped.warnings;
   return {
