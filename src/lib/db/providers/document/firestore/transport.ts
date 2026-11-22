@@ -151,6 +151,7 @@ export function createFirestoreClient(
             origin,
             tls: tlsFor(origin),
             maxSockets: API_MAX_SOCKETS,
+            egress: options.egress,
             headers: { authorization: `Bearer ${bearer}`, ...extraHeaders },
             refusesLinkLocal: true,
             refusesUpgrade: true,

@@ -85,6 +85,7 @@ type Strategy<K extends RefreshingKind> = (
 function tokenLane(context: StrategyContext): NodeTransport {
   return context.lane("token", () => ({
     origin: httpOrigin("https", new URL(GOOGLE_TOKEN_URL).hostname, 443, context.deps.egress),
+    egress: context.deps.egress,
   }));
 }
 
@@ -150,6 +151,7 @@ const metadataToken: Strategy<"metadata"> = async (credentials, context) => {
     origin,
     headers: { "metadata-flavor": "Google" },
     linkLocalEndpoint: true,
+    egress: context.deps.egress,
   }));
   return lane.request({
     method: "GET",

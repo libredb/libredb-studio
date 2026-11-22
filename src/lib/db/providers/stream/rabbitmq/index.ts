@@ -33,6 +33,7 @@ import type {
   ContainerLevels,
   DatabaseObject,
   DatabaseOverview,
+  EgressDecision,
   HealthInfo,
   IndexStats,
   KindCount,
@@ -293,8 +294,9 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
     if (this.lifetime.signal.aborted) throw this.closedError();
     if (this.session !== null) return;
     let endpoints: RabbitMQEndpoints;
+    let egress: EgressDecision;
     try {
-      const egress = requireEgressDecision(this.execution.egress);
+      egress = requireEgressDecision(this.execution.egress);
       const read = readConnectionOptions(this.config, egress);
       endpoints = read.amqp === null ? read : { ...read, amqp: { ...read.amqp, egress } };
     } catch (error) {
@@ -309,6 +311,7 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
         deadlineSignal: this.seams.deadlineSignal,
         queryTimeoutMs: this.queryTimeout,
         lifetime: this.lifetime.signal,
+        egress,
         limiters: { management: this.managementLimiter, bindings: this.bindingsLimiter },
       });
       await management.get("whoami", {}, { site: "connect" });

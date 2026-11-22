@@ -191,6 +191,7 @@ export function createBigQueryTransport(
       origin: api,
       tls: api.scheme === "https" ? tls(api.host) : null,
       maxSockets: 8,
+      egress,
       headers: bearer === null ? {} : { ...quota, authorization: `Bearer ${bearer}` },
     });
   const retire = (lane: Lane) => {

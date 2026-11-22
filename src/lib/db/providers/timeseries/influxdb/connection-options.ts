@@ -62,6 +62,8 @@ export interface InfluxConnectionOptions {
   readonly database: string | undefined;
   /** The provider's in-flight bound, which is the transport's socket bound. */
   readonly maxSockets: number;
+  /** The egress decision the provider was built with, which the transport is built with. */
+  readonly egress: EgressDecision;
   /** The most bytes one response may hold. */
   readonly responseCapBytes: number;
   /** The connection's query timeout, which is a statement's deadline. */
@@ -241,6 +243,7 @@ export function buildInfluxConnectionOptions(
     headers: authorization === undefined ? {} : { authorization },
     database,
     maxSockets: INFLUX_MAX_IN_FLIGHT,
+    egress: context.egress,
     responseCapBytes: INFLUX_RESPONSE_CAP_BYTES,
     callTimeoutMs,
     surfaceTimeoutMs: Math.min(INFLUX_SURFACE_TIMEOUT_MS, callTimeoutMs),

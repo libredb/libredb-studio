@@ -21,10 +21,9 @@
  * module twice (src/lib/governance/keyring.ts does the same for the same reason).
  *
  * No provider reads the decision here: the provider factory hands it to every provider that takes a context, in the
- * build context (`ProviderBuildContext` in `./types`), and the guard takes it as an argument. Until FND-2 slice 2b-4
- * hands it to them too, one core module reads it on a provider's behalf: `createNodeTransport` and
- * `createNodeByteTransport` in `./http/node-transport`.
- * `tests/unit/lib/db/provider-environment-scan.test.ts` holds who imports this module.
+ * build context (`ProviderBuildContext` in `./types`), and every guard and transport takes it as an argument or an
+ * option, so no other module reads it. `tests/unit/lib/db/provider-environment-scan.test.ts` holds who imports this
+ * module, and that no provider module reaches it.
  *
  * `forgetEgressDecision` is a test seam.
  */
@@ -71,7 +70,7 @@ export function egressSetting(): EgressSetting {
   return setting;
 }
 
-/** The decision the provider factory and the interim readers take: throws `INVALID_EGRESS_SETTING` for a refused setting, on every call. */
+/** The decision the provider factory takes: throws `INVALID_EGRESS_SETTING` for a refused setting, on every call. */
 export function egressDecision(): EgressDecision {
   const setting = egressSetting();
   if ("invalid" in setting) throw new DatabaseConfigError(INVALID_EGRESS_SETTING);

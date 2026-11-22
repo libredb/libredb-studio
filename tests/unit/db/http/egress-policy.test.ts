@@ -4,7 +4,6 @@ import type { AddressInfo } from "node:net";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
-import { forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import {
   assertPublicDnsAnswers,
   assertPublicLiteralHost,
@@ -67,18 +66,37 @@ describe("opt-in HTTP database destination policy", () => {
     expect(httpOrigin("http", "[::1]", 8080, ALLOWS_PRIVATE_HOSTS).host).toBe("[::1]");
   });
 
-  test("an invalid setting cannot silently disable the guard of the interim reader createNodeTransport", () => {
-    // An allowing decision, so the origin never refuses and the transport's own read of the setting is the subject.
-    const origin = httpOrigin("http", "8.8.8.8", 8080, ALLOWS_PRIVATE_HOSTS);
+  test("createNodeTransport reads no setting: with DB_HTTP_BLOCK_PRIVATE_HOSTS unreadable, a transport handed an allowing decision is built", async () => {
+    // The factory and the boot preflight refuse this value (their own tests hold it); the transport never reads it.
     setEgressFlag("tru");
-    let failure: unknown;
+    let hits = 0;
+    const server = createServer((_request, response) => {
+      hits += 1;
+      response.end("reached");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const origin = httpOrigin("http", "127.0.0.1", port, ALLOWS_PRIVATE_HOSTS);
+    const transport = createNodeTransport({
+      origin,
+      tls: null,
+      maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
+      headers: {},
+    });
     try {
-      createNodeTransport({ origin, tls: null, maxSockets: 1, headers: {} });
-    } catch (error) {
-      failure = error;
+      const answer = await transport.request({
+        method: "GET",
+        url: `http://127.0.0.1:${port}/`,
+        signal: AbortSignal.timeout(5000),
+        maxResponseBytes: 1024,
+      });
+      expect(answer.status).toBe(200);
+      expect(hits).toBe(1);
+    } finally {
+      transport.close();
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
-    expect(failure).toBeInstanceOf(DatabaseConfigError);
-    expect((failure as Error).message).toBe(INVALID_EGRESS_SETTING);
   });
 
   test("refuses mixed DNS answers, mapped IPv4, and an empty result", () => {
@@ -161,22 +179,6 @@ describe("LOOPBACK_NETWORKS", () => {
         expect(() => httpOrigin("http", host, 8080, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
       }
     }
-  });
-});
-
-describe("the decision the interim reader reads (FND-2 slice 2a)", () => {
-  test("the interim reader keeps the decision the process took: a value written after the first guarded call moves nothing until the decision is forgotten", () => {
-    // An allowing decision, so the origin never refuses and the transport's own check is the subject.
-    const origin = httpOrigin("http", "127.0.0.1", 8080, ALLOWS_PRIVATE_HOSTS);
-    // The node transport, the last interim reader, until slice 2b-4 hands it the decision too.
-    const build = () => createNodeTransport({ origin, tls: null, maxSockets: 1, headers: {} });
-    setEgressFlag("true");
-    expect(build).toThrow(BLOCKED_HOST);
-    // A direct write, not the helper, on purpose: the process decided at its first read, so the write moves nothing.
-    process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
-    expect(build).toThrow(BLOCKED_HOST);
-    forgetEgressDecision();
-    build().close();
   });
 });
 

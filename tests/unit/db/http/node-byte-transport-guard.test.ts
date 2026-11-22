@@ -1,16 +1,22 @@
 /**
  * The egress guard on the byte transport, unmocked (byte transport design 3.9), as node-transport-guard.test.ts runs
- * it on the text transport: with DB_HTTP_BLOCK_PRIVATE_HOSTS on, the guard runs first, so its sentence wins and its
- * lookup, whose blocked list holds every link-local network, goes on the Agent; with it off, loopback is reachable.
+ * it on the text transport: the transport decides by the egress decision it is handed in its options' `egress` and
+ * reads no setting. With a blocking decision the guard runs first, so its sentence wins and its lookup, whose blocked
+ * list holds every link-local network, goes on the Agent; with an allowing one, loopback is reachable. Built without a
+ * decision, the transport refuses by name.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { BLOCKED_HOST as BLOCKED } from "@/lib/db/http/egress-policy";
+import { BLOCKED_HOST as BLOCKED, EGRESS_DECISION_MISSING } from "@/lib/db/http/egress-policy";
 import { httpOrigin } from "@/lib/db/http/endpoint";
-import { createNodeByteTransport, type NodeByteTransport } from "@/lib/db/http/node-transport";
+import {
+  createNodeByteTransport,
+  type NodeByteTransport,
+  type NodeByteTransportOptions,
+} from "@/lib/db/http/node-transport";
 import { closeAll, rawAnswer, rawHttpListener } from "../../../helpers/node-transport-fixtures";
 import { setEgressFlag } from "../../../helpers/egress-flag";
-import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
@@ -32,14 +38,57 @@ function send(transport: NodeByteTransport) {
   });
 }
 
-describe("with the guard on", () => {
-  test("localhost is refused by the guard's lookup on the Agent with the guard's sentence, and nothing is accepted", async () => {
+function refusal(run: () => unknown): Error | undefined {
+  try {
+    run();
+  } catch (error) {
+    return error as Error;
+  }
+  return undefined;
+}
+
+describe("built without an egress decision", () => {
+  test("a byte transport built without an egress decision refuses by name, before any Agent is built", () => {
+    setEgressFlag(undefined);
+    // A JavaScript caller, or a cast: the type asks for the decision.
+    const options = {
+      origin: httpOrigin("http", "db.example.com", 9000, ALLOWS_PRIVATE_HOSTS),
+      tls: null,
+      maxSockets: 4,
+      headers: {},
+    } as unknown as NodeByteTransportOptions;
+    const error = refusal(() => createNodeByteTransport(options));
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error?.message).toBe(EGRESS_DECISION_MISSING);
+  });
+});
+
+describe("handed a blocking decision", () => {
+  test("127.0.0.1 is refused when a byte transport handed a blocking decision is built, before any socket, while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", async () => {
+    setEgressFlag(undefined);
     const listener = await rawHttpListener(OK);
-    setEgressFlag("true");
+    const error = refusal(() =>
+      createNodeByteTransport({
+        origin: httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS),
+        tls: null,
+        maxSockets: 4,
+        egress: BLOCKS_PRIVATE_HOSTS,
+        headers: {},
+      }),
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error?.message).toBe(BLOCKED);
+    expect(listener.accepted()).toBe(0);
+  });
+
+  test("localhost is refused by the guard's lookup on the Agent of a byte transport handed a blocking decision, with the guard's sentence, and nothing is accepted", async () => {
+    setEgressFlag(undefined);
+    const listener = await rawHttpListener(OK);
     const transport = createNodeByteTransport({
       origin: httpOrigin("http", "localhost", listener.port, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 4,
+      egress: BLOCKS_PRIVATE_HOSTS,
       headers: {},
     });
     transports.push(transport);
@@ -55,30 +104,29 @@ describe("with the guard on", () => {
   });
 
   test("a link-local literal gets the guard's sentence, because the guard runs first", () => {
-    setEgressFlag("true");
-    let error: Error | undefined;
-    try {
+    setEgressFlag(undefined);
+    const error = refusal(() =>
       createNodeByteTransport({
         origin: { scheme: "http", host: "169.254.169.254", port: 80 },
         tls: null,
         maxSockets: 1,
+        egress: BLOCKS_PRIVATE_HOSTS,
         headers: {},
-      });
-    } catch (caught) {
-      error = caught as Error;
-    }
+      }),
+    );
     expect(error?.message).toBe(BLOCKED);
   });
 });
 
-describe("with the guard off", () => {
-  test("127.0.0.1 reaches the listener, the control for the refusals above", async () => {
-    setEgressFlag(undefined);
+describe("handed an allowing decision", () => {
+  test("127.0.0.1 reaches the listener for a byte transport handed an allowing decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is true", async () => {
+    setEgressFlag("true");
     const listener = await rawHttpListener(OK);
     const transport = createNodeByteTransport({
       origin: httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 4,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
     });
     transports.push(transport);

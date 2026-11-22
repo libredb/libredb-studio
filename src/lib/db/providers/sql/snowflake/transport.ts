@@ -32,6 +32,7 @@ import {
   TransportError,
 } from "@/lib/db/http/node-transport";
 import { getAppVersion } from "@/lib/app-version";
+import type { EgressDecision } from "@/lib/db/types";
 import type { SnowflakeTokenSource } from "./auth";
 
 export const SNOWFLAKE_RETRY_BASE_MS = 500;
@@ -107,6 +108,8 @@ export interface SnowflakeTransportOptions {
   /** `{ rejectUnauthorized: true, identity: host }` from the provider; null only for a test's loopback origin. */
   readonly tls: NodeTlsMaterial | null;
   readonly tokens: SnowflakeTokenSource;
+  /** The egress decision the provider was built with, which both transports are built with. */
+  readonly egress: EgressDecision;
 }
 
 export interface SnowflakeTextAnswer {
@@ -146,7 +149,7 @@ export function createSnowflakeTransport(
   options: SnowflakeTransportOptions,
   deps: SnowflakeTransportDeps,
 ): SnowflakeTransport {
-  const { origin, tls, tokens } = options;
+  const { origin, tls, tokens, egress } = options;
   const headers = {
     "x-snowflake-authorization-token-type": tokens.tokenType,
     accept: "application/json",
@@ -164,6 +167,7 @@ export function createSnowflakeTransport(
     origin,
     tls,
     maxSockets: 4,
+    egress,
     headers,
     signer: { headerNames: ["authorization"], sign: () => ({ authorization: `Bearer ${bearer}` }) },
   });
@@ -203,6 +207,7 @@ export function createSnowflakeTransport(
           origin,
           tls,
           maxSockets: 8,
+          egress,
           headers: { authorization: `Bearer ${token}`, ...headers },
           refusesLinkLocal: true,
           refusesUpgrade: true,

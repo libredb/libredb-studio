@@ -531,10 +531,11 @@ export class S3Provider extends BaseDatabaseProvider {
   /** The options, the transport and the limited client, with no request: connect and health share it. */
   private openSession(): S3Session {
     // Refused before any transport exists: every connection rule, already worded.
+    const egress = requireEgressDecision(this.execution.egress);
     const options = buildS3ConnectionOptions(this.config, {
       executionReadOnly: this.execution.readOnly === true,
       queryTimeout: this.queryTimeout,
-      egress: requireEgressDecision(this.execution.egress),
+      egress,
     });
     const signer =
       options.credentials === null
@@ -544,6 +545,7 @@ export class S3Provider extends BaseDatabaseProvider {
       origin: options.origin,
       tls: options.tls,
       maxSockets: S3_MAX_SOCKETS,
+      egress,
       headers: {},
       requestHeaderNames: ["range"],
       responseHeaders: S3_RESPONSE_HEADERS,

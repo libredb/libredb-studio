@@ -75,9 +75,9 @@ function isBlocked(address: string, family: number): boolean {
 }
 
 /**
- * The refusal of a provider asked to build a guarded transport or dial with no egress decision: built outside the
- * provider factory, which hands core's decision to every provider that takes a context (`ProviderBuildContext` in
- * `@/lib/db/types`).
+ * The refusal of a provider asked to build a guarded transport or dial with no egress decision, or of a node transport
+ * built without one in its options' `egress`: built outside the provider factory, which hands core's decision to every
+ * provider that takes a context (`ProviderBuildContext` in `@/lib/db/types`).
  */
 export const EGRESS_DECISION_MISSING =
   "This provider was built without the egress decision Studio takes from DB_HTTP_BLOCK_PRIVATE_HOSTS, so it dials nothing";
@@ -85,7 +85,8 @@ export const EGRESS_DECISION_MISSING =
 /**
  * The decision a provider was built with, for the guard: `egress` itself, or, when the provider was built without one,
  * a `DatabaseConfigError` with `EGRESS_DECISION_MISSING`. A provider calls it when it builds its transport or dial, never
- * at construction, and there is no default decision.
+ * at construction, and the shared node transport calls it when it is built (`createNodeTransport` and
+ * `createNodeByteTransport` in `./node-transport`); there is no default decision.
  */
 export function requireEgressDecision(egress: EgressDecision | undefined): EgressDecision {
   if (egress === undefined) throw new DatabaseConfigError(EGRESS_DECISION_MISSING);

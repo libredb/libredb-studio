@@ -1325,11 +1325,14 @@ describe("CouchbaseHttpTransport agent path", () => {
       origin: { scheme: "http", host: "127.0.0.1", port: 8091 },
       tls: null,
       maxSockets: 4,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {
         accept: "application/json",
         authorization: `Basic ${Buffer.from("Administrator:password123").toString("base64")}`,
       },
     });
+    // The decision the transport was built with, by identity.
+    expect(built[0].options.egress).toBe(ALLOWS_PRIVATE_HOSTS);
     expect(built[0].requests).toEqual([
       { method: "GET", url: "http://127.0.0.1:8091/whoami", signal: request.signal, maxResponseBytes: 65536 },
     ]);

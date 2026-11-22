@@ -34,7 +34,7 @@ A provider whose engine has its own sign-in scheme writes it in its own director
 | File | What it holds |
 | --- | --- |
 | `server-identity-gate.ts` | `isServerWritten`: the one definition of a server-written connection; `admitServerIdentity`: the server's own identity only for a server-written connection whose provider opt-in (a variable ending in `_SERVER_CREDENTIALS`) is exactly `"true"`; it reads nothing but that one variable |
-| `lanes.ts` | `authLaneOptions`: the transport options of every request to a credential endpoint, imported only inside the layer |
+| `lanes.ts` | `authLaneOptions`: the transport options of every request to a credential endpoint, built with the egress decision its spec carries, imported only inside the layer |
 | `refresh.ts` | `createRefreshingValue`: a cached expiring value with an early refresh, one shared refresh on its own deadline, and `close()` |
 
 `managed` exactly true is set only on the server side: the operator's seed file, the governance control plane or a discovery source.
@@ -123,6 +123,7 @@ The ADC file accepts the JSON kinds the provider lists; an access token is never
 Each refreshing kind has one strategy in a typed table, so a kind without a strategy does not compile.
 A lane is built on the first refresh that needs it, at most one per kind, and a pasted access token builds none.
 The token endpoint's origin is built through `httpOrigin` with `egress` from the deps, the egress decision of the provider that builds the token source.
+Each lane's transport is built with the same decision, which `AuthLaneSpec.egress` carries into `authLaneOptions`.
 Its host is a fixed name, so the decision refuses none; it is handed so this origin is built as every other one is.
 `quotaProjectHeaders` gives the `x-goog-user-project` header for the provider's own API requests; no token request carries it.
 A token is held by the shared refresh: cached and refreshed 60 seconds before it expires; concurrent callers share one refresh, which runs on its own 30-second deadline, so no caller's abort fails the others; a failed refresh caches nothing.

@@ -394,7 +394,8 @@ export class SnowflakeProvider extends SQLBaseProvider {
     let host = "";
     let cautions: QueryWarning[];
     try {
-      const settings = readSettings(this.config, requireEgressDecision(this.egress));
+      const egress = requireEgressDecision(this.egress);
+      const settings = readSettings(this.config, egress);
       host = settings.endpoint.host;
       const loaded: LoadedKey | null =
         settings.method === "keypair"
@@ -408,7 +409,7 @@ export class SnowflakeProvider extends SQLBaseProvider {
           ? patTokenSource(readAccessToken(this.config.password as string))
           : keyPairTokenSource(loaded, claim, deps.now);
       const transport = createSnowflakeTransport(
-        { origin: endpoint.origin, tls: { rejectUnauthorized: true, identity: endpoint.host }, tokens },
+        { origin: endpoint.origin, tls: { rejectUnauthorized: true, identity: endpoint.host }, tokens, egress },
         deps,
       );
       const [database, schema, warehouse] = [this.config.database, this.config.schema, this.config.warehouse].map(

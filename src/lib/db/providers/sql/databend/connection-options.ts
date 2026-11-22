@@ -70,6 +70,8 @@ export interface DatabendConnectionOptions {
   readonly latchKey: string;
   /** The transport's socket bound: two statements and a kill. */
   readonly maxSockets: number;
+  /** The egress decision the provider was built with, which the transport is built with. */
+  readonly egress: EgressDecision;
   /** The most bytes one answer may hold. */
   readonly responseCapBytes: number;
   /** The most bytes of answer text one statement may read across its pages. */
@@ -200,6 +202,7 @@ export function buildDatabendConnectionOptions(
       password,
     }),
     maxSockets: DATABEND_MAX_SOCKETS,
+    egress: context.egress,
     responseCapBytes: DATABEND_RESPONSE_CAP_BYTES,
     statementBytes: DATABEND_STATEMENT_BYTES,
     cellBudget: DATABEND_CELL_BUDGET,

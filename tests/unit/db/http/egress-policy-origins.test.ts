@@ -10,18 +10,19 @@
  * The variable is left unset, so a refusal shows the handed decision decided. The accepted connections are the count
  * that matters for Kubernetes: over TLS it opens a socket to a plain HTTP server and never sends a request.
  *
- * The inverse, an allowing decision while the variable is `true` at a literal, waits for FND-2 slice 2b-4 for these
- * ten: their node transport reads core's decision on the provider's behalf until then, so a provider handed a decision
- * other than the process's sees the handed one at its origin and the process's at its transport, which only a test
- * can arrange. The fetch kind's inverse is in
- * `egress-policy-providers.test.ts`, and RabbitMQ's management origin's in `egress-policy-socket-dials.test.ts`, over
- * a recorded management API.
+ * Each of the ten also builds its node transport with the same decision (FND-2 slice 2b-4): handed a blocking decision
+ * and connected to `localhost`, a name `httpOrigin` lets through, it is refused by the node transport's lookup before
+ * any connection; handed an allowing decision while the variable is `true`, it reaches 127.0.0.1. BigQuery's API
+ * transport, built under BIGQUERY_EMULATOR_HOST, is held the same way here, since its own unit test replaces the node
+ * transport module. The fetch kind's inverse is in `egress-policy-providers.test.ts`, and RabbitMQ's management
+ * origin's in `egress-policy-socket-dials.test.ts`, over a recorded management API.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { BLOCKED_HOST, EGRESS_DECISION_MISSING } from "@/lib/db/http/egress-policy";
+import { createBigQueryTransport } from "@/lib/db/providers/sql/bigquery/transport";
 import { FirestoreProvider } from "@/lib/db/providers/document/firestore/index";
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect/index";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
@@ -32,7 +33,7 @@ import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseri
 import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import type { DatabaseConnection, DatabaseProvider, EgressDecision } from "@/lib/db/types";
-import { BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { setEgressFlag } from "../../../helpers/egress-flag";
 import { rabbitmqConnection } from "../../../helpers/rabbitmq-connection";
 
@@ -178,4 +179,49 @@ describe("a provider builds its origin by the egress decision it was built with 
       expect(server.hits()).toBe(0);
     },
   );
+});
+
+describe("a provider builds its node transport by the egress decision it was built with (FND-2 slice 2b-4)", () => {
+  test.each(BUILDS)(
+    "%s handed a blocking decision refuses localhost at its node transport's lookup, before any connection, while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset",
+    async (_name, build) => {
+      setEgressFlag(undefined);
+      const server = await countingServer();
+      const failure = await connected(build("localhost", server.port, { egress: BLOCKS_PRIVATE_HOSTS }));
+      expect(failure).toBeInstanceOf(DatabaseConfigError);
+      expect((failure as Error).message).toBe(BLOCKED_HOST);
+      expect(server.connections()).toBe(0);
+    },
+  );
+
+  test.each(BUILDS)(
+    "%s handed an allowing decision reaches 127.0.0.1 while DB_HTTP_BLOCK_PRIVATE_HOSTS is true",
+    async (_name, build) => {
+      setEgressFlag("true");
+      const server = await countingServer();
+      const failure = await connected(build("127.0.0.1", server.port, { egress: ALLOWS_PRIVATE_HOSTS }));
+      // The engine's own error against a server that answers 500, or Kubernetes' TLS failure against a plain one.
+      expect((failure as Error | null)?.message).not.toBe(BLOCKED_HOST);
+      expect(server.connections()).toBeGreaterThan(0);
+    },
+  );
+
+  test("BigQuery's API transport under BIGQUERY_EMULATOR_HOST naming localhost, handed a blocking decision, refuses at the lookup before any connection while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", async () => {
+    setEgressFlag(undefined);
+    const server = await countingServer();
+    const bigquery = createBigQueryTransport(
+      "demo-project",
+      { type: "access_token", token: crypto.randomUUID() },
+      BLOCKS_PRIVATE_HOSTS,
+      { BIGQUERY_EMULATOR_HOST: `localhost:${server.port}` },
+    );
+    const failure = await bigquery.listDatasets(AbortSignal.timeout(5000)).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    bigquery.close();
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BLOCKED_HOST);
+    expect(server.connections()).toBe(0);
+  });
 });

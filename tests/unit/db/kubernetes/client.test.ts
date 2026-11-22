@@ -64,6 +64,8 @@ describe("the transport the client builds", () => {
       "user-agent": "libredb-studio/0.18.2 (kubernetes)",
     });
     expect(options.maxSockets).toBe(4);
+    // The egress decision the cluster endpoint was read with, by identity.
+    expect(options.egress).toBe(ALLOWS_PRIVATE_HOSTS);
     client.close();
     expect(transport.closed()).toBe(1);
   });

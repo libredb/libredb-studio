@@ -98,10 +98,13 @@ describe("firestore transport API lanes", () => {
       origin: API,
       tls: { rejectUnauthorized: true, identity: "firestore.googleapis.com" },
       maxSockets: 8,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: { authorization: `Bearer ${TOKEN}`, ...routingHeaders(target) },
       refusesLinkLocal: true,
       refusesUpgrade: true,
     });
+    // FirestoreClientOptions.egress, by identity.
+    expect(seams.lanes[0].options.egress).toBe(ALLOWS_PRIVATE_HOSTS);
     const request = seams.lanes[0].requests[0];
     expect(request.method).toBe("GET");
     expect(request.url).toBe(urlOf({ kind: "database" }));
@@ -128,6 +131,7 @@ describe("firestore transport API lanes", () => {
       origin: { scheme: "https", host: "oauth2.googleapis.com", port: 443 },
       tls: { rejectUnauthorized: true, identity: "oauth2.googleapis.com" },
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       refusesLinkLocal: true,
       refusesUpgrade: true,
@@ -154,6 +158,7 @@ describe("firestore transport API lanes", () => {
       origin: { scheme: "http", host: "meta.internal", port: 8080 },
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: { "metadata-flavor": "Google" },
       refusesUpgrade: true,
     });

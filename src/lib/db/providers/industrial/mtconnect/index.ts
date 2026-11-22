@@ -265,11 +265,13 @@ export class MTConnectProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   public async connect(): Promise<void> {
-    const { origin, tls, pathPrefix } = mtconnectEndpoint(this.config, requireEgressDecision(this.execution.egress));
+    const egress = requireEgressDecision(this.execution.egress);
+    const { origin, tls, pathPrefix } = mtconnectEndpoint(this.config, egress);
     const transport = this.createTransport({
       origin,
       tls,
       maxSockets: 1,
+      egress,
       headers: {},
       // RabbitMQ's three settings, for the reasons MEASURED there and here: a link-local address is
       // refused before any socket, a 101 is refused at once, and an unreachable host is reported.

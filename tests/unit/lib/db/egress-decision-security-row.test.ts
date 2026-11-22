@@ -38,6 +38,7 @@ describe("control 0.6 names the egress decision", () => {
     "src/lib/db/providers/objectstore/s3/connection-options.ts",
     "src/lib/db/providers/stream/rabbitmq/connection-options.ts",
     "src/lib/db/auth/google/token-source.ts",
+    "src/lib/db/auth/lanes.ts",
     "src/lib/db/providers/document/firestore/transport.ts",
     "src/lib/db/providers/timeseries/influxdb/connection-options.ts",
     "src/lib/db/providers/platform/kubernetes/connection-options.ts",
@@ -74,8 +75,9 @@ describe("control 0.6 names the egress decision", () => {
 
   test("the control says the factory hands the decision to every provider but Spark, and which origins and requests are checked against it", () => {
     expect(control).toContain(
-      "refuses such a value by name, and the factory hands the decision to every provider but Spark, which passes no guard, so the address literal of each origin ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL, Databend, Snowflake, Prometheus, InfluxDB, InfluxDB 3, Couchbase, Firestore, MTConnect, Qdrant, Weaviate, S3-compatible object storage, Kubernetes, RabbitMQ's management API and the Google token source build, the HTTP requests of ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL and Prometheus, Couchbase's own fetch and TLS paths, the AMQP, MQTT, Modbus, NETCONF and Sparkplug B dials and SNMP's name lookup are checked against the decision their provider was handed, and every other guarded path against the same decision, which core's guard reads on the provider's behalf",
+      "refuses such a value by name, and the factory hands the decision to every provider but Spark, which passes no guard, so every guarded connection is checked against the decision its provider was handed: the address literal of each origin it builds, its HTTP requests and node transports, the AMQP, MQTT, Modbus, NETCONF and Sparkplug B dials and SNMP's name lookup",
     );
+    expect(control).not.toContain("on the provider's behalf");
   });
 
   test("Known limits says the decision is logged once, at info level, and a change waits for a restart", () => {
