@@ -303,6 +303,8 @@ import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 // The account module is pure and not mocked: the Snowflake entry's derived-host hint is the real one.
 import { snowflakeHostHint } from "@/lib/db/providers/sql/snowflake/account-host";
 import { CONNECTION_FIELD_DESCRIPTORS } from "@/lib/db/connection-fields";
+import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import type { DatabaseType } from "@/lib/types";
 
 // ── Mock @/lib/db-ui-config ─────────────────────────────────────────────────
 // Mirrors the real table for the engines that diverge from the networked default. A mock
@@ -363,8 +365,8 @@ const mockFields = (type: string): string[] =>
 
 /**
  * What a `DatabaseUIConfig` may declare about its connection fields: labels and hints keyed by
- * field (#1085), the choices of a field drawn as a select, and whether the SSH panel is offered
- * (#1088).
+ * field (#1085), the choices of a field drawn as a select, and whether the SSL panel is offered. Whether the SSH
+ * panel is offered is core's SSH_TUNNEL_REFUSAL row, read below as the real offersSshTunnel reads it (FND-2 slice 5).
  */
 interface MockFieldCopy {
   readonly fieldLabels?: Readonly<Record<string, string>>;
@@ -372,7 +374,6 @@ interface MockFieldCopy {
   readonly fieldPlaceholders?: Readonly<Record<string, string>>;
   readonly fieldPlacement?: Readonly<Record<string, "open" | "advanced">>;
   readonly fieldOptions?: Readonly<Record<string, readonly { readonly value: string; readonly label: string }[]>>;
-  readonly showSshTunnel?: false;
   readonly showSslPanel?: false;
   readonly fieldShownWhen?: Readonly<Record<string, { readonly field: string; readonly equals: string }>>;
   readonly hostHint?: (host: string) => string | undefined;
@@ -455,7 +456,6 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
         { value: "SCRAM-SHA-512", label: "SCRAM-SHA-512" },
       ],
     },
-    showSshTunnel: false,
   },
   // Mirrored from the real entry (#786, #1303); tests/unit/lib/db-ui-config.test.ts pins the real one.
   db2: {
@@ -619,7 +619,6 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       allowInsecureAuth:
         "Sends the username and password in clear text to the management API and the AMQP port, where anyone on the path can read them. Prefer an SSL mode and the TLS ports 15671 and 5671.",
     },
-    showSshTunnel: false,
   },
   // Mirrored from the real entry; tests/unit/lib/db-ui-config.test.ts pins the real one.
   spark: {
@@ -677,7 +676,6 @@ const MOCK_SNOWFLAKE_COPY: MockFieldCopy = {
     password: { field: "authMethod", equals: "pat" },
   },
   hostHint: snowflakeHostHint,
-  showSshTunnel: false,
   showSslPanel: false,
 };
 (MOCK_FIELD_COPY as Record<string, MockFieldCopy>).snowflake = MOCK_SNOWFLAKE_COPY;
@@ -698,8 +696,8 @@ mock.module("@/lib/db-ui-config", () => ({
     ...mockDeclaredCopy,
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
-  // The real rule over the mirrored table: false only where an entry declares `showSshTunnel: false`.
-  offersSshTunnel: (type: string) => ({ ...MOCK_FIELD_COPY[type], ...mockDeclaredCopy }).showSshTunnel !== false,
+  // The real rule: core's SSH_TUNNEL_REFUSAL row.
+  offersSshTunnel: (type: string) => SSH_TUNNEL_REFUSAL[type as DatabaseType] === null,
   offersSslPanel: (type: string) => ({ ...MOCK_FIELD_COPY[type], ...mockDeclaredCopy }).showSslPanel !== false,
   // The real pair's rule, mirrored the way `isFileBased` below mirrors its own: the modal reads
   // its field copy through these two, and the real ones run in tests/unit/lib/db-ui-config.test.ts.
@@ -919,9 +917,10 @@ describe("ConnectionModal", () => {
   });
 
   test("an engine that hides both the SSL/TLS and SSH panels still draws its consent to a cleartext password", () => {
-    mockFormOverrides = { type: "postgres", sslMode: "disable" };
-    mockDeclaredFields = { postgres: ["host", "port", "user", "password", "database", "allowInsecureAuth"] };
-    mockDeclaredCopy = { showSslPanel: false, showSshTunnel: false };
+    // RabbitMQ, whose SSH_TUNNEL_REFUSAL row refuses a tunnel, with the SSL panel withheld on top.
+    mockFormOverrides = { type: "rabbitmq", sslMode: "disable" };
+    mockDeclaredFields = { rabbitmq: ["host", "port", "user", "password", "allowInsecureAuth"] };
+    mockDeclaredCopy = { showSslPanel: false };
     const { getByLabelText, queryByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
 
     expect(queryByText("SSL / TLS")).toBeNull();

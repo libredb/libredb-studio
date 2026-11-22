@@ -26,8 +26,17 @@ import { platformTimeoutMs } from "../helpers/platform-timeout";
 
 const SRC_DIR = join(import.meta.dir, "..", "..", "src");
 
-/** The two factories whose third argument is the execution context (src/lib/db/factory.ts). */
-const FACTORIES = ["getOrCreateProvider", "createDatabaseProvider"] as const;
+/**
+ * The factory functions that build a provider under an execution context (src/lib/db/factory.ts), each with the
+ * number of arguments a call passes once it passes the context: the third for the two that hand out a provider, the
+ * second for `readProviderDeclarations`, which builds one to read its declarations (FND-2 slice 5).
+ */
+const FACTORY_CONTEXT_ARGUMENT = {
+  getOrCreateProvider: 3,
+  createDatabaseProvider: 3,
+  readProviderDeclarations: 2,
+} as const;
+const FACTORIES = Object.keys(FACTORY_CONTEXT_ARGUMENT) as (keyof typeof FACTORY_CONTEXT_ARGUMENT)[];
 
 /** Every .ts/.tsx file under `rootDir`, as forward-slash paths relative to it. */
 function listSources(rootDir: string): string[] {
@@ -47,7 +56,7 @@ function listSources(rootDir: string): string[] {
 
 interface FactoryCall {
   fn: (typeof FACTORIES)[number];
-  /** The number of arguments the call passes; the third is the execution context. */
+  /** The number of arguments the call passes; `FACTORY_CONTEXT_ARGUMENT` says which one is the execution context. */
   args: number;
 }
 
@@ -90,7 +99,7 @@ interface UnposturedCall {
 function findUnposturedCalls(rootDir: string): UnposturedCall[] {
   return listSources(rootDir).flatMap((file) =>
     factoryCalls(file, readFileSync(join(rootDir, file), "utf8"))
-      .filter((call) => call.args < 3)
+      .filter((call) => call.args < FACTORY_CONTEXT_ARGUMENT[call.fn])
       .map((call) => ({ file, fn: call.fn })),
   );
 }
@@ -104,7 +113,7 @@ const UNPOSTURED_ALLOWLIST: Record<string, { calls: number; reason: string }> = 
   "app/api/agent/runs/route.ts": {
     calls: 1,
     reason:
-      "a capability-only read for the run's catalog field (#1530): it builds the provider to read its catalogSessions declaration before the run exists, and never connects, so no handle opens",
+      "a capability-only read for the run's catalog field (#1530): readProviderDeclarations builds the provider to read its catalogSessions declaration before the run exists, and never connects, so no handle opens",
   },
 };
 
@@ -163,6 +172,7 @@ describe("the census detector, proven in both directions on scratch sources", ()
       "const p = await createDatabaseProvider(\n  connection,\n  {},\n);",
     ],
     ["a call through a module object", "const p = await factory.getOrCreateProvider(connection, {});"],
+    ["a declarations read with no context", "const d = await readProviderDeclarations(connection);"],
     [
       "a call after a URL string on the same line",
       'const docs = "https://example.test/x"; const p = await getOrCreateProvider(connection);',
@@ -180,6 +190,7 @@ describe("the census detector, proven in both directions on scratch sources", ()
       "a call with the posture",
       "const p = await getOrCreateProvider(connection, {}, editorExecutionContext(s, connection));",
     ],
+    ["a declarations read with the posture", "const d = await readProviderDeclarations(connection, execution);"],
     ["a call in a line comment", "// const p = await getOrCreateProvider(connection);"],
     ["a call in a doc comment", "/**\n * const p = await getOrCreateProvider(connection);\n */"],
     ["a call named inside a string", 'const hint = "getOrCreateProvider(connection)";'],

@@ -21,8 +21,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { connectionFieldHint, connectionFieldLabel, DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { connectionFieldHint, connectionFieldLabel, DB_UI_CONFIG, offersSshTunnel } from "@/lib/db-ui-config";
+import { MCP_STATEMENT_READ, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { isWithheldKafkaTopic } from "@/lib/db/providers/stream/kafka/agent-statement";
 import { KAFKA_DEFAULT_PORT, kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
@@ -272,8 +272,9 @@ describe("docs/providers/kafka.md says what the provider does not do", () => {
     expect(DOC).toContain("| **Query cancellation** | None");
   });
 
-  test("no SSH tunnel and no connection string, as the dialog declares", () => {
-    expect(DB_UI_CONFIG.kafka.showSshTunnel).toBe(false);
+  test("no SSH tunnel and no connection string, as core's row and the dialog declare", () => {
+    expect(SSH_TUNNEL_REFUSAL.kafka).not.toBeNull();
+    expect(offersSshTunnel("kafka")).toBe(false);
     expect(DB_UI_CONFIG.kafka.showConnectionStringToggle).toBe(false);
     expect(new KafkaProvider(KAFKA).getCapabilities().supportsConnectionString).toBe(false);
     expect(DOC).toContain("| **SSH tunnel** | Refused");

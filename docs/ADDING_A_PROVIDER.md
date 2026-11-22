@@ -516,6 +516,7 @@ export async function createDatabaseProvider(
 > **Important:** Use dynamic `import()` to keep the initial bundle small.
 
 The `connection` your constructor receives is the one `providerConnection` (`src/lib/db/provider-connection.ts`) builds: its `sshTunnel` holds no password, private key or passphrase, because Studio opens the tunnel itself ([what a provider receives of the tunnel](providers/README.md#ssh-tunnels-bastion-host-key-verification)).
+Studio also decides the tunnel before it builds your provider: a provider that is built from a connection whose tunnel is on was given an opened tunnel, with the local endpoint in `host` and `port` and the far end under `TUNNEL_FAR_END`, so your provider dials `host` and `port` and never reads `sshTunnel.enabled` or refuses a tunnel itself.
 
 The third argument is the build context, `ProviderBuildContext` in `src/lib/db/types.ts`: a copy of the caller's execution context and `egress`, the egress decision core took from `DB_HTTP_BLOCK_PRIVATE_HOSTS`.
 The factory copies only plain data: an execution context that is a class instance, or holds a getter, an inherited field or a field that is not enumerable, is refused with a `DatabaseConfigError` and nothing is built.
@@ -1158,6 +1159,7 @@ The integration points, all of which need an entry. This is the list the Strateg
 - [ ] `src/lib/db/compatibility.ts`: the new id's `WRITE_REACH` entry, `none`, `guarded` or `open`, which `READ_ONLY_ENFORCED` is derived from.
       A provider whose reach is not `open` declares `writeReach` on all four write paths, naming its gate or proof by an exported symbol, and its doc carries the `| **Write reach** |` header row with the same value; `tests/unit/db/write-reach-capability.test.ts`, `tests/unit/db/write-reach-proofs.test.ts` and `tests/unit/db/write-reach-docs.test.ts` hold the three equal
 - [ ] `src/lib/db/compatibility.ts`: the new id's `READS_TRUST_MATERIAL` entry, `true` only when its TLS library does not read Node.js's trust store (Step 3).
+- [ ] `src/lib/db/compatibility.ts`: the new id's `SSH_TUNNEL_REFUSAL` entry, `null` when its connections may run through an SSH tunnel, otherwise the whole sentence Studio refuses a tunnelled connection with, saying why (the client reaches addresses the server advertises, a second port, several vendor hosts, a datagram transport, a file with no address); core refuses such a tunnel before it dials anything, and the dialog and `buildConnection` read the same row through `offersSshTunnel`, so the provider never checks a tunnel itself.
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
       twenty-one shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
       `libsql`, `sqlite`, `prometheus`, `qdrant`, `weaviate`, `milvus`, `influxdb`, `influxdb3`, `oxia`, `databend`, `kubernetes`, `bigquery`, `firestore`, `rabbitmq` and `snowflake`
@@ -1230,7 +1232,7 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/seed/credential-resolver.ts`: `RESOLVABLE_FIELDS`, when the field is a credential or an address a deployment keeps out of the seed file; a name such as a SASL mechanism is neither, and takes a literal.
 - [ ] `src/lib/db/provider-cache-key.ts`: `credentialDigest`, a hand-kept list of every field that changes who a connection authenticates as, so two connections that differ only in that field never share a cached provider.
 - [ ] `docs/API_DOCS.md`: the `DatabaseConnection` block, which `tests/unit/api-docs-types.test.ts` compares with the interface as an ordered list of field names, so the field goes in at the same position in both.
-- [ ] `src/lib/db/connection-form.ts`: `fieldOptions`, when the field is a choice the dialog renders as a select, and `showSshTunnel: false`, when the engine cannot run through a tunnel; the dialog and `buildConnection` both read the latter through `offersSshTunnel`, one rule for both readers.
+- [ ] `src/lib/db/connection-form.ts`: `fieldOptions`, when the field is a choice the dialog renders as a select.
 
 **For agent mode (#1821):**
 

@@ -78,12 +78,12 @@ const mockRunInvestigation = mock(async (runId: string, options: { resources: Ag
 
 mock.module("@/lib/agent/run-store", () => ({ ...realRunStore, resolveAgentLedgerWorld: async () => world }));
 mock.module("@/lib/seed/resolve-connection", () => ({ resolveConnection: mockResolveConnection }));
-// What the run's declaration provider was built with, so the context its declarations come from can be read back.
-const mockCreateDatabaseProvider = mock(async (...args: unknown[]) => {
+// What the run's declarations were read with, so the context they come from can be read back.
+const mockReadProviderDeclarations = mock(async (...args: unknown[]) => {
   void args;
-  return { getCapabilities: mockGetCapabilities, getLabels: mockGetLabels };
+  return { capabilities: mockGetCapabilities(), labels: mockGetLabels(), supportsQueryCancel: false };
 });
-mock.module("@/lib/db", () => ({ createDatabaseProvider: mockCreateDatabaseProvider }));
+mock.module("@/lib/db", () => ({ readProviderDeclarations: mockReadProviderDeclarations }));
 // The profiled seam itself, so what the run's acquirer hands it can be read back.
 const mockAcquireExecutionProfileProvider = mock(async (...args: unknown[]) => {
   void args;
@@ -284,7 +284,7 @@ describe("driveAgentRun", () => {
 
   test("reads the run's declarations from a provider built as an agent-mode handle, never as an editor one", async () => {
     await openRun("arun_declared");
-    mockCreateDatabaseProvider.mockClear();
+    mockReadProviderDeclarations.mockClear();
 
     await driveAgentRun("arun_declared");
 
@@ -293,13 +293,31 @@ describe("driveAgentRun", () => {
     // handle refuses. Every agent profile opens readOnly; the operations context sends no statement. It carries the run
     // actor's editor posture, the one its acquirer gets (tests/isolated/agent-runtime-file-posture.test.ts drives it
     // through the real factory).
-    expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(1);
-    expect(mockCreateDatabaseProvider.mock.calls[0]).toEqual([
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(1);
+    expect(mockReadProviderDeclarations.mock.calls[0]).toEqual([
       CONNECTION,
-      {},
       executionContextFor("agent-operations", editorExecutionContext(ACTOR, CONNECTION)),
     ]);
     expect(executionContextFor("agent-operations")).toMatchObject({ readOnly: true, sendsStatements: false });
+  });
+
+  test("reads a tunnelled connection's declarations without opening its tunnel (FND-2 slice 5)", async () => {
+    await openRun("arun_tunnelled");
+    const tunnelled = {
+      ...CONNECTION,
+      host: "db.internal",
+      port: 5432,
+      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "jump", authMethod: "password" },
+    } as DatabaseConnection;
+    mockResolveConnection.mockImplementation(async () => tunnelled);
+    mockReadProviderDeclarations.mockImplementationOnce(realFactory.readProviderDeclarations as never);
+    try {
+      await driveAgentRun("arun_tunnelled");
+
+      expect(investigationCalls.map((call) => call.runId)).toContain("arun_tunnelled");
+    } finally {
+      mockResolveConnection.mockImplementation(async () => CONNECTION);
+    }
   });
 
   test("gives the run a canonical registry, a deadline and an empty repair ledger", async () => {
@@ -754,7 +772,7 @@ describe("driveAgentRun, a failure whose text carries the connection's credentia
     await openRun("arun_constructor");
     mockResolveConnection.mockImplementation(async () => credentialed);
     try {
-      mockCreateDatabaseProvider.mockImplementationOnce(async () => {
+      mockReadProviderDeclarations.mockImplementationOnce(async () => {
         throw new DatabaseConfigError(`bad configuration ${password}`, "postgres");
       });
       const error = await driveAgentRun("arun_constructor").then(
@@ -774,7 +792,7 @@ describe("driveAgentRun, a failure whose text carries the connection's credentia
         ({ ...credentialed, agentUser: "agent_reader", agentPassword: crypto.randomUUID() }) as DatabaseConnection,
     );
     try {
-      mockCreateDatabaseProvider.mockImplementationOnce(async () => {
+      mockReadProviderDeclarations.mockImplementationOnce(async () => {
         throw new ConnectionError(`could not connect with ${password}`, "postgres");
       });
       const error = await driveAgentRun("arun_ownpassword").then(

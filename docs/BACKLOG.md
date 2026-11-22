@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D492, U17 · 364
+- [Drivers and connections](#drivers-and-connections) — D1-D492, U17 · 363
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -1195,7 +1195,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 65 hits, re-measured on 2026-11-22.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 66 hits, re-measured on 2026-11-22.
 The breakdown below is the one measured at 54 on 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
@@ -1805,18 +1805,6 @@ Found 2026-09-25 while building the Kafka provider (#1088, section 5.4).
 Not fixed there: the trade between bounded work and a complete window is a design decision, not a defect of either rule.
 
 **Done when:** a ruling chooses between the stop and the held window, and either the displaced-rows case answers partition 1's rows, or the stop stays with the reason recorded beside the rule in `read.ts`.
-
-### D124. Cassandra and Couchbase also reach addresses the server advertises, which an SSH tunnel does not carry
-
-The Kafka provider refuses an SSH tunnel because a Kafka client reaches every broker at the address the broker advertises (#1088, section 6.1); two other providers discover addresses the same way and take a tunnel anyway.
-`cassandraClientOptions` in `src/lib/db/providers/sql/cassandra/driver-transport.ts` gives the driver the configured host as its one contact point, and the driver discovers the rest of the ring from the node's peers table, whose addresses a tunnel to one host does not forward.
-`pickQueryEndpoint` in `src/lib/db/providers/document/couchbase/http-transport.ts` takes the query service's address from the cluster's node map, so behind a tunnel the management port goes through it and the query service is asked for at the node's own name; D52 records the same discovery handing back an address a port mapping does not reach.
-Read from the code, not measured through a tunnel.
-
-Found 2026-09-24 while designing the Kafka provider's tunnel refusal (#1088, section 6.1).
-Not fixed there: that PR changes no other provider.
-
-**Done when:** each of the two either routes its discovered addresses through the tunnel, or refuses a tunnel with a sentence that says why, as Kafka does, and a test pins the choice for each.
 
 ### D125. A Kafka broker with a failed log directory fails the three monitoring panels
 

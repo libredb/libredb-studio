@@ -70,7 +70,6 @@ input#password type="password" placeholder="***" describedby=none
 label[for=database] "Bucket Name"
 input#database type=none placeholder="db" describedby=none
 button "SSL / TLS"
-button "SSH Tunnel"
 button "Cancel"
 button "Test Connection"
 button "Establish Connection"
@@ -141,7 +140,6 @@ input#connectionString type=none placeholder="couchbase://localhost:8091/travel-
 label[for=database] "Bucket Name (optional override)"
 input#database type=none placeholder="Extracted from URI if not provided" describedby=none
 button "SSL / TLS"
-button "SSH Tunnel"
 button "Cancel"
 button "Test Connection"
 button "Establish Connection"

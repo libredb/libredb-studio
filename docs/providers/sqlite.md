@@ -476,6 +476,9 @@ const c = { id: 'lite-3', name: 'App', type: 'sqlite',
   connectionString: 'file:/data/app.db', createdAt: new Date() };
 ```
 
+SQLite takes no SSH tunnel: it opens a file on the Studio server, so there is no address to forward to, and the dialog offers no SSH panel for it.
+A stored connection that still carries a tunnel switched on, left by the dialog's state before it stopped writing one, is refused before anything is opened; edit the connection and save it again to clear it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+
 `validate()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) requires either `database` or `connectionString` (else "Database file path is required … or `:memory:`").
 Note `getCapabilities().supportsConnectionString` is `false`, yet `connectionString` *is* read as the file path by the provider factory: the flag reflects that there is no network DSN, not that the field is ignored.
 

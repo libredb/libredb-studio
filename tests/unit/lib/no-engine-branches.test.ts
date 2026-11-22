@@ -93,6 +93,7 @@ export const REGISTRIES: readonly Listed[] = [
     "CONNECTION_STRING_ACCEPTED",
     "OPENS_LOCAL_FILE",
     "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
+    "SSH_TUNNEL_REFUSAL",
   ].map((declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY })),
   ...["CONNECTION_FIELD_ROWS", "CONNECTION_FIELDS", "SEED_ONLY_FIELDS", "SEED_AGENT_CREDENTIAL"].map((declaration) => ({
     path: "src/lib/db/connection-fields.ts",
@@ -159,7 +160,7 @@ export const REGISTRIES: readonly Listed[] = [
   },
   {
     path: "src/lib/db/factory.ts",
-    declaration: "createDatabaseProvider",
+    declaration: "buildProvider",
     count: 43,
     reason: "the composition root, which maps each type id to its provider class",
   },

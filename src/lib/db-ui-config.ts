@@ -46,7 +46,8 @@ import {
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import type { ConnectionField } from "@/lib/db/connection-fields";
 import { CONNECTION_FORM, type ConnectionFormSpec, type FieldPlacementDeclaration } from "@/lib/db/connection-form";
-import { assertDatabaseType } from "@/lib/db/type-id";
+import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import { assertDatabaseType, typeIdRow } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 
 export {
@@ -362,18 +363,18 @@ export function hostUriSchemes(type: DatabaseType): readonly HostUriScheme[] {
 }
 
 /**
- * Whether this engine's connections may carry an SSH tunnel: false only where the entry
- * declares `showSshTunnel: false`, which Kafka does, because a tunnel forwards one address and
- * a Kafka client reaches every broker at the address the broker advertises.
+ * Whether this engine's connections may carry an SSH tunnel: true exactly where core's `SSH_TUNNEL_REFUSAL` row
+ * (`src/lib/db/compatibility.ts`) is null, so the dialog offers a tunnel exactly where core takes one (FND-2 slice 5).
+ * The row says why each other engine takes none: Kafka, Apache Cassandra and Couchbase reach addresses the server
+ * advertises, RabbitMQ uses two ports, BigQuery, Firestore and Snowflake reach several vendor API hosts, SNMP sends
+ * datagrams, and SQLite, DuckDB and LibreDB open a file with no address to forward to.
  *
  * One rule, two readers, as the engine's field list is: the connection modal renders the SSH
  * toggle only when this says so, and `buildConnection` writes `sshTunnel` only when this says
  * so. The second reader is the one that matters: the dialog keeps a tunnel switched on under
- * another type in its state, and a hidden panel would leave no control to turn it off. A
- * file-based engine answers true and has its panel hidden by `isFileBased` instead; a tunnel
- * left in the dialog's state is saved on it but inert, because no tunnel opens for a
- * connection without a host and port (docs/BACKLOG.md records the dialog's SSH state).
+ * another type in its state, and a hidden panel would leave no control to turn it off, so a tunnel left there is
+ * never written onto a connection whose engine takes none, which core would refuse.
  */
 export function offersSshTunnel(type: DatabaseType): boolean {
-  return entryOf(type).showSshTunnel !== false;
+  return typeIdRow(SSH_TUNNEL_REFUSAL, type) === null;
 }

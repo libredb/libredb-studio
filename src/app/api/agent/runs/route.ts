@@ -28,7 +28,7 @@ import {
   type AgentThreadHeader,
 } from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
-import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
+import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { READ_ROOTS_REQUIRED, READ_ROOTS_REQUIRED_SENTENCE } from "@/lib/db/compatibility";
 import { editorProvider } from "@/lib/api/editor-provider";
@@ -198,10 +198,13 @@ export async function GET(req: Request) {
   }
 }
 
-/** Whether the connection reaches a whole server (#1530); a record that cannot be built declares nothing. */
+/**
+ * Whether the connection reaches a whole server (#1530), read through `readProviderDeclarations` without connecting
+ * and without opening the connection's tunnel (FND-2 slice 5); a record that cannot be built declares nothing.
+ */
 async function reachesWholeServer(connection: DatabaseConnection): Promise<boolean> {
   try {
-    return (await createDatabaseProvider(connection)).getCapabilities().catalogSessions === true;
+    return (await readProviderDeclarations(connection)).capabilities.catalogSessions === true;
   } catch {
     return false;
   }

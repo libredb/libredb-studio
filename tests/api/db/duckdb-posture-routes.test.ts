@@ -32,6 +32,10 @@ const mockCreateDatabaseProvider = mock(async (...args: unknown[]) => {
   void args;
   return mockProvider;
 });
+const mockReadProviderDeclarations = mock(async (...args: unknown[]) => {
+  void args;
+  return { capabilities: mockProvider.getCapabilities(), labels: mockProvider.getLabels(), supportsQueryCancel: false };
+});
 const mockFindOpenSingleWriterProvider = mock((...args: unknown[]) => {
   void args;
   return null;
@@ -54,11 +58,13 @@ mock.module("@/lib/db", () => ({
   ...actualDb,
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mockCreateDatabaseProvider,
+  readProviderDeclarations: mockReadProviderDeclarations,
 }));
 mock.module("@/lib/db/factory", () => ({
   ...actualFactory,
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mockCreateDatabaseProvider,
+  readProviderDeclarations: mockReadProviderDeclarations,
   findOpenSingleWriterProvider: mockFindOpenSingleWriterProvider,
   isSingleWriterFileOpen: mock(() => false),
 }));
@@ -109,7 +115,13 @@ const EXTRA: Record<string, Record<string, unknown>> = {
 const ADMIN_ONLY = new Set(["maintenance", "maintenance/preview"]);
 
 /** The routes that build their own provider rather than take a cached one. */
-const BUILDS_ITS_OWN = new Set(["provider-meta", "statement/analyze", "test-connection"]);
+const BUILDS_ITS_OWN = new Set(["test-connection"]);
+
+/**
+ * The routes that read a provider's declarations without connecting it (FND-2 slice 5): `readProviderDeclarations`
+ * takes the execution context as its second argument.
+ */
+const READS_DECLARATIONS = new Set(["provider-meta", "statement/analyze"]);
 
 const workDir = mkdtempSync(join(tmpdir(), "libredb-duckdb-posture-routes-"));
 const seedConfigFile = join(workDir, "seed-connections.json");
@@ -137,11 +149,15 @@ const INLINE = {
   connection: { id: "inline-duck", name: "Inline", type: "duckdb", database: join(workDir, "inline.duckdb") },
 };
 
-/** What the route handed the factory as its third argument, the execution context. */
+/** What the route handed the factory as the execution context. */
 async function postureFrom(route: string, target: Record<string, unknown>): Promise<unknown> {
   await handlers[route](
     createMockRequest(`/api/db/${route}`, { method: "POST", body: { ...target, ...EXTRA[route] } }) as never,
   );
+  if (READS_DECLARATIONS.has(route)) {
+    expect(mockReadProviderDeclarations.mock.calls.length).toBeGreaterThan(0);
+    return mockReadProviderDeclarations.mock.calls[0]?.[1];
+  }
   const calls = BUILDS_ITS_OWN.has(route) ? mockCreateDatabaseProvider.mock.calls : mockGetOrCreateProvider.mock.calls;
   expect(calls.length).toBeGreaterThan(0);
   return calls[0]?.[2];
@@ -152,6 +168,7 @@ beforeEach(() => {
   resetSeedCache();
   mockGetOrCreateProvider.mockClear();
   mockCreateDatabaseProvider.mockClear();
+  mockReadProviderDeclarations.mockClear();
   mockFindOpenSingleWriterProvider.mockClear();
 });
 

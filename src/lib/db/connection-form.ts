@@ -114,11 +114,6 @@ export interface ConnectionFormSpec {
    */
   fieldShownWhen?: Partial<Record<ConnectionField, { readonly field: ConnectionField; readonly equals: string }>>;
   /**
-   * `false` where this engine's connections may not carry an SSH tunnel (#1088), absent meaning the
-   * dialog offers the tunnel. Read through `offersSshTunnel`, never directly.
-   */
-  showSshTunnel?: false;
-  /**
    * `false` where the engine's endpoint fixes its own TLS, so an SSL mode would be read by nothing. Absent
    * means the dialog offers the panel. Read through `offersSslPanel`, never directly.
    */
@@ -736,11 +731,6 @@ export const CONNECTION_FORM: {
     // No URI convention to paste: a Kafka client takes a bootstrap address, and Kafka's
     // connection string row has no `paste`.
     showConnectionStringToggle: false,
-    // No SSH tunnel: a tunnel forwards one address, and a Kafka client reads from every broker at
-    // the address the broker advertises (docs/providers/kafka.md). Read through offersSshTunnel, so
-    // the dialog neither offers a tunnel nor sends one left in its state; the provider still
-    // refuses a tunnelled connection that arrives another way.
-    showSshTunnel: false,
     // No database field: one connection is one cluster (docs/providers/kafka.md). The SASL
     // mechanism is a select declared here, not an isKafka branch in the dialog.
     connectionFields: CONNECTION_FIELDS.kafka,
@@ -935,9 +925,8 @@ export const CONNECTION_FORM: {
       password: "Service-account key JSON or access token",
       location: "Location",
     },
-    // Always HTTPS to googleapis.com with the system trust store, and a tunnel would forward one address of
-    // several (the API, the token endpoint, the metadata server), so neither panel would be read.
-    showSshTunnel: false,
+    // Always HTTPS to googleapis.com with the system trust store, so an SSL mode would be read by nothing. No SSH panel
+    // either: core's SSH_TUNNEL_REFUSAL row (src/lib/db/compatibility.ts) refuses a tunnel, and offersSshTunnel reads it.
     showSslPanel: false,
     fieldPlaceholders: {
       database: "my-gcp-project",
@@ -999,9 +988,8 @@ export const CONNECTION_FORM: {
       privateKeyPassphrase: { field: "authMethod", equals: "keypair" },
       password: { field: "authMethod", equals: "pat" },
     },
-    // TLS is fixed (the certificate checked, the account host as its name) and nothing is tunnelled, so neither panel
-    // would be read.
-    showSshTunnel: false,
+    // TLS is fixed (the certificate checked, the account host as its name), so an SSL mode would be read by nothing. No
+    // SSH panel either: core's SSH_TUNNEL_REFUSAL row refuses a tunnel, and offersSshTunnel reads it.
     showSslPanel: false,
   },
   spark: {
@@ -1113,9 +1101,8 @@ export const CONNECTION_FORM: {
     // The database box is the only one of the three that reads a declared placeholder: the dialog draws `***` in the
     // password box and `default` in the schema box for every engine, so their guidance lives in the hints above.
     fieldPlaceholders: { database: "my-project" },
-    // Always HTTPS to googleapis.com with the system trust store, and a tunnel would forward one address of several
-    // (the API, the token endpoint, the metadata server), so neither panel would be read.
-    showSshTunnel: false,
+    // Always HTTPS to googleapis.com with the system trust store, so an SSL mode would be read by nothing. No SSH panel
+    // either: core's SSH_TUNNEL_REFUSAL row refuses a tunnel, and offersSshTunnel reads it.
     showSslPanel: false,
   },
   rabbitmq: {
@@ -1124,8 +1111,6 @@ export const CONNECTION_FORM: {
     defaultPort: "15672",
     // Host and Management port hold the management API. An amqp:// URL is not taken: its parts go in their own fields.
     showConnectionStringToggle: false,
-    // One tunnel carries one port, and the management API and AMQP use two, so the provider refuses a tunnel.
-    showSshTunnel: false,
     hostAcceptsUri: ["http", "https"],
     connectionFields: CONNECTION_FIELDS.rabbitmq,
     fieldLabels: {
@@ -1291,15 +1276,6 @@ export const CONNECTION_FORM: {
     // beside that sentence contradicts it. What secures this protocol is SNMPv3's own USM, inside
     // the message rather than under it.
     showSslPanel: false,
-    // AND NO SSH TUNNEL, which is a different reason and not the same one twice. Something would
-    // read it - `factory.ts` opens the tunnel for any connection that carries one, with no test on
-    // the engine - and that is exactly the problem: MEASURED, the shared tunnel is a local TCP
-    // listener (`src/lib/ssh/tunnel.ts` is `net.createServer` plus `forwardOut`, and the word
-    // `dgram` does not appear in its 392 lines). The factory then rewrites host and port to that
-    // TCP endpoint, and this provider sends datagrams to it, where nothing is listening for them.
-    // A tunnel the dialog offers and the transport cannot use is a box that breaks the connection
-    // it promises to carry.
-    showSshTunnel: false,
     // FOUR FIELDS. Three are what the provider reads; the fourth is the consent without which it
     // REFUSES to open. `connection-options.ts` turns down a v2c connection to a host that is not
     // loopback unless `allowInsecureAuth` is set, and names two ways out: choose v3, or consent to

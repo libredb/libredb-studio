@@ -68,8 +68,8 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the reserved role for Kubernetes-discovered connections, the OpenShift self review, admin rule and platform check, the Kubernetes discovery controls, the operator's own namespace, the OpenShift console plugin's server, a seed's agent credential, an OPC UA seed's read roots, the shared Google sign-in, the provider built without the SSH tunnel's secret fields, the review record every agent and MCP statement gate reads, the one scrub of a provider's text on the agent, hand-over and MCP paths, the operator's CA certificates handed to the providers whose TLS does not read Node's store, then the connection that never opens Studio's own storage files", () => {
-    expect(PROGRAMME_CONTROL_IDS.slice(-16)).toEqual([
+  test("the programme ends with the reserved role for Kubernetes-discovered connections, the OpenShift self review, admin rule and platform check, the Kubernetes discovery controls, the operator's own namespace, the OpenShift console plugin's server, a seed's agent credential, an OPC UA seed's read roots, the shared Google sign-in, the provider built without the SSH tunnel's secret fields, the review record every agent and MCP statement gate reads, the one scrub of a provider's text on the agent, hand-over and MCP paths, the operator's CA certificates handed to the providers whose TLS does not read Node's store, the connection that never opens Studio's own storage files, then core's decision about every SSH tunnel before it dials", () => {
+    expect(PROGRAMME_CONTROL_IDS.slice(-17)).toEqual([
       "3.30",
       "3.31",
       "3.32",
@@ -86,8 +86,9 @@ describe("parseTables and findControlTable", () => {
       "3.43",
       "3.44",
       "3.45",
+      "3.46",
     ]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(72);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(73);
   });
 
   test("ignores a table that is not the control table", () => {

@@ -9,6 +9,8 @@ import {
   type DatabaseConnection,
   type EditorExecutionContext,
   type ProviderBuildContext,
+  type ProviderCapabilities,
+  type ProviderLabels,
   type ProviderOptions,
   type ProviderExecutionContext,
 } from "./types";
@@ -17,11 +19,9 @@ import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderO
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { isEnvelopeClaim } from "@/lib/storage/envelope-claim";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
-import {
-  assertExecutionContextIsPlainData,
-  assertTunnelRecordIsPlainData,
-  providerConnection,
-} from "./provider-connection";
+import { assertExecutionContextIsPlainData, providerConnection } from "./provider-connection";
+import { assertProviderTunnel, decideTunnel } from "./tunnel-decision";
+import { supportsQueryCancel } from "./query-cancel";
 import { storageLocation } from "@/lib/data-dir";
 import { egressDecision } from "./egress-decision";
 import { trustMaterial } from "./trust-material";
@@ -51,9 +51,11 @@ import * as path from "path";
  *
  * @param connection - Database connection configuration. The provider is built from `providerConnection(connection)`
  *   (./provider-connection): a copy whose `sshTunnel` holds only the fields `SSH_TUNNEL_FIELDS` classifies public, so
- *   the tunnel's password, private key and passphrase stay in the record the caller passed. An `sshTunnel` that is not
- *   plain data, or a connection carrying one that is not, is refused with a `DatabaseConfigError` before anything is
- *   built. The process's egress decision is taken first too, where the other entry points call assertEgressDecided: the
+ *   the tunnel's password, private key and passphrase stay in the record the caller passed. Core's decision about the
+ *   tunnel (`decideTunnel` in ./tunnel-decision) is taken before anything is built: a malformed `sshTunnel`, a tunnel
+ *   that is on for an engine that takes none or for a connection with no host and port, a tunnel that is on and was not
+ *   opened (no `TUNNEL_FAR_END`: build inside `withOneShotTunnel` or use `getOrCreateProvider`), and a far end on a
+ *   connection whose tunnel is not on, are each refused with a `DatabaseConfigError` (`assertProviderTunnel`). The process's egress decision is taken first too, where the other entry points call assertEgressDecided: the
  *   first call of a process with no boot hook reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and keeps it, and an invalid value is
  *   refused on every call. A SQLite, DuckDB or LibreDB connection is then admitted (`admittedFileConnection` in
  *   ./provider-files): the provider is handed, under `ADMITTED_FILE`, the file the connection names resolved against
@@ -282,6 +284,53 @@ export async function createDatabaseProvider(
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
+  return await buildProvider(connection, options, execution, true);
+}
+
+/**
+ * What Studio reads of a provider it never connects: its capabilities, its labels and whether it can cancel a running
+ * statement (`supportsQueryCancel` in ./query-cancel). Plain data, never the provider.
+ */
+export interface ProviderDeclarations {
+  readonly capabilities: ProviderCapabilities;
+  readonly labels: ProviderLabels;
+  readonly supportsQueryCancel: boolean;
+}
+
+/**
+ * Read a connection's provider declarations without connecting anything and without opening its SSH tunnel (FND-2
+ * slice 5): the read Studio's routes take when they only need to know what a provider declares, such as
+ * `POST /api/db/provider-meta`.
+ *
+ * It runs every check `createDatabaseProvider` runs, so a connection that one refuses for its type, its read-only
+ * mode, its execution context or its tunnel (a malformed tunnel, an engine that takes none, a tunnel with nothing to
+ * forward to) is refused here by the same sentence, except one: a tunnel that is on and was not opened. It builds the
+ * provider from such a connection, reads it and lets it go, so the provider, whose `host` and `port` are the
+ * database's own, is never handed out and can never be connected past the tunnel. It is not exported from the
+ * package (`src/exports/`); an embedder reads a tunnelled connection's declarations inside `withOneShotTunnel`.
+ */
+export async function readProviderDeclarations(
+  connection: DatabaseConnection,
+  execution: ProviderExecutionContext = {},
+): Promise<ProviderDeclarations> {
+  const provider = await buildProvider(connection, {}, execution, false);
+  return {
+    capabilities: provider.getCapabilities(),
+    labels: provider.getLabels(),
+    supportsQueryCancel: supportsQueryCancel(provider),
+  };
+}
+
+/**
+ * The build `createDatabaseProvider` and `readProviderDeclarations` share: every check, then the provider. Only the
+ * tunnel rule differs between them, `requireOpenedTunnel` (see `assertProviderTunnel` in ./tunnel-decision).
+ */
+async function buildProvider(
+  connection: DatabaseConnection,
+  options: ProviderOptions,
+  execution: ProviderExecutionContext,
+  requireOpenedTunnel: boolean,
+): Promise<DatabaseProvider> {
   // First, before every other check, the log line and the switch below: a type that names no provider is refused by
   // name, and no other refusal or default speaks for it (FND-1).
   assertDatabaseType(connection.type);
@@ -294,6 +343,9 @@ export async function createDatabaseProvider(
   // Before the storage location and the file admission below, which read the host filesystem: a connection whose
   // engine refuses a denied file-access posture, under a context that denies it, reads nothing.
   assertFileAccessPostureHonoured(connection, execution);
+  // Core's decision about the tunnel (./tunnel-decision), before anything is built: a tunnel that is on is built only
+  // when core opened it, so no provider can reach its server past the tunnel the connection asked for.
+  assertProviderTunnel(connection, requireOpenedTunnel);
   const egress = egressDecision();
   // Studio's storage location, taken here on every call so the first provider built in a process with no boot hook
   // takes it, whatever its engine, before a later working directory could move it (FND-2 slice 3, docs/SECURITY.md
@@ -302,8 +354,8 @@ export async function createDatabaseProvider(
   // Every provider is built from the connection `providerConnection` answers: the record with its `sshTunnel` reduced to
   // the public fields, so no provider holds the tunnel's password, private key or passphrase (FND-2,
   // docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider, acquireExecutionProfileProvider,
-  // withOneShotTunnel), it dials with those before it calls this function; a caller that builds an unconnected provider
-  // opens none. A tunnel or record that is not plain data is refused here, by name, before the log line below.
+  // withOneShotTunnel), it dials with those before it calls this function; a tunnel that is on and was not opened was
+  // refused above, except for readProviderDeclarations, which never hands its provider out.
   connection = providerConnection(connection);
   // A SQLite, DuckDB or LibreDB connection (`OPENS_LOCAL_FILE`) is handed the file core admitted, resolved against the
   // working directory now; one of Studio's own storage files, a path the reserved check cannot read, a NUL byte, a
@@ -774,9 +826,11 @@ async function releaseTunnelOfUnopenedProvider(tunnel: TunnelInfo, connectionId:
  * anything named `use()` as React 19's hook and rejects it outside a component, and
  * inside a try block on top of that.
  *
- * A connection with no tunnel, or with no host and port to forward to (a
- * connection-string connection, or SQLite), passes straight through untouched - the
- * same rule the pooled paths apply.
+ * A connection with no tunnel, or with one that is off, passes straight through
+ * untouched. A tunnel that is on is decided by core first (`decideTunnel`, the rule the
+ * pooled paths apply): one that is malformed, on an engine that takes none, or on a
+ * connection with no host and port to forward to (a connection-string connection) is
+ * refused before anything is dialled or run.
  */
 export async function withOneShotTunnel<T>(
   connection: DatabaseConnection,
@@ -786,14 +840,15 @@ export async function withOneShotTunnel<T>(
   assertDatabaseType(connection.type);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
-  // Before the copy below, which would hand createDatabaseProvider plain data: see assertTunnelRecordIsPlainData.
-  assertTunnelRecordIsPlainData(connection);
+  // Core's decision about the tunnel (./tunnel-decision), before the copy below and before anything is dialled: a
+  // malformed tunnel, an engine that takes none and a tunnel with nothing to forward to are refused here, by name.
+  const tunnelDecision = decideTunnel(connection);
   assertEgressDecided();
-  if (!connection.sshTunnel?.enabled || !connection.host || !connection.port) {
+  if (!tunnelDecision.open) {
     return await run(connection);
   }
 
-  const tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port, {
+  const tunnel = await createSSHTunnel(connection.id, tunnelDecision.tunnel, tunnelDecision.host, tunnelDecision.port, {
     shared: false,
   });
 
@@ -1315,7 +1370,9 @@ export async function getOrCreateProvider(
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
-  assertTunnelRecordIsPlainData(connection);
+  // Core's decision about the tunnel (./tunnel-decision), ahead of the cache key, which frames the tunnel's route, and
+  // of any bastion dial: the tunnel is opened below exactly when this answers `open`.
+  const tunnelDecision = decideTunnel(connection);
   assertOwnerPoolHonoured(connection, execution);
   assertEgressDecided();
   // The writable cache never holds a read-only handle, and its key frames no such mode for an
@@ -1404,8 +1461,8 @@ export async function getOrCreateProvider(
   // through it).
   let effectiveConnection = connection;
   let tunnel: TunnelInfo | null = null;
-  if (connection.sshTunnel?.enabled && connection.host && connection.port) {
-    tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port);
+  if (tunnelDecision.open) {
+    tunnel = await createSSHTunnel(connection.id, tunnelDecision.tunnel, tunnelDecision.host, tunnelDecision.port);
     // Rewrite connection to point to local tunnel endpoint, keeping the far end for the seal
     effectiveConnection = tunnelledConnection(connection, tunnel);
   }
@@ -1746,7 +1803,9 @@ export async function acquireExecutionProfileProvider(
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
-  assertTunnelRecordIsPlainData(connection);
+  // Core's decision about the tunnel (./tunnel-decision), as in getOrCreateProvider, and ahead of the statement review
+  // below, so an engine that takes no tunnel is refused for that first.
+  const tunnelDecision = decideTunnel(connection);
   assertOwnerPoolHonoured(connection, requester);
   assertEgressDecided();
   // Refuses an unknown profile ahead of the cache key, which frames the profile.
@@ -1828,8 +1887,8 @@ export async function acquireExecutionProfileProvider(
   // end, and shared with the writable provider (createSSHTunnel hands every caller for that forward the one forward). This
   // acquisition reports how its provider fared, and the pool decides whether a failure closes it.
   let tunnel: TunnelInfo | null = null;
-  if (connection.sshTunnel?.enabled && connection.host && connection.port) {
-    tunnel = await createSSHTunnel(connection.id, connection.sshTunnel, connection.host, connection.port);
+  if (tunnelDecision.open) {
+    tunnel = await createSSHTunnel(connection.id, tunnelDecision.tunnel, tunnelDecision.host, tunnelDecision.port);
     effectiveConnection = tunnelledConnection(effectiveConnection, tunnel);
   }
 

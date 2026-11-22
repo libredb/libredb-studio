@@ -17,7 +17,7 @@
 // Factory (Primary API)
 // ============================================================================
 
-export { getOrCreateProvider, createDatabaseProvider } from "./factory";
+export { getOrCreateProvider, createDatabaseProvider, readProviderDeclarations } from "./factory";
 
 // ============================================================================
 // Types & Interfaces

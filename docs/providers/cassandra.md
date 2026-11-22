@@ -558,6 +558,14 @@ catalog the monitoring reads key their degradation on, and `SELECT key FROM syst
 says whether the server is ScyllaDB and so which keyspaces the tree hides (see "A system keyspace is
 excluded by exact NAME, never by a prefix", #1428).
 
+### 4.4 No SSH tunnel
+
+Studio refuses an Apache Cassandra connection whose SSH tunnel is on, before it dials the bastion or builds the provider, and the dialog offers no SSH panel for it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+A tunnel forwards one address, and the driver keeps only the contact point it dialled: it adds every other node of the ring at the address that node advertises (`rpc_address`) on the protocol port, and opens its pools to those addresses directly, past the tunnel.
+A single-node install would work through the forward and a ring would not, and Studio cannot tell the two apart before it connects, so it refuses both rather than dial around a tunnel the connection asked for.
+The refusal reads "Apache Cassandra does not run through an SSH tunnel: the tunnel forwards one address, and the driver reaches every other node of the ring at the address that node advertises. Connect to the cluster directly, or turn the tunnel off."
+A route per node is a later change.
+
 ### Connection string
 
 `cassandra` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/sql/cassandra/connection-string.ts)).

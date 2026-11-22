@@ -13,7 +13,7 @@
  * dynamic import and a constructor (`tests/helpers/census-connection.ts`).
  */
 import { describe, expect, test } from "bun:test";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { connectionFingerprint, tunnelRoute } from "@/lib/db/connection-fingerprint";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import type { DatabaseConnection, DatabaseProvider } from "@/lib/db/types";
@@ -35,6 +35,7 @@ const TUNNEL_MARKER_THREE = "not-a-real-tunnel-marker-5d0e";
 const MARKERS = [TUNNEL_MARKER_ONE, TUNNEL_MARKER_TWO, TUNNEL_MARKER_THREE];
 const BASTION_FINGERPRINT = "SHA256:bm90LWEtcmVhbC1iYXN0aW9uLWZpbmdlcnByaW50";
 const FAR_END = { host: "db.internal", port: 5432 };
+const TAKES_A_TUNNEL = SHIPPED_DATABASE_TYPES.filter((type) => SSH_TUNNEL_REFUSAL[type] === null);
 
 /** A tunnel with every field filled, a marker in each field the classification calls secret, and one unclassified key. */
 function tunnelWithMarkers(enabled: boolean): SSHTunnelConfig & { unclassified: string } {
@@ -115,7 +116,10 @@ describe("no provider holds the SSH tunnel's secret fields (FND-2)", () => {
     expect(configOf(provider)[TUNNEL_FAR_END]).toBeUndefined();
   });
 
-  test.each(SHIPPED_DATABASE_TYPES)("%s built as the factory builds a tunnelled connection", async (type) => {
+  // Only the engines that take a tunnel: core refuses a tunnel that is on for the others before any build
+  // (SSH_TUNNEL_REFUSAL, tests/security/provider-tunnel-decisions.test.ts), so no provider of theirs is ever built
+  // from a tunnelled connection.
+  test.each(TAKES_A_TUNNEL)("%s built as the factory builds a tunnelled connection", async (type) => {
     const provider = await expectBuiltWithoutTunnelSecrets(tunnelledRecord(type), true);
     expect(configOf(provider)[TUNNEL_FAR_END]).toEqual(FAR_END);
     expect(provider.config.host).toBe("127.0.0.1");

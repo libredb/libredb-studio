@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
-import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
+import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
@@ -187,16 +187,18 @@ export async function POST(req: NextRequest) {
        * operator-pinned `database` with no walk to justify it, so it is refused here in words rather
        * than quietly honoured or quietly ignored.
        *
-       * READ FROM THE DECLARATION, BEFORE ANY SOCKET. Capabilities are type-driven, so the
-       * unconnected provider `POST /api/db/provider-meta` reads them from (#457) answers the same
-       * question. Checked after `getOrCreateProvider`, an unreachable Postgres answered 503 for a
+       * READ FROM THE DECLARATION, BEFORE ANY SOCKET. Capabilities are type-driven, so
+       * `readProviderDeclarations`, the read `POST /api/db/provider-meta` takes (#457), answers the same
+       * question without connecting and without opening the connection's tunnel (FND-2 slice 5). Checked after `getOrCreateProvider`, an unreachable Postgres answered 503 for a
        * request that was never valid, and a reachable one was connected only to be refused.
        *
        * Built under the session's editor posture, as provider-meta builds it, so a connection the
        * posture denies file access is refused here before Studio reads the path it names.
        */
-      const declared = await createDatabaseProvider(connection, {}, editorExecutionContext(guard.session, connection));
-      const capabilities = declared.getCapabilities();
+      const { capabilities } = await readProviderDeclarations(
+        connection,
+        editorExecutionContext(guard.session, connection),
+      );
       if (capabilities.keyScan === undefined) {
         return NextResponse.json(
           {
