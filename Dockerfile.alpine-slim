@@ -81,7 +81,10 @@ WORKDIR /usr/src/app
 RUN apk add --no-cache python3 make g++
 # patches/ holds the driver patches package.json's patchedDependencies names; bun install applies
 # them and refuses to run without them (docs/TOOLCHAIN.md, "Patched dependencies").
-COPY package.json bun.lock ./
+# bunfig.toml carries the hoisted linker, and each workspace package's package.json gets its own
+# COPY line before the install; without either the install still exits 0, in another layout or
+# without the package (packages/README.md, "Docker").
+COPY package.json bun.lock bunfig.toml ./
 COPY patches ./patches
 RUN bun install --frozen-lockfile
 
@@ -149,6 +152,7 @@ RUN set -eux; \
     test -f "node_modules/better-sqlite3/prebuilds/linuxmusl-${ARCH}.node"; \
     test -f .next/standalone/server.js; \
     test ! -e .next/standalone/src; \
+    test ! -e .next/standalone/packages; \
     test ! -e .next/standalone/Dockerfile.alpine-slim; \
     test -f public/monaco/vs/nls/lang/tr.js; \
     test "$(find public/monaco/vs -maxdepth 1 -name '*.worker-*.js' | wc -l)" \

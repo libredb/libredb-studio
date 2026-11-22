@@ -138,6 +138,12 @@ describe("hostViolations", () => {
     });
   }
 
+  it("refuses workspace package code in the host", () => {
+    assert.deepEqual(hostViolations(hostInput("../packages/planted/src/index.ts"), wd), [
+      "packages/planted/src/index.ts: the host never bundles workspace package code",
+    ]);
+  });
+
   it("keeps the secret-field leaf and the id generator", () => {
     assert.deepEqual(hostViolations(hostInput("../src/lib/storage/secret-fields.ts"), wd), []);
     assert.deepEqual(hostViolations(hostInput("../src/lib/ids.ts"), wd), []);
@@ -357,10 +363,14 @@ describe("webviewViolations", () => {
   ];
 
   /** A clean webview metafile, with `extra` inputs added and `imports` edges ([importer, imported]) on the inputs. */
-  function webview(extra: string[] = [], options: { drop?: string[]; externals?: string[] } = {}) {
+  function webview(
+    extra: string[] = [],
+    options: { drop?: string[]; externals?: string[]; edges?: [string, string][] } = {},
+  ) {
     const edges: [string, string][] = [
       [grammar, postgresGrammar],
       [postgresGrammar, redisText],
+      ...(options.edges ?? []),
     ];
     const inputs = [
       "src/webview/main.tsx",
@@ -429,6 +439,24 @@ describe("webviewViolations", () => {
     assert.deepEqual(webviewViolations(webview(["../src/lib/db/providers/sql/postgres.ts"]), wd), [
       "src/lib/db/providers/sql/postgres.ts: the webview bundles a provider file that no sql-grammar row reaches",
     ]);
+  });
+
+  it("refuses a package file in the webview that no sql-grammar row reaches", () => {
+    assert.deepEqual(webviewViolations(webview(["../packages/planted/src/x.ts"]), wd), [
+      "packages/planted/src/x.ts: the webview bundles a provider file that no sql-grammar row reaches",
+    ]);
+  });
+
+  it("keeps a package file a sql-grammar row reaches, through a provider file or another package file", () => {
+    const viaProvider = "../packages/planted/src/grammar.ts";
+    const viaPackage = "../packages/planted/src/keywords.ts";
+    const metafile = webview([viaProvider, viaPackage], {
+      edges: [
+        [postgresGrammar, viaProvider],
+        [viaProvider, viaPackage],
+      ],
+    });
+    assert.deepEqual(webviewViolations(metafile, wd), []);
   });
 
   it("refuses host and backend code", () => {

@@ -369,7 +369,7 @@ async function main(): Promise<number> {
   const junitDir = mkdtempSync(path.join(tmpdir(), "libredb-test-junit-"));
   runScratch = junitDir;
 
-  const selection = options.selectors.length > 0 ? options.selectors.join(" ") : "tests/";
+  const selection = options.selectors.length > 0 ? options.selectors.join(" ") : "tests/ and packages/*/tests/";
   const notRunNote =
     plan.notRun.length > 0 ? ` (${plan.notRun.length} not run on this machine, listed at the end)` : "";
   runStarted = true;

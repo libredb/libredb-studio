@@ -11,7 +11,10 @@ WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends && rm -rf /var/lib/apt/lists/*
 # patches/ holds the driver patches package.json's patchedDependencies names; bun install applies
 # them and refuses to run without them (docs/TOOLCHAIN.md, "Patched dependencies").
-COPY package.json bun.lock ./
+# bunfig.toml carries the hoisted linker, and each workspace package's package.json gets its own
+# COPY line before the install; without either the install still exits 0, in another layout or
+# without the package (packages/README.md, "Docker").
+COPY package.json bun.lock bunfig.toml ./
 COPY patches ./patches
 RUN bun install --frozen-lockfile
 
@@ -134,6 +137,7 @@ RUN set -eux; \
     test -f .next/standalone/server.js; \
     test -d .next/standalone/node_modules; \
     test ! -e .next/standalone/src; \
+    test ! -e .next/standalone/packages; \
     test ! -e .next/standalone/Dockerfile; \
     echo "--- native payload surviving the prune ---"; \
     find node_modules .next/standalone/node_modules \( -name '*.node' -o -name '*.so' -o -name '*.so.*' \) | sort | xargs -r ls -lh | awk '{print $5, $9}'

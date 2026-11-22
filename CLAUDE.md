@@ -33,7 +33,7 @@ bun run format           # Biome formatter check (format:fix to write); CSS/JSON
 bun run lint             # oxlint (fast, syntactic) then ESLint 9
 bun run lint:oxc         # oxlint only
 bun run typecheck        # TypeScript strict
-bun run test             # every test file under tests/ (except tests/live/), one bun process per file
+bun run test             # every test file under tests/ and packages/*/tests/ (except their live/), one bun process per file
 bun run test:unit        # one layer; also test:api, test:integration, test:hooks, test:security, test:evals, test:components
 bun run test:e2e         # Playwright (builds and starts its own servers; see playwright.config.ts)
 bun run test:coverage    # coverage report (merged lcov)
