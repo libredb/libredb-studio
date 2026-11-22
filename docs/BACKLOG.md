@@ -43,7 +43,7 @@ None of it is a GitHub issue.
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B172 · 83
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 24
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV33 · 32
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV34 · 33
 
 ---
 
@@ -10577,3 +10577,16 @@ It cannot write it before then: image 1.3.0 and earlier register their shutdown 
 For the same reason a deployment of that chart that pins `image.tag` to 1.3.0 or earlier would have the variable without the boot handler.
 
 **Done when:** in the release that first moves `appVersion` past 1.3.0, or a chart PR after it, `charts/libredb-studio/templates/deployment.yaml` writes `NEXT_MANUAL_SIG_HANDLE=true` before `extraEnv`, `Chart.yaml` `version` is bumped by hand with the README `--version` examples, `artifacthub.io/changes` and the chart README name the minimum image beside the variable, the operator's chart copy is refreshed by `bun run chart:bump`, a helm test pins the entry, and `docs/DISTRIBUTION.md` "Stopping the server" says the chart writes it.
+
+### GOV34. Under `next dev`, an aborted first request to a route that is still compiling ends the dev server with 70
+
+Measured on 2026-11-21: under `next dev --turbopack`, when a burst of first requests to about ten routes that are still compiling is aborted by the client 50 to 2200 ms in, the dev server exits with 70, in 4 of 4 fresh processes.
+The stack holds only Node.js HTTP internals (`abortIncoming` from `socketOnClose` in `node:_http_server`) and no Studio frame.
+While a route compiles, no error listener is attached to its request yet, so Node.js escalates the abort to an uncaught exception, and Studio's uncaught-exception exit (`src/lib/uncaught-exception.ts`, #2336) ends the process with 70 as designed.
+So a developer who reloads or navigates away while the dev server is still compiling can lose the dev server and has to start it again.
+A production build does not reach it: under `next start`, 705 of 705 aborts across the 45 body-reading and response-streaming routes under `src/app/api`, before, during and after the body and in the middle of the response stream, left the server up, because Next.js catches the aborted request in its request handling and logs it.
+The fix may be upstream in Next.js's dev server; that is recorded as an option, not a decision.
+
+Found 2026-11-21 when the dev server exited after a cancelled Query Safety dialog; measured the same day against a production build.
+
+**Done when:** an aborted first request to a route that is still compiling no longer ends the dev server, no change hides an uncaught exception in a production build, and a test or a recorded measurement shows both.
