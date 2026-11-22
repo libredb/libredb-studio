@@ -191,6 +191,30 @@ describe("POST /api/admin/fleet-health", () => {
     expect(data.results[0].databaseSizeBytes).toBeUndefined();
   });
 
+  test("an engine that does not offer the overview panel is never asked for it, and its row carries no byte figure", async () => {
+    const s3Provider = createMockProvider();
+    mockGetOrCreateProvider.mockImplementation(async () => s3Provider);
+    const s3 = {
+      id: "conn-s3",
+      name: "Objects",
+      type: "s3",
+      host: "objects.example.com",
+      port: 9000,
+      database: "",
+      createdAt: new Date(),
+    };
+
+    const req = createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: [s3] } });
+    const res = await POST(req);
+    const data = await parseResponseJSON<{ results: { status: string; databaseSizeBytes?: number }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results[0].status).toBe("healthy");
+    expect(s3Provider.getHealth).toHaveBeenCalledTimes(1);
+    expect(s3Provider.getOverview).not.toHaveBeenCalled();
+    expect("databaseSizeBytes" in data.results[0]).toBe(false);
+  });
+
   test("returns 403 for non-admin user", async () => {
     mockGetSession.mockResolvedValueOnce({ role: "user", username: "user" });
 
