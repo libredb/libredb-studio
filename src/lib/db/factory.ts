@@ -17,7 +17,11 @@ import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderO
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
-import { assertTunnelRecordIsPlainData, providerConnection } from "./provider-connection";
+import {
+  assertExecutionContextIsPlainData,
+  assertTunnelRecordIsPlainData,
+  providerConnection,
+} from "./provider-connection";
 import { egressDecision } from "./egress-decision";
 import { registerOwnerRemoval } from "./owner-removal";
 import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE } from "./compatibility";
@@ -239,6 +243,9 @@ export async function createDatabaseProvider(
   assertDatabaseType(connection.type);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  // The provider is handed a copy of the context (below), so only plain data is taken: a copy of anything else could
+  // answer differently from the object core reads here.
+  assertExecutionContextIsPlainData(execution);
   assertOwnerPoolHonoured(connection, execution);
   const egress = egressDecision();
   // Every provider is built from the connection `providerConnection` answers: the record with its `sshTunnel` reduced to
@@ -247,9 +254,9 @@ export async function createDatabaseProvider(
   // withOneShotTunnel), it dials with those before it calls this function; a caller that builds an unconnected provider
   // opens none. A tunnel or record that is not plain data is refused here, by name, before the log line below.
   connection = providerConnection(connection);
-  // What every provider that takes a context is handed: the caller's execution context and the process's egress
-  // decision, which a guarded provider hands its guard (FND-2, the provider plugins design section 0.1). One rule for
-  // every case below, and never a caller's `egress`: the decision is set here, last.
+  // What every provider that takes a context is handed: a copy of the caller's execution context, plain data as checked
+  // above, and the process's egress decision, which a guarded provider hands its guard (FND-2, the provider plugins
+  // design section 0.1). One rule for every case below, and never a caller's `egress`: the decision is set here, last.
   const context: ProviderBuildContext = { ...execution, egress };
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 

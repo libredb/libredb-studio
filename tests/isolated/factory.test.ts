@@ -51,7 +51,12 @@ import type { DatabaseProvider, QueryResult } from "@/lib/db/types";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative as relativePath } from "node:path";
-import type { DatabaseConnection, EditorExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
+import type {
+  DatabaseConnection,
+  EditorExecutionContext,
+  ProviderExecutionContext,
+  ReadOnlyStatementBudget,
+} from "@/lib/db/types";
 import {
   ConnectionError,
   DatabaseConfigError,
@@ -6124,5 +6129,83 @@ describe("the egress decision comes before any cache, tunnel or provider (FND-2 
         },
       ],
     ]);
+  });
+});
+
+// ─── The execution context createDatabaseProvider copies is plain data (FND-2 slice 2b) ──
+
+describe("createDatabaseProvider refuses an execution context that is not plain data (FND-2 slice 2b)", () => {
+  const REFUSAL = "The execution context must be a plain object of data fields; no provider was built.";
+
+  /** A context whose `readOnly` and `sendsStatements` are prototype getters, as an agent profile class would hold them. */
+  class AgentReadOnly {
+    get readOnly(): boolean {
+      return true;
+    }
+    get sendsStatements(): boolean {
+      return true;
+    }
+  }
+
+  /**
+   * Contexts that are not plain data. The factory hands a provider a copy with core's egress decision added, and a copy
+   * loses a field defined on the prototype or as not enumerable, so the provider would read its default where core read
+   * the caller's value.
+   */
+  const NOT_PLAIN_DATA: Array<[string, () => ProviderExecutionContext]> = [
+    ["a class instance whose readOnly is a prototype getter", () => new AgentReadOnly() as ProviderExecutionContext],
+    [
+      "an object that inherits allowExternalFileAccess: false",
+      () => Object.create({ allowExternalFileAccess: false }) as ProviderExecutionContext,
+    ],
+    [
+      "an object whose readOnly is not enumerable",
+      () => Object.defineProperty({}, "readOnly", { value: true, enumerable: false }) as ProviderExecutionContext,
+    ],
+    [
+      "an object whose readOnly is an own getter",
+      () => Object.defineProperty({}, "readOnly", { get: () => true, enumerable: true }) as ProviderExecutionContext,
+    ],
+  ];
+
+  test.each(NOT_PLAIN_DATA)("refuses by name, before it logs a build, %s", async (_case, build) => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    let error: unknown;
+    let lines: unknown[][] = [];
+    try {
+      error = await createDatabaseProvider(makeConnection("sqlite", { database: ":memory:" }), {}, build()).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      lines = log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"));
+    } finally {
+      log.mockRestore();
+    }
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(REFUSAL);
+    expect(lines).toEqual([]);
+  });
+
+  test("a plain context, with a null prototype too, reaches the provider with every field and core's decision", async () => {
+    const postgres = await import("@/lib/db/providers/sql/postgres");
+    const RealProvider = postgres.PostgresProvider;
+    // bun types a spied class as `Mock<never>`, since a class has no call signature, hence the cast.
+    const constructed = spyOn(postgres, "PostgresProvider").mockImplementation(function (
+      ...args: ConstructorParameters<typeof RealProvider>
+    ) {
+      return new RealProvider(...args);
+    } as never);
+    try {
+      const bare = Object.assign(Object.create(null) as ProviderExecutionContext, { allowExternalFileAccess: true });
+      await createDatabaseProvider(makeConnection("postgres", { id: "plain-literal" }), {}, { readOnly: true });
+      await createDatabaseProvider(makeConnection("postgres", { id: "plain-bare" }), {}, bare);
+      const egress = egressDecision();
+      expect(constructed.mock.calls.map((call) => (call as unknown[])[2])).toEqual([
+        { readOnly: true, egress },
+        { allowExternalFileAccess: true, egress },
+      ]);
+    } finally {
+      constructed.mockRestore();
+    }
   });
 });
