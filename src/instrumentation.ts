@@ -19,7 +19,8 @@ export async function register(): Promise<void> {
 
   // Second, so that a signal at any later point of the boot or of the life of the process runs the shutdown hooks
   // (docs/DISTRIBUTION.md#stopping-the-server). NEXT_MANUAL_SIG_HANDLE decides who ends the process on SIGTERM and
-  // SIGINT: Studio's handler for `true`, Next.js's own when unset or empty; any other value refuses the boot.
+  // SIGINT: Studio's handler for `true`, Next.js's own when unset or empty; any other value refuses the boot, and so
+  // does `true` on Bun, where the request drain sees no request.
   const { exitOwnerAtBoot, installShutdownHandler } = await import("@/lib/shutdown-handler");
   const exitOwner = exitOwnerAtBoot();
   if (exitOwner === undefined) return;
