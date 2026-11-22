@@ -1450,7 +1450,7 @@ Reproduced on node v24.14.0 and bun 1.4.2, from the repository root, with nothin
 
     bun -e 'import { nodeRequestJson } from "./src/lib/db/providers/document/couchbase/http-transport.ts"; for (const url of ["https://[::1]:59999/pools", "https://127.0.0.1:59999/pools"]) await nodeRequestJson(url, { method: "GET", headers: {} }, { rejectUnauthorized: false }, { blocksPrivateHosts: false, source: "default" }).then((r) => console.log(url, r.httpCode), (e) => console.log(url, e.message));'
 
-The IPv6 URL answers `Couchbase request failed: getaddrinfo ENOTFOUND [::1]`.
+The IPv6 URL answers `Couchbase request failed: host [::1] not found (ENOTFOUND)`.
 The IPv4 URL is the control: `connect ECONNREFUSED 127.0.0.1:59999`, so the request reached the network and only the name failed.
 The engine fact underneath is the same on both runtimes: `https.request({ hostname: "[::1]", port: 59999 })` answers `ENOTFOUND` and `https.request({ hostname: "::1", port: 59999 })` answers `ECONNREFUSED`.
 
