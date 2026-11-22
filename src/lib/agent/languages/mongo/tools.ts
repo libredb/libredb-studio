@@ -302,7 +302,8 @@ export function mongoProfileTablePlan(
   const { schema, table, depth, fromColumn } = parsed.data;
   const resolution = resolveProfileTarget(objects, schema, table, defaultContainer);
   // The candidates are this inventory's own addresses, quoted where they are not plain names, and
-  // `resolveProfileTarget` reads that quoting back, so a model can copy one back verbatim.
+  // `resolveProfileTarget` reads that quoting back, so a model can copy one back verbatim, except where one candidate's
+  // raw name is another's quoted form (see `resolveProfileTarget`).
   if (resolution.kind === "ambiguous") {
     return unavailable(
       "TABLE_SPELLING_AMBIGUOUS",

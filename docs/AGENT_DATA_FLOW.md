@@ -504,10 +504,8 @@ statement rather than as an opaque token.
 
 ## The fence, and what it does not do
 
-Everything derived from the database is wrapped by `fenceUntrustedContent`, except an inventory name the server's own sentence carries, which is quoted as described below
-(`fenceUntrustedContent` in `src/lib/agent/untrusted-content.ts`): a header naming what the block is, which operation
-produced it and which id it joins to; a fixed instruction that the lines are data and must never be
-followed as instructions; and a pair of markers bounding the region.
+Everything derived from the database is wrapped by `fenceUntrustedContent` (in `src/lib/agent/untrusted-content.ts`): a header naming what the block is, which operation produced it and which id it joins to; a fixed instruction that the lines are data and must never be followed as instructions; and a pair of markers bounding the region.
+The one exception is an inventory name the server's own sentence carries, which is quoted as described below.
 
 The load-bearing property is **not the wording — it is that the envelope survives the content.** A
 row value carrying the closing marker would otherwise end the region, and everything after it would
@@ -529,8 +527,9 @@ The column advice after a failed statement, the tables or collections a profile 
 A plain name is one made of letters, combining marks, numbers, `_`, `$`, `.` and `-`.
 The table the column advice says lacks the column, the table a held report is asked to profile, and every name in the MongoDB inventory checks are quoted whether plain or not, as those sentences always quoted them.
 The MongoDB inventory checks quote the command's own collection name and the value it compared in the same way.
-A profile refusal's offer copied back with its quotes names the object it quoted (`resolveProfileTarget` in `inventory-address.ts`).
-A refusal recorded before this quoting is restated to a resumed run as one line with any marker in it neutralised (`oneLineForPrompt`).
+A profile refusal's offer copied back with its quotes names the object it quoted (`resolveProfileTarget` in `inventory-address.ts`), and so does the same spelling given to a MongoDB catalog read or a document-index card.
+Where one inventory name is, character for character, another's quoted form, that spelling is refused as ambiguous, and the refusal's offer for the unquoted one is that same spelling, so only its raw name selects it: a refusal, never the wrong object.
+A not-sent refusal the ledger holds is restated, on a resume or a replay, as one line with any marker in it neutralised (`oneLineForPrompt`), so a detail an earlier Studio recorded with a raw name cannot end a line or a fence.
 A fence header is one line whatever its label holds: every control character and line or paragraph separator in it is escaped.
 
 Two limits stated as plainly as the property:

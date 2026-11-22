@@ -3904,7 +3904,8 @@ export function planTableProfile(
   // The run read every candidate and cannot say which the caller meant, and the candidates
   // are the only thing that repairs it, so they are what is said. They are this inventory's
   // own addresses, quoted where they are not plain names, and `resolveProfileTarget` reads
-  // that quoting back, so a model can copy one back verbatim.
+  // that quoting back, so a model can copy one back verbatim, except where one candidate's
+  // raw name is another's quoted form (see `resolveProfileTarget`).
   if (resolution.kind === "ambiguous") {
     return unavailable(
       "TABLE_SPELLING_AMBIGUOUS",

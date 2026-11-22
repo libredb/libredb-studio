@@ -142,6 +142,13 @@ export type ProfileTargetResolution =
  * it: `"order items"`, quotes and all, is the entry `order items`. Only a name those sentences
  * quote is matched that way, so a plain name's quoted spelling names nothing, and a spelling
  * that is one entry as written and another as quoted is refused as ambiguous with both.
+ * That refusal offers the quoted-named entry by its own quoted form, which resolves, and the
+ * other by the spelling just refused, which does not: only its raw name, which no refusal
+ * shows, selects it. That needs an inventory name holding quote characters, and it fails as
+ * a refusal, never as the wrong object, so it is accepted rather than given a third form.
+ * The MongoDB catalog read (`catalogTarget`) and the document-index card
+ * (`documentIndexTarget`) resolve their spelling here too, so a copied offer reaches the
+ * same entry there.
  */
 export function resolveProfileTarget(
   objects: readonly AgentInventoryObject[],

@@ -419,6 +419,30 @@ describe("inspect_schema on mongo", () => {
     expect(header(plain.modelText)).toContain("catalog read of the collection orders, ");
   });
 
+  test("a collection the profile offer quoted, copied back with its quotes, is read in the database the snapshot says", async () => {
+    // The profile refusals offer `"app.order items"`, and the catalog read resolves a spelling by the same rule,
+    // so the copied offer reaches the inventoried collection rather than a name with quotes in it.
+    const h = harness({}, undefined, async () => ({
+      kind: "described",
+      container: "app",
+      object: "order items",
+      objectKind: "collection",
+      columns: [{ name: "customer", type: "string" }],
+      indexes: [],
+      sampled: 3,
+    }));
+    const outcome = await mongoInspectSchemaTool(
+      h.context,
+      { table: '"app.order items"' },
+      snapshotOf([collection("app", "order items")], ["app"]),
+    );
+    if (outcome.kind !== "completed") throw new Error(`expected completed, got ${outcome.kind}`);
+    expect(h.readCatalogReadOnly.mock.calls[0]?.[0]).toEqual({ container: "app", object: "order items" });
+    // The header names the spelling the model wrote, quoted as one name, as it does for every catalog read.
+    const header = outcome.modelText.split("\n").find((line) => line.startsWith("[UNTRUSTED DATABASE CONTENT"));
+    expect(header).toContain('catalog read of the collection """app.order items""", ');
+  });
+
   test("a collection the database does not hold is the SQL arm's no-such-object answer", async () => {
     const h = harness({}, undefined, async () => ({ kind: "not-found", container: "app", object: "orderz" }));
     const outcome = await mongoInspectSchemaTool(h.context, { table: "orderz" }, null);
@@ -1139,6 +1163,29 @@ describe("recommend_change on mongo", () => {
     if (outcome.kind !== "recommended") throw new Error(`expected a card, got ${outcome.reasonCode}`);
     expect(outcome.recommendation).toMatchObject({ change: "document-index", collection: "archive" });
     expect(Object.hasOwn(outcome.recommendation, "database")).toBe(false);
+  });
+
+  test("a collection the profile offer quoted, copied back with its quotes, is named bare in the database the run read", async () => {
+    const h = harness({ workflowType: "query-optimization" });
+    const command = { collection: "order items", operation: "find", filter: { customer: "Ada" } };
+    const planned = await mongoInspectPlanTool(h.context, { command });
+    if (planned.kind !== "completed") throw new Error(`expected a plan, got ${planned.kind}`);
+    const events = [
+      captured(snapshotOf([collection("app", "order items")], ["app"])),
+      ...drafted("s1", planned.artifact, JSON.stringify(command)),
+    ];
+    const outcome = recommendChangeTool(
+      h.context,
+      { runId: "run-1", events },
+      {
+        change: "document-index",
+        collection: '"app.order items"',
+        keys: { customer: 1 },
+        evidence: [{ source: "artifact", correlationId: planned.artifact.correlationId }],
+      },
+    );
+    if (outcome.kind !== "recommended") throw new Error(`expected a card, got ${outcome.reasonCode}`);
+    expect(outcome.recommendation).toMatchObject({ collection: "order items", database: "app" });
   });
 
   test("an index on keys the collection already has is refused, with no change named as the answer instead", async () => {
