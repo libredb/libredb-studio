@@ -25,14 +25,20 @@ import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-mode
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
 import { AGENT_HANDOVER_BUDGET, AGENT_HANDOVER_READ_ALLOWANCE } from "@/lib/agent/execution-policy";
-import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, rowBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { MSSQL_CUT_VALUE_PREFIX, MSSQL_SERIALISED_PREFIX } from "@/lib/db/providers/sql/mssql-read-only-refusals";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
+  CutValueRefusal,
   ExecutionProfileError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  SerialisedResultRefusal,
+  TimeBudgetRefusal,
 } from "@/lib/db/errors";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
@@ -452,11 +458,19 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
     mockQueryReadOnly.mockResolvedValueOnce({ ...RESULT, rows, rowCount: rows.length } as never);
 
     const res = await POST(request(), params());
-    const body = await parseResponseJSON<{ error: string; code: string; result?: unknown }>(res);
+    const body = await parseResponseJSON<{
+      error: string;
+      code: string;
+      kind: string;
+      outcome: string;
+      result?: unknown;
+    }>(res);
 
     expect(res.status).toBe(400);
     expect(body.code).toBe("QUERY_ERROR");
     expect(body.error).toBe(rowBudgetSentence(DEFAULT_QUERY_LIMIT + 1, DEFAULT_QUERY_LIMIT));
+    expect(body.kind).toBe("studio-budget-refusal");
+    expect(body.outcome).toBe("unknown");
     expect(body.result).toBeUndefined();
   });
 
@@ -473,6 +487,74 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(body.error).toContain("read-only transaction");
+  });
+});
+
+describe("a provider's own budget refusal", () => {
+  type RefusalBody = { error: string; code: string; kind: string; outcome: string; result?: unknown };
+
+  const REFUSALS = [
+    [
+      "row budget refusal",
+      "row-budget-refusal",
+      (s: string) => new RowBudgetRefusal(s, "postgres", ANSWER_SQL),
+      rowBudgetSentence(501, 500),
+    ],
+    [
+      "byte budget refusal",
+      "byte-budget-refusal",
+      (s: string) => new ByteBudgetRefusal(s, "postgres", ANSWER_SQL),
+      byteBudgetSentence(9001, 9000),
+    ],
+    [
+      "time budget refusal",
+      "time-budget-refusal",
+      (s: string) => new TimeBudgetRefusal(s, "postgres", ANSWER_SQL),
+      `${TIME_BUDGET_PREFIX} of 50 ms`,
+    ],
+    [
+      "cut value refusal",
+      "cut-value-refusal",
+      (s: string) => new CutValueRefusal(s, "mssql", ANSWER_SQL),
+      `${MSSQL_CUT_VALUE_PREFIX}: column 1`,
+    ],
+    [
+      "serialised result refusal",
+      "serialised-result-refusal",
+      (s: string) => new SerialisedResultRefusal(s, "mssql", ANSWER_SQL),
+      `${MSSQL_SERIALISED_PREFIX}: FOR JSON`,
+    ],
+  ] as const;
+
+  test.each(REFUSALS.map(([label, kind, make, sentence]) => [label, kind, make, sentence] as const))(
+    "a provider's %s answers 400 QUERY_ERROR with its sentence and kind %s",
+    async (_label, kind, make, sentence) => {
+      mockQueryReadOnly.mockRejectedValueOnce(make(sentence));
+
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<RefusalBody>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.code).toBe("QUERY_ERROR");
+      expect(body.error).toBe(sentence);
+      expect(body.kind).toBe(kind);
+      expect(body.outcome).toBe("unknown");
+      expect(body.result).toBeUndefined();
+    },
+  );
+
+  test("a provider's row budget refusal made before sending answers refused-before-send and not-sent", async () => {
+    const sentence = rowBudgetSentence(1000, 500);
+    mockQueryReadOnly.mockRejectedValueOnce(new RefusedBeforeSendError(sentence, "kafka", ANSWER_SQL));
+
+    const res = await POST(request(), params());
+    const body = await parseResponseJSON<RefusalBody>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("QUERY_ERROR");
+    expect(body.error).toBe(sentence);
+    expect(body.kind).toBe("refused-before-send");
+    expect(body.outcome).toBe("not-sent");
   });
 });
 

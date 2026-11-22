@@ -8,16 +8,21 @@ import { describe, expect, test } from "bun:test";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   connectPhase,
+  CutValueRefusal,
   ExecutionProfileError,
   QueryError,
   ReadAllowanceExceededError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  SerialisedResultRefusal,
   StudioBudgetRefusal,
   StudioProfileRefusal,
   StudioTimeoutRefusal,
   ProviderTextWithheldError,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -342,6 +347,18 @@ describe("isStudioRefusal", () => {
     expect(timeRefusal).toBeInstanceOf(TimeoutError);
     expect(timeRefusal.name).toBe("TimeoutError");
     expect(timeRefusal.timeout).toBe(50);
+  });
+
+  test("a provider's budget refusal classes are not Studio's", () => {
+    for (const Class of [
+      RowBudgetRefusal,
+      ByteBudgetRefusal,
+      TimeBudgetRefusal,
+      CutValueRefusal,
+      SerialisedResultRefusal,
+    ]) {
+      expect(isStudioRefusal(new Class("refused by the budget", "postgres", "SELECT 1")), Class.name).toBe(false);
+    }
   });
 
   test("a StudioProfileRefusal keeps the name ExecutionProfileError", () => {

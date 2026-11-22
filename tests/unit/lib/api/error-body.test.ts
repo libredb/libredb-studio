@@ -10,7 +10,9 @@ import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { VaultError } from "@/lib/seed/vault-client";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
+  CutValueRefusal,
   DatabaseConfigError,
   DatabaseError,
   FacetNotOfferedError,
@@ -22,6 +24,11 @@ import {
   QueryError,
   ReadAllowanceExceededError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  SerialisedResultRefusal,
+  StudioBudgetRefusal,
+  StudioTimeoutRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
   TransactionLostError,
   UnknownProviderError,
@@ -286,11 +293,18 @@ describe("databaseErrorBody", () => {
       new OffsetUnsupportedError("no offset", "cassandra"),
       new RefusedBeforeSendError("refused", "postgres"),
       new ReadAllowanceExceededError("over the allowance", "postgres"),
+      new RowBudgetRefusal("over the row budget", "postgres"),
+      new ByteBudgetRefusal("over the byte budget", "postgres"),
+      new TimeBudgetRefusal("over the time budget", "postgres"),
+      new CutValueRefusal("a cut value", "mssql"),
+      new SerialisedResultRefusal("a serialised result", "mssql"),
+      new StudioBudgetRefusal("over Studio's budget", "postgres"),
       new TimeoutError("timed out", "postgres", 1000),
+      new StudioTimeoutRefusal("Studio's time limit", "postgres", 1000),
       new QueryCancelledError("cancelled", "postgres"),
       new ProviderTextWithheldError("withheld", "postgres"),
     ];
-    expect(new Set(errors.map((error) => errorKind(error))).size).toBe(16);
+    expect(new Set(errors.map((error) => errorKind(error))).size).toBe(23);
     for (const error of errors) {
       const record = errorRecord(scrub, error);
       const body = databaseErrorBody(error)!.body;

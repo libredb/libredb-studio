@@ -278,12 +278,79 @@ export class ReadAllowanceExceededError extends RefusedBeforeSendError {
 }
 
 /**
+ * A provider's refusal of a read whose answer held more rows than the row field of the `ReadOnlyStatementBudget` it
+ * was handed, raised after the read began, in `rowBudgetSentence`'s words. Its own class, so its error record answers
+ * kind `row-budget-refusal` and a reader can tell it from any other statement failure without reading the sentence.
+ * A `QueryError`, so the route answers 400 `QUERY_ERROR` and every caller that settles a statement failure settles it;
+ * its `name` stays `QueryError`, as `StudioBudgetRefusal`'s does. Only providers construct it: core raises
+ * `StudioBudgetRefusal`, and a refusal raised before anything was sent stays a `RefusedBeforeSendError`.
+ */
+export class RowBudgetRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, RowBudgetRefusal.prototype);
+  }
+}
+
+/**
+ * A provider's refusal of a read whose answer held more bytes than the byte field of its `ReadOnlyStatementBudget`,
+ * in `byteBudgetSentence`'s words or an engine's own words for the same budget (SQL Server's estimated plan). Kind
+ * `byte-budget-refusal`; otherwise as `RowBudgetRefusal`.
+ */
+export class ByteBudgetRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, ByteBudgetRefusal.prototype);
+  }
+}
+
+/**
+ * A provider's refusal of a read that outlasted the time field of its `ReadOnlyStatementBudget`, in words that open
+ * with a time budget prefix or the statement deadline. Kind `time-budget-refusal`; otherwise as `RowBudgetRefusal`.
+ * A `QueryError` rather than a `TimeoutError`, so its answer's code and `retryable` stay what they were; a provider
+ * that raises its time refusal as a `TimeoutError` keeps that class and kind `timeout`.
+ */
+export class TimeBudgetRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, TimeBudgetRefusal.prototype);
+  }
+}
+
+/**
+ * A provider's refusal of a value the server cut at the byte ceiling, which the byte budget cannot measure whole
+ * (SQL Server's `MSSQL_CUT_VALUE_PREFIX`). Kind `cut-value-refusal`; otherwise as `RowBudgetRefusal`.
+ */
+export class CutValueRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, CutValueRefusal.prototype);
+  }
+}
+
+/**
+ * A provider's refusal of a serialised result, one value the row budget cannot bound (SQL Server's FOR JSON or FOR
+ * XML, `MSSQL_SERIALISED_PREFIX`). Kind `serialised-result-refusal`; otherwise as `RowBudgetRefusal`.
+ */
+export class SerialisedResultRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, SerialisedResultRefusal.prototype);
+  }
+}
+
+/**
  * A row or byte budget refusal, or the core read path's time refusal, that Studio's core raised over a provider's
  * answer (`runReadOnlyStatement` and `runReadOnlyReading`). It exists only to mark Studio's sentence apart from a
- * provider's, which raises the same sentences as a plain `QueryError`, so the agent says this one in Studio's voice
- * and fences a provider's as database content. Its `name` stays `QueryError`, so a log line, an error body and a
- * reader of the name see no difference. No provider constructs it; tests/unit/db/operations/provider-text-census.test.ts
- * holds that.
+ * provider's, which raises the same sentences as a class of its own (`RowBudgetRefusal` and its siblings), so the
+ * agent says this one in Studio's voice and fences a provider's as database content. Its `name` stays `QueryError`, so
+ * a log line, an error body and a reader of the name see no difference. No provider constructs it;
+ * tests/unit/db/operations/provider-text-census.test.ts holds that.
  */
 export class StudioBudgetRefusal extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
