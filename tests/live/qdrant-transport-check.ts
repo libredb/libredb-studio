@@ -59,6 +59,7 @@ import { TUNNEL_FAR_END } from "@/lib/types";
 import { setEgressFlag } from "../helpers/egress-flag";
 import routeTable from "../fixtures/vector/routes/qdrant-v1.json";
 import { JWT_CLAIMS, mintJwt, QDRANT_SERVICES, slowFilter } from "./qdrant-evidence-catalog";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const RUNTIME = typeof Bun !== "undefined" ? `bun ${Bun.version}` : `node ${process.versions.node}`;
 /** Stand-ins, never realistic values: the key no server holds, and the secret the wrongly signed JWT is signed with. */
@@ -100,7 +101,7 @@ function options(overrides: Record<string, unknown>, queryTimeout = 30_000): Qdr
       port: QDRANT_SERVICES.qdrant.port,
       ...overrides,
     } as never,
-    { executionReadOnly: false, queryTimeout },
+    { executionReadOnly: false, queryTimeout, egress: egressDecision() },
   );
 }
 

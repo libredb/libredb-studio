@@ -12,6 +12,7 @@ import { type AddressInfo, createServer, type Server, type Socket } from "node:n
 import { ConnectionError } from "@/lib/db/errors";
 import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeRequest, TransportError } from "@/lib/db/http/node-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const TRUNCATED = "The server ended the response before it was complete";
 const MIB = 1024 * 1024;
@@ -80,7 +81,7 @@ afterAll(async () => {
 });
 
 function send(path: string, extra: Partial<NodeRequest> = {}, at = port) {
-  const origin = httpOrigin("http", "127.0.0.1", at);
+  const origin = httpOrigin("http", "127.0.0.1", at, ALLOWS_PRIVATE_HOSTS);
   const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {} });
   return transport
     .request({

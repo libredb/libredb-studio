@@ -52,6 +52,7 @@ import {
 } from "../../../helpers/node-transport-fixtures";
 import { QDRANT_FIXTURE_ROUTES, QDRANT_SAMPLE_REQUESTS } from "../../../helpers/qdrant-routes";
 import { withEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -97,7 +98,7 @@ function options(port: number, overrides: Record<string, unknown> = {}): QdrantC
       createdAt: new Date(0),
       ...overrides,
     } as unknown as DatabaseConnection,
-    { executionReadOnly: false, queryTimeout: 30_000 },
+    { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS },
   );
 }
 
@@ -488,7 +489,7 @@ describe("TLS through the connection's SSL / TLS panel (QE6)", () => {
           createdAt: new Date(0),
           [TUNNEL_FAR_END]: { host: farHost, port: 6333 },
         } as unknown as DatabaseConnection,
-        { executionReadOnly: false, queryTimeout: 30_000 },
+        { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS },
       );
       // oxlint-disable-next-line no-await-in-loop -- the listener's one request.
       expect((await get(connection)).status).toBe(200);

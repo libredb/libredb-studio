@@ -28,6 +28,7 @@ import {
   SAMPLE_NODE,
   type StubAnswer,
 } from "../../../helpers/rabbitmq-management-stub";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const CAPABILITIES = new RabbitMQProvider(rabbitmqConnection()).getCapabilities();
 const NOW = Date.UTC(2026, 9, 12, 9, 30, 0);
@@ -36,7 +37,7 @@ function readers() {
   const stub = createManagementStub();
   const deadlines = manualDeadlines();
   const client = createManagementClient({
-    endpoint: readConnectionOptions(rabbitmqConnection()).management,
+    endpoint: readConnectionOptions(rabbitmqConnection(), ALLOWS_PRIVATE_HOSTS).management,
     transport: stub.factory,
     deadlineSignal: deadlines.factory,
     queryTimeoutMs: 60_000,

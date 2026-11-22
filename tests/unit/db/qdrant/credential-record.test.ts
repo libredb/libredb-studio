@@ -23,6 +23,7 @@ import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
 import { resolveConnectionCredentials } from "@/lib/seed/credential-resolver";
 import { SeedConnectionSchema } from "@/lib/seed/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const TEST_PASSWORD = "password";
 const TEST_JWT_SECRET = "password-second";
@@ -149,7 +150,7 @@ describe("connect(): the provider's own stage, after resolution (vector-family s
     const provider = new QdrantProvider(
       connection({ seedId: "vectors", readOnly: true }),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       createClient as never,
     );
     await expect(provider.connect()).rejects.toThrow(NO_SECRET_SENTENCE);
@@ -162,7 +163,7 @@ describe("connect(): the provider's own stage, after resolution (vector-family s
     const provider = new QdrantProvider(
       connection({ seedId: "vectors", readOnly: true, password: "" }),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       createClient as never,
     );
     await expect(provider.connect()).rejects.toThrow(NO_SECRET_SENTENCE);
@@ -171,7 +172,7 @@ describe("connect(): the provider's own stage, after resolution (vector-family s
 
   test("a user's own connection with no key opens, with exactly GET / and GET /collections", async () => {
     const { createClient, sent } = openServer();
-    const provider = new QdrantProvider(connection({}), {}, {}, createClient as never);
+    const provider = new QdrantProvider(connection({}), {}, { egress: ALLOWS_PRIVATE_HOSTS }, createClient as never);
     await provider.connect();
     expect(sent).toEqual(["root", "get_collections"]);
     await provider.disconnect();
@@ -182,7 +183,7 @@ describe("connect(): the provider's own stage, after resolution (vector-family s
     const provider = new QdrantProvider(
       connection({ seedId: "vectors", readOnly: true, password: TEST_PASSWORD }),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       createClient as never,
     );
     await provider.connect();
@@ -195,7 +196,7 @@ describe("connect(): the provider's own stage, after resolution (vector-family s
     const provider = new QdrantProvider(
       connection({ user: "root", password: TEST_PASSWORD }),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       createClient as never,
     );
     await expect(provider.connect()).rejects.toThrow(/user/i);
@@ -247,7 +248,7 @@ describe("load: the seed file refuses what it shows (vector-family spec 3.12)", 
     const provider = new QdrantProvider(
       connection({ seedId: resolved.id, readOnly: true, password: resolved.password }),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       createClient as never,
     );
     await expect(provider.connect()).rejects.toThrow(NO_SECRET_SENTENCE);

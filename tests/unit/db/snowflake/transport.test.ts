@@ -22,9 +22,10 @@ import {
   testDeps,
 } from "../../../helpers/snowflake-node-transport";
 import { closeAll, rawAnswer, rawHttpListener } from "../../../helpers/node-transport-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const HOST = "acme-x1.snowflakecomputing.com";
-const ORIGIN = httpOrigin("https", HOST, 443);
+const ORIGIN = httpOrigin("https", HOST, 443, ALLOWS_PRIVATE_HOSTS);
 const TLS = { rejectUnauthorized: true, identity: HOST } as const;
 const STATEMENTS = "/api/v2/statements";
 const HANDLE = "019c06a4-0000-df4f-0000-00100006589e";
@@ -365,7 +366,11 @@ describe("partition", () => {
     const listener = await rawHttpListener(() => rawAnswer("200 OK", ["content-length: 2"], "[]"));
     const pat = readAccessToken("A".repeat(SNOWFLAKE_TOKEN_MAX_CHARS));
     const transport = createSnowflakeTransport(
-      { origin: httpOrigin("http", "127.0.0.1", listener.port), tls: null, tokens: patTokenSource(pat) },
+      {
+        origin: httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS),
+        tls: null,
+        tokens: patTokenSource(pat),
+      },
       snowflakeProductionDeps(),
     );
     try {

@@ -80,7 +80,7 @@ function connection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnec
 /** What the shared module itself says about this host and port; a failed test if it accepts them. */
 function sharedRefusal(host: unknown, port: unknown): string {
   try {
-    httpOrigin("http", host, port);
+    httpOrigin("http", host, port, ALLOWS_PRIVATE_HOSTS);
   } catch (error) {
     return (error as Error).message;
   }

@@ -9,6 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { mtconnectEndpoint, readPathPrefix } from "@/lib/db/providers/industrial/mtconnect/connection-options";
 import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const connection = (
   extra: Partial<DatabaseConnection> & WithTunnelFarEnd = {},
@@ -50,27 +51,30 @@ describe("the path prefix", () => {
 
 describe("the scheme follows the SSL / TLS panel", () => {
   test("no panel dials http with no TLS material", () => {
-    const endpoint = mtconnectEndpoint(connection());
+    const endpoint = mtconnectEndpoint(connection(), ALLOWS_PRIVATE_HOSTS);
     expect(endpoint.origin).toEqual({ scheme: "http", host: "agent.example", port: 5000 });
     expect(endpoint.tls).toBeNull();
     expect(endpoint.pathPrefix).toBe("");
   });
 
   test("the disable mode dials http too", () => {
-    const endpoint = mtconnectEndpoint(connection({ ssl: { mode: "disable" } }));
+    const endpoint = mtconnectEndpoint(connection({ ssl: { mode: "disable" } }), ALLOWS_PRIVATE_HOSTS);
     expect(endpoint.origin.scheme).toBe("http");
     expect(endpoint.tls).toBeNull();
   });
 
   test("require dials https and does not verify, as the mode says", () => {
-    const endpoint = mtconnectEndpoint(connection({ ssl: { mode: "require" } }));
+    const endpoint = mtconnectEndpoint(connection({ ssl: { mode: "require" } }), ALLOWS_PRIVATE_HOSTS);
     expect(endpoint.origin.scheme).toBe("https");
     expect(endpoint.tls?.rejectUnauthorized).toBe(false);
     expect(endpoint.tls?.identity).toBe("agent.example");
   });
 
   test("verify-full carries the panel's CA and verifies against the host", () => {
-    const endpoint = mtconnectEndpoint(connection({ ssl: { mode: "verify-full", caCert: CA_PLACEHOLDER } }));
+    const endpoint = mtconnectEndpoint(
+      connection({ ssl: { mode: "verify-full", caCert: CA_PLACEHOLDER } }),
+      ALLOWS_PRIVATE_HOSTS,
+    );
     expect(endpoint.origin.scheme).toBe("https");
     expect(endpoint.tls?.rejectUnauthorized).toBe(true);
     expect(endpoint.tls?.ca?.toString("utf8")).toBe(CA_PLACEHOLDER);
@@ -86,13 +90,14 @@ describe("the scheme follows the SSL / TLS panel", () => {
         sshTunnel: { enabled: true } as DatabaseConnection["sshTunnel"],
         [TUNNEL_FAR_END]: { host: "agent.plant.internal", port: 5000 },
       }),
+      ALLOWS_PRIVATE_HOSTS,
     );
     expect(endpoint.origin).toEqual({ scheme: "https", host: "127.0.0.1", port: 40123 });
     expect(endpoint.tls?.identity).toBe("agent.plant.internal");
   });
 
   test("the path prefix travels with the address", () => {
-    expect(mtconnectEndpoint(connection({ apiPath: "/mtc/" })).pathPrefix).toBe("/mtc");
+    expect(mtconnectEndpoint(connection({ apiPath: "/mtc/" }), ALLOWS_PRIVATE_HOSTS).pathPrefix).toBe("/mtc");
   });
 });
 

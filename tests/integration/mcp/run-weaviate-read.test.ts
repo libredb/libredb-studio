@@ -38,6 +38,7 @@ import {
   scopeServer,
 } from "../../helpers/weaviate-agent";
 import { type RecordedAnswer, okAnswer, recordingWeaviateTransport } from "../../helpers/weaviate-wire";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 pinMcpTestEnvironment();
 
@@ -76,7 +77,7 @@ beforeEach(() => {
       const provider = new WeaviateProvider(
         connection as DatabaseConnection,
         { queryTimeout: 30_000 },
-        { readOnly: honourProfile, sendsStatements: agent },
+        { readOnly: honourProfile, sendsStatements: agent, egress: ALLOWS_PRIVATE_HOSTS },
         (options, routes) => createRestWeaviateClient(options, routes, transport.factory),
       );
       await provider.connect();

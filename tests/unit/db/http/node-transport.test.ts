@@ -31,6 +31,7 @@ import {
   silentListener,
   streamingAnswer,
 } from "../../../helpers/node-transport-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const SECRET = "node-transport-secret-key";
 const MIB = 1024 * 1024;
@@ -44,7 +45,7 @@ afterEach(async () => {
 });
 
 function connect(listener: Listener, overrides: Partial<NodeTransportOptions> = {}) {
-  const origin = httpOrigin("http", "127.0.0.1", listener.port);
+  const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
   const transport = createNodeTransport({
     origin,
     tls: null,
@@ -246,7 +247,12 @@ describe("refused before any socket", () => {
 
   test.each([0, -1, 2.5, Number.POSITIVE_INFINITY])("a maxSockets of %p", (maxSockets) => {
     const error = refusal(() =>
-      createNodeTransport({ origin: httpOrigin("http", "127.0.0.1", 6333), tls: null, maxSockets, headers: {} }),
+      createNodeTransport({
+        origin: httpOrigin("http", "127.0.0.1", 6333, ALLOWS_PRIVATE_HOSTS),
+        tls: null,
+        maxSockets,
+        headers: {},
+      }),
     );
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe("Invalid maxSockets: expected a positive integer");
@@ -259,7 +265,7 @@ describe("refused before any socket", () => {
   ])("a connection header %p, which frames or addresses every request, is refused by name", (name, named) => {
     const error = refusal(() =>
       createNodeTransport({
-        origin: httpOrigin("http", "127.0.0.1", 6333),
+        origin: httpOrigin("http", "127.0.0.1", 6333, ALLOWS_PRIVATE_HOSTS),
         tls: null,
         maxSockets: 1,
         headers: { [name]: "5-secret" },
@@ -275,7 +281,12 @@ describe("refused before any socket", () => {
     ["an http origin with TLS material", "http" as const, { rejectUnauthorized: true, identity: "127.0.0.1" }],
   ])("%s", (_label, scheme, tls) => {
     const error = refusal(() =>
-      createNodeTransport({ origin: httpOrigin(scheme, "127.0.0.1", 6333), tls, maxSockets: 1, headers: {} }),
+      createNodeTransport({
+        origin: httpOrigin(scheme, "127.0.0.1", 6333, ALLOWS_PRIVATE_HOSTS),
+        tls,
+        maxSockets: 1,
+        headers: {},
+      }),
     );
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe(
@@ -481,7 +492,7 @@ describe("bounded, stoppable and never resent", () => {
     const listener = await httpListener(jsonAnswer(200, "{}"));
     const { port } = listener;
     await listener.close();
-    const origin = httpOrigin("http", "127.0.0.1", port);
+    const origin = httpOrigin("http", "127.0.0.1", port, ALLOWS_PRIVATE_HOSTS);
     const transport = createNodeTransport({ origin, tls: null, maxSockets: 1, headers: { "api-key": SECRET } });
     transports.push(transport);
     const error = await failure(() =>

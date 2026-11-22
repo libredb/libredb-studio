@@ -26,6 +26,7 @@ import { expectCalls } from "../../../helpers/call-log";
 import { QDRANT_FIXTURE_ROUTES } from "../../../helpers/qdrant-routes";
 import { recordingClientFactory } from "../../../helpers/qdrant-surface-client";
 import { recordedAnswer, resultOf, SEEDED_COLLECTIONS, vectorCapture } from "../../../helpers/qdrant-surface-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const TEST_PASSWORD = "password";
 
@@ -56,7 +57,12 @@ function providerOf(
   execution: ProviderExecutionContext = {},
 ) {
   const clients = recordingClientFactory(answer);
-  const provider = new QdrantProvider({ ...CONNECTION, ...connection }, {}, execution, clients.factory);
+  const provider = new QdrantProvider(
+    { ...CONNECTION, ...connection },
+    {},
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    clients.factory,
+  );
   return { provider, clients };
 }
 

@@ -10,6 +10,7 @@ import { httpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeByteTransport, type NodeByteTransport } from "@/lib/db/http/node-transport";
 import { closeAll, rawAnswer, rawHttpListener } from "../../../helpers/node-transport-fixtures";
 import { setEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
@@ -36,7 +37,7 @@ describe("with the guard on", () => {
     const listener = await rawHttpListener(OK);
     setEgressFlag("true");
     const transport = createNodeByteTransport({
-      origin: httpOrigin("http", "localhost", listener.port),
+      origin: httpOrigin("http", "localhost", listener.port, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 4,
       headers: {},
@@ -75,7 +76,7 @@ describe("with the guard off", () => {
     setEgressFlag(undefined);
     const listener = await rawHttpListener(OK);
     const transport = createNodeByteTransport({
-      origin: httpOrigin("http", "127.0.0.1", listener.port),
+      origin: httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 4,
       headers: {},

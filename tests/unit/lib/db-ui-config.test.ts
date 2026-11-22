@@ -84,6 +84,7 @@ import {
   SYNTHETIC_NO_SECRET,
   SYNTHETIC_PAIR,
 } from "../../helpers/synthetic-credential-warnings";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
@@ -1371,7 +1372,11 @@ describe("declared field rules", () => {
   });
   const providerRefusal = (connection: DatabaseConnection): string | undefined => {
     try {
-      buildS3ConnectionOptions(connection, { executionReadOnly: false, queryTimeout: 30_000 });
+      buildS3ConnectionOptions(connection, {
+        executionReadOnly: false,
+        queryTimeout: 30_000,
+        egress: ALLOWS_PRIVATE_HOSTS,
+      });
       return undefined;
     } catch (error) {
       return (error as Error).message;

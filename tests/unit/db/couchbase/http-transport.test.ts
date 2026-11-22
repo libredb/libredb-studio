@@ -140,19 +140,15 @@ afterEach(() => {
 // ============================================================================
 
 describe("CouchbaseHttpTransport takes the egress decision last", () => {
-  test("a transport built without its decision, as an untyped call of the shape (config, deps) does, sends nothing", async () => {
-    // The decision is last, as at every other guarded transport, so an omitted decision is undefined and the request
-    // fails closed; with the decision second, the deps object would stand in for it and allow every destination.
+  test("a transport built without its decision, as an untyped call of the shape (config, deps) does, is not built and sends nothing", () => {
+    // The decision is last, as at every other guarded transport, so an omitted decision is undefined and the
+    // constructor's own origin check fails closed; with the decision second, the deps object would stand in for it and
+    // allow every destination.
     const Untyped = CouchbaseHttpTransport as unknown as new (
       config: DatabaseConnection,
       deps: CouchbaseHttpTransportDeps,
     ) => CouchbaseHttpTransport;
-    const transport = new Untyped(makeConnection(), {});
-    const error = await transport.manage("/pools/default").then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(error).toBeInstanceOf(Error);
+    expect(() => new Untyped(makeConnection(), {})).toThrow();
     expect(calls).toEqual([]);
   });
 });

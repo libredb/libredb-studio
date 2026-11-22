@@ -25,9 +25,10 @@ import {
   SYNTHETIC_PAIR,
   SYNTHETIC_PASSWORD,
 } from "../../../helpers/synthetic-credential-warnings";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
 
-const CONTEXT = { executionReadOnly: false, queryTimeout: 30_000 };
+const CONTEXT = { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS };
 const fixtures = loadTlsFixtures();
 const FAR_END = { [TUNNEL_FAR_END]: { host: "s3.internal", port: 9000 } };
 const TUNNEL = { ...FAR_END, host: "127.0.0.1", port: 41000, sshTunnel: { enabled: true } };
@@ -88,10 +89,7 @@ describe("what a connection builds", () => {
   });
 
   test("Bucket and Region are read; a short query timeout caps the surface deadline", () => {
-    const options = build(
-      { database: "sales", region: "garage-probe" },
-      { executionReadOnly: false, queryTimeout: 2_000 },
-    );
+    const options = build({ database: "sales", region: "garage-probe" }, { ...CONTEXT, queryTimeout: 2_000 });
     expect(options).toMatchObject({
       pinnedBucket: "sales",
       region: "garage-probe",
@@ -119,7 +117,7 @@ describe("what a connection builds", () => {
   test("read-only sources: the connection's own flag, a seed's, then the execution profile's", () => {
     expect(build({ readOnly: true }).readOnly).toBe("connection");
     expect(build({ readOnly: true, seedId: "seed-1" }).readOnly).toBe("seed");
-    expect(build({}, { executionReadOnly: true, queryTimeout: 30_000 }).readOnly).toBe("execution-profile");
+    expect(build({}, { ...CONTEXT, executionReadOnly: true }).readOnly).toBe("execution-profile");
     expect(build({ readOnly: false }).readOnly).toBeUndefined();
   });
 
@@ -270,7 +268,7 @@ describe("the refusals, in order", () => {
   });
 
   test("row 14: a query timeout outside its range", () => {
-    expect(refusal({}, { executionReadOnly: false, queryTimeout: 0 })).toBe(
+    expect(refusal({}, { ...CONTEXT, queryTimeout: 0 })).toBe(
       "Query timeout must be a whole number between 1 and 2147483647 milliseconds.",
     );
   });
@@ -286,7 +284,7 @@ describe("the refusals, in order", () => {
     expect(refusal({ database: "a b", region: "us east" })).toBe(S.bucket);
     expect(refusal({ region: "us east", ...REMOTE })).toBe(S.region);
     expect(refusal({ ...REMOTE, readOnly: "yes" })).toBe(S.plaintext);
-    expect(refusal({ readOnly: "yes" }, { executionReadOnly: false, queryTimeout: 0 })).toBe(S.readOnlyNotBoolean);
+    expect(refusal({ readOnly: "yes" }, { ...CONTEXT, queryTimeout: 0 })).toBe(S.readOnlyNotBoolean);
   });
 });
 

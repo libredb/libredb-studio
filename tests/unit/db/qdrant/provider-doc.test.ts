@@ -27,6 +27,7 @@ import {
 import { QDRANT_SAMPLE_POINTS } from "@/lib/db/providers/vector/qdrant/sample";
 import { QDRANT_TESTED_VERSION } from "@/lib/db/providers/vector/qdrant/versions";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const TEST_PASSWORD = "password";
@@ -114,7 +115,7 @@ async function plaintextRefusal(): Promise<string> {
   const provider = new QdrantProvider(
     { ...QDRANT, host: "qdrant.example.com", password: TEST_PASSWORD },
     {},
-    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
     createClient as unknown as QdrantClientFactory,
   );
   try {

@@ -26,6 +26,7 @@ import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
 import { recordedAnswer, resultOf, vectorCapture } from "../../helpers/qdrant-surface-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 pinMcpTestEnvironment();
 
@@ -89,7 +90,7 @@ const CONNECTION: DatabaseConnection = {
 };
 
 async function connected(): Promise<QdrantProvider> {
-  const provider = new QdrantProvider(CONNECTION, {}, {}, () => ({
+  const provider = new QdrantProvider(CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, () => ({
     send: async (request) => answer(request),
     probe: async () => {
       throw new Error("an editor handle sent the read-only proof's probe");

@@ -35,6 +35,7 @@
  */
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect/index";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const ORIGIN = new URL(process.env.MTCONNECT_LIVE_ORIGIN ?? "http://127.0.0.1:17322");
 /** The adapter sends a position every ten seconds, so this is one step of the buffer plus slack. */
@@ -118,7 +119,7 @@ const connect = async (): Promise<MTConnectProvider> => {
     host: ORIGIN.hostname,
     port: Number(ORIGIN.port === "" ? "80" : ORIGIN.port),
   } as DatabaseConnection;
-  const provider = new MTConnectProvider(connection, {});
+  const provider = new MTConnectProvider(connection, {}, { egress: egressDecision() });
   await provider.connect();
   return provider;
 };

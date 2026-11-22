@@ -30,6 +30,7 @@ import {
   rawAnswer,
   rawHttpListener,
 } from "../../../helpers/node-transport-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const MIB = 1024 * 1024;
 const AUTHORIZATION = "AWS4-HMAC-SHA256 Credential=test/20261115/us-east-1/dynamodb/aws4_request";
@@ -46,7 +47,7 @@ afterEach(async () => {
 });
 
 function connect(listener: { readonly port: number }, extra: Partial<NodeTransportOptions> = {}) {
-  const origin = httpOrigin("http", "127.0.0.1", listener.port);
+  const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
   const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {}, ...extra });
   transports.push(transport);
   return { transport, url: (path: string) => endpointUrl(origin, path) };
@@ -55,7 +56,7 @@ function connect(listener: { readonly port: number }, extra: Partial<NodeTranspo
 function build(extra: Partial<NodeTransportOptions>): () => NodeTransport {
   return () => {
     const transport = createNodeTransport({
-      origin: httpOrigin("http", "127.0.0.1", 1),
+      origin: httpOrigin("http", "127.0.0.1", 1, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 1,
       headers: {},
@@ -424,7 +425,7 @@ describe("header value caps", () => {
 
   test("the byte transport's signer takes the same 8192-byte cap", async () => {
     const listener = await rawHttpListener(() => rawAnswer("200 OK", ["content-length: 2"], "ok"));
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const byteSigner = (token: string): RequestSigner => ({
       headerNames: ["authorization", "x-amz-security-token"],
       sign: () => ({ authorization: AUTHORIZATION, "x-amz-security-token": token }),
@@ -545,7 +546,7 @@ describe("connection headers in two spellings", () => {
 describe("refusals when the transport is built", () => {
   test("a duplicate spelling and an unknown jsonContentType open no socket", async () => {
     const listener: Listener = await rawHttpListener(OK);
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     expect(() => createNodeTransport({ origin, tls: null, maxSockets: 1, headers: { A: "1", a: "2" } })).toThrow(
       DatabaseConfigError,
     );

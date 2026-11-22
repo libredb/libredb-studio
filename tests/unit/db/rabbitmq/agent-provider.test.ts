@@ -248,9 +248,14 @@ describe("who may call queryReadOnly", () => {
   );
 
   test("before connect() and after disconnect() the call is refused with the provider's own sentences", async () => {
-    const provider = new RabbitMQProvider(rabbitmqConnection(), {}, AGENT, {
-      managementTransport: connectedStub().factory,
-    });
+    const provider = new RabbitMQProvider(
+      rabbitmqConnection(),
+      {},
+      { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
+      {
+        managementTransport: connectedStub().factory,
+      },
+    );
     expect((await refusal(provider.queryReadOnly(READ(), BUDGET))).message).toBe(
       "Provider is not connected. Call connect() first.",
     );
@@ -613,9 +618,14 @@ describe("the editor's surfaces on an agent-mode handle", () => {
   });
 
   test("an agent-mode handle's object source is refused even before connect()", async () => {
-    const provider = new RabbitMQProvider(rabbitmqConnection(), {}, AGENT, {
-      managementTransport: connectedStub().factory,
-    });
+    const provider = new RabbitMQProvider(
+      rabbitmqConnection(),
+      {},
+      { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
+      {
+        managementTransport: connectedStub().factory,
+      },
+    );
     expect((await refusal(provider.readObjectSource(["/", "orders"], "queue"))).message).toBe(
       "Provider is not connected. Call connect() first.",
     );

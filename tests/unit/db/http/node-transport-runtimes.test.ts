@@ -47,12 +47,16 @@ import {
 import { howItFailed } from "../../../helpers/spawn-outcome";
 import { answerWithUpgrade } from "../../../helpers/upgrade-answer";
 import type { setEgressFlag } from "../../../helpers/egress-flag";
+import type { EgressDecision } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 interface Deps {
   readonly createNodeTransport: typeof createNodeTransport;
   readonly nodeTlsMaterial: typeof nodeTlsMaterial;
   readonly endpointUrl: typeof endpointUrl;
   readonly httpOrigin: typeof httpOrigin;
+  /** The decision every origin here is built with, so the origin never refuses and the transport's own check decides. */
+  readonly allowsPrivateHosts: EgressDecision;
   readonly setEgressFlag: typeof setEgressFlag;
   readonly http: typeof http;
   readonly https: typeof https;
@@ -115,6 +119,7 @@ interface ByteOutcome {
 interface ByteDeps {
   readonly createNodeByteTransport: typeof import("@/lib/db/http/node-transport").createNodeByteTransport;
   readonly httpOrigin: typeof httpOrigin;
+  readonly allowsPrivateHosts: EgressDecision;
   readonly http: typeof http;
   readonly https: typeof https;
 }
@@ -193,7 +198,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
       keep?: boolean;
     } = {},
   ) => {
-    const origin = deps.httpOrigin(scheme, host, port);
+    const origin = deps.httpOrigin(scheme, host, port, deps.allowsPrivateHosts);
     const transport = deps.createNodeTransport({ origin, tls, maxSockets: 4, headers: { "api-key": SECRET } });
     try {
       return await transport.request({
@@ -291,7 +296,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
     once("https", "127.0.0.1", ports.farAddress, material(plan.ca, "127.0.0.1"), "/forward"),
   );
   await record("keep-alive: three at once, then five more, at most two sockets", async () => {
-    const origin = deps.httpOrigin("http", "127.0.0.1", ports.slow);
+    const origin = deps.httpOrigin("http", "127.0.0.1", ports.slow, deps.allowsPrivateHosts);
     const transport = deps.createNodeTransport({ origin, tls: null, maxSockets: 2, headers: { "api-key": SECRET } });
     const request = () =>
       transport.request({
@@ -313,7 +318,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
     }
   });
   await record("a request cancelled while queued behind maxSockets", async () => {
-    const origin = deps.httpOrigin("http", "127.0.0.1", ports.silent);
+    const origin = deps.httpOrigin("http", "127.0.0.1", ports.silent, deps.allowsPrivateHosts);
     const transport = deps.createNodeTransport({ origin, tls: null, maxSockets: 1, headers: { "api-key": SECRET } });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 100);
@@ -335,7 +340,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   });
   // A listed per-request header goes out; an unlisted one is refused before a socket, so the guarded listener sees none.
   const sendHeaders = async (port: number, path: string, headers: Record<string, string>) => {
-    const origin = deps.httpOrigin("http", "127.0.0.1", port);
+    const origin = deps.httpOrigin("http", "127.0.0.1", port, deps.allowsPrivateHosts);
     const transport = deps.createNodeTransport({
       origin,
       tls: null,
@@ -365,7 +370,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   // A text transport asked to refuse link-local addresses, with the guard off: entry.mjs answers metadata.test with
   // 169.254.169.254, and the lookup on the Agent refuses it before a socket, so the guarded listener sees nothing.
   await record("text: metadata.test refused with refusesLinkLocal", async () => {
-    const origin = deps.httpOrigin("http", "metadata.test", ports.guarded);
+    const origin = deps.httpOrigin("http", "metadata.test", ports.guarded, deps.allowsPrivateHosts);
     const transport = deps.createNodeTransport({
       origin,
       tls: null,
@@ -384,8 +389,7 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
       transport.close();
     }
   });
-  // Built before the guard is on, so the refusal below is the transport's own and not httpOrigin's.
-  const guardedOrigin = deps.httpOrigin("http", "127.0.0.1", ports.guarded);
+  const guardedOrigin = deps.httpOrigin("http", "127.0.0.1", ports.guarded, deps.allowsPrivateHosts);
   deps.setEgressFlag("true");
   try {
     await record("guard: 127.0.0.1 refused before a socket", async () => {
@@ -479,7 +483,7 @@ async function runByteCases(
   };
   const connect = (host: string) =>
     deps.createNodeByteTransport({
-      origin: deps.httpOrigin("http", host, plan.bytePort),
+      origin: deps.httpOrigin("http", host, plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 4,
       headers: {},
@@ -523,7 +527,7 @@ async function runByteCases(
   // ended the process. `length` counts the requests that rejected with the signer's own error.
   {
     const transport = deps.createNodeByteTransport({
-      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort),
+      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 1,
       headers: {},
@@ -558,7 +562,7 @@ async function runByteCases(
   // Agent's own queue, and Node dialled a socket for it after the cancel. The parent counts that socket.
   await record("byte: a request cancelled as the truncated answer ahead of it resolves", async () => {
     const transport = deps.createNodeByteTransport({
-      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort),
+      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 1,
       headers: {},
@@ -590,7 +594,7 @@ async function runByteCases(
   // A selected header whose value is UTF-8 on the wire is returned as the runtime's latin1 reading of those bytes.
   {
     const transport = deps.createNodeByteTransport({
-      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort),
+      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 1,
       headers: {},
@@ -873,11 +877,16 @@ beforeAll(async () => {
       `import { endpointUrl, httpOrigin } from ${JSON.stringify(join(HTTP_SOURCES, "endpoint.ts"))};`,
       `import { createNodeByteTransport } from ${JSON.stringify(join(HTTP_SOURCES, "node-transport.ts"))};`,
       `import { setEgressFlag } from ${JSON.stringify(join(import.meta.dir, "../../../helpers/egress-flag.ts"))};`,
+      `import { ALLOWS_PRIVATE_HOSTS } from ${JSON.stringify(join(import.meta.dir, "../../../helpers/egress-decisions.ts"))};`,
       `const runCases = ${runCases.toString()};`,
       `const runByteCases = ${runByteCases.toString()};`,
       'const plan = JSON.parse(readFileSync(process.argv[2], "utf8"));',
-      "const report = await runCases({ createNodeTransport, nodeTlsMaterial, endpointUrl, httpOrigin, setEgressFlag, http, https }, plan);",
-      "Object.assign(report, await runByteCases({ createNodeByteTransport, httpOrigin, http, https }, plan));",
+      "const allowsPrivateHosts = ALLOWS_PRIVATE_HOSTS;",
+      "const report = await runCases(",
+      "  { createNodeTransport, nodeTlsMaterial, endpointUrl, httpOrigin, allowsPrivateHosts, setEgressFlag, http, https },",
+      "  plan,",
+      ");",
+      "Object.assign(report, await runByteCases({ createNodeByteTransport, httpOrigin, allowsPrivateHosts, http, https }, plan));",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "process.exit(0);",
       "",
@@ -1367,7 +1376,7 @@ for (const [label, binary] of RUNTIMES) {
     });
 
     test("every byte request carried one Host line, equal to originHost of the origin", () => {
-      const host = originHost(parentHttpOrigin("http", "127.0.0.1", byteListenerPort));
+      const host = originHost(parentHttpOrigin("http", "127.0.0.1", byteListenerPort, ALLOWS_PRIVATE_HOSTS));
       const hosts = byteHostLines.slice(run?.from.byteHeads);
       expect(hosts.length).toBeGreaterThan(0);
       expect(hosts.every((lines) => lines.length === 1 && lines[0] === `host: ${host}`)).toBe(true);

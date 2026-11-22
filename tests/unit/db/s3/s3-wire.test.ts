@@ -34,6 +34,7 @@ import {
   renderCapturesReadme,
   type S3Manifest,
 } from "../../../helpers/s3-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 let sockets = 0;
 const originalConnect = net.Socket.prototype.connect;
@@ -70,7 +71,7 @@ function fakeSigner(calls: SigningInput[], extra: Readonly<Record<string, string
 
 function options(signer?: RequestSigner): NodeByteTransportOptions {
   return {
-    origin: httpOrigin("http", "127.0.0.1", 9010),
+    origin: httpOrigin("http", "127.0.0.1", 9010, ALLOWS_PRIVATE_HOSTS),
     tls: null,
     maxSockets: 1,
     headers: {},
@@ -413,7 +414,10 @@ describe("the byte transport's own checks, replayed with no socket", () => {
     ]);
 
   test("both factories run the byte transport's build checks, so a link-local origin is refused where the byte transport refuses it", () => {
-    const linkLocal = { ...options(fakeSigner([])), origin: httpOrigin("http", "169.254.169.254", 80) };
+    const linkLocal = {
+      ...options(fakeSigner([])),
+      origin: httpOrigin("http", "169.254.169.254", 80, ALLOWS_PRIVATE_HOSTS),
+    };
     for (const wire of [recordedS3Transport(capture([exchange("/")])), scriptedOk()])
       expect(() => wire.createTransport(linkLocal)).toThrow("this connection never reaches a link-local address");
   });

@@ -19,6 +19,7 @@ import { WEAVIATE_CLIENT_ROUTES } from "@/lib/db/providers/vector/weaviate/route
 import type { DatabaseConnection } from "@/lib/types";
 import { expectCalls } from "../../../helpers/call-log";
 import { okAnswer, type RecordedAnswer, recordingWeaviateTransport } from "../../../helpers/weaviate-wire";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -34,7 +35,7 @@ const OPTIONS = buildWeaviateConnectionOptions(
     password: TEST_PASSWORD,
     createdAt: new Date(0),
   } as unknown as DatabaseConnection,
-  { executionReadOnly: false, queryTimeout: 30_000 },
+  { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS },
 );
 
 const signal = () => new AbortController().signal;

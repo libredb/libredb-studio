@@ -23,6 +23,7 @@ import {
 } from "./s3-live-support";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { joinVirtualKey } from "@/lib/db/providers/objectstore/s3/names";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 export interface S3ScenarioExtras {
   /** assertObjectSurface with S3_CONFORMANCE, passed in by a Bun caller, so this module loads under Node. */
@@ -131,7 +132,7 @@ async function consoleRunner(context: S3RunContext, name: ConsoleScenarioName): 
   const provider = new S3Provider(
     connection,
     {},
-    {},
+    { egress: egressDecision() },
     {
       createTransport: context.createTransport,
       clock: context.clockFor(0),
@@ -182,7 +183,7 @@ async function runPreviewSource(run: S3RunContext): Promise<readonly S3StepRun[]
   const provider = new S3Provider(
     connection,
     {},
-    {},
+    { egress: egressDecision() },
     {
       createTransport: run.createTransport,
       clock: run.clockFor(0),

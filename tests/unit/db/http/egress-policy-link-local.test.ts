@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
 import { setEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const realDns = { ...(await import("node:dns")) };
 const lookups: string[] = [];
@@ -246,7 +247,7 @@ describe("through a byte transport with the guard off", () => {
   function connect(host: string, port: number) {
     setEgressFlag(undefined);
     const transport = createNodeByteTransport({
-      origin: httpOrigin("http", host, port),
+      origin: httpOrigin("http", host, port, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 4,
       headers: {},
@@ -394,7 +395,7 @@ describe("a text transport asked to refuse link-local addresses", () => {
   function send(host: string, port: number, guard: "off" | "on" = "off", refusesLinkLocal = true) {
     if (guard === "on") setEgressFlag("true");
     else setEgressFlag(undefined);
-    const origin = httpOrigin("http", host, port);
+    const origin = httpOrigin("http", host, port, ALLOWS_PRIVATE_HOSTS);
     const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {}, refusesLinkLocal });
     transports.push(transport);
     return transport.request({

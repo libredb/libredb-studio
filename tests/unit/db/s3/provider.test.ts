@@ -30,6 +30,7 @@ import {
   objectsXml,
   xmlAnswer,
 } from "../../../helpers/s3-fake-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const BUCKETS: FakeS3Handler = () => xmlAnswer(bucketsXml(["sales"]));
 const FIXED = new Date("2026-10-09T13:14:43.000Z");
@@ -39,7 +40,7 @@ function provider(handler: FakeS3Handler, overrides: Partial<DatabaseConnection>
   const s3 = new S3Provider(
     s3Connection(overrides),
     queryTimeout === undefined ? {} : { queryTimeout },
-    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
     {
       createTransport: fake.createTransport,
       clock: () => FIXED,
@@ -79,7 +80,7 @@ describe("the transport of a session", () => {
     const s3 = new S3Provider(
       s3Connection(),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       {
         createTransport: fake.createTransport,
         signerWrapper: (signer) => {
@@ -263,7 +264,7 @@ describe("the object surface", () => {
     const s3 = new S3Provider(
       s3Connection(),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       { createTransport: fake.createTransport, clock: () => new Date(now) },
     );
     await s3.connect();

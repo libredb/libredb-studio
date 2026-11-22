@@ -21,6 +21,7 @@ import {
 } from "@/lib/db/http/endpoint";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { closeAll, httpListener, jsonAnswer } from "../../../helpers/node-transport-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const LONE_SURROGATE = "Invalid text: expected well-formed Unicode, so it cannot be percent-encoded";
 /** The byte transport's target grammar (byte transport design 3.4), written out again so the test owns it. */
@@ -149,7 +150,7 @@ describe("originHost", () => {
     ["[::1]", "::1"],
   ])("equals the Host the runtime writes for %s", async (host, bind) => {
     const listener = await httpListener(jsonAnswer(200, "{}"), bind);
-    const origin = httpOrigin("http", host, listener.port);
+    const origin = httpOrigin("http", host, listener.port, ALLOWS_PRIVATE_HOSTS);
     const transport = createNodeTransport({ origin, tls: null, maxSockets: 1, headers: {} });
     try {
       await transport.request({

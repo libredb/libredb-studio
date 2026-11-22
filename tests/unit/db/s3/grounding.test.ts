@@ -25,6 +25,7 @@ import {
   objectsXml,
   xmlAnswer,
 } from "../../../helpers/s3-fake-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 /** A root-level key, so the pinned probe's level page (prefix "", delimiter "/") is one a server may send. */
 const SECRET_KEY = "tenant-secret-marker-report.csv";
@@ -62,7 +63,12 @@ describe("plan-mode grounding on S3", () => {
   test("unpinned: the inventory holds the bucket rows, read from one bucket list, and no object key", async () => {
     const connection = s3Connection({ id: "s3-grounding" });
     const fake = fakeS3Transport(HANDLER);
-    const provider = new S3Provider(connection, {}, {}, { createTransport: fake.createTransport });
+    const provider = new S3Provider(
+      connection,
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: fake.createTransport },
+    );
     await provider.connect();
     const before = fake.exchanges.length;
 
@@ -84,7 +90,12 @@ describe("plan-mode grounding on S3", () => {
   test("the snapshot keeps a bucket's name and drops its creation date, and the advice claims no more", async () => {
     const connection = s3Connection({ id: "s3-grounding-dates" });
     const fake = fakeS3Transport(HANDLER);
-    const provider = new S3Provider(connection, {}, {}, { createTransport: fake.createTransport });
+    const provider = new S3Provider(
+      connection,
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: fake.createTransport },
+    );
     await provider.connect();
     // The listing the walk reads carries each bucket's creation date as the object's status.
     expect((await provider.listObjects([], "bucket")).map((object) => object.status)).toEqual([
@@ -107,7 +118,12 @@ describe("plan-mode grounding on S3", () => {
   test("pinned: the one bucket, with no request at all", async () => {
     const connection = s3Connection({ id: "s3-grounding-pinned", database: "sales" });
     const fake = fakeS3Transport(HANDLER);
-    const provider = new S3Provider(connection, {}, {}, { createTransport: fake.createTransport });
+    const provider = new S3Provider(
+      connection,
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: fake.createTransport },
+    );
     await provider.connect();
     const before = fake.exchanges.length;
 

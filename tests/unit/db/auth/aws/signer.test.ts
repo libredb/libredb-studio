@@ -21,6 +21,7 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { endpointUrl, httpOrigin, rfc3986Encode, rfc3986Query } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeTransport, type SigningInput } from "@/lib/db/http/node-transport";
 import { closeAll, httpListener, jsonAnswer, type Seen } from "../../../../helpers/node-transport-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../../helpers/egress-decisions";
 
 interface SuiteVector {
   readonly name: string;
@@ -404,7 +405,7 @@ describe("through a real text transport", () => {
 
   test("a JSON request carries an Authorization equal to one recomputed from what the server received", async () => {
     const listener = await httpListener(jsonAnswer(200, "{}"));
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const keys = { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY" };
     const transport = createNodeTransport({
       origin,
@@ -441,7 +442,7 @@ describe("through a real text transport", () => {
 
   test("a form request with a query, the clock and the credentials read at send time for each request", async () => {
     const listener = await httpListener(jsonAnswer(200, "{}"));
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const first = { accessKeyId: "AKIDFIRST", secretAccessKey: "first-secret" };
     const second = {
       accessKeyId: "AKIDSECOND",
@@ -505,7 +506,7 @@ describe("through a real text transport", () => {
 
   test("a request to a path other than / is refused by the signer and nothing is sent", async () => {
     const listener = await httpListener(jsonAnswer(200, "{}"));
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const transport = createNodeTransport({
       origin,
       tls: null,
@@ -537,7 +538,7 @@ describe("through a real text transport", () => {
 
   test("a query with ~, * and a space signs when built with rfc3986Query and is refused when built by endpointUrl", async () => {
     const listener = await httpListener(jsonAnswer(200, "{}"));
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const keys = { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret" };
     const transport = createNodeTransport({
       origin,

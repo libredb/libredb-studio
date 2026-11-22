@@ -56,6 +56,7 @@ import {
   isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 
 // NOTE: the mocks below are inline rather than in a shared helper, and the request is built by
 // `createMockRequest` with the session supplied by a mocked `@/lib/auth`. That is the ONE pattern
@@ -2150,7 +2151,7 @@ describe("the inventory and search routes over RabbitMQ's management API", () =>
     const provider = new RabbitMQProvider(
       rabbitmqConnection(),
       { queryTimeout: 60_000 },
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       { managementTransport: stub.factory, deadlineSignal: manualDeadlines().factory },
     );
     await provider.connect();

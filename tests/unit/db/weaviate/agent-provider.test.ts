@@ -29,6 +29,7 @@ import {
 } from "../../../helpers/weaviate-agent";
 import { rejection, WEAVIATE_TEST_CONNECTION } from "../../../helpers/weaviate-surface";
 import { type RecordedAnswer, recordingWeaviateTransport } from "../../../helpers/weaviate-wire";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const KEY = "not-a-real-key";
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -45,7 +46,7 @@ function agentProvider(
   const provider = new WeaviateProvider(
     { ...WEAVIATE_TEST_CONNECTION, ...connection } as DatabaseConnection,
     {},
-    execution,
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
     (options, routes) => createRestWeaviateClient(options, routes, wire.factory),
   );
   return { provider, wire };

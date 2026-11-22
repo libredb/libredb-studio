@@ -37,6 +37,7 @@ import {
   writeSeedFile,
 } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 pinMcpTestEnvironment();
 
@@ -113,7 +114,7 @@ async function acquireOver(connection: ManagedConnection, profile: ExecutionProf
   const provider = new MTConnectProvider(
     connection as DatabaseConnection,
     {},
-    agent ? { readOnly: true, sendsStatements: true } : {},
+    { ...(agent ? { readOnly: true, sendsStatements: true } : {}), egress: ALLOWS_PRIVATE_HOSTS },
     () => standIn(),
   );
   await provider.connect();

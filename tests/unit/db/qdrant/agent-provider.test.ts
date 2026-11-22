@@ -17,6 +17,7 @@ import { createRestQdrantClient } from "@/lib/db/providers/vector/qdrant/rest-cl
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { agentAnswer, agentServer } from "../../../helpers/qdrant-agent";
 import { type RecordedAnswer, recordingQdrantTransport } from "../../../helpers/qdrant-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const KEY = "not-a-real-key";
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -56,8 +57,11 @@ function agentProvider(
   connection: Partial<DatabaseConnection> = { password: KEY },
 ) {
   const wire = recordingQdrantTransport(answer);
-  const provider = new QdrantProvider({ ...CONNECTION, ...connection }, {}, execution, (options, routes) =>
-    createRestQdrantClient(options, routes, wire.factory),
+  const provider = new QdrantProvider(
+    { ...CONNECTION, ...connection },
+    {},
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    (options, routes) => createRestQdrantClient(options, routes, wire.factory),
   );
   return { provider, wire };
 }

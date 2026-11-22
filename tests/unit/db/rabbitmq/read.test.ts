@@ -121,7 +121,7 @@ function harness(overrides: Partial<ReadDependencies> = {}, connection: Partial<
   const clock = deadlines();
   const lifetime = new AbortController();
   opened.push(lifetime);
-  const read = readConnectionOptions(rabbitmqConnection(connection));
+  const read = readConnectionOptions(rabbitmqConnection(connection), ALLOWS_PRIVATE_HOSTS);
   // The AMQP endpoint carries the decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
   const endpoints = read.amqp === null ? read : { ...read, amqp: { ...read.amqp, egress: ALLOWS_PRIVATE_HOSTS } };
   const hanging = hangingDial();
@@ -785,7 +785,7 @@ describe("through RabbitMQProvider", () => {
     const provider = new RabbitMQProvider(
       rabbitmqConnection(),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       { managementTransport: stub.factory, dial: hanging.dial },
     );
     await provider.connect();
@@ -802,7 +802,7 @@ describe("through RabbitMQProvider", () => {
     const provider = new RabbitMQProvider(
       rabbitmqConnection(),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       { managementTransport: stub.factory, dial: hangingDial().dial },
     );
     await provider.connect();
