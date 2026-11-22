@@ -2606,19 +2606,22 @@ own.
 
 | Level | The pill says | The qualifier beside it | When |
 | --- | --- | --- | --- |
-| `safe` | *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | Plan mode, on every engine but Modbus, Prometheus and OPC UA, with or without the hand-over |
-| `safe` | *Executes nothing it drafts* | *the register map grounds it; opening the connection dials the device, and no request is sent to it* | Plan mode on Modbus, whose language pack declares its own plan posture (`posture.plan`), since its grounding sends the device nothing while opening the connection dials it |
-| `safe` | *Executes nothing it drafts* | *the server's read endpoints ground it, and no PromQL it drafted is evaluated* | Plan mode on Prometheus, whose language pack declares its own plan posture (`posture.plan`), since its grounding is several read endpoints rather than one schema read |
-| `safe` | *Executes nothing it drafts* | *nothing is read from the server to ground it, and the request it drafts is never sent* | Plan mode on OPC UA, whose language pack declares its own plan posture (`posture.plan`), since an address space is browsed rather than listed, so no inventory grounds it and plan mode reads nothing from the server |
+| `safe` | *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | Plan mode, on every engine but Modbus, MQTT, Sparkplug B, Prometheus and OPC UA, with or without the hand-over |
+| `safe` | *Executes nothing it drafts* | *the register map grounds it; opening the connection dials the device, and no request is sent to it* | Plan mode on Modbus, whose language pack says its own plan words (`posture.plan`), since its grounding sends the device nothing while opening the connection dials it |
+| `safe` | *Executes nothing it drafts* | *no topic is listed for it; opening the connection is a handshake that subscribes to nothing* | Plan mode on MQTT, whose language pack says its own plan words (`posture.plan`), since no command lists topics and topic names are withheld, so nothing grounds the plan |
+| `safe` | *Executes nothing it drafts* | *no group, edge node or device is listed for it; opening the connection is a handshake that subscribes to nothing* | Plan mode on Sparkplug B, whose language pack says its own plan words (`posture.plan`), since no command lists edge nodes or devices and their ids are withheld, so nothing grounds the plan |
+| `safe` | *Executes nothing it drafts* | *the server's read endpoints ground it, and no PromQL it drafted is evaluated* | Plan mode on Prometheus, whose language pack says its own plan words (`posture.plan`), since its grounding is several read endpoints rather than one schema read |
+| `safe` | *Executes nothing it drafts* | *nothing is read from the server to ground it, and the request it drafts is never sent* | Plan mode on OPC UA, whose language pack says its own plan words (`posture.plan`), since an address space is browsed rather than listed, so no inventory grounds it and plan mode reads nothing from the server |
 | `reads` | *Reads only* | the policy row's own per-statement row cap and timeout, *enforced by the engine* | Agent mode on a SQL engine in `AGENT_EXECUTION_ENGINES`, hand-over not ticked |
 | `reads` | *Reads only* | the same row cap and timeout, *enforced by Studio's request allowlist* | Agent mode on Kubernetes, ticked or not: no kubectl variant offers the hand-over, so there is nothing to widen |
 | `reads` | *Reads only* | the same row cap and timeout per command, *enforced by the server* | Agent mode on MongoDB, ticked or not: no mongo variant offers the hand-over, so there is nothing to widen |
 | `widened` | *Reads only, and one statement in your editor* | `AGENT_HANDOVER_BUDGET`'s row cap, *no time limit, same read-only session* | The same, with the hand-over consented for the run being opened |
-| `blocked` | *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | Agent mode on any other engine |
+| `blocked` | *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | Agent mode on any other engine: one with no statement language, or one whose language the review record `AGENT_EXECUTION_ENGINES` does not list, where the popover carries the start route's own refusal (`notReviewedSentence`); no shipped engine is the second kind |
 | `blocked` | *Cannot execute yet* | *no connection is resolved, so no engine has been established* | Agent mode with no connection resolved |
 | `blocked` | *Refused on this connection* | *plan mode drafts here, and the operations workflow still runs* | Agent mode on an engine it executes on, after a run on this connection was refused for the connection itself (principal too broad or too narrow, authorization off, unsupported target, unusable credential); the popover carries the refusal's own sentence, and a connection the shell has moved to since goes back to its engine's reading |
 
-Four levels, one reading per row above: `blocked` covers the three arms that execute nothing and have no bound to state.
+Four levels, one reading per row above: `blocked` covers the four arms that execute nothing and have no bound to state.
+The level and the pill are the posture module's own, chosen by the arm; a language pack supplies the qualifier, the title and the body of its plan, reads and widened arms and cannot write either ([Language packs](#language-packs)).
 They stay separate arms because "has no read-only statement path" is a claim about an engine, which a panel that has resolved no connection has not seen, and "refused on this connection" is a claim about one connection's user, which says nothing about the engine.
 Not one engine name and not one
 figure is typed in the module — the names come from `AGENT_EXECUTION_ENGINES` through
@@ -2972,7 +2975,7 @@ The core (`investigation.ts`, `tools.ts` and the modules beside them) names no s
 
 | Facet | Tier rule | What it holds | Read through |
 | --- | --- | --- | --- |
-| `client` | Browser-safe: it reaches no server module and no `node:` builtin | the copy, the workflow variants, the plan-estimate operation, the posture sentences and the evidence events it writes | `languageClientPack` |
+| `client` | Browser-safe: it reaches no server module and no `node:` builtin | the copy, the workflow variants, the plan-estimate operation, the posture words and the evidence events it writes | `languageClientPack` |
 | `server` | Below `tools.ts`: it never reaches the execution tier | the adapter, the tool overrides and base definitions, the recommendation card, grounding, the tool rules and the shortfall notices | `languageServerPack` |
 | `execution` | Above `tools.ts`: only the run loop reads it | the tool arms and the evidence tools | `agentLanguagePack` |
 | `mcp` | Data only: it never reaches the execution tier or `src/lib/mcp/`, which reads it | the MCP statement tool's name and title, the statement argument's input field, the `database` key and paging mode, `holdsNoTables`, the description, and the words its refusals and cut results use | `AGENT_LANGUAGE_MCP_FACETS` in `languages/mcp.ts` |
@@ -3043,6 +3046,26 @@ Every member an overlay cannot override stays keyed by the persisted family, so 
 `CURATED_CALL_LANGUAGE` is the language a curated call is fingerprinted and refused in, because its `operations:` or `objects:` key is no statement in any language.
 
 **A pack never opens execution.** Whether agent mode executes on an engine is decided by `AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts` and the execution-profile check; a pack only says how a statement in its language is read, refused and narrated.
+
+**What a pack says on the safety strip.**
+The client facet's `posture` supplies words, never a rank: each arm it answers is an `AgentPostureCopy` in `languages/pack.ts`, a qualifier, a title and a body.
+`reads` is required; `widened` is present exactly where one of the language's workflow variants hands a statement to the editor (`canAutoExecute`); `plan` is present only where the shared plan words are not true of the language, as on Modbus, MQTT, Sparkplug B, Prometheus and OPC UA.
+`handoverTerms`, the consent sentence, stays the pack's own text.
+The tone and the headline are `src/lib/agent/posture.ts`'s, derived from the arm, and the arm from core records alone:
+
+| Arm | Chosen when | Tone | Headline |
+| --- | --- | --- | --- |
+| plan | plan mode, on every engine | `safe` | *Executes nothing it drafts* |
+| unresolved | agent mode with no connection | `blocked` | *Cannot execute yet* |
+| unsupported | the engine has no statement language in `AGENT_STATEMENT_LANGUAGE` | `blocked` | *Cannot execute on `<engine>`* |
+| not reviewed | the engine has a language and `AGENT_EXECUTION_ENGINES` does not list it | `blocked` | *Cannot execute on `<engine>`* |
+| refused | the last run on this connection was refused for the connection itself | `blocked` | *Refused on this connection* |
+| widened | the hand-over is ticked and some variant of the language hands a statement over | `widened` | *Reads only, and one statement in your editor* |
+| reads | otherwise, a tick included where no variant hands a statement over | `reads` | *Reads only* |
+
+The four `blocked` arms are core's words whole.
+The two `never` members of `AgentPostureCopy` make a tone or a headline a compile error in every form a pack declares its facet in, which `tests/unit/lib/agent/posture-copy-types.test.ts` holds, and `posture.ts` reads the three members by name, so a value cast past the compiler carries nothing else to the strip.
+`tests/unit/lib/agent/posture.test.ts` holds every shipped pack to the three members, its `widened` to its variants, and every client pack module free of a posture tone or headline, and it renders every engine in every arm against `tests/fixtures/agent/posture/golden-posture.json`.
 
 **What a statement workflow requires of the dialect.**
 Each SQL statement workflow requires of an engine only the dialect members it cannot run without, as the `requires` of its variant in `languages/sql/client.ts`, read against `AGENT_REQUIREMENT_ENGINES` in `agent-manifest.ts`.
