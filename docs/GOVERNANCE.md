@@ -144,7 +144,7 @@ Studio checks the session of every request against these rules:
 - A password, passkey or launch session carries no subject and is refused, and so is a session whose subject is empty or whose issuer is not `OIDC_ISSUER`.
   With `OIDC_ISSUER` unset or not a URL every session is refused, and a changed `OIDC_ISSUER` ends the sessions of the previous issuer.
 - A session issued at or before its subject's latest `revoked_before` in [`bridge.session_revocations_v1`](#row-semantics) is refused, typically within a second of the commit that adds the row, because its change notification reloads the snapshot.
-  An instance that has received SIGTERM or SIGINT applies no such row until it exits ([operating notes](#operating-notes)).
+  An instance whose shutdown hooks have started, at SIGTERM or SIGINT or, where Studio's handler owns the exit, once it has drained the requests in flight, applies no such row until it exits ([operating notes](#operating-notes)).
   A session's issue time is its token's `iat`, in whole seconds, so a session signed within the second of `revoked_before` counts as issued before it.
   A sign-in after that second gets a session the row does not refuse, so a control plane that means to keep someone out also disables them at the identity provider.
 - The OIDC callback applies the same rule to the session it is about to mint: when the subject's latest `revoked_before` is at or after the current second, as when the control plane's clock runs ahead of Studio's or the row's `revoked_before` cannot be read, the sign-in ends on `/login?error=oidc_session_revoked` with no session, and the audit trail records `login_failure` with reason `oidc_session_revoked`.
@@ -416,13 +416,14 @@ How an instance connects to the governance source:
 - Each pooled connection names itself `libredb-studio-governance` in `application_name`, and the listener's connection `libredb-studio-governance-listener`, so they show up as such in `pg_stat_activity`.
 - A load waits at most 5 seconds for a connection, each statement runs under a `statement_timeout` of 10 seconds and is abandoned by Studio after 15, and the whole load gives up after 20 seconds, so a governance source that hangs never holds a load for long.
   Studio closes the connection of a load that gave up, and a statement still running on it keeps its server process busy until it ends, at most the 10 seconds of `statement_timeout`, because PostgreSQL notices a closed connection only when it next reads from it.
-- On SIGTERM or SIGINT Studio first inserts the [query events](#query-events) it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it.
-  Where Studio's handler owns the exit (`NEXT_MANUAL_SIG_HANDLE=true`), it then closes its connections to the users' databases and exits ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
-  Where Next.js's handler owns it, which no image, chart or launcher changes yet, that insert runs beside Next.js's own shutdown and is cut when Next.js exits, within milliseconds on an idle server, so query events still queued can be lost.
+- Where Studio's handler owns the exit (`NEXT_MANUAL_SIG_HANDLE=true`, which the images set), on SIGTERM or SIGINT Studio first stops accepting connections and waits at most 5 seconds for the requests in flight, so their query events are in the insert.
+  It then inserts the [query events](#query-events) it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it, then closes its connections to the users' databases and exits ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+- Where Next.js's handler owns the exit, as under npx and the other launchers today, on SIGTERM or SIGINT Studio inserts the query events it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it.
+  That insert runs beside Next.js's own shutdown and is cut when Next.js exits, within milliseconds on an idle server, so query events still queued can be lost.
   Next.js then goes on serving the requests in flight and the connections open at the signal until they end.
   When the process recorded a query event before the signal, the insert at the signal closed the query event sink once it ended, so the query events of the statements run after that are never inserted; without such an event the sink stays open and inserts them as usual.
   Studio's line at the exit counts every event left unsent as `queryEventsLost`, unless the platform's SIGKILL ends the process, and `queryLog.onSinkFailure` set to `refuse` refuses those statements instead ([query events](#query-events)).
-- Closing the listener and stopping the reloads at the signal means that from then on the instance applies no further change of grants or sessions, a revocation included: until the process exits it authorizes requests by the snapshot it held at the signal, wherever Studio's or Next.js's handler owns the exit.
+- Closing the listener and stopping the reloads when the shutdown hooks start, at the signal where Next.js's handler owns the exit and after the drain where Studio's does, means that from then on the instance applies no further change of grants or sessions, a revocation included: until the process exits it authorizes requests by the snapshot it held then.
 
 ## Admin status
 
@@ -700,7 +701,7 @@ Delivery:
 - At shutdown Studio inserts every queued event at once, batch after batch and without waiting out a backoff, for at most 4 seconds, and logs how many events it could not send.
   The insert runs only when the process recorded an event before the signal, and it sends the events recorded while it runs.
   It then closes the query event sink: an event recorded after it is queued and never sent.
-  The process waits for that insert only where Studio's handler owns the exit; where Next.js's handler owns it, as in every channel today, Next.js's exit can cut it ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+  Where Studio's handler owns the exit, as in the images, it first waits at most 5 seconds for the requests in flight, so their events are in the insert, and the process waits for the insert; where Next.js's handler owns it, as under npx and the other launchers today, the insert starts at the signal and Next.js's exit can cut it ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
   Either way, the line Studio logs as the process exits, unless the platform's SIGKILL ends it, counts the events left unsent, those recorded after the insert included, as `queryEventsLost`, and where Studio's handler owns the exit any such event makes the exit code 143 or 130.
   An uncaught exception ends the process without that insert ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)): the events still queued are not inserted, and the line Studio logs for that exit counts them as `queryEventsLost`.
   The count includes an insert under way, whose rows may have landed, so the count is at most what was lost.

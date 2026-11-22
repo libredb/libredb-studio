@@ -43,7 +43,7 @@ None of it is a GitHub issue.
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B172 · 83
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 24
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV31 · 31
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV32 · 31
 
 ---
 
@@ -10346,28 +10346,13 @@ This is an enhancement rather than a defect: the skip is reported, and nothing i
 
 **Done when:** the manifest publishes, per engine, the credential and definition keys that engine's provider reads, from one exhaustive record a test holds equal to the providers' own rules, the manifest is regenerated, and `docs/GOVERNANCE.md` describes the new section.
 
-### GOV10. No image, chart or launcher sets `NEXT_MANUAL_SIG_HANDLE`, so Next.js's own SIGTERM handler still ends the server before Studio's shutdown
-
-`register()` in `src/instrumentation.ts` installs Studio's shutdown handler (`src/lib/shutdown-handler.ts`) at boot, and it owns the exit only with `NEXT_MANUAL_SIG_HANDLE=true` (`docs/DISTRIBUTION.md`, "Stopping the server").
-No channel sets the variable, so everywhere Next.js's own handler, `cleanup` in `next/dist/server/lib/start-server.js`, closes the HTTP server, waits for the requests in flight and exits with 143 or 130, within milliseconds on an idle server, while Studio's handler is still running the hooks that insert the query events Studio holds.
-Those rows are lost, and under systemd every stop of the service is recorded as a failed unit.
-Next.js's wait has no bound of its own: it waits for every request in flight, an agent run's timeline stream included, and serves a keep-alive connection open at the signal while a client keeps sending requests on it, so such a stop ends only with the platform's SIGKILL.
-A second Ctrl+C does not force the exit, because both handlers ignore a repeated signal.
-When the process recorded a query event before the signal, the hooks closed the query event sink once their insert ended, so the statements those requests run after that leave query events that are never inserted; the line Studio logs at the exit counts them as `queryEventsLost`, unless the platform's SIGKILL ends the process, and `queryLog.onSinkFailure` set to `refuse` refuses them, but with `continue` they are lost.
-The hooks also stopped the governance listener and the snapshot reloads at the signal, so during that wait this instance applies no grant or session change, a revocation included.
-Setting the variable as things stand trades one loss for another: with it Next.js drains nothing and Studio has no drain, so requests in flight would be cut, and the server keeps accepting new connections until Studio's exit, because nothing closes the HTTP server.
-The chart cannot set it before its `appVersion` names an image that installs the handler at boot: an older image registers its handler only once a route has loaded the provider factory, so with the variable it has no SIGTERM listener at all until then, and as PID 1 ignores the signal until the platform's SIGKILL.
-
-**Done when:** the images, and the chart once its `appVersion` names such an image, set the variable, the HTTP server stops accepting connections and requests in flight are drained within a bound or their cut is documented, and a test that sends SIGTERM to the built server under the image's environment shows the queued query events inserted before the process exits.
-Each launcher that starts the standalone server (npx, .deb, .rpm, AUR, Homebrew, Snap, Windows and the desktop app) sets the variable too, or this entry records the owner's reason not to; when the images' part lands first, the launchers' part becomes an entry of its own before this one is deleted.
-
 ### GOV11. At shutdown the governance pool can close under the query event flush
 
 `runShutdownHooks` in `src/lib/shutdown.ts` starts every hook at once, so the query event flush (`flushQueryEvents` in `src/lib/query-events/sink.ts`, which writes through `withGovernanceClient` in `src/lib/governance/db.ts`) runs beside `stopGovernance` in `src/lib/governance/start.ts`, which awaits the listener's close and then `closeGovernancePool()` in `src/lib/governance/db.ts`.
 The flush's first batch takes its client before the pool closes, and `pool.end()` waits for it.
 A later batch, when more than 500 events are queued or when the flush first waits for one already in flight, finds the pool gone, and `governancePool()` in the same file builds a new one that nothing closes, connecting again inside the flush's 4 seconds.
 `docs/GOVERNANCE.md` says Studio first inserts the query events and then closes the pool, and nothing in the code orders the two.
-Alone this rarely loses a row (a connect queued on a full pool when `end()` runs is never served, so that batch dies at the deadline); the larger loss is GOV10's.
+Alone this rarely loses a row (a connect queued on a full pool when `end()` runs is never served, so that batch dies at the deadline); the larger loss, where Next.js's handler owns the exit, is GOV32's.
 
 **Done when:** the governance pool closes only after the query event hook has settled, `governancePool()` refuses to build a pool once shutdown has begun, and a test with more than 500 queued events shows every batch inserted through the original pool before it closes.
 
@@ -10411,7 +10396,7 @@ The governed branch of `POST /api/db/disconnect` (`src/app/api/db/disconnect/rou
 That record is closed later by `recordTimedOut` in `src/lib/api/transaction-ownership.ts`, from its watch timer about five minutes after `BEGIN`, the caller's next transaction request or the lapsed lease, which records `timed-out` with `status` `cancelled`.
 `docs/GOVERNANCE.md` reserves `timed-out` for the database driver rolling the transaction back at its five-minute limit, so the audit trail names the wrong cause at the wrong time, where the grant loader records `rolled-back` for the same rollback (`endRevokedTransactions` in `src/lib/governance/grant-diff.ts`).
 Only the API reaches it, since the UI disconnects only to delete a custom connection, which governance switches off, and at shutdown `closeCachesAtShutdown` rolls transactions back and records no terminal event at all.
-Recording one there is not enough on its own: the shutdown handler in `src/lib/shutdown-handler.ts` runs the shutdown hooks, the query event flush among them, before it closes the providers, so a row recorded during that rollback is never sent (GOV10, GOV11).
+Recording one there is not enough on its own: the shutdown handler in `src/lib/shutdown-handler.ts` runs the shutdown hooks, the query event flush among them, before it closes the providers, so a row recorded during that rollback is never sent (GOV11).
 The loader's own `rolled-back` is recorded even when the rollback did not finish in time, because `teardownProvider` never rejects, so the rule in `docs/GOVERNANCE.md` that a close that fails records nothing does not hold there either; a fix here should not copy it.
 
 **Done when:** the governed disconnect records `rolled-back`, with `status` `error` when the rollback was not confirmed, and releases the owner record, and a test shows that a `begin` followed by a disconnect records exactly one `rolled-back` and no later `timed-out`.
@@ -10570,3 +10555,13 @@ The agent and MCP are off under governance in this contract version, so nothing 
 Found 2026-11-03 while adding the seed agent credential, and left out of it by decision.
 
 **Done when:** the envelope gains an agent credential key, admission merges it into the record and the manifest publishes it, a governed connection's agent signs in under it, and an admission test pins both the merge and the refusal of the pair in the definition.
+
+### GOV32. No launcher sets `NEXT_MANUAL_SIG_HANDLE`, so outside the images Next.js's own SIGTERM handler still ends the server before Studio's shutdown
+
+The three images set `NEXT_MANUAL_SIG_HANDLE=true`, so in a container Studio's shutdown handler (`src/lib/shutdown-handler.ts`) closes the HTTP server, waits for the requests in flight, inserts the query events Studio holds and closes the providers before it exits (`docs/DISTRIBUTION.md`, "Stopping the server").
+No launcher that starts the standalone server sets it: npx (`bin/studio.js`), the .deb, .rpm and AUR packages (`packaging/linux/libredb-studio` and `packaging/linux/libredb-studio.service`), Homebrew (`packaging/homebrew/libredb-studio.rb.tmpl`), Snap (`snap/local/launch.sh`), the Windows launcher (`launcherEnv` in `packaging/windows/launcher/launch.go`), the desktop sidecar (`sidecar_env` in `desktop/src-tauri/src/sidecar.rs`) and package.json `start` (`scripts/next-with-seed-assets.mjs`).
+There Next.js's handler, `cleanup` in `next/dist/server/lib/start-server.js`, ends the process with 143 or 130, within milliseconds on an idle server, while Studio's hooks are still inserting the query events Studio holds, and those rows are lost.
+Under systemd the .deb, .rpm, AUR and Snap services record every such stop as a failed unit, since only 0 is a clean stop there.
+The desktop shell kills the server 5 s after its SIGTERM (`SHUTDOWN_GRACE` in `desktop/src-tauri/src/sidecar.rs`), less than the 25 s Studio's handler may take where it owns the exit.
+
+**Done when:** each launcher above starts the server with `NEXT_MANUAL_SIG_HANDLE=true`, the desktop's grace covers Studio's bounds, a test per launcher shows the variable in the environment it starts the server with, `docs/DISTRIBUTION.md` "Stopping the server" says so, and a stop of the Linux service ends with exit code 0.
