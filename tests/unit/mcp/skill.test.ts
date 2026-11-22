@@ -26,11 +26,7 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { MCP_TOKEN_ENV_NAME, mcpClientConfigs } from "@/lib/mcp/client-config";
 import { MCP_CONNECTIONS_UNREADABLE_TEXT } from "@/lib/mcp/context";
-import {
-  MCP_ENGINE_ERROR_PREFIX,
-  MCP_RESULT_CAP_BYTES,
-  providerTextNotice,
-} from "@/lib/mcp/output";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_RESULT_CAP_BYTES, providerTextNotice } from "@/lib/mcp/output";
 import { fenceRefusalText, profileRefusalText } from "@/lib/mcp/tools/read-query-limits";
 import { MCP_STATEMENT_TOOLS } from "@/lib/mcp/tools/statement-arms";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
