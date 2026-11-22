@@ -471,7 +471,11 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
   private readonly agentTransports = new Map<string, NodeTransport>();
   private agentQueryOrigin: HttpOrigin | null = null;
 
-  constructor(config: DatabaseConnection, egress: EgressDecision, deps: CouchbaseHttpTransportDeps = {}) {
+  /**
+   * `deps` is a test's seam (the provider passes its own, empty unless a test set them); `egress` is the decision the
+   * provider was built with, last, as at every other guarded transport, so a call that omits it fails closed.
+   */
+  constructor(config: DatabaseConnection, deps: CouchbaseHttpTransportDeps, egress: EgressDecision) {
     this.egress = egress;
     this.host = config.host ?? DEFAULT_HOST;
     this.explicitPort = config.port;

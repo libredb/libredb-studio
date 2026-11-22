@@ -504,8 +504,8 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     this.validate();
     const transport = new CouchbaseHttpTransport(
       this.transportConfig(),
-      requireEgressDecision(this.egress),
       this.transportDeps,
+      requireEgressDecision(this.egress),
     );
 
     try {

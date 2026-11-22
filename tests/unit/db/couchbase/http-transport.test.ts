@@ -76,7 +76,7 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 }
 
 function makeTransport(overrides: Partial<DatabaseConnection> = {}, deps: CouchbaseHttpTransportDeps = {}) {
-  return new CouchbaseHttpTransport(makeConnection(overrides), ALLOWS_PRIVATE_HOSTS, deps);
+  return new CouchbaseHttpTransport(makeConnection(overrides), deps, ALLOWS_PRIVATE_HOSTS);
 }
 
 function successPayload(overrides: Record<string, unknown> = {}) {
@@ -133,6 +133,28 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+// ============================================================================
+// The egress decision is the last constructor argument
+// ============================================================================
+
+describe("CouchbaseHttpTransport takes the egress decision last", () => {
+  test("a transport built without its decision, as an untyped call of the shape (config, deps) does, sends nothing", async () => {
+    // The decision is last, as at every other guarded transport, so an omitted decision is undefined and the request
+    // fails closed; with the decision second, the deps object would stand in for it and allow every destination.
+    const Untyped = CouchbaseHttpTransport as unknown as new (
+      config: DatabaseConnection,
+      deps: CouchbaseHttpTransportDeps,
+    ) => CouchbaseHttpTransport;
+    const transport = new Untyped(makeConnection(), {});
+    const error = await transport.manage("/pools/default").then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(calls).toEqual([]);
+  });
 });
 
 // ============================================================================
