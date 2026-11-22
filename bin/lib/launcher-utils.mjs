@@ -248,7 +248,7 @@ export const MANUAL_SIGNAL_HANDLING_VARIABLE = "NEXT_MANUAL_SIG_HANDLE";
  * not content: an empty value is the operator's choice of Next.js's handler, and any other value is
  * passed on for the server to accept or refuse by name. Pure.
  *
- * @param {{ readonly bun?: string }} versions
+ * @param {{ readonly node: string, readonly bun?: string }} versions
  * @param {string | undefined} current the variable in the launcher's environment, read from process.env
  * @returns {Record<string, string>}
  */
