@@ -108,7 +108,15 @@ describe("on the agent path", () => {
       ]);
       const events = await run.events();
       const entries: AgentLedgerEntry[] = [
-        { kind: "run-opened", atMs: 0, runId: run.runId, mode: "agent" },
+        {
+          kind: "run-opened",
+          atMs: 0,
+          runId: run.runId,
+          mode: "agent",
+          actor: { sessionId: "eval", role: "user" },
+          connectionId: run.engine.connection.id,
+          objective: "How many orders are there?",
+        },
         ...events.map((event) => ({ kind: "event" as const, event })),
       ];
 
