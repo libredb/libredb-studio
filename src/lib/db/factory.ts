@@ -27,7 +27,12 @@ import { egressDecision } from "./egress-decision";
 import { trustMaterial } from "./trust-material";
 import { admittedFileConnection, opcuaPkiRoot } from "./provider-files";
 import { registerOwnerRemoval } from "./owner-removal";
-import { READ_ONLY_ENFORCED, READS_FILE_ACCESS_POSTURE, READS_TRUST_MATERIAL } from "./compatibility";
+import {
+  READ_ONLY_ENFORCED,
+  READS_FILE_ACCESS_POSTURE,
+  READS_TRUST_MATERIAL,
+  REFUSES_DENIED_FILE_ACCESS,
+} from "./compatibility";
 import { assertStatementsReviewed } from "./statement-review";
 import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
@@ -62,8 +67,9 @@ import * as path from "path";
  *   provider pass the editor file-access posture `editorExecutionContext` derived from
  *   the verified session and the resolved connection. What each provider establishes with `readOnly` and
  *   `sendsStatements` is stated once, on `ProviderExecutionContext` (types.ts); DuckDB reads
- *   `allowExternalFileAccess` on its editor handle, and SQLite refuses to open at all when it is
- *   `false`, a profiled handle included. On DuckDB, ABSENT MEANS DENY: called without a context, as an
+ *   `allowExternalFileAccess` on its editor handle, and a SQLite connection is refused when it is
+ *   `false`, a profiled handle included, here before the provider is built and before the file it names is read
+ *   (see assertFileAccessPostureHonoured). On DuckDB, ABSENT MEANS DENY: called without a context, as an
  *   embedder that predates the posture calls it, a DuckDB handle opens with
  *   `enable_external_access: 'false'`, so `read_csv`, `COPY`, `ATTACH` of a file and
  *   `INSTALL` are refused outside its private temp directory and its database's own file
@@ -81,9 +87,11 @@ import * as path from "path";
  *   checked, logged or built (FND-1; see `assertDatabaseType` in ./type-id)
  * @throws DatabaseConfigError if connection type is left out of a set
  *   `LIBREDB_ENABLED_PROVIDERS` (see assertProviderEnabled), if its `readOnly` cannot be
- *   honoured (see assertReadOnlyHonoured), or if an owner comes without a whole `ownerPoolMax`
- *   from 1 (see assertOwnerPoolHonoured), or if the execution context is not plain data: a class instance, a getter,
- *   an inherited field or a field that is not enumerable (see assertExecutionContextIsPlainData), or, for an engine
+ *   honoured (see assertReadOnlyHonoured), if an owner comes without a whole `ownerPoolMax`
+ *   from 1 (see assertOwnerPoolHonoured), if the execution context is not plain data: a class instance, a getter,
+ *   an inherited field or a field that is not enumerable (see assertExecutionContextIsPlainData), if its engine
+ *   refuses a denied file-access posture and `execution` denies it, before the file it names is read (see
+ *   assertFileAccessPostureHonoured), or, for an engine
  *   whose `READS_TRUST_MATERIAL` row is true, if the file `NODE_EXTRA_CA_CERTS` names is missing, unreadable, empty,
  *   holds a block under the legacy `X509 CERTIFICATE` label, holds no certificate block or leaves one unclosed
  *   (`Invalid NODE_EXTRA_CA_CERTS: <reason>`, see trustMaterial in
@@ -216,6 +224,21 @@ function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: Prov
 }
 
 /**
+ * Refuse a connection whose engine refuses a handle when its file-access posture is denied
+ * (`REFUSES_DENIED_FILE_ACCESS`) and whose execution context denies it (`allowExternalFileAccess: false`, the
+ * provider's own condition), with the sentence and the error the provider's `connect()` raises for it, before the
+ * storage location, the connection's file or the provider is touched: a connection the posture denies file access is
+ * refused before Studio reads the path it names (FND-2 slice 3, docs/SECURITY.md "Embedded file connection
+ * boundaries"). The row is read through `typeIdRow` and names no type id. An absent posture is not a denied one, as the
+ * provider reads it.
+ */
+function assertFileAccessPostureHonoured(connection: DatabaseConnection, execution: ProviderExecutionContext): void {
+  const refusal = typeIdRow(REFUSES_DENIED_FILE_ACCESS, connection.type);
+  if (refusal === null || execution.allowExternalFileAccess !== false) return;
+  throw new DatabaseConfigError(refusal, connection.type);
+}
+
+/**
  * Take the process's egress decision (`./egress-decision`) before anything is cached, dialled or built, refusing an
  * invalid `DB_HTTP_BLOCK_PRIVATE_HOSTS` with its `DatabaseConfigError`, on every call.
  *
@@ -268,6 +291,9 @@ export async function createDatabaseProvider(
   // answer differently from the object core reads here.
   assertExecutionContextIsPlainData(execution);
   assertOwnerPoolHonoured(connection, execution);
+  // Before the storage location and the file admission below, which read the host filesystem: a connection whose
+  // engine refuses a denied file-access posture, under a context that denies it, reads nothing.
+  assertFileAccessPostureHonoured(connection, execution);
   const egress = egressDecision();
   // Studio's storage location, taken here on every call so the first provider built in a process with no boot hook
   // takes it, whatever its engine, before a later working directory could move it (FND-2 slice 3, docs/SECURITY.md
@@ -966,8 +992,8 @@ const profiledProviderCache = new Map<string, ProfiledCachedProvider>();
  * `agent-read-only` acquisition may never be served what `agent-operations` opened.
  *
  * The requester's file-access posture is in it too, for an engine that reads one, exactly as in
- * the writable key: SQLite refuses a denied requester at connect, so a handle a trusted requester
- * opened must never answer a denied requester's key. Absent reads as denied. So is the requester's
+ * the writable key: a denied SQLite requester is refused before its provider is built, so a handle a trusted
+ * requester opened must never answer a denied requester's key. Absent reads as denied. So is the requester's
  * owner (docs/GOVERNANCE.md#per-user-providers), as in the writable key: one user's acquisition is never served
  * another's.
  *
@@ -1265,8 +1291,8 @@ function ownerContext(owner: string | undefined, requester: EditorExecutionConte
  *   `COPY`, `ATTACH` of a file and `INSTALL` are refused outside its private temp directory and
  *   its database's own file names (docs/providers/duckdb.md section 3.16) while the database
  *   stays writable. Pass
- *   `{ allowExternalFileAccess: true }` for the full editor reach. SQLite refuses a denied handle at
- *   connect, since its drivers cannot confine a statement's file access; every other engine ignores it.
+ *   `{ allowExternalFileAccess: true }` for the full editor reach. A denied SQLite connection is refused before its
+ *   provider is built, since its drivers cannot confine a statement's file access; every other engine ignores it.
  *   With an `owner`, the provider is that user's own: cached apart from every other user's, opened
  *   with the pool of `ownerPoolMax`, and its entry records the owner; an engine that keeps one handle
  *   per file shares that handle whatever the owner (`providerOwner`).

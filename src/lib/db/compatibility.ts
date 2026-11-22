@@ -531,12 +531,16 @@ export const READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> = Obj
 });
 
 /**
- * Which shipped engines refuse to open a handle at all when its file-access posture is denied, rather
- * than confining it. SQLite's `connect()` refuses before it opens anything because its drivers cannot confine
- * statement-level file access, while DuckDB, the other engine that reads the posture, opens the handle
- * with external access off. A true row is always a `READS_FILE_ACCESS_POSTURE` engine. The provider
- * factory's reserved-path check (`admittedFileConnection` in `./provider-files`) runs before this refusal,
- * when the provider is built, and reads the named path's real location on the host filesystem to do so.
+ * Which shipped engines refuse to open a handle at all when its file-access posture is denied, rather than confining
+ * it, and the sentence each refuses with: null for every other engine. SQLite refuses because its drivers cannot
+ * confine statement-level file access, while DuckDB, the other engine that reads the posture, opens the handle with
+ * external access off. A refusing row is always a `READS_FILE_ACCESS_POSTURE` engine.
+ *
+ * The provider factory (`createDatabaseProvider` in `./factory`) refuses such a connection whose execution context sets
+ * `allowExternalFileAccess: false`, the provider's own condition, with this sentence as a `DatabaseConfigError` naming
+ * the connection's type, before any other check of the connection and before the provider is built: a connection the
+ * posture denies file access is refused before Studio reads the path it names. The provider raises the same sentence
+ * at `connect()` for a handle built with that context, before it opens anything.
  *
  * Static because MCP decides before any provider exists: `list_connections` and `inspect_schema` ask,
  * through `mcpConnectionUnavailable` in `src/lib/mcp/availability.ts`, whether any open of a listed
@@ -544,56 +548,56 @@ export const READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> = Obj
  * there was the alternative and is forbidden by `CLAUDE.md`.
  *
  * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
- * answering, and `tests/unit/db/refuses-denied-file-access.test.ts` holds every row to what `connect()`
- * does under the context an MCP open gives a caller whose file access is denied. Frozen like the records
+ * answering, and `tests/unit/db/refuses-denied-file-access.test.ts` holds every row to what the factory and
+ * `connect()` do under the context an MCP open gives a caller whose file access is denied. Frozen like the records
  * above it.
  */
-export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
-  postgres: false,
-  bigquery: false,
-  snowflake: false,
-  spark: false,
-  mysql: false,
-  // Its open refuses a denied handle before any file I/O.
-  sqlite: true,
-  libsql: false,
+export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, string | null>> = Object.freeze({
+  postgres: null,
+  bigquery: null,
+  snowflake: null,
+  spark: null,
+  mysql: null,
+  // Its open refuses a denied handle before it opens anything, and the provider factory before it is built.
+  sqlite: "SQLite connections require an administrator because this driver cannot confine statement-level file access",
+  libsql: null,
   // It reads the posture too, and confines a denied handle instead of refusing it.
-  duckdb: false,
-  oracle: false,
-  db2: false,
-  mssql: false,
-  clickhouse: false,
-  druid: false,
-  trino: false,
-  cassandra: false,
-  elasticsearch: false,
-  opensearch: false,
-  mongodb: false,
-  couchbase: false,
-  redis: false,
-  prometheus: false,
-  kafka: false,
-  etcd: false,
-  neo4j: false,
-  milvus: false,
-  qdrant: false,
-  weaviate: false,
-  influxdb: false,
-  influxdb3: false,
-  oxia: false,
-  databend: false,
-  s3: false,
-  kubernetes: false,
-  mqtt: false,
-  firestore: false,
-  rabbitmq: false,
-  opcua: false,
-  mtconnect: false,
-  modbus: false,
-  netconf: false,
-  snmp: false,
-  sparkplug: false,
-  libredb: false,
+  duckdb: null,
+  oracle: null,
+  db2: null,
+  mssql: null,
+  clickhouse: null,
+  druid: null,
+  trino: null,
+  cassandra: null,
+  elasticsearch: null,
+  opensearch: null,
+  mongodb: null,
+  couchbase: null,
+  redis: null,
+  prometheus: null,
+  kafka: null,
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  qdrant: null,
+  weaviate: null,
+  influxdb: null,
+  influxdb3: null,
+  oxia: null,
+  databend: null,
+  s3: null,
+  kubernetes: null,
+  mqtt: null,
+  firestore: null,
+  rabbitmq: null,
+  opcua: null,
+  mtconnect: null,
+  modbus: null,
+  netconf: null,
+  snmp: null,
+  sparkplug: null,
+  libredb: null,
 });
 
 /**

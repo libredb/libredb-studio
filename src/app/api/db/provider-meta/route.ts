@@ -43,8 +43,9 @@ export async function POST(req: NextRequest) {
     // No `withOneShotTunnel` here, unlike test-connection and schema-snapshot (#457):
     // this route never calls connect(). Capabilities and labels are type-driven and read
     // off the constructed provider without a socket, so there is nothing to tunnel. The
-    // execution context is passed for consistency with the other routes (non-admin DuckDB file access); it changes
-    // nothing, because the posture only affects a handle this route never opens.
+    // execution context is passed as the other routes pass it (non-admin DuckDB file access): the factory refuses a
+    // connection whose engine refuses a denied posture under one that denies it (SQLite), with the sentence its
+    // connect gives, before the provider is built, so a caller who could never open it gets that refusal here too.
     const provider = await createDatabaseProvider(connection, {}, editorExecutionContext(guard.session, connection));
 
     return NextResponse.json({

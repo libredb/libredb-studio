@@ -133,7 +133,7 @@ describe("the SAMPLES table", () => {
     for (const [type, spec] of SAMPLES) {
       expect({ type, roles: spec.roles }).toEqual({
         type,
-        roles: REFUSES_DENIED_FILE_ACCESS[type] ? ["admin"] : ["*"],
+        roles: REFUSES_DENIED_FILE_ACCESS[type] === null ? ["*"] : ["admin"],
       });
     }
   });

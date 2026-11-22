@@ -31,10 +31,10 @@ export const MCP_CONNECTION_UNAVAILABLE_TEXT =
 export function mcpConnectionUnavailable(
   caller: McpCaller,
   connection: ManagedConnection,
-  refuses: Readonly<Record<ManagedConnection["type"], boolean>> = REFUSES_DENIED_FILE_ACCESS,
+  refuses: Readonly<Record<ManagedConnection["type"], string | null>> = REFUSES_DENIED_FILE_ACCESS,
 ): string | null {
   const refusal = typeIdRefusal(connection.type);
   if (refusal !== null) return refusal.sentence;
-  if (!refuses[connection.type]) return null;
+  if (refuses[connection.type] === null) return null;
   return editorExecutionContext(caller, connection).allowExternalFileAccess ? null : MCP_CONNECTION_UNAVAILABLE_TEXT;
 }

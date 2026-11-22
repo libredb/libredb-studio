@@ -140,7 +140,7 @@ case "sqlite": {
 ```
 
 `context` is the build context (`ProviderBuildContext` in [`types.ts`](../../src/lib/db/types.ts)): the server-injected `ProviderExecutionContext` plus the egress decision core took, which SQLite does not read.
-Every cached path passes the server-derived `allowExternalFileAccess` posture, and SQLite refuses to open when it is `false` (the last section of this page).
+Every cached path passes the server-derived `allowExternalFileAccess` posture, and a SQLite connection is refused when it is `false` (the last section of this page): by the factory before the provider is built, and by the provider's own `connect()` for one built without it.
 `acquireExecutionProfileProvider` adds the read-only flag when it builds an agent provider ([§12](#12-agent-read-only-execution-profile-328)).
 
 ---
@@ -150,6 +150,7 @@ Every cached path passes the server-derived `allowExternalFileAccess` posture, a
 ### 3.1 File path resolution & the admin-trusted path model
 
 Studio's provider factory decides the target before the provider is built (`admittedFileConnection` in [`provider-files.ts`](../../src/lib/db/provider-files.ts)): `connectionString` with a leading `file:` removed, else `database`; a connection that names neither is refused by `validate()`.
+A connection whose file-access posture is denied is refused before this, so Studio reads nothing the connection names (the last section of this page).
 A connection string that is `file:` and nothing after it names no file, and the factory refuses it by name ("Invalid database path: the connection string names no file after file:"), whatever `database` holds.
 Exactly `:memory:` is kept as it is; any other name is resolved with `path.resolve()` against the working directory when the provider is built.
 A name holding a NUL byte, or naming one of Studio's own storage files, is **refused there with a `DatabaseConfigError`**, so no provider exists to connect.
@@ -1448,6 +1449,7 @@ the result codes of a refused statement from the `sqlite` row of `DRIVER_ERROR_C
 | Situation | Error |
 |-----------|-------|
 | Missing `database` and `connectionString` | `DatabaseConfigError` |
+| File-access posture denied (`allowExternalFileAccess: false`) | `DatabaseConfigError` ("SQLite connections require an administrator because this driver cannot confine statement-level file access"), raised by the provider factory before the provider is built, before any other check of the file, and by `connect()` for a provider built without the factory |
 | NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed"), raised by the provider factory before the provider is built |
 | A connection string that is `file:` and nothing after it | `DatabaseConfigError` ("Invalid database path: the connection string names no file after file:"), raised by the provider factory before the provider is built |
 | A path the reserved check cannot read (a path through a regular file on POSIX, a symbolic link loop, a directory the server cannot search) | `DatabaseConfigError` ("This connection's file could not be checked against the server's own storage files: " and the filesystem's message), raised by the provider factory before the provider is built |
@@ -1787,5 +1789,6 @@ managed connection: non-admin callers and seeds shared with non-admin roles are 
 Where it is denied, MCP's `list_connections` lists the seed with `read_tool: null` and an `unavailable` sentence that says what an operator changes, and `inspect_schema` and every statement tool refuse it with that sentence before anything is acquired ([MCP.md](../MCP.md#opting-connections-in)).
 SQLite's adapters cannot confine statement-level file access, so a denied connection
 cannot be opened safely. Administrators retain SQLite access on private connections.
+The provider factory refuses a denied connection before it reads the path the connection names, so every path gets the same refusal (`REFUSES_DENIED_FILE_ACCESS` in [`compatibility.ts`](../../src/lib/db/compatibility.ts) holds the sentence).
 Embedded callers using the cached factory must explicitly pass `{ allowExternalFileAccess: true }`
 for trusted SQLite access. Direct providers without an execution context retain trusted behavior.

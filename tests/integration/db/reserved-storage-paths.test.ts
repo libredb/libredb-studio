@@ -3,9 +3,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { tmpdir } from "node:os";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import type { ProviderExecutionContext } from "@/lib/db/types";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { forgetStorageLocation, isReservedStoragePath } from "@/lib/data-dir";
 import { RESERVED_STORAGE_PATH } from "@/lib/db/provider-files";
+import { SAMPLES } from "@/lib/seed/samples";
 import { resealBackupLabel } from "@/lib/storage/reseal";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -41,8 +44,11 @@ function fileConnection(type: (typeof FILE_TYPES)[number], fields: Partial<Datab
 }
 
 /** What `createDatabaseProvider` settles to for `connection`: the refusal it threw, or null when it built a provider. */
-async function buildRefusal(connection: DatabaseConnection): Promise<unknown> {
-  return createDatabaseProvider(connection).then(
+async function buildRefusal(
+  connection: DatabaseConnection,
+  execution: ProviderExecutionContext = {},
+): Promise<unknown> {
+  return createDatabaseProvider(connection, {}, execution).then(
     () => null,
     (error: unknown) => error,
   );
@@ -96,6 +102,7 @@ for (const type of FILE_TYPES) {
       const decomposed = path.join(dir, "Studu\u0308o");
       for (const name of ["storage.db", "storage.db-wal", "auth-bootstrap.json.bak", BACKUP]) {
         const target = path.join(decomposed, name);
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
         await expectRefusedAtBuild(fileConnection(type, { database: target }), target);
       }
     });
@@ -113,6 +120,7 @@ for (const type of FILE_TYPES) {
         path.join(dir, "directory-alias", "storage.db-wal"),
         path.join(dir, "hardlink.db"),
       ]) {
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
         const refused = await buildRefusal(fileConnection(type, { database }));
         expect([database, (refused as Error | null)?.message]).toEqual([database, RESERVED_STORAGE_PATH]);
       }
@@ -170,14 +178,53 @@ test("a symlink in the configured storage path is canonicalized", () => {
 });
 
 for (const readOnly of [false, true]) {
-  test(`SQLite refuses denied file access before opening, readOnly=${readOnly}`, async () => {
-    const provider = await createDatabaseProvider(
+  test(`SQLite refuses denied file access before the provider is built, readOnly=${readOnly}`, async () => {
+    const refused = await createDatabaseProvider(
       { id: "denied", name: "denied", type: "sqlite", database: ":memory:", createdAt: new Date() },
       {},
       { allowExternalFileAccess: false, readOnly },
+    ).then(
+      () => null,
+      (error: unknown) => error,
     );
-    await expect(provider.connect()).rejects.toThrow("require an administrator");
-    expect(provider.isConnected()).toBe(false);
+    expect(refused).toBeInstanceOf(DatabaseConfigError);
+    expect((refused as Error).message).toContain("require an administrator");
+  });
+}
+
+test("SQLite refuses denied file access before it reads the path the connection names, and creates nothing", async () => {
+  const target = path.join(dir, "missing", "user.db");
+  const reads = (["realpathSync", "lstatSync", "statSync", "readlinkSync"] as const).map((name) => spyOn(fs, name));
+  try {
+    const refused = await buildRefusal(fileConnection("sqlite", { database: target }), {
+      allowExternalFileAccess: false,
+    });
+    expect((refused as Error | null)?.message).toContain("require an administrator");
+    expect(reads.flatMap((spy) => spy.mock.calls.map((call) => String(call[0])))).toEqual([]);
+  } finally {
+    for (const spy of reads) spy.mockRestore();
+  }
+  expect(fs.existsSync(path.join(dir, "missing"))).toBe(false);
+});
+
+// The provider refuses only an explicit `false`: an absent posture, which the published package's factory takes by
+// default and the agent runtime's operations context carries, opens as before, and so does a granted one.
+for (const [label, execution] of [
+  ["absent", {}],
+  ["granted", { allowExternalFileAccess: true }],
+] as const) {
+  test(`SQLite with a file-access posture ${label} is built and opens its file`, async () => {
+    const provider = await createDatabaseProvider(
+      fileConnection("sqlite", { database: path.join(dir, "user.db") }),
+      {},
+      execution,
+    );
+    try {
+      await provider.connect();
+      expect(provider.isConnected()).toBe(true);
+    } finally {
+      await provider.disconnect();
+    }
   });
 }
 
@@ -234,10 +281,30 @@ for (const [role, id, roles] of [
       createdAt: new Date(),
     };
     const context = editorExecutionContext({ role }, connection);
-    const provider = await createDatabaseProvider(connection, {}, context);
-    await expect(provider.connect()).rejects.toThrow("require an administrator");
+    const refused = await buildRefusal(connection, context);
+    expect(refused).toBeInstanceOf(DatabaseConfigError);
+    expect((refused as Error).message).toContain("require an administrator");
   });
 }
+
+test("the built-in SQLite sample, offered to administrators alone, is built and opens for an administrator", async () => {
+  const sample = SAMPLES.get("sqlite")!;
+  const connection = {
+    id: `seed:${sample.seedId}`,
+    name: sample.name,
+    type: "sqlite" as const,
+    database: path.join(dir, sample.fileName),
+    roles: [...sample.roles],
+    createdAt: new Date(),
+  };
+  const provider = await createDatabaseProvider(connection, {}, editorExecutionContext({ role: "admin" }, connection));
+  try {
+    await provider.connect();
+    expect(provider.isConnected()).toBe(true);
+  } finally {
+    await provider.disconnect();
+  }
+});
 
 test("dangling symbolic links cannot create reserved files", () => {
   fs.symlinkSync("storage.db", path.join(dir, "dangling.db"));
