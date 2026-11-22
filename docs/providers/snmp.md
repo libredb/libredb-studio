@@ -52,7 +52,7 @@ Every connect that fails closes the socket it opened: this one, one whose probe 
 ### 1.3 Private destinations
 
 With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, an agent at a loopback, private or other non-public address is refused before a socket exists, with the shared guard's sentence, whether the host is an address literal or a name.
-The setting is the decision core takes once per process ([`egress-decision.ts`](../../src/lib/db/egress-decision.ts)) and hands the provider when it builds it, as it hands every other guarded engine, so the literal check and the name lookup read one decision.
+The setting is the decision core takes once per process ([`egress-decision.ts`](../../src/lib/db/egress-decision.ts)) and hands the provider when it builds it, as it hands the other guarded engines it builds with a context, so the literal check and the name lookup read one decision.
 A value other than `true`, `on`, `1`, `false`, `off`, `0` or empty (trimmed, any case) is refused by name before the provider is built, so before any lookup, and a standalone server refuses to start on it.
 A link-local address and AWS's IPv6 instance metadata address are refused whatever the setting says.
 

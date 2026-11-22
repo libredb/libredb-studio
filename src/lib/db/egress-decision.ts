@@ -20,10 +20,11 @@
  * instrumentation, which takes the decision at boot, apart from the route handlers, so one server process holds this
  * module twice (src/lib/governance/keyring.ts does the same for the same reason).
  *
- * No provider reads the decision here: the provider factory hands it to every provider it builds, in the build context
- * (`ProviderBuildContext` in `./types`), and the guard takes it as an argument. Until the later slices of FND-2 slice 2b
- * convert them, two core modules read it on a provider's behalf: `socketEgress` in `./http/egress-policy` and
- * `httpOrigin` in `./http/endpoint`. `tests/unit/lib/db/provider-environment-scan.test.ts` holds who imports this module.
+ * No provider reads the decision here: the provider factory hands it to every provider that takes a context, in the
+ * build context (`ProviderBuildContext` in `./types`), and the guard takes it as an argument. Until the later slices of
+ * FND-2 slice 2b convert them, two core modules read it on a provider's behalf: `socketEgress` in
+ * `./http/egress-policy` and `httpOrigin` in `./http/endpoint`. `tests/unit/lib/db/provider-environment-scan.test.ts`
+ * holds who imports this module.
  *
  * `forgetEgressDecision` is a test seam.
  */

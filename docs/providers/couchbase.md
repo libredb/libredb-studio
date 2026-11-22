@@ -130,7 +130,7 @@ case 'couchbase': {
   // The explicit /index specifier keeps this dynamic import statically analysable:
   // a bare directory resolves only at runtime, which the bundler cannot trace into a chunk.
   const { CouchbaseProvider } = await import('./providers/document/couchbase/index');
-  return new CouchbaseProvider(connection, options);
+  return new CouchbaseProvider(connection, options, context);
 }
 ```
 

@@ -1448,7 +1448,7 @@ Not fixed there: the maintainer's decision for that PR is that it touches no oth
 
 Reproduced on node v24.14.0 and bun 1.4.2, from the repository root, with nothing listening on port 59999:
 
-    bun -e 'import { nodeRequestJson } from "./src/lib/db/providers/document/couchbase/http-transport.ts"; for (const url of ["https://[::1]:59999/pools", "https://127.0.0.1:59999/pools"]) await nodeRequestJson(url, { method: "GET", headers: {} }, { rejectUnauthorized: false }).then((r) => console.log(url, r.httpCode), (e) => console.log(url, e.message));'
+    bun -e 'import { nodeRequestJson } from "./src/lib/db/providers/document/couchbase/http-transport.ts"; for (const url of ["https://[::1]:59999/pools", "https://127.0.0.1:59999/pools"]) await nodeRequestJson(url, { method: "GET", headers: {} }, { rejectUnauthorized: false }, { blocksPrivateHosts: false, source: "default" }).then((r) => console.log(url, r.httpCode), (e) => console.log(url, e.message));'
 
 The IPv6 URL answers `Couchbase request failed: getaddrinfo ENOTFOUND [::1]`.
 The IPv4 URL is the control: `connect ECONNREFUSED 127.0.0.1:59999`, so the request reached the network and only the name failed.
@@ -1530,7 +1530,7 @@ Reproduced 2026-09-23 through the provider's own `countObjects`, with `fetch` re
           ? answer(302, {}, { location: "https://sso.example.test/login?next=%2F_ingest" })
           : answer(403, { error: { type: "security_exception", reason: "no permissions" }, status: 403 });
       };
-      const provider = new ElasticsearchProvider({ id: "es", name: "es", type: "elasticsearch", host: "127.0.0.1", port: 9200 });
+      const provider = new ElasticsearchProvider({ id: "es", name: "es", type: "elasticsearch", host: "127.0.0.1", port: 9200 }, {}, { egress: { blocksPrivateHosts: false, source: "default" } });
       await provider.connect();
       await provider.countObjects([]).then((counts) => console.log(pass, JSON.stringify(counts)), (e) => console.log(pass, e.name, e.message));
     }
@@ -1567,7 +1567,7 @@ From the repository root, one request per case:
         socket.write(head, () => (mode === "302 whole" ? socket.end("{}") : socket.destroy()));
       }));
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-      const transport = new CouchbaseHttpTransport({ id: "c", name: "c", type: "couchbase", host: "127.0.0.1", port: server.address().port, user: "u", password: "p" });
+      const transport = new CouchbaseHttpTransport({ id: "c", name: "c", type: "couchbase", host: "127.0.0.1", port: server.address().port, user: "u", password: "p" }, {}, { blocksPrivateHosts: false, source: "default" });
       await transport.manage("/pools").then(() => console.log(mode, "answered"), (e) => console.log(`${mode}: ${e.constructor.name}: ${e.message}`));
       server.close();
     }

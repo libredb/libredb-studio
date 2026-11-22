@@ -71,7 +71,8 @@ function isBlocked(address: string, family: number): boolean {
 
 /**
  * The refusal of a provider asked to build a guarded transport or dial with no egress decision: built outside the
- * provider factory, which hands every provider it builds core's decision (`ProviderBuildContext` in `@/lib/db/types`).
+ * provider factory, which hands core's decision to every provider that takes a context (`ProviderBuildContext` in
+ * `@/lib/db/types`).
  */
 export const EGRESS_DECISION_MISSING =
   "This provider was built without the egress decision Studio takes from DB_HTTP_BLOCK_PRIVATE_HOSTS, so it dials nothing";

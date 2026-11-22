@@ -157,11 +157,12 @@ case 'clickhouse': {
   // The explicit /index specifier keeps this dynamic import statically analysable:
   // a bare directory resolves only at runtime, which the bundler cannot trace into a chunk.
   const { ClickHouseProvider } = await import('./providers/sql/clickhouse/index');
-  return new ClickHouseProvider(connection, options, execution);
+  return new ClickHouseProvider(connection, options, context);
 }
 ```
 
-The third argument is the execution context, which the agent read-only profile's open-time proof keys on ([§5.6](#56-agent-read-only-execution-profile)).
+The third argument is the build context: the caller's execution context, which the agent read-only profile's open-time proof keys on ([§5.6](#56-agent-read-only-execution-profile)), plus the egress decision core took, which `connect()` requires and hands the guard.
+A provider built without that decision refuses `connect()` with a `DatabaseConfigError` and dials nothing.
 
 `connect()` proves the server, the credentials, and the database together with one `SELECT 1` —
 the cheapest statement that exercises all three at once. This matters here specifically because a

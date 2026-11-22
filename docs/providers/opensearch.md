@@ -146,7 +146,7 @@ The factory wires the type-id in via a dynamic import inside `createDatabaseProv
 ```ts
 case "opensearch": {
   const { OpenSearchProvider } = await import("./providers/sql/search/index");
-  return new OpenSearchProvider(connection, options);
+  return new OpenSearchProvider(connection, options, context);
 }
 ```
 

@@ -57,9 +57,9 @@ describe("control 0.6 names the egress decision", () => {
     expect(control).toContain("logs the decision once, at info level,");
   });
 
-  test("the control says the factory hands the decision to every provider it builds, and which requests are checked against it", () => {
+  test("the control says the factory hands the decision to every provider that takes a context, and which requests are checked against it", () => {
     expect(control).toContain(
-      "refuses such a value by name, and the factory hands the decision to every provider it builds, so the HTTP requests of ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL, Couchbase and Prometheus and SNMP's name lookup are checked against the decision their provider was handed",
+      "refuses such a value by name, and the factory hands the decision to every provider that takes a context, all but Databend, BigQuery, Snowflake and Spark, so the HTTP requests of ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL and Prometheus, Couchbase's own fetch and TLS paths and SNMP's name lookup are checked against the decision their provider was handed, and every other guarded path against the same decision, which core's guard reads on the provider's behalf",
     );
   });
 

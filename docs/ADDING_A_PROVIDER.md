@@ -495,14 +495,16 @@ Add a `case` to the `switch` statement:
 ```typescript
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
-  options: ProviderOptions = {}
+  options: ProviderOptions = {},
+  execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
+  // ... the checks, then `context`: a copy of `execution` with core's egress decision added ...
   switch (connection.type) {
     // ... existing cases ...
 
     case 'cockroachdb': {
       const { CockroachDBProvider } = await import('./providers/sql/cockroachdb');
-      return new CockroachDBProvider(connection, options);
+      return new CockroachDBProvider(connection, options, context);
     }
 
     // ...
@@ -514,8 +516,10 @@ export async function createDatabaseProvider(
 
 The `connection` your constructor receives is the one `providerConnection` (`src/lib/db/provider-connection.ts`) builds: its `sshTunnel` holds no password, private key or passphrase, because Studio opens the tunnel itself ([what a provider receives of the tunnel](providers/README.md#ssh-tunnels-bastion-host-key-verification)).
 
-The third argument is the build context, `ProviderBuildContext` in `src/lib/db/types.ts`: the caller's execution context and `egress`, the egress decision core took from `DB_HTTP_BLOCK_PRIVATE_HOSTS`.
+The third argument is the build context, `ProviderBuildContext` in `src/lib/db/types.ts`: a copy of the caller's execution context and `egress`, the egress decision core took from `DB_HTTP_BLOCK_PRIVATE_HOSTS`.
+The factory copies only plain data: an execution context that is a class instance, or holds a getter, an inherited field or a field that is not enumerable, is refused with a `DatabaseConfigError` and nothing is built.
 A provider whose connections pass the shared egress guard keeps that context and, when it builds its transport or dial, hands `requireEgressDecision(context.egress)` from `src/lib/db/http/egress-policy.ts` to the guard as the last argument; built without a decision, it refuses by name and dials nothing.
+A provider built on `createNodeTransport` (`src/lib/db/http/node-transport.ts`) or dialling through `socketEgress` keeps the context too, but has no guard call to hand the decision to yet: `socketEgress` reads core's decision on the provider's behalf until FND-2 slice 2b-2, and `createNodeTransport` takes none until slice 2b-4.
 Such a provider also joins the engines of `tests/security/provider-egress-decision.test.ts`, which holds that the factory hands it the decision.
 A provider never reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and never imports `src/lib/db/egress-decision.ts`; `tests/unit/lib/db/provider-environment-scan.test.ts` holds it.
 
