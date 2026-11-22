@@ -307,6 +307,12 @@ A child that exits without the client stopping it is logged as a warning with it
 A worker that cannot be spawned at all (its executable missing or not runnable, or no file descriptor left for its pipes) fails the connect or the restart with `SQLite worker failed: <reason>`, and the next statement tries a fresh spawn.
 Nothing is retried.
 
+**Values cross the worker's line in Studio's value codec** ([`value-codec.ts`](../../src/lib/db/value-codec.ts), [ARCHITECTURE.md 4.13](../ARCHITECTURE.md#413-value-codec-srclibdbvalue-codects)).
+The parent encodes every bound parameter and decodes every answer with it, then hands back the in-process driver's shapes: a 64-bit integer through `normalizeSQLiteBigInt` ([§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions)) and a `BLOB` as a `Buffer`.
+The child runs from `node -e` and cannot import the module, so its bootstrap carries a copy restricted to what it binds and reads: 64-bit integers, `BLOB`s, the infinities, and the escape that keeps a row whose columns are named `$` and `v` a row.
+A value the child cannot bind is refused by name and the worker serves the next statement: a `Date` parameter answers `The SQLite worker cannot bind a timestamp (ts) value, at "/0".`, and an `undefined` parameter is refused by the parent's encoder with a `ValueCodecError` naming its place (`/0`).
+Before the codec an infinite `REAL` crossed the line as `null`, a bound infinity was stored as NULL, and a row with a column named `__libredb_sqlite_bigint` was read back as a number.
+
 **The escape hatch `LIBREDB_SQLITE_WORKER=0`** restores the old synchronous behaviour — the test
 suite sets it because Bun 1.4.x hangs a SQLite child process a `bun test` run spawned. With the
 worker off, on-disk statements run on the server thread again, `supportsQueryCancel` reads `false`,
@@ -683,6 +689,11 @@ The JSON export, Copy Row as JSON and the row detail's Copy JSON write the same 
 string the CSV does, through `binaryCellsAsHex` in [`json.ts`](../../src/lib/export/json.ts), rather
 than the `Buffer` form the response carries (#1381); that is the same for every engine whose driver
 hands back bytes.
+
+### Infinite REAL values
+
+An infinite `REAL` reads back as `Infinity` and `-Infinity` on both paths, the worker and the in-process handle (measured 2026-11-22 on Node 24.22.1 and Bun 1.4.4: `1e999` and `-1e999` in a `REAL` column of an on-disk file and of `:memory:`).
+SQLite stores no NaN: a bound NaN is stored as NULL.
 
 ---
 

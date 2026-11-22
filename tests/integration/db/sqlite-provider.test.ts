@@ -574,6 +574,37 @@ describe("SQLiteProvider", () => {
       expect((result.rows[0] as Record<string, unknown>).body).toBe("first");
     });
 
+    test("an infinite REAL reads back as Infinity on an on-disk database, as it does in memory", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "libredb-sqlite-nonfinite-"));
+      const previousWorker = process.env.LIBREDB_SQLITE_WORKER;
+      process.env.LIBREDB_SQLITE_WORKER = "1";
+      try {
+        const answers: unknown[] = [];
+        for (const database of [join(dir, "nonfinite.db"), ":memory:"]) {
+          provider = new SQLiteProvider(makeSQLiteConfig({ database }));
+          await provider.connect();
+          await provider.query("CREATE TABLE t (id INTEGER PRIMARY KEY, r REAL, big INTEGER, b BLOB)");
+          await provider.query(
+            "INSERT INTO t VALUES (1, 1e999, 9223372036854775807, x'00ff'), (2, -1e999, 1, x''), (3, 2.5, -9007199254740993, NULL)",
+          );
+          const rows = (await provider.query("SELECT r, big, b FROM t ORDER BY id")).rows as Record<string, unknown>[];
+          answers.push(rows.map((row) => ({ r: row.r, big: row.big, b: Buffer.isBuffer(row.b) ? [...row.b] : row.b })));
+          await provider.disconnect();
+        }
+        const expected = [
+          { r: Number.POSITIVE_INFINITY, big: "9223372036854775807", b: [0x00, 0xff] },
+          { r: Number.NEGATIVE_INFINITY, big: 1, b: [] },
+          { r: 2.5, big: "-9007199254740993", b: null },
+        ];
+        expect(answers[0]).toEqual(expected);
+        expect(answers[1]).toEqual(expected);
+      } finally {
+        if (previousWorker === undefined) delete process.env.LIBREDB_SQLITE_WORKER;
+        else process.env.LIBREDB_SQLITE_WORKER = previousWorker;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     test("query against a missing table is mapped through mapDatabaseError", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();

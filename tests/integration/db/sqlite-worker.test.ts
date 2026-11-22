@@ -20,6 +20,7 @@ import { GET as apiHealth } from "@/app/api/health/route";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { admittedFileConnection } from "@/lib/db/provider-files";
 import { SQLiteWorkerClient } from "@/lib/db/providers/sql/sqlite-worker";
+import { ValueCodecError } from "@/lib/db/value-codec";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";
@@ -260,6 +261,150 @@ describe("SQLite child-process worker (#1623)", () => {
       expect([...blobRow.b]).toEqual([0xde, 0xad, 0xbe, 0xef, 0x00, 0xff]);
     } finally {
       await provider.disconnect();
+    }
+  });
+
+  test("an infinite REAL crosses the worker as the number it is", async () => {
+    const client = await SQLiteWorkerClient.start({
+      dbPath: join(dir, "nonfinite.db"),
+      readonly: false,
+      queryOnly: false,
+    });
+    try {
+      const read = await client.queryRows("SELECT 1e999 AS p, -1e999 AS n", []);
+      expect(read.values).toEqual([[Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]]);
+      expect(await client.get("SELECT 1e999 AS p")).toEqual({ p: Number.POSITIVE_INFINITY });
+      await client.exec("CREATE TABLE r (v REAL)");
+      await client.queryRows("INSERT INTO r (v) VALUES (?1), (?2)", [
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+      ]);
+      expect(await client.all("SELECT v, typeof(v) AS t FROM r ORDER BY v")).toEqual([
+        { v: Number.NEGATIVE_INFINITY, t: "real" },
+        { v: Number.POSITIVE_INFINITY, t: "real" },
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("values of every tag survive a bound round trip through the worker", async () => {
+    // Seeded, so a failure names a case that replays: mulberry32 over fixed seeds.
+    const mulberry32 = (seed: number) => {
+      let state = seed >>> 0;
+      return () => {
+        state = (state + 0x6d2b79f5) >>> 0;
+        let t = state;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    };
+    const MIN_I64 = -(BigInt(2) ** BigInt(63));
+    const SPAN_I64 = BigInt(2) ** BigInt(64);
+    const client = await SQLiteWorkerClient.start({ dbPath: join(dir, "tags.db"), readonly: false, queryOnly: false });
+    try {
+      for (const seed of [1, 7, 42]) {
+        const random = mulberry32(seed);
+        const params: unknown[] = [];
+        const expected: unknown[] = [];
+        for (let n = 0; n < 40; n++) {
+          const kind = Math.floor(random() * 5);
+          if (kind === 0) {
+            let acc = BigInt(0);
+            for (let i = 0; i < 2; i++) acc = (acc << BigInt(32)) | BigInt(Math.floor(random() * 2 ** 32));
+            const value = MIN_I64 + (acc % SPAN_I64);
+            params.push(value);
+            const asNumber = Number(value);
+            expected.push(Number.isSafeInteger(asNumber) ? asNumber : value.toString());
+          } else if (kind === 1) {
+            const bytes = Uint8Array.from({ length: Math.floor(random() * 20) }, () => Math.floor(random() * 256));
+            params.push(bytes);
+            expected.push(Buffer.from(bytes));
+          } else if (kind === 2) {
+            const value = [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN][Math.floor(random() * 3)];
+            params.push(value);
+            // SQLite stores no NaN: it binds as NULL.
+            expected.push(Number.isNaN(value) ? null : value);
+          } else if (kind === 3) {
+            const value = ["$", "i64", "obj", "__libredb_sqlite_bigint", "__libredb_sqlite_bytes", "x"][
+              Math.floor(random() * 6)
+            ];
+            params.push(value);
+            expected.push(value);
+          } else {
+            const value = (random() - 0.5) * 1e6;
+            params.push(value);
+            expected.push(value);
+          }
+        }
+        const sql = `SELECT ${params.map((_, index) => `?${index + 1}`).join(", ")}`;
+        const read = await client.queryRows(sql, params);
+        expect(read.values, `seed ${seed}`).toEqual([expected]);
+        for (const [index, cell] of read.values[0].entries()) {
+          if (expected[index] instanceof Uint8Array)
+            expect(Buffer.isBuffer(cell), `seed ${seed}, cell ${index}`).toBe(true);
+        }
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("a bigint wider than SQLite's signed 64 bits still meets the driver's own refusal", async () => {
+    const client = await SQLiteWorkerClient.start({ dbPath: join(dir, "wide.db"), readonly: false, queryOnly: false });
+    try {
+      const refused = await client.queryRows("SELECT ?1", [BigInt(2) ** BigInt(63)]).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(refused).toBeInstanceOf(Error);
+      expect((refused as Error).message).toContain("too large");
+      expect((await client.queryRows("SELECT 1 AS one", [])).values).toEqual([[1]]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("a column named like a wire tag stays a column", async () => {
+    const client = await SQLiteWorkerClient.start({
+      dbPath: join(dir, "lookalike.db"),
+      readonly: false,
+      queryOnly: false,
+    });
+    try {
+      expect(await client.all("SELECT '9' AS __libredb_sqlite_bigint")).toEqual([{ __libredb_sqlite_bigint: "9" }]);
+      expect(await client.all("SELECT 'i64' AS \"$\", '9' AS v")).toEqual([{ $: "i64", v: "9" }]);
+      expect(await client.get("SELECT 'nf' AS \"$\", 'NaN' AS v")).toEqual({ $: "nf", v: "NaN" });
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("a parameter the worker cannot bind is refused by name, and the next statement runs", async () => {
+    const client = await SQLiteWorkerClient.start({
+      dbPath: join(dir, "unbindable.db"),
+      readonly: false,
+      queryOnly: false,
+    });
+    try {
+      const refused = await client.queryRows("SELECT ?1", [new Date(0)]).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(refused).toBeInstanceOf(Error);
+      expect((refused as Error).message).toBe('The SQLite worker cannot bind a timestamp (ts) value, at "/0".');
+      expect((await client.queryRows("SELECT 2 AS two", [])).values).toEqual([[2]]);
+
+      const undefinedParam = await client.queryRows("SELECT ?1", [undefined]).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(undefinedParam).toBeInstanceOf(ValueCodecError);
+      expect((undefinedParam as ValueCodecError).path).toBe("/0");
+      expect((await client.queryRows("SELECT 3 AS three", [])).values).toEqual([[3]]);
+    } finally {
+      await client.close();
     }
   });
 
