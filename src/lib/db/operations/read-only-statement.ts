@@ -49,8 +49,14 @@
  * already refuses past its rows or bytes in sentences of its own (the cluster readings' advice to narrow) hands them
  * in, and core raises those.
  *
- * A provider with no `queryReadOnly` is refused by name, in the words the execution-profile acquisition uses; `query()`
- * is never the fallback.
+ * Before anything else, an engine Studio's review record does not list (`AGENT_EXECUTION_ENGINES` in
+ * src/lib/db/compatibility.ts) is refused by name with `PROFILE_ENGINE_NOT_REVIEWED` (`assertStatementsReviewed`), for a
+ * statement and for every budgeted reading, whatever acquirer handed the provider over and whatever the provider
+ * implements, so no budget is read, no provider call is made and nothing is held. This is the one choke point every
+ * agent, hand-over and MCP statement passes, beside the acquisition's own reading of the record.
+ *
+ * A provider with no `queryReadOnly` on an engine the record lists is refused by name, in the words the
+ * execution-profile acquisition uses; `query()` is never the fallback.
  */
 
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
@@ -61,6 +67,7 @@ import {
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
 } from "@/lib/db/providers/sql/read-only-budget";
+import { assertStatementsReviewed } from "@/lib/db/statement-review";
 import type { DatabaseProvider, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { DatabaseType, QueryResult } from "@/lib/types";
@@ -147,6 +154,9 @@ export async function runReadOnlyStatement(
 /** Makes `call.read` and holds the rows it serves to `call.maxRows`, `call.budget.maxResultBytes` and its timeout. */
 export async function runReadOnlyReading<T>(call: ReadOnlyReadingCall<T>): Promise<T> {
   const { type, statement, budget, maxRows } = call;
+  // First, before the budget is read, the provider's read is made or the call is held: an engine off the review
+  // record is refused by name here whatever acquirer handed the provider over.
+  assertStatementsReviewed(type);
   assertReadOnlyBudget(budget, type);
   const answered = call.read();
   call.holdUntilSettled?.(answered);

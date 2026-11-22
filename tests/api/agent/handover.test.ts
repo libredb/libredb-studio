@@ -20,7 +20,7 @@
  *    with the budget the checkbox names.
  */
 
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-model-env";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
@@ -28,6 +28,7 @@ import { AGENT_HANDOVER_BUDGET, AGENT_HANDOVER_READ_ALLOWANCE } from "@/lib/agen
 import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { logger } from "@/lib/logger";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { filterByRoles } from "@/lib/seed/connection-filter";
@@ -413,6 +414,25 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
 
     expect(res.status).toBe(500);
     expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  test("refuses to replay on an engine the review record does not list, naming it, and never calls queryReadOnly", async () => {
+    // Any acquirer: the refusal is core's, in the read path every replay passes, not the factory's alone.
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:sales", name: "Sales", type: "snowflake" });
+    const errorLog = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(500);
+      expect(body.error).toBe(
+        'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements',
+      );
+      expect(mockQueryReadOnly).not.toHaveBeenCalled();
+      expect(mockQuery).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   test("refuses a replay whose provider answers more rows than the hand-over budget, and returns none of them", async () => {

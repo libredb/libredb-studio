@@ -1,5 +1,6 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import path from "node:path";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import {
@@ -573,5 +574,60 @@ describe("runReadOnlyReading", () => {
     expect(error).toBeInstanceOf(QueryError);
     expect((error as QueryError).message).toContain("statementTimeoutMs");
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe("the review record", () => {
+  const notReviewed = (type: string) =>
+    `Provider type "${type}" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements`;
+
+  test("refuses a statement on an engine the review record does not list by name, even when the provider implements queryReadOnly, and never calls or holds it", async () => {
+    const queryReadOnly = mock(async () => answer([{ id: 1 }]));
+    const { provider, query } = providerAnswering(queryReadOnly);
+    const holdUntilSettled = mock((_call: PromiseLike<unknown>) => {});
+    const error = await settled(
+      runReadOnlyStatement(provider, {
+        type: "snowflake",
+        statement: "SELECT 1",
+        budget,
+        wait: "statement-timeout",
+        holdUntilSettled,
+      }),
+    );
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
+    expect((error as ExecutionProfileError).message).toBe(notReviewed("snowflake"));
+    expect(queryReadOnly).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    expect(holdUntilSettled).not.toHaveBeenCalled();
+  });
+
+  test("refuses a budgeted reading on such an engine the same way, and never makes the read", async () => {
+    const read = mock(async () => answer([{ id: 1 }]));
+    const error = await settled(
+      runReadOnlyReading({
+        type: "spark",
+        statement: "catalog",
+        budget,
+        wait: "statement-timeout",
+        read,
+        servedRows: (result) => result.rows,
+        maxRows: budget.maxResultRows,
+      }),
+    );
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
+    expect((error as ExecutionProfileError).message).toBe(notReviewed("spark"));
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  test("reads every engine on the review record", async () => {
+    for (const type of AGENT_EXECUTION_ENGINES) {
+      const served = answer([{ id: 1 }]);
+      const { provider } = providerAnswering(async () => served);
+      expect(
+        await runReadOnlyStatement(provider, { type, statement: "SELECT 1", budget, wait: "caller-deadline" }),
+      ).toBe(served);
+    }
   });
 });

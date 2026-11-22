@@ -484,4 +484,13 @@ describe("the review record gates the protected read path", () => {
       createDatabaseProvider: "gated",
     });
   });
+
+  test("runReadOnlyReading reads the review record before it makes the read", () => {
+    const body = declaredFunction(CORE_CALLER, CORE_READING);
+    expect(gatedBefore(body, REVIEW_GATE, ["assertReadOnlyBudget", "call.read", "call.holdUntilSettled"])).toEqual({
+      assertReadOnlyBudget: "gated",
+      "call.read": "gated",
+      "call.holdUntilSettled": "gated",
+    });
+  });
 });
