@@ -2348,7 +2348,9 @@ the other half: a **pure fold over the ledger** that returns an outcome, the id 
 that produced it, and what the run was required to produce and did not.
 
 The rule is chosen by the run's mode first, then by its workflow on its statement language: every workflow variant in `AGENT_WORKFLOW_VARIANTS` (`src/lib/agent/agent-manifest.ts`) names one verifier, and the SQL record is total over the workflows, so a workflow added to the contract stops the build until somebody decides what "answered" means for it.
-An agent run persists its verifier's id when it opens, so a run reopened later, in a fresh process with no connection reachable, is judged by the rule it was opened under, and an id the code holds no rule for is an error rather than a verdict.
+An agent run persists its verifier's id when it opens, so a run reopened later, in a fresh process with no connection reachable, is judged by the rule it was opened under.
+A header naming an id the code holds no rule for is refused by name when the ledger is read (`AGENT_RUN_UNAVAILABLE`, [Durability and resume](#durability-and-resume)), and a retired id as retired (`RETIRED_GOAL_VERIFIERS` in `src/lib/agent/goal-verifier.ts`).
+A verifier a header can carry keeps its rule, and a changed rule takes a new id, so a run opened under one is judged by that rule to its end.
 
 | Mode | Rule (`agent-planning.1` / `agent-investigation.1`) | Unmet when it fails |
 | --- | --- | --- |
@@ -3045,7 +3047,7 @@ No shipped overlay overrides a Shared member.
 | Every engine | `everyEngineServerDialect` | every registered engine's server dialect, for a rule derived across engines such as the restated-prefix strip |
 | Engine | `agentEnginePack` | the engine's whole pack, which is the family pack itself while both overlays are empty |
 | Engine | `enginesSupporting` | the engines whose client dialect supports every member asked |
-| Run | `statementFamilyOf` | the family a run reads: its persisted `statementLanguage`, or `DEFAULT_STATEMENT_LANGUAGE` when the record holds none |
+| Run | `statementFamilyOf` | the family a run reads: its persisted `statementLanguage`, or `DEFAULT_STATEMENT_LANGUAGE` when the record holds none; a header naming a language this server does not have is refused when the ledger is read, before any resolver |
 | Run | `runServerPack` | the server facet a run reads: its family's, with the connection type's overlay applied only when that type speaks the family; a connection type that is not a type id is refused with `UnknownProviderError` before the run's language is read |
 
 A run's statement language is persisted, and the connection type only selects the overlay.
