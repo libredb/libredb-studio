@@ -15,7 +15,7 @@ import {
 import { connectPhase, DatabaseConfigError, ExecutionProfileError } from "./errors";
 import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderOpened } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
-import { readSecret } from "@/lib/storage/encryption";
+import { isEnvelopeClaim } from "@/lib/storage/envelope-claim";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
 import {
   assertExecutionContextIsPlainData,
@@ -1513,9 +1513,11 @@ export function executionContextFor(
 }
 
 /**
- * Resolves the optional least-privilege agent credential from the connection
- * (the connection-secrets seam: `agentPassword` may arrive sealed and is
- * opened with readSecret). Fail closed on every misconfiguration:
+ * Resolves the optional least-privilege agent credential from the connection.
+ * `agentPassword` is used as written: a seed delivers it as plaintext or a
+ * resolved reference, and a value sealed by the server store opens only in
+ * that store, for the record and field it was sealed for, so none is opened
+ * here. Fail closed on every misconfiguration:
  *
  * - both fields absent → null (the profile runs under the connection's own
  *   credentials, still on a read-only statement path under a declared
@@ -1529,7 +1531,8 @@ export function executionContextFor(
  *   privileged default. The form is the provider's declaration, so it is
  *   decided by `assertAgentCredentialForm` once the provider is built and
  *   before it connects; this function only reads what the fields hold;
- * - a sealed password that does not open → deny, never a plaintext fallback;
+ * - a password shaped like a storage envelope (`isEnvelopeClaim`) → deny,
+ *   without opening it and never as a plaintext fallback;
  * - combined with a connection string → deny: buildPoolConfig ignores
  *   user/password fields when a connection string is present, so the
  *   credential would be silently dropped and the agent would run as the more
@@ -1545,14 +1548,13 @@ function resolveAgentCredential(connection: DatabaseConnection): { user?: string
     );
   }
   if (!agentPassword) return { user: agentUser };
-  const read = readSecret(agentPassword);
-  if (read.kind === "undecryptable") {
+  if (isEnvelopeClaim(agentPassword)) {
     throw new ExecutionProfileError(
       `Connection "${connection.id}" configures an agent credential that cannot be resolved`,
       "AGENT_CREDENTIAL_UNRESOLVABLE",
     );
   }
-  return { user: agentUser, password: read.value };
+  return { user: agentUser, password: agentPassword };
 }
 
 /**
@@ -1560,7 +1562,7 @@ function resolveAgentCredential(connection: DatabaseConnection): { user?: string
  * `AgentCredentialForm` in `src/lib/db/types.ts`: absent takes `agentUser` and `agentPassword` together, `"token"`
  * and `"service-account-key"` take `agentPassword` alone, `"dedicated-user"` takes both with a user other than the
  * connection's own, and `"none"` takes nothing. Read from the provider rather than from `connection.type`, which
- * `CLAUDE.md` forbids here. `password` is the agent secret `resolveAgentCredential` opened, never echoed.
+ * `CLAUDE.md` forbids here. `password` is the agent secret `resolveAgentCredential` resolved, never echoed.
  */
 function assertAgentCredentialForm(
   connection: DatabaseConnection,

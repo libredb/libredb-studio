@@ -37,6 +37,7 @@
  * registration, and `bun test tests/unit` is clean again.
  */
 import { describe, test, expect, mock, beforeEach, beforeAll, afterAll, afterEach, jest, spyOn } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { open as libreOpen, kv as libreKv } from "@libredb/libredb";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -74,7 +75,7 @@ import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes
 import { removeOwnerProviders } from "@/lib/db/owner-removal";
 import { egressDecision, forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import { logger } from "@/lib/logger";
-import { encryptSecret } from "@/lib/storage/encryption";
+import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
 import { projectSeedConnection } from "@/lib/seed/connection-filter";
 import { closeProviderCaches, resetShutdownHooks } from "@/lib/shutdown";
 import type { SSHTunnelConfig } from "@/lib/types";
@@ -86,9 +87,27 @@ import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../helpers/outside-the-union";
 import { markersReachableFrom } from "../helpers/reachable-markers";
 import { setEgressFlag } from "../helpers/egress-flag";
+import { sealVersionOne } from "../helpers/storage-envelope-v1";
 
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
 const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
+
+/**
+ * Runs `run` with a generated STORAGE_ENCRYPTION_KEY in the environment, the key a store would seal under, and puts the
+ * environment back afterwards.
+ */
+async function withStorageKey(run: () => Promise<void>): Promise<void> {
+  const saved = process.env.STORAGE_ENCRYPTION_KEY;
+  process.env.STORAGE_ENCRYPTION_KEY = randomBytes(32).toString("base64url");
+  resetStorageEncryptionKey();
+  try {
+    await run();
+  } finally {
+    if (saved === undefined) delete process.env.STORAGE_ENCRYPTION_KEY;
+    else process.env.STORAGE_ENCRYPTION_KEY = saved;
+    resetStorageEncryptionKey();
+  }
+}
 
 // The SQLite agent-profile tests below construct the read-only profile for its
 // query_only boundary, not to exercise the child transport. The worker's node:sqlite
@@ -3526,11 +3545,32 @@ describe("acquireExecutionProfileProvider", () => {
     expect((error as Error).message).toBe(
       'Connection "seed:pg-seed-envelope" configures an agent credential that cannot be resolved',
     );
-    const sealed = await acquireExecutionProfileProvider(
-      { ...conn, id: "seed:pg-seed-sealed", agentPassword: encryptSecret(STAND_IN_AGENT_PASSWORD) },
-      "agent-read-only",
-    );
-    expect(sealed.config.password).toBe(STAND_IN_AGENT_PASSWORD);
+  });
+
+  test("an agent password shaped like a storage envelope is refused without being opened", async () => {
+    // A sealed storage value opens only in the store it was sealed in, for the record and field it was sealed for, so
+    // the factory opens none: an envelope of the previous format and one of the current format are refused alike.
+    // The key the store would use is the one in the environment while the factory runs, so a factory that still
+    // opened envelopes would open the version 1 value here.
+    await withStorageKey(async () => {
+      const versionOne = sealVersionOne(STAND_IN_AGENT_PASSWORD);
+      const versionTwo = ["v2", randomBytes(12).toString("base64url"), randomBytes(40).toString("base64url")].join(":");
+      for (const [id, agentPassword] of [
+        ["pg-sealed-v1", versionOne],
+        ["pg-sealed-v2", versionTwo],
+      ] as const) {
+        const conn = pgConn({ id, agentUser: "agent_ro", agentPassword });
+
+        const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ExecutionProfileError);
+        expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+        expect((error as Error).message).toBe(
+          `Connection "${id}" configures an agent credential that cannot be resolved`,
+        );
+      }
+    });
+    expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
   test("denies an agent user without a password (fail closed)", async () => {
@@ -3689,33 +3729,21 @@ describe("acquireExecutionProfileProvider", () => {
       }
     });
 
-    test("a service-account-key engine opens a sealed agent key before it reads the key's type", async () => {
-      // Stored connections hold agentPassword sealed, so the key check must read the opened secret, never the field.
-      const agentKey = SERVICE_ACCOUNT_KEY.replace("agent@", "reader@");
-      const conn = bigqueryConn({ agentPassword: encryptSecret(agentKey) });
-      const connect = await connectStubbed(conn);
-      try {
-        const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+    test("a service-account-key engine refuses a sealed agent key without opening it", async () => {
+      // A storage envelope opens only in the store it was sealed in, so the factory refuses it before the key check.
+      await withStorageKey(async () => {
+        const conn = bigqueryConn({ agentPassword: sealVersionOne(SERVICE_ACCOUNT_KEY.replace("agent@", "reader@")) });
+        const connect = await connectStubbed(conn);
+        try {
+          const error = await refusal(conn);
 
-        expect(agent.config.password).toBe(agentKey);
-        expect(connect).toHaveBeenCalledTimes(1);
-      } finally {
-        connect.mockRestore();
-      }
-    });
-
-    test("a service-account-key engine refuses a sealed agent secret that opens to something other than a key", async () => {
-      const conn = bigqueryConn({ agentPassword: encryptSecret("ya29.not-a-real-access-token") });
-      const connect = await connectStubbed(conn);
-      try {
-        const error = await refusal(conn);
-
-        expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
-        expect(error.message).toContain("is not a service-account key");
-        expect(connect).not.toHaveBeenCalled();
-      } finally {
-        connect.mockRestore();
-      }
+          expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+          expect(error.message).toContain("cannot be resolved");
+          expect(connect).not.toHaveBeenCalled();
+        } finally {
+          connect.mockRestore();
+        }
+      });
     });
 
     test.each([
