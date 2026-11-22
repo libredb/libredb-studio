@@ -30,7 +30,7 @@ import {
   UnknownProviderError,
 } from "@/lib/db/errors";
 import { assertDatabaseType } from "@/lib/db/type-id";
-import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { filterByRoles } from "@/lib/seed/connection-filter";
@@ -676,7 +676,7 @@ describe("driveAgentRun, a failure whose text carries the connection's credentia
         );
 
         expect(error).toBeInstanceOf(ProviderTextWithheldError);
-        expect((error as Error).message).toBe(PROVIDER_TEXT_WITHHELD);
+        expect((error as Error).message).toBe(withheldErrorMessage(make("").name));
         for (const each of secretForms([password])) expect(String((error as Error).stack)).not.toContain(each);
         expect(await finishedReason(leakyRun)).toBe(await finishedReason(plainRun));
       } finally {
@@ -698,6 +698,46 @@ describe("driveAgentRun, a failure whose text carries the connection's credentia
         (thrown: unknown) => thrown,
       );
       expect(error).toBe(failure);
+    } finally {
+      mockResolveConnection.mockImplementation(async () => CONNECTION);
+    }
+  });
+
+  test("a string a provider rejects with is withheld when it holds the connection's credential", async () => {
+    await openRun("arun_thrownstring");
+    mockResolveConnection.mockImplementation(async () => credentialed);
+    try {
+      mockRunInvestigation.mockImplementationOnce(async () => {
+        throw `could not connect with ${password}`;
+      });
+      const error = await driveAgentRun("arun_thrownstring").then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+      expect(error).toBeInstanceOf(ProviderTextWithheldError);
+      expect((error as Error).message).toBe(withheldErrorMessage("thrown string"));
+    } finally {
+      mockResolveConnection.mockImplementation(async () => CONNECTION);
+    }
+  });
+
+  test("Studio's own error is rethrown as itself when the credential occurs only in a frame line of its stack", async () => {
+    await openRun("arun_framepath");
+    mockResolveConnection.mockImplementation(async () => credentialed);
+    const refusal = new AgentRunServiceError(
+      "RUN_ALREADY_DRIVEN",
+      'agent run "arun_framepath" is already being driven in this process',
+    );
+    refusal.stack = `AgentRunServiceError: ${refusal.message}\n    at drive (/srv/${password}/.next/server/chunk.js:1:2)`;
+    try {
+      mockRunInvestigation.mockImplementationOnce(async () => {
+        throw refusal;
+      });
+      const error = await driveAgentRun("arun_framepath").then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+      expect(error).toBe(refusal);
     } finally {
       mockResolveConnection.mockImplementation(async () => CONNECTION);
     }

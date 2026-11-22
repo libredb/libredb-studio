@@ -34,7 +34,7 @@ import {
   QueryError,
   RefusedBeforeSendError,
 } from "@/lib/db/errors";
-import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { logger } from "@/lib/logger";
@@ -494,6 +494,8 @@ describe("a replay whose provider's text carries the connection's credential", (
       (text) => new AuthenticationError("denied", "postgres", { fixStatement: text }),
       "acquire",
     ],
+    ["a string the provider rejects with", (text) => text, "statement"],
+    ["a string the acquisition rejects with", (text) => text, "acquire"],
   ];
 
   test.each(failures.flatMap(([label, make, phase]) => forms.map((form) => [label, form, make, phase] as const)))(
@@ -510,7 +512,9 @@ describe("a replay whose provider's text carries the connection's credential", (
         const res = await POST(request(), params());
         const body = await parseResponseJSON<{ error: string }>(res);
 
-        expect(body.error).toBe(PROVIDER_TEXT_WITHHELD);
+        expect(body.error).toBe(
+          withheldErrorMessage(failure instanceof Error ? failure.name : `thrown ${typeof failure}`),
+        );
         const calls = JSON.stringify(
           logged.flatMap((spy) => spy.mock.calls),
           (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),

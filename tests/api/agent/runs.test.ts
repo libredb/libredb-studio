@@ -22,7 +22,7 @@ import * as realGate from "@/lib/agent/capability-gate";
 import * as realDb from "@/lib/db";
 import * as realManifest from "@/lib/agent/agent-manifest";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
-import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { LLMConfigError } from "@/lib/llm/types";
 import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-store";
@@ -1731,6 +1731,21 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     expect(mockStart).not.toHaveBeenCalled();
   });
 
+  test("a configuration error of Studio's own keeps its answer when the credential occurs only in a frame line of its stack", async () => {
+    const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+    mockResolveConnection.mockImplementation(async () => ({ ...SERVER, password }));
+    const message = "No API key is configured for the model";
+    mockAdmitAgentModel.mockImplementation(async () => {
+      const error = new LLMConfigError(message, "openai");
+      error.stack = `LLMConfigError: ${message}\n    at admit (/srv/${password}/.next/server/chunk.js:1:2)`;
+      throw error;
+    });
+    const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+    const body = await parseResponseJSON<{ error: string; code: string }>(res);
+    expect(res.status).toBe(503);
+    expect(body.error).toBe(message);
+  });
+
   test("a start whose editor provider fails with the connection's credential in its text answers without it, and logs without it", async () => {
     const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
     mockResolveConnection.mockImplementation(async () => ({ ...SERVER, password }));
@@ -1744,7 +1759,7 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
       const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
       const body = JSON.stringify(await parseResponseJSON<Record<string, unknown>>(res));
 
-      expect(body).toContain(PROVIDER_TEXT_WITHHELD);
+      expect(body).toContain(withheldErrorMessage("ConnectionError"));
       const calls = JSON.stringify(
         logged.flatMap((spy) => spy.mock.calls),
         (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),

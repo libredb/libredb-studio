@@ -23,6 +23,7 @@ import {
   providerTextScrub,
   scrubProviderText,
   scrubProviderWarnings,
+  withheldErrorMessage,
   withholdProviderError,
   withScrubbedWarnings,
 } from "@/lib/db/operations/provider-text";
@@ -175,10 +176,10 @@ describe("withholdProviderError", () => {
   const holders: [string, () => unknown][] = [
     ["the message", () => new ConnectionError(`could not connect with ${password}`, "postgres")],
     [
-      "the stack",
+      "the stack's header, set after the error was built",
       () => {
         const error = new ConnectionError("could not connect", "postgres");
-        error.stack = `ConnectionError: could not connect\n    at ${password}`;
+        error.stack = `ConnectionError: could not connect as ${password}\n    at connect (driver.js:1:1)`;
         return error;
       },
     ],
@@ -197,13 +198,48 @@ describe("withholdProviderError", () => {
     ],
   ];
 
+  holders.push(
+    ["a thrown string", () => `password authentication failed for ${password}`],
+    ["a thrown object's string form", () => ({ toString: () => `auth failed for ${password}` })],
+  );
+
   test.each(holders)("answers a ProviderTextWithheldError when %s holds one", (_label, make) => {
     const withheld = withholdProviderError(scrub, make());
     expect(withheld).toBeInstanceOf(ProviderTextWithheldError);
     const error = withheld as ProviderTextWithheldError;
-    expect(error.message).toBe(PROVIDER_TEXT_WITHHELD);
+    expect(error.message).toContain("withheld");
+    expect(error.message).not.toContain(password);
     expect(error.provider).toBe("postgres");
     expect(String(error.stack)).not.toContain(password);
+  });
+
+  test.each([
+    ["a ConnectionError", new ConnectionError(`could not connect with ${password}`, "postgres"), "ConnectionError"],
+    [
+      "an AuthenticationError",
+      new AuthenticationError("denied", "postgres", { fixStatement: `ALTER ROLE x PASSWORD '${password}'` }),
+      "AuthenticationError",
+    ],
+    ["a thrown string", `failed for ${password}`, "thrown string"],
+  ] as const)("names the class of %s it replaced, which is code and not provider text", (_label, error, replaced) => {
+    expect((withholdProviderError(scrub, error) as Error).message).toBe(
+      `(Studio withheld the text of this ${replaced} because it contained a credential of this connection)`,
+    );
+    expect(withheldErrorMessage(replaced)).toBe((withholdProviderError(scrub, error) as Error).message);
+  });
+
+  test("names no class whose name holds a form", () => {
+    const error = new Error("failed");
+    error.name = `Error ${password}`;
+    expect((withholdProviderError(scrub, error) as Error).message).toBe(
+      "(Studio withheld the text of this error because it contained a credential of this connection)",
+    );
+  });
+
+  test("returns the same error when a form occurs only in a frame line of its stack, which is code, not its text", () => {
+    const error = new Error("No API key is configured for the model");
+    error.stack = `Error: No API key is configured for the model\n    at admit (/srv/${password}/chunk.js:12:34)\n    at run (x.js:1:1)`;
+    expect(withholdProviderError(scrub, error)).toBe(error);
   });
 
   test("never changes the error it was given", () => {

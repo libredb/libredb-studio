@@ -86,23 +86,52 @@ export function withScrubbedWarnings(scrub: ProviderTextScrub, result: QueryResu
   return { ...result, warnings: scrubProviderWarnings(scrub, result.warnings) };
 }
 
-/** Every text a renderer reads from an error: its name, message and stack, a QueryError's detail, a fix statement. */
-function renderedTexts(error: Error): string[] {
-  const texts = [error.name, error.message, error.stack ?? ""];
+/**
+ * The lines of a stack before its first frame line: the name and the message as the stack was built, which still
+ * shows a message changed after construction. The frame lines are code locations no provider writes (a deployment
+ * path, a chunk name, a line and column), so a credential that happens to occur in one is not the error's text.
+ */
+function stackHeader(stack: string): string {
+  const lines = stack.split("\n");
+  const firstFrame = lines.findIndex((line) => /^\s+at /.test(line));
+  return (firstFrame === -1 ? lines : lines.slice(0, firstFrame)).join("\n");
+}
+
+/**
+ * Every text a renderer reads from a thrown value: an error's name, message and stack header, a QueryError's detail,
+ * a fix statement; anything else as `String(value)`, which is how the logger renders it.
+ */
+function renderedTexts(error: unknown): string[] {
+  if (!(error instanceof Error)) return [String(error)];
+  const texts = [error.name, error.message, stackHeader(error.stack ?? "")];
   if (error instanceof QueryError && error.detail !== undefined) texts.push(error.detail);
   if (error instanceof AuthenticationError && error.fixStatement !== undefined) texts.push(error.fixStatement);
   return texts;
 }
 
+/** The message of the error `withholdProviderError` answers in place of one of class `replaced`. */
+export function withheldErrorMessage(replaced: string): string {
+  return `(Studio withheld the text of this ${replaced} because it contained a credential of this connection)`;
+}
+
 /**
- * For an error leaving core to a renderer that does not hold the connection (an error response, a route's log line):
- * the same error when none of the texts a renderer reads holds a form, otherwise a `ProviderTextWithheldError` naming
- * the connection's type. The error given is never changed, because providers throw shared instances.
+ * The class of the error `withholdProviderError` replaced, for its message: code identity, not provider text, so an
+ * operator still reads what failed. A name that itself holds a form is not named.
+ */
+function replacedClass(scrub: ProviderTextScrub, error: unknown): string {
+  if (!(error instanceof Error)) return `thrown ${typeof error}`;
+  return holdsSecretForm(error.name, scrub.forms) ? "error" : error.name;
+}
+
+/**
+ * For a thrown value leaving core to a renderer that does not hold the connection (an error response, a route's log
+ * line): the same value when none of the texts a renderer reads holds a form, otherwise a `ProviderTextWithheldError`
+ * naming the connection's type, whose message names the class it replaced and says its text was withheld. The value
+ * given is never changed, because providers throw shared instances.
  */
 export function withholdProviderError(scrub: ProviderTextScrub, error: unknown): unknown {
-  if (!(error instanceof Error)) return error;
   if (!renderedTexts(error).some((text) => holdsSecretForm(text, scrub.forms))) return error;
-  return new ProviderTextWithheldError(PROVIDER_TEXT_WITHHELD, scrub.type);
+  return new ProviderTextWithheldError(withheldErrorMessage(replacedClass(scrub, error)), scrub.type);
 }
 
 /** The author a fence or a notice names for a provider's own text: the engine's form label, bundled with Studio. */
