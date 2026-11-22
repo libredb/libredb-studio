@@ -184,6 +184,8 @@ import {
   fenceUntrustedContent,
   neutraliseToolInput,
   neutraliseUntrustedMarkers,
+  oneLineForPrompt,
+  quoteIdentifierForPrompt,
 } from "./untrusted-content";
 import { isStatementReadOperation } from "@/lib/db/operations/descriptors";
 import { providerAuthor, providerTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
@@ -718,7 +720,7 @@ const CORE_SHORTFALL_NOTICES: Readonly<Partial<Record<AgentGoalShortfall, Shortf
     };
   },
   "no-table-profile": (table) => {
-    const named = table === undefined ? "a table this run's inventory lists" : `"${table}"`;
+    const named = table === undefined ? "a table this run's inventory lists" : quoteIdentifierForPrompt(table);
     return {
       said: [
         "This workflow answers with the counts profile_table takes and no table has been profiled, so the report would be scored as having established nothing about the data.",
@@ -1938,7 +1940,9 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string, connect
     return `Step ${event.stepId} (${toolName}) needs a human approval that this run does not have: operation ${refusal.operationId}.`;
   }
   if (refusal.class === "not-sent") {
-    const reason = /[.!?]$/.test(refusal.detail) ? refusal.detail : `${refusal.detail}.`;
+    // One inert line: a ledger an earlier Studio wrote holds this detail with an inventory name as it was.
+    const detail = oneLineForPrompt(refusal.detail);
+    const reason = /[.!?]$/.test(detail) ? detail : `${detail}.`;
     return `Step ${event.stepId} (${toolName}) was refused before the database was reached, so nothing ran: ${reason} That exact call will not be sent again — change the arguments if you still need what it would have produced.`;
   }
   if (refusal.class === "reading-refused") {

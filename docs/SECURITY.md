@@ -925,6 +925,7 @@ These are real, current, and not oversights. Each is a decision with a reason.
   agent fences everything database-derived before it reaches a prompt, assistant messages included:
   an identifier the model quotes back into its own tool arguments is defanged on the way into the
   transcript, while reasoning parts pass through because signed thinking blocks cannot be rewritten.
+  An inventory name the server's own sentence carries is quoted instead of fenced, so it cannot end a line or a fence.
   What each surface sends, and what comes back, with
   the call site for every claim, is [`docs/AGENT_DATA_FLOW.md`](./AGENT_DATA_FLOW.md). **A key is not
   what decides whether any of this happens — a model configuration that validates is.**

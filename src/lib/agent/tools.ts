@@ -242,7 +242,7 @@ import type {
   AgentRunWorkflowType,
   AgentToolRefusal,
 } from "./types";
-import { fenceProviderText, fenceUntrustedContent } from "./untrusted-content";
+import { fenceProviderText, fenceUntrustedContent, nameForPrompt, quoteIdentifierForPrompt } from "./untrusted-content";
 
 /** The tools an agent-mode run may be offered. Nothing else is a tool. */
 export type AgentToolName =
@@ -1631,7 +1631,7 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
     const holders = snapshot.objects
       .filter((entry) => entry.columns.some((column) => column.name.toLowerCase() === missing.toLowerCase()))
       .slice(0, 6)
-      .map((entry) => entry.name);
+      .map((entry) => nameForPrompt(entry.name));
     if (holders.length === 0) return undefined;
     return `${missing} is in ${holders.join(", ")} — join through one of those, or qualify it.`;
   }
@@ -1659,13 +1659,13 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
     const holders = snapshot.objects
       .filter((entry) => entry.columns.some((column) => column.name.toLowerCase() === missing.toLowerCase()))
       .slice(0, 6)
-      .map((entry) => entry.name);
+      .map((entry) => nameForPrompt(entry.name));
     return holders.length === 0
       ? undefined
       : `${missing} is in ${holders.join(", ")} — "${qualifier}" is not one of them.`;
   }
   // Bounded: a wide table's whole column list would bury the sentence that carries it.
-  const named = table.columns.slice(0, 12).map((column) => column.name);
+  const named = table.columns.slice(0, 12).map((column) => nameForPrompt(column.name));
   /*
     And WHERE the column it wanted actually lives, when the inventory has it elsewhere.
     Measured: one model asked for `department.emp_no` twice in one run, having been told after
@@ -1678,9 +1678,9 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
       (entry) => entry !== table && entry.columns.some((column) => column.name.toLowerCase() === missing.toLowerCase()),
     )
     .slice(0, 6)
-    .map((entry) => entry.name);
+    .map((entry) => nameForPrompt(entry.name));
   const found = elsewhere.length === 0 ? "" : ` ${missing} is in ${elsewhere.join(", ")} — join through one of those.`;
-  return `"${table.name}" has no ${missing}. Its columns are ${named.join(", ")}.${found}`;
+  return `${quoteIdentifierForPrompt(table.name)} has no ${missing}. Its columns are ${named.join(", ")}.${found}`;
 }
 
 /**
@@ -3903,9 +3903,14 @@ export function planTableProfile(
   // qualifier is not unknown, the object is not un-profilable and the table is not missing.
   // The run read every candidate and cannot say which the caller meant, and the candidates
   // are the only thing that repairs it, so they are what is said. They are this inventory's
-  // own addresses, so a model can copy one back verbatim.
+  // own addresses, quoted where they are not plain names, and `resolveProfileTarget` reads
+  // that quoting back, so a model can copy one back verbatim, except where one candidate's
+  // raw name is another's quoted form (see `resolveProfileTarget`).
   if (resolution.kind === "ambiguous") {
-    return unavailable("TABLE_SPELLING_AMBIGUOUS", resolution.candidates.map((entry) => entry.name).join(", "));
+    return unavailable(
+      "TABLE_SPELLING_AMBIGUOUS",
+      resolution.candidates.map((entry) => nameForPrompt(entry.name)).join(", "),
+    );
   }
   const target = resolution.kind === "resolved" ? resolution.target : null;
   if (target === null) {
@@ -3951,7 +3956,7 @@ export function planTableProfile(
     // convention this database uses, which is what a misspelling needs. Only names this
     // tool would ACCEPT: offering one it would then refuse is the two-dead-refusals
     // sequence the qualifier split was written to end.
-    const offer = profilable.slice(0, 6).map((entry) => entry.name);
+    const offer = profilable.slice(0, 6).map((entry) => nameForPrompt(entry.name));
     return unavailable("TABLE_NOT_INVENTORIED", offer.length === 0 ? undefined : `it lists ${offer.join(", ")}`);
   }
 
@@ -3990,7 +3995,7 @@ export async function profileTableTool(
   const outcome = await executeAgentOperation(context, {
     operationId: "sql.table.profile",
     sql: plan.sql,
-    label: `profile of ${target.entry.name}`,
+    label: `profile of ${nameForPrompt(target.entry.name)}`,
     ...(target.schema === undefined ? {} : { target: { schema: target.schema } }),
   });
   if (outcome.kind !== "completed") return outcome;
