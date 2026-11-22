@@ -264,7 +264,7 @@ is a connection field, not an object. Editing the VALUE would be writing to a pl
 
 ## 7. Security
 
-The requirements are in `docs/SECURITY.md` under MB-S1 to MB-S13. The short form:
+The requirements are MB-S1 to MB-S13, in section 5 of [#1723](https://github.com/libredb/libredb-studio/issues/1723). The short form:
 
 - Read-only by construction, re-checked at the socket (MB-S1).
 - The shared egress rule applies, and a link-local address is refused by default (MB-S10).
