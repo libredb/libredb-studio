@@ -43,7 +43,7 @@ None of it is a GitHub issue.
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B172 · 83
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 24
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV32 · 31
+- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV33 · 32
 
 ---
 
@@ -10564,4 +10564,16 @@ There Next.js's handler, `cleanup` in `next/dist/server/lib/start-server.js`, en
 Under systemd the .deb, .rpm, AUR and Snap services record every such stop as a failed unit, since only 0 is a clean stop there.
 The desktop shell kills the server 5 s after its SIGTERM (`SHUTDOWN_GRACE` in `desktop/src-tauri/src/sidecar.rs`), less than the 25 s Studio's handler may take where it owns the exit.
 
-**Done when:** each launcher above starts the server with `NEXT_MANUAL_SIG_HANDLE=true`, the desktop's grace covers Studio's bounds, a test per launcher shows the variable in the environment it starts the server with, `docs/DISTRIBUTION.md` "Stopping the server" says so, and a stop of the Linux service ends with exit code 0.
+A launcher must not hand the variable to a server running on Bun: Bun publishes nothing on the channel the request drain reads (`src/lib/shutdown-drain.ts`), so `exitOwnerAtBoot` in `src/lib/shutdown-handler.ts` refuses `true` there with exit code 1.
+npx (`bin/studio.js`) and package.json `start` spawn `process.execPath`, which is Bun under `bunx --bun` and `bun --bun run start`, and under `bunx` and `bun start` on a host without Node.js.
+
+**Done when:** each launcher above starts the server with `NEXT_MANUAL_SIG_HANDLE=true` where the server runs on Node.js, and leaves it unset where it runs on Bun, the desktop's grace covers Studio's bounds, a test per launcher shows the variable in the environment it starts the server with, `docs/DISTRIBUTION.md` "Stopping the server" says so, and a stop of the Linux service ends with exit code 0.
+
+### GOV33. The Helm chart does not write `NEXT_MANUAL_SIG_HANDLE` itself
+
+The three images set `NEXT_MANUAL_SIG_HANDLE=true` from the first release after 1.3.0, so a chart deployment of such a release gets it from the image (`docs/DISTRIBUTION.md`, "Stopping the server").
+The owner decided that the chart also writes it itself, in the chart bump of the first release whose `appVersion` is past 1.3.0, so the deployment states who owns the exit whatever image it runs.
+It cannot write it before then: image 1.3.0 and earlier register their shutdown handler only once a route loads the provider factory, so with the variable they have no SIGTERM listener until then and, as PID 1, ignore the signal until the platform's SIGKILL.
+For the same reason a deployment of that chart that pins `image.tag` to 1.3.0 or earlier would have the variable without the boot handler.
+
+**Done when:** in the release that first moves `appVersion` past 1.3.0, or a chart PR after it, `charts/libredb-studio/templates/deployment.yaml` writes `NEXT_MANUAL_SIG_HANDLE=true` before `extraEnv`, `Chart.yaml` `version` is bumped by hand with the README `--version` examples, `artifacthub.io/changes` and the chart README name the minimum image beside the variable, the operator's chart copy is refreshed by `bun run chart:bump`, a helm test pins the entry, and `docs/DISTRIBUTION.md` "Stopping the server" says the chart writes it.
