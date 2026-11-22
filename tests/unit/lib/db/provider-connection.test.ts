@@ -2,7 +2,7 @@
  * `providerConnection`, the connection a provider is built from (FND-2, docs/SECURITY.md control 3.41).
  *
  * Core opens the SSH tunnel with the record's tunnel credentials, so the provider is handed the record with its
- * `sshTunnel` reduced to the fields `SSH_TUNNEL_FIELDS` classifies public. The expected tunnels below are written out by
+ * `sshTunnel` reduced to the fields `SSH_TUNNEL_FIELDS` does not classify secret. The expected tunnels below are written out by
  * hand, never derived from the classification, so a change to what reaches a provider fails here by name.
  */
 import { describe, expect, test } from "bun:test";
@@ -79,7 +79,7 @@ function refusalOf(given: DatabaseConnection): DatabaseConfigError {
 }
 
 describe("providerConnection, the connection a provider is built from (FND-2)", () => {
-  test("leaves out every tunnel field the classification calls secret and keeps every public one as the record holds it", () => {
+  test("leaves out every tunnel field the classification calls secret and keeps every other one as the record holds it", () => {
     expect(providerConnection(record()).sshTunnel).toEqual({
       enabled: true,
       host: "bastion.example",

@@ -2513,7 +2513,7 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT, RabbitMQ, SNMP), `dataServers` (Oxia), `warehouse` (Databend, Snowflake), `region` (S3), `apiPath` (Kubernetes, RabbitMQ), `namespaces` and `tlsServerName` (Kubernetes), `location` (BigQuery), `amqpPort` (RabbitMQ), `securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath` (OPC UA), `authMethod`, `privateKey`, `privateKeyPassphrase` and `role` (Snowflake), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
+`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT, RabbitMQ, SNMP), `dataServers` (Oxia), `warehouse` (Databend, Snowflake), `region` (S3), `apiPath` (Kubernetes, RabbitMQ), `namespaces` and `tlsServerName` (Kubernetes), `location` (BigQuery), `amqpPort` (RabbitMQ), `securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath` (OPC UA), `authMethod` and `role` (Snowflake), `privateKey` and `privateKeyPassphrase` (Snowflake, NETCONF), `hostKeyFingerprint` (NETCONF), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
 (Elasticsearch, #708), and `readOnly` (#1089). `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
 
@@ -2556,9 +2556,9 @@ interface DatabaseConnection {
   location?: string;    // BigQuery only: where jobs run (EU, US, europe-west3, ...); absent, the provider detects it from the datasets. Not a secret
   amqpPort?: string;    // RabbitMQ only: the AMQP 0-9-1 port of stream reads; empty means browse only.
   authMethod?: 'keypair' | 'pat'; // Snowflake only: the sign-in method, a key-pair JWT signed with privateKey or a programmatic access token in password; absent means keypair. Not the SSH tunnel's sshTunnel.authMethod. Not a secret
-  privateKey?: string;  // Snowflake only: the PEM private key's contents, PKCS#8 or PKCS#1, encrypted or not; never a path. Secret-classified
-  privateKeyPassphrase?: string;
-  hostKeyFingerprint?: string; // Snowflake only: the passphrase of an encrypted privateKey. Secret-classified
+  privateKey?: string;  // Snowflake and NETCONF: a private key's contents, never a path; Snowflake signs the key-pair JWT with it (PEM, PKCS#8 or PKCS#1, encrypted or not), NETCONF signs in to the device's SSH server with it. Secret-classified
+  privateKeyPassphrase?: string; // Snowflake and NETCONF: the passphrase of an encrypted privateKey. Secret-classified
+  hostKeyFingerprint?: string; // NETCONF only: the SSH host key the device must present, pinned. Public key material, readable and identity-classified, so it is bound into every sealed credential of the connection
   role?: string;        // Snowflake only: the role every statement runs as, sent on every request; part of the connection's identity. Not a secret
   skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect). It defers the CATALOG, not the walk: a connection that also declares `keyScan` keeps the sidebar's Objects / Keys switch, and the switch reads nothing, because the key panel mounts only when Keys is chosen and then takes the same bounded sample (#1169)
   readOnly?: boolean;      // refuse writes, value edits and maintenance before any request (#1089). Accepted only where the engine's provider enforces it: true anywhere else is refused at seed load and before any provider is built, and a value that is not a boolean is refused everywhere
@@ -2567,7 +2567,7 @@ interface DatabaseConnection {
   agentUser?: string;      // optional least-privilege principal every agent execution profile and MCP call signs in as (#328); a seed may set it, on a managed seed only (docs/SEED_CONNECTIONS.md)
   agentPassword?: string;  // that principal's secret, or the agent's whole token or key; secret-classified, sealed at rest by connection-secrets; a seed may set it, on a managed seed only
   agentReadRoots?: readonly string[]; // OPC UA only: the read roots, node ids written with their namespace URI, beneath which agent mode and MCP read; set only by the seed file, never listed to the browser, refused inline
-  apiKeyId?: string;       // Elasticsearch only (#708): API key pair, sent in preference to user/password when both halves are set (trimmed). Secret-classified like agentPassword, not public like user. OpenSearch refuses the pair
+  apiKeyId?: string;       // Elasticsearch only (#708): API key pair, sent in preference to user/password when both halves are set (trimmed). Secret-classified like agentPassword, not readable like user. OpenSearch refuses the pair
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
   registerMap?: string;    // Modbus only: the register map, as the JSON document the provider parses - a list of points, each naming a unit, a table, a zero-based PDU address and a type. Bounded at 65536 bytes, checked before the parse; public-classified, because Modbus TCP defines no authentication and the document carries nothing to leak
 }

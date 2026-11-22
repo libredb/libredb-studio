@@ -5,6 +5,7 @@ import * as path from "path";
 import { register } from "@/instrumentation";
 import { forgetEgressDecision } from "@/lib/db/egress-decision";
 import { logger } from "@/lib/logger";
+import { closeStorageProvider } from "@/lib/storage/factory";
 import { getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
 import { getSampleSeedState, resetSampleSeedStates, SAMPLES, unavailableSentence } from "@/lib/seed/samples";
 import * as authBootstrap from "@/lib/auth-bootstrap";
@@ -44,6 +45,9 @@ const ENV_KEYS = [
   "NODE_EXTRA_CA_CERTS",
   "DB_HTTP_BLOCK_PRIVATE_HOSTS",
   "NEXT_MANUAL_SIG_HANDLE",
+  "STORAGE_ENCRYPTION_RESEAL",
+  "STORAGE_ENCRYPTION_REQUIRE_V2",
+  "STORAGE_PROVIDER",
 ] as const;
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -476,6 +480,82 @@ describe("instrumentation register()", () => {
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(fs.existsSync(path.join(tmpDir, "sample-employees.db"))).toBe(false);
     expect(output).not.toContain("Star the project");
+  });
+
+  test("a credential re-seal that fails stops register before the banner and the samples", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    process.env.STORAGE_PROVIDER = "sqlite";
+    // An in-memory store cannot be backed up, so the re-seal refuses to run.
+    process.env.STORAGE_SQLITE_PATH = ":memory:";
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample.libredb");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample-employees.db");
+    delete process.env.LIBREDB_NO_BANNER;
+
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    let banner = "";
+    let output = "";
+    try {
+      await register();
+      banner = errorSpy.mock.calls.flat().join("\n");
+      output = log.mock.calls.flat().join("\n");
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      log.mockRestore();
+      warn.mockRestore();
+      await closeStorageProvider();
+    }
+
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("the credential re-seal did not complete");
+    expect(noSampleStarted()).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
+    expect(output).not.toContain("Star the project");
+  });
+
+  test("the credential re-seal runs after the auth bootstrap and the preflights, so a refused boot never touched the store", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    process.env.STORAGE_PROVIDER = "sqlite";
+    process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "yes";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    let banner = "";
+    try {
+      await register();
+      banner = errorSpy.mock.calls.flat().join("\n");
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      warn.mockRestore();
+      info.mockRestore();
+      await closeStorageProvider();
+    }
+
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("DB_HTTP_BLOCK_PRIVATE_HOSTS is invalid");
+    expect(banner).not.toContain("credential re-seal");
+    // Neither the store nor a backup of it was created: the re-seal never ran.
+    expect(fs.readdirSync(tmpDir).filter((name) => name.startsWith("libredb-storage.db"))).toEqual([]);
   });
 
   /** Boots with both samples disabled and answers the egress decision lines logged, in order. */

@@ -18,10 +18,17 @@ import type {
   StorageCollection,
   StorageData,
   StoredAccount,
+  StoredCredentialRewrite,
+  StoredCredentialRewriteResult,
+  StoredFactorRow,
   StoredPasskey,
+  CredentialEnvelopeState,
 } from "../types";
 import {
   AccountWriteConflict,
+  CREDENTIAL_ENVELOPE_KEY,
+  envelopeStateOf,
+  RETIRED_ENVELOPE_MARKER,
   LastAdminError,
   PasskeyRegistrationConflict,
   PasskeyRemovalConflict,
@@ -53,6 +60,16 @@ function isNodeAbiMismatch(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /NODE_MODULE_VERSION|was compiled against a different Node\.js version/i.test(message);
 }
+
+/** Every table of the store; a store in which none of them exists is created from nothing by initialize. */
+const STORE_TABLES = [
+  "storage_meta",
+  "user_storage",
+  "accounts",
+  "passkey_users",
+  "passkey_credentials",
+  "passkey_spent_challenges",
+] as const;
 
 export class SQLiteStorageProvider implements ServerStorageProvider {
   private db: BetterSqlite3.Database | null = null;
@@ -92,7 +109,20 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       }
 
       // user_storage is per-user product data. accounts is the local identity registry (#784).
-      this.db!.exec(`
+      // storage_meta records facts about the store itself, such as its credential envelope state.
+      // One IMMEDIATE transaction decides whether the store is created from nothing (none of its
+      // tables exists yet), creates the tables, and records version 1 as retired on such a store,
+      // which holds no version 1 value; a store that existed before keeps no row.
+      const create = this.db!.transaction(() => {
+        const existed = this.db!.prepare(
+          `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name IN (${STORE_TABLES.map(() => "?").join(", ")})`,
+        ).get(...STORE_TABLES);
+        this.db!.exec(`
+        CREATE TABLE IF NOT EXISTS storage_meta (
+          key        TEXT PRIMARY KEY,
+          value      TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
         CREATE TABLE IF NOT EXISTS user_storage (
           user_id    TEXT NOT NULL,
           collection TEXT NOT NULL,
@@ -137,6 +167,14 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
         );
         CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_challenges (expires_at)
       `);
+        if (existed === undefined) {
+          this.db!.prepare("INSERT INTO storage_meta (key, value) VALUES (?, ?)").run(
+            CREDENTIAL_ENVELOPE_KEY,
+            RETIRED_ENVELOPE_MARKER,
+          );
+        }
+      });
+      create.immediate();
     } catch (error) {
       logger.error("SQLite storage initialization failed", error, { provider: "sqlite", path: this.dbPath });
       if (isNodeAbiMismatch(error)) {
@@ -451,6 +489,87 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       if (deleted.changes === 0) throw new PasskeyRemovalConflict("credential_missing");
     });
     remove.immediate();
+  }
+
+  async readEnvelopeState(): Promise<CredentialEnvelopeState> {
+    this.ensureDb();
+    return envelopeStateOf(this.readEnvelopeMarker());
+  }
+
+  /**
+   * The operator re-seal (`ServerStorageProvider.rewriteStoredCredentials`), in one IMMEDIATE
+   * transaction, so the write lock is held from the marker read to the commit and every other
+   * writer, in this process or another, waits. Every row and account is passed to the rewrite and
+   * `beforeRetire` runs before anything is written, so a run the rewrite refuses or fails writes no
+   * backup either. The backup is `VACUUM INTO` the path `<store file>.<backupLabel>`, run on a
+   * second connection because SQLite refuses VACUUM inside a transaction; that connection reads the
+   * last committed state, which the held lock keeps equal to the state this transaction read. The
+   * backup file is created first with `wx`, which refuses an existing target and an unwritable
+   * directory with an error that rolls everything back. A backup file a failed run left stays: a
+   * complete copy of the unchanged store when the copy finished and a later write failed, or an
+   * empty or partial file when the copy itself failed part way, which is no backup. Only the data
+   * and factor columns change: an account write that read its row before the re-seal still applies
+   * after it.
+   */
+  async rewriteStoredCredentials(
+    rewrite: StoredCredentialRewrite,
+    backupLabel: string,
+  ): Promise<StoredCredentialRewriteResult> {
+    this.ensureDb();
+    if (this.dbPath === ":memory:") {
+      throw new Error("An in-memory SQLite store cannot be backed up, so its credentials are not re-sealed");
+    }
+    const backup = `${this.dbPath}.${backupLabel}`;
+    const fs = await import("fs");
+    const run = this.db!.transaction((): StoredCredentialRewriteResult => {
+      if (envelopeStateOf(this.readEnvelopeMarker()) === "v1-retired") return { kind: "already-retired" };
+      const rows = this.db!.prepare(
+        "SELECT user_id, data FROM user_storage WHERE collection = 'connections' ORDER BY user_id",
+      ).all() as { user_id: string; data: string }[];
+      const rowWrites: { userId: string; data: string }[] = [];
+      for (const row of rows) {
+        const next = rewrite.connections(row.user_id, row.data);
+        if (next !== null) rowWrites.push({ userId: row.user_id, data: next });
+      }
+      const accounts = this.db!.prepare(
+        "SELECT email, totp_secret, totp_pending FROM accounts ORDER BY email",
+      ).all() as { email: string; totp_secret: string | null; totp_pending: string | null }[];
+      const factorWrites: { email: string; next: Pick<StoredFactorRow, "totpSecret" | "totpPending"> }[] = [];
+      for (const row of accounts) {
+        const next = rewrite.factors({ email: row.email, totpSecret: row.totp_secret, totpPending: row.totp_pending });
+        if (next !== null) factorWrites.push({ email: row.email, next });
+      }
+      rewrite.beforeRetire();
+      // Created first, empty, with the store file's own mode, so the copy of every credential is no more readable
+      // than the store; `wx` refuses a target that already exists. VACUUM INTO accepts an empty target.
+      fs.closeSync(fs.openSync(backup, "wx", fs.statSync(this.dbPath).mode & 0o777));
+      const copier = new Database(this.dbPath) as BetterSqlite3.Database;
+      try {
+        copier.prepare("VACUUM INTO ?").run(backup);
+      } finally {
+        copier.close();
+      }
+      const updateRow = this.db!.prepare(
+        "UPDATE user_storage SET data = ? WHERE user_id = ? AND collection = 'connections'",
+      );
+      for (const { userId, data } of rowWrites) updateRow.run(data, userId);
+      const updateFactors = this.db!.prepare("UPDATE accounts SET totp_secret = ?, totp_pending = ? WHERE email = ?");
+      for (const { email, next } of factorWrites) updateFactors.run(next.totpSecret, next.totpPending, email);
+      this.db!.prepare(
+        `INSERT INTO storage_meta (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      ).run(CREDENTIAL_ENVELOPE_KEY, RETIRED_ENVELOPE_MARKER);
+      return { kind: "rewritten", backup };
+    });
+    return run.immediate();
+  }
+
+  /** The `credential_envelope` row's value, or undefined when the store has none. */
+  private readEnvelopeMarker(): string | undefined {
+    const row = this.db!.prepare("SELECT value FROM storage_meta WHERE key = ?").get(CREDENTIAL_ENVELOPE_KEY) as
+      | { value: string }
+      | undefined;
+    return row?.value;
   }
 
   /** Inside a write transaction: purge old spent rows, then spend this one; false when it was spent. */

@@ -74,11 +74,11 @@ describe("the seed layer keeps all three", () => {
 });
 
 describe("classification and identity", () => {
-  test("all three are public: none is a credential", () => {
+  test("none of the three is a credential; the API path and the TLS server name are bound into the sealed ones", () => {
     expect([CONNECTION_FIELDS.apiPath, CONNECTION_FIELDS.namespaces, CONNECTION_FIELDS.tlsServerName]).toEqual([
+      "identity",
       "public",
-      "public",
-      "public",
+      "identity",
     ]);
   });
 

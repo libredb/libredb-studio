@@ -34,18 +34,39 @@ export type SecretFieldRecord = Omit<DatabaseConnection, "createdAt"> & { create
  *
  * `nested` marks a container whose own map carries the classification, so "I did not think about
  * it" and "it is a container" are different answers rather than the same silence.
+ *
+ * `identity` is readable like `public`, and is also bound into every sealed value of its record
+ * (docs/STORAGE.md, "Where a sealed value opens"): a sealed credential opens only while the record
+ * holds the identity fields it was sealed with. A readable field is `identity` when a writer of the
+ * store could, by changing it alone, choose where a credential of the record is sent (endpoint,
+ * route, address list, protocol), as whom it authenticates (principal name, client identity), or
+ * how safely it travels (TLS and SSH verification, consent to plaintext, a mechanism that sends the
+ * secret itself).
+ *
+ * The identity set is part of the stored envelope format. Adding a NEW field as `identity` is safe
+ * for upgrades: records written before it do not carry it, so their digest is unchanged. It is a
+ * downgrade boundary, as a new envelope version is: an older version leaves the field out of the
+ * digest, so it opens no sealed value of a record that carries it. Moving an EXISTING field
+ * into or out of `identity`, or removing an identity field from the type, changes the digest of
+ * every record that carries it, and every sealed value of those records then reads as
+ * undecryptable. That is a new envelope version with its own re-seal, never an edit here;
+ * tests/unit/lib/storage/connection-secrets.test.ts pins the thirty identity paths.
+ *
+ * Server code that edits a stored connection must seal its credentials again from the plaintext it
+ * opened (`encryptConnections` in ./connection-secrets.ts does), because a sealed value kept across
+ * a change of an identity field no longer opens.
  */
-export type FieldClass = "secret" | "public" | "nested";
+export type FieldClass = "secret" | "public" | "identity" | "nested";
 
 export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   id: "public",
   name: "public",
-  type: "public",
-  host: "public",
-  port: "public",
-  user: "public",
+  type: "identity",
+  host: "identity",
+  port: "identity",
+  user: "identity",
   password: "secret",
-  database: "public",
+  database: "identity",
   // Carries scheme://user:pass@host. The same shape src/lib/audit.ts redacts out of log lines.
   connectionString: "secret",
   createdAt: "public",
@@ -54,18 +75,20 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   group: "public",
   ssl: "nested",
   sshTunnel: "nested",
-  serviceName: "public",
-  instanceName: "public",
+  serviceName: "identity",
+  instanceName: "identity",
   // A data-centre NAME (`datacenter1`), which the server publishes itself in
   // `system.local.data_center` and prints in the driver's own error message when it
   // is wrong. Nothing about it is a credential.
   localDataCenter: "public",
   // A DATABASE NAME (`admin`), not a credential. The password that authenticates
-  // against it is the secret, and it is classified above.
-  authSource: "public",
+  // against it is the secret, and it is classified above. Identity: it is the database the
+  // principal lives in, so another value names another principal.
+  authSource: "identity",
   // A SASL MECHANISM NAME (`SCRAM-SHA-512`), which a broker's own configuration lists in the
   // clear. It says how the password is checked; the password is the secret, classified above.
-  saslMechanism: "public",
+  // Identity: PLAIN sends the password itself where SCRAM sends a proof.
+  saslMechanism: "identity",
   schema: "public",
   queryTimeout: "public",
   // A display preference: whether this browser reads the catalog when the connection
@@ -75,9 +98,11 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // grants nothing, and the browser reads it to draw the Read-only marker.
   readOnly: "public",
   // Db2's acceptance of a cleartext password (#786). A choice about the transport, not a credential.
-  allowInsecureAuth: "public",
-  // Addresses, as `host` is. The token they receive is the secret, classified above.
-  dataServers: "public",
+  // Identity: it is the consent to send the credential without TLS.
+  allowInsecureAuth: "identity",
+  // Addresses, as `host` is. The token they receive is the secret, classified above. Identity: the
+  // token is sent to them.
+  dataServers: "identity",
   // The warehouse: a compute name, from Databend Cloud's DSN or a Snowflake account. It picks where a statement
   // runs and grants nothing; the password, token or key sent with it is the secret, classified above.
   warehouse: "public",
@@ -96,28 +121,33 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   region: "public",
   // Kubernetes: a server path prefix (also RabbitMQ's Path prefix), a list of namespace names and a certificate host
   // name. Each says where requests go or what the tree shows; the credential that authenticates them is classified
-  // above or under ssl.
-  apiPath: "public",
+  // above or under ssl. The path and the certificate host name are identity: the path picks the cluster or broker
+  // behind one host, and the name is what the server certificate is checked against.
+  apiPath: "identity",
   namespaces: "public",
-  tlsServerName: "public",
-  // An AMQP port: an address, as `port` is. It grants nothing.
-  amqpPort: "public",
-  securityMode: "public",
+  tlsServerName: "identity",
+  // An AMQP port: an address, as `port` is. It grants nothing. Identity, as `port` is.
+  amqpPort: "identity",
+  // Identity: the OPC UA channel protection the credential travels under.
+  securityMode: "identity",
   // A thumbprint is the PUBLIC fingerprint of a public certificate: it identifies a server, it does not
   // authenticate anyone, and hiding it would stop an operator reading back what they pinned.
-  serverCertificateThumbprint: "public",
+  // Identity: it is the pin of the server the credential is sent to.
+  serverCertificateThumbprint: "identity",
   // Public key material, exactly as the tunnel's own fingerprint is: it names a key, it is not one,
-  // and a reader has to be able to see it to compare it with what the device prints.
-  hostKeyFingerprint: "public",
+  // and a reader has to be able to see it to compare it with what the device prints. Identity, as
+  // the thumbprint is.
+  hostKeyFingerprint: "identity",
   // A policy URI is published by the server, and the other two are PATHS and not keys: the private
   // key stays in the file the path names and never enters a connection record, which is the reason
-  // this provider takes a path at all.
-  securityPolicyUri: "public",
-  clientCertificatePath: "public",
-  clientPrivateKeyPath: "public",
+  // this provider takes a path at all. Identity: the channel protection, and the client identity
+  // presented.
+  securityPolicyUri: "identity",
+  clientCertificatePath: "identity",
+  clientPrivateKeyPath: "identity",
   managed: "public",
   seedId: "public",
-  agentUser: "public",
+  agentUser: "identity",
   agentPassword: "secret",
   // Node ids an operator declared readable, not a credential and not an address.
   agentReadRoots: "public",
@@ -133,19 +163,23 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
 };
 
 export const SSL_FIELDS: Record<keyof SSLConfig, FieldClass> = {
-  mode: "public",
+  // Identity, all four readable ones: whether and against what the server is verified, and the client identity
+  // presented with the key.
+  mode: "identity",
   // Certificates are public by construction; encrypting them costs diagnosability and buys nothing.
-  caCert: "public",
-  clientCert: "public",
+  caCert: "identity",
+  clientCert: "identity",
   clientKey: "secret",
-  rejectUnauthorized: "public",
+  rejectUnauthorized: "identity",
 };
 
 export const SSH_TUNNEL_FIELDS: Record<keyof SSHTunnelConfig, FieldClass> = {
-  enabled: "public",
-  host: "public",
-  port: "public",
-  username: "public",
+  // Identity: whether the route goes through the bastion, the bastion itself, and the principal on it.
+  enabled: "identity",
+  host: "identity",
+  port: "identity",
+  username: "identity",
+  // Which of the record's own credentials goes to the same bound bastion: not identity.
   authMethod: "public",
   password: "secret",
   privateKey: "secret",
@@ -155,8 +189,8 @@ export const SSH_TUNNEL_FIELDS: Record<keyof SSHTunnelConfig, FieldClass> = {
   // `ssh-keyscan` hands out to anyone who asks. It authenticates the server TO us; it grants no
   // access and unlocks nothing, so there is nothing to seal. Sealing it would also cost the one
   // thing it exists for: the user has to be able to READ it to compare it against their own
-  // known_hosts when a mismatch is reported.
-  hostKeyFingerprint: "public",
+  // known_hosts when a mismatch is reported. Identity: it is the bastion's pin.
+  hostKeyFingerprint: "identity",
 };
 
 /**
@@ -199,6 +233,17 @@ function secretsOf(map: Record<string, FieldClass>): string[] {
 const CONNECTION_SECRET_KEYS = secretsOf(CONNECTION_FIELDS);
 const SSL_SECRET_KEYS = secretsOf(SSL_FIELDS);
 const SSH_TUNNEL_SECRET_KEYS = secretsOf(SSH_TUNNEL_FIELDS);
+
+/** The `identity` keys of a map, derived as the secret ones are. */
+function identitiesOf(map: Record<string, FieldClass>): string[] {
+  return Object.keys(map).filter((key) => map[key] === "identity");
+}
+
+const CONNECTION_IDENTITY_KEYS = identitiesOf(CONNECTION_FIELDS);
+const IDENTITY_CONTAINERS: readonly (readonly ["ssl" | "sshTunnel", string[]])[] = [
+  ["ssl", identitiesOf(SSL_FIELDS)],
+  ["sshTunnel", identitiesOf(SSH_TUNNEL_FIELDS)],
+];
 
 /**
  * Applies `transform` to each named field of `target` in place, passing the field's path (`prefix`
@@ -283,6 +328,55 @@ export function secretFieldValues<T extends SecretFieldRecord>(connection: T): R
   return values;
 }
 
+/**
+ * The identity projection of a connection: the fields classified `identity` that the record holds, which every sealed
+ * value of the record is bound to (./envelope-binding.ts).
+ *
+ * Taken from the record as the store holds it, so the seal side (the record as written) and the open side (the record
+ * as read back) project the same value for every shape the store can hold: the record is first shaped by
+ * `walkSecretFields`, as every write is, and passed through JSON, as the store keeps it. Then every root key classified
+ * identity that is present is kept, and for `ssl` and `sshTunnel` the identity keys of the container when it is a plain
+ * object, or the container value itself (null, a string, a number) when it is not.
+ */
+export function identityFields<T extends SecretFieldRecord>(record: T): Record<string, unknown> {
+  const stored = JSON.parse(JSON.stringify(walkSecretFields(record, (value) => value).connection)) as Record<
+    string,
+    unknown
+  >;
+  return projectIdentity(stored);
+}
+
+/**
+ * The same projection as `identityFields`, of `record` as it is given and without passing it through JSON, for a check
+ * that must not serialize the record (`connectionBindingProblem` in ./envelope-binding.ts). A record reaches the store
+ * from `JSON.parse` of a request body or of a stored row, so what it holds as given is what the store holds.
+ */
+export function identityFieldsAsGiven<T extends SecretFieldRecord>(record: T): Record<string, unknown> {
+  return projectIdentity(record as unknown as Record<string, unknown>);
+}
+
+/** The identity keys `stored` holds, and the identity keys of its `ssl` and `sshTunnel` containers. */
+function projectIdentity(stored: Record<string, unknown>): Record<string, unknown> {
+  const identity: Record<string, unknown> = {};
+  for (const key of CONNECTION_IDENTITY_KEYS) {
+    if (Object.hasOwn(stored, key)) identity[key] = stored[key];
+  }
+  for (const [container, keys] of IDENTITY_CONTAINERS) {
+    if (!Object.hasOwn(stored, container)) continue;
+    const value = stored[container];
+    if (!isPlainObject(value)) {
+      identity[container] = value;
+      continue;
+    }
+    const kept: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (Object.hasOwn(value, key)) kept[key] = value[key];
+    }
+    identity[container] = kept;
+  }
+  return identity;
+}
+
 /** Every path `walkSecretFields` can visit, and so the only paths `withSecretFieldValues` writes. */
 const SECRET_PATHS = new Map<string, { container?: "ssl" | "sshTunnel"; key: string }>([
   ...CONNECTION_SECRET_KEYS.map((key) => [key, { key }] as const),
@@ -293,6 +387,39 @@ const SECRET_PATHS = new Map<string, { container?: "ssl" | "sshTunnel"; key: str
 /** A container a path can be written into: an object, and not an array. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The secret paths of `connection` that hold a value which is neither text nor null: a number, a boolean, a list or an
+ * object. No credential has that shape, and `walkSecretFields` visits text only, so such a value would pass every seal
+ * and every open unexamined; the server store refuses it by path (./connection-secrets.ts).
+ */
+export function nonTextSecretPaths<T extends SecretFieldRecord>(connection: T): string[] {
+  const record = connection as unknown as Record<string, unknown>;
+  const paths: string[] = [];
+  for (const [path, { container, key }] of SECRET_PATHS) {
+    const holder = container ? record[container] : record;
+    if (!isPlainObject(holder)) continue;
+    const value = holder[key];
+    if (value !== undefined && value !== null && typeof value !== "string") paths.push(path);
+  }
+  return paths;
+}
+
+/** A copy of `connection` without the values at `paths`, each one of `SECRET_PATHS`. The input is not changed. */
+export function withoutSecretPaths<T extends SecretFieldRecord>(connection: T, paths: readonly string[]): T {
+  const copy: Record<string, unknown> = { ...connection };
+  for (const path of paths) {
+    const { container, key } = SECRET_PATHS.get(path)!;
+    if (container) {
+      const holder = { ...(copy[container] as Record<string, unknown>) };
+      delete holder[key];
+      copy[container] = holder;
+    } else {
+      delete copy[key];
+    }
+  }
+  return copy as unknown as T;
 }
 
 /**

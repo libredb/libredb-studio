@@ -225,7 +225,7 @@ BigQuery, Firestore and Snowflake offer no SSH panel either: each reaches its ve
 **What a provider receives of the tunnel.**
 Studio, not the provider, dials the tunnel.
 On the paths that connect through one, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` in [`src/lib/db/factory.ts`](../../src/lib/db/factory.ts), core opens it before it builds the provider, for a connection whose `sshTunnel` is enabled and which names a `host` and a `port`.
-A provider built on those paths receives the tunnel's outcome: the local endpoint in `host` and `port`, the far end under `TUNNEL_FAR_END`, and the tunnel's public fields in `sshTunnel` (`enabled`, `host`, `port`, `username`, `authMethod`, `hostKeyFingerprint`).
+A provider built on those paths receives the tunnel's outcome: the local endpoint in `host` and `port`, the far end under `TUNNEL_FAR_END`, and the tunnel's readable fields in `sshTunnel` (`enabled`, `host`, `port`, `username`, `authMethod`, `hostKeyFingerprint`).
 A provider built by `createDatabaseProvider` directly, as Studio does for a provider it never connects and as an embedder may, has no tunnel opened for it: it can see `sshTunnel.enabled: true` with no `TUNNEL_FAR_END`, which means no tunnel was opened and `host` and `port` are the database's own, so a provider that dials should refuse that connection rather than connect; most shipped providers do not yet, and connect to the record's own address ([Direct Provider Creation](../DATABASE_PROVIDERS.md#direct-provider-creation)).
 On every path the provider never receives the tunnel's password, private key or passphrase: `createDatabaseProvider` builds every provider from `providerConnection` in [`src/lib/db/provider-connection.ts`](../../src/lib/db/provider-connection.ts), which leaves them out ([SECURITY.md control 3.41](../SECURITY.md)).
 A provider that reads a tunnel credential therefore reads `undefined`.
@@ -276,9 +276,10 @@ Three deliberate limits, so nobody reads more into this than it does:
 
 The fingerprint is stored and displayed **in the clear**, on purpose. It is public key material: it
 authenticates the bastion to Studio, grants no access, unlocks nothing, and it has to be readable for
-the comparison above to be possible at all. `src/lib/storage/secret-fields.ts` classifies it
-`public` alongside the certificates in `ssl`; the tunnel's password, private key and passphrase stay
-encrypted at rest.
+the comparison above to be possible at all.
+`src/lib/storage/secret-fields.ts` classifies it `identity` alongside the certificates in `ssl`.
+It stays readable, and it is bound into every sealed credential of the connection, the database password included, not only the tunnel's ([STORAGE.md](../STORAGE.md#where-a-sealed-value-opens)).
+The tunnel's password, private key and passphrase stay encrypted at rest.
 
 **One forward per connection, bastion, far end, credential and pin.** Studio pools each open tunnel forward and hands it to every provider of the same connection that asks for the same bastion route and far end, and a forward is shared only by calls that present the credential it was opened with and pin the same host key (or none).
 A changed credential (another auth method, password, private key or passphrase) or another pin opens its own forward.

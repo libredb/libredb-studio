@@ -17,10 +17,16 @@ import type {
   StorageCollection,
   StorageData,
   StoredAccount,
+  StoredCredentialRewrite,
+  StoredCredentialRewriteResult,
   StoredPasskey,
+  CredentialEnvelopeState,
 } from "../types";
 import {
   AccountWriteConflict,
+  CREDENTIAL_ENVELOPE_KEY,
+  envelopeStateOf,
+  RETIRED_ENVELOPE_MARKER,
   LastAdminError,
   PasskeyRegistrationConflict,
   PasskeyRemovalConflict,
@@ -46,6 +52,27 @@ const PASSKEY_INDEXES: Record<string, { table: string; column: string }> = {
   passkey_spent_challenges_expiry: { table: "passkey_spent_challenges", column: "expires_at" },
 };
 
+/**
+ * Every storage table by its unqualified name, in the order the re-seal backs them up. The backup
+ * copies all of them, so "complete" means every table the store holds.
+ */
+const STORE_TABLES = [
+  "storage_meta",
+  "user_storage",
+  "accounts",
+  "passkey_users",
+  "passkey_credentials",
+  "passkey_spent_challenges",
+] as const;
+
+/** A backup label becomes part of a table name, so it is held to letters, digits and dashes. */
+const BACKUP_LABEL = /^[A-Za-z0-9-]+$/;
+/**
+ * The key of the transaction-scoped advisory lock initialize takes around its table DDL: a fixed number, the bytes of
+ * "LibreDBS" read as a signed 64-bit integer, so it names this lock and nothing else in the database.
+ */
+const STORAGE_SCHEMA_LOCK = "5506040262901908051";
+
 // PostgreSQL SQLSTATE insufficient_privilege.
 const INSUFFICIENT_PRIVILEGE = "42501";
 
@@ -64,6 +91,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   private readonly schema: string | undefined;
   /** Every storage table as statements name it, through `qualify`. */
   private readonly tables: {
+    storageMeta: string;
     userStorage: string;
     accounts: string;
     passkeyUsers: string;
@@ -75,6 +103,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     this.connectionString = connectionString || process.env.STORAGE_POSTGRES_URL || "";
     this.schema = readSchemaName("STORAGE_POSTGRES_SCHEMA");
     this.tables = {
+      storageMeta: this.qualify("storage_meta"),
       userStorage: this.qualify("user_storage"),
       accounts: this.qualify("accounts"),
       passkeyUsers: this.qualify("passkey_users"),
@@ -134,8 +163,26 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           );
         }
       }
-      // Create table
-      await this.pool.query(`
+      // Create table. storage_meta records facts about the store itself, such as its credential
+      // envelope state. One transaction, and the advisory lock comes first: PostgreSQL lets only one
+      // of several sessions running CREATE TABLE IF NOT EXISTS for a missing table at once create
+      // it, and the others fail on a unique index of pg_type, so replicas starting together would
+      // fail their first request. The lock is held until every table and index is committed; the next replica
+      // then finds them all. Under the lock, a store none of whose tables exists yet is created from
+      // nothing, holds no version 1 value, and records version 1 as retired in the same
+      // transaction; a store that existed before keeps no row.
+      await this.transaction(async (client) => {
+        await client.query(`SELECT pg_advisory_xact_lock(${STORAGE_SCHEMA_LOCK})`);
+        const existing = await client.query(
+          "SELECT table_name FROM unnest($1::text[]) AS store(table_name) WHERE to_regclass(table_name) IS NOT NULL",
+          [STORE_TABLES.map((table) => this.qualify(table))],
+        );
+        await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.tables.storageMeta} (
+          key        TEXT PRIMARY KEY,
+          value      TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
         CREATE TABLE IF NOT EXISTS ${this.tables.userStorage} (
           user_id    TEXT NOT NULL,
           collection TEXT NOT NULL,
@@ -178,21 +225,30 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           expires_at     TEXT NOT NULL
         )
       `);
-      // Keyed by the name to_regclass() looks up, which carries the schema when one is set.
-      const indexes = new Map(
-        Object.entries(PASSKEY_INDEXES).map(([index, { table, column }]) => [
-          this.qualify(index),
-          `CREATE INDEX IF NOT EXISTS ${index} ON ${this.qualify(table)} (${column})`,
-        ]),
-      );
-      const missing = await this.pool.query(
-        "SELECT index_name FROM unnest($1::text[]) AS wanted(index_name) WHERE to_regclass(index_name) IS NULL",
-        [[...indexes.keys()]],
-      );
-      for (const { index_name } of missing.rows as { index_name: string }[]) {
-        // oxlint-disable-next-line no-await-in-loop -- one DDL statement at a time on the pool, in a fixed order.
-        await this.pool.query(indexes.get(index_name)!);
-      }
+        if (existing.rows.length === 0) {
+          await client.query(`INSERT INTO ${this.tables.storageMeta} (key, value) VALUES ($1, $2)`, [
+            CREDENTIAL_ENVELOPE_KEY,
+            RETIRED_ENVELOPE_MARKER,
+          ]);
+        }
+        // The passkey indexes under the same lock, for the same reason: two sessions creating one missing index at
+        // once fail on a unique index of pg_class. Keyed by the name to_regclass() looks up, which carries the schema
+        // when one is set; only the missing ones are created, because CREATE INDEX checks table ownership first.
+        const indexes = new Map(
+          Object.entries(PASSKEY_INDEXES).map(([index, { table, column }]) => [
+            this.qualify(index),
+            `CREATE INDEX IF NOT EXISTS ${index} ON ${this.qualify(table)} (${column})`,
+          ]),
+        );
+        const missing = await client.query(
+          "SELECT index_name FROM unnest($1::text[]) AS wanted(index_name) WHERE to_regclass(index_name) IS NULL",
+          [[...indexes.keys()]],
+        );
+        for (const { index_name } of missing.rows as { index_name: string }[]) {
+          // oxlint-disable-next-line no-await-in-loop -- one DDL statement at a time on the transaction's client.
+          await client.query(indexes.get(index_name)!);
+        }
+      });
     } catch (error) {
       if (error instanceof Error && error.message.includes("does not support SSL")) {
         throw new Error(
@@ -529,6 +585,88 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         [write.id, write.email],
       );
       if (!deleted.rowCount) throw new PasskeyRemovalConflict("credential_missing");
+    });
+  }
+
+  async readEnvelopeState(): Promise<CredentialEnvelopeState> {
+    this.ensurePool();
+    const { rows } = await this.pool!.query(`SELECT value FROM ${this.tables.storageMeta} WHERE key = $1`, [
+      CREDENTIAL_ENVELOPE_KEY,
+    ]);
+    return envelopeStateOf((rows as { value: string }[])[0]?.value);
+  }
+
+  /**
+   * The operator re-seal (`ServerStorageProvider.rewriteStoredCredentials`), in one transaction.
+   * It first takes EXCLUSIVE locks on storage_meta, accounts and user_storage, in that order (an
+   * account deletion locks accounts before user_storage, so the two cannot deadlock): reads go on,
+   * every write and a second re-seal wait until it commits. The backup is a copy of every store
+   * table, `CREATE TABLE <table>_<label> AS TABLE <table>` in the store's own schema, inside the
+   * same transaction, so it is durable with the data and needs no file system; the label's dashes
+   * become underscores and its letters lower case. Only the data and factor columns change: an
+   * account write that read its row before the re-seal still applies after it. Any error before
+   * COMMIT, a lost connection included, rolls back the backup tables, the rows and the marker
+   * alike. A connection lost during COMMIT itself can lose only the answer to a commit that
+   * happened, so the caller is never told the store is unchanged; a later run reports its state.
+   */
+  async rewriteStoredCredentials(
+    rewrite: StoredCredentialRewrite,
+    backupLabel: string,
+  ): Promise<StoredCredentialRewriteResult> {
+    this.ensurePool();
+    if (!BACKUP_LABEL.test(backupLabel)) {
+      throw new Error(`The backup label ${JSON.stringify(backupLabel)} must be letters, digits and dashes`);
+    }
+    const suffix = backupLabel.toLowerCase().replaceAll("-", "_");
+    return this.transaction(async (client) => {
+      await client.query(
+        `LOCK TABLE ${this.tables.storageMeta}, ${this.tables.accounts}, ${this.tables.userStorage} IN EXCLUSIVE MODE`,
+      );
+      const marker = await client.query(`SELECT value FROM ${this.tables.storageMeta} WHERE key = $1`, [
+        CREDENTIAL_ENVELOPE_KEY,
+      ]);
+      if (envelopeStateOf((marker.rows as { value: string }[])[0]?.value) === "v1-retired") {
+        return { kind: "already-retired" } as const;
+      }
+      const backups: string[] = [];
+      for (const table of STORE_TABLES) {
+        const copy = this.qualify(`${table}_${suffix}`);
+        // oxlint-disable-next-line no-await-in-loop -- one statement at a time on the transaction's client.
+        await client.query(`CREATE TABLE ${copy} AS TABLE ${this.qualify(table)}`);
+        backups.push(copy);
+      }
+      const rows = await client.query(
+        `SELECT user_id, data FROM ${this.tables.userStorage} WHERE collection = 'connections' ORDER BY user_id`,
+      );
+      for (const row of rows.rows as { user_id: string; data: string }[]) {
+        const next = rewrite.connections(row.user_id, row.data);
+        if (next === null) continue;
+        // oxlint-disable-next-line no-await-in-loop -- one statement at a time on the transaction's client.
+        await client.query(
+          `UPDATE ${this.tables.userStorage} SET data = $1 WHERE user_id = $2 AND collection = 'connections'`,
+          [next, row.user_id],
+        );
+      }
+      const accounts = await client.query(
+        `SELECT email, totp_secret, totp_pending FROM ${this.tables.accounts} ORDER BY email`,
+      );
+      for (const row of accounts.rows as { email: string; totp_secret: string | null; totp_pending: string | null }[]) {
+        const next = rewrite.factors({ email: row.email, totpSecret: row.totp_secret, totpPending: row.totp_pending });
+        if (next === null) continue;
+        // oxlint-disable-next-line no-await-in-loop -- one statement at a time on the transaction's client.
+        await client.query(`UPDATE ${this.tables.accounts} SET totp_secret = $1, totp_pending = $2 WHERE email = $3`, [
+          next.totpSecret,
+          next.totpPending,
+          row.email,
+        ]);
+      }
+      rewrite.beforeRetire();
+      await client.query(
+        `INSERT INTO ${this.tables.storageMeta} (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [CREDENTIAL_ENVELOPE_KEY, RETIRED_ENVELOPE_MARKER],
+      );
+      return { kind: "rewritten", backup: backups.join(", ") } as const;
     });
   }
 

@@ -4,11 +4,12 @@ import { SSH_TUNNEL_FIELDS } from "@/lib/storage/secret-fields";
 import { DatabaseConfigError } from "./errors";
 
 /**
- * The tunnel fields a provider receives: the ones `SSH_TUNNEL_FIELDS` classifies `public`, derived once from that map
- * so that a second, hand-kept list cannot drift from the classification storage encryption already reads.
+ * The tunnel fields a provider receives: the ones `SSH_TUNNEL_FIELDS` does not classify `secret` (`public` and
+ * `identity` alike, both readable), derived once from that map so that a second, hand-kept list cannot drift from the
+ * classification storage encryption already reads.
  */
-const PUBLIC_TUNNEL_FIELDS: readonly string[] = Object.entries(SSH_TUNNEL_FIELDS)
-  .filter(([, fieldClass]) => fieldClass === "public")
+const READABLE_TUNNEL_FIELDS: readonly string[] = Object.entries(SSH_TUNNEL_FIELDS)
+  .filter(([, fieldClass]) => fieldClass !== "secret")
   .map(([field]) => field);
 
 /**
@@ -33,7 +34,7 @@ function isPlainData(value: unknown): value is object {
  * A connection without a tunnel passes whatever its shape.
  *
  * WHY. Every path from a tunnelled record to a provider copies it: `providerConnection` copies the record and the
- * tunnel's public fields, and the entry points that open the tunnel (`getOrCreateProvider`,
+ * tunnel's readable fields, and the entry points that open the tunnel (`getOrCreateProvider`,
  * `acquireExecutionProfileProvider` and `withOneShotTunnel` in `./factory`) build from a copy with the tunnel's local
  * endpoint in it. A copy of anything but plain data can answer differently from the record core read (a field defined
  * on the prototype or as not enumerable is lost, so a `readOnly` or an `ssl` would reach the provider as undefined), so
@@ -79,7 +80,7 @@ export function assertExecutionContextIsPlainData(execution: ProviderExecutionCo
 
 /**
  * The connection a provider is built from (FND-2, docs/SECURITY.md control 3.41): the caller's record with its
- * `sshTunnel` reduced to the fields `SSH_TUNNEL_FIELDS` classifies `public`.
+ * `sshTunnel` reduced to the fields `SSH_TUNNEL_FIELDS` does not classify `secret`.
  *
  * WHY. When core opens the SSH tunnel (`getOrCreateProvider`, `acquireExecutionProfileProvider` and
  * `withOneShotTunnel` in `./factory`), it dials with the tunnel's password, private key and passphrase itself, and hands
@@ -88,7 +89,7 @@ export function assertExecutionContextIsPlainData(execution: ProviderExecutionCo
  * so none holds one, whichever path built it. A caller that builds a provider without one of those three opens no
  * tunnel: its provider sees the record's own `sshTunnel.enabled` and no `TUNNEL_FAR_END`.
  *
- * WHAT STAYS. Every public tunnel field the record holds, each value as the record holds it: several providers read
+ * WHAT STAYS. Every readable tunnel field the record holds, each value as the record holds it: several providers read
  * `sshTunnel.enabled` to refuse a tunnel they cannot use or one that was asked for and not opened, Databend frames the
  * route into its sign-in latch key, and the edit-plan seal (`connectionFingerprint`) frames the route from the
  * provider's own config, so the route must be the record's or every tunnelled edit plan is refused. A malformed value
@@ -111,7 +112,7 @@ export function providerConnection<T extends DatabaseConnection>(connection: T):
   if (tunnel === undefined || tunnel === null) return connection;
   assertTunnelRecordIsPlainData(connection);
   const kept: Record<string, unknown> = {};
-  for (const field of PUBLIC_TUNNEL_FIELDS) {
+  for (const field of READABLE_TUNNEL_FIELDS) {
     if (Object.hasOwn(tunnel, field)) kept[field] = Reflect.get(tunnel, field);
   }
   // The one assertion: TypeScript cannot follow the copy of the classified keys above, and the record's values are

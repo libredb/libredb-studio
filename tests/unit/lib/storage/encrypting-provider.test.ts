@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { randomBytes, randomUUID } from "node:crypto";
 import { logger } from "@/lib/logger";
-import { UNDECRYPTABLE_WARNING_PREFIX, withCredentialEncryption } from "@/lib/storage/encrypting-provider";
-import { encryptSecret, resetStorageEncryptionKey } from "@/lib/storage/encryption";
+import {
+  RETIRED_IN_STORE_WARNING,
+  UNDECRYPTABLE_WARNING_PREFIX,
+  V1_ACCEPTED_WARNING,
+  withCredentialEncryption,
+} from "@/lib/storage/encrypting-provider";
+import { VERSION_TWO_NOT_RECORDED } from "@/lib/storage/envelope-settings";
+import { resetStorageEncryptionKey, sealSecret } from "@/lib/storage/encryption";
+import { accountBinding, connectionBinding } from "@/lib/storage/envelope-binding";
 import {
   type AccountUpdateOptions,
   PasskeySignInConflict,
@@ -10,12 +18,16 @@ import {
 } from "@/lib/storage/types";
 import { verifyTotp } from "@/lib/totp";
 import type { DatabaseConnection } from "@/lib/types";
+import { MemoryStorageProvider } from "../../../helpers/memory-storage-provider";
+import { sealVersionOne } from "../../../helpers/storage-envelope-v1";
 
-/** Mechanics: delegation, collection narrowing, and the single warning line. */
+/** Mechanics: delegation, collection narrowing, the envelope state, and the single warning line. */
 
 function stubProvider(overrides: Partial<ServerStorageProvider> = {}) {
   return {
     initialize: mock(async () => {}),
+    readEnvelopeState: mock(async () => "v1-retired"),
+    rewriteStoredCredentials: mock(async () => ({ kind: "already-retired" })),
     isHealthy: mock(async () => true),
     close: mock(async () => {}),
     getAllData: mock(async () => ({})),
@@ -50,11 +62,30 @@ function ownWarnings(warn: ReturnType<typeof spyOn<typeof logger, "warn">>): str
   return warn.mock.calls.map((call) => call[0]).filter((message) => message.startsWith(UNDECRYPTABLE_WARNING_PREFIX));
 }
 
+/** The decorator over `inner`, initialized, as getStorageProvider hands it out. */
+async function ready(inner: ServerStorageProvider): Promise<ServerStorageProvider> {
+  const provider = withCredentialEncryption(inner);
+  await provider.initialize();
+  return provider;
+}
+
+/** `connection`'s password sealed for the place `owner` stores it, as the store holds it. */
+function sealedFor(owner: string, record: DatabaseConnection, secret: string): string {
+  return sealSecret(secret, connectionBinding(owner, record).field("password"));
+}
+
 const snapshot: Record<string, string | undefined> = {};
+
+/** The envelope settings initialize reads; each case starts with neither set. */
+const SETTINGS = ["STORAGE_ENCRYPTION_REQUIRE_V2", "STORAGE_ENCRYPTION_RESEAL"] as const;
 
 beforeEach(() => {
   snapshot.JWT_SECRET = process.env.JWT_SECRET;
   snapshot.STORAGE_ENCRYPTION_KEY = process.env.STORAGE_ENCRYPTION_KEY;
+  for (const key of SETTINGS) {
+    snapshot[key] = process.env[key];
+    delete process.env[key];
+  }
   process.env.JWT_SECRET = "encrypting-provider-test-jwt-secret-32";
   // An ambient STORAGE_ENCRYPTION_KEY (a developer's local .env.local) takes precedence over
   // JWT_SECRET in inputKeyMaterial(), so the "rotate JWT_SECRET" tests below would silently stop
@@ -70,6 +101,10 @@ afterEach(() => {
   else process.env.JWT_SECRET = snapshot.JWT_SECRET;
   if (snapshot.STORAGE_ENCRYPTION_KEY === undefined) delete process.env.STORAGE_ENCRYPTION_KEY;
   else process.env.STORAGE_ENCRYPTION_KEY = snapshot.STORAGE_ENCRYPTION_KEY;
+  for (const key of SETTINGS) {
+    if (snapshot[key] === undefined) delete process.env[key];
+    else process.env[key] = snapshot[key];
+  }
   resetStorageEncryptionKey();
 });
 
@@ -96,19 +131,19 @@ describe("delegation", () => {
   test("a non-connections read is returned untouched", async () => {
     const inner = stubProvider({ getCollection: mock(async () => ["seed-1"]) as never });
 
-    expect(await withCredentialEncryption(inner).getCollection("u", "dismissed_seeds")).toEqual(["seed-1"]);
+    expect(await (await ready(inner)).getCollection("u", "dismissed_seeds")).toEqual(["seed-1"]);
   });
 
   test("a null connections read stays null rather than becoming an empty list", async () => {
     const inner = stubProvider();
 
-    expect(await withCredentialEncryption(inner).getCollection("u", "connections")).toBeNull();
+    expect(await (await ready(inner)).getCollection("u", "connections")).toBeNull();
   });
 
   test("getAllData without a connections key is passed straight back", async () => {
     const inner = stubProvider({ getAllData: mock(async () => ({ history: [] })) as never });
 
-    expect(await withCredentialEncryption(inner).getAllData("u")).toEqual({ history: [] });
+    expect(await (await ready(inner)).getAllData("u")).toEqual({ history: [] });
   });
 
   test("mergeData without a connections key is passed straight back", async () => {
@@ -136,7 +171,7 @@ describe("a connection whose type names no provider", () => {
     expect("type" in written[1]).toBe(false);
     expect(written[0].password).not.toBe("s3cret");
 
-    const reader = withCredentialEncryption(stubProvider({ getCollection: mock(async () => written) as never }));
+    const reader = await ready(stubProvider({ getCollection: mock(async () => written) as never }));
     const opened = (await reader.getCollection("u", "connections")) as unknown;
     expect(JSON.parse(JSON.stringify(opened))).toEqual(JSON.parse(JSON.stringify([unknown, untyped])));
   });
@@ -213,29 +248,317 @@ describe("passkeys", () => {
   });
 });
 
+describe("the envelope state", () => {
+  test("initialize reads the store's envelope state once, and a store that still accepts v1 says so once", async () => {
+    const inner = stubProvider({
+      readEnvelopeState: mock(async () => "v1-accepted"),
+      getAccount: mock(async () => null),
+    } as never);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const provider = await ready(inner);
+      await provider.getAllData("u");
+      await provider.getCollection("u", "connections");
+      await provider.getAccount("ada@example.com");
+
+      expect(inner.readEnvelopeState).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls.filter((call) => call[0] === V1_ACCEPTED_WARNING)).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("the version 1 warning names the whole order in two starts: back up, re-seal without the requirement, then the requirement without the re-seal", () => {
+    const order = [
+      "back up the store",
+      "start once with STORAGE_ENCRYPTION_RESEAL=true and without STORAGE_ENCRYPTION_REQUIRE_V2",
+      "then remove STORAGE_ENCRYPTION_RESEAL, set STORAGE_ENCRYPTION_REQUIRE_V2=true and start again",
+    ];
+    const at = order.map((step) => V1_ACCEPTED_WARNING.indexOf(step));
+    expect(at.every((index) => index >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(V1_ACCEPTED_WARNING).not.toContain("STORAGE_ENCRYPTION_RESEAL=true and STORAGE_ENCRYPTION_REQUIRE_V2=true");
+  });
+
+  test("a store that retired v1 says once, at initialize, that the retirement is recorded only in the store", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const provider = await ready(stubProvider({ getAccount: mock(async () => null) } as never));
+      await provider.getAllData("u");
+      await provider.getAccount("ada@example.com");
+
+      const calls = warn.mock.calls.map((call) => call[0]);
+      expect(calls.filter((line) => line === V1_ACCEPTED_WARNING)).toHaveLength(0);
+      expect(calls.filter((line) => line === RETIRED_IN_STORE_WARNING)).toHaveLength(1);
+      expect(RETIRED_IN_STORE_WARNING).toContain("recorded only in the store");
+      expect(RETIRED_IN_STORE_WARNING).toContain(
+        "remove STORAGE_ENCRYPTION_RESEAL if it is set, set STORAGE_ENCRYPTION_REQUIRE_V2=true and start again",
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("with STORAGE_ENCRYPTION_REQUIRE_V2 set and the store retired, initialize says nothing and v1 and unsealed values are refused as retired", async () => {
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+    const store = new MemoryStorageProvider();
+    store.marker = "v2";
+    store.putRow(
+      "u",
+      "connections",
+      JSON.stringify([
+        { ...connection, id: "c1", password: sealVersionOne(randomUUID()) },
+        { ...connection, id: "c2", password: randomUUID() },
+      ]),
+    );
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const provider = await ready(store);
+      const initWarnings = warn.mock.calls.map((call) => call[0]);
+      const read = (await provider.getCollection("u", "connections")) ?? [];
+
+      expect(initWarnings).toEqual([]);
+      expect(read.map((record) => "password" in record)).toEqual([false, false]);
+      expect(ownWarnings(warn)[0]).toContain("c1 password (retired), c2 password (retired)");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("with STORAGE_ENCRYPTION_REQUIRE_V2 set, a store with no marker fails initialize by name, whether or not a re-seal is asked for", async () => {
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "1";
+    for (const reseal of [undefined, "off", "true", "leave-unopened"]) {
+      if (reseal === undefined) delete process.env.STORAGE_ENCRYPTION_RESEAL;
+      else process.env.STORAGE_ENCRYPTION_RESEAL = reseal;
+      const inner = stubProvider({ readEnvelopeState: mock(async () => "v1-accepted") as never });
+      const provider = withCredentialEncryption(inner);
+
+      // oxlint-disable-next-line no-await-in-loop -- each setting initializes on its own, one after another.
+      const failure = await provider.initialize().then(
+        () => "initialized",
+        (error: Error) => error.message,
+      );
+
+      expect({ reseal, failure }).toEqual({ reseal, failure: VERSION_TWO_NOT_RECORDED });
+      // oxlint-disable-next-line no-await-in-loop -- each setting initializes on its own, one after another.
+      await expect(provider.getAllData("u")).rejects.toThrow("before initialize");
+      expect(inner.getAllData).not.toHaveBeenCalled();
+    }
+  });
+
+  test("an invalid STORAGE_ENCRYPTION_REQUIRE_V2 fails initialize by name before the store is opened", async () => {
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "yes";
+    const inner = stubProvider();
+
+    await expect(withCredentialEncryption(inner).initialize()).rejects.toThrow(
+      'STORAGE_ENCRYPTION_REQUIRE_V2 is invalid: got "yes"',
+    );
+    expect(inner.initialize).not.toHaveBeenCalled();
+  });
+
+  test("a read before initialize is refused", async () => {
+    const provider = withCredentialEncryption(stubProvider({ getAccount: mock(async () => null) } as never));
+
+    await expect(provider.getAllData("u")).rejects.toThrow("before initialize");
+    await expect(provider.getCollection("u", "connections")).rejects.toThrow("before initialize");
+    await expect(provider.getAccount("ada@example.com")).rejects.toThrow("before initialize");
+    await expect(provider.listAccounts()).rejects.toThrow("before initialize");
+  });
+
+  test("an initialize whose state read fails fails by name", async () => {
+    const refusal = new Error("Unknown credential envelope marker v9");
+    const inner = stubProvider({
+      readEnvelopeState: mock(async () => {
+        throw refusal;
+      }) as never,
+    });
+
+    await expect(withCredentialEncryption(inner).initialize()).rejects.toBe(refusal);
+  });
+
+  test("readEnvelopeState is the inner store's answer", async () => {
+    const inner = stubProvider({ readEnvelopeState: mock(async () => "v1-accepted") as never });
+    const provider = await ready(inner);
+
+    expect(await provider.readEnvelopeState()).toBe("v1-accepted");
+    expect(inner.readEnvelopeState).toHaveBeenCalledTimes(2);
+  });
+
+  test("rewriteStoredCredentials reaches the inner store, and from then on this process reads v1 as retired", async () => {
+    const store = new MemoryStorageProvider();
+    const legacy = { ...connection, password: sealVersionOne(randomUUID()) };
+    store.putRow("u", "connections", JSON.stringify([legacy]));
+    const provider = await ready(store);
+    expect(((await provider.getCollection("u", "connections")) ?? [])[0].password).toBeDefined();
+
+    const rewrite = { connections: () => null, factors: () => null, beforeRetire: () => {} };
+    const result = await provider.rewriteStoredCredentials(rewrite, "pre-reseal-x");
+
+    expect(result).toEqual({ kind: "rewritten", backup: "memory:pre-reseal-x" });
+    expect(store.backups.map(({ label }) => label)).toEqual(["pre-reseal-x"]);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const read = (await provider.getCollection("u", "connections")) ?? [];
+      expect("password" in read[0]).toBe(false);
+      expect(ownWarnings(warn)[0]).toContain("c1 password (retired)");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("the binding through the decorator", () => {
+  test("an identity field edited through setCollection re-seals the value, which opens for the new record", async () => {
+    const store = new MemoryStorageProvider();
+    store.marker = "v2";
+    const provider = await ready(store);
+    const secret = randomUUID();
+    await provider.setCollection("u", "connections", [{ ...connection, password: secret }]);
+    const [read] = (await provider.getCollection("u", "connections")) ?? [];
+    const sealedBefore = JSON.parse(store.row("u", "connections") ?? "[]")[0].password;
+
+    await provider.setCollection("u", "connections", [{ ...read, host: "replica.internal" }]);
+
+    const sealedAfter = JSON.parse(store.row("u", "connections") ?? "[]")[0].password;
+    expect(sealedAfter).not.toBe(sealedBefore);
+    expect(sealedAfter).toStartWith("v2:");
+    expect(((await provider.getCollection("u", "connections")) ?? [])[0].password).toBe(secret);
+  });
+
+  test("re-saving an unchanged record keeps a v2 value byte for byte", async () => {
+    const store = new MemoryStorageProvider();
+    const provider = await ready(store);
+    await provider.setCollection("u", "connections", [{ ...connection, password: randomUUID() }]);
+    const before = store.row("u", "connections");
+
+    // The record exactly as the store holds it, sealed value included: nothing about it changed, so nothing is sealed.
+    await provider.setCollection("u", "connections", JSON.parse(before ?? "[]"));
+
+    expect(store.row("u", "connections")).toBe(before);
+  });
+
+  test("mergeData seals for the owner of the row it writes", async () => {
+    const store = new MemoryStorageProvider();
+    const provider = await ready(store);
+    const secret = randomUUID();
+
+    await provider.mergeData("alice", { connections: [{ ...connection, password: secret }], history: [] });
+
+    const stored = JSON.parse(store.row("alice", "connections") ?? "[]")[0].password;
+    expect(stored).toStartWith("v2:");
+    expect(stored).not.toBe(sealedFor("bob", connection, secret));
+    expect(((await provider.getCollection("alice", "connections")) ?? [])[0].password).toBe(secret);
+    store.putRow("bob", "connections", store.row("alice", "connections") ?? "");
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      expect("password" in ((await provider.getCollection("bob", "connections")) ?? [])[0]).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a read names every omitted value with its connection, field and reason in one line", async () => {
+    const store = new MemoryStorageProvider();
+    store.marker = "v2";
+    const envelope = sealedFor("u", connection, randomUUID());
+    store.putRow(
+      "u",
+      "connections",
+      JSON.stringify([
+        { ...connection, id: "c2", password: envelope },
+        {
+          ...connection,
+          id: "c3",
+          password: sealVersionOne(randomUUID()),
+          agentUser: "ro",
+          agentPassword: randomUUID(),
+        },
+      ]),
+    );
+    const provider = await ready(store);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await provider.getAllData("u");
+
+      const calls = ownWarnings(warn);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain("3 field(s) were omitted");
+      expect(calls[0]).toContain("c2 password (unopenable), c3 password (retired), c3 agentPassword (retired)");
+      expect(calls[0]).toContain("BEFORE the app writes again");
+      expect(calls[0]).toContain("STORAGE_ENCRYPTION_RESEAL");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe("the warning", () => {
-  test("names the count and the recovery action exactly once per read", async () => {
-    const sealed = encryptSecret("s3cret");
+  test("gives the cause and the remedy of each reason present: retired, mixed, not-text and unbindable", async () => {
+    const store = new MemoryStorageProvider();
+    store.marker = "v2";
+    let deep: unknown = "x";
+    for (let level = 0; level < 100; level++) deep = { inner: deep };
+    const envelope = sealedFor("u", connection, randomUUID());
+    store.putRow(
+      "u",
+      "connections",
+      JSON.stringify([
+        null,
+        { ...connection, password: envelope, connectionString: randomUUID(), apiKeyId: 7 },
+        { ...connection, id: "c2", host: deep, password: randomUUID() },
+        { ...connection, id: "c3", password: sealVersionOne(randomUUID()) },
+      ]),
+    );
+    const provider = await ready(store);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const data = await provider.getAllData("u");
+
+      expect(data.connections?.[0]).toBeNull();
+      const calls = ownWarnings(warn);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain(
+        "c1 apiKeyId (not-text), c1 connectionString (mixed), c2 password (unbindable), c3 password (retired)",
+      );
+      expect(calls[0]).toContain(
+        "deleting the store's storage_meta row credential_envelope with every server stopped and re-sealing under the key that sealed it in one start with STORAGE_ENCRYPTION_RESEAL set and STORAGE_ENCRYPTION_REQUIRE_V2 not set, then setting STORAGE_ENCRYPTION_REQUIRE_V2 again",
+      );
+      expect(calls[0]).toContain("or because STORAGE_ENCRYPTION_REQUIRE_V2 is set");
+      expect(calls[0]).toContain("One a re-seal run with leave-unopened left");
+      expect(calls[0]).toContain("A value marked mixed is a version 1 or unsealed value");
+      expect(calls[0]).toContain("A value marked not-text is a number, a boolean, a list or an object");
+      expect(calls[0]).toContain("A value marked unbindable belongs to a connection");
+      expect(calls[0]).not.toContain("BEFORE the app writes again");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("names each loss and the recovery action exactly once per read", async () => {
+    const sealed = sealedFor("u", connection, randomUUID());
     const inner = stubProvider({
       getAllData: mock(async () => ({
         connections: [
           { ...connection, password: sealed },
-          { ...connection, id: "c2", password: sealed },
+          { ...connection, id: 7, password: sealed },
         ],
       })) as never,
     });
+    const provider = await ready(inner);
 
-    process.env.JWT_SECRET = "a-different-secret-that-cannot-open-it";
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
     resetStorageEncryptionKey();
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
-      await withCredentialEncryption(inner).getAllData("u");
+      await provider.getAllData("u");
 
       const calls = ownWarnings(warn);
       expect(calls).toHaveLength(1);
       expect(calls[0]).toContain(UNDECRYPTABLE_WARNING_PREFIX);
       expect(calls[0]).toContain("2 field(s)");
+      expect(calls[0]).toContain("c1 password (unopenable), 7 password (unopenable)");
       expect(calls[0]).toContain("BEFORE the app writes again");
+      expect(calls[0]).not.toContain("STORAGE_ENCRYPTION_RESEAL");
     } finally {
       warn.mockRestore();
     }
@@ -243,11 +566,13 @@ describe("the warning", () => {
 
   test("stays silent when everything opened, so the line means something when it appears", async () => {
     const inner = stubProvider({
-      getAllData: mock(async () => ({ connections: [{ ...connection, password: encryptSecret("s3cret") }] })) as never,
+      getAllData: mock(async () => ({
+        connections: [{ ...connection, password: sealedFor("u", connection, randomUUID()) }],
+      })) as never,
     });
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
-      await withCredentialEncryption(inner).getAllData("u");
+      await (await ready(inner)).getAllData("u");
 
       expect(ownWarnings(warn)).toHaveLength(0);
     } finally {
@@ -256,33 +581,38 @@ describe("the warning", () => {
   });
 
   test("also fires on the single-collection read path, not only on getAllData", async () => {
-    const sealed = encryptSecret("s3cret");
+    const sealed = sealedFor("u", connection, randomUUID());
     const inner = stubProvider({ getCollection: mock(async () => [{ ...connection, password: sealed }]) as never });
+    const provider = await ready(inner);
 
-    process.env.JWT_SECRET = "a-different-secret-that-cannot-open-it";
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
     resetStorageEncryptionKey();
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
-      await withCredentialEncryption(inner).getCollection("u", "connections");
+      await provider.getCollection("u", "connections");
 
       expect(ownWarnings(warn)).toHaveLength(1);
     } finally {
       warn.mockRestore();
     }
   });
+});
+
+describe("account factors", () => {
+  const account = (overrides: Partial<StoredAccount> = {}): StoredAccount => ({
+    email: "ada@example.com",
+    passwordHash: "scrypt$hash",
+    role: "admin" as const,
+    totpSecret: TOTP_SECRET,
+    totpPending: TOTP_PENDING,
+    disabled: false,
+    sessionVersion: 7,
+    createdAt: "t",
+    updatedAt: "t",
+    ...overrides,
+  });
 
   test("account rows pass through, except the second-factor secrets, which are sealed at rest", async () => {
-    const account = {
-      email: "ada@example.com",
-      passwordHash: "scrypt$hash",
-      role: "admin" as const,
-      totpSecret: TOTP_SECRET,
-      totpPending: TOTP_PENDING,
-      disabled: false,
-      sessionVersion: 7,
-      createdAt: "t",
-      updatedAt: "t",
-    };
     const stored: StoredAccount[] = [];
     const insertAccount = mock(async (row: StoredAccount) => {
       stored.push(row);
@@ -299,74 +629,105 @@ describe("the warning", () => {
       listAccounts: mock(async () => stored),
       getAccount: mock(async () => stored[0] ?? null),
     } as never);
-    const wrapped = withCredentialEncryption(inner);
+    const wrapped = await ready(inner);
+    const row = account();
 
-    await wrapped.insertAccount(account);
-    await wrapped.updateAccount({ ...account, totpPending: null }, { expected: account, keepEnabledAdmin: true });
-    await wrapped.deleteAccount(account.email, { keepEnabledAdmin: true });
+    await wrapped.insertAccount(row);
+    await wrapped.updateAccount({ ...row, totpPending: null }, { expected: row, keepEnabledAdmin: true });
+    await wrapped.deleteAccount(row.email, { keepEnabledAdmin: true });
 
     // What reached the store: no plaintext secret, everything else as given.
     expect(JSON.stringify(stored)).not.toContain(TOTP_SECRET);
     expect(JSON.stringify(stored)).not.toContain(TOTP_PENDING);
-    expect(stored[0].totpSecret).toStartWith("v1:");
-    expect(stored[0].totpPending).toStartWith("v1:");
+    expect(stored[0].totpSecret).toStartWith("v2:");
+    expect(stored[0].totpPending).toStartWith("v2:");
     expect(stored[1].totpPending).toBeNull();
     expect({ ...stored[0], totpSecret: null, totpPending: null }).toEqual({
-      ...account,
+      ...row,
       totpSecret: null,
       totpPending: null,
     });
-    expect(updateAccount.mock.calls[0][1]).toEqual({ expected: account, keepEnabledAdmin: true });
-    expect(deleteAccount).toHaveBeenCalledWith(account.email, { keepEnabledAdmin: true });
+    expect(updateAccount.mock.calls[0][1]).toEqual({ expected: row, keepEnabledAdmin: true });
+    expect(deleteAccount).toHaveBeenCalledWith(row.email, { keepEnabledAdmin: true });
 
     // What a caller reads back: the secrets open again.
-    expect(await wrapped.getAccount(account.email)).toEqual(account);
-    expect((await wrapped.listAccounts()).map((row) => row.totpSecret)).toEqual([TOTP_SECRET, TOTP_SECRET]);
+    expect(await wrapped.getAccount(row.email)).toEqual(row);
+    expect((await wrapped.listAccounts()).map((read) => read.totpSecret)).toEqual([TOTP_SECRET, TOTP_SECRET]);
   });
 
   test("a stored factor the key cannot open reads as an unusable secret, never as no factor", async () => {
-    const sealed = encryptSecret(TOTP_SECRET);
-    const row = {
-      email: "ada@example.com",
-      passwordHash: "scrypt$hash",
-      role: "user" as const,
-      totpSecret: sealed,
+    const row = account({
+      totpSecret: sealSecret(TOTP_SECRET, accountBinding("ada@example.com").field("totpSecret")),
       totpPending: null,
-      disabled: false,
-      sessionVersion: 1,
-      createdAt: "t",
-      updatedAt: "t",
-    };
+    });
     const inner = stubProvider({ getAccount: mock(async () => row), listAccounts: mock(async () => [row]) } as never);
+    const provider = await ready(inner);
 
-    process.env.JWT_SECRET = "a-different-secret-that-cannot-open-it";
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
     resetStorageEncryptionKey();
     const error = spyOn(logger, "error").mockImplementation(() => {});
     try {
-      const read = await withCredentialEncryption(inner).getAccount(row.email);
+      const read = await provider.getAccount(row.email);
       // Still a factor, so login keeps asking for a code, and no code opens it.
       expect(read?.totpSecret).not.toBeNull();
       expect(verifyTotp(read?.totpSecret ?? "", "000000")).toBeNull();
-      expect((await withCredentialEncryption(inner).listAccounts())[0].totpSecret).toBe(read?.totpSecret ?? "");
+      expect((await provider.listAccounts())[0].totpSecret).toBe(read?.totpSecret ?? "");
       expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain("ada@example.com");
     } finally {
       error.mockRestore();
     }
   });
 
-  test("a factor stored before sealing existed is read as it is and sealed at the next write", async () => {
-    const row = {
-      email: "ada@example.com",
-      passwordHash: "scrypt$hash",
-      role: "user" as const,
-      totpSecret: TOTP_SECRET,
-      totpPending: null,
-      disabled: false,
-      sessionVersion: 1,
-      createdAt: "t",
-      updatedAt: "t",
-    };
-    const inner = stubProvider({ getAccount: mock(async () => row) } as never);
-    expect((await withCredentialEncryption(inner).getAccount(row.email))?.totpSecret).toBe(TOTP_SECRET);
+  test("a factor moved to another account reads as unusable and is named", async () => {
+    const store = new MemoryStorageProvider();
+    const provider = await ready(store);
+    await provider.insertAccount(account());
+    await provider.insertAccount(account({ email: "bob@example.com", totpSecret: null, totpPending: null }));
+    const ada = store.accounts.get("ada@example.com")!;
+    store.accounts.set("bob@example.com", { ...store.accounts.get("bob@example.com")!, totpSecret: ada.totpSecret });
+    store.accounts.set("ada@example.com", { ...ada, totpSecret: ada.totpPending, totpPending: ada.totpSecret });
+
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const bob = await provider.getAccount("bob@example.com");
+      const swapped = await provider.getAccount("ada@example.com");
+
+      expect(bob?.totpSecret).toBe("!unopenable");
+      expect([swapped?.totpSecret, swapped?.totpPending]).toEqual(["!unopenable", "!unopenable"]);
+      const lines = error.mock.calls.map((call) => String(call[0]));
+      expect(lines.some((line) => line.includes("bob@example.com") && line.includes("unopenable"))).toBe(true);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("a v1 factor opens while v1 is accepted and reads as unusable once it is retired", async () => {
+    const row = account({ totpSecret: sealVersionOne(TOTP_SECRET), totpPending: TOTP_PENDING });
+    const accepted = await ready(
+      stubProvider({
+        getAccount: mock(async () => row),
+        readEnvelopeState: mock(async () => "v1-accepted"),
+      } as never),
+    );
+    const retired = await ready(stubProvider({ getAccount: mock(async () => row) } as never));
+
+    expect(await accepted.getAccount(row.email)).toEqual({ ...row, totpSecret: TOTP_SECRET });
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const read = await retired.getAccount(row.email);
+      expect([read?.totpSecret, read?.totpPending]).toEqual(["!unopenable", "!unopenable"]);
+      expect(error.mock.calls.map((call) => String(call[0])).join("\n")).toContain("(retired)");
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("a factor stored before sealing existed is read as it is while v1 is accepted", async () => {
+    const row = account({ totpPending: null });
+    const inner = stubProvider({
+      getAccount: mock(async () => row),
+      readEnvelopeState: mock(async () => "v1-accepted"),
+    } as never);
+    expect((await (await ready(inner)).getAccount(row.email))?.totpSecret).toBe(TOTP_SECRET);
   });
 });

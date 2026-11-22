@@ -4,7 +4,9 @@
  * libredb-platform). On standalone boot, first install the uncaught-exception
  * exit (docs/DISTRIBUTION.md#uncaught-errors-and-restarts), then the shutdown
  * handler (docs/DISTRIBUTION.md#stopping-the-server), then bootstrap
- * missing auth env (#109), run the boot preflights, and start copying the
+ * missing auth env (#109), run the boot preflights and the credential
+ * re-seal and check when STORAGE_ENCRYPTION_RESEAL or
+ * STORAGE_ENCRYPTION_REQUIRE_V2 asks for them, and start copying the
  * built-in samples (src/lib/seed/samples.ts), which boot never waits for: a
  * sample whose copy fails is logged once and listed unavailable.
  */
@@ -64,6 +66,18 @@ export async function register(): Promise<void> {
   // before anything acts on it. It checks nothing while the review is off.
   const { verifyAccessReviewEnvAtBoot } = await import("@/lib/kubernetes-access/preflight");
   if (!verifyAccessReviewEnvAtBoot()) return;
+
+  // Credential re-seal (docs/STORAGE.md, "Re-sealing the store"): with
+  // STORAGE_ENCRYPTION_REQUIRE_V2 set, check that the store records version 1
+  // as retired, before any re-seal step, and run no re-seal; without it, with
+  // STORAGE_ENCRYPTION_RESEAL set, back the server store up, re-seal every
+  // stored credential and retire version 1 before the server serves. A value
+  // of either variable it cannot read, local mode, a re-seal that does not
+  // complete, or a check that does not pass refuses the boot. It does nothing while both are unset. It runs after
+  // bootstrapAuth (the storage key may come from the JWT_SECRET that fills in)
+  // and after the preflights, so a boot they refuse never touches the store.
+  const { resealStoreAtBoot } = await import("@/lib/storage/reseal-at-boot");
+  if (!(await resealStoreAtBoot())) return;
 
   // Governance snapshot (docs/GOVERNANCE.md#operating-notes): load the
   // governance source in the background and keep it current. Not awaited, so
