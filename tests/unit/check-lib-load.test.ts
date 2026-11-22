@@ -325,7 +325,10 @@ describe("isolation of the temporary root", () => {
 
 describe("loadFailures", () => {
   /** A consumer-shaped install: `<root>/node_modules/planted-lib/dist/...`, with `yaml` linked as declared. */
-  function plantedInstall(files: Record<string, string>): { packageDir: string; env: Record<string, string> } {
+  function plantedInstall(files: Record<string, string>): {
+    packageDir: string;
+    env: Record<string, string | undefined>;
+  } {
     const root = scratch("lib-load-install-");
     expect(ancestorNodeModules(root, existsSync)).toBeNull();
     const packageDir = path.join(root, "node_modules", "planted-lib");
@@ -475,7 +478,7 @@ describe("the repository's lib:load wiring", () => {
   );
 
   test("tsup.config.ts bundles every workspace package, code and types", async () => {
-    const config = (await import("../../tsup.config.ts")).default as {
+    const config = (await import("../../tsup.config")).default as {
       noExternal?: (string | RegExp)[];
       dts?: unknown;
     };

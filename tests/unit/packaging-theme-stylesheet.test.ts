@@ -146,7 +146,7 @@ describe("the ER diagram's stylesheet reaches hosts through styles.css, not the 
   });
 
   test("tsup turns every stylesheet import into an empty module", async () => {
-    const config = (await import("../../tsup.config.ts")).default as {
+    const config = (await import("../../tsup.config")).default as {
       loader?: Record<string, string>;
       noExternal?: (string | RegExp)[];
       esbuildPlugins?: { name: string }[];

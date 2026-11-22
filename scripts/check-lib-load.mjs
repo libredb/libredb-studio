@@ -197,8 +197,14 @@ export function ancestorNodeModules(directory, exists) {
   return null;
 }
 
-/** The child's environment: the parent's without NODE_PATH and NODE_OPTIONS, with HOME and USERPROFILE at `home`. */
+/**
+ * The child's environment: the parent's without NODE_PATH and NODE_OPTIONS, with HOME and USERPROFILE at `home`.
+ * @param {Record<string, string | undefined>} parentEnv
+ * @param {string} home
+ * @returns {Record<string, string | undefined>}
+ */
 export function childEnvironment(parentEnv, home) {
+  /** @type {Record<string, string | undefined>} */
   const env = {};
   for (const [key, value] of Object.entries(parentEnv)) {
     const upper = key.toUpperCase();
@@ -268,7 +274,7 @@ export function packPackage(root, temp, tar = "tar") {
  * heap, and returns how many modules it checked and one sentence per failing module, or one naming the timeout.
  * @param {string} packageDir
  * @param {string[]} entries
- * @param {{ env: Record<string, string>, timeoutMs?: number }} options
+ * @param {{ env: Record<string, string | undefined>, timeoutMs?: number }} options
  * @returns {{ modules: number, failures: string[] }}
  */
 export function loadFailures(packageDir, entries, { env, timeoutMs = 120_000 }) {
