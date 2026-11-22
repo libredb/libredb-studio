@@ -3,22 +3,19 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on SNMP: the boundary is the provider's structural closed table, a client that holds Get, GetNext and
  * GetBulk alone behind the valve that refuses every other PDU. Its answers carry the device's values, never anything
  * of the withheld security modules, which the body names before anything counts them.
  */
-function snmpgetReadsPosture(bounds: StatementBudgets): AgentPosture {
+function snmpgetReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `${rows} rows and ${seconds} s per read, over a client that sends only Get, GetNext and GetBulk, with the SNMP security modules withheld`,
     title: "Agent mode reads the SNMP agent's values with get, next, walk and table, and never writes",
     body: `Agent mode runs SNMP reads it wrote itself, each one of the console's four commands, get, next, walk and table, and answers the device's values as the console renders them, text shown only when it is showable and bytes otherwise in hex, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Withheld, because they hold community strings, user names, keys and access rules, are SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB, SNMP-COMMUNITY-MIB, SNMP-SSH-TM-MIB, SNMP-TSM-MIB, SNMP-TLS-TM-MIB, SNMP-USM-DH-OBJECTS-MIB and Net-SNMP's NET-SNMP-VACM-MIB, and, because a command line, a script's output or a copy's login can carry credentials, the running processes (HOST-RESOURCES-MIB::hrSWRun), the commands the agent runs and what they print (NET-SNMP-AGENT-MIB::nsExtensions, UCD-SNMP-MIB::extTable and UCD-SNMP-MIB::prErrFixCmd) and Cisco's file copies (CISCO-CONFIG-COPY-MIB and CISCO-FLASH-MIB::ciscoFlashCopyTable); an object inside one is answered withheld and never asked for, a walk that covers one steps over it and names it, and a walk inside one is refused. Studio's agent client holds only the Get, GetNext and GetBulk requests, and every datagram passes a check that refuses any other, so it cannot send a Set or a notification. The community never reaches an answer. Nothing reaches your editor.`,
@@ -65,7 +62,6 @@ export const SNMPGET_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: snmpgetReadsPosture,
-    widened: snmpgetReadsPosture,
     handoverTerms: () =>
       "An SNMP answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

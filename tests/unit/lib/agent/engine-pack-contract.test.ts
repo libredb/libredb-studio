@@ -487,8 +487,9 @@ describe.each(ENGINES)("%s", (type) => {
     expect(pack.server.grounding.omissionAdvice.length).toBeGreaterThan(0);
     for (const workflow of WORKFLOWS) {
       const bounds = AGENT_WORKFLOW_BUDGETS[workflow].policy.budgets;
-      for (const posture of [pack.client.posture.reads(bounds), pack.client.posture.widened(bounds)]) {
-        for (const field of [posture.headline, posture.qualifier, posture.title, posture.body]) {
+      const copies = [pack.client.posture.reads(bounds), pack.client.posture.widened?.(bounds)];
+      for (const copy of copies.filter((each) => each !== undefined)) {
+        for (const field of [copy.qualifier, copy.title, copy.body]) {
           expect(field.length, workflow).toBeGreaterThan(0);
         }
       }

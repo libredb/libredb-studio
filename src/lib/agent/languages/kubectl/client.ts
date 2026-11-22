@@ -4,7 +4,6 @@
  */
 import type { DatabaseType } from "@/lib/types";
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import type { AgentArtifactReference } from "../../types";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
@@ -12,6 +11,7 @@ import type {
   AgentEvidenceEventSpecs,
   AgentEvidenceTimelineEntry,
   AgentLanguageClientPack,
+  AgentPostureCopy,
   AgentVariantRequirementSpec,
   StatementBudgets,
 } from "../pack";
@@ -170,12 +170,10 @@ const KUBECTL_EVIDENCE_EVENTS = Object.freeze({
  * whether an agent token is set. Naming both, and recommending a token bound to `view`, is
  * the most this panel can say truthfully.
  */
-function kubectlReadsPosture(bounds: StatementBudgets): AgentPosture {
+function kubectlReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `${rows} rows and ${seconds} s per statement, enforced by Studio's request allowlist`,
     title: "Agent mode reads, under a boundary Studio enforces",
     body: `Agent mode runs kubectl reads it wrote itself, bounded to ${rows} rows and ${seconds} seconds each. Studio's request allowlist admits reads only, checked on the final request before it is sent, and the identity's RBAC decides what is visible: the agent runs on the connection's agent token when one is set, and on the connection's own token otherwise, so give it a token bound to view. Values Studio masks, such as env values, annotation values, ConfigMap data and Secret names and values, never reach the model. Nothing reaches your editor.`,
@@ -299,7 +297,6 @@ export const KUBECTL_CLIENT_PACK = Object.freeze({
   } satisfies Record<KubectlVariantRequirement, AgentVariantRequirementSpec>),
   posture: Object.freeze({
     reads: kubectlReadsPosture,
-    widened: kubectlReadsPosture,
     handoverTerms: () =>
       "A kubectl answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

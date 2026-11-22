@@ -3,10 +3,9 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on Modbus: the boundary is the provider's structural closed table, the request builders of Read Coils,
@@ -14,12 +13,10 @@ import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
  * valve that refuses every other function code before it is sent. Its answers carry the device's values, which Modbus
  * guards with no credential; what the body adds is the pacing a device serving one client at a time needs.
  */
-function modbusreadReadsPosture(bounds: StatementBudgets): AgentPosture {
+function modbusreadReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `${rows} rows and ${seconds} s per read, one read at a time per device, over a client that sends only Read Coils, Read Discrete Inputs, Read Holding Registers, Read Input Registers and Read Device Identification`,
     title: "Agent mode reads the Modbus device's coils, inputs, registers and identification objects, and never writes",
     body: `Agent mode runs Modbus reads it wrote itself, each one of the console's JSON read requests: points the connection's register map names, one block of one table, or the device identification objects. It answers the device's values as the console renders them, numbers and bits decoded as the register map declares them and identification objects as text only when their bytes are text, in hex otherwise, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Agent reads of one device never overlap, across every run on this server, and Studio waits one second after each before the next one dials, so the plant's own client can reach a device that serves one client at a time; one run sends at most 64 requests to Modbus devices. Studio's agent client builds only Read Coils, Read Discrete Inputs, Read Holding Registers, Read Input Registers and Read Device Identification, and every frame passes a check that refuses any other function code before it is sent, so it cannot write. Nothing reaches your editor.`,
@@ -31,10 +28,8 @@ function modbusreadReadsPosture(bounds: StatementBudgets): AgentPosture {
  * acquisition that reads it opens the connection, and Modbus's `connect` dials the device's port and closes it again,
  * so the shared "nothing else reaches the database" would not be true. No Modbus request is sent.
  */
-function modbusreadPlanPosture(): AgentPosture {
+function modbusreadPlanPosture(): AgentPostureCopy {
   return {
-    tone: "safe",
-    headline: "Executes nothing it drafts",
     qualifier: "the register map grounds it; opening the connection dials the device, and no request is sent to it",
     title: "Plan mode drafts, and never runs what it drafted",
     body: "Plan mode never sends the request it wrote. It is grounded on the connection's register map, which is read without a request to the device, and it is where the inventory in Run details came from. Opening the connection to read it dials the device's port and closes the connection again, and no Modbus request is sent to the device.",
@@ -80,7 +75,6 @@ export const MODBUSREAD_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: modbusreadReadsPosture,
-    widened: modbusreadReadsPosture,
     handoverTerms: () =>
       "A Modbus answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
     plan: modbusreadPlanPosture,

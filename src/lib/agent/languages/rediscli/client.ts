@@ -3,22 +3,19 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on Redis: the boundary is the provider's closed table of metadata reads, which holds no write and no
  * read of a key name or a value, and before every command the server is asked to refuse the ACL user a set of write
  * probes that change nothing, each as a command the user does not hold. Its answers carry counts, types and sizes only.
  */
-function rediscliReadsPosture(bounds: StatementBudgets): AgentPosture {
+function rediscliReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `metadata only, ${rows} rows and ${seconds} s per command, as an ACL user the server refuses writes`,
     title: "Agent mode reads Redis's metadata, as an ACL user the server refuses writes",
     body: `Agent mode runs Redis reads it wrote itself, the database's key count and, for one key a command names, its type, existence, time to live, length, encoding and memory use, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Key names count as stored values, so it never lists keys and never reads a value, field or member. Before every command, on that command's own connection, the server must refuse the connection's ACL user write, admin, dangerous, scripting and pubsub probes that change nothing, each as a command the user does not hold, so the default user, a connection naming no user and a user holding any probed command, even on its own key pattern only, are refused; a write the probes leave out is stopped by the reader, which sends none. Studio's reader refuses every other command before anything is sent. Nothing reaches your editor.`,
@@ -65,7 +62,6 @@ export const REDISCLI_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: rediscliReadsPosture,
-    widened: rediscliReadsPosture,
     handoverTerms: () =>
       "A Redis answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

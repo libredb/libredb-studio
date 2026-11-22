@@ -3,10 +3,9 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /** What agent mode reads and what it never does, in the words the posture uses. */
 const READ_ROOTS =
@@ -18,12 +17,10 @@ const READ_ROOTS =
  * answers carry the server's process values, each with its engineering units, and only beneath the connection's read
  * roots.
  */
-function opcuareadReadsPosture(bounds: StatementBudgets): AgentPosture {
+function opcuareadReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `${rows} rows and ${seconds} s per read, one session per read, over a client that sends only Browse, BrowseNext, Read and HistoryRead`,
     title: "Agent mode reads the OPC UA server's values, history and address space, and never writes or calls a method",
     body: `Agent mode runs OPC UA reads it wrote itself, each one JSON request: the current values of the nodes it names, one node's raw history, or the children of one node. It answers the server's values as the console renders them, each with its node's engineering units and EU range as the server publishes them, or "no units published" where it publishes none, never a unit Studio guessed, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. ${READ_ROOTS} Each read opens its own session and closes it, so nothing is held between reads. Studio's agent client holds only Browse, BrowseNext, Read and HistoryRead, so it cannot write a value, call a method, change a node or subscribe. Nothing reaches your editor.`,
@@ -34,10 +31,8 @@ function opcuareadReadsPosture(bounds: StatementBudgets): AgentPosture {
  * Plan mode on OPC UA. An address space is browsed, not listed, so the provider declares no kind the grounding walk
  * lists, and the shared "one schema read grounds it" would not be true: plan mode reads nothing from the server.
  */
-function opcuareadPlanPosture(): AgentPosture {
+function opcuareadPlanPosture(): AgentPostureCopy {
   return {
-    tone: "safe",
-    headline: "Executes nothing it drafts",
     qualifier: "nothing is read from the server to ground it, and the request it drafts is never sent",
     title: "Plan mode drafts, and never runs what it drafted",
     body: "Plan mode never sends the read request it wrote. An OPC UA address space is browsed one level at a time rather than listed, so no inventory grounds the plan and plan mode reads nothing from the server: the request is drafted from your question and the node ids it names.",
@@ -84,7 +79,6 @@ export const OPCUAREAD_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: opcuareadReadsPosture,
-    widened: opcuareadReadsPosture,
     handoverTerms: () =>
       "An OPC UA answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
     plan: opcuareadPlanPosture,
