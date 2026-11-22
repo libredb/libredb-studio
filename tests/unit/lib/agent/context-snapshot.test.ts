@@ -10,6 +10,7 @@ import {
   packContextForTask,
   packOperationsInventory,
   reusableSnapshot,
+  scrubSnapshotSentences,
 } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -33,6 +34,7 @@ import {
   sqlQueryReadDescriptor,
 } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import { PROVIDER_TEXT_WITHHELD, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { OperationRegistry } from "@/lib/db/operations/registry";
 import type {
   Container,
@@ -3970,5 +3972,67 @@ describe("the identity a held inventory is filed under", () => {
 
     expect(heldSnapshotForConnection(repointed({ database: "staging" }))).toBeNull();
     expect(heldSnapshotForConnection(connectionIdentity(CONNECTION))).toEqual(snapshot);
+  });
+});
+
+describe("scrubSnapshotSentences", () => {
+  const password = crypto.randomUUID();
+  const scrub = providerTextScrub(
+    { id: "c1", name: "c", type: "postgres", password, createdAt: new Date(0) },
+    "profiled",
+  );
+  const base: AgentContextSnapshot = {
+    connectionId: "c1",
+    fingerprint: "ctx_recorded",
+    capturedAtMs: 1,
+    objects: [
+      {
+        path: ["public", "orders"],
+        name: "orders",
+        kind: "table",
+        columns: [],
+        indexes: { unavailable: `refused for ${password}` },
+        foreignKeys: [],
+      },
+      { path: ["public", "items"], name: "items", kind: "table", columns: [], indexes: [], foreignKeys: [] },
+    ],
+  };
+
+  test("withholds each provider sentence holding the credential, and keeps the recorded fingerprint", () => {
+    const scrubbed = scrubSnapshotSentences(
+      {
+        ...base,
+        kinds: [
+          { id: "table", role: "relation", label: "Table", labelPlural: "Tables", sampledFrom: `walk ${password}` },
+          { id: "view", role: "relation", label: "View", labelPlural: "Views", unavailable: `denied ${password}` },
+        ],
+        truncated: { limit: 1, reason: `bounded ${password}` },
+        unreadContainers: {
+          count: 1,
+          label: "Schema",
+          labelPlural: "Schemas",
+          read: ["public"],
+          unlistedParents: [{ path: "archive", label: "Schema", reason: `unlisted ${password}` }],
+        },
+      },
+      scrub,
+    );
+    expect(scrubbed.fingerprint).toBe("ctx_recorded");
+    expect(scrubbed.objects[0]?.indexes).toEqual({ unavailable: PROVIDER_TEXT_WITHHELD });
+    expect(scrubbed.objects[1]).toBe(base.objects[1]);
+    expect(scrubbed.kinds?.map((kind) => [kind.sampledFrom, kind.unavailable])).toEqual([
+      [PROVIDER_TEXT_WITHHELD, undefined],
+      [undefined, PROVIDER_TEXT_WITHHELD],
+    ]);
+    expect(scrubbed.truncated).toEqual({ limit: 1, reason: PROVIDER_TEXT_WITHHELD });
+    expect(scrubbed.unreadContainers?.unlistedParents).toEqual([
+      { path: "archive", label: "Schema", reason: PROVIDER_TEXT_WITHHELD },
+    ]);
+    expect(JSON.stringify(scrubbed)).not.toContain(password);
+  });
+
+  test("adds no field a snapshot did not carry", () => {
+    const scrubbed = scrubSnapshotSentences(base, scrub);
+    expect(Object.keys(scrubbed).sort()).toEqual(Object.keys(base).sort());
   });
 });

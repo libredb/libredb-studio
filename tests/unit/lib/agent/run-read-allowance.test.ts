@@ -4,14 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
-import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
+import { fingerprintInventory, forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_RUN_READ_ALLOWANCE, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { runInvestigation } from "@/lib/agent/investigation";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
-import type { AgentRunEvent, AgentToolRefusal } from "@/lib/agent/types";
+import type { AgentInventory, AgentRunEvent, AgentToolRefusal } from "@/lib/agent/types";
 import { UNTRUSTED_PROVIDER_TEXT_BEGIN, UNTRUSTED_PROVIDER_TEXT_END } from "@/lib/agent/untrusted-content";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -344,6 +344,61 @@ describe("the run read allowance", () => {
       expect(text).toContain(PROVIDER_TEXT_WITHHELD);
       for (const form of secretForms([password])) expect(text).not.toContain(form);
     }
+  });
+
+  test("a resumed run withholds a credential an older ledger's inventory snapshot recorded in a provider's sentence", async () => {
+    const password = crypto.randomUUID();
+    const credentialed: DatabaseConnection = { ...connection, password };
+    const { provider } = billingProvider(() => 0);
+    forgetHeldSnapshots();
+    const { store, service, resources } = boot(freshDataDir(), provider);
+    const run = await startRun(service);
+    // As a drive before the walk scrubbed these sentences recorded them.
+    const inventory = {
+      objects: [
+        {
+          path: ["public", "orders"],
+          name: "orders",
+          kind: "table",
+          columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+          indexes: { unavailable: `index read refused for ${password}` },
+          foreignKeys: [],
+        },
+      ],
+      kinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables", sampledFrom: `a walk as ${password}` },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views", unavailable: `denied for ${password}` },
+      ],
+      truncated: { limit: 1, reason: `bounded for ${password}` },
+      unreadContainers: {
+        count: 1,
+        label: "Schema",
+        labelPlural: "Schemas",
+        read: ["public"],
+        unlistedParents: [{ path: "archive", label: "Schema", reason: `could not list as ${password}` }],
+      },
+    } as AgentInventory;
+    const fingerprint = fingerprintInventory(inventory);
+    await store.appendEvent(run.runId, {
+      kind: "context-captured",
+      atMs: 1,
+      fingerprint,
+      tableCount: 1,
+      snapshot: { ...inventory, connectionId: connection.id, fingerprint, capturedAtMs: 1 },
+    });
+    const script = scriptedModel(answersProse("No report."), answersProse("No report."));
+    await runInvestigation(run.runId, {
+      service,
+      model: await modelOver(script.fetch),
+      resources: { ...resources, connection: credentialed },
+    }).catch(() => undefined);
+    const first = script.turns[0];
+    if (first === undefined) throw new Error("the resumed run never asked the model");
+    const text = promptText(first);
+
+    expect(text).toContain("orders");
+    expect(text).toContain(PROVIDER_TEXT_WITHHELD);
+    for (const form of secretForms([password])) expect(text).not.toContain(form);
   });
 
   test("is the run's, not the drive's: a resumed drive starts from what the ledger says the run spent", async () => {

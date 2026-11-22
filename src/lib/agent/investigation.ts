@@ -74,6 +74,7 @@ import {
   packContextForTask,
   packOperationsInventory,
   reusableSnapshot,
+  scrubSnapshotSentences,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
 import { tuningProvenance } from "./model-tuning";
@@ -3202,6 +3203,8 @@ export async function runInvestigation(
       // own history. Re-holding a reading that came from the hold is not a no-op either
       // — it moves the connection back to the newest end of the eviction order.
       holdSnapshotForConnection(snapshot, connectionIdentity(context.connection));
+      // What the prompt is shown: a recorded or held snapshot may predate the walk's scrub of its provider sentences.
+      const packed = scrubSnapshotSentences(snapshot, providerTextScrub(context.connection, "profiled"));
       if (operations) {
         // Names and indexes, and NO relations block: the graph is the most expensive
         // part of the packing and the least useful part of it here (#411). The note
@@ -3209,8 +3212,8 @@ export async function runInvestigation(
         messages.push({ role: "user", content: planningOperationsContextNote(engine.noun) });
         messages.push({
           role: "user",
-          content: packOperationsInventory(snapshot, {
-            preface: planningSnapshotPreface(snapshot, readBy, engine.noun),
+          content: packOperationsInventory(packed, {
+            preface: planningSnapshotPreface(packed, readBy, engine.noun),
             noun: engine.noun,
           }),
         });
@@ -3218,7 +3221,7 @@ export async function runInvestigation(
         messages.push({
           role: "user",
           content: packPlanningSnapshotMessage(
-            snapshot,
+            packed,
             record.objective,
             readBy,
             engine.noun,
@@ -3227,7 +3230,7 @@ export async function runInvestigation(
         });
         messages.push({
           role: "user",
-          content: packRelations(snapshot, record.workflowType, record.mode, context.capabilities, engine.noun),
+          content: packRelations(packed, record.workflowType, record.mode, context.capabilities, engine.noun),
         });
       }
 
@@ -3242,7 +3245,7 @@ export async function runInvestigation(
       // #411.
       messages.push({
         role: "user",
-        content: packSchemaStatistics(snapshot, statistics, operations ? { detail: "rows" } : {}),
+        content: packSchemaStatistics(packed, statistics, operations ? { detail: "rows" } : {}),
       });
       grounding = {
         schemaKnown: true,
@@ -3314,7 +3317,9 @@ export async function runInvestigation(
        * capture — the note says what the fenced block under it is for, so the two belong
        * in one place and cannot come apart.
        */
-      const show = (snapshot: AgentContextSnapshot): void => {
+      const show = (held: AgentContextSnapshot): void => {
+        // A recorded snapshot may predate the walk's scrub of its provider sentences, so every packing passes it again.
+        const snapshot = scrubSnapshotSentences(held, providerTextScrub(context.connection, "profiled"));
         if (operations) {
           messages.push({ role: "user", content: operationsContextNote(engine.noun) });
           messages.push({

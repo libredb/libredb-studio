@@ -284,6 +284,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [agent("languages", "kubectl", "tools.ts"), "runWorkloadProfile", "providerTextScrub"],
   [agent("languages", "mongo", "tools.ts"), "invoke", "providerTextScrub"],
   [agent("investigation.ts"), "describeSettled", "scrubProviderText"],
+  [agent("context-snapshot.ts"), "scrubSnapshotSentences", "scrubProviderText"],
   [agent("investigation.ts"), "describeSettled", "fenceProviderText"],
   [agent("runtime.ts"), "driveAgentRun", "withholdProviderError"],
   [api("runs", "route.ts"), "POST", "withholdProviderError"],
@@ -307,7 +308,8 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
 ];
 
 /** The reason a read of an inventory snapshot's provider sentence is no crossing of its own. */
-const SNAPSHOT_SENTENCE = "a snapshot's provider sentence, which walkObjectInventory scrubbed when it was captured";
+const SNAPSHOT_SENTENCE =
+  "a snapshot's provider sentence: walkObjectInventory scrubbed it at the capture, scrubSnapshotSentences before a prompt";
 
 /**
  * Every read of such a text on the three paths outside a recorded crossing, each with the reason it is not a
