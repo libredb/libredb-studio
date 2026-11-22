@@ -11,21 +11,27 @@
  *   refuses the boot, so the owner is never in doubt. The variable must be set in the environment that starts the
  *   server, never in a `.env` file: Next.js reads it before it loads `.env`, and Studio reads it in `register()`
  *   after, so a `.env` value would give both handlers the exit.
- * - The steps. On the first signal it logs one line naming the signal and the owner, then runs the shutdown hooks
+ * - The drain. Where Studio owns the exit, the handler starts the request drain (src/lib/shutdown-drain.ts) at install,
+ *   so it learns from boot, through node:diagnostics_channel, the HTTP servers and the requests in flight. Next.js
+ *   drains them itself where it owns the exit, so there nothing subscribes.
+ * - The steps. On the first signal it logs one line naming the signal and the owner. Where Studio owns the exit the
+ *   line also counts the servers the drain closes and the responses in flight, and the drain runs first: it closes
+ *   every server seen to new connections, ends each kept-alive connection as its response ends, and waits at most 5 s
+ *   for the requests in flight, so their query events are queued before the flush. Then it runs the shutdown hooks
  *   (`runShutdownHooks()` in src/lib/shutdown.ts, at most 5 s), which insert the queued query events and close the
  *   governance pool. Where Studio owns the exit it then runs every registered provider cache close at once
- *   (`closeProviderCaches()`, at most 15 s), logs one end line and exits. It never closes the HTTP server, so until
- *   the exit the server accepts connections and serves their requests. Where Next.js owns the exit it closes no
- *   provider and never exits: Next.js may still be draining requests that use the providers, and its exit ends the
- *   process and the pools with it. There it attaches an `exit` listener at the signal, which Node.js runs inside
- *   `process.exit`, and logs one line as the process exits, counting the query events left unsent and naming the
- *   hooks still running.
- * - The exit code where Studio owns the exit: 0 when every hook and every close settled without failing in time and
- *   no query event is left in the sink's queue (`queuedQueryEventCount()`, read without loading the sink); otherwise
- *   128 plus the signal's number, 143 for SIGTERM and 130 for SIGINT, the codes Next.js's own handler exits with, and
- *   the end line names what was cut or failed and counts `queryEventsLost`. A provider close fails when a provider
- *   did not close completely (`closeCachesAtShutdown` in src/lib/db/factory.ts). A step that rejects is logged and
- *   counts as incomplete; the exit runs anyway.
+ *   (`closeProviderCaches()`, at most 15 s), logs one end line and exits, 25 s at most after the signal. Where Next.js
+ *   owns the exit it closes no server and no provider and never exits: Next.js may still be draining requests that
+ *   use the providers, and its exit ends the process and the pools with it. There it attaches an `exit` listener at
+ *   the signal, which Node.js runs inside `process.exit`, and logs one line as the process exits, counting the query
+ *   events left unsent and naming the hooks still running.
+ * - The exit code where Studio owns the exit: 0 when every request in flight ended within the drain's deadline, every
+ *   hook and every close settled without failing in time and no query event is left in the sink's queue
+ *   (`queuedQueryEventCount()`, read without loading the sink); otherwise 128 plus the signal's number, 143 for
+ *   SIGTERM and 130 for SIGINT, the codes Next.js's own handler exits with, and the end line names what was cut or
+ *   failed and counts `responsesCut` and `queryEventsLost`. A provider close fails when a provider did not close
+ *   completely (`closeCachesAtShutdown` in src/lib/db/factory.ts). A step that rejects is logged and counts as
+ *   incomplete; the exit runs anyway.
  * - Repeated signals start nothing, do not cut the run and do not change the code; the first is logged. `npx` delivers
  *   every Ctrl+C twice, once from the terminal and once from the launcher's forward, and so do `bun dev` and
  *   `bun start` through scripts/next-with-seed-assets.mjs, so a second signal must not force the exit. On Windows that
@@ -42,7 +48,9 @@
  *   handling is not available; a signal in the first fraction of a second, before `register()` runs, reaches no
  *   Studio handler (docs/DISTRIBUTION.md#stopping-the-server names the two windows).
  * - Test seam: `installShutdownHandler()` takes the process it attaches to, so a test hands it a stand-in whose exit
- *   records the code (tests/helpers/shutdown-stand-in.ts), and `resetShutdownHandler()` forgets the installation.
+ *   records the code (tests/helpers/shutdown-stand-in.ts), and the source of request starts the drain reads
+ *   (tests/helpers/request-starts-stand-in.ts); `resetShutdownHandler()` forgets the installation and unsubscribes
+ *   the drain.
  */
 import { constants } from "node:os";
 import { logger } from "@/lib/logger";
@@ -54,6 +62,13 @@ import {
   type ShutdownHooksOutcome,
   shutdownHooksRunning,
 } from "@/lib/shutdown";
+import {
+  type DrainOutcome,
+  nodeRequestStarts,
+  type RequestDrain,
+  type RequestStarts,
+  trackRequests,
+} from "@/lib/shutdown-drain";
 
 /** The environment variable that, set to `true`, makes Next.js install no signal handler and Studio own the exit. */
 export const MANUAL_SIGNAL_HANDLING_VARIABLE = "NEXT_MANUAL_SIG_HANDLE";
@@ -78,6 +93,8 @@ interface HandlerState {
   started?: ShutdownSignal;
   /** Whether a later signal has been logged. */
   repeatLogged: boolean;
+  /** The request drain, where Studio owns the exit. */
+  requests?: RequestDrain;
 }
 
 type RegistryHolder = { [REGISTRY_KEY]?: HandlerState };
@@ -123,6 +140,7 @@ async function step<T>(name: string, run: () => Promise<T>, fallback: T): Promis
   }
 }
 
+const NOTHING_DRAINED: DrainOutcome = { servers: 0, cut: 0 };
 const NONE_CUT: ShutdownHooksOutcome = { cut: [], failed: [] };
 const NO_CLOSE_CUT: ProviderCacheClosesOutcome = { cut: 0, failed: 0 };
 
@@ -130,16 +148,25 @@ const NO_CLOSE_CUT: ProviderCacheClosesOutcome = { cut: 0, failed: 0 };
 const named = <T>(value: readonly T[]): readonly T[] | undefined => (value.length > 0 ? value : undefined);
 const counted = (value: number): number | undefined => (value > 0 ? value : undefined);
 
-async function shutDown(proc: ShutdownProcess, owner: ExitOwner, signal: ShutdownSignal): Promise<void> {
+async function shutDown(
+  proc: ShutdownProcess,
+  requests: RequestDrain | undefined,
+  signal: ShutdownSignal,
+): Promise<void> {
+  if (requests === undefined) {
+    await step("hooks", runShutdownHooks, NONE_CUT);
+    return;
+  }
+  const drain = await step("drain", () => requests.drain(), NOTHING_DRAINED);
   const hooks = await step("hooks", runShutdownHooks, NONE_CUT);
-  if (owner === "nextjs") return;
   const closes = await step("provider cache closes", closeProviderCaches, NO_CLOSE_CUT);
 
-  const stepsFailed = [hooks.failed, closes.failed].filter((name): name is string => name !== undefined);
+  const stepsFailed = [drain.failed, hooks.failed, closes.failed].filter((name): name is string => name !== undefined);
   // Events still queued now are never sent: the flush, which ran if an event was recorded before the signal, has ended.
   const queryEventsLost = queuedQueryEventCount();
   const complete =
     stepsFailed.length === 0 &&
+    drain.value.cut === 0 &&
     hooks.value.cut.length === 0 &&
     hooks.value.failed.length === 0 &&
     closes.value.cut === 0 &&
@@ -152,6 +179,7 @@ async function shutDown(proc: ShutdownProcess, owner: ExitOwner, signal: Shutdow
     logger.warn(`Shutdown incomplete, exiting with ${code}`, {
       route: "shutdown",
       signal,
+      responsesCut: counted(drain.value.cut),
       hooksCut: named(hooks.value.cut),
       hooksFailed: named(hooks.value.failed),
       cacheClosesCut: counted(closes.value.cut),
@@ -184,14 +212,20 @@ function logExit(signal: ShutdownSignal, code: number): void {
 }
 
 /**
- * Attaches one SIGTERM and one SIGINT listener to `proc` once per process. The first signal starts the shutdown;
- * where `owner` is Studio, the shutdown ends with `proc.exit`.
+ * Attaches one SIGTERM and one SIGINT listener to `proc` once per process. Where `owner` is Studio, it first starts
+ * the request drain on `starts`, and the shutdown drains the requests in flight and ends with `proc.exit`.
  */
-export function installShutdownHandler(proc: ShutdownProcess, owner: ExitOwner): void {
+export function installShutdownHandler(
+  proc: ShutdownProcess,
+  owner: ExitOwner,
+  starts: RequestStarts = nodeRequestStarts,
+): void {
   const holder = globalThis as RegistryHolder;
   if (holder[REGISTRY_KEY]) return;
   const state: HandlerState = { repeatLogged: false };
   holder[REGISTRY_KEY] = state;
+  const requests = owner === "studio" ? trackRequests(starts) : undefined;
+  state.requests = requests;
   const onSignal = (signal: ShutdownSignal): void => {
     if (state.started !== undefined) {
       if (!state.repeatLogged) {
@@ -201,20 +235,30 @@ export function installShutdownHandler(proc: ShutdownProcess, owner: ExitOwner):
       return;
     }
     state.started = signal;
-    logger.info(
-      owner === "studio"
-        ? `Received ${signal}: running the shutdown hooks, then closing the providers, then exiting`
-        : `Received ${signal}: running the shutdown hooks; Next.js's handler ends the process`,
-      { route: "shutdown", owner },
-    );
-    if (owner === "nextjs") proc.on("exit", (code) => logExit(signal, code));
-    void shutDown(proc, owner, signal);
+    if (requests === undefined) {
+      logger.info(`Received ${signal}: running the shutdown hooks; Next.js's handler ends the process`, {
+        route: "shutdown",
+        owner,
+      });
+      proc.on("exit", (code) => logExit(signal, code));
+    } else {
+      logger.info(
+        `Received ${signal}: closing the HTTP server and waiting for the requests in flight, then running the shutdown hooks, then closing the providers, then exiting`,
+        { route: "shutdown", owner, ...requests.tracked() },
+      );
+    }
+    void shutDown(proc, requests, signal);
   };
   proc.on("SIGTERM", onSignal);
   proc.on("SIGINT", onSignal);
 }
 
-/** Test seam: forgets the installation, as a new process would; the listeners stay on the process they were given. */
+/**
+ * Test seam: forgets the installation, as a new process would, and unsubscribes its request drain; the listeners stay
+ * on the process they were given.
+ */
 export function resetShutdownHandler(): void {
-  delete (globalThis as RegistryHolder)[REGISTRY_KEY];
+  const holder = globalThis as RegistryHolder;
+  holder[REGISTRY_KEY]?.requests?.stop();
+  delete holder[REGISTRY_KEY];
 }

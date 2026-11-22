@@ -5,10 +5,14 @@
  *
  * Every case installs the handler on a stand-in process (tests/helpers/shutdown-stand-in.ts), whose exit records the
  * code and resolves a promise the case awaits; no real signal is ever sent and the real `process.exit` is never bound.
+ * Where Studio owns the exit the handler drains the requests in flight first: a case that needs a request in flight
+ * hands it a stand-in source of request starts (tests/helpers/request-starts-stand-in.ts), and the others use
+ * node:diagnostics_channel itself, on which Bun publishes nothing, so their drain sees no server and ends at once.
  * Deadlines run on fake timers, and a case waits on the stand-in's exit, never on a timer-settled promise assertion.
  * The provider in the cache is a real SQLite database in memory, so what a hook sees shows what ran before it.
  */
 import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
+import diagnostics_channel from "node:diagnostics_channel";
 import { clearProviderCache, getOrCreateProvider, getProviderCacheStats } from "@/lib/db/factory";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
@@ -21,6 +25,8 @@ import {
   resetShutdownHooks,
   SHUTDOWN_HOOKS_DEADLINE_MS,
 } from "@/lib/shutdown";
+import * as drainModule from "@/lib/shutdown-drain";
+import { DRAIN_DEADLINE_MS, REQUEST_START_CHANNEL } from "@/lib/shutdown-drain";
 import {
   exitOwnerAtBoot,
   installShutdownHandler,
@@ -28,6 +34,12 @@ import {
   resetShutdownHandler,
 } from "@/lib/shutdown-handler";
 import { installUncaughtExceptionExit, resetUncaughtExceptionExit } from "@/lib/uncaught-exception";
+import {
+  requestStart,
+  requestStartsStandIn,
+  standInResponse,
+  standInServer,
+} from "../../helpers/request-starts-stand-in";
 import { shutdownStandIn } from "../../helpers/shutdown-stand-in";
 import { standInProcess } from "../../helpers/uncaught-exception-stand-in";
 
@@ -61,6 +73,10 @@ function leaveQueryEvents(count: number): void {
     queue: Array.from({ length: count }, () => ({})),
   };
 }
+
+/** Studio's start line for `signal`, where it owns the exit. */
+const studioStart = (signal: string): string =>
+  `Received ${signal}: closing the HTTP server and waiting for the requests in flight, then running the shutdown hooks, then closing the providers, then exiting`;
 
 /** Every line the logger was asked for at `level`, as message and context. */
 function lines(level: "info" | "warn"): unknown[][] {
@@ -97,8 +113,12 @@ describe("installShutdownHandler", () => {
     expect(other.registrations).toEqual([]);
   });
 
-  test("on SIGTERM it runs the hooks, then closes every provider cache, then exits with 0 once all of it settled", async () => {
+  test("on SIGTERM where Studio owns the exit it drains the requests in flight, then runs the hooks, then closes every provider cache, then exits with 0 once all of it settled", async () => {
     const order: string[] = [];
+    const source = requestStartsStandIn();
+    const server = standInServer();
+    const response = standInResponse();
+    response.once("close", () => order.push("drain end"));
     onShutdown("hook", async () => {
       order.push("hook");
     });
@@ -106,21 +126,170 @@ describe("installShutdownHandler", () => {
       order.push("close");
     });
     const proc = shutdownStandIn();
-    installShutdownHandler(proc, "studio");
+    installShutdownHandler(proc, "studio", source.starts);
+    source.publish(requestStart(server, response));
 
     proc.signal("SIGTERM");
+    await settle();
+    expect(order).toEqual([]);
+    expect(server.calls).toEqual(["close"]);
+    response.end();
 
     expect(await proc.exited).toBe(0);
-    expect(order).toEqual(["hook", "close"]);
+    expect(order).toEqual(["drain end", "hook", "close"]);
     expect(proc.exits).toEqual([0]);
     expect(lines("info")).toEqual([
-      [
-        "Received SIGTERM: running the shutdown hooks, then closing the providers, then exiting",
-        { route: "shutdown", owner: "studio" },
-      ],
+      [studioStart("SIGTERM"), { route: "shutdown", owner: "studio", servers: 1, inFlight: 1 }],
       ["Shutdown complete, exiting with 0", { route: "shutdown", signal: "SIGTERM" }],
     ]);
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test("where Studio owns the exit it subscribes to http.server.request.start at install, before any signal, and a second install subscribes nothing", () => {
+    const source = requestStartsStandIn();
+    const proc = shutdownStandIn();
+
+    installShutdownHandler(proc, "studio", source.starts);
+    expect(source.subscriptions()).toBe(1);
+    installShutdownHandler(proc, "studio", source.starts);
+    expect(source.subscriptions()).toBe(1);
+    expect(proc.exits).toEqual([]);
+  });
+
+  test("the hooks start only after the last response in flight has closed", async () => {
+    const source = requestStartsStandIn();
+    const server = standInServer();
+    const first = standInResponse();
+    const last = standInResponse();
+    const openAtHook: number[] = [];
+    let open = 2;
+    first.once("close", () => {
+      open -= 1;
+    });
+    last.once("close", () => {
+      open -= 1;
+    });
+    onShutdown("observer", async () => {
+      openAtHook.push(open);
+    });
+    const proc = shutdownStandIn();
+    installShutdownHandler(proc, "studio", source.starts);
+    source.publish(requestStart(server, first));
+    source.publish(requestStart(server, last));
+
+    proc.signal("SIGTERM");
+    await settle();
+    first.end();
+    await settle();
+    expect(openAtHook).toEqual([]);
+    last.end();
+
+    expect(await proc.exited).toBe(0);
+    expect(openAtHook).toEqual([0]);
+  });
+
+  test("a response still in flight 5 s after the signal is cut, the hooks and the closes run after it, and the exit code is 143 with responsesCut in the end line", async () => {
+    const order: string[] = [];
+    const source = requestStartsStandIn();
+    onShutdown("hook", async () => {
+      order.push("hook");
+    });
+    registerClose(async () => {
+      order.push("close");
+    });
+    const proc = shutdownStandIn();
+    installShutdownHandler(proc, "studio", source.starts);
+    source.publish(requestStart(standInServer(), standInResponse()));
+    jest.useFakeTimers();
+
+    proc.signal("SIGTERM");
+    await settle();
+    jest.advanceTimersByTime(DRAIN_DEADLINE_MS - 1);
+    await settle();
+    expect(order).toEqual([]);
+    expect(proc.exits).toEqual([]);
+
+    jest.advanceTimersByTime(1);
+    expect(await proc.exited).toBe(143);
+    expect(order).toEqual(["hook", "close"]);
+    expect(logger.warn).toHaveBeenCalledWith("Requests in flight cut at the drain deadline", {
+      route: "shutdown",
+      pending: 1,
+    });
+    expect(logger.warn).toHaveBeenCalledWith("Shutdown incomplete, exiting with 143", {
+      route: "shutdown",
+      signal: "SIGTERM",
+      responsesCut: 1,
+      hooksCut: undefined,
+      hooksFailed: undefined,
+      cacheClosesCut: undefined,
+      cacheClosesFailed: undefined,
+      stepsFailed: undefined,
+      queryEventsLost: undefined,
+    });
+  });
+
+  test("the start line names the servers the drain closes and the responses in flight", async () => {
+    const source = requestStartsStandIn();
+    const first = standInServer();
+    const second = standInServer();
+    const done = standInResponse();
+    const open = standInResponse();
+    const proc = shutdownStandIn();
+    installShutdownHandler(proc, "studio", source.starts);
+    source.publish(requestStart(first, done));
+    source.publish(requestStart(second, open));
+    done.end();
+
+    proc.signal("SIGINT");
+    expect(lines("info")[0]).toEqual([
+      studioStart("SIGINT"),
+      { route: "shutdown", owner: "studio", servers: 2, inFlight: 1 },
+    ]);
+    open.end();
+
+    expect(await proc.exited).toBe(0);
+    expect(first.calls).toEqual(["close"]);
+    expect(second.calls).toEqual(["close", "closeIdleConnections"]);
+  });
+
+  test("where Next.js owns the exit it subscribes to nothing and closes no server", async () => {
+    const source = requestStartsStandIn();
+    const server = standInServer();
+    let hookRan = false;
+    onShutdown("hook", async () => {
+      hookRan = true;
+    });
+    const proc = shutdownStandIn();
+    installShutdownHandler(proc, "nextjs", source.starts);
+    source.publish(requestStart(server, standInResponse()));
+
+    proc.signal("SIGTERM");
+    await settle();
+
+    expect(source.subscriptions()).toBe(0);
+    expect(hookRan).toBe(true);
+    expect(server.calls).toEqual([]);
+    expect(proc.exits).toEqual([]);
+  });
+
+  test("resetShutdownHandler unsubscribes the drain", () => {
+    const source = requestStartsStandIn();
+    installShutdownHandler(shutdownStandIn(), "studio", source.starts);
+    resetShutdownHandler();
+    expect(source.unsubscriptions()).toBe(1);
+
+    // With the default source, node:diagnostics_channel itself.
+    expect(diagnostics_channel.hasSubscribers(REQUEST_START_CHANNEL)).toBe(false);
+    installShutdownHandler(shutdownStandIn(), "studio");
+    expect(diagnostics_channel.hasSubscribers(REQUEST_START_CHANNEL)).toBe(true);
+    resetShutdownHandler();
+    expect(diagnostics_channel.hasSubscribers(REQUEST_START_CHANNEL)).toBe(false);
+
+    // Where Next.js owns the exit there is nothing to unsubscribe.
+    installShutdownHandler(shutdownStandIn(), "nextjs", source.starts);
+    resetShutdownHandler();
+    expect(source.unsubscriptions()).toBe(1);
   });
 
   test("the caches are closed only after the hooks: a hook sees every provider still open", async () => {
@@ -159,6 +328,7 @@ describe("installShutdownHandler", () => {
     expect(logger.warn).toHaveBeenCalledWith("Shutdown incomplete, exiting with 143", {
       route: "shutdown",
       signal: "SIGTERM",
+      responsesCut: undefined,
       hooksCut: ["stuck"],
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -181,6 +351,7 @@ describe("installShutdownHandler", () => {
     expect(logger.warn).toHaveBeenCalledWith("Shutdown incomplete, exiting with 143", {
       route: "shutdown",
       signal: "SIGTERM",
+      responsesCut: undefined,
       hooksCut: undefined,
       hooksFailed: ["fails"],
       cacheClosesCut: undefined,
@@ -207,6 +378,7 @@ describe("installShutdownHandler", () => {
     expect(logger.warn).toHaveBeenCalledWith("Shutdown incomplete, exiting with 143", {
       route: "shutdown",
       signal: "SIGTERM",
+      responsesCut: undefined,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: 1,
@@ -236,6 +408,7 @@ describe("installShutdownHandler", () => {
     expect(logger.warn).toHaveBeenCalledWith("Shutdown incomplete, exiting with 143", {
       route: "shutdown",
       signal: "SIGTERM",
+      responsesCut: undefined,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -259,6 +432,7 @@ describe("installShutdownHandler", () => {
     expect(logger.warn).toHaveBeenCalledWith("Shutdown incomplete, exiting with 143", {
       route: "shutdown",
       signal: "SIGTERM",
+      responsesCut: undefined,
       hooksCut: undefined,
       hooksFailed: undefined,
       cacheClosesCut: undefined,
@@ -310,6 +484,22 @@ describe("installShutdownHandler", () => {
     installShutdownHandler(incomplete, "studio");
     incomplete.signal("SIGINT");
     expect(await incomplete.exited).toBe(130);
+
+    resetShutdownHooks();
+    resetShutdownHandler();
+    const source = requestStartsStandIn();
+    const cut = shutdownStandIn();
+    installShutdownHandler(cut, "studio", source.starts);
+    source.publish(requestStart(standInServer(), standInResponse()));
+    jest.useFakeTimers();
+    cut.signal("SIGINT");
+    await settle();
+    jest.advanceTimersByTime(DRAIN_DEADLINE_MS);
+    expect(await cut.exited).toBe(130);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Shutdown incomplete, exiting with 130",
+      expect.objectContaining({ signal: "SIGINT", responsesCut: 1 }),
+    );
   });
 
   test("a second signal during the shutdown starts nothing and keeps the first signal's exit code", async () => {
@@ -408,9 +598,15 @@ describe("installShutdownHandler", () => {
     });
   });
 
-  test("a hooks run or a cache close run that rejects is logged, counts as incomplete, and the exit still runs", async () => {
+  test("a drain, a hooks run or a cache close run that rejects is logged, counts as incomplete, and the exit still runs", async () => {
+    const drainFailure = new Error("drain failed");
     const hooksFailure = new Error("hooks run failed");
     const closesFailure = new Error("closes run failed");
+    const drain = spyOn(drainModule, "trackRequests").mockImplementation(() => ({
+      tracked: () => ({ servers: 0, inFlight: 0 }),
+      drain: () => Promise.reject(drainFailure),
+      stop: () => {},
+    }));
     const hooks = spyOn(shutdownRegistry, "runShutdownHooks").mockImplementation(() => Promise.reject(hooksFailure));
     const closes = spyOn(shutdownRegistry, "closeProviderCaches").mockImplementation(() =>
       Promise.reject(closesFailure),
@@ -422,6 +618,10 @@ describe("installShutdownHandler", () => {
       proc.signal("SIGTERM");
 
       expect(await proc.exited).toBe(143);
+      expect(logger.error).toHaveBeenCalledWith("Shutdown step failed", drainFailure, {
+        route: "shutdown",
+        step: "drain",
+      });
       expect(logger.error).toHaveBeenCalledWith("Shutdown step failed", hooksFailure, {
         route: "shutdown",
         step: "hooks",
@@ -433,14 +633,16 @@ describe("installShutdownHandler", () => {
       expect(logger.warn).toHaveBeenCalledWith("Shutdown incomplete, exiting with 143", {
         route: "shutdown",
         signal: "SIGTERM",
+        responsesCut: undefined,
         hooksCut: undefined,
         hooksFailed: undefined,
         cacheClosesCut: undefined,
         cacheClosesFailed: undefined,
-        stepsFailed: ["hooks", "provider cache closes"],
+        stepsFailed: ["drain", "hooks", "provider cache closes"],
         queryEventsLost: undefined,
       });
     } finally {
+      drain.mockRestore();
       hooks.mockRestore();
       closes.mockRestore();
     }
