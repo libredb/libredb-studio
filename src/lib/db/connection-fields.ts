@@ -80,8 +80,20 @@ export type ConnectionField =
   // are checked by different code, and one box for both would carry a label that is wrong half
   // the time.
   | "hostKeyFingerprint";
-/** A field a seed file may carry that no connection dialog draws: a deployment fact, named by a file path or a URI, or an OPC UA seed's read roots. */
-export type SeedOnlyField = "securityPolicyUri" | "clientCertificatePath" | "clientPrivateKeyPath" | "agentReadRoots";
+/**
+ * The fields a seed file may carry that no connection dialog draws: a deployment fact, named by a file path or a URI,
+ * or an OPC UA seed's read roots. Only the operator's seed file or an embedder's own code sets one: `resolveConnection`
+ * (src/lib/seed/resolve-connection.ts) refuses by name a connection a browser or a client supplies inline that sets
+ * one, and the managed connection list (src/app/api/connections/managed/route.ts) never sends one to the browser.
+ */
+export const SEED_ONLY_FIELD_NAMES = Object.freeze([
+  "securityPolicyUri",
+  "clientCertificatePath",
+  "clientPrivateKeyPath",
+  "agentReadRoots",
+] as const);
+/** A field a seed file may carry that no connection dialog draws (`SEED_ONLY_FIELD_NAMES`). */
+export type SeedOnlyField = (typeof SEED_ONLY_FIELD_NAMES)[number];
 
 /**
  * The fields the connection dialog draws either in the open or behind its Advanced accordion, as the engine's

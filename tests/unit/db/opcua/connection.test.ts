@@ -3,8 +3,9 @@
  */
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { TUNNEL_FAR_END } from "@/lib/types";
+import { ADMITTED_HOST_PATHS, TUNNEL_FAR_END } from "@/lib/types";
 import { readConnection } from "@/lib/db/providers/industrial/opcua/connection";
+import { ADMITTED_HOST_PATH_MISSING } from "@/lib/db/utils/admitted-file";
 import type { DatabaseConnection } from "@/lib/types";
 
 /** The PKI root Studio's provider factory decides and the provider hands the reader (`opcuaPkiRoot`). */
@@ -131,9 +132,12 @@ describe("the PKI root and the client's own identity", () => {
   });
 
   test("a certificate without its key is refused", () => {
-    expect(() => readConnection(connection({ clientCertificatePath: "/c.pem" }), PKI_ROOT)).toThrow(
-      /together or not at all/,
-    );
+    expect(() =>
+      readConnection(
+        connection({ clientCertificatePath: "/c.pem", [ADMITTED_HOST_PATHS]: { clientCertificatePath: "/c.pem" } }),
+        PKI_ROOT,
+      ),
+    ).toThrow(/together or not at all/);
   });
 
   test("both supplied is carried through", () => {
@@ -141,11 +145,66 @@ describe("the PKI root and the client's own identity", () => {
       connection({
         clientCertificatePath: "/run/secrets/c.pem",
         clientPrivateKeyPath: "/run/secrets/k.pem",
+        [ADMITTED_HOST_PATHS]: {
+          clientCertificatePath: "/run/secrets/c.pem",
+          clientPrivateKeyPath: "/run/secrets/k.pem",
+        },
       }),
       PKI_ROOT,
     );
     expect(options.clientCertificatePath).toBe("/run/secrets/c.pem");
     expect(options.clientPrivateKeyPath).toBe("/run/secrets/k.pem");
+  });
+
+  /**
+   * The certificate and key are files on Studio's own host, so Studio's provider factory admits them before the provider
+   * is built (`admittedHostPathConnection` in `src/lib/db/provider-files.ts`); the reader hands the library the paths
+   * the factory admitted, and refuses by name a connection that names one the factory never admitted.
+   */
+  test("a certificate and key the factory did not admit are refused by name", () => {
+    const both = { clientCertificatePath: "/run/secrets/c.pem", clientPrivateKeyPath: "/run/secrets/k.pem" };
+    const cases: [Record<string, string> | undefined, string][] = [
+      [undefined, "clientCertificatePath"],
+      [{ clientCertificatePath: "/run/secrets/c.pem" }, "clientPrivateKeyPath"],
+      [{ clientPrivateKeyPath: "/run/secrets/k.pem" }, "clientCertificatePath"],
+    ];
+    for (const [admitted, field] of cases) {
+      const record = connection(admitted === undefined ? both : { ...both, [ADMITTED_HOST_PATHS]: admitted });
+      let refused: unknown = null;
+      try {
+        readConnection(record, PKI_ROOT);
+      } catch (error) {
+        refused = error;
+      }
+      expect([field, refused instanceof DatabaseConfigError]).toEqual([field, true]);
+      expect((refused as Error).message).toBe(`${field}: ${ADMITTED_HOST_PATH_MISSING}`);
+    }
+  });
+
+  test("the options carry the admitted absolute paths, not the record's spelling", () => {
+    const options = readConnection(
+      connection({
+        clientCertificatePath: "pki/c.pem",
+        clientPrivateKeyPath: "pki/k.pem",
+        [ADMITTED_HOST_PATHS]: {
+          clientCertificatePath: "/srv/studio/pki/c.pem",
+          clientPrivateKeyPath: "/srv/studio/pki/k.pem",
+        },
+      }),
+      PKI_ROOT,
+    );
+    expect(options.clientCertificatePath).toBe("/srv/studio/pki/c.pem");
+    expect(options.clientPrivateKeyPath).toBe("/srv/studio/pki/k.pem");
+  });
+
+  test("an absent or empty path needs no admission, and none is carried", () => {
+    for (const empty of [undefined, null, ""]) {
+      const options = readConnection(
+        connection({ clientCertificatePath: empty, clientPrivateKeyPath: empty }),
+        PKI_ROOT,
+      );
+      expect(["clientCertificatePath" in options, "clientPrivateKeyPath" in options]).toEqual([false, false]);
+    }
   });
 });
 

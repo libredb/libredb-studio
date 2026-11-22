@@ -231,7 +231,7 @@ written refuses the connection in its own words rather than blaming the endpoint
 | `securityMode` | Security mode | `None`, `Sign` or `SignAndEncrypt`, chosen with three buttons. Default `SignAndEncrypt`. Studio's own `sslMode` and the shared SSL panel are **not** read: their vocabulary (`require`, `verify-full`) names nothing a server offers, so this entry declares `showSslPanel: false`. |
 | `securityPolicyUri` | — (seed file only) | Optional. An endpoint is a **mode and a policy**, so the policy of the endpoint chosen for the mode is what the session dials with; naming one here narrows the choice to that pair and is refused when the server offers no such pair. |
 | `serverCertificateThumbprint` | Server certificate | SHA-256, 64 hex characters; colons and spaces ignored. Refused together with `securityMode: None`, because a pin cannot be enforced there ([4.5](#45-the-certificate-pin)). |
-| `clientCertificatePath` / `clientPrivateKeyPath` | — (seed file only) | Supplied together or not at all. |
+| `clientCertificatePath` / `clientPrivateKeyPath` | — (seed file only) | Supplied together or not at all. Each is resolved against the working directory when the provider is built, refused by name when it names one of Studio's own storage files or cannot be checked against them ([SECURITY.md control 3.45](../SECURITY.md)), and handed to the library as that absolute path. Refused on a connection supplied inline. |
 | `sshTunnel` | SSH Tunnel | Standard Studio tunnel. The address is rebuilt rather than replaced: the tunnel rewrites `host` to the local end, which for this engine is the whole URL, so the dialled URL keeps the scheme and path the reader typed and takes the local authority. Studio refuses a tunnel that is on and was not opened before the provider is built, so the endpoint is never dialled past it. |
 
 **The three rows with no label are seed-file fields, and that is deliberate.** A policy URI is a
@@ -426,6 +426,7 @@ Its `validateSeed` holds a seed's `agentReadRoots` to the read roots grammar (`r
 `securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath`, `clientPrivateKeyPath` and `agentReadRoots` are its seed-only fields, declared in `SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` (#1677): on any other engine the provider never reads them, so a seed of another engine that carries one would be listed as pinned or as encrypted and be neither, and is refused by name.
 The last three are the fields the dialog has no box for, because they are deployment facts: the policy to insist on, and the client certificate and key to present.
 A server with a trust list of its own has to be given a stable client certificate before it will accept a secured channel, and a file path is how a deployment names one, which is the seed file's job and not a text box's.
+A connection a browser or a client supplies inline that carries any of the three is refused with 400 naming the field, and `GET /api/connections/managed` never lists them, so a Duplicate of an unmanaged seed never carries them ([SECURITY.md control 3.48](../SECURITY.md)).
 
 ### Execution UI
 

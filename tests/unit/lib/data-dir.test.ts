@@ -10,6 +10,7 @@ import {
   getDataDir,
   getStorageSqlitePath,
   isReservedStoragePath,
+  LINKS_FOLLOWED_LIMIT,
   reservedStoragePaths,
   storageLocation,
 } from "@/lib/data-dir";
@@ -403,5 +404,242 @@ describe("data-dir canonicalPath() on a path whose last component the process ca
 
     expect(() => canonicalPath(file)).toThrow("EIO: denied");
     expect(() => isReservedStoragePath(file)).toThrow("EIO: denied");
+  });
+});
+
+/**
+ * A path whose resolution follows more than `LINKS_FOLLOWED_LIMIT` symbolic links is refused with ELOOP. The real-path
+ * read of every path under the chain's directory answers "no such file" here, so the walk follows each link itself and
+ * the kernel's own link limit never decides; the chain's directory itself reads as before.
+ */
+describe("data-dir canonicalPath() follows at most LINKS_FOLLOWED_LIMIT links", () => {
+  const originalPath = process.env.STORAGE_SQLITE_PATH;
+  const realpath = fs.realpathSync;
+  let scratch: string;
+  let chain: string;
+  let missing: ReturnType<typeof spyOn> | undefined;
+
+  /** Answers ENOENT to the real-path read of every path under `chain`; every other path reads as before. */
+  function walkChainByHand(): void {
+    const under = `${chain}${path.sep}`;
+    missing = spyOn(fs, "realpathSync").mockImplementation(((file: fs.PathLike, options?: unknown) => {
+      if (String(file).startsWith(under)) {
+        throw Object.assign(new Error(`ENOENT: no such file or directory, lstat '${String(file)}'`), {
+          code: "ENOENT",
+        });
+      }
+      return realpath(file, options as fs.EncodingOption);
+    }) as typeof fs.realpathSync);
+  }
+
+  /** Links `<name>1 -> <name>2 -> ... -> <name><count> -> <target>`, each with an absolute target; returns the first. */
+  function linkChain(count: number, target: string, name = "n"): string {
+    for (let i = 1; i <= count; i++) {
+      const next = i === count ? target : path.join(chain, `${name}${i + 1}`);
+      fs.symlinkSync(next, path.join(chain, `${name}${i}`));
+    }
+    return path.join(chain, `${name}1`);
+  }
+
+  beforeEach(() => {
+    forgetStorageLocation();
+    scratch = realpath(fs.mkdtempSync(path.join(tmpdir(), "libredb-link-limit-")));
+    chain = path.join(scratch, "chain");
+    fs.mkdirSync(path.join(scratch, "data"));
+    fs.mkdirSync(chain);
+    fs.writeFileSync(path.join(scratch, "data", "storage.db"), "store");
+    process.env.STORAGE_SQLITE_PATH = path.join(scratch, "data", "storage.db");
+  });
+
+  afterEach(() => {
+    missing?.mockRestore();
+    missing = undefined;
+    if (originalPath === undefined) delete process.env.STORAGE_SQLITE_PATH;
+    else process.env.STORAGE_SQLITE_PATH = originalPath;
+    forgetStorageLocation();
+    fs.rmSync(scratch, { recursive: true, force: true });
+  });
+
+  test("the limit is the 40 links Linux follows in one path resolution", () => {
+    expect(LINKS_FOLLOWED_LIMIT).toBe(40);
+  });
+
+  test("a path whose resolution follows exactly LINKS_FOLLOWED_LIMIT links resolves to the file the last one names", () => {
+    const end = path.join(chain, "end.db");
+    const first = linkChain(LINKS_FOLLOWED_LIMIT, end);
+    walkChainByHand();
+
+    expect(canonicalPath(first)).toBe(end);
+  });
+
+  test("a path whose resolution follows one link more is refused with ELOOP, naming the path", () => {
+    const first = linkChain(LINKS_FOLLOWED_LIMIT + 1, path.join(chain, "end.db"));
+    walkChainByHand();
+
+    let thrown: unknown;
+    try {
+      canonicalPath(first);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).toMatchObject({
+      code: "ELOOP",
+      path: first,
+      message: `ELOOP: more than ${LINKS_FOLLOWED_LIMIT} symbolic links followed while resolving '${first}'`,
+    });
+  });
+
+  // The leaf's chain ends at a file under the parent's chain, so the walk follows both in one call; each chain alone is
+  // short enough that the filesystem's own lstat through the parent's chain answers "no such file", not ELOOP.
+  test("the links followed while resolving a missing path's parents count toward the same limit", () => {
+    const parents = LINKS_FOLLOWED_LIMIT / 2 + 1;
+    const parent = linkChain(parents, path.join(chain, "elsewhere"), "p");
+    const within = linkChain(LINKS_FOLLOWED_LIMIT - parents, path.join(parent, "file.db"), "w");
+    const over = linkChain(LINKS_FOLLOWED_LIMIT - parents + 1, path.join(parent, "file.db"), "o");
+    walkChainByHand();
+
+    expect(canonicalPath(within)).toBe(path.join(chain, "elsewhere", "file.db"));
+    expect(() => canonicalPath(over)).toThrow(
+      `ELOOP: more than ${LINKS_FOLLOWED_LIMIT} symbolic links followed while resolving '${over}'`,
+    );
+  });
+
+  // Bun 1.4.4 passes at most 65,536 arguments to a call made with a spread and drops the rest without an error
+  // (measured), so the names are joined into one string, not spread into path.join. Linux only: macOS allows a link's
+  // target 1023 bytes, so 40 links there add about 20,000 names, and Windows makes a link only with a privilege.
+  test.skipIf(process.platform !== "linux")(
+    "a path whose links add more names than one call takes as arguments resolves to every one of them",
+    () => {
+      const depth = 1_700;
+      const tail = Array.from({ length: depth }, () => "m").join(path.sep);
+      for (let i = 1; i <= LINKS_FOLLOWED_LIMIT; i++) {
+        fs.symlinkSync(path.join(`n${i + 1}`, tail), path.join(chain, `n${i}`));
+      }
+      const resolved = canonicalPath(path.join(chain, "n1")).split(path.sep);
+
+      expect(resolved.filter((name) => name === "m").length).toBe(LINKS_FOLLOWED_LIMIT * depth);
+      expect(resolved.slice(0, chain.split(path.sep).length + 1)).toEqual([
+        ...chain.split(path.sep),
+        `n${LINKS_FOLLOWED_LIMIT + 1}`,
+      ]);
+    },
+  );
+
+  test("a chain of links within the limit that ends at a reserved file not yet created is still reserved", () => {
+    const first = linkChain(LINKS_FOLLOWED_LIMIT - 1, path.join(scratch, "data", "storage.db-wal"));
+    walkChainByHand();
+
+    expect(canonicalPath(first)).toBe(path.join(scratch, "data", "storage.db-wal"));
+    expect(isReservedStoragePath(first)).toBe(true);
+  });
+});
+
+/**
+ * A missing path is resolved with one lookup per ancestor: the filesystem calls `canonicalPath` makes are counted here
+ * through the `fs` functions it calls, on links that each add many missing components, so the count shows whether it
+ * grows with those components.
+ */
+describe("data-dir canonicalPath() looks up each ancestor of a missing path once", () => {
+  let scratch: string;
+  let spies: ReturnType<typeof spyOn>[] = [];
+
+  beforeEach(() => {
+    scratch = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "libredb-ancestor-walk-")));
+  });
+
+  afterEach(() => {
+    for (const spy of spies) spy.mockRestore();
+    spies = [];
+    fs.rmSync(scratch, { recursive: true, force: true });
+  });
+
+  /**
+   * Links `L0 -> L1/m/.../m -> ... -> L<links - 1> -> end/m/.../m` in a directory of their own, each target adding
+   * `missing` components; returns that directory.
+   */
+  function deepChain(name: string, links: number, missing: number): string {
+    const deep = path.join(scratch, name);
+    fs.mkdirSync(deep);
+    const tail = Array.from({ length: missing }, () => "m").join(path.sep);
+    for (let i = 0; i < links; i++) {
+      fs.symlinkSync(path.join(i === links - 1 ? "end" : `L${i + 1}`, tail), path.join(deep, `L${i}`));
+    }
+    return deep;
+  }
+
+  /** Resolves `candidate` and returns its real path with the number of filesystem calls it took. */
+  function counted(candidate: string): { resolved: string; calls: number } {
+    let calls = 0;
+    for (const name of ["realpathSync", "lstatSync", "readlinkSync", "statSync"] as const) {
+      const original = fs[name] as (...args: unknown[]) => unknown;
+      spies.push(
+        spyOn(fs, name).mockImplementation(((...args: unknown[]) => {
+          calls += 1;
+          return original(...args);
+        }) as never),
+      );
+    }
+    try {
+      return { resolved: canonicalPath(candidate), calls };
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+      spies = [];
+    }
+  }
+
+  // Each link costs its own three calls (the real-path read, the lookup that finds the link, the read of its target)
+  // and one jump to the deepest existing ancestor of its target: the real-path read and lookup of the target, then one
+  // lookup for each of the deep directory's ancestors below the root, for the deep directory, for the next link and for
+  // the first missing name after it. The last target ends at the deep directory, read once more.
+  test("the calls are linear in the links followed plus the depth of the existing directory, whatever each link adds", () => {
+    const links = 30;
+    // macOS's realpath expands every link it follows, with the names left after it, into one 1,024-byte buffer and
+    // answers ENAMETOOLONG past it, so 30 links of 10 names each (about 600 bytes) stay under it.
+    const added = 10;
+    const many = deepChain("many", links, added);
+    const few = deepChain("few", links, 5);
+    const depth = many.split(path.sep).filter((name) => name !== "").length;
+    const bound = links * 3 + links * (depth + 4) + 1;
+
+    const deep = counted(path.join(many, "L0"));
+    const shallow = counted(path.join(few, "L0"));
+
+    expect(deep.resolved).toBe(path.join(many, "end", ...Array.from({ length: links * added }, () => "m")));
+    expect(shallow.resolved).toBe(path.join(few, "end", ...Array.from({ length: links * 5 }, () => "m")));
+    expect(deep.calls).toBe(shallow.calls);
+    expect(deep.calls).toBeLessThanOrEqual(bound);
+  });
+
+  test("a missing path under existing directories is their real path joined with every missing name, in order", () => {
+    fs.mkdirSync(path.join(scratch, "real", "inner"), { recursive: true });
+    fs.symlinkSync(path.join(scratch, "real"), path.join(scratch, "alias"));
+    const candidate = path.join(scratch, "alias", "inner", "a", "b", "c.db");
+
+    const { resolved, calls } = counted(candidate);
+
+    expect(resolved).toBe(path.join(scratch, "real", "inner", "a", "b", "c.db"));
+    expect(calls).toBeLessThanOrEqual(candidate.split(path.sep).length + 3);
+  });
+
+  test("a missing path under a missing root is refused with the root's error", () => {
+    const root = path.parse(scratch).root;
+    const realpath = fs.realpathSync;
+    const lstat = fs.lstatSync;
+    const missing = (file: fs.PathLike) => String(file).startsWith(root);
+    spies.push(
+      spyOn(fs, "realpathSync").mockImplementation(((file: fs.PathLike, options?: unknown) => {
+        if (missing(file)) {
+          throw Object.assign(new Error(`ENOENT: no such file or directory, '${String(file)}'`), { code: "ENOENT" });
+        }
+        return realpath(file, options as fs.EncodingOption);
+      }) as typeof fs.realpathSync),
+      spyOn(fs, "lstatSync").mockImplementation(((file: fs.PathLike, options?: fs.StatOptions) => {
+        if (missing(file)) return undefined;
+        return lstat(file, options);
+      }) as typeof fs.lstatSync),
+    );
+
+    expect(() => canonicalPath(path.join(scratch, "a", "b"))).toThrow(`ENOENT: no such file or directory, '${root}'`);
   });
 });

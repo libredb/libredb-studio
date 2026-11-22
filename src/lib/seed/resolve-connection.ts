@@ -3,6 +3,7 @@ import { getSeedConnectionByIdUnfiltered } from "./index";
 import { resolveVaultCredentials } from "./credential-resolver";
 import { logger } from "@/lib/logger";
 import { ApiErrorCode } from "@/lib/api/error-codes";
+import { SEED_ONLY_FIELD_NAMES } from "@/lib/db/connection-fields";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import { consumeRateLimit } from "@/lib/api/rate-limit";
 import { emitAuditEvent } from "@/lib/audit";
@@ -163,6 +164,21 @@ export async function resolveConnection(
     if (connection.agentReadRoots !== undefined) {
       throw new SeedConnectionError(
         "agentReadRoots is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot declare what agent mode and MCP read. Remove agentReadRoots from this connection.",
+        400,
+      );
+    }
+    /*
+     * The other seed-only fields (`SEED_ONLY_FIELD_NAMES`), OPC UA's policy URI and its client certificate and private
+     * key paths, are deployment facts the operator's seed file names: the paths name files on Studio's own host. A
+     * connection a browser or a client supplies is refused by name when it sets one, `null` and an empty string
+     * included, the first in that list order. A `seed:` id below is resolved from the file, the caller's copy discarded.
+     */
+    const seedOnly = SEED_ONLY_FIELD_NAMES.find(
+      (field) => field !== "agentReadRoots" && connection[field] !== undefined,
+    );
+    if (seedOnly !== undefined) {
+      throw new SeedConnectionError(
+        `${seedOnly} is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot set it. Remove ${seedOnly} from this connection.`,
         400,
       );
     }

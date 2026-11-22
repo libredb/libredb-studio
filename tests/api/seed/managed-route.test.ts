@@ -115,6 +115,49 @@ describe("GET /api/connections/managed", () => {
     }
   });
 
+  // The policy URI and the client certificate and key paths are seed-only fields a connection a browser supplies cannot
+  // set, so the browser's copy never holds them and a Duplicate of an unmanaged seed never carries them inline.
+  it("never lists an OPC UA seed's policy URI, certificate path or key path, managed or unmanaged", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-seed-identity-"));
+    const file = path.join(dir, "seed-connections.json");
+    const plant = {
+      type: "opcua",
+      host: "opc.tcp://plc.ornek.net:4840/",
+      roles: ["*"],
+      securityPolicyUri: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
+      clientCertificatePath: path.join(dir, "client.pem"),
+      clientPrivateKeyPath: path.join(dir, "client.key"),
+    };
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          { ...plant, id: "plant-a", name: "Plant A" },
+          { ...plant, id: "plant-b", name: "Plant B", managed: false },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = file;
+    resetCache();
+    try {
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.connections.map((conn: { seedId: string }) => conn.seedId)).toEqual(["plant-a", "plant-b"]);
+      for (const conn of data.connections) {
+        for (const field of ["securityPolicyUri", "clientCertificatePath", "clientPrivateKeyPath"]) {
+          expect([conn.seedId, field, field in conn]).toEqual([conn.seedId, field, false]);
+        }
+      }
+    } finally {
+      process.env.SEED_CONFIG_PATH = origPath;
+      resetCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // Whom the operator offers a seed to is read on the server, where the file-access posture is decided from it; the
   // browser is sent only the roles its session holds, so neither copy of a seed carries the marker.
   it("never lists the server-side marker of whom a seed is offered to, which the server's record carries", async () => {

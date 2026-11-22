@@ -25,7 +25,7 @@ import { supportsQueryCancel } from "./query-cancel";
 import { storageLocation } from "@/lib/data-dir";
 import { egressDecision } from "./egress-decision";
 import { trustMaterial } from "./trust-material";
-import { admittedFileConnection, opcuaPkiRoot } from "./provider-files";
+import { admittedFileConnection, admittedHostPathConnection, opcuaPkiRoot } from "./provider-files";
 import { registerOwnerRemoval } from "./owner-removal";
 import {
   READ_ONLY_ENFORCED,
@@ -59,7 +59,9 @@ import * as path from "path";
  *   first call of a process with no boot hook reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and keeps it, and an invalid value is
  *   refused on every call. A SQLite, DuckDB or LibreDB connection is then admitted (`admittedFileConnection` in
  *   ./provider-files): the provider is handed, under `ADMITTED_FILE`, the file the connection names resolved against
- *   the working directory of this call, and opens that; `database` and `connectionString` stay as passed. Studio's
+ *   the working directory of this call, and opens that; `database` and `connectionString` stay as passed. The files
+ *   an OPC UA connection's client certificate and private key paths name are admitted the same way
+ *   (`admittedHostPathConnection`), under `ADMITTED_HOST_PATHS`; the fields stay as passed. Studio's
  *   storage location (`storageLocation` in @/lib/data-dir) is taken beside the egress decision, so the first call of
  *   a process with no boot hook takes it and keeps it, whatever engine that call builds.
  * @param options - Optional provider options (pooling, timeout, etc.)
@@ -102,6 +104,8 @@ import * as path from "path";
  * @throws DatabaseConfigError if a SQLite, DuckDB or LibreDB connection names one of Studio's own storage files, a
  *   path holding a NUL byte, a file name that is not text, a path the reserved check cannot read or, for SQLite, a
  *   connection string with no file after `file:`, before the provider is built (see admittedFileConnection),
+ *   if an OPC UA connection's client certificate or private key path names one of Studio's own storage files, holds a
+ *   NUL byte, is not text or cannot be checked, naming the field (see admittedHostPathConnection),
  *   or if an OPC UA connection is built while `LIBREDB_OPCUA_PKI_ROOT` is relative (see opcuaPkiRoot)
  *
  * @example
@@ -362,6 +366,9 @@ async function buildProvider(
   // connection string that names no file after `file:` or a name that is not text is refused here, by name, before any
   // provider exists (FND-2 slice 3, docs/SECURITY.md 3.45). Every other connection passes unchanged.
   connection = admittedFileConnection(connection);
+  // The files on Studio's host a connection's `HOST_PATH_FIELDS` name (OPC UA's client certificate and private key)
+  // are admitted the same way, each refused by name with its field, and handed to the provider as absolute paths.
+  connection = admittedHostPathConnection(connection);
   // What every provider that takes a context is handed: a copy of the caller's execution context, plain data as checked
   // above, the process's egress decision, which a guarded provider hands its guard, and, for an engine whose
   // `READS_TRUST_MATERIAL` row is true, the trust material core read from the file NODE_EXTRA_CA_CERTS names, which that

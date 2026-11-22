@@ -1132,6 +1132,29 @@ describe("useConnectionForm", () => {
     expect(resolveAgentRunConnectionId(copy, { loaded: true, seeds: [served] })).toEqual({ id: "seed:plant" });
   });
 
+  // The policy URI and the client certificate and key paths never reach the browser either, so they decide nothing
+  // here: an editable copy saved while the managed list still carried them is still the seed, and the run resolves the
+  // seed's own fields on the server.
+  test("an OPC UA seed's editable copy that still carries its policy URI and client identity paths stays eligible", () => {
+    const served = {
+      id: "seed:plant",
+      name: "Plant",
+      type: "opcua",
+      host: "opc.tcp://plc.ornek.net:4840/",
+      seedId: "plant",
+      managed: false,
+      createdAt: new Date().toISOString(),
+    } as const;
+    const copy = {
+      ...served,
+      securityPolicyUri: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
+      clientCertificatePath: "/run/secrets/client.pem",
+      clientPrivateKeyPath: "/run/secrets/client.key",
+      createdAt: new Date(served.createdAt),
+    } as DatabaseConnection;
+    expect(resolveAgentRunConnectionId(copy, { loaded: true, seeds: [served] })).toEqual({ id: "seed:plant" });
+  });
+
   /*
     A file-addressed engine takes a path and nothing else, and the editor shows it
     nothing else — but it used to write `host: "localhost"`, an empty user and

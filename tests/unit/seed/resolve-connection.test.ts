@@ -317,6 +317,72 @@ describe("resolve-connection", () => {
     expect(result.agentReadRoots).toBeUndefined();
   });
 
+  /**
+   * OPC UA's policy URI, client certificate and private key are deployment facts only the operator's seed file names
+   * (`SEED_ONLY_FIELD_NAMES` in src/lib/db/connection-fields.ts), so an inline connection that sets one is refused by
+   * name, whatever its engine, with its own sentence; `null` and an empty string are set too.
+   */
+  for (const field of ["securityPolicyUri", "clientCertificatePath", "clientPrivateKeyPath"] as const) {
+    const sentence = `${field} is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot set it. Remove ${field} from this connection.`;
+    for (const type of ["opcua", "postgres"] as const) {
+      it(`refuses an inline ${type} connection that sets ${field}, which only an operator's seed file sets`, async () => {
+        for (const value of ["/run/secrets/client.pem", "", null]) {
+          const conn = {
+            id: `user-${type}`,
+            name: "User Plant",
+            type,
+            host: "opc.tcp://plc.ornek.net:4840/",
+            [field]: value,
+            createdAt: new Date(),
+          } as unknown as DatabaseConnection;
+          // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next request.
+          const refused = await resolveConnection({ connection: conn }, { role: "admin", username: "test" }).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          expect(refused).toBeInstanceOf(SeedConnectionError);
+          expect(refused).toMatchObject({ statusCode: 400, message: sentence });
+        }
+      });
+    }
+  }
+
+  it("refuses a seed-only field before a missing type, in its own sentence", async () => {
+    const conn = {
+      id: "user-plant",
+      name: "User Plant",
+      host: "opc.tcp://plc.ornek.net:4840/",
+      clientPrivateKeyPath: "/run/secrets/client.key",
+      createdAt: new Date(),
+    } as unknown as DatabaseConnection;
+    await expect(resolveConnection({ connection: conn }, { role: "admin", username: "test" })).rejects.toMatchObject({
+      name: "SeedConnectionError",
+      statusCode: 400,
+      message:
+        "clientPrivateKeyPath is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot set it. Remove clientPrivateKeyPath from this connection.",
+    });
+  });
+
+  it("resolves a seed id claim from the file, discarding seed-only fields the caller's copy carries", async () => {
+    const claimed = {
+      id: "seed:everyone",
+      name: "Claimed",
+      type: "postgres",
+      host: "db.ornek.net",
+      securityPolicyUri: "http://opcfoundation.org/UA/SecurityPolicy#None",
+      clientCertificatePath: "/run/secrets/client.pem",
+      clientPrivateKeyPath: "/run/secrets/client.key",
+      createdAt: new Date(),
+    } as DatabaseConnection;
+    const result = await resolveConnection({ connection: claimed }, { role: "user", username: "test" });
+    expect(result.id).toBe("seed:everyone");
+    expect([result.securityPolicyUri, result.clientCertificatePath, result.clientPrivateKeyPath]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("resolves seed connection by connectionId", async () => {
     const result = await resolveConnection({ connectionId: "seed:everyone" }, { role: "user", username: "test" });
     expect(result.id).toBe("seed:everyone");

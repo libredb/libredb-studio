@@ -92,6 +92,7 @@ export const REGISTRIES: readonly Listed[] = [
     "CONNECTION_FORM_URI_MODE",
     "CONNECTION_STRING_ACCEPTED",
     "OPENS_LOCAL_FILE",
+    "HOST_PATH_FIELDS",
     "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
     "SSH_TUNNEL_REFUSAL",
   ].map((declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY })),

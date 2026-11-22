@@ -3,12 +3,14 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as dataDir from "@/lib/data-dir";
-import { forgetStorageLocation, storageLocation } from "@/lib/data-dir";
-import { OPENS_LOCAL_FILE } from "@/lib/db/compatibility";
+import { BOOTSTRAP_FILE_NAME, forgetStorageLocation, LINKS_FOLLOWED_LIMIT, storageLocation } from "@/lib/data-dir";
+import { HOST_PATH_FIELDS, OPENS_LOCAL_FILE } from "@/lib/db/compatibility";
+import { SEED_ONLY_FIELD_NAMES } from "@/lib/db/connection-fields";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import {
   admittedFileConnection,
+  admittedHostPathConnection,
   FILE_NAME_NOT_TEXT,
   NO_FILE_AFTER_SCHEME,
   NUL_IN_DATABASE_PATH,
@@ -20,7 +22,15 @@ import {
 } from "@/lib/db/provider-files";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
-import { ADMITTED_FILE, type DatabaseType, TUNNEL_FAR_END, type WithAdmittedFile } from "@/lib/types";
+import {
+  ADMITTED_FILE,
+  ADMITTED_HOST_PATHS,
+  type DatabaseType,
+  type HostPathField,
+  TUNNEL_FAR_END,
+  type WithAdmittedFile,
+  type WithAdmittedHostPaths,
+} from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 
 /**
@@ -277,6 +287,51 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
     );
   }
 
+  /**
+   * A path whose resolution follows more than `LINKS_FOLLOWED_LIMIT` links is one the check cannot read. The real-path
+   * read of every path under the chain's directory answers "no such file" here, so the check follows each link itself
+   * and the kernel's own link limit never decides.
+   */
+  // Windows makes a symbolic link only with a privilege the runner may lack (the rows above).
+  test.skipIf(onWindows)(
+    "a path whose resolution follows more than LINKS_FOLLOWED_LIMIT links is refused by name with ELOOP when the provider is built, for every engine OPENS_LOCAL_FILE marks",
+    async () => {
+      const chain = path.join(scratch, "link-chain");
+      fs.mkdirSync(chain);
+      for (let i = 1; i <= LINKS_FOLLOWED_LIMIT + 1; i++)
+        fs.symlinkSync(path.join(chain, `n${i + 1}`), path.join(chain, `n${i}`));
+      const database = path.join(chain, "n1");
+      const realpath = fs.realpathSync;
+      const missing = spyOn(fs, "realpathSync").mockImplementation(((file: fs.PathLike, options?: unknown) => {
+        if (String(file).startsWith(`${chain}${path.sep}`)) {
+          throw Object.assign(new Error(`ENOENT: no such file or directory, lstat '${String(file)}'`), {
+            code: "ENOENT",
+          });
+        }
+        return realpath(file, options as fs.EncodingOption);
+      }) as typeof fs.realpathSync);
+      try {
+        const marked = (Object.keys(OPENS_LOCAL_FILE) as DatabaseType[]).filter((type) => OPENS_LOCAL_FILE[type]);
+        for (const type of marked) {
+          // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
+          const refused = await createDatabaseProvider(connection(type, { database })).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          expect(refused).toBeInstanceOf(DatabaseConfigError);
+          const error = refused as DatabaseConfigError;
+          expect([type, error.provider]).toEqual([type, type]);
+          expect(error.message).toBe(
+            `${PATH_NOT_CHECKED}: ELOOP: more than ${LINKS_FOLLOWED_LIMIT} symbolic links followed while resolving '${database}'`,
+          );
+          expect((error.cause as NodeJS.ErrnoException).code).toBe("ELOOP");
+        }
+      } finally {
+        missing.mockRestore();
+      }
+    },
+  );
+
   // POSIX reports a path through a regular file as ENOTDIR; Windows reports it as absent (see the rows above).
   test.skipIf(onWindows)(
     "a filesystem error from reading Studio's own storage files is raised as it is, not as the connection's file (POSIX)",
@@ -341,6 +396,164 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
     }
     const marked = (Object.keys(OPENS_LOCAL_FILE) as DatabaseType[]).filter((type) => OPENS_LOCAL_FILE[type]);
     expect(holders.sort()).toEqual(marked.sort());
+  });
+});
+
+/**
+ * OPC UA's `clientCertificatePath` and `clientPrivateKeyPath` (`HOST_PATH_FIELDS`) name files on Studio's own host that
+ * the provider reads, so core admits them as it admits a local-file connection's database: resolved against the working
+ * directory when the provider is built, refused by name when one names Studio's own storage files, and handed to the
+ * provider under `ADMITTED_HOST_PATHS` (`admittedHostPathConnection` in `src/lib/db/provider-files.ts`).
+ */
+describe("core admits OPC UA's certificate and key paths like a database file", () => {
+  const FIELDS = ["clientCertificatePath", "clientPrivateKeyPath"] as const satisfies readonly HostPathField[];
+  const hostPaths = (value: DatabaseConnection) => (value as WithAdmittedHostPaths)[ADMITTED_HOST_PATHS];
+  const other = (field: HostPathField): HostPathField =>
+    field === "clientCertificatePath" ? "clientPrivateKeyPath" : "clientCertificatePath";
+  const onWindows = process.platform === "win32";
+
+  /** What building `value` with createDatabaseProvider threw, settled into a value before it is asserted on. */
+  async function buildRefusal(value: DatabaseConnection): Promise<unknown> {
+    return createDatabaseProvider(value).then(
+      () => null,
+      (error: unknown) => error,
+    );
+  }
+
+  test("either path naming one of Studio's own storage files is refused by name, with the field and the connection's type, before any provider is built", async () => {
+    const { storageFile, dataDirectory } = storageLocation();
+    const bootstrap = path.join(dataDirectory, BOOTSTRAP_FILE_NAME);
+    const ownFiles = [storageFile, `${storageFile}-wal`, bootstrap, `${bootstrap}.bak`];
+    for (const field of FIELDS) {
+      for (const own of ownFiles) {
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
+        const refused = await buildRefusal(
+          connection("opcua", { [field]: own, [other(field)]: path.join(scratch, "scratch.pem") }),
+        );
+        expect([field, own, refused instanceof DatabaseConfigError]).toEqual([field, own, true]);
+        expect((refused as DatabaseConfigError).message).toBe(`${field}: ${RESERVED_STORAGE_PATH}`);
+        expect((refused as DatabaseConfigError).provider).toBe("opcua");
+      }
+    }
+  });
+
+  test("a relative path is resolved against the working directory when the provider is built, and the provider is handed the absolute path", async () => {
+    process.chdir(scratch);
+    const record = connection("opcua", { clientCertificatePath: "pki/c.pem", clientPrivateKeyPath: "pki/../k.pem" });
+    const provider = await createDatabaseProvider(record);
+    expect(hostPaths(provider.config)).toEqual({
+      clientCertificatePath: path.join(scratch, "pki", "c.pem"),
+      clientPrivateKeyPath: path.join(scratch, "k.pem"),
+    });
+    expect(Object.isFrozen(hostPaths(provider.config))).toBe(true);
+    expect(provider.config.clientCertificatePath).toBe("pki/c.pem");
+    expect(provider.config.clientPrivateKeyPath).toBe("pki/../k.pem");
+    expect(hostPaths(record)).toBeUndefined();
+  });
+
+  test("an absent, null or empty path is not admitted, and the provider's pair rule still answers one without the other", async () => {
+    for (const empty of [undefined, null, ""]) {
+      const neither = admittedHostPathConnection(
+        connection("opcua", { clientCertificatePath: empty, clientPrivateKeyPath: empty } as never),
+      );
+      expect([empty, hostPaths(neither)]).toEqual([empty, {}]);
+      const one = admittedHostPathConnection(
+        connection("opcua", {
+          clientCertificatePath: path.join(scratch, "c.pem"),
+          clientPrivateKeyPath: empty,
+        } as never),
+      );
+      expect([empty, hostPaths(one)]).toEqual([empty, { clientCertificatePath: path.join(scratch, "c.pem") }]);
+    }
+    const provider = await createDatabaseProvider(
+      connection("opcua", { host: "opc.tcp://127.0.0.1:1/", clientCertificatePath: path.join(scratch, "c.pem") }),
+    );
+    await expect(provider.connect()).rejects.toThrow(/supplied together or not at all/);
+  });
+
+  test("a path that is not text, or holds a NUL byte, is refused by name", async () => {
+    for (const field of FIELDS) {
+      for (const [value, message] of [
+        [42, `Invalid ${field}: the file it names must be text`],
+        [{ path: "c.pem" }, `Invalid ${field}: the file it names must be text`],
+        [`${path.join(scratch, "c.pem")}\0.txt`, `Invalid ${field}: NUL bytes are not allowed`],
+      ] as const) {
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
+        const refused = await buildRefusal(connection("opcua", { [field]: value } as never));
+        expect([field, refused instanceof DatabaseConfigError]).toEqual([field, true]);
+        expect((refused as DatabaseConfigError).message).toBe(message);
+        expect((refused as DatabaseConfigError).provider).toBe("opcua");
+      }
+    }
+  });
+
+  // POSIX reports a path through a regular file as ENOTDIR; Windows reports it as absent (the rows above).
+  test.skipIf(onWindows)(
+    "a path the check cannot read is refused by name with the filesystem's reason (POSIX)",
+    async () => {
+      const plain = path.join(scratch, "plain-pem");
+      fs.writeFileSync(plain, "");
+      for (const field of FIELDS) {
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
+        const refused = await buildRefusal(connection("opcua", { [field]: path.join(plain, "c.pem") }));
+        expect([field, refused instanceof DatabaseConfigError]).toEqual([field, true]);
+        const error = refused as DatabaseConfigError;
+        expect(error.provider).toBe("opcua");
+        expect(error.message.startsWith(`${field}: ${PATH_NOT_CHECKED}: ENOTDIR: `)).toBe(true);
+        expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOTDIR");
+      }
+    },
+  );
+
+  test("a caller-set ADMITTED_HOST_PATHS is replaced by core's, and an engine with no host path field comes back as the same object", () => {
+    const farEnd = { host: "plc.internal", port: 4840 };
+    const record = Object.freeze({
+      ...connection("opcua", { clientCertificatePath: path.join(scratch, "c.pem") }),
+      [ADMITTED_HOST_PATHS]: { clientCertificatePath: "/caller/chose.pem", clientPrivateKeyPath: "/caller/k.pem" },
+      [TUNNEL_FAR_END]: farEnd,
+    });
+    const copy = admittedHostPathConnection(record);
+    expect(hostPaths(copy)).toEqual({ clientCertificatePath: path.join(scratch, "c.pem") });
+    expect((copy as { [TUNNEL_FAR_END]?: unknown })[TUNNEL_FAR_END]).toBe(farEnd);
+    expect(hostPaths(record)).toEqual({
+      clientCertificatePath: "/caller/chose.pem",
+      clientPrivateKeyPath: "/caller/k.pem",
+    });
+
+    const postgres = connection("postgres", { clientCertificatePath: "/etc/c.pem" });
+    expect(admittedHostPathConnection(postgres)).toBe(postgres);
+    const marked = { ...postgres, [ADMITTED_HOST_PATHS]: { clientCertificatePath: "/caller/chose.pem" } };
+    const unmarked = admittedHostPathConnection(marked);
+    expect(unmarked).not.toBe(marked);
+    expect(ADMITTED_HOST_PATHS in unmarked).toBe(false);
+    expect(hostPaths(marked)).toEqual({ clientCertificatePath: "/caller/chose.pem" });
+  });
+
+  test("every field HOST_PATH_FIELDS names is a seed-only field, so only an operator's seed file or an embedder's own code names one", () => {
+    const named = new Set(Object.values(HOST_PATH_FIELDS).flat());
+    expect(named.size).toBeGreaterThan(0);
+    for (const field of named)
+      expect([field, (SEED_ONLY_FIELD_NAMES as readonly string[]).includes(field)]).toEqual([field, true]);
+  });
+
+  test("every engine HOST_PATH_FIELDS names, built from its census connection with both paths set, holds absolute admitted paths, and no other engine holds any", async () => {
+    const holders: string[] = [];
+    for (const type of Object.keys(CENSUS_CONNECTION) as DatabaseType[]) {
+      // oxlint-disable-next-line no-await-in-loop -- one build at a time, each read before the next.
+      const provider = await createDatabaseProvider({
+        ...CENSUS_CONNECTION[type],
+        clientCertificatePath: "census-c.pem",
+        clientPrivateKeyPath: "census-k.pem",
+      });
+      const admittedPaths = hostPaths(provider.config);
+      if (admittedPaths === undefined) continue;
+      holders.push(type);
+      expect(Object.keys(admittedPaths).sort()).toEqual([...HOST_PATH_FIELDS[type]].sort());
+      for (const file of Object.values(admittedPaths)) expect(path.isAbsolute(file)).toBe(true);
+    }
+    const named = (Object.keys(HOST_PATH_FIELDS) as DatabaseType[]).filter((type) => HOST_PATH_FIELDS[type].length > 0);
+    expect(holders.sort()).toEqual(named.sort());
+    expect(named).toEqual(["opcua"]);
   });
 });
 

@@ -98,9 +98,9 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   // The checkbox owns it, so unticking it has to CLEAR it (#786): `preserved` would keep a Db2
   // connection sending its password without TLS after the user took the consent back.
   allowInsecureAuth: "edited",
-  // OPC UA's three deployment fields have no box in this dialog - they come from a seed file - so
-  // editing a seeded connection must hand them back unchanged rather than drop them. Preserved,
-  // which is what every field the form does not own is.
+  // OPC UA's three deployment fields have no box in this dialog: only the operator's seed file sets them, the managed
+  // listing never sends them to the browser, and an inline connection that sets one is refused. Preserved, which is
+  // what every field the form does not own is.
   securityPolicyUri: "preserved",
   clientCertificatePath: "preserved",
   clientPrivateKeyPath: "preserved",

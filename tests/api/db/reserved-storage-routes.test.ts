@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { forgetStorageLocation } from "@/lib/data-dir";
+import { resetCache as resetSeedCache } from "@/lib/seed";
 import { NO_FILE_AFTER_SCHEME, PATH_NOT_CHECKED, RESERVED_STORAGE_PATH } from "@/lib/db/provider-files";
 
 /**
@@ -39,12 +40,39 @@ forgetStorageLocation();
 
 const reservedSqlite = { id: "inline-reserved", name: "Reserved", type: "sqlite", database: storageFile };
 
+// An operator's seed file whose OPC UA connection names the storage database as its client private key: the one place
+// such a path can come from, since a connection a browser or a client supplies inline cannot set it.
+const seedConfigFile = join(workDir, "seed-connections.json");
+writeFileSync(
+  seedConfigFile,
+  JSON.stringify({
+    version: "1",
+    connections: [
+      {
+        id: "opcua-reserved-key",
+        name: "OPC UA",
+        type: "opcua",
+        host: "opc.tcp://127.0.0.1:1/",
+        clientCertificatePath: join(workDir, "client.pem"),
+        clientPrivateKeyPath: storageFile,
+        roles: ["*"],
+      },
+    ],
+  }),
+);
+const previousSeedConfigPath = process.env.SEED_CONFIG_PATH;
+process.env.SEED_CONFIG_PATH = seedConfigFile;
+resetSeedCache();
+
 beforeEach(() => {
   role = "admin";
   clearRateLimitState();
 });
 
 afterAll(() => {
+  if (previousSeedConfigPath === undefined) delete process.env.SEED_CONFIG_PATH;
+  else process.env.SEED_CONFIG_PATH = previousSeedConfigPath;
+  resetSeedCache();
   if (previousStoragePath === undefined) delete process.env.STORAGE_SQLITE_PATH;
   else process.env.STORAGE_SQLITE_PATH = previousStoragePath;
   forgetStorageLocation();
@@ -65,6 +93,23 @@ describe("the routes answer a connection to Studio's own storage database with t
       outcome: "unknown",
     });
     expect(existsSync(storageFile)).toBe(false);
+  });
+
+  test("Test Connection answers an OPC UA seed whose client private key names the storage database with the reserved sentence after the field", async () => {
+    const response = await testConnectionPost(
+      createMockRequest("/api/db/test-connection", {
+        method: "POST",
+        body: { connectionId: "seed:opcua-reserved-key" },
+      }) as never,
+    );
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
+      error: `clientPrivateKeyPath: ${RESERVED_STORAGE_PATH}`,
+      code: "CONFIG_ERROR",
+      statusCode: 400,
+      kind: "config",
+      outcome: "unknown",
+    });
   });
 
   test("provider-meta answers the same connection with the reserved sentence", async () => {
