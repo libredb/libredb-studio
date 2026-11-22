@@ -83,6 +83,22 @@ describe("ConnectionStore", () => {
       ]);
     });
 
+    it("names each refused entry that has an id in its warning, since the reason may not", () => {
+      const reason = 'No provider for the connection type "acmefoo" is installed in this LibreDB Studio.';
+      const { store, warnings } = setup([
+        { ...PG, type: "acmefoo" },
+        { ...MONGO, type: "acmefoo" },
+      ]);
+      assert.deepEqual(store.list(), [
+        { kind: "invalid", reason, id: PG.id, name: PG.name },
+        { kind: "invalid", reason, id: MONGO.id, name: MONGO.name },
+      ]);
+      assert.deepEqual(warnings, [
+        `Ignoring the libredb.connections entry ${PG.id}: ${reason}`,
+        `Ignoring the libredb.connections entry ${MONGO.id}: ${reason}`,
+      ]);
+    });
+
     it("lists one invalid item for a setting that is not an array", () => {
       const { store, warnings } = setup({ broken: true });
       const reason =
