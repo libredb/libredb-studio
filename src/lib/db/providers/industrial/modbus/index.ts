@@ -51,7 +51,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -244,7 +244,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     agentSeams: Partial<ModbusAgentReadSeams> = {},
   ) {
     super(config, options);
@@ -556,7 +556,8 @@ export class ModbusProvider extends BaseDatabaseProvider {
    */
   /** The dial target, read from the connection by `connection-options.ts`. */
   private endpoint(): Endpoint {
-    return modbusEndpoint(this.config);
+    const endpoint = modbusEndpoint(this.config);
+    return this.execution.egress === undefined ? endpoint : { ...endpoint, egress: this.execution.egress };
   }
 
   /**

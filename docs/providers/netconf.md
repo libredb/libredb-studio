@@ -262,6 +262,12 @@ reason is measured rather than assumed: there is no documented vendor default ac
 about, no JWT, and the "no secret" case is unreachable because a missing, empty or wrong
 credential all end in the same refusal.
 
+### 4.4 Where the dial may connect
+
+The dial applies the shared egress rule, `socketEgress` in [`egress-policy.ts`](../../src/lib/db/http/egress-policy.ts), to the socket it hands `ssh2`.
+A link-local address or AWS's IPv6 instance metadata address is never reached, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says.
+With the flag on, a loopback, private or other non-public address is refused as well, before any byte reaches the device: an IP literal before any socket opens, with the shared sentence, and a name at the lookup the socket dials through.
+
 ### Connection string
 
 `netconf` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/netconf/connection-string.ts)).
@@ -540,7 +546,7 @@ The refusal reason it prints, verbatim:
 ## 14. Agent mode
 
 Agent mode reads a NETCONF device through `queryReadOnly`, on a handle opened under the agent read-only profile only; on an editor handle it is refused before anything is sent.
-The provider takes the execution context as its third constructor argument, the injected device layer fourth and the agent's door, a session per read, fifth.
+The provider takes the execution context as its third constructor argument, the injected device layer fourth and the agent's door, a session per read, fifth, and each of the two openers is handed the connection and the egress decision the provider was built with.
 
 ### 14.1 The boundary
 

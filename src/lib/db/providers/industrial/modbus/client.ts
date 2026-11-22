@@ -6,7 +6,7 @@
  * the shape that matters, read from `src/lib/db/http/egress-policy.ts` rather than inferred:
  *
  *   `assertPublicLiteralHost` returns early when the egress decision it is handed allows
- *   private hosts; `socketEgress` hands it core's decision.
+ *   private hosts; `socketEgress` hands it the decision the provider was built with.
  *   `assertPublicDnsAnswers` checks NO decision and always enforces.
  *   `guardedNodeOptions` returns `{}` when the decision it is handed allows private hosts, so
  *   the lookup is never installed and `assertPublicDnsAnswers` is never reached.
@@ -28,7 +28,8 @@
 import { connect as netConnect, type LookupFunction, type Socket } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
-import { socketEgress } from "@/lib/db/http/egress-policy";
+import { requireEgressDecision, socketEgress } from "@/lib/db/http/egress-policy";
+import type { EgressDecision } from "@/lib/db/types";
 import { type NodeTlsMaterial, nodeTlsConnectOptions } from "@/lib/db/http/node-transport";
 import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "./constants";
 import { expectationOf } from "./pdu";
@@ -70,6 +71,8 @@ export interface Endpoint {
   readonly tls?: NodeTlsMaterial;
   /** See the module comment: `true` is the safer end and refuses a self-assigned device. */
   readonly refusesLinkLocal?: boolean;
+  /** The egress decision the provider was built with; `dialModbus` refuses without one, before any socket. */
+  readonly egress?: EgressDecision;
 }
 
 export class ModbusDialError extends Error {}
@@ -159,11 +162,14 @@ export const dialModbus: Dialer = (endpoint, options = {}) =>
         tls ? tlsConnect(target as never) : netConnect(target as never));
     let lookup: LookupFunction | undefined;
     try {
-      // The shared rule decides. When the flag is off this is `undefined` and no lookup is
-      // installed, which is what lets a name-addressed local device be read at all.
-      lookup = socketEgress(endpoint.host, {
-        refusesLinkLocal: endpoint.refusesLinkLocal ?? true,
-      });
+      // The shared rule decides, by the decision the provider was built with, and a missing one is
+      // refused here by name. When the decision allows private hosts this is `undefined` and no
+      // lookup is installed, which is what lets a name-addressed local device be read at all.
+      lookup = socketEgress(
+        endpoint.host,
+        { refusesLinkLocal: endpoint.refusesLinkLocal ?? true },
+        requireEgressDecision(endpoint.egress),
+      );
     } catch (error) {
       // The guard's own DatabaseConfigError, rethrown unchanged so the user reads its words.
       reject(error);

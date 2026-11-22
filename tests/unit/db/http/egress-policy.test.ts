@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpOrigin } from "@/lib/db/http/endpoint";
+import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { forgetEgressDecision } from "@/lib/db/egress-decision";
 import {
   assertPublicDnsAnswers,
@@ -12,6 +13,7 @@ import {
   guardedNodeOptions,
   httpTransportFetch,
   LOOPBACK_NETWORKS,
+  linkLocalRefusingLookup,
   publicAddressLookup,
   requireEgressDecision,
   socketEgress,
@@ -158,16 +160,21 @@ describe("LOOPBACK_NETWORKS", () => {
 
 describe("the decision the interim readers read (FND-2 slice 2a)", () => {
   test("the interim readers keep the decision the process took: a value written after the first guarded call moves nothing until the decision is forgotten", () => {
+    // Built with the flag unset: httpOrigin runs the literal check too, and the transport's own check is wanted.
+    setEgressFlag(undefined);
+    const origin = httpOrigin("http", "127.0.0.1", 8080);
+    const build = () => createNodeTransport({ origin, tls: null, maxSockets: 1, headers: {} });
     setEgressFlag("true");
     expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
+    expect(build).toThrow(BLOCKED_HOST);
     // A direct write, not the helper, on purpose: the process decided at its first read, so the write moves nothing.
     process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "false";
     expect(() => httpOrigin("http", "127.0.0.1", 8080)).toThrow(BLOCKED_HOST);
-    // The other interim reader, the socket dials' rule, until slice 2b-2 hands it the decision too.
-    expect(() => socketEgress("127.0.0.1", { refusesLinkLocal: false })).toThrow(BLOCKED_HOST);
+    // The other interim reader, the node transport, until slice 2b-4 hands it the decision too.
+    expect(build).toThrow(BLOCKED_HOST);
     forgetEgressDecision();
     expect(httpOrigin("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
-    expect(socketEgress("127.0.0.1", { refusesLinkLocal: false })).toBeUndefined();
+    build().close();
   });
 });
 
@@ -198,6 +205,18 @@ describe("the guard decides by the decision it is handed (FND-2 slice 2b)", () =
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }
+  });
+
+  test("socketEgress refuses 127.0.0.1 with a blocking decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", () => {
+    setEgressFlag(undefined);
+    expect(() => socketEgress("127.0.0.1", { refusesLinkLocal: false }, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+    expect(() => socketEgress("127.0.0.1", { refusesLinkLocal: true }, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+  });
+
+  test("socketEgress lets 127.0.0.1 through with an allowing decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is true", () => {
+    setEgressFlag("true");
+    expect(socketEgress("127.0.0.1", { refusesLinkLocal: false }, ALLOWS_PRIVATE_HOSTS)).toBeUndefined();
+    expect(socketEgress("127.0.0.1", { refusesLinkLocal: true }, ALLOWS_PRIVATE_HOSTS)).toBe(linkLocalRefusingLookup);
   });
 
   test("requireEgressDecision answers the decision it is given", () => {

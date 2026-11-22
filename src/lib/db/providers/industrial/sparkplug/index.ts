@@ -51,7 +51,8 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
+  EgressDecision,
   ProviderLabels,
   ProviderOptions,
   ReadOnlyStatementBudget,
@@ -145,6 +146,8 @@ export interface SparkplugReadRequest {
   readonly windowSeconds: number;
   /** Connect and leave without subscribing, so the read holds nothing the broker carries; `filters` is not read. */
   readonly handshakeOnly?: boolean;
+  /** The egress decision the provider was built with; the dial refuses without one. */
+  readonly egress?: EgressDecision;
 }
 
 /**
@@ -212,6 +215,7 @@ export async function dialAndRead(
     maxBytes: MAX_BYTES_PER_READ,
     ...(openTransport === undefined ? {} : { openTransport }),
     ...(request.handshakeOnly === true ? { handshakeOnly: true } : {}),
+    ...(request.egress === undefined ? {} : { egress: request.egress }),
   });
   const folded = foldMessages(outcome.messages);
   return {
@@ -246,7 +250,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     private readonly read?: SparkplugReader,
   ) {
     super(config, options);
@@ -362,6 +366,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
       filters: readFilters(groupId === "" ? undefined : groupId),
       windowSeconds,
       tls,
+      ...(this.execution.egress === undefined ? {} : { egress: this.execution.egress }),
     };
   }
 

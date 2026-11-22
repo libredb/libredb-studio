@@ -268,6 +268,7 @@ The requirements are in `docs/SECURITY.md` under MB-S1 to MB-S13. The short form
 
 - Read-only by construction, re-checked at the socket (MB-S1).
 - The shared egress rule applies, and a link-local address is refused by default (MB-S10).
+- With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused too, before any byte reaches the device: an IP literal before any socket opens and a name at the lookup the socket dials through, both with the shared sentence.
 - The identification walk is bounded (MB-S6).
 - A value is data, never markup (MB-S13).
 - `mbaps` checks the chain and the host name, and not revocation, and says so.

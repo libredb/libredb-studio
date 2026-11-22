@@ -10,7 +10,7 @@
  * double and complete tomorrow with the real reader, and nothing here changes when it lands.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 import { dialNetconf, NETCONF_PORT, type SocketPort, type SshPort } from "./dial";
 import { nodeSocketPort, nodeSshPort } from "./node-ports";
 import { asHouseError, type DialTarget } from "./failures";
@@ -44,6 +44,8 @@ export interface OpenPorts {
   readonly ssh?: SshPort;
   readonly socket?: SocketPort;
   readonly limits?: SessionLimits;
+  /** The egress decision the provider was built with, handed to the dial. */
+  readonly egress?: EgressDecision;
 }
 
 /**
@@ -187,6 +189,7 @@ async function dialSession(
       ...(passphrase === undefined ? {} : { passphrase }),
       ...(password === undefined ? {} : { password }),
       readyMs: limits.helloMs,
+      ...(ports.egress === undefined ? {} : { egress: ports.egress }),
     },
     ports.ssh ?? nodeSshPort,
     ports.socket ?? nodeSocketPort,

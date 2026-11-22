@@ -85,6 +85,7 @@ import { isIP, type LookupFunction, type Socket } from "node:net";
 import { type ConnectionOptions, checkServerIdentity, type PeerCertificate } from "node:tls";
 import { urlToHttpOptions } from "node:url";
 import { ConnectionError, DatabaseConfigError, waitedSeconds } from "@/lib/db/errors";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { socketEgress } from "@/lib/db/http/egress-policy";
 import { endpointUrl, type HttpOrigin, originHost, rejectRedirect } from "@/lib/db/http/endpoint";
 import type { SSLConfig, SSLMode } from "@/lib/types";
@@ -1301,7 +1302,9 @@ function connectionOf<A>(
   // guard on, its check and then the link-local check, so the guard's sentence wins where both refuse; with it off,
   // linkLocalRefusingLookup (byte transport design 3.9). Without refusesLinkLocal the guard's lookup is kept alone.
   // socketEgress holds that rule, so a socket dial outside this transport applies the same one.
-  const lookup = socketEgress(origin.host, { refusesLinkLocal });
+  // An interim reader: it reads core's decision on the calling provider's behalf until FND-2 slice 2b-4 hands it the
+  // decision as an argument (tests/unit/lib/db/provider-environment-scan.test.ts lists it until then).
+  const lookup = socketEgress(origin.host, { refusesLinkLocal }, egressDecision());
   const addressed = address(origin);
   const connectionHeaders = headersOf(options.headers);
   const requestHeaderNames = requestHeaderNamesOf(options.requestHeaderNames, connectionHeaders);

@@ -11,7 +11,7 @@ expected to enter it next and take the shape set here.
 
 | File | What it is | The measurement behind it |
 |---|---|---|
-| `dial.ts` | the SSH dial, through the shared egress rule | the flag is read inside `socketEgress`, so a name resolving to localhost is accepted with the flag off and refused with it on, and `169.254.169.254` is refused either way by the link-local rule |
+| `dial.ts` | the SSH dial, through the shared egress rule | `socketEgress` decides by the egress decision the provider was built with, so a name resolving to localhost is accepted with `DB_HTTP_BLOCK_PRIVATE_HOSTS` off and refused with it on, and `169.254.169.254` is refused either way by the link-local rule |
 | `auth.ts` | login failures, and which the user is told apart | the two passphrase failures are raised inside `connect()` before any packet and with different text; a wrong password, an unknown user and a password to a key-only account all end in one sentence |
 | `hostkey.ts` | the pin, its parser and its mismatch message | a wrong pin stops the handshake before any user-authentication packet, directly and through an SSH tunnel, where the key checked is the device's and not the bastion's |
 | `framing.ts` | RFC 6242 framing, both forms, incremental and bounded | Netopeer2 accepts a chunk size with a leading zero, which RFC 6242 4.2 forbids, so the client refuses it; the buffer holds BYTES and decodes once, because holding text and counting bytes off it corrupted a split character and shifted the buffer off the frame |

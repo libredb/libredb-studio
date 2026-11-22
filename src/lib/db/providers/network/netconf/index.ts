@@ -41,7 +41,8 @@ import type {
   ObjectDetailBatch,
   PerformanceMetrics,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
+  EgressDecision,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -153,19 +154,28 @@ const WRITE_WORDS =
  * `openNetconfReader` already defaults the SSH and socket ports, so the only port named here is
  * the XML reader, which is the one decision this provider makes about its own parsing (K-10).
  */
-async function openWithNodePorts(config: DatabaseConnection): Promise<DeviceReader> {
+async function openWithNodePorts(
+  config: DatabaseConnection,
+  egress: EgressDecision | undefined,
+): Promise<DeviceReader> {
   const [{ openNetconfReader }, { netconfXmlPort }] = await Promise.all([import("./open"), import("./xml")]);
-  return openNetconfReader(config, { xml: netconfXmlPort });
+  return openNetconfReader(config, { xml: netconfXmlPort, ...(egress === undefined ? {} : { egress }) });
 }
 
 /** The agent's door, over the same ports and dynamic imports: one session, nothing read on it yet. */
-async function openAgentWithNodePorts(config: DatabaseConnection): Promise<NetconfAgentClient> {
+async function openAgentWithNodePorts(
+  config: DatabaseConnection,
+  egress: EgressDecision | undefined,
+): Promise<NetconfAgentClient> {
   const [{ openNetconfSession }, { netconfXmlPort }, { createNetconfAgentClient }] = await Promise.all([
     import("./open"),
     import("./xml"),
     import("./agent-client"),
   ]);
-  return createNetconfAgentClient(await openNetconfSession(config, { xml: netconfXmlPort }), netconfXmlPort);
+  return createNetconfAgentClient(
+    await openNetconfSession(config, { xml: netconfXmlPort, ...(egress === undefined ? {} : { egress }) }),
+    netconfXmlPort,
+  );
 }
 
 /** Studio's own refusals on the agent's statement path, made before anything is sent. */
@@ -176,8 +186,14 @@ export const NETCONF_PROVIDER_SENTENCES = Object.freeze({
 
 export class NetconfProvider extends BaseDatabaseProvider {
   private reader: DeviceReader | null = null;
-  private readonly openReader: (config: DatabaseConnection) => Promise<DeviceReader>;
-  private readonly openAgent: (config: DatabaseConnection) => Promise<NetconfAgentClient>;
+  private readonly openReader: (
+    config: DatabaseConnection,
+    egress: EgressDecision | undefined,
+  ) => Promise<DeviceReader>;
+  private readonly openAgent: (
+    config: DatabaseConnection,
+    egress: EgressDecision | undefined,
+  ) => Promise<NetconfAgentClient>;
 
   /**
    * The base class constructor is protected, so every provider declares its own.
@@ -185,13 +201,14 @@ export class NetconfProvider extends BaseDatabaseProvider {
    * The device layer is injected rather than built here, which is what lets every rule in this
    * class be tested without a network. The execution context comes third, as on every provider that
    * reads it, so the injected device layer is fourth, and the agent's door, a session per read, fifth.
+   * Each opener is handed the connection and the egress decision the provider was built with.
    */
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
-    openReader?: (config: DatabaseConnection) => Promise<DeviceReader>,
-    openAgent?: (config: DatabaseConnection) => Promise<NetconfAgentClient>,
+    private readonly execution: ProviderBuildContext = {},
+    openReader?: (config: DatabaseConnection, egress: EgressDecision | undefined) => Promise<DeviceReader>,
+    openAgent?: (config: DatabaseConnection, egress: EgressDecision | undefined) => Promise<NetconfAgentClient>,
   ) {
     super(config, options);
     assertDeclarationIsSound();
@@ -255,7 +272,7 @@ export class NetconfProvider extends BaseDatabaseProvider {
   }
 
   public async connect(): Promise<void> {
-    this.reader = await this.openReader(this.config);
+    this.reader = await this.openReader(this.config, this.execution.egress);
   }
 
   public async disconnect(): Promise<void> {
@@ -302,7 +319,11 @@ export class NetconfProvider extends BaseDatabaseProvider {
     const reading = readNetconfAgentStatement(statement);
     if (!reading.ok) throw new RefusedBeforeSendError(reading.message, "netconf", statement);
     const started = Date.now();
-    const answer = await runNetconfAgentReadWithin(() => this.openAgent(this.config), reading.plan, budget);
+    const answer = await runNetconfAgentReadWithin(
+      () => this.openAgent(this.config, this.execution.egress),
+      reading.plan,
+      budget,
+    );
     return netconfAgentResult(answer, budget, Date.now() - started);
   }
 

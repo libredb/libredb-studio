@@ -11,7 +11,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { EGRESS_REFUSAL_SENTENCES } from "@/lib/db/http/egress-policy";
+import { EGRESS_DECISION_MISSING, EGRESS_REFUSAL_SENTENCES } from "@/lib/db/http/egress-policy";
 import { TransportError } from "@/lib/db/http/node-transport";
 import * as E from "@/lib/db/providers/stream/rabbitmq/errors";
 
@@ -425,6 +425,11 @@ describe("the boundary", () => {
       const egress = new DatabaseConfigError(sentence);
       expect(E.rabbitmqBoundary(egress, at)).toBe(egress);
     }
+  });
+
+  test("the missing egress decision passes through unchanged, so a provider built outside the factory is refused by name", () => {
+    const missing = new DatabaseConfigError(EGRESS_DECISION_MISSING);
+    expect(E.rabbitmqBoundary(missing, at)).toBe(missing);
   });
 
   test("anything else becomes the unexpected-answer sentence, and the original is not its message or cause", () => {

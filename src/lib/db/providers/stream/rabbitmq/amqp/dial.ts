@@ -1,7 +1,9 @@
 /**
  * The one socket the read opens, and the only module of the provider that imports node:net or node:tls.
  *
- * The egress rule is the shared one (`socketEgress`): an IP literal is checked here before dialling, because a literal
+ * The egress rule is the shared one (`socketEgress`), decided by the decision the provider was built with, which the
+ * provider adds to the endpoint; without one the dial is refused by name before any socket. An IP literal is checked
+ * here before dialling, because a literal
  * never calls the lookup hook, and a DNS name dials through the checked lookup, so the address dialled is the address
  * checked. Its refusal is the shared guard's DatabaseConfigError, rethrown unchanged and classified before the connect
  * and TLS classes, so a refused TLS dial yields the egress sentence.
@@ -19,7 +21,7 @@
 import { connect as netConnect, type Socket } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { socketEgress } from "@/lib/db/http/egress-policy";
+import { requireEgressDecision, socketEgress } from "@/lib/db/http/egress-policy";
 import { isTlsFailureCode, nodeTlsConnectOptions } from "@/lib/db/http/node-transport";
 import type { AmqpEndpoint } from "../connection-options";
 import { type TlsFailureKind, tlsFailureKind } from "../errors";
@@ -75,12 +77,15 @@ function egressRefusal(error: unknown): DatabaseConfigError | null {
   return error instanceof DatabaseConfigError ? error : null;
 }
 
-/** socketEgress(host, { refusesLinkLocal: true }) as the lookup, nodeTlsConnectOptions for TLS, noDelay, one attempt. */
+/**
+ * socketEgress(host, { refusesLinkLocal: true }, the endpoint's decision) as the lookup, nodeTlsConnectOptions for
+ * TLS, noDelay, one attempt.
+ */
 export const dialAmqp: AmqpDial = (endpoint, signal) =>
   new Promise<AmqpSocket>((resolve, reject) => {
     let lookup: ReturnType<typeof socketEgress>;
     try {
-      lookup = socketEgress(endpoint.host, { refusesLinkLocal: true });
+      lookup = socketEgress(endpoint.host, { refusesLinkLocal: true }, requireEgressDecision(endpoint.egress));
     } catch (error) {
       reject(error);
       return;
