@@ -7,12 +7,15 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { DatabaseConfigError, UnknownProviderError } from "@/lib/db/errors";
 import {
   ABSENT_TYPE_SENTENCE,
+  assertConnectionType,
   assertDatabaseType,
+  connectionTypeRefusal,
   isDatabaseType,
   MALFORMED_TYPE_SENTENCE,
   quoteTypeId,
   typeIdRefusal,
   typeIdRow,
+  UNTYPED_CAPABILITIES_SENTENCE,
   unknownTypeSentence,
 } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
@@ -161,6 +164,40 @@ describe("assertDatabaseType", () => {
 
   test("a type id returns", () => {
     expect(() => assertDatabaseType("postgres")).not.toThrow();
+  });
+});
+
+describe("connectionTypeRefusal and assertConnectionType", () => {
+  // A connection's declaration, as a host hands it to a published component beside the connection's type.
+  const CAPABILITIES = { queryLanguage: "sql" };
+  const UNTYPED = { reason: "absent", typeId: undefined, message: UNTYPED_CAPABILITIES_SENTENCE };
+
+  test("capabilities without a type are refused as absent, with the sentence that the call needs the connection's type", () => {
+    expect(connectionTypeRefusal(undefined, CAPABILITIES)).toEqual({
+      reason: "absent",
+      sentence: UNTYPED_CAPABILITIES_SENTENCE,
+    });
+    expect(refusalThrownBy(() => assertConnectionType(undefined, CAPABILITIES))).toEqual(UNTYPED);
+    expect(UNTYPED_CAPABILITIES_SENTENCE).toBe(
+      "This connection's capabilities were handed over without its type, and the call needs the connection's type (databaseType) to write for its engine.",
+    );
+  });
+
+  test("neither a type nor capabilities is no connection, and is not refused", () => {
+    expect(connectionTypeRefusal(undefined, undefined)).toBeNull();
+    expect(refusalThrownBy(() => assertConnectionType(undefined, undefined))).toBe("returned");
+  });
+
+  test("a type id is not refused, with capabilities or before they load", () => {
+    expect(connectionTypeRefusal("mysql", CAPABILITIES)).toBeNull();
+    expect(connectionTypeRefusal("mysql", undefined)).toBeNull();
+    expect(refusalThrownBy(() => assertConnectionType("mysql", CAPABILITIES))).toBe("returned");
+  });
+
+  test.each(OUTSIDE_THE_UNION)("refuses %s as typeIdRefusal does, with capabilities or without", (_label, value) => {
+    expect(refusalThrownBy(() => assertConnectionType(value, CAPABILITIES))).toEqual(refusalOf(value));
+    expect(refusalThrownBy(() => assertConnectionType(value, undefined))).toEqual(refusalOf(value));
+    expect(connectionTypeRefusal(value, CAPABILITIES)).toEqual(typeIdRefusal(value));
   });
 });
 

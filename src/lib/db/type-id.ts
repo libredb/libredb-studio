@@ -96,6 +96,37 @@ export function assertDatabaseType(value: unknown): asserts value is DatabaseTyp
 }
 
 /**
+ * The refusal of a published component handed a connection's capabilities without the connection's type. An SQL
+ * engine's own identifier quoting and forms, and a document language's insert, are read by the type, so the
+ * declaration alone cannot say how to write for its engine.
+ */
+export const UNTYPED_CAPABILITIES_SENTENCE =
+  "This connection's capabilities were handed over without its type, and the call needs the connection's type (databaseType) to write for its engine.";
+
+/**
+ * Why a published component cannot write for the connection a host describes with `databaseType` and `capabilities`,
+ * or `null` when it can: a type id, with or without capabilities, or neither value, which is no connection open.
+ * Capabilities without a type are refused as `absent` with `UNTYPED_CAPABILITIES_SENTENCE`; any other type as
+ * `typeIdRefusal` refuses it.
+ */
+export function connectionTypeRefusal(databaseType: unknown, capabilities: unknown): TypeIdRefusal | null {
+  if (databaseType === undefined) {
+    return capabilities === undefined ? null : { reason: "absent", sentence: UNTYPED_CAPABILITIES_SENTENCE };
+  }
+  return typeIdRefusal(databaseType);
+}
+
+/**
+ * Refuses, with `UnknownProviderError`, the connection `connectionTypeRefusal` refuses.
+ *
+ * @throws {UnknownProviderError} When capabilities come without a type, or the type is not a type id.
+ */
+export function assertConnectionType(databaseType: unknown, capabilities: unknown): void {
+  const refusal = connectionTypeRefusal(databaseType, capabilities);
+  if (refusal !== null) throw new UnknownProviderError(refusal);
+}
+
+/**
  * Reads `table`'s row for `value` after `assertDatabaseType`, so a value that is not a type id is refused by name
  * before the table is read, and a prototype key such as `"constructor"` never reaches an `Object.prototype` member. It
  * reads only a table's own rows: a total table answers its row, and a partial table answers `undefined` for a type id
