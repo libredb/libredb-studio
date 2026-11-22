@@ -59,6 +59,7 @@ import {
   ExecutionProfileError,
   NO_ACTIVE_TRANSACTION,
   QueryError,
+  TimeBudgetRefusal,
 } from "../../../errors";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -371,7 +372,11 @@ export class Db2Provider extends SQLBaseProvider {
       );
     } catch (error) {
       if (retired) {
-        throw new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "db2", sql);
+        throw new TimeBudgetRefusal(
+          `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+          "db2",
+          sql,
+        );
       }
       throw error;
     } finally {

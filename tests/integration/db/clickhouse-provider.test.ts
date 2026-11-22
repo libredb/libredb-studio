@@ -46,6 +46,7 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
 import { comparePaths } from "@/lib/db/object-path";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
@@ -4494,6 +4495,7 @@ describe("ClickHouseProvider agent read-only profile", () => {
     const error = await readOnlyRefusal(provider.queryReadOnly("SELECT number FROM numbers(4)", AGENT_BUDGET));
 
     expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("an answer past the body cap is the shared byte refusal", async () => {
@@ -4503,6 +4505,7 @@ describe("ClickHouseProvider agent read-only profile", () => {
     const error = await readOnlyRefusal(provider.queryReadOnly("SELECT s FROM demo.wide", AGENT_BUDGET));
 
     expect(error.message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 500 allowed$/);
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("a result past the byte budget under the body cap is refused too", async () => {
@@ -4511,6 +4514,7 @@ describe("ClickHouseProvider agent read-only profile", () => {
     const error = await readOnlyRefusal(provider.queryReadOnly("SELECT s FROM demo.wide", AGENT_BUDGET));
 
     expect(error.message).toBe("Read-only execution exceeded the byte budget: 610 bytes > 500 allowed");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("a table function that reaches another server is refused before anything is sent", async () => {

@@ -60,10 +60,12 @@ import {
 import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   QueryError,
+  TimeBudgetRefusal,
 } from "@/lib/db/errors";
 import { assertReadOnlyBudget, byteBudgetSentence, TIME_BUDGET_PREFIX } from "../read-only-budget";
 import {
@@ -430,10 +432,10 @@ export class LibSQLProvider extends SQLBaseProvider {
   /** A failure on the agent's path as the shared refusal it is, or as the error every other path maps it to. */
   private agentReadFailure(error: unknown, budget: ReadOnlyStatementBudget, sql: string): Error {
     if (error instanceof LibSQLBodyLimitError) {
-      return new QueryError(byteBudgetSentence(error.bytesRead, budget.maxResultBytes), this.type, sql);
+      return new ByteBudgetRefusal(byteBudgetSentence(error.bytesRead, budget.maxResultBytes), this.type, sql);
     }
     if (error instanceof LibSQLDeadlineError) {
-      return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${error.timeoutMs}ms`, this.type, sql);
+      return new TimeBudgetRefusal(`${TIME_BUDGET_PREFIX}: no answer within ${error.timeoutMs}ms`, this.type, sql);
     }
     if (error instanceof LibSQLTransportError && error.status === WRITE_FORBIDDEN_STATUS) {
       return new QueryError(error.message, this.type, sql);

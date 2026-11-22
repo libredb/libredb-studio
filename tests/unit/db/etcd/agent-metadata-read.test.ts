@@ -23,6 +23,7 @@ import {
   capturedStatus,
   principalCapture,
 } from "../../../helpers/etcd-agent";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET = { maxResultRows: 200, maxResultBytes: 64 * 1024, statementTimeoutMs: 10_000 };
 const capture = principalCapture("reader-range");
@@ -192,6 +193,16 @@ describe("an answer that does not fit its column withholds the whole answer", ()
   });
 });
 
+/** The kind of the error `run` throws. */
+function kindOf(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return errorKind(error);
+  }
+  throw new Error("expected a refusal");
+}
+
 describe("the budget", () => {
   const members = capturedMembers(answerOf("memberListLinearizable"));
 
@@ -200,12 +211,22 @@ describe("the budget", () => {
     expect(() =>
       etcdAgentResult({ op: "member list", members: many }, { ...BUDGET, maxResultRows: 2 }, "member list", 1),
     ).toThrow(QueryError);
+    expect(
+      kindOf(() =>
+        etcdAgentResult({ op: "member list", members: many }, { ...BUDGET, maxResultRows: 2 }, "member list", 1),
+      ),
+    ).toBe("row-budget-refusal");
   });
 
   test("more bytes than the budget allows are refused, never cut", () => {
     expect(() =>
       etcdAgentResult({ op: "member list", members }, { ...BUDGET, maxResultBytes: 10 }, "member list", 1),
     ).toThrow(QueryError);
+    expect(
+      kindOf(() =>
+        etcdAgentResult({ op: "member list", members }, { ...BUDGET, maxResultBytes: 10 }, "member list", 1),
+      ),
+    ).toBe("byte-budget-refusal");
   });
 });
 
@@ -258,6 +279,7 @@ describe("the wording of a failure", () => {
   test("a deadline is the time budget's refusal", () => {
     const failure = etcdAgentFailure(new EtcdError("deadline-exceeded", "Cancelled on client"), BUDGET, "x");
     expect(failure?.message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 10000ms`);
+    expect(errorKind(failure)).toBe("time-budget-refusal");
   });
 
   test("a projection's refusal keeps its own sentence, and anything else is not this table's", () => {

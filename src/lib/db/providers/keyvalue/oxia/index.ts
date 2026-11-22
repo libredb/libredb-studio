@@ -18,7 +18,7 @@
  * and reads no value on any surface. MCP read stays closed on this engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError, RowBudgetRefusal } from "@/lib/db/errors";
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
@@ -487,7 +487,7 @@ export class OxiaProvider extends BaseDatabaseProvider {
         // The keys stay here: only how many there are is answered, and a namespace Studio could not count to its end is
         // refused rather than answered as the part it read.
         if (answer.stoppedBy !== undefined) throw new QueryError(OXIA_AGENT_COUNT_SENTENCES.overBytes, OXIA_TYPE);
-        if (answer.more) throw new QueryError(OXIA_AGENT_COUNT_SENTENCES.overRows(limit), OXIA_TYPE);
+        if (answer.more) throw new RowBudgetRefusal(OXIA_AGENT_COUNT_SENTENCES.overRows(limit), OXIA_TYPE);
         return { op: plan.op, count: answer.keys.length };
       }
     }

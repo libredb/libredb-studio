@@ -26,6 +26,7 @@ import {
   verifyAgentPrincipal,
 } from "@/lib/db/providers/sql/oracle/agent-read";
 import type { QueryResult } from "@/lib/db/types";
+import { errorKind } from "@/lib/db/error-record";
 
 type Rows = readonly Record<string, unknown>[];
 type Statement = keyof typeof AGENT_PRINCIPAL_STATEMENTS;
@@ -931,14 +932,30 @@ describe("readAgentAnswer", () => {
     expect(() => readAgentAnswer(result([{ ID: 1 }, { ID: 2 }, { ID: 3 }]), BUDGET, "SELECT id FROM t")).toThrow(
       "Read-only execution exceeded the row budget: 3 rows > 2 allowed",
     );
+    expect(kindOf(() => readAgentAnswer(result([{ ID: 1 }, { ID: 2 }, { ID: 3 }]), BUDGET, "SELECT id FROM t"))).toBe(
+      "row-budget-refusal",
+    );
   });
 
   test("counts a LOB fetched as a string against the byte budget, in the shared byte sentence", () => {
     expect(() => readAgentAnswer(result([{ DOC: "x".repeat(60) }]), BUDGET, "SELECT doc FROM t")).toThrow(
       "Read-only execution exceeded the byte budget: 72 bytes > 40 allowed",
     );
+    expect(kindOf(() => readAgentAnswer(result([{ DOC: "x".repeat(60) }]), BUDGET, "SELECT doc FROM t"))).toBe(
+      "byte-budget-refusal",
+    );
   });
 });
+
+/** The kind of the error `run` throws. */
+function kindOf(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return errorKind(error);
+  }
+  throw new Error("expected a refusal");
+}
 
 describe("agentDeadlineRefusal", () => {
   test("reads the driver's call timeout as the shared time refusal", () => {
@@ -949,6 +966,7 @@ describe("agentDeadlineRefusal", () => {
     );
     expect(refused).toBeInstanceOf(QueryError);
     expect(refused?.message).toBe("Read-only execution exceeded the time budget: no answer within 2500ms");
+    expect(errorKind(refused)).toBe("time-budget-refusal");
   });
 
   test("leaves every other failure to the provider's own mapping", () => {

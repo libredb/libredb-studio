@@ -14,6 +14,7 @@ import { RedisProvider } from "@/lib/db/providers/keyvalue/redis";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { type CapturedStep, principalCapture, probeLabel, stepFor } from "../../../helpers/redis-agent";
+import { errorKind } from "@/lib/db/error-record";
 
 const CAPTURE = principalCapture("8.10.2", "reader-info");
 const HELLO = stepFor(CAPTURE.outside, ["HELLO", "2"]) as CapturedStep;
@@ -168,6 +169,7 @@ describe("an agent command on a server that stops answering", () => {
       expect((error as Error).message).toBe(
         `Read-only execution exceeded the time budget: no answer within ${TIME_LEFT_MS}ms`,
       );
+      expect(errorKind(error)).toBe("time-budget-refusal");
       expect(settled).toBeGreaterThanOrEqual(TIME_LEFT_MS - 20);
       expect(settled).toBeLessThan(TIME_LEFT_MS * 2);
 

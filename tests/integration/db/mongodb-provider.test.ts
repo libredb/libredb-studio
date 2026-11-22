@@ -24,6 +24,7 @@ import {
   mongoServerError,
   resetMongoDriver,
 } from "../../helpers/mongodb-driver";
+import { errorKind } from "@/lib/db/error-record";
 
 // ============================================================================
 // Mock Setup — MUST come before provider import
@@ -2633,6 +2634,7 @@ describe("MongoDBProvider", () => {
         expect((error as Error).message).toBe(
           'Read-only execution exceeded the row budget: 11 rows > 10 allowed; the read stops one row past the budget, so at least 11 documents match and the total is not known (count it with "operation": "count", or narrow the read)',
         );
+        expect(errorKind(error)).toBe("row-budget-refusal");
         // The sentence is the one the run reads its row-budget advice from.
         expect(rowBudgetIn((error as Error).message)).toEqual({ projected: 11, allowed: 10 });
         expect(lastCursor()).toMatchObject({ pulled: 11, closes: 1 });
@@ -2656,9 +2658,11 @@ describe("MongoDBProvider", () => {
         const profiled = profiledProvider();
         await profiled.connect();
         const tinyBudget = { statementTimeoutMs: 5000, maxResultRows: 10, maxResultBytes: 512 };
-        await expect(profiled.queryReadOnly(envelope("find"), tinyBudget)).rejects.toThrow(
+        const refused = await profiled.queryReadOnly(envelope("find"), tinyBudget).catch((caught: unknown) => caught);
+        expect((refused as Error).message).toMatch(
           /^Read-only execution exceeded the byte budget: \d+ bytes > 512 allowed$/,
         );
+        expect(errorKind(refused)).toBe("byte-budget-refusal");
         expect(lastCursor()).toMatchObject({ pulled: 2, closes: 1 });
         await profiled.disconnect();
       });
@@ -2670,9 +2674,9 @@ describe("MongoDBProvider", () => {
         );
         const profiled = profiledProvider();
         await profiled.connect();
-        await expect(profiled.queryReadOnly(envelope("find"), budget)).rejects.toThrow(
-          /deadline of 5000ms and was killed server-side/,
-        );
+        const refused = await profiled.queryReadOnly(envelope("find"), budget).catch((caught: unknown) => caught);
+        expect((refused as Error).message).toMatch(/deadline of 5000ms and was killed server-side/);
+        expect(errorKind(refused)).toBe("time-budget-refusal");
         await profiled.disconnect();
       });
 
@@ -2916,13 +2920,18 @@ describe("MongoDBProvider", () => {
         expect(await profiled.readCatalogReadOnly!({ object: "users" }, tight)).toMatchObject({ sampled: 2 });
         expect(mongoDriver.cursors.at(-1)).toMatchObject({ pulled: 3, closes: 1 });
         // A first document that alone crosses it is refused: there is nothing honest to infer from.
-        await expect(
-          profiled.readCatalogReadOnly!({ object: "users" }, { ...budget, maxResultBytes: 100 }),
-        ).rejects.toThrow(/exceeded the byte budget/);
+        const firstTooWide = await profiled.readCatalogReadOnly!(
+          { object: "users" },
+          { ...budget, maxResultBytes: 100 },
+        ).catch((caught: unknown) => caught);
+        expect((firstTooWide as Error).message).toMatch(/exceeded the byte budget/);
+        expect(errorKind(firstTooWide)).toBe("byte-budget-refusal");
         mongoDriver.collectionsByDb = {
           testdb: Array.from({ length: 11 }, (_, i) => ({ name: `c${i}`, type: "collection" })),
         };
-        await expect(profiled.readCatalogReadOnly!({}, budget)).rejects.toThrow("11 rows > 10 allowed");
+        const listing = await profiled.readCatalogReadOnly!({}, budget).catch((caught: unknown) => caught);
+        expect((listing as Error).message).toContain("11 rows > 10 allowed");
+        expect(errorKind(listing)).toBe("row-budget-refusal");
         await profiled.disconnect();
       });
 

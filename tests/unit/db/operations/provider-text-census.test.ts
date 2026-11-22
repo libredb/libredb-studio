@@ -264,6 +264,18 @@ describe("who wrote a refusal", () => {
     }
   });
 
+  test("no module outside provider code constructs a provider's budget refusal class", () => {
+    for (const className of [
+      "RowBudgetRefusal",
+      "ByteBudgetRefusal",
+      "TimeBudgetRefusal",
+      "CutValueRefusal",
+      "SerialisedResultRefusal",
+    ]) {
+      expect(constructed(className, (file) => !file.provider)).toEqual([]);
+    }
+  });
+
   test("the core read path constructs no plain QueryError, and its row, byte and time refusals are Studio's own", () => {
     const corePath = (file: { file: string }) => file.file === READ_ONLY_STATEMENT;
     expect(constructed("QueryError", corePath)).toEqual([]);

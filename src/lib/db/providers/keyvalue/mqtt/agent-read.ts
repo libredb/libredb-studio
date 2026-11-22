@@ -18,7 +18,7 @@
  * response topic or content type is read into a row. A loss the read can prove is counted, never named, since the
  * editor's sentence for it names the topic.
  */
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, DatabaseConfigError, QueryError, TimeBudgetRefusal } from "@/lib/db/errors";
 import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import {
   declareMetadataOnly,
@@ -257,7 +257,7 @@ export function mqttAgentResult(
       : projectMetadata(TOPIC, [{ outcome: answer.outcome, row: answer.row }]);
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), MQTT_TYPE, statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), MQTT_TYPE, statement);
   }
   const loss = lossSentence(answer.outcome);
   return {
@@ -290,7 +290,7 @@ const NOT_PASSED_ON =
 export function mqttAgentFailure(error: unknown, deadlineMs: number, statement?: string): QueryError | undefined {
   if (error instanceof MetadataProjectionError) return new QueryError(error.message, MQTT_TYPE, statement);
   if (error instanceof AgentDeadlineError) {
-    return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${deadlineMs}ms`, MQTT_TYPE, statement);
+    return new TimeBudgetRefusal(`${TIME_BUDGET_PREFIX}: no answer within ${deadlineMs}ms`, MQTT_TYPE, statement);
   }
   if (error instanceof DatabaseConfigError) return undefined;
   if (!(error instanceof MqttSessionError)) return undefined;

@@ -25,6 +25,7 @@ import {
   xmlAnswer,
 } from "../../../helpers/s3-fake-transport";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { errorKind } from "@/lib/db/error-record";
 
 const MARKER = "tenant-marker";
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 200, maxResultBytes: 1_000_000, statementTimeoutMs: 5_000 };
@@ -199,6 +200,7 @@ describe("the agent's reads on the agent read-only profile", () => {
       s3.queryReadOnly("aws s3api head-bucket --bucket sales", { ...BUDGET, statementTimeoutMs: 20 }),
     );
     expect(failure.message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 20ms`);
+    expect(errorKind(failure)).toBe("time-budget-refusal");
   });
 
   test("nothing of one read reaches the next: each summary starts at the bucket's first page", async () => {

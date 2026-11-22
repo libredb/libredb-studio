@@ -24,7 +24,7 @@
  * Every call names the connection's database, whatever the plan says, and the calls go one after another under the
  * caller's one signal.
  */
-import { QueryError, TimeoutError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, RowBudgetRefusal, TimeBudgetRefusal, TimeoutError } from "@/lib/db/errors";
 import {
   byteBudgetSentence,
   measureResultBytes,
@@ -492,11 +492,11 @@ export function milvusAgentResult(
   executionTime: number,
 ): QueryResult {
   if (projected.rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(projected.rows.length, budget.maxResultRows), "milvus", statement);
+    throw new RowBudgetRefusal(rowBudgetSentence(projected.rows.length, budget.maxResultRows), "milvus", statement);
   }
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "milvus", statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "milvus", statement);
   }
   return { fields: projected.fields, rows: projected.rows, rowCount: projected.rows.length, executionTime };
 }
@@ -511,7 +511,7 @@ export function milvusAgentFailure(
   statement: string,
 ): QueryError | undefined {
   if ((error instanceof MilvusError && error.category === "deadline-exceeded") || error instanceof TimeoutError) {
-    return new QueryError(
+    return new TimeBudgetRefusal(
       `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
       "milvus",
       statement,

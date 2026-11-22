@@ -69,7 +69,7 @@
  * Every finding is collected and named in one refusal, as the statements that lift it, or, for a control, as the
  * control. The next call's check reads the catalog as it is then.
  */
-import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, ExecutionProfileError, QueryError, RowBudgetRefusal } from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan } from "@/lib/sql/spans";
@@ -679,11 +679,11 @@ export function assertAgentColumnTypes(columns: readonly Db2ColumnMeta[], sql: s
  */
 export function readAgentAnswer(result: QueryResult, budget: ReadOnlyStatementBudget, sql: string): QueryResult {
   if (result.rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), "db2", sql);
+    throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), "db2", sql);
   }
   const bytes = measureResultBytes(result.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "db2", sql);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "db2", sql);
   }
   return result;
 }

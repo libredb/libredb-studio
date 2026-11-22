@@ -2,6 +2,7 @@
  * The libSQL agent read-only profile's reading of an answer against the budget (`agent-read.ts`).
  */
 import { describe, expect, test } from "bun:test";
+import { errorKind } from "@/lib/db/error-record";
 import { QueryError } from "@/lib/db/errors";
 import {
   AGENT_ENVELOPE_ALLOWANCE_BYTES,
@@ -13,6 +14,16 @@ import type { LibSQLStatementResult } from "@/lib/db/providers/sql/libsql/transp
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 2, maxResultBytes: 1_000 };
+
+/** The kind of the error `run` throws. */
+function kindOf(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return errorKind(error);
+  }
+  throw new Error("expected a refusal");
+}
 
 function answer(
   rows: Record<string, unknown>[],
@@ -66,11 +77,13 @@ describe("readAgentAnswer", () => {
 
     expect(run).toThrow(QueryError);
     expect(run).toThrow("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+    expect(kindOf(run)).toBe("row-budget-refusal");
   });
 
   test("refuses a result past the byte budget with the shared sentence", () => {
     const run = () => readAgentAnswer(answer([{ a: "x".repeat(2_000) }]), BUDGET, "SELECT a FROM t", 1);
 
     expect(run).toThrow("Read-only execution exceeded the byte budget: 2010 bytes > 1000 allowed");
+    expect(kindOf(run)).toBe("byte-budget-refusal");
   });
 });

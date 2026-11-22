@@ -61,7 +61,15 @@ import {
   type ObjectPathShapeEngine,
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
-import { DatabaseConfigError, ConnectionError, QueryError, RefusedBeforeSendError } from "../../errors";
+import {
+  ByteBudgetRefusal,
+  DatabaseConfigError,
+  ConnectionError,
+  QueryError,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { carriesLossyNumber } from "../../utils/json-integers";
 import { assertRegularFilesOrMissing } from "../../utils/regular-file";
@@ -869,7 +877,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
         this.readForAgent(reading.command, budget, statement),
       );
       if (executionTime > budget.statementTimeoutMs) {
-        throw new QueryError(
+        throw new TimeBudgetRefusal(
           `${TIME_BUDGET_PREFIX}: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
           "libredb",
           statement,
@@ -899,7 +907,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       for (const { key, value } of this.agentScan(store, command)) {
         if (this.isReserved(key)) continue;
         if (rows.length === budget.maxResultRows) {
-          throw new QueryError(
+          throw new RowBudgetRefusal(
             `${rowBudgetSentence(rows.length + 1, budget.maxResultRows)}; the read stops one key past the budget, so at least ${rows.length + 1} keys match and the total is not known: narrow the prefix or the range`,
             "libredb",
             statement,
@@ -908,7 +916,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
         const row = { key, value: this.renderValue(value) };
         bytes += measureRowBytes(row);
         if (bytes > budget.maxResultBytes) {
-          throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "libredb", statement);
+          throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "libredb", statement);
         }
         rows.push(row);
       }

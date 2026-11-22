@@ -84,6 +84,7 @@ import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from ".
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind } from "@/lib/db/error-record";
 
 /** The notice an answer carrying database content opens with on this file's elasticsearch connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("elasticsearch"));
@@ -4418,6 +4419,7 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
     expect(error.message).toBe(
       `Read-only execution exceeded the row budget: 1000 rows > ${AGENT_BUDGET.maxResultRows} allowed`,
     );
+    expect(errorKind(error)).toBe("row-budget-refusal");
     const close = sent.at(-1);
     expect(close?.path).toBe("/_sql/close");
     expect(close?.body).toEqual({ cursor: AGGREGATION_CURSOR });
@@ -4435,6 +4437,7 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
 
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed$/);
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("an engine refusal keeps the engine's words", async () => {
@@ -4458,6 +4461,7 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
     expect(error.message).toBe(
       `Read-only execution exceeded the time budget: no answer within ${AGENT_BUDGET.statementTimeoutMs}ms`,
     );
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("a cancellation is not a deadline, and keeps the provider's own error", async () => {

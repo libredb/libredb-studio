@@ -36,11 +36,14 @@ import {
 } from "@/lib/db/object-kinds";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
@@ -719,10 +722,14 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       (error instanceof TransportError && error.kind === "timeout") ||
       (error instanceof CouchbaseError && error.code === REQUEST_TIMEOUT_CODE);
     if (timedOut) {
-      return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, this.type, sql);
+      return new TimeBudgetRefusal(
+        `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+        this.type,
+        sql,
+      );
     }
     if (error instanceof TransportError && error.kind === "too-large") {
-      return new QueryError(
+      return new ByteBudgetRefusal(
         `${byteBudgetSentence(maxResponseBytes, budget.maxResultBytes)}; the server's answer passed that many bytes and was not read further`,
         this.type,
         sql,
@@ -743,12 +750,12 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     sql: string,
   ): QueryResult {
     if (result.rows.length > budget.maxResultRows) {
-      throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), this.type, sql);
+      throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), this.type, sql);
     }
     const answer = this.toQueryResult(result, executionTime);
     const bytes = measureResultBytes(answer.rows);
     if (bytes > budget.maxResultBytes) {
-      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+      throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
     }
     return answer;
   }

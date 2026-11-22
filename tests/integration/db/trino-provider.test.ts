@@ -101,6 +101,7 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { isSourcePartUnavailable, kindHasColumns } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { errorKind } from "@/lib/db/error-record";
 
 const CATALOG = "tpch";
 const ORIGIN = "http://trino.test:8080";
@@ -5574,16 +5575,18 @@ describe("queryReadOnly", () => {
     const recorded = coordinator(replies);
     const provider = await opened(recorded);
 
-    await expect(provider.queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 4 rows > 3 allowed",
-    );
-    await expect(provider.queryReadOnly("SELECT b FROM pg.public.t", AGENT_BUDGET)).rejects.toThrow(
+    const overRows = await provider.queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET).catch((e: unknown) => e);
+    expect((overRows as Error).message).toStartWith("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(overRows)).toBe("row-budget-refusal");
+    const overBytes = await provider.queryReadOnly("SELECT b FROM pg.public.t", AGENT_BUDGET).catch((e: unknown) => e);
+    expect((overBytes as Error).message).toStartWith(
       "Read-only execution exceeded the byte budget: 1200 bytes > 1000 allowed",
     );
+    expect(errorKind(overBytes)).toBe("byte-budget-refusal");
     // 999 bytes as the row arrived, under the cap; 1003 once it is keyed by its column's name.
-    await expect(provider.queryReadOnly("SELECT c FROM pg.public.t", AGENT_BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the byte budget: 1003 bytes > 1000 allowed",
-    );
+    const keyed = await provider.queryReadOnly("SELECT c FROM pg.public.t", AGENT_BUDGET).catch((e: unknown) => e);
+    expect((keyed as Error).message).toBe("Read-only execution exceeded the byte budget: 1003 bytes > 1000 allowed");
+    expect(errorKind(keyed)).toBe("byte-budget-refusal");
     expect(recorded.open.size).toBe(0);
   });
 
@@ -5603,6 +5606,7 @@ describe("queryReadOnly", () => {
     expect((error as Error).message).toBe(
       "Read-only execution exceeded the time budget: no answer within 50ms; the statement Studio had sent was cancelled on the cluster",
     );
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect(recorded.log.at(-1)).toEndWith(": ROLLBACK");
     expect(recorded.open.size).toBe(0);
   });
@@ -5659,6 +5663,7 @@ describe("queryReadOnly", () => {
     expect((error as Error).message).toBe(
       "Read-only execution exceeded the time budget: no answer within 50ms while the access control was checked; the statement was not sent",
     );
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect((error as Error).message).not.toContain("Studio had sent");
     expect(recorded.log.some((line) => line.endsWith(": SELECT a FROM pg.public.t"))).toBe(false);
   });
@@ -5684,6 +5689,7 @@ describe("queryReadOnly", () => {
     expect((error as Error).message).toBe(
       "Read-only execution exceeded the time budget: no answer within 50ms while the access control was checked; the statement was not sent",
     );
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect(recorded.log.some((line) => line.endsWith(": SELECT a FROM pg.public.t"))).toBe(false);
     expect(recorded.open.size).toBe(0);
   });

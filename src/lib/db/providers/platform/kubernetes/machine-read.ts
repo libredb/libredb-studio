@@ -10,7 +10,7 @@
  * The deadline is a race, not a signal alone: a cold or expired discovery load is shared by every caller of the
  * session, so one caller's deadline stops that caller waiting and never cancels the load the others are waiting on.
  */
-import { QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, RowBudgetRefusal } from "@/lib/db/errors";
 import {
   assertReadOnlyBudget,
   byteBudgetSentence,
@@ -92,10 +92,10 @@ export async function withMachineContext<T>(
 /** The result as the agent may receive it: refused, never truncated, past either budget. */
 function withinBudget(result: QueryResult, budget: ReadOnlyStatementBudget): QueryResult {
   if (result.rows.length > budget.maxResultRows)
-    throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), KUBERNETES_TYPE);
+    throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), KUBERNETES_TYPE);
   const bytes = measureResultBytes(result.rows);
   if (bytes > budget.maxResultBytes)
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), KUBERNETES_TYPE);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), KUBERNETES_TYPE);
   return result;
 }
 

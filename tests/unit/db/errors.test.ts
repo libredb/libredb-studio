@@ -14,6 +14,12 @@ import {
   FacetNotOfferedError,
   TransactionLostError,
   StudioProfileRefusal,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  ByteBudgetRefusal,
+  TimeBudgetRefusal,
+  CutValueRefusal,
+  SerialisedResultRefusal,
   isDatabaseError,
   isConnectionError,
   isQueryError,
@@ -278,6 +284,43 @@ describe("OffsetUnsupportedError", () => {
     expect(err.provider).toBe("cassandra");
     expect(err.query).toBe("SELECT * FROM t");
     expect(new QueryError("syntax")).not.toBeInstanceOf(OffsetUnsupportedError);
+  });
+});
+
+describe("budget refusal classes", () => {
+  const BUDGET_REFUSALS = [
+    RowBudgetRefusal,
+    ByteBudgetRefusal,
+    TimeBudgetRefusal,
+    CutValueRefusal,
+    SerialisedResultRefusal,
+  ] as const;
+
+  test.each(BUDGET_REFUSALS.map((Class) => [Class.name, Class] as const))(
+    "each is a QueryError named QueryError, with its provider and statement, and is no refusal before send: %s",
+    (_name, Class) => {
+      const sentence = `refused ${crypto.randomUUID()}`;
+      const err = new Class(sentence, "postgres", "SELECT 1");
+      expect(err).toBeInstanceOf(Class);
+      expect(err).toBeInstanceOf(QueryError);
+      expect(err).toBeInstanceOf(DatabaseError);
+      expect(err).not.toBeInstanceOf(RefusedBeforeSendError);
+      expect(err).not.toBeInstanceOf(TimeoutError);
+      expect(err.name).toBe("QueryError");
+      expect(err.message).toBe(sentence);
+      expect(err.code).toBe("QUERY_ERROR");
+      expect(err.provider).toBe("postgres");
+      expect(err.query).toBe("SELECT 1");
+      for (const Other of BUDGET_REFUSALS) if (Other !== Class) expect(err).not.toBeInstanceOf(Other);
+    },
+  );
+
+  test("none answers an outcome of its own", () => {
+    for (const Class of BUDGET_REFUSALS) {
+      const err = new Class("refused", "postgres");
+      expect(err.outcome, Class.name).toBeUndefined();
+      expect(Object.hasOwn(err, "outcome"), Class.name).toBe(false);
+    }
   });
 });
 

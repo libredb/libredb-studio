@@ -11,7 +11,7 @@
  * as etcdctl prints them (a member's `%x`, a lease's `%016x`), a lease of `TTL` -1 is one etcd no longer holds, and a
  * key with no lease holds lease 0.
  */
-import { QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, RowBudgetRefusal, TimeBudgetRefusal } from "@/lib/db/errors";
 import {
   byteBudgetSentence,
   measureResultBytes,
@@ -207,11 +207,11 @@ export function etcdAgentResult(
 ): QueryResult {
   const projected = project(answer);
   if (projected.rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(projected.rows.length, budget.maxResultRows), "etcd", statement);
+    throw new RowBudgetRefusal(rowBudgetSentence(projected.rows.length, budget.maxResultRows), "etcd", statement);
   }
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "etcd", statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "etcd", statement);
   }
   return { fields: projected.fields, rows: projected.rows, rowCount: projected.rows.length, executionTime };
 }
@@ -246,7 +246,11 @@ export function etcdAgentFailure(
   if (error instanceof MetadataProjectionError) return new QueryError(error.message, "etcd", statement);
   if (!(error instanceof EtcdError)) return undefined;
   if (error.category === "deadline-exceeded") {
-    return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "etcd", statement);
+    return new TimeBudgetRefusal(
+      `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+      "etcd",
+      statement,
+    );
   }
   return new QueryError(ETCD_AGENT_FAILURE_SENTENCES.refused(error.category), "etcd", statement);
 }

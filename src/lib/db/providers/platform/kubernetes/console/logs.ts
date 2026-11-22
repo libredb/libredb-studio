@@ -19,7 +19,7 @@
  * reads the budget split evenly across its streams, a selector keeps its 10 per pod, streams times the tail past the
  * budget is refused with the row budget's sentence, and `limitBytes` never asks for more than the byte budget.
  */
-import { QueryError } from "@/lib/db/errors";
+import { QueryError, RowBudgetRefusal } from "@/lib/db/errors";
 import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { ACCEPT_JSON } from "../client";
 import type { IndexedResource } from "../discovery";
@@ -374,11 +374,11 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
         ? KUBERNETES_LOG_TAIL_DEFAULT
         : Math.floor(machine.maxRows / Math.max(1, streams.length)));
   // The bound holds before any log is read.
+  if (streams.length * tail > ceiling && machine !== undefined)
+    throw new RowBudgetRefusal(rowBudgetSentence(streams.length * tail, machine.maxRows), KUBERNETES_TYPE);
   if (streams.length * tail > ceiling)
     throw new QueryError(
-      machine === undefined
-        ? `This statement would read up to ${(streams.length * tail).toLocaleString("en-US")} lines across ${streams.length} log streams, more than the 5,000 one statement shows: lower --tail, name one container with -c, or narrow the selector. No log was read.`
-        : rowBudgetSentence(streams.length * tail, machine.maxRows),
+      `This statement would read up to ${(streams.length * tail).toLocaleString("en-US")} lines across ${streams.length} log streams, more than the 5,000 one statement shows: lower --tail, name one container with -c, or narrow the selector. No log was read.`,
       KUBERNETES_TYPE,
     );
   // The agent's byte budget bounds each stream's request too, so no stream is asked for more than the read may carry.
@@ -411,11 +411,9 @@ export async function readLogs(context: KubectlContext, statement: LogsStatement
     const split = text.split("\n");
     // A server may answer more lines than tailLines asks for; the statement's bound holds all the same.
     read += split.length;
-    if (read > ceiling)
-      throw new QueryError(
-        machine === undefined ? LINES_CAP_SENTENCE : rowBudgetSentence(read, machine.maxRows),
-        KUBERNETES_TYPE,
-      );
+    if (read > ceiling && machine !== undefined)
+      throw new RowBudgetRefusal(rowBudgetSentence(read, machine.maxRows), KUBERNETES_TYPE);
+    if (read > ceiling) throw new QueryError(LINES_CAP_SENTENCE, KUBERNETES_TYPE);
     return split.map((line) => {
       const parts = splitTimestamp(line);
       return { pod: stream.pod, container: stream.container, time: parts.time, text: stripTerminalEscapes(parts.text) };

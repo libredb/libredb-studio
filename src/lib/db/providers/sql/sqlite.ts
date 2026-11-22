@@ -38,7 +38,15 @@ import {
   type IndexStats,
   type StorageStats,
 } from "../../types";
-import { DatabaseConfigError, ConnectionError, ExecutionProfileError, QueryError } from "../../errors";
+import {
+  ByteBudgetRefusal,
+  DatabaseConfigError,
+  ConnectionError,
+  ExecutionProfileError,
+  QueryError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "../../errors";
 import { mapDatabaseError } from "../../map-database-error";
 import {
   assertReadOnlyBudget,
@@ -1672,7 +1680,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     return await new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.worker?.terminate();
-        reject(new QueryError(`${TIME_BUDGET_PREFIX}: ${timeoutMs}ms allowed`, "sqlite", sql));
+        reject(new TimeBudgetRefusal(`${TIME_BUDGET_PREFIX}: ${timeoutMs}ms allowed`, "sqlite", sql));
       }, timeoutMs);
       fn().then(
         (value) => {
@@ -1791,11 +1799,11 @@ export class SQLiteProvider extends SQLBaseProvider {
       });
 
       if (rows.length > budget.maxResultRows) {
-        throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "sqlite", sql);
+        throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), "sqlite", sql);
       }
       const resultBytes = measureResultBytes(rows);
       if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(byteBudgetSentence(resultBytes, budget.maxResultBytes), "sqlite", sql);
+        throw new ByteBudgetRefusal(byteBudgetSentence(resultBytes, budget.maxResultBytes), "sqlite", sql);
       }
       // With the child-process worker the deadline above is preemptive: an overrunning
       // statement is killed and its promise rejects before this check. Under the
@@ -1804,7 +1812,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       // statement is not preempted, but its result is refused rather than returned as
       // if it had been within budget.
       if (executionTime > budget.statementTimeoutMs) {
-        throw new QueryError(
+        throw new TimeBudgetRefusal(
           `${TIME_BUDGET_PREFIX}: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
           "sqlite",
           sql,

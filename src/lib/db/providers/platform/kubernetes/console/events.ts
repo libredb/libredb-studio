@@ -13,7 +13,7 @@
  * the budget and in the cap's when it stopped at 5,000, because a sorted or filtered part of it would read as the whole;
  * and an involved Secret's name is withheld from the OBJECT cell.
  */
-import { QueryError } from "@/lib/db/errors";
+import { QueryError, RowBudgetRefusal } from "@/lib/db/errors";
 import { rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import { ACCEPT_JSON } from "../client";
 import { KUBERNETES_EVENTS_READ_MAX, KUBERNETES_EVENTS_SHOWN, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
@@ -124,13 +124,9 @@ export async function listEvents(context: KubectlContext, statement: EventsState
     limit: machineRowLimit(context, KUBERNETES_EVENTS_READ_MAX),
     pageSize: KUBERNETES_PAGE_SIZE,
   });
-  if (scan.more)
-    throw new QueryError(
-      context.machine === undefined || scan.rows.length <= context.machine.maxRows
-        ? EVENTS_CAP_SENTENCE
-        : rowBudgetSentence(scan.rows.length, context.machine.maxRows),
-      KUBERNETES_TYPE,
-    );
+  if (scan.more && context.machine !== undefined && scan.rows.length > context.machine.maxRows)
+    throw new RowBudgetRefusal(rowBudgetSentence(scan.rows.length, context.machine.maxRows), KUBERNETES_TYPE);
+  if (scan.more) throw new QueryError(EVENTS_CAP_SENTENCE, KUBERNETES_TYPE);
   const typed = scan.rows
     .map((row) => (row.object ?? {}) as KubeEvent)
     // kubectl compares the type without case.

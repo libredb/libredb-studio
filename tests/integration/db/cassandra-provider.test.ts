@@ -54,6 +54,7 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { errorKind } from "@/lib/db/error-record";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { cassandraAgentStatementRefusal } from "@/lib/db/providers/sql/cassandra/agent-boundary";
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
@@ -4154,9 +4155,9 @@ describe("the agent read-only profile", () => {
     const { provider } = await agentProvider(() => ({ [STATEMENT]: three }));
     await provider.connect();
 
-    await expect(provider.queryReadOnly(STATEMENT, BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 3 rows > 2 allowed",
-    );
+    const error = await provider.queryReadOnly(STATEMENT, BUDGET).catch((failure: unknown) => failure);
+    expect((error as Error).message).toBe("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("an answer the server split across pages is refused, since the agent reads one page only", async () => {
@@ -4174,9 +4175,11 @@ describe("the agent read-only profile", () => {
     const { provider } = await agentProvider(() => ({ [STATEMENT]: CUSTOMERS }));
     await provider.connect();
 
-    await expect(provider.queryReadOnly(STATEMENT, { ...BUDGET, maxResultBytes: 10 })).rejects.toThrow(
-      "Read-only execution exceeded the byte budget: 47 bytes > 10 allowed",
-    );
+    const error = await provider
+      .queryReadOnly(STATEMENT, { ...BUDGET, maxResultBytes: 10 })
+      .catch((failure: unknown) => failure);
+    expect((error as Error).message).toBe("Read-only execution exceeded the byte budget: 47 bytes > 10 allowed");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("the client deadline is the shared time refusal, and the session that waited is closed", async () => {
@@ -4188,6 +4191,7 @@ describe("the agent read-only profile", () => {
     const error = await provider.queryReadOnly(STATEMENT, BUDGET).catch((failure: unknown) => failure);
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toBe("Read-only execution exceeded the time budget: no answer within 4000ms");
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect(calls[0].state.shutdown).toBe(1);
   });
 

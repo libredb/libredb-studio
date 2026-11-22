@@ -16,6 +16,7 @@ import { NEO4J_AGENT_PROOF_STATEMENTS } from "@/lib/db/providers/graph/neo4j/age
 import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { NEO4J_FIXTURES, neo4jCapture, recordedGraphClient } from "../../../helpers/neo4j-fixtures";
+import { errorKind } from "@/lib/db/error-record";
 
 const BOUNDARY = join(NEO4J_FIXTURES, "agent-boundary");
 const PROOF = Object.values(NEO4J_AGENT_PROOF_STATEMENTS);
@@ -244,6 +245,7 @@ describe("queryReadOnly", () => {
     expect((error as Error).message).toBe(
       "Read-only execution exceeded the row budget: 2 rows > 1 allowed; the read stops one row past the budget, so at least 2 rows match and the total is not known: narrow the statement",
     );
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a result past the byte budget is refused", async () => {
@@ -252,6 +254,7 @@ describe("queryReadOnly", () => {
       .queryReadOnly(READ, { ...BUDGET, maxResultBytes: 10 })
       .catch((caught: unknown) => caught);
     expect((error as Error).message).toBe("Read-only execution exceeded the byte budget: 31 bytes > 10 allowed");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("a transport failure of the statement or of a proof read during a cancel goes through the error table", async () => {

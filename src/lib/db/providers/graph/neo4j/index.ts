@@ -25,7 +25,7 @@
 import { createBoltClient } from "@/lib/db/graph/bolt/bolt-client";
 import type { GraphClientFactory } from "@/lib/db/graph/bolt/client";
 import { GraphClientError } from "@/lib/db/graph/bolt/client";
-import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, ExecutionProfileError, RefusedBeforeSendError, RowBudgetRefusal } from "@/lib/db/errors";
 import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";
 import { type GraphEngineProfile, GraphBaseProvider, toQueryResult } from "@/lib/db/graph/graph-base-provider";
 import {
@@ -239,7 +239,7 @@ export class Neo4jProvider extends GraphBaseProvider {
       );
       if (result.truncated) {
         const atLeast = budget.maxResultRows + 1;
-        throw new QueryError(
+        throw new RowBudgetRefusal(
           `${rowBudgetSentence(atLeast, budget.maxResultRows)}; the read stops one row past the budget, so at least ${atLeast} rows match and the total is not known: narrow the statement`,
           this.type,
           statement,
@@ -247,7 +247,7 @@ export class Neo4jProvider extends GraphBaseProvider {
       }
       const bytes = measureResultBytes([...result.rows]);
       if (bytes > budget.maxResultBytes) {
-        throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, statement);
+        throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, statement);
       }
       return toQueryResult(result, executionTime);
     });

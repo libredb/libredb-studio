@@ -87,12 +87,15 @@ import {
   requireSourceKind,
 } from "../../../object-kinds";
 import {
+  ByteBudgetRefusal,
   DatabaseConfigError,
   DatabaseError,
   ExecutionProfileError,
   QueryCancelledError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
 } from "../../../errors";
 import { mapDatabaseError } from "../../../map-database-error";
 import {
@@ -940,11 +943,11 @@ export class DuckDBProvider extends SQLBaseProvider {
       });
 
       if (result.rows.length > budget.maxResultRows) {
-        throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), "duckdb", sql);
+        throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), "duckdb", sql);
       }
       const resultBytes = measureResultBytes(result.rows);
       if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(byteBudgetSentence(resultBytes, budget.maxResultBytes), "duckdb", sql);
+        throw new ByteBudgetRefusal(byteBudgetSentence(resultBytes, budget.maxResultBytes), "duckdb", sql);
       }
       // DuckDB has no statement-level timeout setting, so the budget's timeout is a
       // post-execution deadline here: an overrunning statement is not preempted, but its
@@ -952,7 +955,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       // engine CAN be interrupted (`cancelQuery`), and wiring the deadline to that is
       // recorded as follow-up work in `docs/providers/duckdb.md` rather than claimed.
       if (executionTime > budget.statementTimeoutMs) {
-        throw new QueryError(
+        throw new TimeBudgetRefusal(
           `${TIME_BUDGET_PREFIX}: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
           "duckdb",
           sql,

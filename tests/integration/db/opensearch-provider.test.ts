@@ -92,6 +92,7 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind } from "@/lib/db/error-record";
 
 /** The notice an answer carrying database content opens with on this file's opensearch connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("opensearch"));
@@ -2994,6 +2995,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
 
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
     expect(sentPaths.at(-1)).toBe("/_plugins/_sql/close");
     expect(sentBodies.at(-1)).toEqual({ cursor: CURSOR_ONE });
   });
@@ -3016,6 +3018,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(error.message).toBe(
       "Read-only execution exceeded the row budget: OpenSearch answers at most 1 rows (plugins.query.size_limit) and cuts the rest without saying so, so an answer that reaches it is refused",
     );
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("refuses an answer that reaches a result limit equal to the row budget, which may have been cut", async () => {
@@ -3030,6 +3033,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(error.message).toBe(
       "Read-only execution exceeded the row budget: OpenSearch answers at most 1 rows (plugins.query.size_limit) and cuts the rest without saying so, so an answer that reaches it is refused",
     );
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("reads the result limit again before each statement, so a limit lowered on an open handle is honoured", async () => {
@@ -3059,6 +3063,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(error.message).toBe(
       "Read-only execution exceeded the row budget: OpenSearch answers at most 50 rows (plugins.query.size_limit) and cuts the rest without saying so, so an answer that reaches it is refused",
     );
+    expect(errorKind(error)).toBe("row-budget-refusal");
     const check = (name: string) => [
       `/_resolve/index/${name}?expand_wildcards=open`,
       `/${name}/_field_caps?fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open`,
@@ -3104,6 +3109,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     );
 
     expect(error.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("refuses an answer past the byte budget", async () => {
@@ -3115,6 +3121,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
 
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed$/);
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   // The index is resolved before the statement is sent and can be removed between the two, a residual the check names.

@@ -39,12 +39,15 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   QueryCancelledError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -568,7 +571,7 @@ export class DruidProvider extends SQLBaseProvider {
           if (error instanceof DruidAnswerTooLargeError) {
             // Closing the read does not stop the server's work, so the statement's own id is cancelled too.
             const cancel = await this.cancelAgentStatement(transport, queryId);
-            throw new QueryError(
+            throw new ByteBudgetRefusal(
               `${byteBudgetSentence(maxResponseBytes, budget.maxResultBytes)}; the server's answer passed that many bytes and was not read further; ${cancel}`,
               this.type,
               sql,
@@ -581,7 +584,7 @@ export class DruidProvider extends SQLBaseProvider {
             throw new QueryError(error.message, this.type, sql);
           }
           if (error instanceof DruidTransportError && error.is("TIMEOUT")) {
-            throw new QueryError(
+            throw new TimeBudgetRefusal(
               `${TIME_BUDGET_PREFIX}: the server stopped the statement at ${budget.statementTimeoutMs}ms`,
               this.type,
               sql,
@@ -669,7 +672,7 @@ export class DruidProvider extends SQLBaseProvider {
 
   private timeBudgetError(budget: ReadOnlyStatementBudget, sql: string, cancel: string | null): QueryError {
     const waited = `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`;
-    return new QueryError(cancel === null ? waited : `${waited}; ${cancel}`, this.type, sql);
+    return new TimeBudgetRefusal(cancel === null ? waited : `${waited}; ${cancel}`, this.type, sql);
   }
 
   /** The agent's result, or the shared refusal: held to both budgets, never cut. */
@@ -680,12 +683,12 @@ export class DruidProvider extends SQLBaseProvider {
     sql: string,
   ): QueryResult {
     if (result.rows.length > budget.maxResultRows) {
-      throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), this.type, sql);
+      throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), this.type, sql);
     }
     const answer = { ...toQueryResult(result), executionTime };
     const bytes = measureResultBytes(answer.rows);
     if (bytes > budget.maxResultBytes) {
-      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+      throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
     }
     return answer;
   }

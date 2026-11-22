@@ -39,6 +39,7 @@ import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind } from "@/lib/db/error-record";
 
 /** The notice an answer carrying database content opens with on this file's oracle connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("oracle"));
@@ -6632,9 +6633,13 @@ describe("OracleProvider.queryReadOnly", () => {
       CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
         ? undefined
         : { rows: [{ DOC: "x".repeat(500) }], metaData: [{ name: "DOC", dbType: DB_TYPE_CLOB, dbTypeName: "CLOB" }] };
-    await expect(provider.queryReadOnly("SELECT doc FROM app_owner.t1", BUDGET)).rejects.toThrow(
+    const refused = await provider
+      .queryReadOnly("SELECT doc FROM app_owner.t1", BUDGET)
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(
       "Read-only execution exceeded the byte budget: 512 bytes > 400 allowed",
     );
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
     expect(events().slice(-2)).toEqual(["rollback", "close"]);
   });
 
@@ -6643,9 +6648,11 @@ describe("OracleProvider.queryReadOnly", () => {
       CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
         ? undefined
         : { rows: [{ ID: 1 }, { ID: 2 }, { ID: 3 }], metaData: [{ name: "ID", dbType: DB_TYPE_VARCHAR }] };
-    await expect(provider.queryReadOnly("SELECT id FROM app_owner.t1", BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 3 rows > 2 allowed",
-    );
+    const refused = await provider
+      .queryReadOnly("SELECT id FROM app_owner.t1", BUDGET)
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test.each([
@@ -6690,9 +6697,11 @@ describe("OracleProvider.queryReadOnly", () => {
       CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
         ? undefined
         : new Error("NJS-123: call timeout of 2500 ms exceeded");
-    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).rejects.toThrow(
+    const refused = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(
       "Read-only execution exceeded the time budget: no answer within 2500ms",
     );
+    expect(errorKind(refused)).toBe("time-budget-refusal");
     expect(events().slice(-2)).toEqual(["rollback", "close"]);
   });
 

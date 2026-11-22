@@ -32,6 +32,7 @@ import { containerDepth, kindHasColumns, kindHasSource } from "@/lib/db/object-k
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { errorKind } from "@/lib/db/error-record";
 
 /** Remove a database file AND its 0.2.x exclusive-lock sidecar (`<path>.lock`). */
 function rmDbFile(file: string): void {
@@ -1811,6 +1812,7 @@ describe("LibreDBProvider — the agent read-only profile", () => {
       expect((error as Error).message).toBe(
         "Read-only execution exceeded the row budget: 2 rows > 1 allowed; the read stops one key past the budget, so at least 2 keys match and the total is not known: narrow the prefix or the range",
       );
+      expect(errorKind(error)).toBe("row-budget-refusal");
       expect((await reader.queryReadOnly("prefix user:", { ...BUDGET, maxResultRows: 2 })).rowCount).toBe(2);
     } finally {
       await reader.disconnect();
@@ -1826,6 +1828,7 @@ describe("LibreDBProvider — the agent read-only profile", () => {
       expect((error as Error).message).toMatch(
         /^Read-only execution exceeded the byte budget: \d+ bytes > 20 allowed$/,
       );
+      expect(errorKind(error)).toBe("byte-budget-refusal");
     } finally {
       await reader.disconnect();
     }
@@ -1839,6 +1842,7 @@ describe("LibreDBProvider — the agent read-only profile", () => {
     try {
       const error = await settle(reader.queryReadOnly("get user:1", { ...BUDGET, statementTimeoutMs: 10 }));
       expect((error as Error).message).toBe("Read-only execution exceeded the time budget: 50ms > 10ms allowed");
+      expect(errorKind(error)).toBe("time-budget-refusal");
     } finally {
       clock.mockRestore();
       await reader.disconnect();

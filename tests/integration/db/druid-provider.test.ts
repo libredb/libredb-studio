@@ -71,6 +71,7 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { ExplainTreeNode } from "@/lib/explain/types";
 import { comparePaths } from "@/lib/db/object-path";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { errorKind } from "@/lib/db/error-record";
 
 // ============================================================================
 // Connection
@@ -3311,17 +3312,17 @@ describe("queryReadOnly", () => {
   test("refuses a result past the row budget, never cuts it", async () => {
     const recorded = recording(async () => rowsOf([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]));
     const provider = await open(recorded);
-    await expect(provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 4 rows > 3 allowed",
-    );
+    const refused = await provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("refuses a result past the byte budget", async () => {
     const recorded = recording(async () => rowsOf([{ s: "x".repeat(2000) }]));
     const provider = await open(recorded);
-    await expect(provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the byte budget",
-    );
+    const refused = await provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the byte budget");
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("refuses an answer the transport stopped reading at its byte cap, and cancels the statement's own id", async () => {
@@ -3332,6 +3333,7 @@ describe("queryReadOnly", () => {
     const error = await provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toStartWith("Read-only execution exceeded the byte budget");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
     expect((error as Error).message).toEndWith(
       "; the server's answer passed that many bytes and was not read further; the server accepted the cancel of its query id",
     );
@@ -3348,9 +3350,11 @@ describe("queryReadOnly", () => {
       throw new DruidTransportError("Druid refused the cancel with HTTP 403");
     });
     const provider = await open(recorded);
-    await expect(provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET)).rejects.toThrow(
+    const refused = await provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(
       "was not read further; its cancel could not be confirmed: Druid refused the cancel with HTTP 403",
     );
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("a statement the server stopped at its own timeout is refused on the time budget, and nothing is cancelled", async () => {
@@ -3358,9 +3362,11 @@ describe("queryReadOnly", () => {
       throw new DruidTransportError("Query [x] timed out!", "TIMEOUT", "legacyQueryException", "OPERATOR");
     });
     const provider = await open(recorded);
-    await expect(provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET)).rejects.toThrow(
+    const refused = await provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(
       "Read-only execution exceeded the time budget: the server stopped the statement at 30000ms",
     );
+    expect(errorKind(refused)).toBe("time-budget-refusal");
     expect(recorded.cancels).toEqual([]);
   });
 
@@ -3377,9 +3383,11 @@ describe("queryReadOnly", () => {
     test("cancels the statement's own id, and says the server accepted the cancel", async () => {
       const recorded = recording(hangs);
       const provider = await open(recorded);
-      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+      const refused = await provider.queryReadOnly("SELECT n FROM t", SHORT).catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the time budget: no answer within 20ms; the server accepted the cancel of its query id",
       );
+      expect(errorKind(refused)).toBe("time-budget-refusal");
       const statement = recorded.agent.at(-1);
       expect(statement?.sql).toBe("SELECT n FROM t");
       expect(recorded.cancels.map((cancel) => cancel.queryId)).toEqual([statement?.opts.queryId ?? "no statement"]);
@@ -3390,9 +3398,11 @@ describe("queryReadOnly", () => {
       const recorded = recording(hangs);
       recorded.answerCancel(async () => "not-found");
       const provider = await open(recorded);
-      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+      const refused = await provider.queryReadOnly("SELECT n FROM t", SHORT).catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the time budget: no answer within 20ms; the server holds no statement under its id any longer",
       );
+      expect(errorKind(refused)).toBe("time-budget-refusal");
     });
 
     test("names a cancel that could not be confirmed, and still refuses on the time budget", async () => {
@@ -3401,17 +3411,21 @@ describe("queryReadOnly", () => {
         throw new DruidTransportError("Druid refused the cancel with HTTP 403");
       });
       const provider = await open(recorded);
-      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+      const refused = await provider.queryReadOnly("SELECT n FROM t", SHORT).catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the time budget: no answer within 20ms; its cancel could not be confirmed: Druid refused the cancel with HTTP 403",
       );
+      expect(errorKind(refused)).toBe("time-budget-refusal");
     });
 
     test("a deadline that passes while the planner is asked refuses on the time budget, and cancels nothing", async () => {
       const recorded = recording(undefined, hangs);
       const provider = await open(recorded);
-      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+      const refused = await provider.queryReadOnly("SELECT n FROM t", SHORT).catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the time budget: no answer within 20ms",
       );
+      expect(errorKind(refused)).toBe("time-budget-refusal");
       expect(recorded.agent.at(-1)?.sql).toBe("EXPLAIN PLAN FOR\nSELECT n FROM t");
       expect(recorded.cancels).toEqual([]);
     });
@@ -3420,9 +3434,11 @@ describe("queryReadOnly", () => {
       const recorded = recording();
       const provider = await open(recorded);
       recorded.transport.agentQuery = (sql, opts) => hangs(sql, opts);
-      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+      const refused = await provider.queryReadOnly("SELECT n FROM t", SHORT).catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the time budget: no answer within 20ms",
       );
+      expect(errorKind(refused)).toBe("time-budget-refusal");
       expect(recorded.cancels).toEqual([]);
     });
   });

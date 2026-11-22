@@ -84,6 +84,7 @@ import {
   removeDatabaseFile,
   warehouseSibling,
 } from "../../../docker/duckdb-init/build-fixture";
+import { errorKind } from "@/lib/db/error-record";
 
 // ============================================================================
 // Helpers
@@ -1695,18 +1696,22 @@ describe("queryReadOnly()", () => {
   test("a result over the row budget is refused", async () => {
     provider = await readOnlyProvider();
 
-    await expect(
-      provider.queryReadOnly("SELECT * FROM users", { ...GENEROUS_BUDGET, maxResultRows: 1 }),
-    ).rejects.toThrow(/exceeded the row budget: 2 rows > 1 allowed/);
+    const refused = await provider
+      .queryReadOnly("SELECT * FROM users", { ...GENEROUS_BUDGET, maxResultRows: 1 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded the row budget: 2 rows > 1 allowed/);
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("a result over the byte budget is refused", async () => {
     provider = await readOnlyProvider();
 
     // The whole sentence, numbers in order: the two seeded users are 52 bytes as JSON (D367).
-    await expect(
-      provider.queryReadOnly("SELECT * FROM users", { ...GENEROUS_BUDGET, maxResultBytes: 1 }),
-    ).rejects.toThrow(/^Read-only execution exceeded the byte budget: 52 bytes > 1 allowed$/);
+    const refused = await provider
+      .queryReadOnly("SELECT * FROM users", { ...GENEROUS_BUDGET, maxResultBytes: 1 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/^Read-only execution exceeded the byte budget: 52 bytes > 1 allowed$/);
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("a statement over the time budget has its result refused", async () => {
@@ -1714,9 +1719,11 @@ describe("queryReadOnly()", () => {
     // the fact: the result is refused rather than returned as if it were in budget.
     provider = await readOnlyProvider();
 
-    await expect(
-      provider.queryReadOnly("SELECT count(*) FROM range(30000000)", { ...GENEROUS_BUDGET, statementTimeoutMs: 1 }),
-    ).rejects.toThrow(/exceeded the time budget/);
+    const refused = await provider
+      .queryReadOnly("SELECT count(*) FROM range(30000000)", { ...GENEROUS_BUDGET, statementTimeoutMs: 1 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded the time budget/);
+    expect(errorKind(refused)).toBe("time-budget-refusal");
   }, 30_000);
 
   // ------------------------------------------------------------------------

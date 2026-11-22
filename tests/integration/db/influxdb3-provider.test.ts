@@ -50,6 +50,7 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind } from "@/lib/db/error-record";
 
 /** The notice an answer carrying database content opens with on this file's influxdb3 connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("influxdb3"));
@@ -413,6 +414,7 @@ describe("InfluxDB 3.12.0 Core's write refusals, replayed", () => {
     const rows = preview.body.split("\n").filter((line) => line.trim() !== "").length;
     const cut = await rejection(provider.queryReadOnly(q, { ...BUDGET, maxResultRows: rows - 1 }));
     expect(cut.message).toBe(`Read-only execution exceeded the row budget: ${rows} rows > ${rows - 1} allowed`);
+    expect(errorKind(cut)).toBe("row-budget-refusal");
     await provider.disconnect();
 
     const wide = `{${Array.from({ length: 125_001 }, (_, column) => `"c${column}":1`).join(",")}}\n`;
@@ -420,6 +422,7 @@ describe("InfluxDB 3.12.0 Core's write refusals, replayed", () => {
     await cells.provider.connect();
     const overflow = await rejection(cells.provider.queryReadOnly(q, { ...BUDGET, maxResultBytes: 50_000_000 }));
     expect(overflow.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(overflow)).toBe("row-budget-refusal");
     await cells.provider.disconnect();
   });
 });

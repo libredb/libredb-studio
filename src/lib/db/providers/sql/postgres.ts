@@ -78,12 +78,14 @@ import { EDIT_CHARACTER_LIMIT, userPositionOf } from "../../object-edit";
 import { connectionFingerprint } from "../../connection-fingerprint";
 import { comparePaths } from "../../object-path";
 import {
+  ByteBudgetRefusal,
   DatabaseConfigError,
   ConnectionError,
   DatabaseError,
   ExecutionProfileError,
   PoolExhaustedError,
   QueryError,
+  RowBudgetRefusal,
   TransactionLostError,
   NO_TRANSACTION_OPENED,
   NO_ACTIVE_TRANSACTION,
@@ -3675,11 +3677,11 @@ export class PostgresProvider extends SQLBaseProvider {
       // measured on the keyed rows, which are what the caller receives.
       const result = pgQueryResult(answered as unknown as PgArrayAnswer, sql, this.userDefinedTypes);
       if (result.rows.length > budget.maxResultRows) {
-        throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), "postgres", sql);
+        throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), "postgres", sql);
       }
       const resultBytes = measureResultBytes(result.rows);
       if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(byteBudgetSentence(resultBytes, budget.maxResultBytes), "postgres", sql);
+        throw new ByteBudgetRefusal(byteBudgetSentence(resultBytes, budget.maxResultBytes), "postgres", sql);
       }
 
       return { ...result, executionTime };

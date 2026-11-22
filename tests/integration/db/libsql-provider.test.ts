@@ -68,6 +68,7 @@ import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from ".
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind } from "@/lib/db/error-record";
 
 /** The notice an answer carrying database content opens with on this file's libsql connections. */
 const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("libsql"));
@@ -3520,12 +3521,16 @@ describe("LibSQLProvider agent read-only profile", () => {
     readOnlyToken();
     const provider = await opened();
 
-    await expect(
-      provider.queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", { ...BUDGET, maxResultRows: 1 }),
-    ).rejects.toThrow("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
-    await expect(
-      provider.queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", { ...BUDGET, maxResultBytes: 10 }),
-    ).rejects.toThrow("Read-only execution exceeded the byte budget");
+    const overRows = await provider
+      .queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", { ...BUDGET, maxResultRows: 1 })
+      .catch((caught: unknown) => caught);
+    expect((overRows as Error).message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(overRows)).toBe("row-budget-refusal");
+    const overBytes = await provider
+      .queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", { ...BUDGET, maxResultBytes: 10 })
+      .catch((caught: unknown) => caught);
+    expect((overBytes as Error).message).toStartWith("Read-only execution exceeded the byte budget");
+    expect(errorKind(overBytes)).toBe("byte-budget-refusal");
     await provider.disconnect();
   });
 
@@ -3561,6 +3566,7 @@ describe("LibSQLProvider agent read-only profile", () => {
     const error = await refusal(() => provider.queryReadOnly("SELECT big", { ...BUDGET, maxResultBytes: 1 }));
 
     expect(error).toBeInstanceOf(QueryError);
+    expect(errorKind(error)).toBe("byte-budget-refusal");
     const counted = /^Read-only execution exceeded the byte budget: (\d+) bytes > 1 allowed$/.exec(error.message);
     // Six bytes for the budget and the 1 MiB envelope, stopped at the 64 KiB chunk that crossed them.
     expect(Number(counted?.[1])).toBe(17 * 64 * 1024);
@@ -3577,9 +3583,11 @@ describe("LibSQLProvider agent read-only profile", () => {
         init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
       })) as unknown as typeof fetch;
 
-    await expect(provider.queryReadOnly("SELECT 1", { ...BUDGET, statementTimeoutMs: 5 })).rejects.toThrow(
-      "Read-only execution exceeded the time budget: no answer within 5ms",
-    );
+    const refused = await provider
+      .queryReadOnly("SELECT 1", { ...BUDGET, statementTimeoutMs: 5 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the time budget: no answer within 5ms");
+    expect(errorKind(refused)).toBe("time-budget-refusal");
     await provider.disconnect();
   });
 

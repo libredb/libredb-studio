@@ -25,7 +25,14 @@
  *
  * Pure: it receives the answers and never a client.
  */
-import { ExecutionProfileError, QueryError, TimeoutError } from "@/lib/db/errors";
+import {
+  ByteBudgetRefusal,
+  ExecutionProfileError,
+  QueryError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+  TimeoutError,
+} from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   byteBudgetSentence,
@@ -476,11 +483,11 @@ export function shapeWeaviateAgentAnswer(
     throw error;
   }
   if (projected.rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(projected.rows.length, budget.maxResultRows), "weaviate", statement);
+    throw new RowBudgetRefusal(rowBudgetSentence(projected.rows.length, budget.maxResultRows), "weaviate", statement);
   }
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "weaviate", statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "weaviate", statement);
   }
   return {
     fields: projected.fields,
@@ -524,7 +531,7 @@ export function weaviateAgentFailure(
     );
   }
   if ((error instanceof TransportError && error.kind === "timeout") || error instanceof TimeoutError) {
-    return new QueryError(
+    return new TimeBudgetRefusal(
       `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
       "weaviate",
       statement,

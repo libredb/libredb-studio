@@ -10,7 +10,7 @@
  * `TTL` answers -2 for a missing key and -1 for one with no expiry, and `OBJECT ENCODING` and `MEMORY USAGE` answer
  * nil for a missing key.
  */
-import { QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, RowBudgetRefusal, TimeBudgetRefusal } from "@/lib/db/errors";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,
@@ -104,11 +104,11 @@ export function redisAgentResult(
 ): QueryResult {
   const projected = projectMetadata(PROJECTIONS[op], [reply]);
   if (projected.rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(projected.rows.length, budget.maxResultRows), "redis", statement);
+    throw new RowBudgetRefusal(rowBudgetSentence(projected.rows.length, budget.maxResultRows), "redis", statement);
   }
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "redis", statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "redis", statement);
   }
   return { fields: projected.fields, rows: projected.rows, rowCount: projected.rows.length, executionTime };
 }
@@ -164,7 +164,11 @@ export function redisAgentFailure(
   if (error instanceof MetadataProjectionError) return new QueryError(error.message, "redis", statement);
   if (!(error instanceof Error)) return undefined;
   if (error.message === REDIS_COMMAND_TIMED_OUT) {
-    return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "redis", statement);
+    return new TimeBudgetRefusal(
+      `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+      "redis",
+      statement,
+    );
   }
   if (error.name !== "ReplyError") return undefined;
   const code = codeOf(error.message);
