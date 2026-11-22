@@ -272,8 +272,10 @@ Every launcher that starts the standalone server sets it too, where the server r
 
 Every launcher but the desktop app sets it only when it is absent and keeps a value the operator set, the empty one included.
 So `NEXT_MANUAL_SIG_HANDLE=` where the server is started, a line in `/etc/libredb-studio/env` for the .deb, .rpm and AUR service or in the unit's drop-in for the Snap, leaves the exit to Next.js's handler, as the empty value does for a container.
-`brew services` takes the service's environment from the formula alone, so there the empty value applies only to the wrapper run directly, `NEXT_MANUAL_SIG_HANDLE= libredb-studio`.
-On Windows the empty value has to come from a parent that keeps an empty variable, such as PowerShell 7.5 or later: cmd.exe's `set NEXT_MANUAL_SIG_HANDLE=` and Windows PowerShell's `$env:NEXT_MANUAL_SIG_HANDLE = ''` remove the variable, and the launchers then set `true`.
+The formula's service block sets no `NEXT_MANUAL_SIG_HANDLE`, and `brew services` has no per-service setting for it.
+Under `brew services` the empty value reaches the wrapper only through the service manager's own environment: `launchctl setenv` on macOS, `systemctl --user set-environment` or an environment.d file on Linux.
+Run directly, the wrapper takes it from the shell, `NEXT_MANUAL_SIG_HANDLE= libredb-studio`.
+On Windows the empty value has to come from a parent that keeps an empty variable, such as PowerShell 7.5 or later: cmd.exe's `set NEXT_MANUAL_SIG_HANDLE=` and `$env:NEXT_MANUAL_SIG_HANDLE = ''` in PowerShell before 7.5 remove the variable, and the launchers then set `true`.
 The desktop app sets it on every start, as it does its storage path.
 npx and `bun start` start the server on their own runtime (`process.execPath`), so on Bun they add nothing and pass on a value the operator set, which the server refuses at boot when it is `true`.
 `bun start` stops with exit code 1, before it starts the Next.js CLI, when the variable is absent from its environment and a `.env` file Next.js loads for `start` sets it, since its own `true` would otherwise replace that value unseen; it names each such file.
@@ -1260,7 +1262,7 @@ The launcher mirrors the Linux packages' contract:
 - **Configuration:** environment variables only — the same set as Docker and the Linux packages
   (`PORT`, `LIBREDB_BIND`, `JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_*`, `OIDC_*`, `STORAGE_*`, ...).
   See [Configuration](#configuration) above and [`.env.example`](../.env.example).
-  cmd.exe and Windows PowerShell remove a variable set to the empty string, so `NEXT_MANUAL_SIG_HANDLE=` reaches the launcher only from a parent that keeps an empty variable, such as PowerShell 7.5 or later ([Stopping the server](#stopping-the-server)).
+  cmd.exe and PowerShell before 7.5 remove a variable set to the empty string, so `NEXT_MANUAL_SIG_HANDLE=` reaches the launcher only from a parent that keeps an empty variable, such as PowerShell 7.5 or later ([Stopping the server](#stopping-the-server)).
 
 ### Portable zip (no package manager)
 

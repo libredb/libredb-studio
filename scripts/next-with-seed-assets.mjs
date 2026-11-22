@@ -27,7 +27,8 @@
  * from the loader's loadedEnvFiles. It holds on Bun as on Node.js: under `bun start` Bun runs the script's `node`,
  * as Bun itself under `bun --bun run start` or where no Node.js is installed, and loads no .env file into its
  * environment; only a direct `bun scripts/next-with-seed-assets.mjs` run, which no package.json script makes, has Bun
- * load the .env files first, so that the file's value arrives as the caller's.
+ * load its own .env files first (.env, .env.local and the one for its NODE_ENV, development when unset), so that a
+ * value from one of them arrives as the caller's.
  *
  * Every argument is passed to the Next.js CLI unchanged. The CLI is the `next` binary named by the `bin` field of the
  * checkout's own node_modules/next/package.json, run with this Node.js, so no shell, no PATH lookup and no package
