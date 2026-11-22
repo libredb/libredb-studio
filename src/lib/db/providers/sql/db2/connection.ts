@@ -173,8 +173,8 @@ const CHECKS_HOST_NAME = new Set<SSLMode>(["verify-system", "verify-full"]);
 /**
  * The transport rules, checked before any socket opens.
  *
- * No TLS without the explicit opt-in. A tunnel the factory did not open is refused rather
- * than dialled around. And through a tunnel, a mode that checks the server's NAME is refused:
+ * No TLS without the explicit opt-in. A tunnel that is on and was not opened never reaches here: core
+ * refuses it before the provider is built. And through a tunnel, a mode that checks the server's NAME is refused:
  * db2-node 1.0.25 has no option for the name to check, so it checks the certificate against the
  * address it dials, which is the tunnel's local end and not the server's own name.
  */
@@ -187,14 +187,9 @@ export function assertTransport(config: Db2Connection, target: Db2Target): void 
       "db2",
     );
   }
+  // The far end alone says a tunnel carries the connection: core sets it only when it opened the tunnel, and refuses a
+  // tunnel that is on and was not opened before any provider is built (FND-2 slice 5).
   const farEnd = config[TUNNEL_FAR_END];
-  if (config.sshTunnel?.enabled === true && farEnd === undefined) {
-    throw new DatabaseConfigError(
-      "This Db2 connection asks for an SSH tunnel and none was opened for it, so it is not dialled directly; " +
-        "fill in Host and Port, which the tunnel forwards to.",
-      "db2",
-    );
-  }
   if (farEnd !== undefined && target.tls !== undefined && CHECKS_HOST_NAME.has(target.tls)) {
     throw new DatabaseConfigError(
       `TLS mode "${target.tls}" checks the server's name, and through an SSH tunnel db2-node 1.0.25 can only check ` +

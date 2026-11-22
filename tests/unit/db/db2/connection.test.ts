@@ -240,11 +240,16 @@ describe("assertTransport (fail closed)", () => {
     },
   );
 
-  test("a tunnel that was not opened is refused rather than dialled around", () => {
-    const config = connection({
-      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },
-    });
-    expect(() => assertTransport(config, resolveTarget(config))).toThrow("asks for an SSH tunnel and none was opened");
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const mode of ["verify-system", "verify-full"] as SSLMode[]) {
+      const config = connection({
+        ssl: { mode, caCert: PEM },
+        sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },
+      });
+      expect(() => assertTransport(config, resolveTarget(config))).not.toThrow();
+    }
   });
 
   test("through a tunnel, a mode that checks the server's name is refused", () => {

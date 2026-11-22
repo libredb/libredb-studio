@@ -12,7 +12,7 @@
  *   session instead (`boundByClose`, `driver.ts`); M7 a duplicate column kept, under a numbered name
  *   (`values.ts`); a lost LOB edit named, and kept out of the preview (K24, `values.ts`);
  * - a driver failure classified by its `driverCode` (K17, `driver.ts`);
- * - TLS that fails closed, and a tunnel that is never dialled around (`connection.ts`).
+ * - TLS that fails closed, and through an opened tunnel the dial address is always its local end (`connection.ts`).
  *
  * One shared client per provider, no pool: four concurrent queries on one client were measured
  * correct, and a pool would multiply the cleartext-password exposure of a connection that opted
