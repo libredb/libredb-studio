@@ -973,6 +973,9 @@ count, whether it answered and when it ended.
   deletion — a run you can still name by id is still openable.
 - **History is the index, not the record.** A reopened report reads the run's own ledger, so the
   listing can never contradict what the run actually recorded.
+- **A run recorded in a statement language, or judged by a goal rule, this Studio does not have is listed, and opening it says so.**
+  Instead of its report you read a sentence that names the language or the rule, for example a run recorded by a newer Studio.
+  The run is kept as it was, and a Studio that has that language or rule opens it.
 
 ---
 
