@@ -62,6 +62,7 @@ import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub } from "../helpers/mcp-fixtures";
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -210,6 +211,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: async (target: ManagedConnection, profile: ExecutionProfile) => {
       // The open's own check, as McpConnectionContext.acquire makes it before anything is acquired.
       assertReadRootsWhereRequired(target);

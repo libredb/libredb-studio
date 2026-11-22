@@ -101,7 +101,7 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
@@ -112,6 +112,8 @@ import {
   FAKE_PEER_READ_TIMEOUT_MS,
   runCassandraFrameCases,
 } from "../../helpers/cassandra-fake-peer";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 
 const KEYSPACE = "probe";
 
@@ -4290,6 +4292,7 @@ describe("the agent read-only profile", () => {
       caller: { username: "alice", role: "admin" },
       visibleConnections: async () => [SEED],
       resolve: async () => SEED,
+      textScrub: fakeTextScrub,
       acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
         acquired.push(profile);
         const config = makeConnection({ user: "agent_ro", password: "not-a-real-password" });
@@ -4423,6 +4426,7 @@ describe("the agent read-only profile", () => {
 
       expect(answer).toEqual({
         content: [
+          { type: "text", text: providerTextNotice(providerAuthor("cassandra")) },
           {
             type: "text",
             text: `The statement was refused before it reached the database: ${cassandraAgentStatementRefusal(sql, KEYSPACE)}`,
@@ -4430,7 +4434,7 @@ describe("the agent read-only profile", () => {
         ],
         isError: true,
       });
-      expect(textOf(answer)[0]).toContain("this statement does not begin with SELECT, so it was not sent.");
+      expect(textOf(answer)[1]).toContain("this statement does not begin with SELECT, so it was not sent.");
       expect(acquired).toEqual(["agent-read-only"]);
       expect(sessions).toHaveLength(0);
     });
@@ -4446,6 +4450,7 @@ describe("the agent read-only profile", () => {
 
       expect(answer).toEqual({
         content: [
+          { type: "text", text: providerTextNotice(providerAuthor("cassandra")) },
           {
             type: "text",
             text: `The statement was refused before it reached the database: The agent read-only execution profile reads the tables of the connection's keyspace and of system_schema, and nothing else; this SELECT reads ${table}, so it was not sent. Name a table of the keyspace probe, or of system_schema for the schema.`,
@@ -4484,6 +4489,7 @@ describe("the agent read-only profile", () => {
       expect(sessions).toHaveLength(0);
       expect(answer).toEqual({
         content: [
+          { type: "text", text: providerTextNotice(providerAuthor("cassandra")) },
           {
             type: "text",
             text: `run_read_query cannot run on this connection: The agent read-only execution profile refuses the Cassandra role agent_ro: it is a superuser (agent_ro), whom no grant restricts. Connect as a role that is no superuser, holds no superuser role, and holds only SELECT on the keyspace probe or on its tables. It runs on ${RUN_READ_QUERY_ENGINES}.`,

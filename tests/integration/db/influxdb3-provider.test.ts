@@ -33,7 +33,7 @@ import { evaluateInfluxSql } from "@/lib/db/providers/timeseries/influxdb/sql-po
 import { InfluxDB3Provider } from "@/lib/db/providers/timeseries/influxdb/sql-provider";
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import { generateTableQuery } from "@/lib/query-generators";
@@ -47,6 +47,8 @@ import {
 import { type RecordedInfluxRequest, recordingInfluxTransport } from "../../helpers/influxdb-transport";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 
 const S = INFLUX_ERROR_SENTENCES as unknown as Record<string, string & ((...parts: string[]) => string)>;
 
@@ -449,6 +451,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     caller: { username: "alice", role: "admin" },
     visibleConnections: async () => [SEED],
     resolve: async () => SEED,
+    textScrub: fakeTextScrub,
     acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       const { provider, wire } = recordedServer(answers, executionContextFor(profile), ping, hold);
@@ -593,7 +596,13 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
   ])("%p passes the MCP fence and is refused by the provider's system fence before it is sent", async (sql) => {
     const result = await call({ sql });
 
-    expect(result).toEqual({ content: [{ type: "text", text: SYSTEM_REFUSAL }], isError: true });
+    expect(result).toEqual({
+      content: [
+        { type: "text", text: providerTextNotice(providerAuthor("influxdb3")) },
+        { type: "text", text: SYSTEM_REFUSAL },
+      ],
+      isError: true,
+    });
     expect(acquired).toEqual(["agent-read-only"]);
     expect(statementsSent().filter((q) => q.includes("system"))).toEqual([]);
   });
@@ -613,7 +622,13 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     async (sql) => {
       const result = await call({ sql });
 
-      expect(result).toEqual({ content: [{ type: "text", text: STRING_QUALIFIER_REFUSAL }], isError: true });
+      expect(result).toEqual({
+        content: [
+          { type: "text", text: providerTextNotice(providerAuthor("influxdb3")) },
+          { type: "text", text: STRING_QUALIFIER_REFUSAL },
+        ],
+        isError: true,
+      });
       expect(acquired).toEqual(["agent-read-only"]);
       expect(statementsSent().filter((q) => q.includes("system"))).toEqual([]);
     },
@@ -634,6 +649,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     expect(acquired).toEqual(["agent-read-only"]);
     expect(result).toEqual({
       content: [
+        { type: "text", text: providerTextNotice(providerAuthor("influxdb3")) },
         {
           type: "text",
           text: `The statement was refused before it reached the database: ${(evaluateInfluxSql("DELETE FROM home WHERE room = 'Kitchen'") as { message: string }).message}`,
@@ -659,6 +675,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
 
   const refusedAtOpen = (sentence: string) => ({
     content: [
+      { type: "text" as const, text: providerTextNotice(providerAuthor("influxdb3")) },
       {
         type: "text" as const,
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,

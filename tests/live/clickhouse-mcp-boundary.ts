@@ -41,6 +41,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { egressDecision } from "@/lib/db/egress-decision";
+import { fakeTextScrub } from "../helpers/mcp-fixtures";
 
 const PREFIX = "libredb_lm_";
 const DB = `${PREFIX}data`;
@@ -122,6 +123,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);

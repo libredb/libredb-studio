@@ -32,11 +32,13 @@ import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 
 // ---------------------------------------------------------------------------
 // Mock oracledb BEFORE loading the provider
@@ -6872,6 +6874,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
       caller: { username: "alice", role: "admin" },
       visibleConnections: async () => [target],
       resolve: async () => target,
+      textScrub: fakeTextScrub,
       acquire: (connection: ManagedConnection, profile: ExecutionProfile) => {
         acquired.push(profile);
         return acquireExecutionProfileProvider(connection, profile);
@@ -7068,6 +7071,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
     expect((result.content[1] as { text: string }).text).toContain("ORA-01456");
   });
 
+  // Studio's own refusal at the open, in its own words with no notice.
   const refused = (sentence: string) => ({
     content: [
       {
@@ -7079,11 +7083,14 @@ describe("MCP run_read_query on an Oracle connection", () => {
   });
 
   // The check runs on the statement call, and its refusal quotes names any user of the database may have chosen, so it
-  // comes behind the untrusted-data notice.
+  // comes behind the notice naming the provider that wrote it.
   const refusedAtStatement = (sentence: string) => ({
     content: [
-      { type: "text" as const, text: MCP_UNTRUSTED_NOTICE },
-      { type: "text" as const, text: `run_read_query cannot run on this connection: ${sentence}.` },
+      { type: "text" as const, text: providerTextNotice(providerAuthor("oracle")) },
+      {
+        type: "text" as const,
+        text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+      },
     ],
     isError: true as const,
   });

@@ -29,7 +29,13 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
-import { pinMcpTestEnvironment, resetMcpTestState, waitFor, writeSeedFile } from "../../helpers/mcp-fixtures";
+import {
+  fakeTextScrub,
+  pinMcpTestEnvironment,
+  resetMcpTestState,
+  waitFor,
+  writeSeedFile,
+} from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 
 pinMcpTestEnvironment();
@@ -386,6 +392,7 @@ describe("the wait", () => {
     const context = {
       caller: { username: "alice", role: "admin" },
       resolve: async () => connection,
+      textScrub: fakeTextScrub,
       acquire: acquireOver,
     } as unknown as McpConnectionContext;
     const input = RUN_MTCONNECT_READ_ARM.inputSchema.parse({

@@ -58,6 +58,7 @@ import {
   TestAmqpConnection,
   TestPublisher,
 } from "../helpers/rabbitmq-test-amqp091";
+import { fakeTextScrub } from "../helpers/mcp-fixtures";
 import { egressDecision } from "@/lib/db/egress-decision";
 
 function env(name: string): string {
@@ -219,6 +220,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (seeded: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return options.acquire === undefined ? acquireExecutionProfileProvider(seeded, profile) : options.acquire(seeded);

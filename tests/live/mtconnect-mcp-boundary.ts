@@ -50,6 +50,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
+import { fakeTextScrub } from "../helpers/mcp-fixtures";
 
 const PORT = Number(process.env.MTCONNECT_MCP_PORT ?? "17422");
 const PUT_PORT = Number(process.env.MTCONNECT_MCP_PUT_PORT ?? "17423");
@@ -180,6 +181,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: async (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired++;
       const provider = await acquire(target, profile);

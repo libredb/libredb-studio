@@ -16,12 +16,12 @@ import { languageServer } from "@/lib/agent/languages/server";
 import { getServerAuditBuffer } from "@/lib/audit";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
-import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
+import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { mongoDriver, mongoDriverModule, resetMongoDriver } from "../../helpers/mongodb-driver";
@@ -114,6 +114,7 @@ function fakeContext(provider: object, type: DatabaseType = "mongodb"): McpConne
     caller: { username: "alice", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: async () => provider as DatabaseProvider,
   } as unknown as McpConnectionContext;
 }
@@ -246,8 +247,9 @@ describe("a refusal", () => {
     mongoDriver.connectionStatus = readWriteStatus.reply;
     const result = await command({ connection_id: "seed:mongo", command: { collection: "orders", operation: "find" } });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toStartWith("run_mongo_command cannot run on this connection: ");
-    expect(result.content[0].text).toEndWith(" It runs on MongoDB.");
+    expect(result.content[0].text).toBe(providerTextNotice("MongoDB provider, bundled with Studio"));
+    expect(result.content[1].text).toStartWith("run_mongo_command cannot run on this connection: ");
+    expect(result.content[1].text).toEndWith(" It runs on MongoDB.");
     expect(mongoDriver.cursors).toEqual([]);
     expect(mcpEvents().at(-1)).toMatchObject({ target: "mcp/execution", reason: "mcp_execution_failed" });
   });

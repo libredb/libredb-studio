@@ -61,6 +61,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { loadMilvusDescriptor } from "../../scripts/generate-milvus-descriptor.mjs";
+import { fakeTextScrub } from "../helpers/mcp-fixtures";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -351,6 +352,7 @@ function contextFor(connection: ManagedConnection, acquired: ExecutionProfile[])
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);

@@ -50,6 +50,7 @@ import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement
 import type { ManagedConnection } from "@/lib/seed";
 import { loadWriteRefusalCaptures } from "../helpers/influxdb-fixtures";
 import { readFixtureCredentials } from "./influxdb-evidence-checks";
+import { fakeTextScrub } from "../helpers/mcp-fixtures";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const TOKEN = readFixtureCredentials(
@@ -151,6 +152,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);

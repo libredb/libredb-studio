@@ -24,7 +24,7 @@ import type { EtcdClient } from "@/lib/db/providers/keyvalue/etcd/client";
 import { EtcdError } from "@/lib/db/providers/keyvalue/etcd/client";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -277,6 +277,7 @@ describe("a refusal", () => {
     expect(result).toEqual({
       isError: true,
       content: [
+        { type: "text", text: providerTextNotice("etcd provider, bundled with Studio") },
         {
           type: "text",
           text: `run_etcd_read cannot run on this connection: ${sentence.replace(/\.+$/, "")}. It runs on etcd.`,
@@ -297,13 +298,14 @@ describe("a refusal", () => {
     expect(result).toEqual({
       isError: true,
       content: [
+        { type: "text", text: providerTextNotice("etcd provider, bundled with Studio") },
         {
           type: "text",
           text: `run_etcd_read cannot run on this connection: ${ETCD_PROOF_SENTENCES.authOff.replace(/\.+$/, "")}. It runs on etcd.`,
         },
       ],
     });
-    expect(result.content[0].text).not.toContain("(etcd:");
+    expect(result.content[1].text).not.toContain("(etcd:");
     expect(methods()).toEqual(["authenticate", "close"]);
   });
 
@@ -320,7 +322,8 @@ describe("a refusal", () => {
     };
     const result = await etcd("endpoint status");
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain(ETCD_PROOF_SENTENCES.kubernetes("/registry/").replace(/\.+$/, ""));
+    expect(result.content[0].text).toBe(providerTextNotice("etcd provider, bundled with Studio"));
+    expect(result.content[1].text).toContain(ETCD_PROOF_SENTENCES.kubernetes("/registry/").replace(/\.+$/, ""));
   });
 
   test("a key outside the user's READ ranges is refused in Studio's words, never etcd's", async () => {

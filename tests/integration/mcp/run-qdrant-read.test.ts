@@ -23,7 +23,7 @@ import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
 import { QDRANT_PROOF_SENTENCES } from "@/lib/db/providers/vector/qdrant/metadata-read";
 import { createRestQdrantClient } from "@/lib/db/providers/vector/qdrant/rest-client";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -254,6 +254,7 @@ describe("a refusal", () => {
     expect(result).toEqual({
       isError: true,
       content: [
+        { type: "text", text: providerTextNotice("Qdrant provider, bundled with Studio") },
         {
           type: "text",
           text: `run_qdrant_read cannot run on this connection: ${QDRANT_PROOF_SENTENCES.writes.replace(/\.+$/, "")}. It runs on Qdrant.`,
@@ -270,7 +271,8 @@ describe("a refusal", () => {
     });
     const result = await qdrant("GET /collections");
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain(QDRANT_PROOF_SENTENCES.writesCollection.replace(/\.+$/, ""));
+    expect(result.content[0].text).toBe(providerTextNotice("Qdrant provider, bundled with Studio"));
+    expect(result.content[1].text).toContain(QDRANT_PROOF_SENTENCES.writesCollection.replace(/\.+$/, ""));
     expect(lines().at(-1)).toBe("POST /collections/plain/points/delete");
   });
 

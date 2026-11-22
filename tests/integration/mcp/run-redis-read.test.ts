@@ -20,11 +20,11 @@ import { REDIS_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/keyvalue/redis
 import { REDIS_PROOF_SENTENCES } from "@/lib/db/providers/keyvalue/redis-read-only-proof";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import { type McpStatementInput, runStatement } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
-import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
+import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
 import { asReply, type CapturedStep, principalCapture, probeLabel, stepFor } from "../../helpers/redis-agent";
@@ -309,6 +309,7 @@ describe("a refusal", () => {
     expect(result).toEqual({
       isError: true,
       content: [
+        { type: "text", text: providerTextNotice("Redis provider, bundled with Studio") },
         {
           type: "text",
           text: `run_redis_read cannot run on this connection: ${sentence}`.replace(/\.$/, "") + ". It runs on Redis.",
@@ -323,6 +324,7 @@ describe("a refusal", () => {
     expect(result).toEqual({
       isError: true,
       content: [
+        { type: "text", text: providerTextNotice("Redis provider, bundled with Studio") },
         {
           type: "text",
           text: `run_redis_read cannot run on this connection: ${REDIS_PROOF_SENTENCES.admitted("DEL").replace(/\.$/, "")}. It runs on Redis.`,
@@ -417,6 +419,7 @@ describe("a cancel", () => {
       caller: { username: "alice", role: "admin" },
       visibleConnections: async () => [connection],
       resolve: async () => connection,
+      textScrub: fakeTextScrub,
       acquire: (target: ManagedConnection, profile: ExecutionProfile) =>
         acquireExecutionProfileProvider(target, profile),
     } as unknown as McpConnectionContext;

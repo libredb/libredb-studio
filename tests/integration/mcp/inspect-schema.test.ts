@@ -34,7 +34,17 @@ import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
 import { MCP_CONNECTION_UNAVAILABLE_TEXT } from "@/lib/mcp/availability";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_NOT_VISIBLE_TEXT, MCP_RESULT_CAP_BYTES, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import {
+  MCP_CANCELLED_TEXT,
+  MCP_NOT_VISIBLE_TEXT,
+  MCP_RESULT_CAP_BYTES,
+  MCP_UNTRUSTED_NOTICE,
+  providerTextNotice,
+} from "@/lib/mcp/output";
+import { ExecutionProfileError, StudioProfileRefusal } from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { secretForms } from "@/lib/db/utils/server-text";
+import type { ManagedConnection } from "@/lib/seed";
 import { metadataReadAnnotations } from "@/lib/mcp/tools/annotations";
 import { INSPECT_SCHEMA_DESCRIPTION, InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
 import {
@@ -42,6 +52,7 @@ import {
   createDuckdbFile,
   createSqliteFile,
   failNextCall,
+  fakeTextScrub,
   gateMethod,
   pinMcpTestEnvironment,
   resetMcpTestState,
@@ -304,6 +315,7 @@ describe("the answer", () => {
     const context = {
       caller: { username: "alice", role: "admin" as const },
       resolve: async () => connection,
+      textScrub: fakeTextScrub,
       acquire: async () => provider,
     } as unknown as McpConnectionContext;
     const result = await inspectSchema(InspectSchemaInputSchema.parse({ connection_id: "seed:mongo" }), {
@@ -417,6 +429,7 @@ describe("on a Kubernetes connection", () => {
     const context = {
       caller: { username: "alice", role: "admin" as const },
       resolve: async () => connection,
+      textScrub: fakeTextScrub,
       acquire: async () => {
         acquired.calls += 1;
         await provider.connect();
@@ -639,11 +652,15 @@ describe("failures", () => {
   // #1462: an ExecutionProfileError is Studio's own decision, not the engine's, so it
   // reads in Studio's words - no untrusted-data notice, no "The database refused or
   // failed the call:" prefix - exactly as run_read_query already answers one.
-  test("an in-memory SQLite database is refused by the profile, in Studio's own words with no untrusted-data notice", async () => {
+  test("an in-memory SQLite database is refused by the provider's profile, behind a notice naming the provider", async () => {
     const result = await inspect({ connection_id: "seed:memory" });
     expect(result.isError).toBe(true);
     expect(result.content).toEqual([
-      { type: "text", text: "The agent read-only execution profile cannot target an in-memory SQLite database" },
+      { type: "text", text: providerTextNotice("SQLite provider, bundled with Studio") },
+      {
+        type: "text",
+        text: "inspect_schema cannot run on this connection: The agent read-only execution profile cannot target an in-memory SQLite database.",
+      },
     ]);
     expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
   });
@@ -884,6 +901,7 @@ function inspectFixed(
   const context = {
     caller: { username: "alice", role: "admin" as const },
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: async () => provider as unknown as DatabaseProvider,
   } as unknown as McpConnectionContext;
   return inspectSchema(InspectSchemaInputSchema.parse({ connection_id: "seed:fixed", ...args }), { context, signal });
@@ -1347,5 +1365,71 @@ describe("default arguments", () => {
     expect(
       (await inspect({ connection_id: "seed:named", include_columns: false, include_foreign_keys: true })).content,
     ).toEqual([{ type: "text", text: FIRST_OVER_CAP }]);
+  });
+});
+
+describe("a provider's text on inspect_schema", () => {
+  const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+  const AUTHOR = "PostgreSQL provider, bundled with Studio";
+
+  /** inspect_schema through a context over one credentialed PostgreSQL-typed connection whose open does `acquire`. */
+  function inspectOpening(acquire: () => Promise<DatabaseProvider>) {
+    const connection = {
+      id: "seed:fixed",
+      name: "fixed",
+      type: "postgres" as const,
+      seedId: "fixed",
+      password,
+      createdAt: new Date(),
+    } as ManagedConnection;
+    const context = {
+      caller: { username: "alice", role: "admin" as const },
+      resolve: async () => connection,
+      textScrub: fakeTextScrub,
+      acquire,
+    } as unknown as McpConnectionContext;
+    return inspectSchema(InspectSchemaInputSchema.parse({ connection_id: "seed:fixed" }), {
+      context,
+      signal: new AbortController().signal,
+    });
+  }
+
+  test.each(
+    (
+      [
+        [
+          "a profile refusal the provider raises",
+          (text: string) => new ExecutionProfileError(text, "PROFILE_PRIVILEGES_TOO_BROAD"),
+        ],
+        ["an engine error", (text: string) => new Error(text)],
+      ] as const
+    ).flatMap(([label, make]) => secretForms([password]).map((form) => [label, form, make] as const)),
+  )("%s holding %s is withheld", async (_label, form, make) => {
+    const result = await inspectOpening(async () => {
+      throw make(`refused for ${form}`);
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).toContain(PROVIDER_TEXT_WITHHELD);
+    for (const each of secretForms([password])) expect(JSON.stringify(result)).not.toContain(each);
+  });
+
+  test("a profile refusal the provider raises is answered behind a notice naming the provider", async () => {
+    const result = await inspectOpening(async () => {
+      throw new ExecutionProfileError("the role may write", "PROFILE_PRIVILEGES_TOO_BROAD");
+    });
+    expect(result).toEqual({
+      isError: true,
+      content: [
+        { type: "text", text: providerTextNotice(AUTHOR) },
+        { type: "text", text: "inspect_schema cannot run on this connection: the role may write." },
+      ],
+    });
+  });
+
+  test("a profile refusal Studio raises keeps Studio's words and carries no notice", async () => {
+    const result = await inspectOpening(async () => {
+      throw new StudioProfileRefusal("Studio refused the open", "AGENT_CREDENTIAL_REQUIRED");
+    });
+    expect(result).toEqual({ isError: true, content: [{ type: "text", text: "Studio refused the open" }] });
   });
 });

@@ -13,6 +13,8 @@ import { join, resolve } from "node:path";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { clearProviderCache } from "@/lib/db/factory";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import type { ManagedConnection } from "@/lib/seed";
 import { resetCache } from "@/lib/seed";
 
 const ROOT = resolve(import.meta.dir, "../..");
@@ -217,4 +219,12 @@ export async function resetMcpTestState(): Promise<void> {
   resetCache();
   clearRateLimitState();
   getServerAuditBuffer().clear();
+}
+
+/**
+ * A fake MCP context's `textScrub`: the scrub of the listed connection, which is what the real one answers for a
+ * connection with no Vault reference.
+ */
+export async function fakeTextScrub(listed: ManagedConnection): Promise<ProviderTextScrub> {
+  return providerTextScrub(listed);
 }

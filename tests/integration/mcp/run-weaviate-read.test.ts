@@ -24,7 +24,7 @@ import { WEAVIATE_AGENT_UNREADABLE, WEAVIATE_PROOF_SENTENCES } from "@/lib/db/pr
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -318,6 +318,7 @@ describe("a refusal", () => {
     expect(result).toEqual({
       isError: true,
       content: [
+        { type: "text", text: providerTextNotice("Weaviate provider, bundled with Studio") },
         { type: "text", text: `run_weaviate_read cannot run on this connection: ${sentence} It runs on Weaviate.` },
       ],
     });

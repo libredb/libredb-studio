@@ -51,11 +51,13 @@ import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 
 // ============================================================================
 // Connection
@@ -4616,6 +4618,7 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
     caller: { username: "alice", role: "admin" },
     visibleConnections: async () => [SEED],
     resolve: async () => SEED,
+    textScrub: fakeTextScrub,
     acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       const provider = new ClickHouseProvider(
@@ -4720,6 +4723,7 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
 
     expect(result).toEqual({
       content: [
+        { type: "text", text: providerTextNotice(providerAuthor("clickhouse")) },
         {
           type: "text",
           text: `The statement was refused before it reached the database: Read-only execution refused the table function ${name}(), which reaches another server.`,
@@ -4760,6 +4764,7 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
     expect(sentSql.filter((sent) => sent.startsWith("SELECT id FROM demo.orders"))).toEqual([]);
     expect(result).toEqual({
       content: [
+        { type: "text", text: providerTextNotice(providerAuthor("clickhouse")) },
         {
           type: "text",
           text: `run_read_query cannot run on this connection: ClickHouse user "agent_ro" holds BACKUP ON demo.*, a grant whose statements readonly does not refuse; the agent read-only profile takes a user holding only SELECT and SHOW on named databases or tables, so it is refused. It runs on ${RUN_READ_QUERY_ENGINES}.`,

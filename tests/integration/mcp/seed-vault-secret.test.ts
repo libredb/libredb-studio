@@ -13,6 +13,7 @@ import { join } from "node:path";
 import * as route from "@/app/api/mcp/route";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import { logger } from "@/lib/logger";
 import { resetVaultCache } from "@/lib/seed/vault-client";
@@ -128,6 +129,32 @@ describe("a secret a seed reads from Vault", () => {
     expect(opened).toEqual([MARKER, MARKER]);
     expect(everythingSent(answers)).not.toContain(MARKER);
     expect(written.join("\n")).not.toContain(MARKER);
+  });
+});
+
+describe("a provider's error that echoes the Vault-resolved password", () => {
+  test("a provider's error that echoes the Vault-resolved password is withheld", async () => {
+    const resolved = crypto.randomUUID();
+    vaultAnswers(200, { data: { data: { password: resolved } } });
+    seedWarehouse("${vault:secret/data/mcp/warehouse#password}");
+    spies.push(
+      spyOn(PostgresProvider.prototype, "connect").mockImplementation(async function (this: PostgresProvider) {
+        opened.push(this.config.password);
+        throw new Error(`password authentication failed for ${this.config.password}`);
+      }),
+    );
+
+    const inspected = await call("inspect_schema", { connection_id: "seed:warehouse" });
+    const read = await call("run_read_query", { connection_id: "seed:warehouse", sql: "SELECT 1" });
+
+    // The control: the provider was handed the resolved secret, which the listed connection never holds.
+    expect(opened).toEqual([resolved, resolved]);
+    for (const answer of [inspected, read]) {
+      expect(answer.isError).toBe(true);
+      expect(JSON.stringify(answer)).toContain(PROVIDER_TEXT_WITHHELD);
+    }
+    expect(everythingSent([inspected, read])).not.toContain(resolved);
+    expect(written.join("\n")).not.toContain(resolved);
   });
 });
 

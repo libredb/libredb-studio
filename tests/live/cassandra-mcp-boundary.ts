@@ -56,6 +56,7 @@ import type { ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub } from "../helpers/mcp-fixtures";
 
 const PREFIX = "libredb_lmc_";
 const KS = `${PREFIX}data`;
@@ -165,6 +166,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);

@@ -46,7 +46,7 @@ const TOO_LARGE_TEXTS: Record<"rows" | "bytes", string> = {
 export type ReadQueryFailure =
   | { readonly kind: "timeout" }
   | { readonly kind: "too-large"; readonly text: string }
-  | { readonly kind: "not-sent"; readonly text: string }
+  | { readonly kind: "not-sent"; readonly error: RefusedBeforeSendError }
   | { readonly kind: "engine"; readonly error: unknown };
 
 /** `texts` answers a budget refusal in a statement language's own words; a refusal it leaves out keeps the SQL text. */
@@ -60,9 +60,9 @@ export function classifyReadQueryFailure(
   // The call's read allowance, refused by this server before anything was sent: its own sentence, never the
   // database's error.
   if (error instanceof ReadAllowanceExceededError) return { kind: "too-large", text: error.message };
-  // Any other statement this repository refused before sending it, a provider's own fence: its sentence, said to be
-  // this server's refusal rather than the database's error.
-  if (error instanceof RefusedBeforeSendError) return { kind: "not-sent", text: notSentText(error.message) };
+  // Any other statement refused before it was sent, a provider's own fence: the error itself, which the caller renders
+  // as the provider's text behind a notice naming it, never as the database's error.
+  if (error instanceof RefusedBeforeSendError) return { kind: "not-sent", error };
   const message = error instanceof Error ? error.message : String(error);
   const refusal = READ_ONLY_REFUSALS.find(({ prefix }) => message.startsWith(prefix));
   if (refusal === undefined) return { kind: "engine", error };
@@ -127,11 +127,6 @@ export function timeoutText(timeoutMs: number): string {
 
 export function nextPageHint(nextOffset: number): string {
   return `Call again with offset ${nextOffset} for the next page.`;
-}
-
-function notSentText(message: string): string {
-  const reason = /[.!?]$/.test(message) ? message : `${message}.`;
-  return `The statement was refused before it reached the database: ${reason}`;
 }
 
 export function fenceRefusalText(code: string, type: DatabaseType): string {

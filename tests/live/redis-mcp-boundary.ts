@@ -48,6 +48,7 @@ import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub } from "../helpers/mcp-fixtures";
 
 const PREFIX = "libredb_lm_";
 
@@ -463,6 +464,7 @@ async function inspectSchemaOf(connection: ManagedConnection): Promise<string> {
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => acquireExecutionProfileProvider(target, profile),
   } as unknown as McpConnectionContext;
   const args = InspectSchemaInputSchema.parse({ connection_id: connection.id });

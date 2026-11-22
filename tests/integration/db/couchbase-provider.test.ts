@@ -40,12 +40,14 @@ import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { loadTlsFixtures } from "../../helpers/tls-fixtures";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 
 // ============================================================================
 // Connection
@@ -3025,6 +3027,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
       caller: { username: "alice", role: "admin" },
       visibleConnections: async () => [SEED],
       resolve: async () => SEED,
+      textScrub: fakeTextScrub,
       acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
         acquired.push(profile);
         const provider = new CouchbaseProvider(
@@ -3221,6 +3224,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
 
         expect(result).toEqual({
           content: [
+            { type: "text", text: providerTextNotice(providerAuthor("couchbase")) },
             {
               type: "text",
               text: "The statement was refused before it reached the database: The agent read-only execution profile sends one SQL++ statement, a SELECT (a WITH before it is fine), and nothing else; this statement does not begin with SELECT or WITH, so it was not sent. A user holding only query_select may still run UPDATE STATISTICS, BEGIN WORK, PREPARE and EXECUTE, so only a SELECT reaches the server.",
@@ -3260,6 +3264,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
       expect(paths(cluster.sent)).toEqual(["GET /whoami"]);
       expect(result).toEqual({
         content: [
+          { type: "text", text: providerTextNotice(providerAuthor("couchbase")) },
           {
             type: "text",
             text: `run_read_query cannot run on this connection: The agent read-only execution profile needs a Couchbase user whose only roles are query_select on named scopes of the bucket travel; the user agent_ro also holds query_system_catalog, which reach past them, so the connection is refused. A role on every scope of the bucket reaches its _system scope too, which holds Sync Gateway's and the query optimizer's own documents. Give the agent a user whose only roles are query_select[travel:<scope>], one for each scope it reads. ${ENGINES}`,
@@ -3276,6 +3281,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
 
       expect(result).toEqual({
         content: [
+          { type: "text", text: providerTextNotice(providerAuthor("couchbase")) },
           {
             type: "text",
             text: `run_read_query cannot run on this connection: The agent read-only execution profile needs a server that enforces its users' roles; this server ran a DELETE in the bucket travel for the user agent_ro, whose only roles are query_select, so its enforcement is unproven and the connection is refused. ${ENGINES}`,

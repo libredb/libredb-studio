@@ -24,7 +24,7 @@ import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
-import { pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
+import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
 import { recordedAnswer, resultOf, vectorCapture } from "../../helpers/qdrant-surface-fixtures";
 
 pinMcpTestEnvironment();
@@ -125,6 +125,7 @@ describe("QE17: the machine surfaces carry the schema and no marker", () => {
     const context = {
       caller: { username: "alice", role: "admin" as const },
       resolve: async () => CONNECTION,
+      textScrub: fakeTextScrub,
       acquire: async () => provider,
     } as unknown as McpConnectionContext;
     const result = await inspectSchema(InspectSchemaInputSchema.parse({ connection_id: CONNECTION.id }), {

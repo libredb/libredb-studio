@@ -47,6 +47,7 @@ import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { snapshotDiff, snapshotLines } from "./kafka-snapshot";
+import { fakeTextScrub } from "../helpers/mcp-fixtures";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -207,6 +208,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);

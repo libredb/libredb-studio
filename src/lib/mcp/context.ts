@@ -5,6 +5,7 @@ import { MCP_AGENT_CREDENTIAL_REQUIRED, READ_ROOTS_REQUIRED } from "@/lib/db/com
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import { acquireExecutionProfileProvider, profiledCacheKey, type ExecutionProfile } from "@/lib/db/factory";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { getManagedConnections, seedRolesOf, type ManagedConnection } from "@/lib/seed";
@@ -140,6 +141,13 @@ export function assertReadRootsWhereRequired(
 
 export class McpConnectionContext {
   private visible: Promise<readonly ManagedConnection[] | typeof MCP_CONNECTIONS_UNREADABLE> | null = null;
+  /**
+   * The open of each listed connection this request made, keyed by the listed record itself, so two records that
+   * share an id and not their credentials are never joined: the open's own checks, then its Vault
+   * references read. `textScrub` and `acquire` share it, so Vault is read once per call and in the order it always
+   * was, before any provider is built. An open that refused stays refused for the rest of the request.
+   */
+  private readonly opened = new Map<ManagedConnection, Promise<ManagedConnection>>();
 
   constructor(readonly caller: McpCaller) {}
 
@@ -169,10 +177,17 @@ export class McpConnectionContext {
     );
   }
 
+  /**
+   * The scrub of the connection a call opens (src/lib/db/operations/provider-text.ts), over its secrets as resolved:
+   * a Vault-backed secret is a reference on the listed connection and a value only once the open has read it, so
+   * the scrub is taken from the open, which a tool asks for before it acquires. It refuses as the open refuses.
+   */
+  async textScrub(listed: ManagedConnection): Promise<ProviderTextScrub> {
+    return providerTextScrub(await this.open(listed));
+  }
+
   async acquire(listed: ManagedConnection, profile: ExecutionProfile): Promise<DatabaseProvider> {
-    assertAgentCredentialWhereRequired(listed);
-    assertReadRootsWhereRequired(listed);
-    const connection = await resolvedSecrets(listed);
+    const connection = await this.open(listed);
     // The caller's editor posture on this connection (non-admin DuckDB file access): it decides whether a
     // SQLite handle opens at all and which open single-writer handle an operations acquisition may
     // borrow, and it is part of the key, so it is derived first; every caller that can resolve one seed
@@ -186,6 +201,20 @@ export class McpConnectionContext {
     });
     pendingAcquisitions.set(key, acquisition);
     return acquisition;
+  }
+
+  /** The listed connection checked and its Vault references read, once per request (`opened`). */
+  private open(listed: ManagedConnection): Promise<ManagedConnection> {
+    let opening = this.opened.get(listed);
+    if (opening === undefined) {
+      opening = (async () => {
+        assertAgentCredentialWhereRequired(listed);
+        assertReadRootsWhereRequired(listed);
+        return resolvedSecrets(listed);
+      })();
+      this.opened.set(listed, opening);
+    }
+    return opening;
   }
 
   /**
