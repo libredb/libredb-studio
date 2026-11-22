@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B173 · 84
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B178 · 89
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 24
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV35 · 33
@@ -1195,7 +1195,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 62 hits, re-measured on 2026-11-20.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 63 hits, re-measured on 2026-11-22.
 The breakdown below is the one measured at 54 on 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
@@ -10007,6 +10007,52 @@ It is not new with the review record: every deny code has taken this path since 
 Found 2026-11-22 while rebasing the agent statement review record (FND-7 slice 2).
 
 **Done when:** an `ExecutionProfileError` reaching the hand-over route is answered with a client-error status and its `reasonCode` in the body, logged below error level, and a route test pins that answer for a refused profile, with the deny codes that are a server fault, if any, named and kept apart.
+
+### B174. One unreadable run ledger stops the resume sweep for every run listed after it
+
+`sweepStaleRuns` in `src/lib/agent/resume-sweep.ts` reads each listed run's status outside the per-run `try` that guards its drive, so a ledger the store refuses as `MALFORMED_LEDGER` (an event kind no pack declares, a line that is not JSON, a second header) throws out of the pass: `runResumeSweepOnce` logs "agent resume sweep failed" and returns, and no run listed after that ledger is resumed, on that pass or any later one.
+Measured on 2026-11-22 over a real local world: a sweep over a malformed ledger listed before a stale running run threw `MALFORMED_LEDGER` and never reached the running run.
+A ledger that names a statement language, workflow or goal rule this Studio does not have is counted and left as it is; a malformed one is not, because skipping corruption needs a log line of its own to stay loud.
+Found 2026-11-22 while planning FND-1 slice 6.
+
+**Done when:** the pass skips a malformed ledger with an error-level line naming its run id and the store's reason, a later stale run is still driven, and a sweep test pins both; cited in `docs/AGENT.md`.
+
+### B175. Stopping a run that still has a statement in flight answers 500, where pausing it answers 409
+
+`DELETE /api/agent/runs/{runId}` (`src/app/api/agent/runs/[runId]/route.ts`) passes every error from `AgentRunService.cancel` to `createErrorResponse`.
+When `cancel` ends a queued or paused run, `finalize` refuses a run whose executions are still in flight with `AgentRunServiceError` (`RUN_HAS_LIVE_EXECUTION`), and `createErrorResponse` has no branch for that class, so it falls through to the generic branch.
+`PATCH` on the same route answers every `AgentRunServiceError` 409 with its message.
+Measured 2026-11-22 with the route test's mocks: the same `AgentRunServiceError("RUN_HAS_LIVE_EXECUTION", ...)` answered `500` `{"code":"INTERNAL_ERROR"}` from `DELETE` and `409` from `PATCH`.
+The route test for `DELETE` pins only a status of 500 or more.
+Found 2026-11-22 while building FND-1 slice 6.
+
+**Done when:** `DELETE` answers an `AgentRunServiceError` 409 as `PATCH` does, logged below error level, and the route test pins that status.
+
+### B176. A ledger line carrying an event kind no pack declares is refused under the entry's kind, not the event's
+
+`parseEntry` in `src/lib/agent/run-store.ts` refuses an `event` entry whose event kind is not in `EVENT_KINDS` with the same message as an entry of an unknown kind, which names the entry's kind.
+So a ledger with an undeclared event kind is refused as carrying `the unknown kind "event"`, and the event kind that actually failed the check appears nowhere in the message.
+Measured while planning FND-1 slice 6.
+Found 2026-11-22 while building FND-1 slice 6.
+
+**Done when:** the refusal of an undeclared event kind names that event kind, and a run-store test pins the message.
+
+### B177. Driving a paused run resolves its connection and builds a provider before the run is seen to be paused
+
+`driveAgentRun` in `src/lib/agent/runtime.ts` resolves the run's connection and builds its provider, reading its capabilities and labels, before `runInvestigation` reads the ledger and returns for a paused run.
+The run is left paused and takes no turn, so the outcome is correct, but the connection lookup and the provider construction are spent on a run that will not be driven.
+Measured while planning FND-1 slice 6: a drive of a paused run called `getCapabilities` and `getLabels`.
+Found 2026-11-22 while building FND-1 slice 6.
+
+**Done when:** a drive of a paused run returns before it resolves a connection or builds a provider, and a runtime test pins that no provider is built for it.
+
+### B178. A continuation from another user's malformed run ledger is declined "error", not "unavailable"
+
+When `POST /api/agent/runs` (`src/app/api/agent/runs/route.ts`) is asked to continue a previous run, a ledger that names an id this Studio does not have is declined `"error"` to its owner and `"unavailable"` to anyone else.
+A ledger the store refuses as `MALFORMED_LEDGER` is declined `"error"` to every caller, the owner or not.
+Found 2026-11-22 while building FND-1 slice 6.
+
+**Done when:** anyone but the owner is declined `"unavailable"` for a malformed ledger as well, and a route test pins it.
 
 ## Passkey deferrals (#785)
 

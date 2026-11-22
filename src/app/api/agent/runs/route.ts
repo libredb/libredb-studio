@@ -12,7 +12,7 @@ import { decodeHistoryCursor, type AgentHistoryCursor } from "@/lib/agent/histor
 import { threadContextMaxCharsFor } from "@/lib/agent/models";
 import { agentPosture } from "@/lib/agent/posture";
 import type { AgentRunStatusReport } from "@/lib/agent/run-service";
-import { AgentRunStoreError } from "@/lib/agent/run-store";
+import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-store";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
 import { threadContextFor } from "@/lib/agent/thread-context";
 import {
@@ -512,8 +512,16 @@ export async function POST(req: Request) {
           // this server and says nothing about the id at all. Neither reaches the caller
           // as a distinction, and neither stops the run. Recorded rather than logged
           // because a fail-open decision has to carry its reason as data.
-          failed =
-            error instanceof AgentRunStoreError && error.reasonCode === "INVALID_RUN_ID" ? "unavailable" : "error";
+          // A ledger naming an id this Studio does not have is the owner's unreadable
+          // run, and anyone else's run that is not theirs: its persisted actor decides,
+          // so the 202 body tells no one else that such a run exists.
+          if (error instanceof AgentRunUnavailableError) {
+            failed = error.actor.sessionId === guard.session.username ? "error" : "unavailable";
+          } else if (error instanceof AgentRunStoreError && error.reasonCode === "INVALID_RUN_ID") {
+            failed = "unavailable";
+          } else {
+            failed = "error";
+          }
         }
         if (
           failed === null &&

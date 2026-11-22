@@ -1840,7 +1840,7 @@ eight paths, eleven handlers, under `src/app/api/agent/`. They drive the read-on
 behaviour in [`docs/AGENT.md`](AGENT.md), the surface in [`docs/AGENT_GUIDE.md`](AGENT_GUIDE.md), and
 what a run sends to a model provider in [`docs/AGENT_DATA_FLOW.md`](AGENT_DATA_FLOW.md).
 
-Three properties hold across the whole family and are not repeated per route:
+Four properties hold across the whole family and are not repeated per route:
 
 - **Every handler verifies its own caller.** Middleware is an optimisation, not the authorization
   boundary.
@@ -1851,6 +1851,19 @@ Three properties hold across the whole family and are not repeated per route:
 - **When the server runs no agents, the run-reaching handlers answer `404`** — after the session
   check, so an unauthenticated caller cannot learn whether an agent surface exists. `GET
   /api/agent/config` is the deliberate exception: `{"enabled": false, …}` *is* its answer.
+- **A run whose ledger names a statement language, workflow or goal rule this Studio does not have, or has retired, is refused by name.**
+  Every per-run route below answers the run's owner `409` with code `AGENT_RUN_UNAVAILABLE` and a sentence that names the id, before anything is resolved, built or replayed, and anyone else the `404` "No such agent run" of the ownership property above.
+  `POST /api/agent/drive` has no session: it answers the same `409` to the holder of the drive credential that names the run.
+  The ledger is kept as it was, and a Studio that has the id reads it.
+
+```json
+// 409 Conflict - to the run's owner
+{
+  "error": "This run was recorded in the statement language \"cobol\", which this LibreDB Studio does not have. The run is kept as it was, and this LibreDB Studio does not open, drive, stop or replay it.",
+  "code": "AGENT_RUN_UNAVAILABLE",
+  "statusCode": 409
+}
+```
 
 #### GET /api/agent/config
 
@@ -2001,7 +2014,7 @@ Opens a run and returns immediately; the drive happens in the background.
 | `objective` | string | Yes | Non-empty, at most 4000 characters |
 | `connectionId` | string | Yes | Must resolve **server-side**. An inline `connection` object in the body is refused |
 | `catalog` | string | On a server-level connection | The database the run reads on a connection that reaches a whole server (#1530). **Required** exactly when the connection declares `catalogSessions` and refused on every other connection, both with `400`; a database the role cannot open is refused before the run exists. It is recorded on the run and echoed back, part of the run's connection identity, and the run, its resumed drives and its hand-over read that database alone |
-| `previousRunId` | string | No | Continue the **conversation** a run this session opened belongs to. The server derives the earlier steps' objectives and the most recent step's report from those runs' own ledgers, verifies the named run belongs to this session, is on this connection and has ended, and persists the result as `thread` on the new run's header. A run it cannot reach **does not refuse the start**: the run opens carrying no conversation and the response says so through `thread.declined` — `"repointed"` when the predecessor was reachable but was established against a different database than this connection now addresses — the run still opens, and it records the connection as it now addresses it, so a follow-up naming **that** run carries normally: the decline is one question long, not a state the connection is left in — `"disabled"` when the server has conversations switched off, `"error"` on an unreadable ledger, and `"unavailable"` for the five remaining causes, which are deliberately not told apart. Only a value that is not a non-empty string is refused, with `400` — that is a malformed request rather than a runtime condition |
+| `previousRunId` | string | No | Continue the **conversation** a run this session opened belongs to. The server derives the earlier steps' objectives and the most recent step's report from those runs' own ledgers, verifies the named run belongs to this session, is on this connection and has ended, and persists the result as `thread` on the new run's header. A run it cannot reach **does not refuse the start**: the run opens carrying no conversation and the response says so through `thread.declined`: `"repointed"` when the predecessor was reachable but was established against a different database than this connection now addresses (the run still opens, and it records the connection as it now addresses it, so a follow-up naming **that** run carries normally, because the decline is one question long, not a state the connection is left in); `"disabled"` when the server has conversations switched off; `"error"` on an unreadable ledger, including the caller's own ledger that names a statement language, workflow or goal rule this Studio does not have; and `"unavailable"` for the five remaining causes, which are deliberately not told apart, someone else's such ledger among them. Only a value that is not a non-empty string is refused, with `400`: that is a malformed request rather than a runtime condition |
 
 **Response (202 Accepted):**
 
@@ -2165,6 +2178,7 @@ it names one run, authorizes one thing — driving it — and its signing key is
 one: `401 { "error": "A valid agent drive credential is required" }`, audited as a
 `permission_denied` event. `404` for an unknown run, `409` for a run that has already ended (the
 message is not retryable, so a queue should stop delivering it).
+A run whose ledger names an id this Studio does not have answers `409` with code `AGENT_RUN_UNAVAILABLE` too, before its connection is resolved or a provider or model is built, for the same reason: no delivery to this server can drive it.
 
 Nothing in the product produces a drive delivery yet, so this route's callers today are its tests.
 
@@ -2779,6 +2793,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `BEARER_NO_ROLE` | A bearer access token verified, but its claims map to no role Studio accepts (403). Answered by the middleware; a fresh token is refused the same way until an administrator changes the account |
 | `BEARER_NO_IDENTITY` | A bearer access token verified, but it carries no `sub` or no username Studio can use (403). Answered by the middleware; a fresh token is refused the same way until an administrator changes the account |
 | `ADMIN_REQUIRED` | The session is valid and the route is for admins only (403). Answered by the route rather than `createErrorResponse` |
+| `AGENT_RUN_UNAVAILABLE` | An agent run's ledger names a statement language, workflow or goal rule this Studio does not have, or has retired (409). Answered by the agent run routes and `POST /api/agent/drive` rather than `createErrorResponse`. The run routes answer it to the run's owner alone, and anyone else the `404` of a missing run; the drive route answers it to the holder of the drive credential that names the run (see [Agent API](#agent-api)) |
 | `TRANSACTION_NOT_OWNED` | The transaction open on the connection belongs to another session (409), with `startedAt` and `availableAt`. Answered by `POST /api/db/transaction` rather than `createErrorResponse` |
 | `TRANSACTION_LOST` | The database session the open transaction ran on has ended, so the server ended the transaction with it and the provider holds none (503, not `retryable`). Answered by `POST /api/db/transaction` for a statement, COMMIT or ROLLBACK; the editor leaves transaction mode on it. A COMMIT that reached the server before the session ended stays committed, so the data is checked before the work runs again ([PostgreSQL §8.0.2](./providers/postgres.md#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)) |
 | `WORKSPACE_OWNER_MISMATCH` | The request's `X-LibreDB-Workspace-Owner` header names an account other than the signed-in one (409). Answered by the middleware rather than `createErrorResponse`; the browser reloads the tab for it (see [Storage API](#storage-api)) |

@@ -541,6 +541,7 @@ const FAILURE_SENTENCES = {
   "profile-target-unsupported":
     "Agent mode runs on this engine, but not against this server or target: a compatible server whose read-only enforcement is not measured, such as FerretDB on the MongoDB wire or Percona on the MySQL wire, or an in-memory database. Plan mode and the operations workflow still work.",
   "connection-unresolvable": "This run's database connection no longer resolves on the server.",
+  "provider-unknown": "No provider for this run's connection type is installed in this LibreDB Studio.",
   internal: "The server could not carry this run. The reason is in the server log.",
 } as const satisfies Record<AgentRunFailureReason, string>;
 

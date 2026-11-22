@@ -36,6 +36,7 @@ import * as engineClientResolvers from "@/lib/agent/languages/engines/client";
 import * as enginePackResolvers from "@/lib/agent/languages/engines/index";
 import * as engineServerResolvers from "@/lib/agent/languages/engines/server";
 import { agentPosture } from "@/lib/agent/posture";
+import { runHeaderRefusal } from "@/lib/agent/run-ledger-ids";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { AGENT_EXECUTION_ENGINES, EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
@@ -731,6 +732,12 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   test("docs/API_DOCS.md quotes the refusal the posture writes for an engine outside the list", () => {
     const body = agentPosture({ mode: "agent", engine: "spark", engineLabel: "Apache Spark", handover: false }).body;
     expect(read("docs/API_DOCS.md")).toContain(`"error": "${body}"`);
+  });
+
+  test("docs/API_DOCS.md quotes the sentence a run recorded in a statement language this Studio does not have is refused with", () => {
+    const sentence = runHeaderRefusal({ mode: "agent", statementLanguage: "cobol" })?.sentence;
+    expect(sentence).toBeDefined();
+    expect(read("docs/API_DOCS.md")).toContain(`"error": ${JSON.stringify(sentence)}`);
   });
 });
 

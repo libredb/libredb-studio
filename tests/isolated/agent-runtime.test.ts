@@ -21,7 +21,8 @@ import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import * as realRunStore from "@/lib/agent/run-store";
 import { AgentRunServiceError } from "@/lib/agent/run-service";
 import { LLMAuthError, LLMConfigError, LLMRateLimitError } from "@/lib/llm/types";
-import { type ExecutionProfileDenyCode, ExecutionProfileError } from "@/lib/db/errors";
+import { type ExecutionProfileDenyCode, ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
+import { assertDatabaseType } from "@/lib/db/type-id";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import { seedRolesOf } from "@/lib/seed/roles";
@@ -580,6 +581,21 @@ describe("a drive that fails before the loop", () => {
     expect(await finishedEvent("arun_connectiongone")).toMatchObject({
       status: "failed",
       reason: "connection-unresolvable",
+    });
+  });
+
+  test("a drive whose connection's type names no provider records provider-unknown, not internal", async () => {
+    await openRun("arun_providerunknown");
+    mockResolveConnection.mockImplementationOnce(async () => {
+      assertDatabaseType("acmefoo");
+      return CONNECTION;
+    });
+
+    await expect(driveAgentRun("arun_providerunknown")).rejects.toThrow(UnknownProviderError);
+
+    expect(await finishedEvent("arun_providerunknown")).toMatchObject({
+      status: "failed",
+      reason: "provider-unknown",
     });
   });
 

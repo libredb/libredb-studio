@@ -442,6 +442,13 @@ export type AgentRunFailureReason =
   | "server-authorization-off"
   /** The run's persisted connection no longer resolves on the server. */
   | "connection-unresolvable"
+  /**
+   * The run's seed entry is still found and open to its actor, but its type names no provider this Studio has
+   * (`UnknownProviderError`, FND-1), so resolving the connection refuses it: a seed entry written for a newer Studio,
+   * or a type misspelt in it. Named after the API code it mirrors, `PROVIDER_UNKNOWN`. The run has ended `failed`, so
+   * the repair is the seed entry's `type`, or starting the question again in a Studio that has that provider.
+   */
+  | "provider-unknown"
   /** Anything else. Deliberately unspecific; the log carries the detail. */
   | "internal";
 
@@ -1880,7 +1887,9 @@ export interface AgentRunRecord {
    * selection, narrowing, the prompt, the verifier and a resumed drive all read it from the record, never
    * from the live connection, so a run is the same run in a process that cannot reach its database.
    *
-   * Optional, and absent reads as `sql`: every ledger written before this field was an SQL run.
+   * Optional, and absent reads as `sql`: every ledger written before this field was an SQL run. A header
+   * naming a language this build does not hold is refused when the ledger is read (`runHeaderRefusal`),
+   * so a folded record only ever carries an id this build holds.
    */
   readonly statementLanguage?: AgentStatementLanguageId;
   /**
@@ -1891,7 +1900,10 @@ export interface AgentRunRecord {
    * manifest that may have changed since.
    *
    * Optional, and absent reads as the verifier of the run's variant (for a ledger written before this field,
-   * the SQL workflow's verifier), which is what judged every run written then.
+   * the SQL workflow's verifier), which is what judged every run written then. An agent-mode header naming a
+   * verifier with no rule, or a retired one, or a workflow with no variant on its language, is refused when the
+   * ledger is read (`runHeaderRefusal`), so a folded agent-mode record only ever resolves to a rule `goalOf`
+   * judges. A plan is judged by the planning rule whatever this field holds, so it is not checked on a plan.
    */
   readonly verifier?: AgentGoalVerifierId;
   /**

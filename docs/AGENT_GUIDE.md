@@ -772,7 +772,7 @@ And when the run failed for a reason that is not about the answer at all, that s
 both, and also appears next to the Start button so you can fix it before starting another
 (`FAILURE_SENTENCES`, `timeline.ts`; rendered at `AgentRail` in `AgentRail.tsx`): the model
 provider not being configured or reachable, limiting this key's requests, rejecting the credentials,
-an engine with no read-only execution profile, a connection that no longer resolves, or an internal
+an engine with no read-only execution profile, a connection that no longer resolves, a connection whose type no provider in this Studio serves, or an internal
 failure whose reason is in the server log.
 
 ---
@@ -973,6 +973,10 @@ count, whether it answered and when it ended.
   deletion — a run you can still name by id is still openable.
 - **History is the index, not the record.** A reopened report reads the run's own ledger, so the
   listing can never contradict what the run actually recorded.
+- **A run recorded in a statement language or judged by a goal rule this Studio does not have, or opened for a workflow it does not offer on that language, is listed, and opening it says so.**
+  Instead of its report you read a sentence that names the language, the workflow or the rule, for example a run recorded by a newer Studio.
+  The run is kept as it was, and a Studio that has that language, workflow or rule opens it.
+  A run opened for a workflow this Studio does not have at all is left out of the list, because its history entry reads as absent, while opening it by its id still answers with the sentence.
 
 ---
 
@@ -1041,9 +1045,11 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   the run's own record names — and cannot be exported from any of them, because Export writes the
   tab's own rows (B34).
 - **An interrupted run is picked up on its own, eventually.** A sweep finds runs a dead process left
-  `running` and drives each one again — but only AFTER its claim expires, so this is eventual resume,
-  not immediate. It is guaranteed on the `local` backend only; the multi-replica Postgres world is out
+  `running` and drives each one again, but only AFTER its claim expires, so this is eventual resume,
+  not immediate.
+  It is guaranteed on the `local` backend only; the multi-replica Postgres world is out
   of scope until B16 lands.
+  A run whose ledger names a statement language, workflow or goal rule this Studio does not have is the exception: it is left as it is, for a Studio that has it.
 - **It reads what your connection's role can read.** The declared-target allowlist, the statement
   guard and the role's own grants are the whole boundary on out-of-scope reads
   (`docs/BACKLOG.md`, "Agent M1 deferrals", A3).
