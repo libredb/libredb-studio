@@ -17,10 +17,16 @@ import type {
   StorageCollection,
   StorageData,
   StoredAccount,
+  StoredCredentialRewrite,
+  StoredCredentialRewriteResult,
   StoredPasskey,
+  CredentialEnvelopeState,
 } from "../types";
 import {
   AccountWriteConflict,
+  CREDENTIAL_ENVELOPE_KEY,
+  envelopeStateOf,
+  RETIRED_ENVELOPE_MARKER,
   LastAdminError,
   PasskeyRegistrationConflict,
   PasskeyRemovalConflict,
@@ -46,6 +52,22 @@ const PASSKEY_INDEXES: Record<string, { table: string; column: string }> = {
   passkey_spent_challenges_expiry: { table: "passkey_spent_challenges", column: "expires_at" },
 };
 
+/**
+ * Every storage table by its unqualified name, in the order the re-seal backs them up. The backup
+ * copies all of them, so "complete" means every table the store holds.
+ */
+const STORE_TABLES = [
+  "storage_meta",
+  "user_storage",
+  "accounts",
+  "passkey_users",
+  "passkey_credentials",
+  "passkey_spent_challenges",
+] as const;
+
+/** A backup label becomes part of a table name, so it is held to letters, digits and dashes. */
+const BACKUP_LABEL = /^[A-Za-z0-9-]+$/;
+
 // PostgreSQL SQLSTATE insufficient_privilege.
 const INSUFFICIENT_PRIVILEGE = "42501";
 
@@ -64,6 +86,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
   private readonly schema: string | undefined;
   /** Every storage table as statements name it, through `qualify`. */
   private readonly tables: {
+    storageMeta: string;
     userStorage: string;
     accounts: string;
     passkeyUsers: string;
@@ -75,6 +98,7 @@ export class PostgresStorageProvider implements ServerStorageProvider {
     this.connectionString = connectionString || process.env.STORAGE_POSTGRES_URL || "";
     this.schema = readSchemaName("STORAGE_POSTGRES_SCHEMA");
     this.tables = {
+      storageMeta: this.qualify("storage_meta"),
       userStorage: this.qualify("user_storage"),
       accounts: this.qualify("accounts"),
       passkeyUsers: this.qualify("passkey_users"),
@@ -134,8 +158,14 @@ export class PostgresStorageProvider implements ServerStorageProvider {
           );
         }
       }
-      // Create table
+      // Create table. storage_meta records facts about the store itself, such as its credential
+      // envelope state.
       await this.pool.query(`
+        CREATE TABLE IF NOT EXISTS ${this.tables.storageMeta} (
+          key        TEXT PRIMARY KEY,
+          value      TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
         CREATE TABLE IF NOT EXISTS ${this.tables.userStorage} (
           user_id    TEXT NOT NULL,
           collection TEXT NOT NULL,
@@ -529,6 +559,85 @@ export class PostgresStorageProvider implements ServerStorageProvider {
         [write.id, write.email],
       );
       if (!deleted.rowCount) throw new PasskeyRemovalConflict("credential_missing");
+    });
+  }
+
+  async readEnvelopeState(): Promise<CredentialEnvelopeState> {
+    this.ensurePool();
+    const { rows } = await this.pool!.query(`SELECT value FROM ${this.tables.storageMeta} WHERE key = $1`, [
+      CREDENTIAL_ENVELOPE_KEY,
+    ]);
+    return envelopeStateOf((rows as { value: string }[])[0]?.value);
+  }
+
+  /**
+   * The operator re-seal (`ServerStorageProvider.rewriteStoredCredentials`), in one transaction.
+   * It first takes EXCLUSIVE locks on storage_meta, accounts and user_storage, in that order (an
+   * account deletion locks accounts before user_storage, so the two cannot deadlock): reads go on,
+   * every write and a second re-seal wait until it commits. The backup is a copy of every store
+   * table, `CREATE TABLE <table>_<label> AS TABLE <table>` in the store's own schema, inside the
+   * same transaction, so it is durable with the data and needs no file system; the label's dashes
+   * become underscores and its letters lower case. Only the data and factor columns change: an
+   * account write that read its row before the re-seal still applies after it. Any error, a lost
+   * connection included, rolls back the backup tables, the rows and the marker alike.
+   */
+  async rewriteStoredCredentials(
+    rewrite: StoredCredentialRewrite,
+    backupLabel: string,
+  ): Promise<StoredCredentialRewriteResult> {
+    this.ensurePool();
+    if (!BACKUP_LABEL.test(backupLabel)) {
+      throw new Error(`The backup label ${JSON.stringify(backupLabel)} must be letters, digits and dashes`);
+    }
+    const suffix = backupLabel.toLowerCase().replaceAll("-", "_");
+    return this.transaction(async (client) => {
+      await client.query(
+        `LOCK TABLE ${this.tables.storageMeta}, ${this.tables.accounts}, ${this.tables.userStorage} IN EXCLUSIVE MODE`,
+      );
+      const marker = await client.query(`SELECT value FROM ${this.tables.storageMeta} WHERE key = $1`, [
+        CREDENTIAL_ENVELOPE_KEY,
+      ]);
+      if (envelopeStateOf((marker.rows as { value: string }[])[0]?.value) === "v1-retired") {
+        return { kind: "already-retired" } as const;
+      }
+      const backups: string[] = [];
+      for (const table of STORE_TABLES) {
+        const copy = this.qualify(`${table}_${suffix}`);
+        // oxlint-disable-next-line no-await-in-loop -- one statement at a time on the transaction's client.
+        await client.query(`CREATE TABLE ${copy} AS TABLE ${this.qualify(table)}`);
+        backups.push(copy);
+      }
+      const rows = await client.query(
+        `SELECT user_id, data FROM ${this.tables.userStorage} WHERE collection = 'connections' ORDER BY user_id`,
+      );
+      for (const row of rows.rows as { user_id: string; data: string }[]) {
+        const next = rewrite.connections(row.user_id, row.data);
+        if (next === null) continue;
+        // oxlint-disable-next-line no-await-in-loop -- one statement at a time on the transaction's client.
+        await client.query(
+          `UPDATE ${this.tables.userStorage} SET data = $1 WHERE user_id = $2 AND collection = 'connections'`,
+          [next, row.user_id],
+        );
+      }
+      const accounts = await client.query(
+        `SELECT email, totp_secret, totp_pending FROM ${this.tables.accounts} ORDER BY email`,
+      );
+      for (const row of accounts.rows as { email: string; totp_secret: string | null; totp_pending: string | null }[]) {
+        const next = rewrite.factors({ email: row.email, totpSecret: row.totp_secret, totpPending: row.totp_pending });
+        if (next === null) continue;
+        // oxlint-disable-next-line no-await-in-loop -- one statement at a time on the transaction's client.
+        await client.query(`UPDATE ${this.tables.accounts} SET totp_secret = $1, totp_pending = $2 WHERE email = $3`, [
+          next.totpSecret,
+          next.totpPending,
+          row.email,
+        ]);
+      }
+      await client.query(
+        `INSERT INTO ${this.tables.storageMeta} (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [CREDENTIAL_ENVELOPE_KEY, RETIRED_ENVELOPE_MARKER],
+      );
+      return { kind: "rewritten", backup: backups.join(", ") } as const;
     });
   }
 

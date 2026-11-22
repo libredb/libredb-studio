@@ -915,6 +915,153 @@ describe("PostgresStorageProvider", () => {
     expect(backend.client.listenerCount("error")).toBe(0);
   });
 
+  // ── The credential envelope state and the operator re-seal ──
+
+  const LABEL = "pre-reseal-20261122T053000Z";
+  const BACKED_UP = [
+    "storage_meta",
+    "user_storage",
+    "accounts",
+    "passkey_users",
+    "passkey_credentials",
+    "passkey_spent_challenges",
+  ];
+
+  test("initialize creates storage_meta with the other tables", async () => {
+    await provider.initialize();
+    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS storage_meta \(\s*key\s+TEXT PRIMARY KEY,\s*value\s+TEXT NOT NULL,/);
+  });
+
+  test("readEnvelopeState answers v1-accepted without a row and v1-retired for v2, and refuses any other value by name", async () => {
+    await provider.initialize();
+    const read = "SELECT value FROM storage_meta WHERE key = $1";
+
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    expect(await provider.readEnvelopeState()).toBe("v1-accepted");
+    mockQuery.mockResolvedValueOnce({ rows: [{ value: "v2" }] });
+    expect(await provider.readEnvelopeState()).toBe("v1-retired");
+    mockQuery.mockResolvedValueOnce({ rows: [{ value: "v3" }] });
+    await expect(provider.readEnvelopeState()).rejects.toThrow('credential_envelope is "v3"');
+    expect((mockQuery.mock.calls as unknown[][]).slice(-3)).toEqual([
+      [read, ["credential_envelope"]],
+      [read, ["credential_envelope"]],
+      [read, ["credential_envelope"]],
+    ]);
+  });
+
+  test("rewriteStoredCredentials locks storage_meta, accounts and user_storage in that order, backs up every store table in its schema, rewrites and marks v2 in one transaction", async () => {
+    await provider.initialize();
+    const client = scriptedClient((sql) => {
+      if (sql.startsWith("SELECT value FROM storage_meta")) return { rows: [] };
+      if (sql.startsWith("SELECT user_id, data")) {
+        return {
+          rows: [
+            { user_id: "alice", data: "[1]" },
+            { user_id: "bob", data: "[2]" },
+          ],
+        };
+      }
+      if (sql.startsWith("SELECT email, totp_secret")) {
+        return { rows: [{ email: "ada@example.com", totp_secret: "a", totp_pending: null }] };
+      }
+      return {};
+    });
+
+    const result = await provider.rewriteStoredCredentials(
+      {
+        connections: (owner, data) => (owner === "alice" ? `${data}!` : null),
+        factors: (row) => ({ totpSecret: `${row.totpSecret}!`, totpPending: row.totpPending }),
+      },
+      LABEL,
+    );
+
+    const suffix = "pre_reseal_20261122t053000z";
+    expect(result).toEqual({
+      kind: "rewritten",
+      backup: BACKED_UP.map((table) => `${table}_${suffix}`).join(", "),
+    });
+    expect(client.statements).toEqual([
+      { sql: "BEGIN", params: [] },
+      { sql: "LOCK TABLE storage_meta, accounts, user_storage IN EXCLUSIVE MODE", params: [] },
+      { sql: "SELECT value FROM storage_meta WHERE key = $1", params: ["credential_envelope"] },
+      ...BACKED_UP.map((table) => ({ sql: `CREATE TABLE ${table}_${suffix} AS TABLE ${table}`, params: [] })),
+      {
+        sql: "SELECT user_id, data FROM user_storage WHERE collection = 'connections' ORDER BY user_id",
+        params: [],
+      },
+      {
+        sql: "UPDATE user_storage SET data = $1 WHERE user_id = $2 AND collection = 'connections'",
+        params: ["[1]!", "alice"],
+      },
+      { sql: "SELECT email, totp_secret, totp_pending FROM accounts ORDER BY email", params: [] },
+      {
+        sql: "UPDATE accounts SET totp_secret = $1, totp_pending = $2 WHERE email = $3",
+        params: ["a!", null, "ada@example.com"],
+      },
+      {
+        sql: expect.stringContaining("INSERT INTO storage_meta (key, value, updated_at) VALUES ($1, $2, NOW())"),
+        params: ["credential_envelope", "v2"],
+      },
+      { sql: "COMMIT", params: [] },
+    ]);
+    expect(client.release).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failure part way rolls back and rethrows", async () => {
+    await provider.initialize();
+    const failure = new Error("rewrite failed");
+    const client = scriptedClient((sql) => {
+      if (sql.startsWith("SELECT user_id, data")) return { rows: [{ user_id: "alice", data: "[1]" }] };
+      return {};
+    });
+
+    await expect(
+      provider.rewriteStoredCredentials(
+        {
+          connections: () => {
+            throw failure;
+          },
+          factors: () => null,
+        },
+        LABEL,
+      ),
+    ).rejects.toBe(failure);
+
+    expect(client.sql().at(-1)).toBe("ROLLBACK");
+    expect(client.sql()).not.toContain("COMMIT");
+  });
+
+  test("a retired store commits with no backup", async () => {
+    await provider.initialize();
+    const client = scriptedClient((sql) =>
+      sql.startsWith("SELECT value FROM storage_meta") ? { rows: [{ value: "v2" }] } : {},
+    );
+
+    const result = await provider.rewriteStoredCredentials(
+      { connections: () => null, factors: () => null },
+      LABEL,
+    );
+
+    expect(result).toEqual({ kind: "already-retired" });
+    expect(client.sql()).toEqual([
+      "BEGIN",
+      "LOCK TABLE storage_meta, accounts, user_storage IN EXCLUSIVE MODE",
+      "SELECT value FROM storage_meta WHERE key = $1",
+      "COMMIT",
+    ]);
+  });
+
+  test("a backup label that is not letters, digits and dashes is refused before anything runs", async () => {
+    await provider.initialize();
+    const client = scriptedClient();
+
+    await expect(
+      provider.rewriteStoredCredentials({ connections: () => null, factors: () => null }, "pre-reseal; DROP"),
+    ).rejects.toThrow("backup label");
+    expect(client.statements).toEqual([]);
+  });
+
   test("updateAccount is conditional on the version it read", async () => {
     await provider.initialize();
     const read = { ...ACCOUNT, sessionVersion: 3, updatedAt: "2026-09-28T01:00:00.000Z" };
@@ -1240,6 +1387,7 @@ describe("PostgresStorageProvider", () => {
   // ── STORAGE_POSTGRES_SCHEMA ──────────────────────────────────────────────────
 
   const STORAGE_TABLES = [
+    "storage_meta",
     "user_storage",
     "accounts",
     "passkey_users",
@@ -1308,6 +1456,13 @@ describe("PostgresStorageProvider", () => {
         purgeSpentBefore: PURGE_BEFORE,
       });
       await qualified.renamePasskey(ACCOUNT.email, PASSKEY.id, "Laptop");
+      await qualified.readEnvelopeState();
+      expect(
+        await qualified.rewriteStoredCredentials({ connections: () => null, factors: () => null }, "pre-reseal-x"),
+      ).toEqual({
+        kind: "rewritten",
+        backup: STORAGE_TABLES.map((table) => `"studio".${table}_pre_reseal_x`).join(", "),
+      });
       await qualified.deletePasskey({
         email: ACCOUNT.email,
         id: PASSKEY.id,

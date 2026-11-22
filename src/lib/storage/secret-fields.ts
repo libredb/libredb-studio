@@ -232,6 +232,17 @@ const CONNECTION_SECRET_KEYS = secretsOf(CONNECTION_FIELDS);
 const SSL_SECRET_KEYS = secretsOf(SSL_FIELDS);
 const SSH_TUNNEL_SECRET_KEYS = secretsOf(SSH_TUNNEL_FIELDS);
 
+/** The `identity` keys of a map, derived as the secret ones are. */
+function identitiesOf(map: Record<string, FieldClass>): string[] {
+  return Object.keys(map).filter((key) => map[key] === "identity");
+}
+
+const CONNECTION_IDENTITY_KEYS = identitiesOf(CONNECTION_FIELDS);
+const IDENTITY_CONTAINERS: readonly (readonly ["ssl" | "sshTunnel", string[]])[] = [
+  ["ssl", identitiesOf(SSL_FIELDS)],
+  ["sshTunnel", identitiesOf(SSH_TUNNEL_FIELDS)],
+];
+
 /**
  * Applies `transform` to each named field of `target` in place, passing the field's path (`prefix`
  * plus its name). A transform returning `undefined` DELETES the field rather than storing
@@ -313,6 +324,41 @@ export function secretFieldValues<T extends SecretFieldRecord>(connection: T): R
     return value;
   });
   return values;
+}
+
+/**
+ * The identity projection of a connection: the fields classified `identity` that the record holds, which every sealed
+ * value of the record is bound to (./envelope-binding.ts).
+ *
+ * Taken from the record as the store holds it, so the seal side (the record as written) and the open side (the record
+ * as read back) project the same value for every shape the store can hold: the record is first shaped by
+ * `walkSecretFields`, as every write is, and passed through JSON, as the store keeps it. Then every root key classified
+ * identity that is present is kept, and for `ssl` and `sshTunnel` the identity keys of the container when it is a plain
+ * object, or the container value itself (null, a string, a number) when it is not.
+ */
+export function identityFields<T extends SecretFieldRecord>(record: T): Record<string, unknown> {
+  const stored = JSON.parse(JSON.stringify(walkSecretFields(record, (value) => value).connection)) as Record<
+    string,
+    unknown
+  >;
+  const identity: Record<string, unknown> = {};
+  for (const key of CONNECTION_IDENTITY_KEYS) {
+    if (Object.hasOwn(stored, key)) identity[key] = stored[key];
+  }
+  for (const [container, keys] of IDENTITY_CONTAINERS) {
+    if (!Object.hasOwn(stored, container)) continue;
+    const value = stored[container];
+    if (!isPlainObject(value)) {
+      identity[container] = value;
+      continue;
+    }
+    const kept: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (Object.hasOwn(value, key)) kept[key] = value[key];
+    }
+    identity[container] = kept;
+  }
+  return identity;
 }
 
 /** Every path `walkSecretFields` can visit, and so the only paths `withSecretFieldValues` writes. */

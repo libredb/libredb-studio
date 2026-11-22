@@ -16,6 +16,7 @@ function makeMockProvider() {
     initialize: mockInitialize,
     close: mockClose,
     getAllData: mockGetAllData,
+    readEnvelopeState: mock(async () => "v1-retired"),
     getCollection: mock(async () => null),
     setCollection: mock(async () => {}),
     mergeData: mock(async () => {}),
@@ -150,7 +151,7 @@ describe("factory: getStorageProvider", () => {
 
     const written = JSON.stringify(mockSQLiteInstance.setCollection.mock.calls);
     expect(written).not.toContain("FACTORY-CANARY");
-    expect(written).toContain("v1:");
+    expect(written).toContain("v2:");
   });
 });
 

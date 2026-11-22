@@ -1,15 +1,24 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   CONNECTION_FIELDS,
   decryptConnections,
   encryptConnections,
   type FieldClass,
+  resealConnections,
   SSH_TUNNEL_FIELDS,
   SSL_FIELDS,
   withoutSecretFields,
 } from "@/lib/storage/connection-secrets";
-import { ENVELOPE_VERSION, readSecret, resetStorageEncryptionKey } from "@/lib/storage/encryption";
+import { ENVELOPE_VERSION, openSecret, resetStorageEncryptionKey } from "@/lib/storage/encryption";
+import { connectionBinding } from "@/lib/storage/envelope-binding";
+import { secretFieldValues } from "@/lib/storage/secret-fields";
 import type { DatabaseConnection } from "@/lib/types";
+import { sealVersionOne } from "../../../helpers/storage-envelope-v1";
+
+const OWNER = "alice";
+const bindingOf = (owner: string, connection: DatabaseConnection, path: string) =>
+  connectionBinding(owner, connection).field(path);
 
 const snapshot: Record<string, string | undefined> = {};
 
@@ -280,7 +289,7 @@ describe("the classification is exhaustive by construction", () => {
 
 describe("encryptConnections", () => {
   test("no canary survives anywhere in the serialized result", () => {
-    const serialized = JSON.stringify(encryptConnections([fullConnection()]));
+    const serialized = JSON.stringify(encryptConnections(OWNER, [fullConnection()]));
 
     for (const canary of CANARIES) {
       expect({ canary, present: serialized.includes(canary) }).toEqual({ canary, present: false });
@@ -288,9 +297,10 @@ describe("encryptConnections", () => {
   });
 
   test("every secret field becomes a versioned envelope", () => {
-    const [encrypted] = encryptConnections([fullConnection()]);
+    const [encrypted] = encryptConnections(OWNER, [fullConnection()]);
     const prefix = `${ENVELOPE_VERSION}:`;
 
+    expect(prefix).toBe("v2:");
     expect(encrypted.password?.startsWith(prefix)).toBe(true);
     expect(encrypted.connectionString?.startsWith(prefix)).toBe(true);
     expect(encrypted.agentPassword?.startsWith(prefix)).toBe(true);
@@ -303,7 +313,7 @@ describe("encryptConnections", () => {
   });
 
   test("leaves the fields an operator needs to identify the deployment readable", () => {
-    const [encrypted] = encryptConnections([fullConnection()]);
+    const [encrypted] = encryptConnections(OWNER, [fullConnection()]);
 
     expect(encrypted.host).toBe("db.internal");
     expect(encrypted.user).toBe("app");
@@ -314,17 +324,17 @@ describe("encryptConnections", () => {
 
   test("does not mutate the caller's object", () => {
     const original = fullConnection();
-    encryptConnections([original]);
+    encryptConnections(OWNER, [original]);
 
     expect(original.password).toBe("CANARY-DB-PASSWORD");
     expect(original.sshTunnel?.privateKey).toBe("CANARY-SSH-PRIVATE-KEY");
   });
 
   test("does not double-envelope a value that is already sealed", () => {
-    const once = encryptConnections([fullConnection()]);
-    const twice = encryptConnections(once);
+    const once = encryptConnections(OWNER, [fullConnection()]);
+    const twice = encryptConnections(OWNER, once);
 
-    expect(twice[0].password).toBe(once[0].password);
+    expect(twice).toEqual(once);
   });
 
   test("handles a connection with no ssl, no tunnel and no password", () => {
@@ -336,96 +346,308 @@ describe("encryptConnections", () => {
       createdAt: new Date("2026-01-01T00:00:00.000Z"),
     };
 
-    expect(encryptConnections([minimal])).toEqual([minimal]);
+    expect(encryptConnections(OWNER, [minimal])).toEqual([minimal]);
   });
 
   test("leaves an empty-string secret alone rather than enveloping nothing", () => {
     const blank = { ...fullConnection(), password: "" };
 
-    expect(encryptConnections([blank])[0].password).toBe("");
+    expect(encryptConnections(OWNER, [blank])[0].password).toBe("");
   });
 
   test("encrypts a real password shaped like an envelope, rather than writing it verbatim", () => {
-    // A user whose actual password is "v2:hunter2" produces a two-segment string matching the
-    // envelope version tag. readSecret classifies it "undecryptable" - the write path must not
-    // treat that the same as "already sealed" and store it in the clear.
-    const lookalike = { ...fullConnection(), password: "v2:hunter2" };
-    const [sealed] = encryptConnections([lookalike]);
+    // A user whose actual password is shaped "v2:<text>" produces a two-segment string matching the envelope version
+    // tag. It does not open, so the write path seals it as the text it is instead of storing it in the clear.
+    const lookalike = { ...fullConnection(), password: `v2:${randomUUID()}` };
+    const [sealed] = encryptConnections(OWNER, [lookalike]);
 
-    expect(sealed.password).not.toBe("v2:hunter2");
-    expect(readSecret(sealed.password as string).kind).toBe("decrypted");
-    expect(decryptConnections([sealed]).connections[0].password).toBe("v2:hunter2");
+    expect(sealed.password).not.toBe(lookalike.password);
+    expect(openSecret(sealed.password as string, bindingOf(OWNER, sealed, "password")).kind).toBe("v2");
+    expect(decryptConnections(OWNER, [sealed], "v1-retired").connections[0].password).toBe(lookalike.password);
   });
 
   test("encrypts a corrupted three-segment envelope claim rather than writing it verbatim", () => {
-    // A three-segment value whose IV/body cannot be decoded or authenticated is also
-    // "undecryptable", not "already sealed" - the write path must seal it, not pass it through.
     const corrupted = { ...fullConnection(), password: "v1:not-base64url-iv:not-base64url-body" };
-    const [sealed] = encryptConnections([corrupted]);
+    const [sealed] = encryptConnections(OWNER, [corrupted]);
 
     expect(sealed.password).not.toBe(corrupted.password);
-    expect(readSecret(sealed.password as string).kind).toBe("decrypted");
+    expect(openSecret(sealed.password as string, bindingOf(OWNER, sealed, "password")).kind).toBe("v2");
   });
 });
 
 describe("decryptConnections", () => {
   test("round-trips every secret field", () => {
     const original = fullConnection();
-    const result = decryptConnections(encryptConnections([original]));
+    const result = decryptConnections(OWNER, encryptConnections(OWNER, [original]), "v1-retired");
 
-    expect(result.undecryptable).toBe(0);
+    expect(result.omitted).toEqual([]);
     expect(result.connections[0]).toEqual(original);
   });
 
-  test("passes a pre-encryption store through untouched, which is the whole migration", () => {
+  test("passes a pre-encryption store through untouched while v1 is accepted, which is the whole migration", () => {
     const legacy = fullConnection();
-    const result = decryptConnections([legacy]);
+    const result = decryptConnections(OWNER, [legacy], "v1-accepted");
 
-    expect(result.undecryptable).toBe(0);
+    expect(result.omitted).toEqual([]);
     expect(result.connections[0].password).toBe("CANARY-DB-PASSWORD");
   });
 
   test("reads a half-migrated record where only some fields were re-written", () => {
-    const encrypted = encryptConnections([fullConnection()])[0];
-    const halfMigrated = { ...encrypted, password: "STILL-PLAINTEXT" } as DatabaseConnection;
-    const result = decryptConnections([halfMigrated]);
+    const encrypted = encryptConnections(OWNER, [fullConnection()])[0];
+    const unsealed = randomUUID();
+    const halfMigrated = { ...encrypted, password: unsealed } as DatabaseConnection;
+    const result = decryptConnections(OWNER, [halfMigrated], "v1-accepted");
 
-    expect(result.undecryptable).toBe(0);
-    expect(result.connections[0].password).toBe("STILL-PLAINTEXT");
+    expect(result.omitted).toEqual([]);
+    expect(result.connections[0].password).toBe(unsealed);
     expect(result.connections[0].sshTunnel?.privateKey).toBe("CANARY-SSH-PRIVATE-KEY");
   });
 
-  test("omits an unreadable secret, keeps the record, and counts the loss", () => {
-    const encrypted = encryptConnections([fullConnection()]);
+  test("omits an unreadable secret, keeps the record, and names the loss", () => {
+    const encrypted = encryptConnections(OWNER, [fullConnection()]);
 
-    process.env.JWT_SECRET = "a-different-secret-that-cannot-open-it";
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
     resetStorageEncryptionKey();
-    const result = decryptConnections(encrypted);
+    const result = decryptConnections(OWNER, encrypted, "v1-accepted");
 
-    // Eleven unreadable fields on one record.
-    expect(result.undecryptable).toBe(11);
+    // Eleven unreadable fields on one record, each named by its connection and path.
+    expect(result.omitted).toHaveLength(11);
+    expect(result.omitted[0]).toEqual({ id: "c1", path: "password", reason: "unopenable" });
     // The record SURVIVES. Dropping it would be persisted as a deletion by the write-through
     // cache on the next sync, destroying ciphertext a restored key could still have opened.
     expect(result.connections).toHaveLength(1);
     expect(result.connections[0].name).toBe("Prod");
     expect(result.connections[0].host).toBe("db.internal");
-    // And the field is ABSENT, never the raw envelope: "v1:..." must never reach a driver.
+    // And the field is ABSENT, never the raw envelope: "v2:..." must never reach a driver.
     expect("password" in result.connections[0]).toBe(false);
     expect(result.connections[0].sshTunnel?.privateKey).toBeUndefined();
     expect(JSON.stringify(result.connections)).not.toContain(ENVELOPE_VERSION + ":");
   });
 
-  test("counts across records rather than reporting only the first", () => {
-    const encrypted = encryptConnections([fullConnection(), { ...fullConnection(), id: "c2" }]);
+  test("names the losses across records rather than reporting only the first", () => {
+    const encrypted = encryptConnections(OWNER, [fullConnection(), { ...fullConnection(), id: "c2" }]);
 
-    process.env.JWT_SECRET = "a-different-secret-that-cannot-open-it";
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
     resetStorageEncryptionKey();
+    const { omitted } = decryptConnections(OWNER, encrypted, "v1-accepted");
 
-    expect(decryptConnections(encrypted).undecryptable).toBe(22);
+    expect(omitted).toHaveLength(22);
+    expect(new Set(omitted.map(({ id }) => id))).toEqual(new Set(["c1", "c2"]));
   });
 
   test("an empty list is not an error", () => {
-    expect(decryptConnections([])).toEqual({ connections: [], undecryptable: 0 });
+    expect(decryptConnections(OWNER, [], "v1-retired")).toEqual({ connections: [], omitted: [] });
+  });
+});
+
+/** A connection whose every secret path holds a generated value, returned with those values by path. */
+function generatedConnection(overrides: Record<string, unknown> = {}): {
+  connection: DatabaseConnection;
+  values: Record<string, string>;
+} {
+  const connection = {
+    ...fullConnection(),
+    ...overrides,
+    password: randomUUID(),
+    connectionString: `postgres://app:${randomUUID()}@db.internal:5432/prod`,
+    agentPassword: randomUUID(),
+    apiKeyId: randomUUID(),
+    apiKeySecret: randomUUID(),
+    privateKey: randomUUID(),
+    privateKeyPassphrase: randomUUID(),
+    ssl: { ...fullConnection().ssl, clientKey: randomUUID() },
+    sshTunnel: { ...fullConnection().sshTunnel!, password: randomUUID(), privateKey: randomUUID(), passphrase: randomUUID() },
+  } as DatabaseConnection;
+  return { connection, values: secretFieldValues(connection) };
+}
+
+const SECRET_PATHS = [
+  "password",
+  "connectionString",
+  "privateKey",
+  "privateKeyPassphrase",
+  "agentPassword",
+  "apiKeyId",
+  "apiKeySecret",
+  "ssl.clientKey",
+  "sshTunnel.password",
+  "sshTunnel.privateKey",
+  "sshTunnel.passphrase",
+];
+
+/** Reads one secret path of a connection, `ssl.clientKey` and `sshTunnel.password` included. */
+function at(connection: DatabaseConnection, path: string): unknown {
+  const [head, tail] = path.split(".");
+  const value = (connection as unknown as Record<string, unknown>)[head];
+  return tail === undefined ? value : (value as Record<string, unknown> | undefined)?.[tail];
+}
+
+/** A copy of `connection` with `value` written at `path`. */
+function withAt(connection: DatabaseConnection, path: string, value: unknown): DatabaseConnection {
+  const copy = structuredClone(connection) as unknown as Record<string, Record<string, unknown>>;
+  const [head, tail] = path.split(".");
+  if (tail === undefined) (copy as unknown as Record<string, unknown>)[head] = value;
+  else copy[head] = { ...copy[head], [tail]: value };
+  return copy as unknown as DatabaseConnection;
+}
+
+describe("the binding", () => {
+  test("a value written and read back for the same owner, connection and identity opens, for every secret path", () => {
+    const { connection, values } = generatedConnection();
+    expect(Object.keys(values).sort()).toEqual([...SECRET_PATHS].sort());
+    const stored = JSON.parse(JSON.stringify(encryptConnections(OWNER, [connection])));
+
+    const read = decryptConnections(OWNER, stored, "v1-retired");
+
+    expect(read.omitted).toEqual([]);
+    expect(secretFieldValues(read.connections[0])).toEqual(values);
+  });
+
+  test("a value moved to another connection of the row does not open, and is named", () => {
+    const first = generatedConnection({ id: "first" });
+    const second = generatedConnection({ id: "second" });
+    const [sealedFirst, sealedSecond] = encryptConnections(OWNER, [first.connection, second.connection]);
+    const moved = { ...sealedSecond, password: sealedFirst.password };
+
+    const read = decryptConnections(OWNER, [sealedFirst, moved], "v1-accepted");
+
+    expect(read.connections[0].password).toBe(first.values.password);
+    expect("password" in read.connections[1]).toBe(false);
+    expect(read.omitted).toEqual([{ id: "second", path: "password", reason: "unopenable" }]);
+  });
+
+  test("a value moved to another field does not open", () => {
+    const { connection } = generatedConnection();
+    const [sealed] = encryptConnections(OWNER, [connection]);
+    const moved = withAt(sealed, "sshTunnel.password", sealed.password);
+
+    const read = decryptConnections(OWNER, [moved], "v1-accepted");
+
+    expect(read.omitted).toEqual([{ id: "c1", path: "sshTunnel.password", reason: "unopenable" }]);
+  });
+
+  test("a value moved into another owner's row does not open", () => {
+    const { connection } = generatedConnection();
+    const sealed = encryptConnections(OWNER, [connection]);
+
+    const read = decryptConnections(`other-${randomUUID()}`, sealed, "v1-accepted");
+
+    expect(read.omitted).toHaveLength(SECRET_PATHS.length);
+    expect(read.omitted.every(({ reason }) => reason === "unopenable")).toBe(true);
+  });
+
+  test("a value whose connection changed an identity field does not open, for every identity field", () => {
+    const { connection } = generatedConnection();
+    const [sealed] = encryptConnections(OWNER, [connection]);
+    const outcomes: Record<string, number> = {};
+    for (const [map, container] of [
+      [CONNECTION_FIELDS, ""],
+      [SSL_FIELDS, "ssl"],
+      [SSH_TUNNEL_FIELDS, "sshTunnel"],
+    ] as const) {
+      for (const [key, fieldClass] of Object.entries(map)) {
+        if (fieldClass !== "identity") continue;
+        const path = container === "" ? key : `${container}.${key}`;
+        const changed = withAt(sealed, path, `changed ${randomUUID()}`);
+        outcomes[path] = decryptConnections(OWNER, [changed], "v1-accepted").omitted.length;
+      }
+    }
+
+    expect(Object.keys(outcomes)).toHaveLength(30);
+    expect(Object.values(outcomes).every((count) => count === SECRET_PATHS.length)).toBe(true);
+  });
+
+  test("a value whose connection changed only a public field still opens", () => {
+    const { connection, values } = generatedConnection();
+    const [sealed] = encryptConnections(OWNER, [connection]);
+    const failures: string[] = [];
+    for (const [map, container] of [
+      [CONNECTION_FIELDS, ""],
+      [SSL_FIELDS, "ssl"],
+      [SSH_TUNNEL_FIELDS, "sshTunnel"],
+    ] as const) {
+      for (const [key, fieldClass] of Object.entries(map)) {
+        if (fieldClass !== "public" || key === "id") continue;
+        const path = container === "" ? key : `${container}.${key}`;
+        const read = decryptConnections(OWNER, [withAt(sealed, path, `changed ${randomUUID()}`)], "v1-retired");
+        if (read.omitted.length > 0 || secretFieldValues(read.connections[0]).password !== values.password) {
+          failures.push(path);
+        }
+      }
+    }
+
+    expect(failures).toEqual([]);
+  });
+
+  test("the write keeps a v2 value that opens for the record as written and seals anything else as text, a v1 envelope and another connection's v2 envelope included", () => {
+    const { connection } = generatedConnection();
+    const [sealed] = encryptConnections(OWNER, [connection]);
+    const [elsewhere] = encryptConnections(OWNER, [generatedConnection({ id: "elsewhere" }).connection]);
+    const versionOne = sealVersionOne(randomUUID());
+    const claim = `v2:${randomUUID()}`;
+
+    const [kept] = encryptConnections(OWNER, [sealed]);
+    expect(kept.password).toBe(sealed.password);
+
+    for (const submitted of [versionOne, elsewhere.password as string, claim]) {
+      const [written] = encryptConnections(OWNER, [{ ...sealed, password: submitted }]);
+      expect(written.password).not.toBe(submitted);
+      expect(decryptConnections(OWNER, [written], "v1-retired").connections[0].password).toBe(submitted);
+    }
+  });
+
+  test("a v1 value and an unsealed value open while v1 is accepted and are refused by name once it is retired", () => {
+    const secret = randomUUID();
+    const plain = randomUUID();
+    const legacy = {
+      id: "c1",
+      name: "Prod",
+      type: "postgres",
+      host: "db.internal",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      password: sealVersionOne(secret),
+      agentUser: "agent-ro",
+      agentPassword: plain,
+    } as unknown as DatabaseConnection;
+
+    const accepted = decryptConnections(OWNER, [legacy], "v1-accepted");
+    expect(accepted.omitted).toEqual([]);
+    expect([accepted.connections[0].password, accepted.connections[0].agentPassword]).toEqual([secret, plain]);
+
+    const retired = decryptConnections(OWNER, [legacy], "v1-retired");
+    expect(retired.omitted).toEqual([
+      { id: "c1", path: "password", reason: "retired" },
+      { id: "c1", path: "agentPassword", reason: "retired" },
+    ]);
+    expect("password" in retired.connections[0]).toBe(false);
+    expect("agentPassword" in retired.connections[0]).toBe(false);
+  });
+
+  test("resealConnections re-seals v1 and unsealed values, keeps v2 values that open, and leaves and names the rest", () => {
+    const { connection, values } = generatedConnection();
+    const [sealed] = encryptConnections(OWNER, [connection]);
+    const unopenable = `v2:${randomBytes(12).toString("base64url")}:${randomBytes(32).toString("base64url")}`;
+    const stored = {
+      ...sealed,
+      password: sealVersionOne(values.password),
+      agentPassword: values.agentPassword,
+      apiKeyId: unopenable,
+    } as DatabaseConnection;
+
+    const result = resealConnections(OWNER, [stored]);
+
+    expect(result.resealed).toBe(2);
+    expect(result.kept).toBe(SECRET_PATHS.length - 3);
+    expect(result.unopened).toEqual([{ id: "c1", path: "apiKeyId", reason: "unopenable" }]);
+    const [after] = result.connections;
+    expect(after.apiKeyId).toBe(unopenable);
+    expect(after.privateKey).toBe(sealed.privateKey);
+    expect(after.password?.startsWith("v2:")).toBe(true);
+    expect(after.agentPassword?.startsWith("v2:")).toBe(true);
+    const read = decryptConnections(OWNER, [after], "v1-retired");
+    expect(read.connections[0].password).toBe(values.password);
+    expect(read.connections[0].agentPassword).toBe(values.agentPassword);
+    expect(read.omitted).toEqual([{ id: "c1", path: "apiKeyId", reason: "unopenable" }]);
   });
 });
 

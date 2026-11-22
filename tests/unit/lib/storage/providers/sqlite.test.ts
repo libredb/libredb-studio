@@ -76,6 +76,13 @@ describe("SQLiteStorageProvider", () => {
     }
   });
 
+  test("initialize creates storage_meta with the other tables", async () => {
+    await provider.initialize();
+    const sql = (mockExec.mock.calls as unknown[][])[0][0] as string;
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS storage_meta");
+    expect(sql).toMatch(/storage_meta \(\s*key\s+TEXT PRIMARY KEY,\s*value\s+TEXT NOT NULL,/);
+  });
+
   test("initialize refuses to start when foreign keys cannot be enabled", async () => {
     foreignKeysReadBack = 0;
     try {

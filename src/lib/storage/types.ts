@@ -116,7 +116,71 @@ export interface ServerStorageProvider extends PasskeyStore {
    * account keeps its rows so re-enabling restores them.
    */
   deleteAccount(email: string, options?: AccountWriteOptions): Promise<void>;
+  /**
+   * The store's credential envelope state, from its `storage_meta` row `credential_envelope`: no
+   * row is `v1-accepted`, `v2` is `v1-retired`, and any other value throws by name (a store written
+   * by a newer format).
+   */
+  readEnvelopeState(): Promise<CredentialEnvelopeState>;
+  /**
+   * The operator re-seal (docs/STORAGE.md, "Re-sealing the store"), in one transaction holding the
+   * store's write lock: on a store already retired, nothing is read, written or backed up;
+   * otherwise a complete backup named with `backupLabel` is written first, every `connections` row
+   * and every account's factors are passed to `rewrite`, the rows it changes are written, and the
+   * state becomes `v1-retired`. Any error rolls every change back and is rethrown.
+   */
+  rewriteStoredCredentials(
+    rewrite: StoredCredentialRewrite,
+    backupLabel: string,
+  ): Promise<StoredCredentialRewriteResult>;
 }
+
+/**
+ * Whether the store still opens version 1 envelopes and unsealed values (`v1-accepted`), or has
+ * been re-sealed and refuses them by name (`v1-retired`).
+ */
+export type CredentialEnvelopeState = "v1-accepted" | "v1-retired";
+
+/** The `storage_meta` key whose row records the credential envelope state. */
+export const CREDENTIAL_ENVELOPE_KEY = "credential_envelope";
+/** Its value once the operator re-seal retired version 1. */
+export const RETIRED_ENVELOPE_MARKER = "v2";
+
+/**
+ * The state a `credential_envelope` row records: none is `v1-accepted`, `v2` is `v1-retired`, and
+ * any other value throws by name, because a store written by a newer format must not be read as one
+ * this version understands.
+ */
+export function envelopeStateOf(marker: string | undefined): CredentialEnvelopeState {
+  if (marker === undefined) return "v1-accepted";
+  if (marker === RETIRED_ENVELOPE_MARKER) return "v1-retired";
+  throw new Error(
+    `The store's storage_meta row ${CREDENTIAL_ENVELOPE_KEY} is ${JSON.stringify(marker)}, a credential envelope state this version does not know; it was written by a newer version, so this one refuses to start on it.`,
+  );
+}
+
+/** The sealed factor columns of one account row, as stored. */
+export interface StoredFactorRow {
+  email: string;
+  totpSecret: string | null;
+  totpPending: string | null;
+}
+
+/**
+ * What the re-seal does to each stored row, called synchronously inside the provider's transaction.
+ * Each returns the replacement, or null to leave the row as it is.
+ */
+export interface StoredCredentialRewrite {
+  /** One user_storage row of collection `connections`: its owner and its `data` text as stored. */
+  connections(userId: string, data: string): string | null;
+  /** One account's factor columns as stored. */
+  factors(row: StoredFactorRow): Pick<StoredFactorRow, "totpSecret" | "totpPending"> | null;
+}
+
+export type StoredCredentialRewriteResult =
+  | { kind: "already-retired" }
+  /** `backup` names where the complete copy of the store as it was is: a file path, or a table name pattern. */
+  | { kind: "rewritten"; backup: string };
 
 export interface AccountWriteOptions {
   /**

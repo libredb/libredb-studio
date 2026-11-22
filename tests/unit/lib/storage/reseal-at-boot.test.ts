@@ -1,0 +1,205 @@
+/**
+ * STORAGE_ENCRYPTION_RESEAL at boot (docs/STORAGE.md, "Re-sealing the store"): read once by register(), it re-seals
+ * the server store after a complete backup and retires version 1, or refuses the boot by name. Run against a real
+ * SQLite store through the storage factory, with process.exit and console.error stubbed as the other boot checks'
+ * tests do.
+ */
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { randomBytes, randomUUID } from "node:crypto";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
+import { logger } from "@/lib/logger";
+import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
+import { closeStorageProvider } from "@/lib/storage/factory";
+import { resealStoreAtBoot } from "@/lib/storage/reseal-at-boot";
+import { sealVersionOne } from "../../../helpers/storage-envelope-v1";
+
+const ENV_KEYS = ["STORAGE_ENCRYPTION_RESEAL", "STORAGE_PROVIDER", "STORAGE_SQLITE_PATH", "JWT_SECRET"] as const;
+
+describe("resealStoreAtBoot", () => {
+  const saved: Record<string, string | undefined> = {};
+  let dir = "";
+  let path = "";
+
+  beforeEach(() => {
+    for (const key of ENV_KEYS) saved[key] = process.env[key];
+    dir = mkdtempSync(join(tmpdir(), "libredb-reseal-at-boot-"));
+    path = join(dir, "store.db");
+    delete process.env.STORAGE_ENCRYPTION_RESEAL;
+    process.env.STORAGE_PROVIDER = "sqlite";
+    process.env.STORAGE_SQLITE_PATH = path;
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
+    resetStorageEncryptionKey();
+  });
+
+  afterEach(async () => {
+    await closeStorageProvider();
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+    resetStorageEncryptionKey();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Runs the boot step with process.exit, console.error and logger.warn recorded. */
+  async function run(): Promise<{ result: boolean; exits: Array<number | undefined>; banner: string; warned: string[] }> {
+    const originalExit = process.exit;
+    const exits: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exits.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const result = await resealStoreAtBoot();
+      // Read the recorded calls before mockRestore(): bun clears them on restore.
+      return {
+        result,
+        exits,
+        banner: errorSpy.mock.calls.flat().join("\n"),
+        warned: warn.mock.calls.map((call) => String(call[0])),
+      };
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      warn.mockRestore();
+    }
+  }
+
+  /** Writes a store the previous version left: one user's connection with a version 1 password. */
+  function previousVersionStore(): void {
+    const db = new Database(path);
+    try {
+      db.exec("CREATE TABLE user_storage (user_id TEXT, collection TEXT, data TEXT, updated_at TEXT, PRIMARY KEY (user_id, collection))");
+      const record = { id: "c1", name: "c1", type: "postgres", host: "db.internal", password: sealVersionOne(randomUUID()) };
+      db.prepare("INSERT INTO user_storage VALUES ('alice', 'connections', ?, 't')").run(JSON.stringify([record]));
+    } finally {
+      db.close();
+    }
+  }
+
+  test("does nothing while STORAGE_ENCRYPTION_RESEAL is unset, empty or off", async () => {
+    for (const value of [undefined, "", "  ", "false", "0", "off", "OFF"]) {
+      if (value === undefined) delete process.env.STORAGE_ENCRYPTION_RESEAL;
+      else process.env.STORAGE_ENCRYPTION_RESEAL = value;
+
+      const outcome = await run();
+
+      expect({ value, ...outcome }).toEqual({ value, result: true, exits: [], banner: "", warned: [] });
+    }
+    // Nothing opened the store.
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("accepts true, 1 and on in any letter case", async () => {
+    for (const value of ["true", "1", "on", "TRUE", " On "]) {
+      await closeStorageProvider();
+      process.env.STORAGE_ENCRYPTION_RESEAL = value;
+
+      const { result, exits } = await run();
+
+      expect({ value, result, exits }).toEqual({ value, result: true, exits: [] });
+    }
+  });
+
+  test("refuses the boot by name on any other value", async () => {
+    process.env.STORAGE_ENCRYPTION_RESEAL = 'yes"\n';
+
+    const { result, exits, banner } = await run();
+
+    expect(result).toBe(false);
+    expect(exits).toEqual([1]);
+    expect(banner).toContain("STORAGE_ENCRYPTION_RESEAL is invalid");
+    expect(banner).toContain('Got "yes\\"\\n"');
+    expect(banner).toContain("true, on or 1");
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("refuses the boot when STORAGE_PROVIDER is local", async () => {
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    delete process.env.STORAGE_PROVIDER;
+
+    const { result, exits, banner } = await run();
+
+    expect(result).toBe(false);
+    expect(exits).toEqual([1]);
+    expect(banner).toContain("STORAGE_ENCRYPTION_RESEAL is set, but STORAGE_PROVIDER is local");
+  });
+
+  test("re-seals and logs the backup, the counts and the reminder to remove the variable", async () => {
+    previousVersionStore();
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+
+    const { result, exits, warned } = await run();
+
+    expect(result).toBe(true);
+    expect(exits).toEqual([]);
+    const backup = readdirSync(dir).find((name) => name.startsWith("store.db.pre-reseal-"));
+    expect(backup).toMatch(/^store\.db\.pre-reseal-\d{8}T\d{6}Z$/);
+    const lines = warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"));
+    expect(lines).toEqual([
+      `STORAGE_ENCRYPTION_RESEAL: backed up the store to ${join(dir, backup!)}, re-sealed 1 value(s) and kept 0 already sealed for their place; version 1 is retired.`,
+      "STORAGE_ENCRYPTION_RESEAL: remove it now; every start re-checks the store while it is set.",
+    ]);
+    const db = new Database(path);
+    try {
+      const row = db.prepare("SELECT data FROM user_storage").get() as { data: string };
+      expect(JSON.parse(row.data)[0].password).toStartWith("v2:");
+      expect(db.prepare("SELECT value FROM storage_meta").get()).toEqual({ value: "v2" });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("names the values and rows it left as they were", async () => {
+    previousVersionStore();
+    const db = new Database(path);
+    try {
+      db.prepare("INSERT INTO user_storage VALUES ('bob', 'connections', '{not json', 't')").run();
+      db.prepare("INSERT INTO user_storage VALUES ('carol', 'connections', ?, 't')").run(
+        JSON.stringify([{ id: "c9", password: "v2:broken:value" }]),
+      );
+    } finally {
+      db.close();
+    }
+    process.env.STORAGE_ENCRYPTION_RESEAL = "on";
+
+    const { warned } = await run();
+
+    expect(warned).toContain("STORAGE_ENCRYPTION_RESEAL: left 1 value(s) as they were, because they open nowhere here: carol c9 password.");
+    expect(warned).toContain("STORAGE_ENCRYPTION_RESEAL: left 1 row(s) or element(s) unread, because they are not connections: bob connections.");
+  });
+
+  test("says there was nothing to do on a retired store", async () => {
+    previousVersionStore();
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    await run();
+    await closeStorageProvider();
+    const backups = readdirSync(dir).filter((name) => name.includes("pre-reseal"));
+
+    const { result, warned } = await run();
+
+    expect(result).toBe(true);
+    expect(warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"))).toEqual([
+      "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up. Remove STORAGE_ENCRYPTION_RESEAL now.",
+    ]);
+    expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual(backups);
+  });
+
+  test("refuses the boot with the failure and the unchanged-store sentence when the re-seal throws", async () => {
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    process.env.STORAGE_SQLITE_PATH = ":memory:";
+
+    const { result, exits, banner } = await run();
+
+    expect(result).toBe(false);
+    expect(exits).toEqual([1]);
+    expect(banner).toContain("LibreDB Studio cannot start: the credential re-seal failed");
+    expect(banner).toContain("An in-memory SQLite store cannot be backed up");
+    expect(banner).toContain("The store is as it was");
+    expect(banner).toContain("remove STORAGE_ENCRYPTION_RESEAL");
+  });
+});

@@ -18,10 +18,16 @@ import type {
   StorageCollection,
   StorageData,
   StoredAccount,
+  StoredCredentialRewrite,
+  StoredCredentialRewriteResult,
   StoredPasskey,
+  CredentialEnvelopeState,
 } from "../types";
 import {
   AccountWriteConflict,
+  CREDENTIAL_ENVELOPE_KEY,
+  envelopeStateOf,
+  RETIRED_ENVELOPE_MARKER,
   LastAdminError,
   PasskeyRegistrationConflict,
   PasskeyRemovalConflict,
@@ -92,7 +98,13 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       }
 
       // user_storage is per-user product data. accounts is the local identity registry (#784).
+      // storage_meta records facts about the store itself, such as its credential envelope state.
       this.db!.exec(`
+        CREATE TABLE IF NOT EXISTS storage_meta (
+          key        TEXT PRIMARY KEY,
+          value      TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
         CREATE TABLE IF NOT EXISTS user_storage (
           user_id    TEXT NOT NULL,
           collection TEXT NOT NULL,
@@ -451,6 +463,74 @@ export class SQLiteStorageProvider implements ServerStorageProvider {
       if (deleted.changes === 0) throw new PasskeyRemovalConflict("credential_missing");
     });
     remove.immediate();
+  }
+
+  async readEnvelopeState(): Promise<CredentialEnvelopeState> {
+    this.ensureDb();
+    return envelopeStateOf(this.readEnvelopeMarker());
+  }
+
+  /**
+   * The operator re-seal (`ServerStorageProvider.rewriteStoredCredentials`), in one IMMEDIATE
+   * transaction, so the write lock is held from the marker read to the commit and every other
+   * writer, in this process or another, waits. The backup is `VACUUM INTO` the path
+   * `<store file>.<backupLabel>`, run on a second connection because SQLite refuses VACUUM inside a
+   * transaction; that connection reads the last committed state, which the held lock keeps equal to
+   * the state this transaction rewrites. VACUUM INTO refuses an existing target and an unwritable
+   * directory with an error, which rolls everything back. A backup file a failed run wrote stays,
+   * a copy of the unchanged store. Only the data and factor columns change: an account write that
+   * read its row before the re-seal still applies after it.
+   */
+  async rewriteStoredCredentials(
+    rewrite: StoredCredentialRewrite,
+    backupLabel: string,
+  ): Promise<StoredCredentialRewriteResult> {
+    this.ensureDb();
+    if (this.dbPath === ":memory:") {
+      throw new Error("An in-memory SQLite store cannot be backed up, so its credentials are not re-sealed");
+    }
+    const backup = `${this.dbPath}.${backupLabel}`;
+    const run = this.db!.transaction((): StoredCredentialRewriteResult => {
+      if (envelopeStateOf(this.readEnvelopeMarker()) === "v1-retired") return { kind: "already-retired" };
+      const copier = new Database(this.dbPath) as BetterSqlite3.Database;
+      try {
+        copier.prepare("VACUUM INTO ?").run(backup);
+      } finally {
+        copier.close();
+      }
+      const rows = this.db!.prepare(
+        "SELECT user_id, data FROM user_storage WHERE collection = 'connections' ORDER BY user_id",
+      ).all() as { user_id: string; data: string }[];
+      const updateRow = this.db!.prepare(
+        "UPDATE user_storage SET data = ? WHERE user_id = ? AND collection = 'connections'",
+      );
+      for (const row of rows) {
+        const next = rewrite.connections(row.user_id, row.data);
+        if (next !== null) updateRow.run(next, row.user_id);
+      }
+      const accounts = this.db!.prepare(
+        "SELECT email, totp_secret, totp_pending FROM accounts ORDER BY email",
+      ).all() as { email: string; totp_secret: string | null; totp_pending: string | null }[];
+      const updateFactors = this.db!.prepare("UPDATE accounts SET totp_secret = ?, totp_pending = ? WHERE email = ?");
+      for (const row of accounts) {
+        const next = rewrite.factors({ email: row.email, totpSecret: row.totp_secret, totpPending: row.totp_pending });
+        if (next !== null) updateFactors.run(next.totpSecret, next.totpPending, row.email);
+      }
+      this.db!.prepare(
+        `INSERT INTO storage_meta (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      ).run(CREDENTIAL_ENVELOPE_KEY, RETIRED_ENVELOPE_MARKER);
+      return { kind: "rewritten", backup };
+    });
+    return run.immediate();
+  }
+
+  /** The `credential_envelope` row's value, or undefined when the store has none. */
+  private readEnvelopeMarker(): string | undefined {
+    const row = this.db!.prepare("SELECT value FROM storage_meta WHERE key = ?").get(CREDENTIAL_ENVELOPE_KEY) as
+      | { value: string }
+      | undefined;
+    return row?.value;
   }
 
   /** Inside a write transaction: purge old spent rows, then spend this one; false when it was spent. */

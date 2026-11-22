@@ -1,9 +1,11 @@
 import { logger } from "@/lib/logger";
-import { decryptConnections, encryptConnections } from "./connection-secrets";
-import { encryptSecret, readSecret } from "./encryption";
+import { decryptConnections, encryptConnections, type OmittedSecret } from "./connection-secrets";
+import { readStoredSecret, sealSecret } from "./encryption";
+import { type AccountFactorField, accountBinding } from "./envelope-binding";
 import type {
   AccountUpdateOptions,
   AccountWriteOptions,
+  CredentialEnvelopeState,
   PasskeyMatch,
   PasskeyRegistrationWrite,
   PasskeyRemovalWrite,
@@ -12,6 +14,8 @@ import type {
   StorageCollection,
   StorageData,
   StoredAccount,
+  StoredCredentialRewrite,
+  StoredCredentialRewriteResult,
   StoredPasskey,
 } from "./types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -30,6 +34,14 @@ import type { DatabaseConnection } from "@/lib/types";
  * is already sanitized by src/lib/audit.ts, and the remaining eight hold metadata. Of the account
  * registry, only the TOTP secrets are sealed (see openFactor below). Nothing passkey-related is
  * sealed: a public key, a user handle and a name are not secrets.
+ *
+ * Every value is sealed for its place (./envelope-binding.ts): a connection's for the row's owner
+ * (the `userId` each method receives, which the route derived from the session), the connection's
+ * id, the field and its identity fields; a factor for the account's email and the field. Whether a
+ * version 1 envelope or an unsealed value still opens is the store's envelope state, read ONCE, in
+ * initialize: the factory memoizes one provider per process, so a read never queries it, and a
+ * process observes another replica's re-seal at its next restart, which the re-seal procedure
+ * performs (docs/STORAGE.md, "Re-sealing the store").
  */
 
 const CONNECTIONS: StorageCollection = "connections";
@@ -40,15 +52,38 @@ const CONNECTIONS: StorageCollection = "connections";
  */
 export const UNDECRYPTABLE_WARNING_PREFIX = "Stored connection secrets could not be decrypted";
 
+/** Logged once per process, at initialize, while the store still opens version 1 envelopes and unsealed values. */
+export const V1_ACCEPTED_WARNING =
+  "Stored credentials still accept the version 1 envelope and unsealed values. Once every server runs this version, back up the store, set STORAGE_ENCRYPTION_RESEAL=true on every server and restart them to re-seal and retire version 1 (docs/STORAGE.md, Re-sealing the store).";
+
+const UNOPENABLE_ADVICE =
+  "A value marked unopenable does not open for the place it is stored in with the current key: restore the previous JWT_SECRET (or STORAGE_ENCRYPTION_KEY) BEFORE the app writes again, or re-enter the affected credentials.";
+const RETIRED_ADVICE =
+  "A value marked retired is a version 1 or unsealed value, which this store refuses since STORAGE_ENCRYPTION_RESEAL retired version 1: re-enter the affected credentials.";
+
+const READ_BEFORE_INITIALIZE =
+  "Stored credentials were read before initialize: the store's envelope state is read there, so call initialize() first.";
+
+/** An id as a report line names it: a string as it is, any other JSON value as its JSON text. */
+function idText(id: unknown): string {
+  return typeof id === "string" ? id : JSON.stringify(id);
+}
+
 /**
- * One line per read, carrying a count - not one line per field. A read happens on every page load
- * through the sync hook, and a per-field line would turn a single misconfiguration into a log
- * flood that buries the one thing the operator needs to see.
+ * One line per read, naming every omitted value as `<connection id> <field path> (<reason>)`, not
+ * one line per field. A read happens on every page load through the sync hook, and a per-field line
+ * would turn a single misconfiguration into a log flood that buries the one thing the operator
+ * needs to see. The advice follows the reasons present.
  */
-function reportUndecryptable(count: number): void {
-  if (count === 0) return;
+function reportOmitted(omitted: OmittedSecret[]): void {
+  if (omitted.length === 0) return;
+  const names = omitted.map(({ id, path, reason }) => `${idText(id)} ${path} (${reason})`).join(", ");
+  const advice = [
+    omitted.some(({ reason }) => reason === "unopenable") ? UNOPENABLE_ADVICE : null,
+    omitted.some(({ reason }) => reason === "retired") ? RETIRED_ADVICE : null,
+  ].filter((line) => line !== null);
   logger.warn(
-    `${UNDECRYPTABLE_WARNING_PREFIX}: ${count} field(s) were omitted. Restore the previous JWT_SECRET (or STORAGE_ENCRYPTION_KEY) BEFORE the app writes again, or re-enter the affected credentials.`,
+    `${UNDECRYPTABLE_WARNING_PREFIX}: ${omitted.length} field(s) were omitted: ${names}. ${advice.join(" ")}`,
     { provider: "storage-encryption" },
   );
 }
@@ -62,39 +97,74 @@ function reportUndecryptable(count: number): void {
  */
 const UNOPENABLE_FACTOR = "!unopenable";
 
-function sealFactor(value: string | null): string | null {
-  return value === null ? null : encryptSecret(value);
+function sealFactor(value: string | null, email: string, field: AccountFactorField): string | null {
+  return value === null ? null : sealSecret(value, accountBinding(email).field(field));
 }
 
-function openFactor(value: string | null, email: string): string | null {
+function openFactor(
+  value: string | null,
+  email: string,
+  field: AccountFactorField,
+  state: CredentialEnvelopeState,
+): string | null {
   if (value === null) return null;
-  const result = readSecret(value);
-  if (result.kind !== "undecryptable") return result.value;
+  const read = readStoredSecret(value, accountBinding(email).field(field), state);
+  if (read.kind === "opened") return read.value;
   logger.error(
-    `The stored second factor of ${email} does not open with the current storage key, so the account cannot sign in until an admin clears it. Restore the previous JWT_SECRET (or STORAGE_ENCRYPTION_KEY) to recover it.`,
+    `The stored second factor of ${email} (${field}) does not open for this account (${read.reason}), so the account cannot sign in until an admin clears it. For unopenable, restore the previous JWT_SECRET (or STORAGE_ENCRYPTION_KEY) to recover it.`,
     undefined,
     { provider: "storage-encryption" },
   );
   return UNOPENABLE_FACTOR;
 }
 
+/** Seals both factors for the account's email on every insert and update. The email never changes (updateAccount does not rename). */
 function sealAccount(account: StoredAccount): StoredAccount {
-  return { ...account, totpSecret: sealFactor(account.totpSecret), totpPending: sealFactor(account.totpPending) };
-}
-
-function openAccount(account: StoredAccount): StoredAccount {
   return {
     ...account,
-    totpSecret: openFactor(account.totpSecret, account.email),
-    totpPending: openFactor(account.totpPending, account.email),
+    totpSecret: sealFactor(account.totpSecret, account.email, "totpSecret"),
+    totpPending: sealFactor(account.totpPending, account.email, "totpPending"),
+  };
+}
+
+function openAccount(account: StoredAccount, state: CredentialEnvelopeState): StoredAccount {
+  return {
+    ...account,
+    totpSecret: openFactor(account.totpSecret, account.email, "totpSecret", state),
+    totpPending: openFactor(account.totpPending, account.email, "totpPending", state),
   };
 }
 
 class CredentialEncryptingProvider implements ServerStorageProvider {
+  /** The store's envelope state, read once by initialize; null before it. */
+  private state: CredentialEnvelopeState | null = null;
+
   constructor(private readonly inner: ServerStorageProvider) {}
 
-  initialize(): Promise<void> {
-    return this.inner.initialize();
+  async initialize(): Promise<void> {
+    await this.inner.initialize();
+    this.state = await this.inner.readEnvelopeState();
+    if (this.state === "v1-accepted") logger.warn(V1_ACCEPTED_WARNING, { provider: "storage-encryption" });
+  }
+
+  /** The state initialize read; a read of a credential before it is refused rather than guessed. */
+  private envelopeState(): CredentialEnvelopeState {
+    if (this.state === null) throw new Error(READ_BEFORE_INITIALIZE);
+    return this.state;
+  }
+
+  readEnvelopeState(): Promise<CredentialEnvelopeState> {
+    return this.inner.readEnvelopeState();
+  }
+
+  /** The re-seal, in the inner store; once it succeeds, this process reads version 1 as retired at once. */
+  async rewriteStoredCredentials(
+    rewrite: StoredCredentialRewrite,
+    backupLabel: string,
+  ): Promise<StoredCredentialRewriteResult> {
+    const result = await this.inner.rewriteStoredCredentials(rewrite, backupLabel);
+    this.state = "v1-retired";
+    return result;
   }
 
   isHealthy(): Promise<boolean> {
@@ -106,43 +176,47 @@ class CredentialEncryptingProvider implements ServerStorageProvider {
   }
 
   async getAllData(userId: string): Promise<Partial<StorageData>> {
+    const state = this.envelopeState();
     const data = await this.inner.getAllData(userId);
     if (!data.connections) return data;
-    const { connections, undecryptable } = decryptConnections(data.connections);
-    reportUndecryptable(undecryptable);
+    const { connections, omitted } = decryptConnections(userId, data.connections, state);
+    reportOmitted(omitted);
     return { ...data, connections };
   }
 
   async getCollection<K extends StorageCollection>(userId: string, collection: K): Promise<StorageData[K] | null> {
+    const state = this.envelopeState();
     const value = await this.inner.getCollection(userId, collection);
     if (collection !== CONNECTIONS || value === null) return value;
     // TypeScript cannot narrow StorageData[K] from a runtime comparison on K, so the two casts are
     // unavoidable; the runtime guard above is what makes them sound.
-    const { connections, undecryptable } = decryptConnections(value as DatabaseConnection[]);
-    reportUndecryptable(undecryptable);
+    const { connections, omitted } = decryptConnections(userId, value as DatabaseConnection[], state);
+    reportOmitted(omitted);
     return connections as StorageData[K];
   }
 
   setCollection<K extends StorageCollection>(userId: string, collection: K, data: StorageData[K]): Promise<void> {
     if (collection !== CONNECTIONS) return this.inner.setCollection(userId, collection, data);
-    const sealed = encryptConnections(data as DatabaseConnection[]) as StorageData[K];
+    const sealed = encryptConnections(userId, data as DatabaseConnection[]) as StorageData[K];
     return this.inner.setCollection(userId, collection, sealed);
   }
 
   mergeData(userId: string, data: Partial<StorageData>): Promise<void> {
     if (!data.connections) return this.inner.mergeData(userId, data);
-    return this.inner.mergeData(userId, { ...data, connections: encryptConnections(data.connections) });
+    return this.inner.mergeData(userId, { ...data, connections: encryptConnections(userId, data.connections) });
   }
 
   // Account rows: the password hash is already a KDF output and passes through. The TOTP secret
   // is not: it is the shared key that mints codes, so it is sealed like a connection password.
   async listAccounts(): Promise<StoredAccount[]> {
-    return (await this.inner.listAccounts()).map(openAccount);
+    const state = this.envelopeState();
+    return (await this.inner.listAccounts()).map((account) => openAccount(account, state));
   }
 
   async getAccount(email: string): Promise<StoredAccount | null> {
+    const state = this.envelopeState();
     const account = await this.inner.getAccount(email);
-    return account ? openAccount(account) : null;
+    return account ? openAccount(account, state) : null;
   }
 
   insertAccount(account: StoredAccount): Promise<void> {

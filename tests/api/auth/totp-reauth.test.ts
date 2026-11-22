@@ -142,7 +142,7 @@ describe("changing your own second factor needs more than the session", () => {
       totp_secret: string;
     };
     raw.close();
-    expect(column.totp_secret).toStartWith("v1:");
+    expect(column.totp_secret).toStartWith("v2:");
     expect(column.totp_secret).not.toContain(secret);
     expect((await signIn(ALICE, ALICE_PASSWORD)).status).toBe(401);
   });

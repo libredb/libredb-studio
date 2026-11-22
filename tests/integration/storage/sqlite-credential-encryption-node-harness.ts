@@ -65,7 +65,7 @@ async function main(): Promise<void> {
   const fileBytes = fs.readFileSync(dbPath).toString("latin1");
   report.canaryInFile = fileBytes.includes(CANARY);
   report.rowContainsCanary = row.data.includes(CANARY);
-  report.rowLooksSealed = /"password":"v1:/.test(row.data);
+  report.rowLooksSealed = /"password":"v2:/.test(row.data);
 
   // Phase 2: rotate the key (a fresh JWT_SECRET, exactly what an operator does) and read back
   // through a NEW provider instance against the SAME on-disk file.
