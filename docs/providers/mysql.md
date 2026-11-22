@@ -125,7 +125,7 @@ Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/
 ```ts
 case 'mysql': {
   const { MySQLProvider } = await import('./providers/sql/mysql');
-  return new MySQLProvider(connection, options);
+  return new MySQLProvider(connection, options, context);
 }
 ```
 

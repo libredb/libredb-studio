@@ -73,7 +73,7 @@ Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/
 ```ts
 case 'mssql': {
   const { MSSQLProvider } = await import('./providers/sql/mssql');
-  return new MSSQLProvider(connection, options);
+  return new MSSQLProvider(connection, options, context);
 }
 ```
 

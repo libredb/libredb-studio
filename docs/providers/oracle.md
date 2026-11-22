@@ -81,7 +81,7 @@ Loaded on demand by the factory ([`factory.ts`](../../src/lib/db/factory.ts)):
 ```ts
 case 'oracle': {
   const { OracleProvider } = await import('./providers/sql/oracle/index');
-  return new OracleProvider(connection, options);
+  return new OracleProvider(connection, options, context);
 }
 ```
 

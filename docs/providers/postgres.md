@@ -103,7 +103,7 @@ PostgreSQL connection is opened by `createDatabaseProvider()`
 ```ts
 case 'postgres': {
   const { PostgresProvider } = await import('./providers/sql/postgres');
-  return new PostgresProvider(connection, options);
+  return new PostgresProvider(connection, options, context);
 }
 ```
 

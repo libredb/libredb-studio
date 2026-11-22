@@ -114,7 +114,7 @@ when a LibreDB connection is actually opened by `createDatabaseProvider()`
 ```ts
 case 'libredb': {
   const { LibreDBProvider } = await import('./providers/embedded/libredb');
-  return new LibreDBProvider(connection, options);
+  return new LibreDBProvider(connection, options, context);
 }
 ```
 

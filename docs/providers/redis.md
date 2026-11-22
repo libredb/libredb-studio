@@ -175,7 +175,7 @@ connection is actually opened by `createDatabaseProvider()`
 ```ts
 case 'redis': {
   const { RedisProvider } = await import('./providers/keyvalue/redis');
-  return new RedisProvider(connection, options);
+  return new RedisProvider(connection, options, context);
 }
 ```
 
