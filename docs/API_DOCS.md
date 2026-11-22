@@ -2557,7 +2557,7 @@ interface DatabaseConnection {
   amqpPort?: string;    // RabbitMQ only: the AMQP 0-9-1 port of stream reads; empty means browse only.
   authMethod?: 'keypair' | 'pat'; // Snowflake only: the sign-in method, a key-pair JWT signed with privateKey or a programmatic access token in password; absent means keypair. Not the SSH tunnel's sshTunnel.authMethod. Not a secret
   privateKey?: string;  // Snowflake only: the PEM private key's contents, PKCS#8 or PKCS#1, encrypted or not; never a path. Secret-classified
-  privateKeyPassphrase?: string; // Snowflake only: the passphrase of an encrypted privateKey. Secret-classified
+  privateKeyPassphrase?: string; // Snowflake and NETCONF: the passphrase of an encrypted privateKey. Secret-classified
   hostKeyFingerprint?: string; // NETCONF only: the SSH host key the device must present, pinned. Public key material, readable and identity-classified, so it is bound into every sealed credential of the connection
   role?: string;        // Snowflake only: the role every statement runs as, sent on every request; part of the connection's identity. Not a secret
   skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect). It defers the CATALOG, not the walk: a connection that also declares `keyScan` keeps the sidebar's Objects / Keys switch, and the switch reads nothing, because the key panel mounts only when Keys is chosen and then takes the same bounded sample (#1169)
