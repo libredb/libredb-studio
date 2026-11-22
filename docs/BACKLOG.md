@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D492, U17 · 365
+- [Drivers and connections](#drivers-and-connections) — D1-D492, U17 · 364
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -4694,16 +4694,6 @@ Measured 2026-11-05 through `POST /api/db/query` with the real driver and an adm
 Found 2026-11-05 by the review of the change that reads a shared seed's file-access audience from its operator roles.
 
 **Done when:** the SQLite refusal names a connection another role can use the way the DuckDB one does, for example "SQLite connections open only for an administrator on a connection no other role can use, because this driver cannot confine statement-level file access", every test that pins the sentence (in `tests/integration/mcp/context.test.ts`, `tests/integration/db/reserved-storage-paths.test.ts`, `tests/isolated/factory.test.ts`, `tests/unit/db/refuses-denied-file-access.test.ts`, `tests/integration/mcp/list-connections.test.ts` and `e2e/embedded-samples.spec.ts`) asserts the new wording, one of them for an administrator on a seed offered to `["admin", "user"]`, and any document that quotes the sentence follows it.
-
-### D461. On an on-disk SQLite seed an infinite REAL cell reaches an MCP client as `null`
-
-`docs/MCP.md`'s Limits says a NaN, Infinity or -Infinity cell in a `run_read_query` answer is the string `"NaN"`, `"Infinity"` or `"-Infinity"`, and that it used to be `null`, which a client could not tell from SQL NULL.
-On an on-disk SQLite seed the read runs in the worker child of `src/lib/db/providers/sql/sqlite-worker.ts`, whose answer crosses one JSON line (`JSON.stringify(resp)` in the worker script), and `ser` in that script, the child's copy of `serializeCell`, tags BigInt and bytes but not non-finite numbers, so `JSON.stringify` writes an infinity as `null` before the parent's `deserializeCell` or the MCP serializer ever sees it.
-Measured 2026-11-06 through `run_read_query` on an opted-in on-disk SQLite seed: `SELECT 1e999, -1e999, 1e308 * 10` answered `null` three times, the same as a SQL NULL, while `typeof(1e999)` answered `'real'` and `CAST(1e999 AS TEXT)` answered `'Inf'`; DuckDB answered `"Infinity"` and `"-Infinity"`.
-SQLite stores no NaN, so only the two infinities are affected.
-Found 2026-11-06 by the final local check of MCP phase 1 (#2252).
-
-**Done when:** the worker carries a non-finite number across its JSON line and an MCP answer on an on-disk SQLite seed shows `"Infinity"` and `"-Infinity"`, with a test on the worker path and the provider triad kept (`docs/providers/sqlite.md`, `tests/integration/db/sqlite-provider.test.ts`).
 
 ### D462. The Sparkplug STORED certificate test reads a one-second window under bun's five-second default
 

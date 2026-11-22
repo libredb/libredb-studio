@@ -223,6 +223,12 @@ describe("the answer", () => {
     expect(Object.hasOwn(result.structuredContent?.rows[0], "__proto__")).toBe(true);
   });
 
+  test("an infinite REAL on an on-disk SQLite seed answers Infinity and -Infinity, not null", async () => {
+    const result = await query({ connection_id: "seed:shop", sql: "SELECT 1e999 AS p, -1e999 AS n" });
+    expect(result.isError ?? false).toBe(false);
+    expect(result.structuredContent?.rows).toEqual([{ p: "Infinity", n: "-Infinity" }]);
+  });
+
   test("carries none of the provider's warnings, since this arm's facet does not answer them", async () => {
     const original = SQLiteProvider.prototype.queryReadOnly;
     SQLiteProvider.prototype.queryReadOnly = async function (
