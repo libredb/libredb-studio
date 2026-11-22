@@ -25,7 +25,7 @@ import { connectionFieldHint, connectionFieldLabel, DB_UI_CONFIG, offersSshTunne
 import { MCP_STATEMENT_READ, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { isWithheldKafkaTopic } from "@/lib/db/providers/stream/kafka/agent-statement";
-import { KAFKA_DEFAULT_PORT, kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
+import { KAFKA_DEFAULT_PORT } from "@/lib/db/providers/stream/kafka/connection-options";
 import { overviewFrom } from "@/lib/db/providers/stream/kafka/monitoring";
 import { KAFKA_TOPIC_COLUMNS, KAFKA_TOPIC_LIST_CAP } from "@/lib/db/providers/stream/kafka/objects";
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET } from "@/lib/db/providers/stream/kafka/read";
@@ -187,18 +187,10 @@ describe("docs/providers/kafka.md quotes the strings the provider writes", () =>
     expect(DOC).toContain(`"${labels.sessionsEmptyState}"`);
   });
 
-  test("the SSH tunnel refusal is the one connect() raises", () => {
-    let message = "";
-    try {
-      kafkaConnectionOptions(
-        { ...KAFKA, sshTunnel: { enabled: true, host: "b", port: 22, username: "u", authMethod: "password" } },
-        1000,
-      );
-    } catch (error) {
-      message = (error as Error).message;
-    }
-    expect(message).toStartWith("Kafka does not run through an SSH tunnel");
-    expect(DOC).toContain(message);
+  test("the SSH tunnel refusal is core's row for Kafka, quoted whole (FND-2 slice 5)", () => {
+    const sentence = SSH_TUNNEL_REFUSAL.kafka;
+    expect(sentence).toStartWith("Kafka does not run through an SSH tunnel");
+    expect(DOC).toContain(`"${sentence}"`);
   });
 
   test("the refusal of a client library the installation cannot load is the one connect() raises", async () => {

@@ -823,21 +823,13 @@ describe("connect and disconnect", () => {
     }
   });
 
-  test("an SSH tunnel is refused before any client exists (spec 6.1)", async () => {
-    let created = 0;
-    const provider = new KafkaProvider(
-      { ...CONNECTION, sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u" } } as DatabaseConnection,
-      {},
-      {},
-      async (options) => {
-        created++;
-        return createPlatformaticClient(options, brokerLib().lib);
-      },
-    );
-    const error = await provider.connect().catch((e) => e);
+  test("an SSH tunnel is refused before any provider or client exists (spec 6.1, FND-2 slice 5)", async () => {
+    const error = await createDatabaseProvider({
+      ...CONNECTION,
+      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },
+    } as DatabaseConnection).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect(error.message).toContain("SSH tunnel");
-    expect(created).toBe(0);
+    expect((error as Error).message).toStartWith("Kafka does not run through an SSH tunnel");
   });
 
   test("with no client factory, the provider loads the real library, and an unreachable broker is a ConnectionError", async () => {
