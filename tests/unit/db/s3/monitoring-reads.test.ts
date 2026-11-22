@@ -18,6 +18,7 @@ import {
   objectsXml,
   xmlAnswer,
 } from "../../../helpers/s3-fake-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const PROBE_LINE = "GET /sales?delimiter=%2F&encoding-type=url&list-type=2&max-keys=1&prefix=";
 const HTML = { status: 200, body: "<html><body>MinIO Console</body></html>", contentType: "text/html" };
@@ -27,7 +28,7 @@ function provider(handler: FakeS3Handler, overrides: Partial<DatabaseConnection>
   const s3 = new S3Provider(
     s3Connection(overrides),
     queryTimeout === undefined ? {} : { queryTimeout },
-    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
     { createTransport: fake.createTransport },
   );
   return { s3, fake };

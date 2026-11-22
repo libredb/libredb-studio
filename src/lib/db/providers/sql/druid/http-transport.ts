@@ -563,7 +563,12 @@ export class DruidHttpTransport implements DruidTransport {
     // `connectionFields`, and an explicit `disable` has to turn TLS OFF as well as
     // an explicit mode turns it on (the #264 lesson).
     const secure = config.ssl !== undefined && config.ssl.mode !== "disable";
-    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, config.port ?? DEFAULT_PORT);
+    this.origin = httpOrigin(
+      secure ? "https" : "http",
+      config.host ?? DEFAULT_HOST,
+      config.port ?? DEFAULT_PORT,
+      egress,
+    );
     this.endpoint = endpointUrl(this.origin, SQL_PATH);
     // Spec section 1, live-verified: a default install loads no security extension
     // and IGNORES this header entirely - a bogus Basic header still answers 200 -

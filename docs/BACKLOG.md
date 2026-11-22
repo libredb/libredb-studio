@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D487, U17 · 360
+- [Drivers and connections](#drivers-and-connections) — D1-D488, U17 · 361
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U222 · 207
@@ -4829,6 +4829,21 @@ Filed 2026-11-22 with the setting.
 
 **Done when:** a later release refuses version 1 and unsealed credentials by default, the upgrade notes say so, and tests pin the default.
 That release keeps an explicit off value of the setting, because the re-seal runs only while the requirement is off, so the re-sealing start of an upgrade or a recovery sets it off.
+
+### D488. Only some units refuse link-local and instance-metadata destinations whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says
+
+`DB_HTTP_BLOCK_PRIVATE_HOSTS` is off by default, and `docs/SECURITY.md` "Known limits" says so.
+With it off, some units still refuse a link-local address (`169.254.0.0/16`, `fe80::/10`) and AWS's IPv6 instance metadata address (`fd00:ec2::254`), and others dial them.
+
+These refuse them whatever the flag says: the byte transport, the AMQP, MQTT, NETCONF and Sparkplug B dials, Modbus unless its endpoint turns the refusal off, SNMP's agent lookup, MTConnect, Kubernetes, Snowflake, Firestore, RabbitMQ's management API and the auth layer's lanes other than the metadata lane.
+These reach them while the flag is off: InfluxDB, InfluxDB 3 and Weaviate, measured; Qdrant, Databend and BigQuery's API lane, read from their node transports, which do not opt in to the refusal; and ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL, Prometheus and Couchbase, read from the guarded fetch path, which hands the request to the plain `fetch` while the flag is off.
+"Known limits" names the always-on refusal only for MQTT, NETCONF, Sparkplug B and the byte transport.
+
+Measured 2026-11-22 with factory-built providers against a counting server: with the flag unset, MTConnect refused `169.254.169.254`, `[fe80::1]` and `fd00:ec2::254` before any request, and Kubernetes did the same with TLS on, while InfluxDB, InfluxDB 3 and Weaviate dialled them.
+
+Found 2026-11-22 while building FND-2 slice 2b-3a.
+
+**Done when:** every unit that dials a host from the connection refuses link-local addresses and AWS's IPv6 instance metadata address whatever the flag says, as the byte transport, MQTT, NETCONF and Sparkplug B do, a census test holds it, and `docs/SECURITY.md` "Known limits" says so.
 
 ## Value interpolation
 

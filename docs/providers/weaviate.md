@@ -170,6 +170,10 @@ A later release takes REST by the table, and REST search is still a preview upst
 
 Weaviate Cloud and DigitalOcean Managed Weaviate are claimed nowhere until a test cluster passes the live check.
 
+### 4.10 Where the connection may connect
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused before any request, with the shared sentence: an IP literal when `connect()` builds the connection's origin, and a name at the lookup the request's socket dials through.
+
 ### Connection string
 
 `weaviate` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/vector/weaviate/connection-string.ts)).

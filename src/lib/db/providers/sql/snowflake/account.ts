@@ -8,7 +8,7 @@
  * any socket, and never repeats the text, since a pasted URL can carry a token. `httpOrigin` then holds the host to
  * the shared host rules, which the reading already met.
  */
-import { type HttpOrigin, httpOrigin } from "@/lib/db/http/endpoint";
+import { type HttpOrigin, httpOriginWithCoreDecision } from "@/lib/db/http/endpoint";
 import { checkSnowflakeAccount, SNOWFLAKE_FIELD_SENTENCES } from "./account-host";
 import { SnowflakeError } from "./errors";
 
@@ -25,5 +25,5 @@ export function snowflakeEndpoint(account: unknown): SnowflakeEndpoint {
   const reading = checkSnowflakeAccount(account);
   if (!reading.ok) throw new SnowflakeError("config", reading.refusal);
   const { host, accountClaim } = reading;
-  return { origin: httpOrigin("https", host, 443), host, accountClaim };
+  return { origin: httpOriginWithCoreDecision("https", host, 443), host, accountClaim };
 }

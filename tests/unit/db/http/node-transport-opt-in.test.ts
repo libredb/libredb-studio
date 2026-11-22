@@ -17,6 +17,7 @@ import {
 } from "@/lib/db/http/node-transport";
 import { closeAll, eventually, rawAnswer, rawHttpListener } from "../../../helpers/node-transport-fixtures";
 import { setEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const LINK_LOCAL =
   "Invalid host: this connection never reaches a link-local address or AWS's IPv6 instance metadata address, whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says";
@@ -77,7 +78,7 @@ describe("refusesLinkLocal", () => {
   test("loopback stays reachable when it is set", async () => {
     setEgressFlag(undefined);
     const listener = await rawHttpListener(() => rawAnswer("200 OK", ["content-length: 2"], "ok"));
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const transport = build({ origin, tls: null, maxSockets: 1, headers: {}, refusesLinkLocal: true });
     const answer = await transport.request({
       method: "GET",
@@ -143,7 +144,7 @@ describe("refusesUpgrade", () => {
     "a 101 with %s fails at once as a network failure, closes its socket and frees its slot",
     async (_label, headerLines) => {
       const listener = await upgradeListener(headerLines);
-      const origin = httpOrigin("http", "127.0.0.1", listener.port);
+      const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
       const transport = build({ origin, tls: null, maxSockets: 1, headers: {}, refusesUpgrade: true });
       const started = Date.now();
       const error = await failure(() => transport.request(get(origin, "/switch")));
@@ -160,14 +161,14 @@ describe("refusesUpgrade", () => {
 
   test("absent, a 101 with no upgrade headers is answered as a status, as it always was", async () => {
     const listener = await upgradeListener(["content-length: 0"]);
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const transport = build({ origin, tls: null, maxSockets: 1, headers: {} });
     expect((await transport.request(get(origin, "/switch"))).status).toBe(101);
   });
 
   test("absent, a 101 with upgrade headers still fails at once as a network failure, closes its socket and frees its slot", async () => {
     const listener = await upgradeListener(["connection: upgrade", "upgrade: websocket"]);
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const transport = build({ origin, tls: null, maxSockets: 1, headers: {} });
     const started = Date.now();
     const error = await failure(() => transport.request(get(origin, "/switch")));

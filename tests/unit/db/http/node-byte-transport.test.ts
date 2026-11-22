@@ -34,6 +34,7 @@ import {
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
 import { setEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const MIB = 1024 * 1024;
 const CLOSED = "The connection was closed, so the request did not complete";
@@ -61,7 +62,7 @@ function connect(
   extra: Partial<NodeByteTransportOptions> = {},
   host = "127.0.0.1",
 ): NodeByteTransport {
-  const origin = httpOrigin("http", host, listener.port);
+  const origin = httpOrigin("http", host, listener.port, ALLOWS_PRIVATE_HOSTS);
   const transport = createNodeByteTransport({ origin, tls: null, maxSockets: 4, headers: {}, ...extra });
   transports.push(transport);
   return transport;
@@ -174,10 +175,10 @@ describe("the connection headers meet the rule a request's own headers meet, whe
 
   test("the text transport still takes those headers as it did", () => {
     const transport = createNodeTransport({
-      origin: httpOrigin("http", "127.0.0.1", 9),
+      origin: httpOrigin("http", "127.0.0.1", 9, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 1,
-      headers: { authorization: "Bearer fixed", connection: "close" },
+      headers: { authorization: `Bearer ${crypto.randomUUID()}`, connection: "close" },
     });
     transport.close();
   });
@@ -623,7 +624,7 @@ describe("HEAD and the byte answer", () => {
     const listener = await rawHttpListener(() =>
       rawAnswer("200 OK", ["content-encoding: gzip", `content-length: ${stored.length}`], stored),
     );
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const text = createNodeTransport({ origin, tls: null, maxSockets: 1, headers: {} });
     try {
       const error = await failure(() =>
@@ -681,7 +682,7 @@ describe("deadline, cancel and close", () => {
 describe("TLS", () => {
   test("a GET over https with a verify-full CA reaches the listener, and the explicit Host leaves the server name alone", async () => {
     const listener = await httpsListener(certificates.local, jsonAnswer(200, "{}"));
-    const origin = httpOrigin("https", "localhost", listener.port);
+    const origin = httpOrigin("https", "localhost", listener.port, ALLOWS_PRIVATE_HOSTS);
     const transport = createNodeByteTransport({
       origin,
       tls: nodeTlsMaterial({ mode: "verify-full", caCert: certificates.ca }, "localhost"),
@@ -738,7 +739,7 @@ describe("the response-header selection, checked when the transport is built", (
     ["set-cookie", { names: ["etag", "set-cookie"] }, NEVER_RETURNED],
   ] as const)("%s is refused before any socket", async (_label, responseHeaders, sentence) => {
     const listener = await rawHttpListener(OK);
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const error = refusal(() =>
       createNodeByteTransport({ origin, tls: null, maxSockets: 1, headers: {}, responseHeaders }),
     );
@@ -748,7 +749,7 @@ describe("the response-header selection, checked when the transport is built", (
   });
 
   test("32 names and 8 prefixes of three characters are accepted", () => {
-    const origin = httpOrigin("http", "127.0.0.1", 9000);
+    const origin = httpOrigin("http", "127.0.0.1", 9000, ALLOWS_PRIVATE_HOSTS);
     expect(() => {
       transports.push(
         createNodeByteTransport({
@@ -1153,7 +1154,7 @@ describe("the signer's names, checked when the transport is built", () => {
     ],
   ] as const)("%s is refused before any socket", async (_label, headerNames, sentence) => {
     const listener = await rawHttpListener(OK);
-    const origin = httpOrigin("http", "127.0.0.1", listener.port);
+    const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
     const error = refusal(() =>
       createNodeByteTransport({
         origin,
@@ -1188,7 +1189,7 @@ describe("the signer's names, checked when the transport is built", () => {
   });
 
   test("authorization is accepted", () => {
-    const origin = httpOrigin("http", "127.0.0.1", 9000);
+    const origin = httpOrigin("http", "127.0.0.1", 9000, ALLOWS_PRIVATE_HOSTS);
     expect(() =>
       transports.push(createNodeByteTransport({ origin, tls: null, maxSockets: 1, headers: {}, signer: signer() })),
     ).not.toThrow();

@@ -24,7 +24,7 @@ import {
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
 import { RABBITMQ_TEST_PASSWORD, rabbitmqConnection } from "../../../helpers/rabbitmq-connection";
-import { setEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const CA = readFileSync(join(import.meta.dir, "../../../fixtures/tls/ca.crt"), "utf8");
 
@@ -41,15 +41,11 @@ function refusal(read: () => unknown): string {
 }
 
 const refuse = (overrides: Partial<DatabaseConnection>) =>
-  refusal(() => readConnectionOptions(rabbitmqConnection(overrides)));
-
-afterEach(() => {
-  setEgressFlag(undefined);
-});
+  refusal(() => readConnectionOptions(rabbitmqConnection(overrides), ALLOWS_PRIVATE_HOSTS));
 
 describe("the endpoints of a valid record", () => {
   test("loopback without TLS: http management on 15672, AMQP on 5672, both named host:port", () => {
-    const { management, amqp } = readConnectionOptions(rabbitmqConnection());
+    const { management, amqp } = readConnectionOptions(rabbitmqConnection(), ALLOWS_PRIVATE_HOSTS);
     expect(management).toEqual({
       origin: { scheme: "http", host: "127.0.0.1", port: 15672 },
       pathPrefix: "",
@@ -69,10 +65,10 @@ describe("the endpoints of a valid record", () => {
   });
 
   test("an empty or absent AMQP port browses only, and an absent port is the management default", () => {
-    expect(readConnectionOptions(rabbitmqConnection({ amqpPort: "" })).amqp).toBeNull();
-    expect(readConnectionOptions(rabbitmqConnection({ amqpPort: undefined })).amqp).toBeNull();
+    expect(readConnectionOptions(rabbitmqConnection({ amqpPort: "" }), ALLOWS_PRIVATE_HOSTS).amqp).toBeNull();
+    expect(readConnectionOptions(rabbitmqConnection({ amqpPort: undefined }), ALLOWS_PRIVATE_HOSTS).amqp).toBeNull();
     const absent = { ...rabbitmqConnection(), port: undefined } as unknown as DatabaseConnection;
-    expect(readConnectionOptions(absent).management.origin.port).toBe(15672);
+    expect(readConnectionOptions(absent, ALLOWS_PRIVATE_HOSTS).management.origin.port).toBe(15672);
   });
 
   test("any SSL mode but disable is https and amqps for both, with one TLS identity: the host", () => {
@@ -83,6 +79,7 @@ describe("the endpoints of a valid record", () => {
         amqpPort: "5671",
         ssl: { mode: "verify-full", caCert: CA },
       }),
+      ALLOWS_PRIVATE_HOSTS,
     );
     expect(management.origin).toEqual({ scheme: "https", host: "mq.example", port: 15671 });
     expect(management.tls).toMatchObject({ rejectUnauthorized: true, identity: "mq.example" });
@@ -94,6 +91,7 @@ describe("the endpoints of a valid record", () => {
   test("an IPv6 literal: bracketed in the origin and the display, bare in the AMQP host and the TLS identity", () => {
     const { management, amqp } = readConnectionOptions(
       rabbitmqConnection({ host: "[::1]", ssl: { mode: "verify-full", caCert: CA } }),
+      ALLOWS_PRIVATE_HOSTS,
     );
     expect(management.origin.host).toBe("[::1]");
     expect(management.display).toBe("[::1]:15672");
@@ -105,6 +103,7 @@ describe("the endpoints of a valid record", () => {
   test("a DNS host with one trailing dot keeps it in the address and the display, not in either TLS identity", () => {
     const { management, amqp } = readConnectionOptions(
       rabbitmqConnection({ host: "mq.example.com.", amqpPort: "5671", ssl: { mode: "verify-full", caCert: CA } }),
+      ALLOWS_PRIVATE_HOSTS,
     );
     expect(management.origin.host).toBe("mq.example.com.");
     expect(management.tls?.identity).toBe("mq.example.com");
@@ -114,9 +113,9 @@ describe("the endpoints of a valid record", () => {
   });
 
   test("a Path prefix loses one trailing slash", () => {
-    expect(readConnectionOptions(rabbitmqConnection({ apiPath: "/rabbitmq/" })).management.pathPrefix).toBe(
-      "/rabbitmq",
-    );
+    expect(
+      readConnectionOptions(rabbitmqConnection({ apiPath: "/rabbitmq/" }), ALLOWS_PRIVATE_HOSTS).management.pathPrefix,
+    ).toBe("/rabbitmq");
   });
 });
 
@@ -125,8 +124,11 @@ describe("refused before any socket", () => {
     const tunnel = { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" as const };
     expect(refuse({ sshTunnel: tunnel })).toBe(E.TUNNEL_REFUSED);
     const forwarded = { ...rabbitmqConnection(), [TUNNEL_FAR_END]: { host: "mq", port: 15672 } };
-    expect(refusal(() => readConnectionOptions(forwarded))).toBe(E.TUNNEL_REFUSED);
-    expect(readConnectionOptions(rabbitmqConnection({ sshTunnel: { ...tunnel, enabled: false } })).amqp).not.toBeNull();
+    expect(refusal(() => readConnectionOptions(forwarded, ALLOWS_PRIVATE_HOSTS))).toBe(E.TUNNEL_REFUSED);
+    expect(
+      readConnectionOptions(rabbitmqConnection({ sshTunnel: { ...tunnel, enabled: false } }), ALLOWS_PRIVATE_HOSTS)
+        .amqp,
+    ).not.toBeNull();
   });
 
   test("Database, Namespaces and TLS server name, named and never quoted", () => {
@@ -184,20 +186,27 @@ describe("the plaintext rule", () => {
   });
 
   test("the box lifts it for both endpoints; loopback and TLS never need it", () => {
-    const ticked = readConnectionOptions(rabbitmqConnection({ ...remote, allowInsecureAuth: true }));
+    const ticked = readConnectionOptions(
+      rabbitmqConnection({ ...remote, allowInsecureAuth: true }),
+      ALLOWS_PRIVATE_HOSTS,
+    );
     expect(ticked.management.origin.scheme).toBe("http");
     expect(ticked.amqp?.tls).toBeNull();
-    expect(readConnectionOptions(rabbitmqConnection({ host: "localhost" })).amqp?.host).toBe("localhost");
+    expect(readConnectionOptions(rabbitmqConnection({ host: "localhost" }), ALLOWS_PRIVATE_HOSTS).amqp?.host).toBe(
+      "localhost",
+    );
     expect(
-      readConnectionOptions(rabbitmqConnection({ host: "mq.example", ssl: { mode: "require" } })).amqp,
+      readConnectionOptions(rabbitmqConnection({ host: "mq.example", ssl: { mode: "require" } }), ALLOWS_PRIVATE_HOSTS)
+        .amqp,
     ).not.toBeNull();
   });
 });
 
-describe("the egress flag", () => {
-  test("a private literal under DB_HTTP_BLOCK_PRIVATE_HOSTS keeps the shared sentence, which the boundary passes", () => {
-    setEgressFlag("true");
-    const message = refuse({ host: "10.0.0.8", ssl: { mode: "require" } });
+describe("the egress decision", () => {
+  test("a private literal handed a blocking decision keeps the shared sentence, which the boundary passes", () => {
+    const message = refusal(() =>
+      readConnectionOptions(rabbitmqConnection({ host: "10.0.0.8", ssl: { mode: "require" } }), BLOCKS_PRIVATE_HOSTS),
+    );
     expect(EGRESS_REFUSAL_SENTENCES.has(message)).toBe(true);
   });
 });
@@ -260,6 +269,7 @@ describe("the server name a trailing-dot host sends", () => {
         port: listener.port,
         ssl: { mode: "verify-full", caCert: certificates.ca },
       }),
+      ALLOWS_PRIVATE_HOSTS,
     );
     const transport = createNodeTransport({
       origin: management.origin,

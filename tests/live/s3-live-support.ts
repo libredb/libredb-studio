@@ -56,6 +56,7 @@ import {
   type S3TransportFactory,
   signingInput,
 } from "../helpers/s3-wire";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 export const ROOT: string =
   typeof import.meta.dir === "string" ? path.resolve(import.meta.dir, "../..") : process.cwd();
@@ -1547,6 +1548,7 @@ function connectionOptions(connection: DatabaseConnection) {
   return buildS3ConnectionOptions(connection as Parameters<typeof buildS3ConnectionOptions>[0], {
     executionReadOnly: true,
     queryTimeout: 30_000,
+    egress: egressDecision(),
   });
 }
 
@@ -1954,7 +1956,7 @@ function provider(run: S3RunContext, wire: Wire, connection: DatabaseConnection,
   return new S3Provider(
     connection,
     {},
-    {},
+    { egress: egressDecision() },
     {
       createTransport: wire.createTransport,
       clock: run.clockFor(offsetMs),
@@ -2832,7 +2834,7 @@ export async function s3Fingerprint(
 ): Promise<Readonly<Record<string, string>>> {
   const options = buildS3ConnectionOptions(
     s3LiveConnection(target, principals, { role: "root" }, ca) as Parameters<typeof buildS3ConnectionOptions>[0],
-    { executionReadOnly: true, queryTimeout: 60_000 },
+    { executionReadOnly: true, queryTimeout: 60_000, egress: egressDecision() },
   );
   if (options.credentials === null) throw new Error("the fingerprint signs as root, and root has no key pair");
   const transport = createTransport({

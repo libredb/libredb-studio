@@ -58,6 +58,7 @@ import {
   version,
   WEAVIATE_TEST_CONNECTION,
 } from "../../../helpers/weaviate-surface";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const TEST_KEY = "replay-reader-key";
 
@@ -76,7 +77,7 @@ function providerOf(
   const provider = new WeaviateProvider(
     { ...WEAVIATE_TEST_CONNECTION, ...connection } as DatabaseConnection,
     options,
-    execution,
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
     clients.factory,
   );
   return { provider, clients };

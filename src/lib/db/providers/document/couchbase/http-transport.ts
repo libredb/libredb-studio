@@ -29,7 +29,7 @@ import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } f
 import { BodyLimitExceededError, readBoundedText } from "@/lib/db/http/bounded-body";
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
+import { guardedNodeOptions, httpTransportFetch, requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { describeFetchFailure } from "@/lib/db/http/fetch-failure";
 import {
   createNodeTransport,
@@ -473,10 +473,10 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
 
   /**
    * `deps` is a test's seam (the provider passes its own, empty unless a test set them); `egress` is the decision the
-   * provider was built with, last, as at every other guarded transport, so a call that omits it fails closed.
+   * provider was built with, last, as at every other guarded transport, so a call that omits it is refused by name.
    */
   constructor(config: DatabaseConnection, deps: CouchbaseHttpTransportDeps, egress: EgressDecision) {
-    this.egress = egress;
+    this.egress = requireEgressDecision(egress);
     this.host = config.host ?? DEFAULT_HOST;
     this.explicitPort = config.port;
     this.tls = buildTlsMaterial(config.ssl);
@@ -485,7 +485,7 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
     // Validated now so a bad host or port is refused before any lookup or request.
     // Every URL is built through the same check again, because the host that is
     // finally used may come from an SRV record or from the cluster itself.
-    httpOrigin(this.scheme, this.host, this.managementPort);
+    httpOrigin(this.scheme, this.host, this.managementPort, this.egress);
     this.authorization = `Basic ${Buffer.from(`${config.user ?? ""}:${config.password ?? ""}`).toString("base64")}`;
     this.resolveSrv = deps.resolveSrv ?? dns.resolveSrv.bind(dns);
     this.requestJson = deps.requestJson ?? nodeRequestJson;
@@ -525,10 +525,13 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
 
   public async manage<T>(path: string): Promise<T> {
     const host = await this.getHost();
-    const response = await this.send(endpointUrl(httpOrigin(this.scheme, host, this.managementPort), path), {
-      method: "GET",
-      headers: this.baseHeaders(),
-    });
+    const response = await this.send(
+      endpointUrl(httpOrigin(this.scheme, host, this.managementPort, this.egress), path),
+      {
+        method: "GET",
+        headers: this.baseHeaders(),
+      },
+    );
     throwIfFailed(response);
     return response.payload as T;
   }
@@ -578,7 +581,7 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
 
   /** A management read on the agent path. */
   private async agentManage(path: string, o: AgentRequestOpts): Promise<unknown> {
-    const origin = httpOrigin(this.scheme, await this.getHost(), this.managementPort);
+    const origin = httpOrigin(this.scheme, await this.getHost(), this.managementPort, this.egress);
     const response = await this.agentTransport(origin).request({
       method: "GET",
       url: endpointUrl(origin, path),
@@ -671,13 +674,13 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
       const external = node.alternateAddresses?.external;
       const externalPort = external?.ports?.[serviceKey];
       if (typeof externalPort === "number") {
-        return httpOrigin(this.scheme, external?.hostname ?? node.hostname ?? host, externalPort);
+        return httpOrigin(this.scheme, external?.hostname ?? node.hostname ?? host, externalPort, this.egress);
       }
 
       const port = node.services?.[serviceKey];
-      if (typeof port === "number") return httpOrigin(this.scheme, node.hostname ?? host, port);
+      if (typeof port === "number") return httpOrigin(this.scheme, node.hostname ?? host, port, this.egress);
     }
 
-    return httpOrigin(this.scheme, host, this.tls ? DEFAULT_QUERY_TLS_PORT : DEFAULT_QUERY_PORT);
+    return httpOrigin(this.scheme, host, this.tls ? DEFAULT_QUERY_TLS_PORT : DEFAULT_QUERY_PORT, this.egress);
   }
 }

@@ -28,7 +28,7 @@ import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
   type HttpOrigin,
-  httpOrigin,
+  httpOriginWithCoreDecision,
   plaintextSecretRefusal,
   validateHost,
   validatePort,
@@ -203,7 +203,9 @@ export function buildInfluxConnectionOptions(
   const { type } = context;
   const farEnd = tunnelFarEnd(config, type);
   // validateHost, validatePort and the egress policy's literal-address guard, on the host that is dialled.
-  const dialled = shared(type, () => httpOrigin("http", config.host, config.port ?? DEFAULT_PORT_BY_TYPE[type]));
+  const dialled = shared(type, () =>
+    httpOriginWithCoreDecision("http", config.host, config.port ?? DEFAULT_PORT_BY_TYPE[type]),
+  );
   const endpoint =
     farEnd === undefined
       ? { host: unbracketed(dialled.host), port: dialled.port }

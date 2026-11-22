@@ -40,6 +40,7 @@ import {
 } from "../../live/s3-live-support";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 /** Every file the README's digest table names: `| <set>/<file>.json | <sha256> |`. */
 const TABLE = readDigestTable(readFileSync(path.join(S3_CAPTURES_ROOT, "README.md"), "utf8"));
@@ -180,7 +181,12 @@ describe("console over captures", () => {
       user: "",
       password: "",
     } as DatabaseConnection;
-    const provider = new S3Provider(config, {}, {}, { createTransport: transport.createTransport });
+    const provider = new S3Provider(
+      config,
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: transport.createTransport },
+    );
     await provider.connect();
     return { provider, transport };
   }
@@ -276,7 +282,11 @@ describe("the agent credential", () => {
   test("takes an access key ID of its own, never the connection's, as the agent's key", () => {
     // An access key ID equal to the connection's own names the same key, so an agent pair beside it would narrow
     // nothing: the factory refuses one at open, and the seed schema at load.
-    const provider = new S3Provider({ id: "s3-agent-form", name: "s3", type: "s3", createdAt: new Date(0) });
+    const provider = new S3Provider(
+      { id: "s3-agent-form", name: "s3", type: "s3", createdAt: new Date(0) },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     expect(provider.getCapabilities().agentCredential).toBe("dedicated-user");
   });
 });

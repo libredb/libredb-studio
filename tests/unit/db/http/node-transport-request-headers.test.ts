@@ -23,6 +23,7 @@ import {
   jsonAnswer,
   type Listener,
 } from "../../../helpers/node-transport-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const SECRET = "node-transport-request-headers-secret";
 const MIB = 1024 * 1024;
@@ -35,7 +36,7 @@ afterEach(async () => {
 });
 
 function connect(listener: Listener, extra: Partial<NodeTransportOptions> = {}) {
-  const origin = httpOrigin("http", "127.0.0.1", listener.port);
+  const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
   const transport = createNodeTransport({
     origin,
     tls: null,
@@ -50,7 +51,7 @@ function connect(listener: Listener, extra: Partial<NodeTransportOptions> = {}) 
 function build(requestHeaderNames: readonly string[]): () => NodeTransport {
   return () =>
     createNodeTransport({
-      origin: httpOrigin("http", "127.0.0.1", 1),
+      origin: httpOrigin("http", "127.0.0.1", 1, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 1,
       headers: { accept: "application/json" },
@@ -116,7 +117,7 @@ describe("requestHeaderNames at creation", () => {
   test("a connection header is refused whatever spelling the connection gave it", () => {
     const create = () =>
       createNodeTransport({
-        origin: httpOrigin("http", "127.0.0.1", 1),
+        origin: httpOrigin("http", "127.0.0.1", 1, ALLOWS_PRIVATE_HOSTS),
         tls: null,
         maxSockets: 1,
         headers: { "X-Databend-Warehouse": "default" },

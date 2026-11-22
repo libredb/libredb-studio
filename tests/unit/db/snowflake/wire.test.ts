@@ -5,7 +5,7 @@
  * The test builds the pieces directly, the composition the provider's `connect()` makes, with a loopback origin in
  * place of the one the Account field gives:
  *
- *   const origin = httpOrigin("http", "127.0.0.1", listener.port);
+ *   const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
  *   const transport = createSnowflakeTransport({ origin, tls: null, tokens: patTokenSource(PAT) }, snowflakeProductionDeps());
  *   const statements = createSnowflakeStatements({ transport, origin, context, queryTimeoutMs, failure, secrets, deps });
  *
@@ -22,6 +22,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { gzipSync } from "node:zlib";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const realDns = { ...(await import("node:dns")) };
 const lookups: string[] = [];
@@ -97,7 +98,7 @@ function wire(origin: ReturnType<typeof httpOrigin>, queryTimeoutMs = 60_000): S
 }
 
 const toLoopback = (listener: Listener, queryTimeoutMs?: number): Statements =>
-  wire(httpOrigin("http", "127.0.0.1", listener.port), queryTimeoutMs);
+  wire(httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS), queryTimeoutMs);
 
 function json(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { "content-type": "application/json" });
@@ -251,7 +252,8 @@ describe("a statement over the wire", () => {
 });
 
 describe("a name that resolves to the instance metadata address", () => {
-  const origin = (): ReturnType<typeof httpOrigin> => httpOrigin("http", "metadata.snowflake.test", 80);
+  const origin = (): ReturnType<typeof httpOrigin> =>
+    httpOrigin("http", "metadata.snowflake.test", 80, ALLOWS_PRIVATE_HOSTS);
 
   test("is refused on a status GET before any byte is sent", async () => {
     const transport = createSnowflakeTransport(

@@ -11,6 +11,7 @@ import { createRestQdrantClient } from "@/lib/db/providers/vector/qdrant/rest-cl
 import type { DatabaseConnection } from "@/lib/types";
 import { QDRANT_FIXTURE_ROUTES } from "../../../helpers/qdrant-routes";
 import { recordingQdrantTransport } from "../../../helpers/qdrant-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const KEY = "not-a-real-key";
 
@@ -24,7 +25,7 @@ const OPTIONS = buildQdrantConnectionOptions(
     password: KEY,
     createdAt: new Date(0),
   } as unknown as DatabaseConnection,
-  { executionReadOnly: true, queryTimeout: 30_000 },
+  { executionReadOnly: true, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS },
 );
 
 const signal = () => new AbortController().signal;

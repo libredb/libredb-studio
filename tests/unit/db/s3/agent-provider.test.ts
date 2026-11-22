@@ -24,6 +24,7 @@ import {
   objectsXml,
   xmlAnswer,
 } from "../../../helpers/s3-fake-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const MARKER = "tenant-marker";
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 200, maxResultBytes: 1_000_000, statementTimeoutMs: 5_000 };
@@ -60,7 +61,12 @@ async function provider(
   handler: FakeS3Handler = SERVER,
 ) {
   const fake = fakeS3Transport(handler);
-  const s3 = new S3Provider(s3Connection(overrides), {}, execution, { createTransport: fake.createTransport });
+  const s3 = new S3Provider(
+    s3Connection(overrides),
+    {},
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    { createTransport: fake.createTransport },
+  );
   await s3.connect();
   const connected = fake.lines().length;
   return { s3, fake, sent: () => fake.lines().slice(connected) };
@@ -88,9 +94,14 @@ describe("queryReadOnly's profile", () => {
   });
 
   test("is refused before connect", async () => {
-    const s3 = new S3Provider(s3Connection(), {}, READ_ONLY, {
-      createTransport: fakeS3Transport(SERVER).createTransport,
-    });
+    const s3 = new S3Provider(
+      s3Connection(),
+      {},
+      { ...READ_ONLY, egress: ALLOWS_PRIVATE_HOSTS },
+      {
+        createTransport: fakeS3Transport(SERVER).createTransport,
+      },
+    );
     expect((await failureOf(s3.queryReadOnly("aws s3api list-buckets", BUDGET))).message).toContain("connect");
   });
 
@@ -283,9 +294,14 @@ describe("the other surfaces of an agent-mode handle", () => {
 
   test("a pinned agent handle probes its bucket with a whole-bucket page of one entry and counts it with no request", async () => {
     const fake = fakeS3Transport(SERVER);
-    const s3 = new S3Provider(s3Connection({ database: "sales" }), {}, OPERATIONS, {
-      createTransport: fake.createTransport,
-    });
+    const s3 = new S3Provider(
+      s3Connection({ database: "sales" }),
+      {},
+      { ...OPERATIONS, egress: ALLOWS_PRIVATE_HOSTS },
+      {
+        createTransport: fake.createTransport,
+      },
+    );
     await s3.connect();
     expect(fake.lines()).toEqual(["GET /sales?encoding-type=url&list-type=2&max-keys=1&prefix="]);
     expect(await s3.countObjects([])).toEqual({ bucket: { count: 1 } });
@@ -299,7 +315,12 @@ describe("the other surfaces of an agent-mode handle", () => {
 
   test("a sessionless health check on an agent handle opens with the agent's probe", async () => {
     const fake = fakeS3Transport(SERVER);
-    const s3 = new S3Provider(s3Connection(), {}, OPERATIONS, { createTransport: fake.createTransport });
+    const s3 = new S3Provider(
+      s3Connection(),
+      {},
+      { ...OPERATIONS, egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: fake.createTransport },
+    );
     expect((await s3.getHealth()).databaseSize).toBe(S3_AGENT_WITHHELD.databaseSize);
     expect(fake.lines()).toEqual(["GET /?max-buckets=10000"]);
   });
@@ -338,7 +359,12 @@ describe("the other surfaces of an agent-mode handle", () => {
 describe("the connect probe of an agent-mode handle", () => {
   test("a refused probe is worded by its status, never by the server's words or the endpoint", async () => {
     const fake = fakeS3Transport(() => xmlAnswer(errorXml("AccessDenied", `Access Denied for ${MARKER}`), 403));
-    const s3 = new S3Provider(s3Connection(), {}, READ_ONLY, { createTransport: fake.createTransport });
+    const s3 = new S3Provider(
+      s3Connection(),
+      {},
+      { ...READ_ONLY, egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: fake.createTransport },
+    );
     const failure = await failureOf(s3.connect());
     expect(failure.message).toBe(S3_AGENT_FAILURE_SENTENCES.denied);
     expect(fake.closed.count).toBe(1);
@@ -348,7 +374,12 @@ describe("the connect probe of an agent-mode handle", () => {
     const fake = fakeS3Transport(() => {
       throw new Error("a defect of ours");
     });
-    const s3 = new S3Provider(s3Connection(), {}, OPERATIONS, { createTransport: fake.createTransport });
+    const s3 = new S3Provider(
+      s3Connection(),
+      {},
+      { ...OPERATIONS, egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: fake.createTransport },
+    );
     const failure = await failureOf(s3.getHealth());
     expect(failure.message).not.toBe(S3_AGENT_FAILURE_SENTENCES.denied);
   });

@@ -21,6 +21,7 @@ import {
   objectsXml,
   xmlAnswer,
 } from "../../../helpers/s3-fake-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const ROOT = posix.join(import.meta.dir.replaceAll("\\", "/"), "..", "..", "..", "..");
 const S3 = "src/lib/db/providers/objectstore/s3";
@@ -148,7 +149,12 @@ describe("every request an agent-mode handle sends", () => {
   ] as const)("on %s is a request of the closed table", async (_name, execution: ProviderExecutionContext) => {
     for (const overrides of [{}, { database: "sales" }]) {
       const fake = fakeS3Transport(SERVER);
-      const s3 = new S3Provider(s3Connection(overrides), {}, execution, { createTransport: fake.createTransport });
+      const s3 = new S3Provider(
+        s3Connection(overrides),
+        {},
+        { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+        { createTransport: fake.createTransport },
+      );
       await s3.connect();
       const budget = { statementTimeoutMs: 5_000, maxResultRows: 100, maxResultBytes: 1_000_000 };
       for (const command of COMMANDS) {

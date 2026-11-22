@@ -20,6 +20,7 @@ import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { recordedAnswer } from "../../helpers/qdrant-surface-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -39,7 +40,7 @@ let current: QdrantProvider | undefined;
 
 /** A connected QdrantProvider whose client answers through `answer`, with the signal the provider passes. */
 async function connectedProvider(answer: Answer, connection: Partial<DatabaseConnection> = {}) {
-  const provider = new QdrantProvider({ ...CONNECTION, ...connection }, {}, {}, () => ({
+  const provider = new QdrantProvider({ ...CONNECTION, ...connection }, {}, { egress: ALLOWS_PRIVATE_HOSTS }, () => ({
     send: async (request, signal) => answer(request, signal),
     probe: async () => {
       throw new Error("the console sent the read-only proof's probe");

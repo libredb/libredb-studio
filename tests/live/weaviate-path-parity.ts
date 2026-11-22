@@ -14,6 +14,7 @@
  *   bun tests/live/weaviate-path-parity.ts
  */
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const SERVERS = [
   ["1.40 REST", "weaviate"],
@@ -80,7 +81,11 @@ const canonical = (rows: Row[], fields: string[]) =>
   rows.map((row) => JSON.stringify(fields.map((f) => [f, row[f]]))).sort();
 const providers = await Promise.all(
   SERVERS.map(async ([, host]) => {
-    const p = new WeaviateProvider({ id: host, name: host, type: "weaviate", host, port: 8080 } as never);
+    const p = new WeaviateProvider(
+      { id: host, name: host, type: "weaviate", host, port: 8080 } as never,
+      {},
+      { egress: egressDecision() },
+    );
     await p.connect();
     return p;
   }),

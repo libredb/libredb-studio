@@ -37,6 +37,7 @@ import {
   type SnapshotRecord,
   type UnavailableReason,
 } from "./support/snapshot";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const PREFIX = "studio_live_";
 const RUNTIME = typeof Bun === "undefined" ? `node ${process.version}` : `bun ${Bun.version}`;
@@ -327,7 +328,7 @@ async function main(): Promise<void> {
   const inferenceAfterControl = inference.received();
   const snapshotAfterControl = snapshotListener.received();
 
-  const open = new QdrantProvider(connection("live-open", 6333));
+  const open = new QdrantProvider(connection("live-open", 6333), {}, { egress: egressDecision() });
   await open.connect();
 
   /**
@@ -464,7 +465,7 @@ async function main(): Promise<void> {
   );
 
   await check("every refusal corpus is refused before the wire, and the listeners receive nothing", async () => {
-    const authProvider = new QdrantProvider(connection("live-auth", 6343, ADMIN_KEY));
+    const authProvider = new QdrantProvider(connection("live-auth", 6343, ADMIN_KEY), {}, { egress: egressDecision() });
     await authProvider.connect();
     const hosted = (qdrantDocs as { blocks: { text: string }[] }).blocks.filter((block) =>
       NON_LOCAL_MODEL.test(block.text),
@@ -497,7 +498,7 @@ async function main(): Promise<void> {
 
   await check("the credential and alias matrix on qdrant-auth", async () => {
     const opens = async (password: string) => {
-      const provider = new QdrantProvider(connection("live-cred", 6343, password));
+      const provider = new QdrantProvider(connection("live-cred", 6343, password), {}, { egress: egressDecision() });
       try {
         await provider.connect();
         return "opened";
@@ -515,6 +516,8 @@ async function main(): Promise<void> {
     assert(!expired.includes(ADMIN_KEY.slice(0, 12)), "a refusal holds part of the key");
     const aliasOnly = new QdrantProvider(
       connection("live-alias", 6343, mint({ access: [{ collection: "docs_alias", access: "r" }], exp: LATER })),
+      {},
+      { egress: egressDecision() },
     );
     await aliasOnly.connect();
     const listed = await aliasOnly.query("GET /collections");
@@ -528,6 +531,8 @@ async function main(): Promise<void> {
     const ca = key("ca.pem");
     const tls = new QdrantProvider(
       connection("live-tls", 6353, key("tls/read-only.key"), { mode: "verify-full", caCert: ca }),
+      {},
+      { egress: egressDecision() },
     );
     await tls.connect();
     await tls.disconnect();
@@ -538,11 +543,15 @@ async function main(): Promise<void> {
         clientCert: key("client.pem"),
         clientKey: key("client.key"),
       }),
+      {},
+      { egress: egressDecision() },
     );
     await mtls.connect();
     await mtls.disconnect();
     const noClientCert = new QdrantProvider(
       connection("live-mtls-none", 6363, key("mtls/read-only.key"), { mode: "verify-full", caCert: ca }),
+      {},
+      { egress: egressDecision() },
     );
     let refusedHandshake = false;
     await noClientCert.connect().catch(() => {
@@ -552,7 +561,11 @@ async function main(): Promise<void> {
   });
 
   await check("a slow scroll stops at the server timeout Studio sends", async () => {
-    const slow = new QdrantProvider({ ...connection("live-qm4", 6333), queryTimeout: 3000 });
+    const slow = new QdrantProvider(
+      { ...connection("live-qm4", 6333), queryTimeout: 3000 },
+      {},
+      { egress: egressDecision() },
+    );
     await slow.connect();
     const should = Array.from({ length: 256 }, (_, at) => ({ key: "absent_key", match: { value: `no-match-${at}` } }));
     const started = Date.now();

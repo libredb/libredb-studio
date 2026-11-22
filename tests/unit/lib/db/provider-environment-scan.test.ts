@@ -23,7 +23,7 @@ const BOOT_PREFLIGHT = "src/lib/config/egress-preflight.ts";
  * fails the importer test, so the list never outlives the code.
  */
 const INTERIM_READERS: Readonly<Record<string, string>> = {
-  "src/lib/db/http/endpoint.ts": "httpOrigin, until slice 2b-3",
+  "src/lib/db/http/endpoint.ts": "httpOriginWithCoreDecision, until slice 2b-3b",
   "src/lib/db/http/node-transport.ts": "createNodeTransport and createNodeByteTransport, until slice 2b-4",
 };
 

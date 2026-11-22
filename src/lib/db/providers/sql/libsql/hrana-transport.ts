@@ -473,7 +473,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     this.egress = egress;
     const secure = config.ssl !== undefined && config.ssl.mode !== "disable";
     const port = config.port ?? (secure ? DEFAULT_TLS_PORT : DEFAULT_PORT);
-    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, port);
+    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, port, egress);
     this.authorization = authorizationFor(config);
   }
 

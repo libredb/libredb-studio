@@ -24,10 +24,11 @@ import {
 } from "@/lib/db/providers/industrial/mtconnect/client";
 import { guardRequestLine, type MtcWindow } from "@/lib/db/providers/industrial/mtconnect/guard";
 import { MTC_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const DIR = join(import.meta.dir, "../../../fixtures/mtconnect/2.8.0.3");
 const fixture = (name: string) => readFileSync(join(DIR, name), "utf8");
-const ORIGIN = httpOrigin("http", "127.0.0.1", 21300);
+const ORIGIN = httpOrigin("http", "127.0.0.1", 21300, ALLOWS_PRIVATE_HOSTS);
 const WINDOW: MtcWindow = {
   instanceId: "1791206842",
   firstSequence: BigInt(1),

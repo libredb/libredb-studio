@@ -10,6 +10,7 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeRequest, type NodeTransport } from "@/lib/db/http/node-transport";
 import { closeAll, httpListener, jsonAnswer, type Listener } from "../../../helpers/node-transport-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const SECRET = "node-transport-form-secret";
 const MIB = 1024 * 1024;
@@ -21,7 +22,7 @@ afterEach(async () => {
 });
 
 function connect(listener: Listener) {
-  const origin = httpOrigin("http", "127.0.0.1", listener.port);
+  const origin = httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS);
   const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: { authorization: SECRET } });
   transports.push(transport);
   return { transport, url: (path: string, params?: URLSearchParams) => endpointUrl(origin, path, params) };

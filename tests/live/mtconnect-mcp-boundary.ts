@@ -50,6 +50,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const PORT = Number(process.env.MTCONNECT_MCP_PORT ?? "17422");
@@ -136,7 +137,7 @@ async function recordingAcquire(connection: ManagedConnection, profile: Executio
   const provider = new MTConnectProvider(
     connection as DatabaseConnection,
     {},
-    executionContextFor(profile),
+    { ...executionContextFor(profile), egress: egressDecision() },
     (options) => {
       const transport = createNodeTransport(options);
       return {

@@ -544,7 +544,7 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
     this.egress = egress;
     const secure = config.ssl !== undefined && config.ssl.mode !== "disable";
     const port = config.port ?? (secure ? DEFAULT_TLS_PORT : DEFAULT_PORT);
-    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, port);
+    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, port, egress);
     this.database = config.database;
     // Live-verified: an EMPTY Basic username fails hard - "Got an empty user name
     // from Authorization HTTP header", code 516 - while sending no header at all

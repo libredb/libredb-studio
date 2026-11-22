@@ -31,6 +31,7 @@ import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../h
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { agentAnswer, agentServer } from "../../helpers/qdrant-agent";
 import { type RecordedAnswer, okAnswer, recordingQdrantTransport } from "../../helpers/qdrant-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 pinMcpTestEnvironment();
 
@@ -73,7 +74,7 @@ beforeEach(() => {
       const provider = new QdrantProvider(
         connection as DatabaseConnection,
         { queryTimeout: 30_000 },
-        { readOnly: agent, sendsStatements: agent },
+        { readOnly: agent, sendsStatements: agent, egress: ALLOWS_PRIVATE_HOSTS },
         (options, routes) => createRestQdrantClient(options, routes, transport.factory),
       );
       await provider.connect();

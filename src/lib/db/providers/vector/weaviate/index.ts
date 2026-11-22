@@ -17,6 +17,7 @@
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
@@ -34,7 +35,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -204,7 +205,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     private readonly createClient: WeaviateClientFactory = createRestWeaviateClient,
   ) {
     super(config, options);
@@ -266,6 +267,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       const options = buildWeaviateConnectionOptions(this.config, {
         executionReadOnly: this.execution.readOnly === true,
         queryTimeout: this.queryTimeout,
+        egress: requireEgressDecision(this.execution.egress),
       });
       if (this.readOnlyProfile && !Object.hasOwn(options.headers, "authorization")) throw keylessAgentRefusal();
       client = this.createClient(options, WEAVIATE_ROUTE_TEMPLATES);

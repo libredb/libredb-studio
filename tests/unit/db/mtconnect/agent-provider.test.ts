@@ -33,6 +33,7 @@ import { MTC_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const FIXTURES = path.resolve(import.meta.dir, "..", "..", "..", "fixtures", "mtconnect");
 const capture = (name: string): string => readFileSync(path.join(FIXTURES, `${name}.xml`), "utf8");
@@ -91,7 +92,12 @@ async function opened(
   answers?: Readonly<Record<string, Answer>>,
 ): Promise<MTConnectProvider> {
   const transport = standIn(answers);
-  const provider = new MTConnectProvider(connection(), {}, execution, () => transport);
+  const provider = new MTConnectProvider(
+    connection(),
+    {},
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    () => transport,
+  );
   await provider.connect();
   return provider;
 }
@@ -153,7 +159,9 @@ describe("which handle answers an agent read", () => {
   });
 
   test("a closed handle refuses with the connection sentence", async () => {
-    const provider = new MTConnectProvider(connection(), {}, AGENT, () => standIn());
+    const provider = new MTConnectProvider(connection(), {}, { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS }, () =>
+      standIn(),
+    );
     await expect(provider.queryReadOnly("/current", BUDGET)).rejects.toThrow("Provider is not connected");
   });
 
@@ -771,7 +779,7 @@ describe("failures are worded by their category, never in the agent's text", () 
 
   test("a model read the agent refuses is worded the same way", async () => {
     const provider = await opened();
-    const refusing = new MTConnectProvider(connection(), {}, AGENT, () =>
+    const refusing = new MTConnectProvider(connection(), {}, { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS }, () =>
       standIn({ ...DEFAULT_ANSWERS, "/probe": errorCapture("error-invalid-uri") }),
     );
     // The handle opened on a good model, and the agent refuses the model read of the next agent read.
@@ -929,12 +937,16 @@ describe("an agent-mode handle's other surfaces", () => {
   });
 
   test("a reading on a handle that is not open says so", async () => {
-    const provider = new MTConnectProvider(connection(), {}, OPERATIONS, () => standIn());
+    const provider = new MTConnectProvider(connection(), {}, { ...OPERATIONS, egress: ALLOWS_PRIVATE_HOSTS }, () =>
+      standIn(),
+    );
     await expect(provider.getHealth()).rejects.toThrow("Provider is not connected");
   });
 
   test("plan mode drafts from the console's request line, which names what is never drafted", () => {
-    const provider = new MTConnectProvider(connection(), {}, AGENT, () => standIn());
+    const provider = new MTConnectProvider(connection(), {}, { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS }, () =>
+      standIn(),
+    );
     expect(provider.getLabels().statementLanguage).toBe(MTCONNECT_STATEMENT_LANGUAGE);
     expect(MTCONNECT_STATEMENT_LANGUAGE).toContain("one MTConnect request line this editor runs, GET implied");
     expect(MTCONNECT_STATEMENT_LANGUAGE).toContain("no PUT, no POST, no /cancel and no streaming parameter");

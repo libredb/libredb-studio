@@ -48,6 +48,7 @@ import {
   type StubBroker,
   segment,
 } from "../../../helpers/rabbitmq-management-stub";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 /** The test connection's password, built at run time by the helper; no sentence may carry it. */
 const TEST_PASSWORD = rabbitmqConnection().password as string;
@@ -84,10 +85,15 @@ function provider(
 ) {
   const stub = createManagementStub();
   const deadlines = manualDeadlines();
-  const instance = new RabbitMQProvider(connection, { queryTimeout }, execution, {
-    managementTransport: stub.factory,
-    deadlineSignal: deadlines.factory,
-  });
+  const instance = new RabbitMQProvider(
+    connection,
+    { queryTimeout },
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    {
+      managementTransport: stub.factory,
+      deadlineSignal: deadlines.factory,
+    },
+  );
   return { stub, deadlines, provider: instance };
 }
 

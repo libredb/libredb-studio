@@ -35,6 +35,7 @@ import type { ObjectSourcePart } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import type { LoggedCall } from "./call-log";
 import type { WeaviateExchange } from "./weaviate-scenario";
+import { ALLOWS_PRIVATE_HOSTS } from "./egress-decisions";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures", "weaviate");
 
@@ -49,7 +50,11 @@ export const WEAVIATE_TEST_CONNECTION: DatabaseConnection = {
 
 /** The options a plain connection to 127.0.0.1:8080 is built with. */
 export function testOptions(): WeaviateConnectionOptions {
-  return buildWeaviateConnectionOptions(WEAVIATE_TEST_CONNECTION, { executionReadOnly: false, queryTimeout: 30_000 });
+  return buildWeaviateConnectionOptions(WEAVIATE_TEST_CONNECTION, {
+    executionReadOnly: false,
+    queryTimeout: 30_000,
+    egress: ALLOWS_PRIVATE_HOSTS,
+  });
 }
 
 /** A version as `GET /v1/meta` reports it. */

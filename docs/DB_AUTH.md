@@ -145,7 +145,8 @@ A blank region is refused as missing.
 A value shaped as an AWS region name, such as `cn-north-1` or `us-gov-west-1`, is refused with a sentence that names it, because China, GovCloud and the isolated partitions are not supported in this version.
 Any other value, such as `local` or a secret pasted into the wrong field, is refused without being quoted.
 The European Sovereign Cloud's `eusc-de-east-1` is one of those: it is not shaped as a region name by that rule, so it is refused unquoted as not a region.
-`awsServiceOrigin(service, region)` is `https://<service>.<region>.amazonaws.com:443`; the service name is the provider's own and matches `^[a-z][a-z0-9-]{1,62}$`, and the region must be one `parseAwsRegion` returned.
+`awsServiceOrigin(service, region, egress)` is `https://<service>.<region>.amazonaws.com:443`, built through `httpOrigin` with `egress`, the egress decision of the provider that calls it; the service name is the provider's own and matches `^[a-z][a-z0-9-]{1,62}$`, and the region must be one `parseAwsRegion` returned.
+Its host is always a name, so the decision refuses none; it is handed so this origin is built as every other one is.
 No FIPS or dual-stack endpoint is built.
 
 An endpoint override for an emulator is the provider's own field and policy.

@@ -10,6 +10,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { BLOCKED_HOST, EGRESS_DECISION_MISSING } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 import type { NodeRequest, NodeTransportOptions } from "@/lib/db/http/node-transport";
@@ -22,7 +23,8 @@ import {
   type CouchbaseTlsMaterial,
   type JsonRequestInit,
 } from "@/lib/db/providers/document/couchbase/http-transport";
-import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { withEgressFlag } from "../../../helpers/egress-flag";
 
 // ============================================================================
 // Helpers
@@ -140,19 +142,16 @@ afterEach(() => {
 // ============================================================================
 
 describe("CouchbaseHttpTransport takes the egress decision last", () => {
-  test("a transport built without its decision, as an untyped call of the shape (config, deps) does, sends nothing", async () => {
-    // The decision is last, as at every other guarded transport, so an omitted decision is undefined and the request
-    // fails closed; with the decision second, the deps object would stand in for it and allow every destination.
+  test("a transport built without its decision, as an untyped call of the shape (config, deps) does, is not built and sends nothing", () => {
+    // The decision is last, as at every other guarded transport, so an omitted decision is undefined and the
+    // constructor refuses it by name; with the decision second, the deps object would stand in for it and allow every
+    // destination, and this refusal would not be the one thrown.
     const Untyped = CouchbaseHttpTransport as unknown as new (
       config: DatabaseConnection,
       deps: CouchbaseHttpTransportDeps,
     ) => CouchbaseHttpTransport;
-    const transport = new Untyped(makeConnection(), {});
-    const error = await transport.manage("/pools/default").then(
-      () => null,
-      (e: unknown) => e,
-    );
-    expect(error).toBeInstanceOf(Error);
+    expect(() => new Untyped(makeConnection(), {})).toThrow(DatabaseConfigError);
+    expect(() => new Untyped(makeConnection(), {})).toThrow(EGRESS_DECISION_MISSING);
     expect(calls).toEqual([]);
   });
 });
@@ -1462,5 +1461,103 @@ describe("CouchbaseHttpTransport agent path", () => {
     await transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true });
     expect(built).toHaveLength(4);
     expect(built[2].requests.map((sent) => new URL(sent.url).pathname)).toEqual(["/pools/default/nodeServices"]);
+  });
+
+  test("refuses a private node the cluster advertises by the decision the transport was built with, before any request to it", async () => {
+    // The node transport is a stub here, so the query origin built from the advertised node is the only check of the
+    // handed decision; the management host is a name, which the origin lets through.
+    const built: Built[] = [];
+    const advertised = {
+      nodesExt: [{ hostname: "10.0.0.5", services: { n1ql: 8093 } }],
+    };
+    const transport = new CouchbaseHttpTransport(
+      makeConnection({ host: "cb.example.test" }),
+      nodeDeps((request) => {
+        if (new URL(request.url).pathname === "/pools/default/nodeServices") {
+          return { status: 200, text: JSON.stringify(advertised) };
+        }
+        return cluster()(request);
+      }, built),
+      BLOCKS_PRIVATE_HOSTS,
+    );
+
+    // DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, so a refusal shows the handed decision decided, not the variable.
+    const failure = await withEgressFlag(undefined, () =>
+      transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true }).then(
+        () => null,
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BLOCKED_HOST);
+    expect(built.flatMap((record) => record.requests.map((sent) => sent.url))).toEqual([
+      "http://cb.example.test:8091/pools/default/nodeServices",
+    ]);
+  });
+
+  test("refuses a private external alternate address the cluster advertises by the decision the transport was built with, before any request to it", async () => {
+    // The node is a name and only its external alternate address is private, so the query origin built from that
+    // address is the only check of the handed decision.
+    const built: Built[] = [];
+    const advertised = {
+      nodesExt: [
+        {
+          hostname: "cb-internal.example.test",
+          alternateAddresses: { external: { hostname: "10.0.0.5", ports: { n1ql: 8093 } } },
+          services: { n1ql: 8093 },
+        },
+      ],
+    };
+    const transport = new CouchbaseHttpTransport(
+      makeConnection({ host: "cb.example.test" }),
+      nodeDeps((request) => {
+        if (new URL(request.url).pathname === "/pools/default/nodeServices") {
+          return { status: 200, text: JSON.stringify(advertised) };
+        }
+        return cluster()(request);
+      }, built),
+      BLOCKS_PRIVATE_HOSTS,
+    );
+
+    // DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, so a refusal shows the handed decision decided, not the variable.
+    const failure = await withEgressFlag(undefined, () =>
+      transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true }).then(
+        () => null,
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BLOCKED_HOST);
+    expect(built.flatMap((record) => record.requests.map((sent) => sent.url))).toEqual([
+      "http://cb.example.test:8091/pools/default/nodeServices",
+    ]);
+  });
+
+  test("refuses a private management host an SRV answer names, on the agent path, by the decision the transport was built with", async () => {
+    // The configured host is a name with no port, so the SRV answer picks the management host, and the origin built
+    // from it is the only check of the handed decision.
+    const built: Built[] = [];
+    const transport = new CouchbaseHttpTransport(
+      makeConnection({ host: "cb.example.test", port: undefined }),
+      {
+        ...nodeDeps(cluster(), built),
+        resolveSrv: async () => [{ name: "10.0.0.7", port: 11207, priority: 0, weight: 0 }],
+      },
+      BLOCKS_PRIVATE_HOSTS,
+    );
+
+    // DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, so a refusal shows the handed decision decided, not the variable.
+    const failure = await withEgressFlag(undefined, () =>
+      transport.whoami(bounds()).then(
+        () => null,
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BLOCKED_HOST);
+    expect(built.flatMap((record) => record.requests.map((sent) => sent.url))).toEqual([]);
   });
 });

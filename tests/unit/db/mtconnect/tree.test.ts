@@ -25,6 +25,7 @@ import { join } from "node:path";
 import type { DatabaseConnection } from "@/lib/types";
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect/index";
 import { MTCONNECT_HEALTH_UNKNOWN, MTCONNECT_OBJECT_KINDS } from "@/lib/db/providers/industrial/mtconnect/capabilities";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const FIXTURES = join(import.meta.dir, "..", "..", "..", "fixtures", "mtconnect");
 const capture = (name: string): string => readFileSync(join(FIXTURES, `${name}.xml`), "utf-8");
@@ -51,7 +52,7 @@ const connection = (): DatabaseConnection =>
   ({ id: "mtc-tree", name: "mtconnect tree", type: "mtconnect", host: "127.0.0.1", port }) as DatabaseConnection;
 
 const connected = async (): Promise<MTConnectProvider> => {
-  const provider = new MTConnectProvider(connection(), {});
+  const provider = new MTConnectProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 };

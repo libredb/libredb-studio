@@ -15,8 +15,10 @@
  * through.
  *
  * RabbitMQ dials AMQP only for a stream read, so its operation is `connect()` over a recorded management API, then the
- * stream read. Its allowing case dials `localhost`, a name: until slice 2b-3 the management origin is built by the
- * interim `httpOrigin`, which applies the process's decision to an IP literal at `connect()`.
+ * stream read.
+ * Its management origin checks a literal host by the same handed decision inside `connect()`, so a blocking decision at
+ * 127.0.0.1 is refused there; the row that dials the name localhost passes that origin and is the one that reaches the
+ * AMQP dial.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
@@ -178,14 +180,13 @@ function connection(type: DatabaseConnection["type"], host: string, port: number
   return { id: `socket-dial-${type}`, name: `socket dial ${type}`, type, host, port, createdAt: new Date() };
 }
 
-const BUILDS: readonly [string, Build, string][] = [
+const BUILDS: readonly [string, Build][] = [
   [
     "MQTT",
     (host, port, context) => {
       const provider = new MqttProvider(connection("mqtt", host, port), {}, context);
       return { provider, dial: () => provider.connect() };
     },
-    "127.0.0.1",
   ],
   [
     "Sparkplug B",
@@ -193,7 +194,6 @@ const BUILDS: readonly [string, Build, string][] = [
       const provider = new SparkplugProvider(connection("sparkplug", host, port), {}, context);
       return { provider, dial: () => provider.connect() };
     },
-    "127.0.0.1",
   ],
   [
     "NETCONF",
@@ -209,7 +209,6 @@ const BUILDS: readonly [string, Build, string][] = [
       const provider = new NetconfProvider(config, {}, context);
       return { provider, dial: () => provider.connect() };
     },
-    "127.0.0.1",
   ],
   [
     "Modbus",
@@ -217,7 +216,6 @@ const BUILDS: readonly [string, Build, string][] = [
       const provider = new ModbusProvider(connection("modbus", host, port), {}, context);
       return { provider, dial: () => provider.connect() };
     },
-    "127.0.0.1",
   ],
   [
     "RabbitMQ",
@@ -227,8 +225,6 @@ const BUILDS: readonly [string, Build, string][] = [
       const read = JSON.stringify({ vhost: "/", stream: "orders" });
       return { provider, dial: () => provider.connect().then(() => provider.query(read)) };
     },
-    // A name until slice 2b-3: see the module comment.
-    "localhost",
   ],
 ];
 
@@ -257,10 +253,10 @@ describe("a socket-dial provider dials by the egress decision it was built with 
 
   test.each(BUILDS)(
     "%s handed an allowing decision reaches a local listener while DB_HTTP_BLOCK_PRIVATE_HOSTS is true",
-    async (_name, build, allowedHost) => {
+    async (_name, build) => {
       setEgressFlag("true");
       const listener = await countingListener();
-      const outcome = await dialled(build(allowedHost, listener.port, { egress: ALLOWS_PRIVATE_HOSTS }));
+      const outcome = await dialled(build("127.0.0.1", listener.port, { egress: ALLOWS_PRIVATE_HOSTS }));
       // The engine's own outcome against a listener that closes at once, never an egress refusal.
       const message = outcome instanceof Error ? outcome.message : "";
       expect(EGRESS_REFUSAL_SENTENCES.has(message)).toBe(false);
@@ -478,6 +474,21 @@ describe("where a socket dial may connect, whatever the decision allows or block
           { egress: BLOCKS_PRIVATE_HOSTS },
         );
         return { provider, dial: () => provider.connect() };
+      },
+      BLOCKED_HOST,
+    ],
+    [
+      "RabbitMQ",
+      (port: number) => {
+        const config = rabbitmqConnection({ host: "localhost", amqpPort: String(port), password: crypto.randomUUID() });
+        const provider = new RabbitMQProvider(
+          config,
+          {},
+          { egress: BLOCKS_PRIVATE_HOSTS },
+          { managementTransport: connectedStub().factory },
+        );
+        const read = JSON.stringify({ vhost: "/", stream: "orders" });
+        return { provider, dial: () => provider.connect().then(() => provider.query(read)) };
       },
       BLOCKED_HOST,
     ],

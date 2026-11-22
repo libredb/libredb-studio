@@ -36,6 +36,7 @@ import { join } from "node:path";
 import type { DatabaseConnection } from "@/lib/types";
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect/index";
 import { loadTlsFixtures } from "../../helpers/tls-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 const FIXTURES = join(import.meta.dir, "..", "..", "fixtures", "mtconnect");
 
@@ -113,7 +114,7 @@ const connection = (): DatabaseConnection =>
   ({ id: "mtc-fixture", name: "mtconnect fixture", type: "mtconnect", host: "127.0.0.1", port }) as DatabaseConnection;
 
 const connected = async (): Promise<MTConnectProvider> => {
-  const provider = new MTConnectProvider(connection(), {});
+  const provider = new MTConnectProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 };
@@ -354,7 +355,11 @@ describe("a proxy's page where observations were asked for is named, never walke
 describe("the connection's Path prefix", () => {
   test("is put in front of every route the provider sends", async () => {
     seen.length = 0;
-    const provider = new MTConnectProvider({ ...connection(), apiPath: `${PROXY_PREFIX}/` }, {});
+    const provider = new MTConnectProvider(
+      { ...connection(), apiPath: `${PROXY_PREFIX}/` },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     await provider.connect();
     const result = await provider.query("GET /current");
     expect(result.rowCount).toBeGreaterThan(0);
@@ -365,7 +370,11 @@ describe("the connection's Path prefix", () => {
 
 describe("a probe that answers no device model", () => {
   test("is refused by name, before any observation is read against it", async () => {
-    const provider = new MTConnectProvider({ ...connection(), apiPath: `${NOT_A_MODEL_PREFIX}/` }, {});
+    const provider = new MTConnectProvider(
+      { ...connection(), apiPath: `${NOT_A_MODEL_PREFIX}/` },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     await provider.connect();
     await expect(provider.query("GET /current")).rejects.toThrow(
       "This address answered a document that is not an MTConnect device model.",
@@ -395,6 +404,7 @@ describe("an agent served over https", () => {
     const provider = new MTConnectProvider(
       { ...connection(), port: tlsPort, ssl: { mode: "verify-full", caCert: material.ca } },
       {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
     );
     await provider.connect();
     const result = await provider.query("GET /current");
@@ -407,6 +417,7 @@ describe("an agent served over https", () => {
     const provider = new MTConnectProvider(
       { ...connection(), port: tlsPort, ssl: { mode: "verify-full", caCert: material.otherCa } },
       {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
     );
     await expect(provider.connect()).rejects.toThrow("The TLS connection failed");
     expect(seen).toEqual([]);

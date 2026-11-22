@@ -37,6 +37,7 @@ import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { amzDateOf, canonicalQueryOf, signatureV4 } from "@/lib/db/auth/aws/sigv4";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -237,7 +238,10 @@ function studio(who: typeof ROOT, execution: ProviderExecutionContext, pin?: str
     ...(pin === undefined ? {} : { database: pin }),
     createdAt: new Date(0),
   } as DatabaseConnection;
-  return { provider: new S3Provider(connection, {}, execution, { createTransport }), lines };
+  return {
+    provider: new S3Provider(connection, {}, { ...execution, egress: egressDecision() }, { createTransport }),
+    lines,
+  };
 }
 
 interface AgentRecord {

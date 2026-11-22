@@ -25,6 +25,7 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
@@ -43,7 +44,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -196,7 +197,7 @@ export class QdrantProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     private readonly createClient: QdrantClientFactory = createRestQdrantClient,
   ) {
     super(config, options);
@@ -266,6 +267,7 @@ export class QdrantProvider extends BaseDatabaseProvider {
       const options = buildQdrantConnectionOptions(this.config, {
         executionReadOnly: this.execution.readOnly === true,
         queryTimeout: this.queryTimeout,
+        egress: requireEgressDecision(this.execution.egress),
       });
       if (this.readOnlyProfile && !Object.hasOwn(options.headers, "api-key")) throw keylessAgentRefusal();
       client = this.createClient(options, QDRANT_ROUTE_TEMPLATES);

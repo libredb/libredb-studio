@@ -19,23 +19,16 @@ import {
   SYNTHETIC_JWT,
   SYNTHETIC_NO_SECRET,
 } from "../../../helpers/synthetic-credential-warnings";
-import { setEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
-const CONTEXT = { executionReadOnly: false, queryTimeout: 30_000 };
+const CONTEXT = { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS };
 const EXITS = [
   "Choose an SSL mode under SSL / TLS",
   "connect through an SSH tunnel",
   "if authentication is off on this server, clear the API key",
 ];
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const originalFlag = process.env[FLAG];
-
-afterEach(() => {
-  setEgressFlag(originalFlag);
-});
-
 function connection(overrides: Record<string, unknown> = {}): DatabaseConnection {
   return {
     id: "c1",
@@ -114,10 +107,10 @@ describe("QE1: the endpoint is exactly what it claims", () => {
     expect(refusal({ port }).message).toBe("Invalid port: expected an integer from 1 to 65535");
   });
 
-  test("with the egress guard on, a private literal host is refused before anything else is read", () => {
-    setEgressFlag("true");
-    expect(refusal({ host: "10.0.0.5", user: "someone" }).message).toBe(BLOCKED_HOST);
-    expect(build({ host: "qdrant.example.com" }).origin.host).toBe("qdrant.example.com");
+  test("with a blocking egress decision, a private literal host is refused before anything else is read", () => {
+    const blocking = { ...CONTEXT, egress: BLOCKS_PRIVATE_HOSTS };
+    expect(refusal({ host: "10.0.0.5", user: "someone" }, blocking).message).toBe(BLOCKED_HOST);
+    expect(build({ host: "qdrant.example.com" }, blocking).origin.host).toBe("qdrant.example.com");
   });
 
   test("through a tunnel the origin is the local forward and the endpoint the far end", () => {

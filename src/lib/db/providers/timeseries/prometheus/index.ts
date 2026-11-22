@@ -90,6 +90,7 @@ import {
 } from "./monitoring";
 import { type ObjectsTransport, PROMETHEUS_OBJECT_KINDS, PrometheusObjects } from "./objects";
 import { requireEgressDecision } from "@/lib/db/http/egress-policy";
+import type { EgressDecision } from "@/lib/db/types";
 import { createSendRequest, type SendRequest, tlsMaterialFor } from "./request";
 import { MATRIX_SAMPLE_BUDGET, RESULT_BYTE_BUDGET, type ShapeLimits, shapeQueryResult } from "./results";
 import { type PrometheusQueryOptions, type PrometheusTransport, PrometheusTransportError } from "./transport";
@@ -101,7 +102,8 @@ import { type PrometheusQueryOptions, type PrometheusTransport, PrometheusTransp
 export interface PrometheusProviderDeps {
   /**
    * Builds the endpoint from the connection. Default: the shared validated builder of
-   * src/lib/db/http/endpoint.ts (#1086), adapted to this port; unit tests inject their own.
+   * src/lib/db/http/endpoint.ts (#1086), adapted to this port and built with the egress decision the provider was
+   * built with; unit tests inject their own, which needs no decision, as an injected `send` needs none.
    */
   readonly endpoint?: (config: DatabaseConnection, secure: boolean) => PrometheusEndpoint;
   /** How a request leaves the process. Default: `createSendRequest(tlsMaterialFor(config.ssl), <the built decision>)`. */
@@ -192,10 +194,11 @@ function withQuerySlots(transport: PrometheusTransport, limiter: QueryLimiter): 
  * `endpointUrl` then builds each request URL and checks its hostname, port and path again before
  * handing it back. Nothing is validated here: a second copy of the rule is the drift the shared module exists
  * to end. The one adaptation is the return type, a `URL` where the shared builder answers a string.
- * The port falls back to the one this provider declares, for either scheme; no host is defaulted.
+ * The port falls back to the one this provider declares, for either scheme; no host is defaulted. `egress` is the
+ * decision the provider was built with, which `httpOrigin` checks an address literal against.
  */
-function sharedEndpoint(config: DatabaseConnection, secure: boolean): PrometheusEndpoint {
-  const origin = httpOrigin(secure ? "https" : "http", config.host, config.port ?? PROMETHEUS_DEFAULT_PORT);
+function sharedEndpoint(config: DatabaseConnection, secure: boolean, egress: EgressDecision): PrometheusEndpoint {
+  const origin = httpOrigin(secure ? "https" : "http", config.host, config.port ?? PROMETHEUS_DEFAULT_PORT, egress);
   return { url: (pathname, query) => new URL(endpointUrl(origin, pathname, query)) };
 }
 
@@ -369,7 +372,10 @@ export class PrometheusProvider extends BaseDatabaseProvider {
         {
           // An injected sender is a test's; the real one follows the egress decision the factory built this provider with.
           send: this.deps.send ?? createSendRequest(tls, requireEgressDecision(this.execution.egress)),
-          endpoint: (this.deps.endpoint ?? sharedEndpoint)(this.config, tls !== null),
+          endpoint:
+            this.deps.endpoint === undefined
+              ? sharedEndpoint(this.config, tls !== null, requireEgressDecision(this.execution.egress))
+              : this.deps.endpoint(this.config, tls !== null),
           requestTimeoutMs: this.queryTimeout,
           maxResponseBytes: RESPONSE_BYTE_CAP,
         },
