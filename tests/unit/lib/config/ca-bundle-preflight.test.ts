@@ -155,7 +155,7 @@ describe("config/ca-bundle-preflight verifyExtraCaCertsAtBoot", () => {
     expect(banner).toContain("a -----BEGIN CERTIFICATE----- block in the file has no -----END CERTIFICATE----- line");
     // Node.js trusts the complete blocks before the broken one, so the banner claims neither "no bundle" nor "no CA".
     expect(banner).toContain("NODE_EXTRA_CA_CERTS names a file Studio does not accept as a certificate bundle");
-    expect(banner).toContain("Node would only warn, and trust none or only part of it");
+    expect(banner).toContain(" Node would warn and trust none or only part of it, or, for a legacy label,");
     expect(banner).not.toContain("names no certificate bundle");
   });
 
@@ -168,6 +168,24 @@ describe("config/ca-bundle-preflight verifyExtraCaCertsAtBoot", () => {
     expect(banner).toContain(
       "the file holds a -----BEGIN X509 CERTIFICATE----- block, which Node.js trusts and Studio does not take; relabel it -----BEGIN CERTIFICATE----- and -----END CERTIFICATE-----",
     );
+    // Node.js trusts the legacy block without a warning, so the banner names Db2's connections, not a warning.
+    expect(banner).toContain(
+      [
+        " Node would warn and trust none or only part of it, or, for a legacy label,",
+        " trust a CA that Studio's Db2 connections would not, so TLS connections",
+        " behind the private CA would fail later. Fix it either way:",
+      ].join("\n"),
+    );
+  });
+
+  test("accepts a bundle that begins with a UTF-8 byte order mark, as Node.js does", () => {
+    const certificate = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+    bundle(`\uFEFF${certificate}\n`);
+    const { result, exitCalls, banner } = run();
+    expect(result).toBe(true);
+    expect(exitCalls).toEqual([]);
+    expect(banner).toBe("");
+    expect(trustMaterial()).toEqual({ certificates: [certificate] });
   });
 
   test("accepts a bundle whose comment quotes the BEGIN marker", () => {

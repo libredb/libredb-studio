@@ -610,6 +610,7 @@ describe("openClient", () => {
     for (const ssl of [{ mode: "verify-system" }, { mode: "verify-full" }] as Db2Connection["ssl"][]) {
       let loaded = false;
       const { fs, calls } = memoryFs();
+      // oxlint-disable-next-line no-await-in-loop -- each mode reads its own fake file system and driver flag, one after another.
       const error = await openClient(
         connection({ ssl }),
         undefined,

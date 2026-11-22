@@ -14,7 +14,10 @@
  * UTF-8 and refused, with its reason, when it cannot be read, is empty or blank, holds a block under the legacy
  * `-----BEGIN X509 CERTIFICATE-----` label, holds no `-----BEGIN CERTIFICATE-----` block, or holds a block with no
  * `-----END CERTIFICATE-----` line before the next block or the end of the file. A marker counts only on a line of its
- * own, which may end in blanks and a carriage return, so a comment that quotes one is text like any other. The legacy
+ * own, which may end in blanks and a carriage return, so a comment that quotes one is text like any other. A UTF-8
+ * byte order mark is ignored where OpenSSL, and so Node.js, ignores it: at the start of the first line each PEM read
+ * takes, which is the start of the file and the line right after an END line of any PEM block. A mark anywhere else,
+ * such as after a blank line, leaves the marker it precedes as text, as Node.js leaves it. The legacy
  * label is refused rather than dropped: Node.js trusts a certificate under it, and a provider handed the material
  * without it would distrust what every other engine trusts, with nothing naming the cause. The material is the
  * certificate blocks in the file's order, each as the file spells it; every other text (a comment, a subject line, a
@@ -53,6 +56,10 @@ const LEGACY_BEGIN = "-----BEGIN X509 CERTIFICATE-----";
 const MARKER_LINE = /^-----(BEGIN|END) CERTIFICATE-----[ \t\r]*$/gm;
 /** A BEGIN line under the legacy label OpenSSL, and so Node.js, also reads as a certificate. */
 const LEGACY_BEGIN_LINE = /^-----BEGIN X509 CERTIFICATE-----[ \t\r]*$/m;
+
+const BOM = "\uFEFF";
+/** A UTF-8 byte order mark at the start of the line right after an END line, where OpenSSL's next PEM read begins. */
+const BOM_AFTER_END_LINE = /(?<=^-----END [^\r\n]*-----[ \t\r]*\n)\uFEFF/gm;
 
 /**
  * The kept outcome: the material, with the bundle's path for the log line when the variable named one, or the refusal
@@ -95,6 +102,9 @@ function read(path: string | undefined): TrustSetting {
     const code = (error as NodeJS.ErrnoException).code ?? "unknown error";
     return { invalid: { path, reason: `the file cannot be read (${code})` } };
   }
+  // The byte order marks OpenSSL ignores: the file's first, and one right after an END line.
+  if (content.startsWith(BOM)) content = content.slice(BOM.length);
+  content = content.replace(BOM_AFTER_END_LINE, "");
   if (content.trim() === "") return { invalid: { path, reason: "the file is empty" } };
   if (LEGACY_BEGIN_LINE.test(content)) {
     const reason = `the file holds a ${LEGACY_BEGIN} block, which Node.js trusts and Studio does not take; relabel it ${BEGIN} and ${END}`;

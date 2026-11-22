@@ -470,7 +470,8 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
  * certificate only a private CA in `NODE_EXTRA_CA_CERTS` signs: every one reached it but Db2, whose driver, db2-node,
  * verifies with rustls against the operating system's store and never reads the variable. The engines with a
  * configurable host were built through the provider factory on Node.js 26.13.1 in the runner image, Node.js 24.22.1
- * and Bun 1.4.4; RabbitMQ's AMQPS leg was dialled through its `dialAmqp` on the same three, not built by the factory;
+ * and Bun 1.4.4; RabbitMQ's AMQPS leg was dialled through its `dialAmqp`, not built by the factory, on Node.js 26.13.1
+ * in the runner image and Bun 1.4.4;
  * Snowflake, BigQuery and Firestore, whose hosts are fixed on port 443, only on Node.js 26.13.1 in the runner image.
  * Not measured:
  * Oracle in Thick mode, whose TLS is the Oracle Client's own (docs/BACKLOG.md). A new provider sets its row to true

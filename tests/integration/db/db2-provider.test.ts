@@ -1057,9 +1057,11 @@ describe("Db2Provider: the trust material of its build context (FND-2 slice 4)",
       { ssl: { mode: "verify-ca" as const, caCert: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n" } },
     ]) {
       const { provider, written } = trusting(undefined, overrides);
+      // oxlint-disable-next-line no-await-in-loop -- each mode builds its own provider and connects it before the next.
       await provider.connect();
       expect(provider.isConnected()).toBe(true);
       expect(written).toEqual(overrides.ssl.mode === "require" ? [] : [overrides.ssl.caCert]);
+      // oxlint-disable-next-line no-await-in-loop -- the provider is disconnected before the next mode builds its own.
       await provider.disconnect();
     }
   });

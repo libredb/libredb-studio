@@ -183,6 +183,52 @@ describe("the trust material, read once per process from the file NODE_EXTRA_CA_
     });
   });
 
+  /**
+   * A UTF-8 byte order mark, which Windows PowerShell 5.1's `Set-Content -Encoding UTF8` and older Notepad write.
+   * OpenSSL, and so Node.js, ignores one at the start of the first line each PEM read takes: the start of the file and
+   * the line right after an END line.
+   */
+  const BOM = "\uFEFF";
+
+  test("a byte order mark at the start of the file does not hide the first block", () => {
+    const only = block();
+    bundle(`${BOM}${only}\n`);
+    expect(trustMaterial()).toEqual({ certificates: [only] });
+    forgetTrustMaterial();
+    const first = block();
+    const second = block();
+    bundle(`${BOM}${first}\n${second}\n`);
+    expect(trustMaterial()).toEqual({ certificates: [first, second] });
+  });
+
+  test("two files that each begin with a byte order mark, concatenated, keep both blocks", () => {
+    const first = block();
+    const second = block();
+    bundle(`${BOM}${first}\n${BOM}${second}\n`);
+    expect(trustMaterial()).toEqual({ certificates: [first, second] });
+  });
+
+  test("a byte order mark after a blank line is text, so the block it starts is dropped, as Node.js drops it", () => {
+    const first = block();
+    bundle(`${first}\n\n${BOM}${block()}\n`);
+    expect(trustMaterial()).toEqual({ certificates: [first] });
+  });
+
+  test("a byte order mark before a legacy X509 CERTIFICATE block does not hide it from the refusal", () => {
+    const legacy = block()
+      .replace("BEGIN CERTIFICATE", "BEGIN X509 CERTIFICATE")
+      .replace("END CERTIFICATE", "END X509 CERTIFICATE");
+    const file = bundle(`${BOM}${legacy}\n${block()}\n`);
+    expect(trustMaterialSetting()).toEqual({
+      invalid: {
+        path: file,
+        reason:
+          "the file holds a -----BEGIN X509 CERTIFICATE----- block, which Node.js trusts and Studio does not take; " +
+          "relabel it -----BEGIN CERTIFICATE----- and -----END CERTIFICATE-----",
+      },
+    });
+  });
+
   test("a refused setting stays refused, and a file fixed later does not rescue it", () => {
     const file = bundle("");
     expect(() => trustMaterial()).toThrow("Invalid NODE_EXTRA_CA_CERTS: the file is empty");
