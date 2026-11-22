@@ -231,6 +231,7 @@ Both refusals leave as the shared `DatabaseConfigError`, not as a `QueryError`: 
 
 Through an SSH tunnel the request dials the local forward, a loopback address, and these rules are checked against that address.
 So with the variable on a tunnelled connection is refused, and with it off the forward is dialled.
+The agent at the far end is not checked here: a link-local or metadata address there is reached through the tunnel, and a name is resolved by the SSH server, where Studio cannot check it.
 
 ### Connection string
 
