@@ -320,16 +320,23 @@ const positiveControl = {
   raw: { request: `PUT /${LATHE}?x1722-pos=4242`, status: rawPut.status, valueChanged: putAfterMcp !== putAfterRaw },
 };
 
-// Every other refused form, fenced and unfenced, each with the provider's reason for it. The count past the row cap is
-// the provider's to refuse, so the fence lets it through and the provider's words answer both.
+// Every other refused form, fenced and unfenced, each with who refuses the fenced call and the provider's reason for
+// it. The count past the row cap is the provider's to refuse, so the fence lets it through and the provider's words
+// answer both.
 const PAST_THE_ROW_CAP = providerRefusal("count may not be larger than this read's row cap of 1000.");
 const OUTSIDE_THE_PATH_SUBSET = providerRefusal("The path is outside what agent mode sends.");
 const REFUSED = [
-  ["/cancel/id=1", FENCE_REFUSAL, providerRefusal("GET /cancel/id=1 is not a route this provider runs.")],
-  ["/assets/TOOL-1722", FENCE_REFUSAL, providerRefusal("GET /assets/TOOL-1722 is not a route this provider runs.")],
-  ["/swagger", FENCE_REFUSAL, providerRefusal("GET /swagger is not a route this provider runs.")],
+  ["/cancel/id=1", "fence", FENCE_REFUSAL, providerRefusal("GET /cancel/id=1 is not a route this provider runs.")],
+  [
+    "/assets/TOOL-1722",
+    "fence",
+    FENCE_REFUSAL,
+    providerRefusal("GET /assets/TOOL-1722 is not a route this provider runs."),
+  ],
+  ["/swagger", "fence", FENCE_REFUSAL, providerRefusal("GET /swagger is not a route this provider runs.")],
   [
     "/sample?interval=1000",
+    "fence",
     FENCE_REFUSAL,
     providerRefusal(
       "interval is not sent by this provider: streaming is out of scope for v1: an answer never ends, and the shared transport cannot carry it.",
@@ -337,32 +344,43 @@ const REFUSED = [
   ],
   [
     "/current?heartbeat=1000",
+    "fence",
     FENCE_REFUSAL,
     providerRefusal("heartbeat is not sent by this provider: streaming is out of scope for v1."),
   ],
   [
     "/sample?frequency=1000",
+    "fence",
     FENCE_REFUSAL,
     providerRefusal("frequency is not sent by this provider: the deprecated spelling of interval."),
   ],
-  ["/current\n/sample", FENCE_REFUSAL, providerRefusal("A run sends one request.")],
+  ["/current\n/sample", "fence", FENCE_REFUSAL, providerRefusal("A run sends one request.")],
   [
     "/../probe",
+    "fence",
     FENCE_REFUSAL,
     providerRefusal(
       "device is a dot segment, which a URL resolves to another path, so what would be sent is not the route that was written.",
     ),
   ],
-  ["/current?path=count(//DataItem)", FENCE_REFUSAL, providerRefusal("count() is not a function this provider sends.")],
-  ["/current?path=//Adapter", FENCE_REFUSAL, OUTSIDE_THE_PATH_SUBSET],
-  ['/current?path=//DataItem[starts-with(@id,"_")]', FENCE_REFUSAL, OUTSIDE_THE_PATH_SUBSET],
-  ["/sample?count=1001", PAST_THE_ROW_CAP, PAST_THE_ROW_CAP],
+  [
+    "/current?path=count(//DataItem)",
+    "fence",
+    FENCE_REFUSAL,
+    providerRefusal("count() is not a function this provider sends."),
+  ],
+  ["/current?path=//Adapter", "fence", FENCE_REFUSAL, OUTSIDE_THE_PATH_SUBSET],
+  ['/current?path=//DataItem[starts-with(@id,"_")]', "fence", FENCE_REFUSAL, OUTSIDE_THE_PATH_SUBSET],
+  ["/sample?count=1001", "provider", PAST_THE_ROW_CAP, PAST_THE_ROW_CAP],
 ] as const;
 const refused = [];
-for (const [statement, fencedWords, unfencedWords] of REFUSED) {
+for (const [statement, fencedRefuser, fencedWords, unfencedWords] of REFUSED) {
   const fenced = await mcp(fixture, statement);
   const unfenced = await mcp(fixture, statement, { arm: UNFENCED });
-  const fencedRefusal = firstSentence(textOf(fenced.result));
+  // The fence's refusal is the answer's only text; a provider's follows the notice naming it.
+  const fencedRefusal = firstSentence(
+    fencedRefuser === "fence" ? textOf(fenced.result) : providerRefusalText(fenced.result, "mtconnect"),
+  );
   const unfencedRefusal = firstSentence(providerRefusalText(unfenced.result, "mtconnect"));
   check(
     fenced.result.isError === true &&
