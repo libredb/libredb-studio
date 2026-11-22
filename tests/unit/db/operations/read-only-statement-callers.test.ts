@@ -444,10 +444,119 @@ function gatedBefore(node: ts.Node, gate: string, reaches: readonly string[]): R
   );
 }
 
+/** Whether `statement` ends the branch it is: a `throw`, a `return`, or a block whose last statement is one. */
+function endsInThrowOrReturn(statement: ts.Statement): boolean {
+  if (ts.isThrowStatement(statement) || ts.isReturnStatement(statement)) return true;
+  if (ts.isBlock(statement)) {
+    const last = statement.statements.at(-1);
+    return last !== undefined && (ts.isThrowStatement(last) || ts.isReturnStatement(last));
+  }
+  return false;
+}
+
+/**
+ * Whether the `typeof` test `test` only refuses the method's absence: it is one operand of a `!==` or `!=` comparison
+ * with the string `"function"`, that comparison reaches an `if` condition only through parentheses, `&&` and `||`, and
+ * the `if`'s then-branch ends in `throw` or `return`. Anything else (a `===` test, a negation, a ternary, a value kept
+ * in a name) is a presence test that could open a path.
+ */
+function refusesAbsence(test: ts.TypeOfExpression): boolean {
+  const comparison = outer(test);
+  if (
+    comparison === undefined ||
+    !ts.isBinaryExpression(comparison) ||
+    ![ts.SyntaxKind.ExclamationEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken].includes(
+      comparison.operatorToken.kind,
+    )
+  ) {
+    return false;
+  }
+  const other = inner(comparison.left) === test ? comparison.right : comparison.left;
+  if (!ts.isStringLiteralLike(inner(other)) || (inner(other) as ts.StringLiteralLike).text !== "function") return false;
+  let at: ts.Node = comparison;
+  let parent = at.parent;
+  while (
+    parent !== undefined &&
+    (ts.isParenthesizedExpression(parent) ||
+      (ts.isBinaryExpression(parent) &&
+        [ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.BarBarToken].includes(parent.operatorToken.kind)))
+  ) {
+    at = parent;
+    parent = at.parent;
+  }
+  return (
+    parent !== undefined &&
+    ts.isIfStatement(parent) &&
+    parent.expression === at &&
+    endsInThrowOrReturn(parent.thenStatement)
+  );
+}
+
+interface PresenceTest {
+  readonly file: string;
+  readonly declaration: string;
+  readonly refusesAbsence: boolean;
+}
+
+/** Every `typeof` test of a member called `queryReadOnly` in `text`, with whether it only refuses the absence. */
+function presenceTests(file: string, text: string): PresenceTest[] {
+  const source = parse(file, text);
+  const found: PresenceTest[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isTypeOfExpression(node) && readsMember(inner(node.expression), "queryReadOnly")) {
+      found.push({ file, declaration: enclosingDeclaration(node), refusesAbsence: refusesAbsence(node) });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
 const REVIEW_GATE = "assertStatementsReviewed";
+/** The presence tests outside provider code today, each refusing the absence: none opens a path. */
 const FACTORY = join("src", "lib", "db", "factory.ts");
+const KNOWN_PRESENCE_TESTS: readonly string[] = [
+  `${join("src", "app", "api", "agent", "runs", "[runId]", "handover", "route.ts")} in POST`,
+  `${join("src", "lib", "agent", "tools.ts")} in runStatement`,
+  `${FACTORY} in acquireExecutionProfileProvider`,
+  `${CORE_CALLER} in read`,
+  `${join("src", "lib", "mcp", "tools", "run-statement.ts")} in execute`,
+];
 
 describe("the review record gates the protected read path", () => {
+  test("the scan finds a presence test that opens, and not one that refuses the absence", () => {
+    const planted = [
+      "function opens(p) { if (typeof p.queryReadOnly === 'function') run(); }",
+      "function ternary(p) { return typeof p.queryReadOnly === 'function' ? run() : refuse(); }",
+      "function kept(p) { const has = typeof p.queryReadOnly === 'function'; return has; }",
+      "function negated(p) { if (!(typeof p.queryReadOnly !== 'function')) run(); }",
+      "function throws(p) { if (typeof p.queryReadOnly !== 'function') throw new Error('no path'); }",
+      "async function cleans(p, gate) { if (gate && typeof p.queryReadOnly !== 'function') { await cleanup(); throw new Error('no path'); } }",
+      "function returns(p) { if (typeof p.queryReadOnly !== 'function') return refusal; }",
+    ].join("\n");
+    expect(
+      presenceTests("planted.ts", planted)
+        .filter((found) => !found.refusesAbsence)
+        .map((found) => found.declaration),
+    ).toEqual(["opens", "ternary", "kept", "negated"]);
+    expect(
+      presenceTests("planted.ts", planted)
+        .filter((found) => found.refusesAbsence)
+        .map((found) => found.declaration),
+    ).toEqual(["throws", "cleans", "returns"]);
+  });
+
+  test("no module outside the providers decides from the presence of queryReadOnly", () => {
+    const outside = SOURCE_ROOTS.flatMap(sourceFiles).filter((file) => !file.startsWith(PROVIDER_CODE));
+    expect(outside.length).toBeGreaterThan(0);
+    const found = outside.flatMap((file) => presenceTests(file, readFileSync(join(ROOT, file), "utf8")));
+    expect(found.filter((test) => !test.refusesAbsence).map((test) => `${test.file} in ${test.declaration}`)).toEqual(
+      [],
+    );
+    // Not vacuous: the known presence tests are found, each one a refusal of the absence.
+    expect(found.map((test) => `${test.file} in ${test.declaration}`).sort()).toEqual(KNOWN_PRESENCE_TESTS);
+  });
+
   test("the scan finds a choke point that reaches the provider before the record is read", () => {
     const file = "planted.ts";
     const planted = parse(
