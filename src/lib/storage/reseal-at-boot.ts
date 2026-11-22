@@ -1,13 +1,13 @@
 /**
  * STORAGE_ENCRYPTION_RESEAL, the operator's re-seal of the server store (docs/STORAGE.md, "Re-sealing the store").
  *
- * Set on every server once every server runs this version, and removed after one restart (while it is set, every start
- * that finds no credential_envelope row re-seals the store as it is then): the first start backs the
- * store up completely, re-seals every stored credential as a version 2 envelope bound to its place, and records that
- * version 1 is retired; any other replica starting at the same time waits on the store's lock and finds nothing to do.
- * It follows ADMIN_PASSWORD_RESET (an environment variable plus a restart) and the boot preflights (a banner and exit
- * status 1 on refusal), and runs in src/instrumentation.ts register() after the preflights and before the server
- * serves.
+ * Set on every server once every server runs this version, without STORAGE_ENCRYPTION_REQUIRE_V2, and removed after one
+ * restart (while it is set without STORAGE_ENCRYPTION_REQUIRE_V2, every start that finds no credential_envelope row
+ * re-seals the store as it is then): the first start backs the store up completely, re-seals every stored credential
+ * as a version 2 envelope bound to its place, and records that version 1 is retired; any other replica starting at the
+ * same time waits on the store's lock and finds nothing to do. It follows ADMIN_PASSWORD_RESET (an environment variable
+ * plus a restart) and the boot preflights (a banner and exit status 1 on refusal), and runs in src/instrumentation.ts
+ * register() after the preflights and before the server serves.
  *
  * Unset, empty, `false`, `0` and `off` do nothing. `true`, `1` and `on`, in any letter case, re-seal, and refuse the
  * boot when a version 1 value does not open under the key in use; `leave-unopened` re-seals and retires version 1 over
@@ -20,8 +20,10 @@
  *
  * STORAGE_ENCRYPTION_REQUIRE_V2, read in the same step, refuses version 1 and unsealed values whatever the store
  * records (./encrypting-provider.ts). With it set, the start is refused by name unless the store records version 1 as
- * retired; the check follows the re-seal, so one start with both set completes the upgrade. Its values, and local mode,
- * are refused as STORAGE_ENCRYPTION_RESEAL's are, and both values are read before the store is opened.
+ * retired, and that check runs before any re-seal step: while it is set, the re-seal runs only on a store that records
+ * it, where there is nothing to re-seal, so the re-seal itself never runs. The upgrade is therefore two starts: the
+ * re-seal without it, then it without the re-seal. Its values, and local mode, are refused as STORAGE_ENCRYPTION_RESEAL's
+ * are, and both values are read before the store is opened.
  *
  * It lives apart from the storage modules so that `process.exit` and the banner never reach the published package.
  */
@@ -43,7 +45,20 @@ import { resealStore } from "./reseal";
  * back.
  */
 export const UNOPENED_ADVICE =
-  "Version 1 is retired now, so they are refused as retired even once the key that sealed them is back, and a second re-seal finds nothing to do. Such a value comes back only by stopping every server, restoring the key that sealed it, deleting the store's storage_meta row credential_envelope and starting again with STORAGE_ENCRYPTION_RESEAL set, or from the backup above (docs/STORAGE.md, Re-sealing the store).";
+  "Version 1 is retired now, so they are refused as retired even once the key that sealed them is back, and a second re-seal finds nothing to do. Such a value comes back only by stopping every server, restoring the key that sealed it, deleting the store's storage_meta row credential_envelope, starting once with STORAGE_ENCRYPTION_RESEAL set and STORAGE_ENCRYPTION_REQUIRE_V2 not set, and then setting STORAGE_ENCRYPTION_REQUIRE_V2 again, or from the backup above (docs/STORAGE.md, Re-sealing the store).";
+
+/** Logged when STORAGE_ENCRYPTION_RESEAL is set and the store records the re-seal already. */
+const ALREADY_RETIRED_LINE =
+  "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up.";
+
+/** Logged after every start with STORAGE_ENCRYPTION_RESEAL set that the store passed. */
+const REMOVE_RESEAL_LINE =
+  "STORAGE_ENCRYPTION_RESEAL: remove it now, and start with STORAGE_ENCRYPTION_REQUIRE_V2=true from now on; while STORAGE_ENCRYPTION_RESEAL is set without STORAGE_ENCRYPTION_REQUIRE_V2, every start that finds no credential_envelope row re-seals the store as it is then.";
+
+function logAlreadyRetired(): void {
+  logger.warn(ALREADY_RETIRED_LINE, { route: "storage-reseal" });
+  logger.warn(REMOVE_RESEAL_LINE, { route: "storage-reseal" });
+}
 
 function refuse(lines: string[]): false {
   console.error(
@@ -60,10 +75,10 @@ function refuse(lines: string[]): false {
 }
 
 /**
- * Runs the re-seal when STORAGE_ENCRYPTION_RESEAL asks for it, then, with STORAGE_ENCRYPTION_REQUIRE_V2 set, checks
- * that the store records version 1 as retired. Returns true when the boot goes on (nothing asked, a re-seal that
- * succeeded or a store already retired, and a check that passed); otherwise prints a banner, exits with status 1 and
- * returns false. Both values are read before the store is opened.
+ * With STORAGE_ENCRYPTION_REQUIRE_V2 set, checks that the store records version 1 as retired, before any re-seal step,
+ * and runs no re-seal; without it, runs the re-seal when STORAGE_ENCRYPTION_RESEAL asks for it. Returns true when the
+ * boot goes on (nothing asked, a check that passed, a re-seal that succeeded or a store already retired); otherwise
+ * prints a banner, exits with status 1 and returns false. Both values are read before the store is opened.
  */
 export async function resealStoreAtBoot(): Promise<boolean> {
   let reseal: ResealSetting;
@@ -98,11 +113,19 @@ export async function resealStoreAtBoot(): Promise<boolean> {
       " to sqlite or postgres.",
     ]);
   }
-  if (reseal !== "off" && !(await resealAtBoot(reseal === "leave-unopened"))) return false;
-  return requireV2 ? checkVersionTwoAtBoot() : true;
+  if (requireV2) {
+    if (!(await checkVersionTwoAtBoot())) return false;
+    // The store records the re-seal, so a requested one has nothing to do there.
+    if (reseal !== "off") logAlreadyRetired();
+    return true;
+  }
+  return resealAtBoot(reseal === "leave-unopened");
 }
 
-/** With STORAGE_ENCRYPTION_REQUIRE_V2 set: the store must record version 1 as retired before the server serves. */
+/**
+ * With STORAGE_ENCRYPTION_REQUIRE_V2 set: the store must record version 1 as retired, before any re-seal step and
+ * before the server serves.
+ */
 async function checkVersionTwoAtBoot(): Promise<boolean> {
   try {
     // Not null: the provider type is sqlite or postgres here.
@@ -124,10 +147,7 @@ async function resealAtBoot(leaveUnopened: boolean): Promise<boolean> {
     const provider = (await getStorageProvider())!;
     const report = await resealStore(provider, new Date(), { leaveUnopened });
     if (report.kind === "already-retired") {
-      logger.warn(
-        "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up. Remove STORAGE_ENCRYPTION_RESEAL now; while it is set, every start that finds no credential_envelope row re-seals the store as it is then.",
-        { route: "storage-reseal" },
-      );
+      logAlreadyRetired();
       return true;
     }
     logger.warn(
@@ -158,10 +178,7 @@ async function resealAtBoot(leaveUnopened: boolean): Promise<boolean> {
         { route: "storage-reseal" },
       );
     }
-    logger.warn(
-      "STORAGE_ENCRYPTION_RESEAL: remove it now; while it is set, every start that finds no credential_envelope row re-seals the store as it is then.",
-      { route: "storage-reseal" },
-    );
+    logger.warn(REMOVE_RESEAL_LINE, { route: "storage-reseal" });
     return true;
   } catch (error) {
     return refuse([

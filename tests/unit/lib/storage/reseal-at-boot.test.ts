@@ -14,8 +14,16 @@ import { logger } from "@/lib/logger";
 import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
 import { VERSION_TWO_NOT_RECORDED } from "@/lib/storage/envelope-settings";
 import { closeStorageProvider, getStorageProvider } from "@/lib/storage/factory";
+import { SQLiteStorageProvider } from "@/lib/storage/providers/sqlite";
 import { resealStoreAtBoot, UNOPENED_ADVICE } from "@/lib/storage/reseal-at-boot";
 import { sealVersionOne } from "../../../helpers/storage-envelope-v1";
+
+/** Logged when STORAGE_ENCRYPTION_RESEAL is set and the store records the re-seal already. */
+const ALREADY_RETIRED_LINE =
+  "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up.";
+/** Logged after every start with STORAGE_ENCRYPTION_RESEAL set that the store passed. */
+const REMOVE_RESEAL_LINE =
+  "STORAGE_ENCRYPTION_RESEAL: remove it now, and start with STORAGE_ENCRYPTION_REQUIRE_V2=true from now on; while STORAGE_ENCRYPTION_RESEAL is set without STORAGE_ENCRYPTION_REQUIRE_V2, every start that finds no credential_envelope row re-seals the store as it is then.";
 
 const ENV_KEYS = [
   "STORAGE_ENCRYPTION_RESEAL",
@@ -167,7 +175,7 @@ describe("resealStoreAtBoot", () => {
     const lines = warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"));
     expect(lines).toEqual([
       `STORAGE_ENCRYPTION_RESEAL: backed up the store to ${join(dir, backup!)}, re-sealed 1 value(s) and kept 0 already sealed for their place; version 1 is retired.`,
-      "STORAGE_ENCRYPTION_RESEAL: remove it now; while it is set, every start that finds no credential_envelope row re-seals the store as it is then.",
+      REMOVE_RESEAL_LINE,
     ]);
     const db = new Database(path);
     try {
@@ -240,7 +248,7 @@ describe("resealStoreAtBoot", () => {
     expect(warned.filter((line) => line.includes("open nowhere here"))).toEqual([]);
     expect(UNOPENED_ADVICE).toContain("a second re-seal finds nothing to do");
     expect(UNOPENED_ADVICE).toContain(
-      "comes back only by stopping every server, restoring the key that sealed it, deleting the store's storage_meta row credential_envelope and starting again with STORAGE_ENCRYPTION_RESEAL set, or from the backup above",
+      "comes back only by stopping every server, restoring the key that sealed it, deleting the store's storage_meta row credential_envelope, starting once with STORAGE_ENCRYPTION_RESEAL set and STORAGE_ENCRYPTION_REQUIRE_V2 not set, and then setting STORAGE_ENCRYPTION_REQUIRE_V2 again, or from the backup above",
     );
     expect(markerOf()).toBe("v2");
   });
@@ -256,7 +264,8 @@ describe("resealStoreAtBoot", () => {
 
     expect(result).toBe(true);
     expect(warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"))).toEqual([
-      "STORAGE_ENCRYPTION_RESEAL: this store retired version 1 already, so nothing was read, written or backed up. Remove STORAGE_ENCRYPTION_RESEAL now; while it is set, every start that finds no credential_envelope row re-seals the store as it is then.",
+      ALREADY_RETIRED_LINE,
+      REMOVE_RESEAL_LINE,
     ]);
     expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual(backups);
   });
@@ -349,22 +358,134 @@ describe("resealStoreAtBoot", () => {
     expect(markerOf()).toBeUndefined();
   });
 
-  test("with both set, the re-seal runs first and the check follows it, so one start completes the upgrade", async () => {
+  /** Every table of the store file and its rows, read on a connection of its own. */
+  function storeDump(): Record<string, unknown[]> {
+    const db = new Database(path, { readonly: true });
+    try {
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as {
+        name: string;
+      }[];
+      return Object.fromEntries(tables.map(({ name }) => [name, db.prepare(`SELECT * FROM "${name}"`).all()]));
+    } finally {
+      db.close();
+    }
+  }
+
+  /** The store methods that read or write credentials, counted on every SQLite store this process opens. */
+  function spyOnStoreReads() {
+    const spies = [
+      spyOn(SQLiteStorageProvider.prototype, "rewriteStoredCredentials"),
+      spyOn(SQLiteStorageProvider.prototype, "getAllData"),
+      spyOn(SQLiteStorageProvider.prototype, "getCollection"),
+      spyOn(SQLiteStorageProvider.prototype, "listAccounts"),
+    ];
+    return {
+      calls: () => spies.map((spy) => spy.mock.calls.length),
+      restore: () => {
+        for (const spy of spies) spy.mockRestore();
+      },
+    };
+  }
+
+  test("with both set, refuses the start by name on a store that records no re-seal, before anything is read, written or backed up, whatever STORAGE_ENCRYPTION_RESEAL says", async () => {
+    // A store re-sealed once whose credential_envelope row is gone since, so every table exists and only the row is
+    // missing.
     previousVersionStore();
     process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    await run();
+    await closeStorageProvider();
+    const db = new Database(path);
+    try {
+      db.prepare("DELETE FROM storage_meta WHERE key = 'credential_envelope'").run();
+      db.prepare("INSERT INTO user_storage VALUES ('bob', 'connections', ?, 't')").run(
+        JSON.stringify([
+          { id: "b1", name: "b1", type: "postgres", host: "b.internal", password: sealVersionOne(randomUUID()) },
+        ]),
+      );
+    } finally {
+      db.close();
+    }
+    const before = storeDump();
+    const backups = readdirSync(dir).filter((name) => name.includes("pre-reseal"));
+
+    for (const value of ["true", "leave-unopened"]) {
+      // oxlint-disable-next-line no-await-in-loop -- each value boots on its own, one after another.
+      await closeStorageProvider();
+      process.env.STORAGE_ENCRYPTION_RESEAL = value;
+      process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+      const reads = spyOnStoreReads();
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- each value boots on its own, one after another.
+        const { result, exits, banner, warned } = await run();
+
+        // rewriteStoredCredentials, getAllData, getCollection, listAccounts: none ran.
+        expect({ value, reads: reads.calls() }).toEqual({ value, reads: [0, 0, 0, 0] });
+        expect({ value, result, exits }).toEqual({ value, result: false, exits: [1] });
+        expect(banner).toContain("the STORAGE_ENCRYPTION_REQUIRE_V2 check did not pass");
+        expect(banner).toContain(VERSION_TWO_NOT_RECORDED);
+        expect(warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"))).toEqual([]);
+      } finally {
+        reads.restore();
+      }
+      expect(storeDump()).toEqual(before);
+      expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual(backups);
+    }
+  });
+
+  test("with both set and the store retired, does nothing, and says so and to remove STORAGE_ENCRYPTION_RESEAL", async () => {
+    previousVersionStore();
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    await run();
+    await closeStorageProvider();
+    const before = storeDump();
+    const backups = readdirSync(dir).filter((name) => name.includes("pre-reseal"));
     process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+    const reads = spyOnStoreReads();
 
-    const { result, exits, warned } = await run();
+    try {
+      const { result, exits, warned } = await run();
 
-    expect(result).toBe(true);
-    expect(exits).toEqual([]);
-    expect(warned.some((line) => line.includes("re-sealed 1 value(s)"))).toBe(true);
+      expect(result).toBe(true);
+      expect(exits).toEqual([]);
+      expect(warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"))).toEqual([
+        ALREADY_RETIRED_LINE,
+        REMOVE_RESEAL_LINE,
+      ]);
+      expect(reads.calls()).toEqual([0, 0, 0, 0]);
+    } finally {
+      reads.restore();
+    }
+    expect(storeDump()).toEqual(before);
+    expect(readdirSync(dir).filter((name) => name.includes("pre-reseal"))).toEqual(backups);
+  });
+
+  test("the upgrade takes two starts: the re-seal without STORAGE_ENCRYPTION_REQUIRE_V2, then the requirement without the re-seal", async () => {
+    previousVersionStore();
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+
+    const first = await run();
+
+    expect(first).toMatchObject({ result: true, exits: [] });
+    expect(first.warned.some((line) => line.includes("re-sealed 1 value(s)"))).toBe(true);
+    expect(first.warned).toContain(REMOVE_RESEAL_LINE);
     expect(markerOf()).toBe("v2");
 
-    // The next start keeps STORAGE_ENCRYPTION_REQUIRE_V2 and drops STORAGE_ENCRYPTION_RESEAL, and passes.
     await closeStorageProvider();
     delete process.env.STORAGE_ENCRYPTION_RESEAL;
-    expect(await run()).toMatchObject({ result: true, exits: [] });
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+    const second = await run();
+
+    expect(second).toMatchObject({ result: true, exits: [], banner: "" });
+    expect(second.warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"))).toEqual([]);
+  });
+
+  test("with STORAGE_ENCRYPTION_REQUIRE_V2 set, a store created from nothing starts, because initialize records the row as it creates the store", async () => {
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+
+    const { result, exits, banner } = await run();
+
+    expect({ result, exits, banner }).toEqual({ result: true, exits: [], banner: "" });
+    expect(markerOf()).toBe("v2");
   });
 
   test("with STORAGE_ENCRYPTION_REQUIRE_V2 set, refuses the start when the store does not read as retired at the check", async () => {

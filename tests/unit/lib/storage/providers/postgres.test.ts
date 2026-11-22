@@ -51,7 +51,10 @@ mock.module("pg", () => ({
 }));
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+import { VERSION_TWO_NOT_RECORDED } from "@/lib/storage/envelope-settings";
+import { closeStorageProvider } from "@/lib/storage/factory";
 import { PostgresStorageProvider } from "@/lib/storage/providers/postgres";
+import { resealStoreAtBoot } from "@/lib/storage/reseal-at-boot";
 import {
   AccountWriteConflict,
   LastAdminError,
@@ -1197,6 +1200,82 @@ describe("PostgresStorageProvider", () => {
       ),
     ).rejects.toThrow("backup label");
     expect(client.statements).toEqual([]);
+  });
+
+  /**
+   * The boot step over this provider, through the storage factory, with both envelope settings set and a store whose
+   * tables exist; `marker` is the credential_envelope row the store holds, if any.
+   */
+  async function bootWithBothSettings(marker: string | undefined) {
+    const keys = [
+      "STORAGE_PROVIDER",
+      "STORAGE_POSTGRES_URL",
+      "STORAGE_ENCRYPTION_RESEAL",
+      "STORAGE_ENCRYPTION_REQUIRE_V2",
+    ] as const;
+    const saved = keys.map((key) => process.env[key]);
+    process.env.STORAGE_PROVIDER = "postgres";
+    process.env.STORAGE_POSTGRES_URL = "postgresql://localhost:5432/test";
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes(PRESENCE)) return { rows: BACKED_UP.map((table_name) => ({ table_name })) };
+      if (sql.startsWith("SELECT value FROM storage_meta"))
+        return { rows: marker === undefined ? [] : [{ value: marker }] };
+      return { rows: [] };
+    });
+    const originalExit = process.exit;
+    const exits: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exits.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const result = await resealStoreAtBoot();
+      return {
+        result,
+        exits,
+        banner: errorSpy.mock.calls.flat().join("\n"),
+        warned: warn.mock.calls.map((call) => String(call[0])),
+      };
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      warn.mockRestore();
+      mockQuery.mockImplementation(async () => ({ rows: [] }));
+      await closeStorageProvider();
+      keys.forEach((key, index) => {
+        if (saved[index] === undefined) delete process.env[key];
+        else process.env[key] = saved[index];
+      });
+    }
+  }
+
+  /** The statements that read or write credentials, back the store up, or take the re-seal's lock. */
+  const credentialWork = () =>
+    statements().filter((sql) =>
+      ["FROM user_storage", "FROM accounts", "pre_reseal", "LOCK TABLE", "UPDATE ", "INSERT INTO storage_meta"].some(
+        (needle) => sql.includes(needle),
+      ),
+    );
+
+  test("with STORAGE_ENCRYPTION_RESEAL and STORAGE_ENCRYPTION_REQUIRE_V2 both set, the start is refused by name on a store with no credential_envelope row, before anything is read, written or backed up", async () => {
+    const { result, exits, banner } = await bootWithBothSettings(undefined);
+
+    expect(credentialWork()).toEqual([]);
+    expect(result).toBe(false);
+    expect(exits).toEqual([1]);
+    expect(banner).toContain(VERSION_TWO_NOT_RECORDED);
+  });
+
+  test("with STORAGE_ENCRYPTION_RESEAL and STORAGE_ENCRYPTION_REQUIRE_V2 both set, a store that records the re-seal starts and nothing is done", async () => {
+    const { result, exits, warned } = await bootWithBothSettings("v2");
+
+    expect(credentialWork()).toEqual([]);
+    expect(result).toBe(true);
+    expect(exits).toEqual([]);
+    expect(warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"))).toHaveLength(2);
   });
 
   test("updateAccount is conditional on the version it read", async () => {

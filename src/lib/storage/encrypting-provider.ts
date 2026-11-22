@@ -2,7 +2,7 @@ import { logger } from "@/lib/logger";
 import { decryptConnections, encryptConnections, type OmittedSecret } from "./connection-secrets";
 import { readStoredSecret, sealSecret } from "./encryption";
 import { type AccountFactorField, accountBinding } from "./envelope-binding";
-import { requiresVersionTwo, resealSetting, VERSION_TWO_NOT_RECORDED } from "./envelope-settings";
+import { requiresVersionTwo, VERSION_TWO_NOT_RECORDED } from "./envelope-settings";
 import type {
   AccountUpdateOptions,
   AccountWriteOptions,
@@ -56,16 +56,16 @@ export const UNDECRYPTABLE_WARNING_PREFIX = "Stored connection secrets could not
 
 /** Logged once per process, at initialize, while the store still opens version 1 envelopes and unsealed values. */
 export const V1_ACCEPTED_WARNING =
-  "Stored credentials still accept the version 1 envelope and unsealed values. Once every server runs this version, back up the store, start every server with STORAGE_ENCRYPTION_RESEAL=true and STORAGE_ENCRYPTION_REQUIRE_V2=true to re-seal and retire version 1, then remove STORAGE_ENCRYPTION_RESEAL and keep STORAGE_ENCRYPTION_REQUIRE_V2 (docs/STORAGE.md, Re-sealing the store).";
+  "Stored credentials still accept the version 1 envelope and unsealed values. Once every server runs this version, back up the store, start once with STORAGE_ENCRYPTION_RESEAL=true and without STORAGE_ENCRYPTION_REQUIRE_V2 to re-seal and retire version 1, then remove STORAGE_ENCRYPTION_RESEAL, set STORAGE_ENCRYPTION_REQUIRE_V2=true and start again (docs/STORAGE.md, Re-sealing the store).";
 
 /** Logged once per process, at initialize, when the store records version 1 as retired and STORAGE_ENCRYPTION_REQUIRE_V2 is not set. */
 export const RETIRED_IN_STORE_WARNING =
-  "The store records that version 1 is retired, but that is recorded only in the store: set STORAGE_ENCRYPTION_REQUIRE_V2=true to have the server refuse version 1 and unsealed values whatever the store holds (docs/STORAGE.md, Re-sealing the store).";
+  "The store records that version 1 is retired, but that is recorded only in the store: remove STORAGE_ENCRYPTION_RESEAL if it is set, set STORAGE_ENCRYPTION_REQUIRE_V2=true and start again, to have the server refuse version 1 and unsealed values whatever the store holds (docs/STORAGE.md, Re-sealing the store).";
 
 const UNOPENABLE_ADVICE =
   "A value marked unopenable does not open for the place it is stored in with the current key: restore the previous JWT_SECRET (or STORAGE_ENCRYPTION_KEY) BEFORE the app writes again, or re-enter the affected credentials.";
 const RETIRED_ADVICE =
-  "A value marked retired is a version 1 or unsealed value, which this store refuses since STORAGE_ENCRYPTION_RESEAL retired version 1, or because STORAGE_ENCRYPTION_REQUIRE_V2 is set. One a re-seal run with leave-unopened left because the key then in use did not open it, or one an older server wrote after a downgrade, comes back by deleting the store's storage_meta row credential_envelope with every server stopped and re-sealing under the key that sealed it, with STORAGE_ENCRYPTION_RESEAL set; any other one is re-entered (docs/STORAGE.md, Values refused as retired after the re-seal).";
+  "A value marked retired is a version 1 or unsealed value, which this store refuses since STORAGE_ENCRYPTION_RESEAL retired version 1, or because STORAGE_ENCRYPTION_REQUIRE_V2 is set. One a re-seal run with leave-unopened left because the key then in use did not open it, or one an older server wrote after a downgrade, comes back by deleting the store's storage_meta row credential_envelope with every server stopped and re-sealing under the key that sealed it in one start with STORAGE_ENCRYPTION_RESEAL set and STORAGE_ENCRYPTION_REQUIRE_V2 not set, then setting STORAGE_ENCRYPTION_REQUIRE_V2 again; any other one is re-entered (docs/STORAGE.md, Values refused as retired after the re-seal).";
 const MIXED_ADVICE =
   "A value marked mixed is a version 1 or unsealed value in a connection whose other values are sealed as v2, which this version never writes: it was put there outside Studio, so re-enter the affected credentials.";
 const NOT_TEXT_ADVICE =
@@ -163,15 +163,15 @@ class CredentialEncryptingProvider implements ServerStorageProvider {
   /**
    * Opens the inner store and decides the envelope state for the life of this provider. With
    * STORAGE_ENCRYPTION_REQUIRE_V2 set, the state is `v1-retired` whatever the store's marker says, and a store with no
-   * marker is refused by name, unless STORAGE_ENCRYPTION_RESEAL asks for a re-seal: then the boot step re-seals it and
-   * checks the marker before the server serves (./reseal-at-boot.ts). Without the setting, the marker decides.
+   * marker is refused by name whatever STORAGE_ENCRYPTION_RESEAL says, so no re-seal runs on it (./reseal-at-boot.ts).
+   * Without the setting, the marker decides.
    */
   async initialize(): Promise<void> {
     const required = requiresVersionTwo();
     await this.inner.initialize();
     const recorded = await this.inner.readEnvelopeState();
     if (required) {
-      if (recorded === "v1-accepted" && resealSetting() === "off") throw new Error(VERSION_TWO_NOT_RECORDED);
+      if (recorded === "v1-accepted") throw new Error(VERSION_TWO_NOT_RECORDED);
       this.state = "v1-retired";
       return;
     }

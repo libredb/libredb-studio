@@ -268,12 +268,16 @@ describe("the envelope state", () => {
     }
   });
 
-  test("the version 1 warning names the whole order: back up, re-seal, then keep STORAGE_ENCRYPTION_REQUIRE_V2 set", () => {
-    const order = ["back up the store", "STORAGE_ENCRYPTION_RESEAL=true", "STORAGE_ENCRYPTION_REQUIRE_V2=true"];
+  test("the version 1 warning names the whole order in two starts: back up, re-seal without the requirement, then the requirement without the re-seal", () => {
+    const order = [
+      "back up the store",
+      "start once with STORAGE_ENCRYPTION_RESEAL=true and without STORAGE_ENCRYPTION_REQUIRE_V2",
+      "then remove STORAGE_ENCRYPTION_RESEAL, set STORAGE_ENCRYPTION_REQUIRE_V2=true and start again",
+    ];
     const at = order.map((step) => V1_ACCEPTED_WARNING.indexOf(step));
     expect(at.every((index) => index >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
-    expect(V1_ACCEPTED_WARNING).toContain("remove STORAGE_ENCRYPTION_RESEAL and keep STORAGE_ENCRYPTION_REQUIRE_V2");
+    expect(V1_ACCEPTED_WARNING).not.toContain("STORAGE_ENCRYPTION_RESEAL=true and STORAGE_ENCRYPTION_REQUIRE_V2=true");
   });
 
   test("a store that retired v1 says once, at initialize, that the retirement is recorded only in the store", async () => {
@@ -287,7 +291,9 @@ describe("the envelope state", () => {
       expect(calls.filter((line) => line === V1_ACCEPTED_WARNING)).toHaveLength(0);
       expect(calls.filter((line) => line === RETIRED_IN_STORE_WARNING)).toHaveLength(1);
       expect(RETIRED_IN_STORE_WARNING).toContain("recorded only in the store");
-      expect(RETIRED_IN_STORE_WARNING).toContain("STORAGE_ENCRYPTION_REQUIRE_V2=true");
+      expect(RETIRED_IN_STORE_WARNING).toContain(
+        "remove STORAGE_ENCRYPTION_RESEAL if it is set, set STORAGE_ENCRYPTION_REQUIRE_V2=true and start again",
+      );
     } finally {
       warn.mockRestore();
     }
@@ -319,47 +325,25 @@ describe("the envelope state", () => {
     }
   });
 
-  test("with STORAGE_ENCRYPTION_REQUIRE_V2 set, v1 and unsealed values are refused as retired with no marker in the store while a re-seal is asked for", async () => {
-    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "on";
-    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
-    const store = new MemoryStorageProvider();
-    const secret = randomUUID();
-    store.putRow("u", "connections", JSON.stringify([{ ...connection, password: sealVersionOne(secret) }]));
-    store.accounts.set("ada@example.com", {
-      email: "ada@example.com",
-      passwordHash: "scrypt$hash",
-      role: "user",
-      totpSecret: randomUUID(),
-      totpPending: null,
-      disabled: false,
-      sessionVersion: 0,
-      createdAt: "t",
-      updatedAt: "t",
-    });
-    const warn = spyOn(logger, "warn").mockImplementation(() => {});
-    const error = spyOn(logger, "error").mockImplementation(() => {});
-    try {
-      const provider = await ready(store);
-      const read = (await provider.getCollection("u", "connections")) ?? [];
-      const ada = await provider.getAccount("ada@example.com");
-
-      expect(store.marker).toBeUndefined();
-      expect("password" in read[0]).toBe(false);
-      expect(ownWarnings(warn)[0]).toContain("c1 password (retired)");
-      expect(ada?.totpSecret).toBe("!unopenable");
-    } finally {
-      warn.mockRestore();
-      error.mockRestore();
-    }
-  });
-
-  test("with STORAGE_ENCRYPTION_REQUIRE_V2 set and no re-seal asked for, a store with no marker fails initialize by name", async () => {
+  test("with STORAGE_ENCRYPTION_REQUIRE_V2 set, a store with no marker fails initialize by name, whether or not a re-seal is asked for", async () => {
     process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "1";
-    const inner = stubProvider({ readEnvelopeState: mock(async () => "v1-accepted") as never });
-    const provider = withCredentialEncryption(inner);
+    for (const reseal of [undefined, "off", "true", "leave-unopened"]) {
+      if (reseal === undefined) delete process.env.STORAGE_ENCRYPTION_RESEAL;
+      else process.env.STORAGE_ENCRYPTION_RESEAL = reseal;
+      const inner = stubProvider({ readEnvelopeState: mock(async () => "v1-accepted") as never });
+      const provider = withCredentialEncryption(inner);
 
-    await expect(provider.initialize()).rejects.toThrow(VERSION_TWO_NOT_RECORDED);
-    await expect(provider.getAllData("u")).rejects.toThrow("before initialize");
+      // oxlint-disable-next-line no-await-in-loop -- each setting initializes on its own, one after another.
+      const failure = await provider.initialize().then(
+        () => "initialized",
+        (error: Error) => error.message,
+      );
+
+      expect({ reseal, failure }).toEqual({ reseal, failure: VERSION_TWO_NOT_RECORDED });
+      // oxlint-disable-next-line no-await-in-loop -- each setting initializes on its own, one after another.
+      await expect(provider.getAllData("u")).rejects.toThrow("before initialize");
+      expect(inner.getAllData).not.toHaveBeenCalled();
+    }
   });
 
   test("an invalid STORAGE_ENCRYPTION_REQUIRE_V2 fails initialize by name before the store is opened", async () => {
@@ -537,7 +521,7 @@ describe("the warning", () => {
         "c1 apiKeyId (not-text), c1 connectionString (mixed), c2 password (unbindable), c3 password (retired)",
       );
       expect(calls[0]).toContain(
-        "deleting the store's storage_meta row credential_envelope with every server stopped and re-sealing under the key that sealed it",
+        "deleting the store's storage_meta row credential_envelope with every server stopped and re-sealing under the key that sealed it in one start with STORAGE_ENCRYPTION_RESEAL set and STORAGE_ENCRYPTION_REQUIRE_V2 not set, then setting STORAGE_ENCRYPTION_REQUIRE_V2 again",
       );
       expect(calls[0]).toContain("or because STORAGE_ENCRYPTION_REQUIRE_V2 is set");
       expect(calls[0]).toContain("One a re-seal run with leave-unopened left");
