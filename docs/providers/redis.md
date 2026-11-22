@@ -1890,6 +1890,21 @@ won't break the monitoring dashboard.
 The same catch also answers `[]` for a read that failed for any other reason, a connection reset included, so the panel shows no sessions or no slow queries with no error (D39 and D472 in [`../BACKLOG.md`](../BACKLOG.md)).
 The other reads, `getOverview()`, `getPerformanceMetrics()` and `getStorageStats()`, raise a failure the driver or the server gave them as a `QueryError`, *"Redis error: …"* ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)).
 
+### Engine facets
+
+Which of the seven monitoring panels `redis` offers is its row in `ENGINE_FACETS`, declared in [`redis-engine-facets.ts`](../../src/lib/db/providers/keyvalue/redis-engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ---
 
 ## 8. Maintenance

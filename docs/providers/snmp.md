@@ -460,6 +460,25 @@ So the scope of a narrow community is held by the agent's view, which does not d
 A `set` sent through the tool with its fence removed, with a community whose view may write, is refused by the provider's reader before anything is sent and leaves `sysContact` as it was, while the same Set sent raw with that community changes it.
 What no prefix list holds is written in [section 13.3](#133-values-and-what-is-withheld): a `pass`, `pass_persist` or `proxy` directive's subtree and a vendor MIB the list does not name are read as the agent answers them.
 
+## Monitoring
+
+Only the overview panel reads the agent, so the monitoring dashboard draws the Overview tab and the pool view for this engine.
+
+### Engine facets
+
+Which of the seven monitoring panels `snmp` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/network/snmp/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
 ## Migration DDL
 
 [`SNMP_MIGRATION_DDL`](../../src/lib/db/providers/network/snmp/migration-ddl.ts) is what the schema-diff migration generator writes for `snmp`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.

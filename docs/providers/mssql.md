@@ -1425,6 +1425,21 @@ the driver returns no row, no expected column, or a non-finite value, the measur
 the string stays `N/A`. The shared `measuredNullableAggregate()` ([`measured-aggregate.ts`](../../src/lib/db/utils/measured-aggregate.ts))
 boundary preserves those states without a falsy test that would erase a genuine zero.
 
+### Engine facets
+
+Which of the seven monitoring panels `mssql` offers is its row in `ENGINE_FACETS`, declared in [`mssql-engine-facets.ts`](../../src/lib/db/providers/sql/mssql-engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ---
 
 ## 9. Maintenance

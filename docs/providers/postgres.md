@@ -2062,6 +2062,21 @@ same quantity twice with one of the two mislabelled, and substituted `100` when 
 `0`. PostgreSQL publishes no buffer-pool occupancy without the `pg_buffercache` extension, which is
 not installed by default and whose scan locks `shared_buffers`.
 
+### Engine facets
+
+Which of the seven monitoring panels `postgres` offers is its row in `ENGINE_FACETS`, declared in [`postgres-engine-facets.ts`](../../src/lib/db/providers/sql/postgres-engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ---
 
 ## 8. Transactions

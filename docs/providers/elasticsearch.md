@@ -1589,6 +1589,21 @@ Its null then propagates honestly: `getOverview()` shows `"N/A"` for the size **
 `databaseSizeBytes`**, and `getStorageStats()` returns **no row at all** rather than a row claiming
 the cluster stores zero bytes.
 
+### Engine facets
+
+Which of the seven monitoring panels `elasticsearch` offers is its row in `ENGINE_FACETS`, declared in [`elasticsearch-engine-facets.ts`](../../src/lib/db/providers/sql/search/elasticsearch-engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ---
 
 ## 8. Maintenance

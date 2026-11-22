@@ -2175,6 +2175,21 @@ a remainder of `-49152 B`. `getTableStats()` carries `INDEX_LENGTH` as `indexSiz
 that number and dropped it before 2026-08-23, which is why the panel had nothing to add up), and
 that is what MySQL itself calls index bytes.
 
+### Engine facets
+
+Which of the seven monitoring panels `mysql` offers is its row in `ENGINE_FACETS`, declared in [`mysql-engine-facets.ts`](../../src/lib/db/providers/sql/mysql-engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ---
 
 ## 9. Maintenance

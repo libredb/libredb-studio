@@ -1053,6 +1053,21 @@ other honest answer. `size`, the formatted string beside it, still reads `"N/A"`
 `fileSizeHuman()` every other caller uses, so the row is not internally consistent between its two size
 fields on a failed read — a required-field limitation, not an oversight.
 
+### Engine facets
+
+Which of the seven monitoring panels `libredb` offers is its row in `ENGINE_FACETS`, declared in [`libredb-engine-facets.ts`](../../src/lib/db/providers/embedded/libredb-engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` refuses with `LIBREDB_ACTIVE_SESSIONS_REFUSAL` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` refuses with `LIBREDB_INDEX_STATS_REFUSAL` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ---
 
 ## 8. Maintenance

@@ -37,6 +37,7 @@ const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 /** The engine contract directories, scanned like the rest of the shared db core. */
 const CONTRACT_DIRECTORIES = [
   "src/lib/db/connection-string/",
+  "src/lib/db/engine-facets/",
   "src/lib/db/execution-ui/",
   "src/lib/db/migration-ddl/",
   "src/lib/db/sql-grammar/",
@@ -101,6 +102,7 @@ export const REGISTRIES: readonly Listed[] = [
   })),
   ...[
     ["src/lib/db/connection-string/index.ts", "CONNECTION_STRING"],
+    ["src/lib/db/engine-facets/index.ts", "ENGINE_FACETS"],
     ["src/lib/db/execution-ui/index.ts", "EXECUTION_UI"],
     ["src/lib/db/migration-ddl/index.ts", "MIGRATION_DDL"],
     ["src/lib/db/sql-grammar/index.ts", "SQL_GRAMMAR"],

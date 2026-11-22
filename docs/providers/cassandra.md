@@ -1279,6 +1279,21 @@ throwing health check would lock the whole ScyllaDB family out of the product
 ([§3.6](#36-a-monitoring-surface-degrades-on-a-denial-and-on-one-absent-keyspace)). A monitoring
 panel has the opposite obligation — it is the surface that must say what it could not read.
 
+### Engine facets
+
+Which of the seven monitoring panels `cassandra` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/cassandra/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | No | `getTableStats` refuses with `CASSANDRA_TABLE_STATS_REFUSAL` without asking the engine |
+| `indexes` | No | `getIndexStats` refuses with `CASSANDRA_INDEX_STATS_REFUSAL` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `CASSANDRA_STORAGE_STATS_REFUSAL` without asking the engine |
+
 ---
 
 ## 8. Maintenance

@@ -946,6 +946,21 @@ theoretical mismatch — the Queries panel told an OPC UA reader to install `pg_
 PostgreSQL extension, and the Sessions panel said "No active sessions found." against a server that
 was holding this very session.
 
+### Engine facets
+
+Which of the seven monitoring panels `opcua` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/opcua/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine |
+| `indexes` | No | `getIndexStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine |
+
 ## 8. Maintenance
 
 `supportsMaintenance: false`, `maintenanceOperations: []`. `runMaintenance` refuses:

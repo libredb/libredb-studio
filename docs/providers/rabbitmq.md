@@ -271,6 +271,21 @@ The tree handles about 1,200 virtual hosts; past that the `/api/vhosts` answer p
 The performance, slow-query, session, table, index and storage panels answer empty with no GET: RabbitMQ has no query log, and Studio does not list broker connections, because they name other users and client addresses.
 No node name and no other principal's name is shown.
 
+### Engine facets
+
+Which of the seven monitoring panels `rabbitmq` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/stream/rabbitmq/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
 ## 8. AI agent and MCP
 
 - A model receives virtual host, stream, queue and exchange names, kinds, counts and the request language, each name inside the untrusted-content fence in plan mode and MCP.

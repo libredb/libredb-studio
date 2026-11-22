@@ -398,6 +398,21 @@ capability count from the hello. There are no performance metrics, no slow queri
 index statistics and no storage statistics, and each of those answers empty rather than throwing,
 because the truthful answer is that this engine publishes none of them.
 
+### Engine facets
+
+Which of the seven monitoring panels `netconf` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/network/netconf/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` refuses with `SENTENCES.noMetrics` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` refuses with `SENTENCES.noMetrics` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` refuses with `SENTENCES.noSessions` without asking the engine |
+| `tables` | No | `getTableStats` refuses with `SENTENCES.noTables` without asking the engine |
+| `indexes` | No | `getIndexStats` refuses with `SENTENCES.noTables` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `SENTENCES.noStorage` without asking the engine |
+
 ## 8. Maintenance
 
 None. `supportsMaintenance: false`, `maintenanceOperations: []`, and `runMaintenance` states a

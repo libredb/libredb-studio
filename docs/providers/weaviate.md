@@ -296,6 +296,21 @@ Where no object has shown the vector's length, as in the tree's one-read schema 
 | Indexes | One row per vector: index type, distance and compression |
 | Slow queries, sessions, storage | Empty: Weaviate reports none over the routes Studio reads |
 
+### Engine facets
+
+Which of the seven monitoring panels `weaviate` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/vector/weaviate/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
 ## 8. Maintenance
 
 None: Weaviate has no maintenance operation in v1, so no Admin > Operations card and no tree control is offered for it.

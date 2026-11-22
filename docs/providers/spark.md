@@ -500,6 +500,21 @@ The overview's version is the server's text as the version sentences of [section
 
 The 60 s connection pulse sends one AnalyzePlan on the metadata session, which also keeps that session from idling out.
 
+#### Engine facets
+
+Which of the seven monitoring panels `spark` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/spark/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` refuses with `SPARK_MONITORING_LABELS.tablesRefused` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `SPARK_MONITORING_LABELS.storageRefused` without asking the engine |
+
 ### 8.3 Plan mode and agent operations
 
 Plan mode works: the model is told to write Spark SQL, and the grounding walk reads only the session's current namespace, or, when the current catalog holds no such namespace, that catalog's namespaces.

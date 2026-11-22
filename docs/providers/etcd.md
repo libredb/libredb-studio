@@ -448,6 +448,21 @@ The overview gives the version, the exact key count and the member's size on dis
 Storage is one row for the answering member, its usage the size on disk over the quota the member runs under, a quota of 0 from 3.6 or later read as the 2 GiB default (3.6.0 to 3.6.5 send the flag's 0, and 3.6.6 and later answer the default themselves), and "-" when the quota is disabled (a negative `--quota-backend-bytes`) or not reported (a server before 3.6 sends none); the Tables tab counts each group's keys when it opens, "The key-prefix groups; a key in no group is counted in the Overview and not here".
 etcd keeps no query log and reports no client sessions, and its performance metrics are not read.
 
+### Engine facets
+
+Which of the seven monitoring panels `etcd` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/keyvalue/etcd/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ## 8. Maintenance
 
 Three cards of Admin > Operations, each for an admin, each audited, and each confirmed by typing the connection's name:

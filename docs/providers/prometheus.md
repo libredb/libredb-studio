@@ -601,6 +601,21 @@ Each surface reads the HTTP API only, and a surface that cannot give an honest n
 The `operations` agent workflow reads these surfaces on every engine in both modes, so agent runs reach the monitored server through them too.
 On a handle opened for an agent-mode profile the overview, performance, slow-query, session and index readings answer their reason instead ([§14.4](#144-values-and-what-each-path-reads)).
 
+### Engine facets
+
+Which of the seven monitoring panels `prometheus` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/timeseries/prometheus/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ---
 
 ## 8. Maintenance

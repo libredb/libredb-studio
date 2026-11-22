@@ -85,6 +85,7 @@ The console's modules are pure and shipped to the browser, because the editor, t
 | `labels.ts` | The labels, the statement language and the key order in words | browser |
 | `connection-string.ts` | The engine's connection string row: no scheme, no TLS read from a URL query, no seed load check | browser |
 | `execution-ui.ts` | The engine's execution UI row: the rolled-back notice names `COMMIT`, no consent deadline | browser |
+| `engine-facets.ts` | The engine's facets row: no monitoring panel is offered | browser |
 | `generators.ts` | The commands Generate Command writes | browser |
 | `sql-writing.ts` | The SQL writing row, the inert standard answer no generator calls | browser |
 | `destructive.ts` | The engine's row of the confirmation gate's vocabulary, which `src/lib/db/destructive-commands.ts` collects | browser |
@@ -608,6 +609,21 @@ The other panels are empty, with these states:
 - Slow queries: Oxia keeps no query log
 - Sessions: Oxia does not list client sessions
 - Tables: Oxia has no tables: its shards are listed under Shards, and its keys in the Keys panel and with list in the console.
+
+### Engine facets
+
+Which of the seven monitoring panels `oxia` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/keyvalue/oxia/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | No | `getOverview` answers constants after a reachability probe, never a figure the server reports |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
 
 ## 8. Maintenance
 

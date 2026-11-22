@@ -449,6 +449,21 @@ Slow queries and sessions are not offered, and the two panels say why:
 
 For performance, storage and query-node metrics, point a Prometheus server at Milvus's `:9091/metrics` and read it through the Prometheus provider.
 
+### Engine facets
+
+Which of the seven monitoring panels `milvus` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/vector/milvus/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
 ## 8. Maintenance
 
 Two controls of Admin > Operations, on each collection, for an admin, each audited with the Studio user, the Milvus user, the database and the collection:

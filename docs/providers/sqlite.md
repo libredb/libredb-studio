@@ -1273,6 +1273,21 @@ and before one, the `-wal` can hold older copies of a page beside the current on
 **WAL** row, which is what the Storage tab's WAL tile reads. Those rows are the bytes on disk, so
 their sum can be larger than the database size.
 
+### Engine facets
+
+Which of the seven monitoring panels `sqlite` offers is its row in `ENGINE_FACETS`, declared in [`sqlite-engine-facets.ts`](../../src/lib/db/providers/sql/sqlite-engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers the constant `{ deadlocks: 0 }` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers one synthetic session carrying Studio's own process id without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ---
 
 ## 8. Maintenance

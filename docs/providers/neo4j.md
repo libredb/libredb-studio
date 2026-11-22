@@ -398,6 +398,21 @@ A read the server refuses yields that panel's empty answer, never a throw, while
 The Slow queries panel says "Neo4j Community keeps no query log, and this version does not read the Enterprise query log." and the Active sessions panel with nothing running says "No transaction is running."
 Health answers healthy after the connectivity check and the ping, or raises; Bolt reports no cache ratio, size or uptime, so those read "N/A".
 
+### Engine facets
+
+Which of the seven monitoring panels `neo4j` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/graph/neo4j/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
 ## 8. Maintenance
 
 None: `supportsMaintenance` is false, no operation is declared, and a maintenance call that arrives anyway is refused with "Neo4j connections are read-only in this version: no maintenance operation runs."

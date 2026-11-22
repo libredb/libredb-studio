@@ -765,6 +765,21 @@ On the measured Cloud tenant `system_history.query_history` answered 1003, so th
 
 With Warehouse set, or on a Databend Cloud host, no pulse or fleet check runs (section 4.4); a panel opened by a person resumes the warehouse like any other request.
 
+### Engine facets
+
+Which of the seven monitoring panels `databend` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/databend/engine-facets.ts).
+A panel not offered is never read: `getMonitoringData` lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
 ## 8. Maintenance
 
 The one operation is "Kill Query": `KILL QUERY '<session id>'` on a session the Sessions panel lists, which stops that session's current statement and needs the global SUPER privilege.
