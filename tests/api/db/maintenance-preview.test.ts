@@ -106,13 +106,17 @@ mock.module("@/lib/db", () => ({
 const { POST } = await import("@/app/api/db/maintenance/preview/route");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+/**
+ * An etcd connection: the route reads the engine facets row of the connection's type before the factory, so the
+ * type is one whose row offers the synthetic declaration's `compact`, `defragment` and `disarm`. Its `analyze` is
+ * offered by PostgreSQL's row, and the test that posts it says so.
+ */
 const validConnection = {
   id: "test-1",
   name: "Test DB",
-  type: "postgres",
+  type: "etcd",
   host: "localhost",
-  port: 5432,
-  database: "testdb",
+  port: 2379,
 };
 
 /** Every provider method that was called, by name: an admin's preview may call `getCapabilities` and `previewMaintenance` only. */
@@ -242,8 +246,32 @@ describe("POST /api/db/maintenance/preview", () => {
     const res = await preview({ type: "optimize", target: "orders", connection: validConnection });
 
     expect(res.status).toBe(400);
-    expect(await errorOf(res)).toContain("not supported");
-    expect(calledMethods()).toEqual(["getCapabilities"]);
+    expect(await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res)).toEqual({
+      error:
+        '"optimize" is not a maintenance operation LibreDB Studio offers on etcd, which offers compact, defragment, disarm; no connection was opened and nothing was run.',
+      code: "FACET_NOT_OFFERED",
+      statusCode: 400,
+    });
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(calledMethods()).toEqual([]);
+  });
+
+  test("an operation the engine does not offer is refused FACET_NOT_OFFERED before any provider is built", async () => {
+    const res = await preview({
+      type: "compact",
+      target: "orders",
+      connection: { ...validConnection, type: "kafka", port: 9092 },
+    });
+
+    expect(res.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res)).toEqual({
+      error:
+        '"compact" is not a maintenance operation LibreDB Studio offers on Apache Kafka, which offers none; no connection was opened and nothing was run.',
+      code: "FACET_NOT_OFFERED",
+      statusCode: 400,
+    });
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(calledMethods()).toEqual([]);
   });
 
   test("an engine with no maintenance answers 400 and previews nothing", async () => {
@@ -254,10 +282,36 @@ describe("POST /api/db/maintenance/preview", () => {
 
     const res = await preview({ type: "compact", target: "orders", connection: validConnection });
 
+    // The row offers compact on etcd, so the refusal comes from the connected server, after connect.
     expect(res.status).toBe(400);
-    expect(await errorOf(res)).toContain("not supported");
+    expect(await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res)).toEqual({
+      error:
+        '"compact" is not a maintenance operation the etcd server this connection reaches accepts, which accepts none; nothing was run.',
+      code: "FACET_NOT_OFFERED",
+      statusCode: 400,
+    });
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
     expect(mockPreviewMaintenance).not.toHaveBeenCalled();
   });
+
+  test.each<[string, unknown]>([
+    ["the number 5", 5],
+    ["true", true],
+    ["an object", {}],
+    ["an array", []],
+  ])(
+    "a type that is not text is refused with a fixed sentence before any provider is built: %s",
+    async (_label, type) => {
+      const res = await preview({ type, target: "orders", connection: validConnection });
+
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON<{ error: string }>(res)).toEqual({
+        error: '"type" must be a string naming a maintenance operation',
+      });
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(calledMethods()).toEqual([]);
+    },
+  );
 
   test("a whole-database operation answers the placement 400 in the provider's words", async () => {
     const res = await preview({ type: "defragment", target: "orders", connection: validConnection });
@@ -269,11 +323,12 @@ describe("POST /api/db/maintenance/preview", () => {
     expect(calledMethods()).toEqual(["getCapabilities"]);
   });
 
-  test.each<[string, string]>([
-    ["a typed-target operation", "disarm"],
-    ["an operation with no confirmation", "analyze"],
-  ])("%s whose spec declares no preview answers 400", async (_label, type) => {
-    const res = await preview({ type, target: "orders", connection: validConnection });
+  test.each<[string, string, string]>([
+    ["a typed-target operation", "disarm", "etcd"],
+    // etcd's row offers no analyze, so this one posts a connection whose row does.
+    ["an operation with no confirmation", "analyze", "postgres"],
+  ])("%s whose spec declares no preview answers 400", async (_label, type, engine) => {
+    const res = await preview({ type, target: "orders", connection: { ...validConnection, type: engine } });
 
     expect(res.status).toBe(400);
     expect(await errorOf(res)).toBe("This operation has no preview");

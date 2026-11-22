@@ -6,6 +6,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { assertMaintenanceAccepted, assertMaintenanceOffered } from "@/lib/db/engine-facets/maintenance";
 
 const ROUTE = "POST /api/db/maintenance/preview";
 
@@ -14,8 +15,10 @@ const ROUTE = "POST /api/db/maintenance/preview";
  *
  * A read, and still a route on the credential path, so it stands behind the same doors as `POST /api/db/maintenance`:
  * the same `guardRoute` bucket, the admin check with its audited denial, and the request checks that route makes
- * before it runs anything, in the same order, so the two cannot disagree about a request. A preview is per object, so
- * a non-empty `target` is required where the maintenance route reads its absence as the whole-database form.
+ * before it runs anything, in the same order, so the two cannot disagree about a request: `type` present and text,
+ * `container` text or absent, the operation listed in the engine's `ENGINE_FACETS` row before any provider is built
+ * (`400 FACET_NOT_OFFERED`), and the operation the connected server accepts (the same code). A preview is per object,
+ * so a non-empty `target` is required where the maintenance route reads its absence as the whole-database form.
  *
  * Neither route proves that the target exists, because neither calls the provider before its one method: existence is
  * the provider's, and `previewMaintenance` raises a `QueryError` naming what is missing. Nothing but that method is
@@ -45,6 +48,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Maintenance type is required" }, { status: 400 });
     }
 
+    // The maintenance route's type rule: an operation is named by text, and a value that is not text is not repeated.
+    if (typeof type !== "string") {
+      return NextResponse.json({ error: `"type" must be a string naming a maintenance operation` }, { status: 400 });
+    }
+
     // The maintenance route's container rule: a string or absent, and an empty string is the absence of one.
     if (container !== undefined && typeof container !== "string") {
       return NextResponse.json(
@@ -59,21 +67,14 @@ export async function POST(request: Request) {
 
     const requestedContainer: string | undefined = container || undefined;
 
+    // The maintenance route's two operation checks: the engine facets row before any provider is built, and the
+    // connected server's declaration after, each refused 400 FACET_NOT_OFFERED.
+    assertMaintenanceOffered(connection.type, type);
+
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
     const capabilities = provider.getCapabilities();
 
-    if (!capabilities.supportsMaintenance) {
-      return NextResponse.json({ error: `Maintenance operations not supported for this database` }, { status: 400 });
-    }
-
-    if (!capabilities.maintenanceOperations.includes(type as MaintenanceOperation)) {
-      return NextResponse.json(
-        {
-          error: `Operation '${type}' not supported for this database. Supported: ${capabilities.maintenanceOperations.join(", ")}`,
-        },
-        { status: 400 },
-      );
-    }
+    assertMaintenanceAccepted(connection.type, type, capabilities);
 
     // The maintenance route's placement gate, for the one placement a preview has: a named object. It speaks only
     // where the provider offers the other placement, which is that route's reading of a spec with both halves false.
