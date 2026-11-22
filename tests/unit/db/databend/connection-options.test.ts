@@ -182,8 +182,12 @@ describe("refusals before any socket", () => {
     }
   });
 
-  test("a tunnel that is on but did not open", () => {
-    expect(refusal(() => build({ sshTunnel: BASTION })).message).toBe(DATABEND_CONNECTION_SENTENCES.tunnelNotOpened);
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no tunnel decision: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [BASTION, { enabled: "yes" }, { enabled: false }, null, "on", []]) {
+      expect(build({ sshTunnel }).origin).toEqual(build().origin);
+    }
   });
 
   test.each([
@@ -191,9 +195,6 @@ describe("refusals before any socket", () => {
     ["password", { password: 7 }, "a string"],
     ["warehouse", { warehouse: 7 }, "a string"],
     ["database", { database: 7 }, "a string"],
-    ["sshTunnel", { sshTunnel: "on" }, "an object"],
-    ["sshTunnel", { sshTunnel: [] }, "an object"],
-    ["sshTunnel.enabled", { sshTunnel: { enabled: "yes" } }, "true or false"],
   ])("a %s of the wrong type is refused by name", (field, overrides, expected) => {
     expect(refusal(() => build(overrides)).message).toBe(DATABEND_CONNECTION_SENTENCES.wrongType(field, expected));
   });
