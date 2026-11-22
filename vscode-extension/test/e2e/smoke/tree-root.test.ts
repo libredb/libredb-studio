@@ -138,10 +138,7 @@ describe("the Connections view's root in a real extension host", () => {
     }
     const bad = items[2];
     assert.equal(bad.description, "invalid");
-    assert.equal(
-      bad.tooltip,
-      "The connection bad has the type nosuchdb, which is not a database LibreDB Studio connects to.",
-    );
+    assert.equal(bad.tooltip, 'No provider for the connection type "nosuchdb" is installed in this LibreDB Studio.');
     assert.ok(bad.iconPath instanceof vscode.ThemeIcon);
     assert.equal(bad.iconPath.id, "error");
     assert.equal(bad.collapsibleState, vscode.TreeItemCollapsibleState.None);

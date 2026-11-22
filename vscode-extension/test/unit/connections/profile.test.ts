@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import {
   type ProfileEntry,
   readProfiles,
@@ -67,20 +69,49 @@ describe("readProfiles", () => {
     for (const name of ["  ", 3, undefined]) assert.deepEqual(invalid({ ...PG, name }), item, String(name));
   });
 
-  it("refuses a type that is not an external database, and keeps one the channel does not enable (rule 5)", () => {
+  it("refuses a type that names no provider with the sentence Studio refuses it with (rule 5)", () => {
+    const types: readonly unknown[] = [
+      "postgresql",
+      "acmefoo",
+      "Postgres",
+      " postgres",
+      "constructor",
+      "__proto__",
+      "toString",
+      "a\nb",
+      "",
+      null,
+      undefined,
+      5,
+      ["postgres"],
+      { toString: () => "redis" },
+    ];
+    for (const type of types) {
+      const refusal = typeIdRefusal(type);
+      assert.notEqual(refusal, null, String(type));
+      const item = invalid({ ...PG, type });
+      assert.deepEqual(item, refusedShop(refusal?.sentence ?? ""), JSON.stringify(type));
+      // One log line per entry: a control character in the type is escaped, never written raw.
+      assert.equal(item.kind === "invalid" && item.reason.includes("\n"), false, JSON.stringify(type));
+    }
     assert.deepEqual(
-      invalid({ ...PG, type: "postgresql" }),
-      refusedShop("The connection shop has the type postgresql, which is not a database LibreDB Studio connects to."),
+      invalid({ ...PG, type: "acmefoo" }),
+      refusedShop('No provider for the connection type "acmefoo" is installed in this LibreDB Studio.'),
     );
+  });
+
+  it("refuses libredb, a type id that is no external database, with its own sentence (rule 5)", () => {
     assert.deepEqual(
       invalid({ ...PG, type: "libredb" }),
       refusedShop("The connection shop has the type libredb, which is not a database LibreDB Studio connects to."),
     );
-    assert.deepEqual(
-      invalid({ ...PG, type: undefined }),
-      refusedShop("The connection shop has the type undefined, which is not a database LibreDB Studio connects to."),
-    );
-    assert.deepEqual(invalid({ ...PG, type: "sqlite" }), valid({ ...PG, type: "sqlite" }));
+  });
+
+  it("keeps every external type id, the ones the channel does not enable included (rule 5)", () => {
+    assert.equal(EXTERNAL_DATABASE_TYPES.length, 42);
+    for (const type of EXTERNAL_DATABASE_TYPES) {
+      assert.deepEqual(invalid({ ...PG, type }), valid({ ...PG, type }), type);
+    }
   });
 
   it("refuses a createdAt that is not a date string (rule 6)", () => {

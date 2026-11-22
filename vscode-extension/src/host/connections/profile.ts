@@ -2,6 +2,7 @@
 // libredb.connections setting"), its load validation, and its split from and join to the WireConnection the child
 // takes, both through P7's walker so the host never names a secret field.
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import { secretFieldValues, withoutSecretFields, withSecretFieldValues } from "@/lib/storage/secret-fields";
 import type { SSLMode } from "@/lib/types";
 import type { WireConnection } from "../../protocol";
@@ -72,8 +73,12 @@ function readEntry(element: unknown, n: number, seen: Set<string>): ProfileItem 
 /** Rules 5 to 10 for an element whose id and name are usable: the first one it breaks, else undefined. */
 function refusalOf(entry: Record<string, unknown>, name: string): string | undefined {
   const { type, createdAt, port, ssl, secretFields } = entry;
-  // A type the channel does not enable passes: its open answers the factory gate's sentence.
-  if (typeof type !== "string" || !EXTERNAL.has(type)) {
+  // A type that is missing, not text or names no provider gets the sentence Studio refuses it with (`typeIdRefusal`).
+  // A type id outside EXTERNAL is the embedded LibreDB store; a type the channel does not enable passes, and its open
+  // answers the factory gate's sentence.
+  const refusal = typeIdRefusal(type);
+  if (refusal !== null) return refusal.sentence;
+  if (!EXTERNAL.has(type as string)) {
     return `The connection ${name} has the type ${String(type)}, which is not a database LibreDB Studio connects to.`;
   }
   if (typeof createdAt !== "string" || Number.isNaN(Date.parse(createdAt))) {
