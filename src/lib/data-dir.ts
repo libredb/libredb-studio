@@ -89,16 +89,24 @@ export function reservedStoragePaths(): string[] {
   return [base, `${base}-wal`, `${base}-shm`];
 }
 
+/** The errors of a real-path read after which `canonicalPath` canonicalizes the path from its parent. */
+const CANONICAL_FROM_PARENT = new Set(["ENOENT", "EACCES", "EPERM"]);
+
 /**
  * The real path of `candidate`, an absolute path: its existing ancestors are resolved too, so aliases of a directory
- * name one path for files not yet created. Any error but ENOENT is thrown.
+ * name one path for files not yet created. A path whose last component the process cannot read (EACCES or EPERM, which
+ * macOS answers for a file without read permission, where Linux needs only search permission on the directories) is
+ * canonicalized from its parent, as a missing one is: a symbolic link there is followed, and anything else is the
+ * parent's real path joined with its name. Any other error, any error reading the link, and such an error on the root,
+ * which has no parent, is thrown.
  */
 export function canonicalPath(candidate: string): string {
   try {
     return fs.realpathSync(candidate);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (!CANONICAL_FROM_PARENT.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
     const parent = path.dirname(candidate);
+    if (parent === candidate) throw error;
     if (fs.lstatSync(candidate, { throwIfNoEntry: false })?.isSymbolicLink()) {
       return canonicalPath(path.resolve(parent, fs.readlinkSync(candidate)));
     }

@@ -3,6 +3,7 @@ import * as path from "path";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import {
+  canonicalPath,
   DEFAULT_STORAGE_SQLITE_PATH,
   foldPathKey,
   forgetStorageLocation,
@@ -309,5 +310,98 @@ describe("Studio's storage location is taken once per process (FND-2 slice 3)", 
     expect(storageLocation().storageFile).toBe(path.join(scratch, "first.db"));
     forgetStorageLocation();
     expect(storageLocation().storageFile).toBe(path.join(scratch, "second.db"));
+  });
+});
+
+/**
+ * A path whose last component the process cannot read is canonicalized from its parent, as a missing one is. macOS
+ * answers EACCES to the real-path read of a file without read permission, where Linux needs only search permission on
+ * its directories, so the read is replaced here for the named paths and the case runs the same on every OS.
+ */
+describe("data-dir canonicalPath() on a path whose last component the process cannot read", () => {
+  const originalPath = process.env.STORAGE_SQLITE_PATH;
+  const realpath = fs.realpathSync;
+  let scratch: string;
+  let denied: ReturnType<typeof spyOn> | undefined;
+
+  /** Makes the real-path read of each of `paths` fail with `code`; every other path reads as before. */
+  function denyRealpath(paths: string[], code: string): void {
+    const named = new Set(paths);
+    denied = spyOn(fs, "realpathSync").mockImplementation(((file: fs.PathLike, options?: unknown) => {
+      if (named.has(String(file))) {
+        throw Object.assign(new Error(`${code}: denied, lstat '${String(file)}'`), { code });
+      }
+      return realpath(file, options as fs.EncodingOption);
+    }) as typeof fs.realpathSync);
+  }
+
+  beforeEach(() => {
+    forgetStorageLocation();
+    scratch = realpath(fs.mkdtempSync(path.join(tmpdir(), "libredb-unreadable-last-")));
+    fs.mkdirSync(path.join(scratch, "data"));
+    fs.mkdirSync(path.join(scratch, "user"));
+    fs.writeFileSync(path.join(scratch, "data", "storage.db"), "store");
+    process.env.STORAGE_SQLITE_PATH = path.join(scratch, "data", "storage.db");
+  });
+
+  afterEach(() => {
+    denied?.mockRestore();
+    denied = undefined;
+    if (originalPath === undefined) delete process.env.STORAGE_SQLITE_PATH;
+    else process.env.STORAGE_SQLITE_PATH = originalPath;
+    forgetStorageLocation();
+    fs.rmSync(scratch, { recursive: true, force: true });
+  });
+
+  for (const code of ["EACCES", "EPERM"]) {
+    test(`a file whose real path answers ${code} is its parent's real path joined with its name, and is decided`, () => {
+      const file = path.join(scratch, "user", "locked.db");
+      fs.writeFileSync(file, "user data");
+      fs.symlinkSync(path.join(scratch, "user"), path.join(scratch, "alias"));
+      const spelled = path.join(scratch, "alias", "locked.db");
+      denyRealpath([spelled], code);
+
+      expect(canonicalPath(spelled)).toBe(file);
+      expect(isReservedStoragePath(spelled)).toBe(false);
+    });
+  }
+
+  test("a link to a reserved file, whose own real path answers EACCES, is still reserved", () => {
+    const store = path.join(scratch, "data", "storage.db");
+    const links = {
+      symbolic: path.join(scratch, "user", "symbolic.db"),
+      hard: path.join(scratch, "user", "hard.db"),
+      "symbolic to a sidecar not yet created": path.join(scratch, "user", "wal.db"),
+      "symbolic to the bootstrap backup not yet created": path.join(scratch, "user", "bak.json"),
+    };
+    fs.symlinkSync(store, links.symbolic);
+    fs.linkSync(store, links.hard);
+    fs.symlinkSync(`${store}-wal`, links["symbolic to a sidecar not yet created"]);
+    fs.symlinkSync(
+      path.join(scratch, "data", "auth-bootstrap.json.bak"),
+      links["symbolic to the bootstrap backup not yet created"],
+    );
+    const otherCase = path.join(scratch, "data", "STORAGE.DB");
+    denyRealpath([...Object.values(links), otherCase], "EACCES");
+
+    for (const [kind, link] of Object.entries(links)) {
+      expect([kind, isReservedStoragePath(link)]).toEqual([kind, true]);
+    }
+    expect(isReservedStoragePath(otherCase)).toBe(true);
+  });
+
+  test("the root, which has no parent, raises its error", () => {
+    denyRealpath([path.parse(scratch).root], "EACCES");
+
+    expect(() => canonicalPath(path.parse(scratch).root)).toThrow("EACCES: denied");
+  });
+
+  test("any other error from the real-path read is still raised", () => {
+    const file = path.join(scratch, "user", "broken.db");
+    fs.writeFileSync(file, "user data");
+    denyRealpath([file], "EIO");
+
+    expect(() => canonicalPath(file)).toThrow("EIO: denied");
+    expect(() => isReservedStoragePath(file)).toThrow("EIO: denied");
   });
 });
