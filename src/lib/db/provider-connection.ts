@@ -1,8 +1,61 @@
 import type { ProviderExecutionContext } from "@/lib/db/types";
 import { TUNNEL_ROUTE } from "@/lib/types";
-import type { DatabaseConnection, SSHTunnelConfig, WithTunnelRoute } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, SSHTunnelConfig, WithTunnelRoute } from "@/lib/types";
+import { CONNECTION_STRING_ACCEPTED, SSH_TUNNEL_REFUSAL } from "./compatibility";
+import { CONNECTION_FIELDS, REFUSED_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "./connection-fields";
+import { offersSslPanel } from "./connection-form";
 import { tunnelRoute } from "./connection-fingerprint";
 import { DatabaseConfigError } from "./errors";
+import { typeIdRow } from "./type-id";
+
+/**
+ * Studio's own fields every provider receives, whatever its engine declares (FND-2 slice 6):
+ * - `id`, `name` and `type`: the record's identity, name and engine, which every provider logs and keys on;
+ * - `queryTimeout`: the statement timeout, which core reads back from `provider.config` when it reuses a provider;
+ * - `readOnly` and `seedId`: the read-only mode and the seed it came from, which the read-only providers read to
+ *   refuse a write by name, and which core decides on before the build (`assertReadOnlyHonoured` in ./factory);
+ * - `managed`: whether the record is an operator's seed, which the server-identity grant reads
+ *   (`./auth/server-identity-gate`).
+ * None is a credential. Studio's display and browser facts (`createdAt`, `color`, `environment`, `group`,
+ * `skipObjectScan`), the agent credential (`agentUser`, `agentPassword`) and the SSH tunnel are not among them.
+ */
+export const PROVIDER_CORE_FIELDS = Object.freeze([
+  "id",
+  "name",
+  "type",
+  "queryTimeout",
+  "readOnly",
+  "managed",
+  "seedId",
+] as const satisfies readonly (keyof DatabaseConnection)[]);
+
+/**
+ * The connection fields a provider of `type` receives (FND-2 slice 6, docs/SECURITY.md control 3.41), composed from
+ * the contract rows that declare them, each read through `typeIdRow`:
+ * 1. `CONNECTION_FIELDS`, the fields its connection dialog draws;
+ * 2. the fields of its `SEED_ONLY_FIELDS` row, the fields only its provider reads and only a seed names;
+ * 3. `connectionString` where `CONNECTION_STRING_ACCEPTED` answers true, the URI a seed or an embedder may hand it;
+ * 4. `ssl` where the dialog offers the TLS panel (`offersSslPanel` in ./connection-form);
+ * 5. `host` and `port` where the engine takes an SSH tunnel (`SSH_TUNNEL_REFUSAL` is null), because core writes the
+ *    tunnel's local endpoint there;
+ * 6. `REFUSED_CONNECTION_FIELDS`, the fields it receives only to refuse them by name;
+ * 7. `PROVIDER_CORE_FIELDS`, Studio's own fields every provider receives.
+ * Each field once, in that order. The answer is frozen.
+ *
+ * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
+ */
+export function providerFields(type: DatabaseType): readonly (keyof DatabaseConnection)[] {
+  const fields: (keyof DatabaseConnection)[] = [
+    ...typeIdRow(CONNECTION_FIELDS, type),
+    ...(typeIdRow(SEED_ONLY_FIELDS, type)?.fields ?? []),
+    ...(typeIdRow(CONNECTION_STRING_ACCEPTED, type) ? (["connectionString"] as const) : []),
+    ...(offersSslPanel(type) ? (["ssl"] as const) : []),
+    ...(typeIdRow(SSH_TUNNEL_REFUSAL, type) === null ? (["host", "port"] as const) : []),
+    ...typeIdRow(REFUSED_CONNECTION_FIELDS, type),
+    ...PROVIDER_CORE_FIELDS,
+  ];
+  return Object.freeze([...new Set(fields)]);
+}
 
 /**
  * Whether `value` is plain data, as parsed JSON is: its prototype is `Object.prototype` or null, and every own property,
