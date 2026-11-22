@@ -21,6 +21,7 @@ import {
   MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
   MCP_STATEMENT_READ,
+  HOST_PATH_FIELDS,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
   READ_ONLY_ENFORCED,
@@ -761,6 +762,28 @@ describe("OPENS_LOCAL_FILE", () => {
     // Vacuity, by name: a record that answered false everywhere would pass the census above against a form that
     // also drew no file path.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => OPENS_LOCAL_FILE[type])).toEqual(["sqlite", "duckdb", "libredb"]);
+  });
+});
+
+/**
+ * `HOST_PATH_FIELDS`: the connection fields that name a file on Studio's own host which the provider reads, admitted by
+ * the provider factory beside the file an `OPENS_LOCAL_FILE` engine opens (`admittedHostPathConnection` in
+ * `src/lib/db/provider-files.ts`, held by `tests/unit/lib/db/provider-files.test.ts`).
+ */
+describe("HOST_PATH_FIELDS", () => {
+  test("answers for every shipped type-id and for nothing else", () => {
+    expect(Object.keys(HOST_PATH_FIELDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+
+  test("is frozen, row and record, so no reader can change an answer at run time", () => {
+    expect(Object.isFrozen(HOST_PATH_FIELDS)).toBe(true);
+    for (const type of SHIPPED_DATABASE_TYPES)
+      expect([type, Object.isFrozen(HOST_PATH_FIELDS[type])]).toEqual([type, true]);
+  });
+
+  test("OPC UA names its client certificate and private key, and no other engine names a field", () => {
+    expect(HOST_PATH_FIELDS.opcua).toEqual(["clientCertificatePath", "clientPrivateKeyPath"]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => HOST_PATH_FIELDS[type].length > 0)).toEqual(["opcua"]);
   });
 });
 

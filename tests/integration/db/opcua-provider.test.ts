@@ -32,6 +32,7 @@ import type {
 } from "@/lib/db/providers/industrial/opcua/client";
 import { OpcuaUnansweredError } from "@/lib/db/providers/industrial/opcua/errors";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
+import { ADMITTED_HOST_PATH_MISSING } from "@/lib/db/utils/admitted-file";
 import type { DatabaseConnection } from "@/lib/types";
 
 const CAPTURES = join(import.meta.dir, "..", "..", "fixtures", "opcua");
@@ -460,6 +461,48 @@ describe("the connection's refusals happen before a socket exists", () => {
       if (original === undefined) delete process.env.LIBREDB_OPCUA_PKI_ROOT;
       else process.env.LIBREDB_OPCUA_PKI_ROOT = original;
     }
+  });
+
+  /**
+   * The client certificate and key are files on Studio's own host, admitted by the factory before the provider is built
+   * (`admittedHostPathConnection` in `src/lib/db/provider-files.ts`, held by `tests/unit/lib/db/provider-files.test.ts`).
+   * The factory's provider has no seam for an opener, so its config, which carries what core admitted, is handed to a
+   * provider over the recording, and the opener sees the options the session would be opened with.
+   */
+  test("a provider built by the factory reads the certificate and key paths core admitted", async () => {
+    const dir = join(tmpdir(), `libredb-opcua-identity-${randomUUID()}`);
+    // Spelled with a `..` the factory resolves, so the admitted path differs from the record's spelling.
+    const spelled = { clientCertificatePath: `${dir}/pki/../c.pem`, clientPrivateKeyPath: `${dir}/pki/../k.pem` };
+    const built = await createDatabaseProvider(connection(spelled));
+    const seen: { clientCertificatePath?: string; clientPrivateKeyPath?: string }[] = [];
+    const provider = new OpcuaProvider(
+      built.config,
+      {},
+      {},
+      async (options) => {
+        seen.push({
+          clientCertificatePath: options.clientCertificatePath,
+          clientPrivateKeyPath: options.clientPrivateKeyPath,
+        });
+        return recordedClient(fresh());
+      },
+      "/tmp/libredb-opcua-pki",
+    );
+    await provider.connect();
+    await provider.disconnect();
+    expect(seen[0]).toEqual({ clientCertificatePath: join(dir, "c.pem"), clientPrivateKeyPath: join(dir, "k.pem") });
+    expect(built.config.clientCertificatePath).toBe(spelled.clientCertificatePath);
+  });
+
+  test("a provider built without the factory refuses a certificate and key core never admitted, before a socket exists", async () => {
+    const provider = new OpcuaProvider(
+      connection({ clientCertificatePath: "/run/secrets/c.pem", clientPrivateKeyPath: "/run/secrets/k.pem" }),
+      {},
+      {},
+      async () => recordedClient(fresh()),
+      "/tmp/libredb-opcua-pki",
+    );
+    await expect(provider.connect()).rejects.toThrow(`clientCertificatePath: ${ADMITTED_HOST_PATH_MISSING}`);
   });
 
   test("an endpoint in another scheme is refused", async () => {

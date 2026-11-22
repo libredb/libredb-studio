@@ -20,7 +20,7 @@
  * MySQL) and the compatibility table in `docs/providers/README.md`. Neither may
  * hold its own copy of the data.
  */
-import type { DatabaseType } from "@/lib/types";
+import type { DatabaseType, HostPathField } from "@/lib/types";
 import type { WriteReach } from "./write-reach";
 
 /**
@@ -1472,6 +1472,67 @@ export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.
   sparkplug: false,
   // The embedded store this app creates, a file on Studio's own volume.
   libredb: true,
+});
+
+/** The row of an engine whose connection names no file on Studio's own host that its provider reads. */
+const NO_HOST_PATH_FIELDS: readonly HostPathField[] = Object.freeze([]);
+
+/**
+ * The connection fields that name a file on Studio's own host which the provider reads, beside the file an
+ * `OPENS_LOCAL_FILE` engine opens. The provider factory admits each one before the provider is built
+ * (`admittedHostPathConnection` in `./provider-files`): resolved against the working directory then, refused by name
+ * when it names one of Studio's own storage files, and handed to the provider as an absolute path under
+ * `ADMITTED_HOST_PATHS` (`@/lib/types`).
+ *
+ * Kept apart from `OPENS_LOCAL_FILE` because that record also decides governance row admission: an engine that reads a
+ * certificate from the host is still a server a governance source may grant. An exhaustive Record for the reason
+ * `EXTERNAL` gives, frozen with every row, like the records above it.
+ */
+export const HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathField[]>> = Object.freeze({
+  postgres: NO_HOST_PATH_FIELDS,
+  bigquery: NO_HOST_PATH_FIELDS,
+  snowflake: NO_HOST_PATH_FIELDS,
+  spark: NO_HOST_PATH_FIELDS,
+  mysql: NO_HOST_PATH_FIELDS,
+  sqlite: NO_HOST_PATH_FIELDS,
+  libsql: NO_HOST_PATH_FIELDS,
+  duckdb: NO_HOST_PATH_FIELDS,
+  oracle: NO_HOST_PATH_FIELDS,
+  db2: NO_HOST_PATH_FIELDS,
+  mssql: NO_HOST_PATH_FIELDS,
+  clickhouse: NO_HOST_PATH_FIELDS,
+  druid: NO_HOST_PATH_FIELDS,
+  trino: NO_HOST_PATH_FIELDS,
+  cassandra: NO_HOST_PATH_FIELDS,
+  elasticsearch: NO_HOST_PATH_FIELDS,
+  opensearch: NO_HOST_PATH_FIELDS,
+  mongodb: NO_HOST_PATH_FIELDS,
+  couchbase: NO_HOST_PATH_FIELDS,
+  redis: NO_HOST_PATH_FIELDS,
+  prometheus: NO_HOST_PATH_FIELDS,
+  kafka: NO_HOST_PATH_FIELDS,
+  etcd: NO_HOST_PATH_FIELDS,
+  neo4j: NO_HOST_PATH_FIELDS,
+  milvus: NO_HOST_PATH_FIELDS,
+  qdrant: NO_HOST_PATH_FIELDS,
+  weaviate: NO_HOST_PATH_FIELDS,
+  influxdb: NO_HOST_PATH_FIELDS,
+  influxdb3: NO_HOST_PATH_FIELDS,
+  oxia: NO_HOST_PATH_FIELDS,
+  databend: NO_HOST_PATH_FIELDS,
+  s3: NO_HOST_PATH_FIELDS,
+  kubernetes: NO_HOST_PATH_FIELDS,
+  mqtt: NO_HOST_PATH_FIELDS,
+  firestore: NO_HOST_PATH_FIELDS,
+  rabbitmq: NO_HOST_PATH_FIELDS,
+  // The client certificate and private key a seed connection names, read by the OPC UA library from the host.
+  opcua: Object.freeze(["clientCertificatePath", "clientPrivateKeyPath"] as const),
+  mtconnect: NO_HOST_PATH_FIELDS,
+  modbus: NO_HOST_PATH_FIELDS,
+  netconf: NO_HOST_PATH_FIELDS,
+  snmp: NO_HOST_PATH_FIELDS,
+  sparkplug: NO_HOST_PATH_FIELDS,
+  libredb: NO_HOST_PATH_FIELDS,
 });
 
 /**

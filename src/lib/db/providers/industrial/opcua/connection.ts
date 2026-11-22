@@ -7,6 +7,7 @@
  * the server who is asking.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { requireAdmittedHostPath } from "@/lib/db/utils/admitted-file";
 import { TUNNEL_FAR_END, type DatabaseConnection, type TunnelFarEnd, type WithTunnelFarEnd } from "@/lib/types";
 import { OPCUA_SCHEME, OPCUA_TYPE } from "./constants";
 import { clientIdentitySource } from "./pki";
@@ -42,6 +43,7 @@ export interface OpcuaConnectionOptions {
    * factory, whose session is refused by name (`openReadOnlySession`).
    */
   readonly pkiRoot?: string;
+  /** The client certificate and private key Studio's provider factory admitted: absolute paths on Studio's host. */
   readonly clientCertificatePath?: string;
   readonly clientPrivateKeyPath?: string;
   readonly tunnelled: boolean;
@@ -161,6 +163,11 @@ export function readConnection(
     ...(certificatePath === undefined ? {} : { certificatePath }),
     ...(privateKeyPath === undefined ? {} : { privateKeyPath }),
   });
+  // The files the library reads are the ones Studio's provider factory admitted (`admittedHostPathConnection` in
+  // `src/lib/db/provider-files.ts`): absolute, and never one of Studio's own storage files. A path the factory did not
+  // admit is refused by name, so a provider built without the factory reads none.
+  const admittedCertificate = requireAdmittedHostPath(config, "clientCertificatePath", OPCUA_TYPE);
+  const admittedKey = requireAdmittedHostPath(config, "clientPrivateKeyPath", OPCUA_TYPE);
 
   return {
     endpointUrl,
@@ -175,8 +182,8 @@ export function readConnection(
     ...(password === undefined ? {} : { password }),
     ...(pinnedThumbprint === undefined ? {} : { pinnedThumbprint }),
     ...(pkiRoot === undefined ? {} : { pkiRoot }),
-    ...(certificatePath === undefined ? {} : { clientCertificatePath: certificatePath }),
-    ...(privateKeyPath === undefined ? {} : { clientPrivateKeyPath: privateKeyPath }),
+    ...(admittedCertificate === undefined ? {} : { clientCertificatePath: admittedCertificate }),
+    ...(admittedKey === undefined ? {} : { clientPrivateKeyPath: admittedKey }),
     tunnelled,
   };
 }
