@@ -9,6 +9,7 @@ import {
   type AgentStatementLanguageId,
   agentVariant,
   notReviewedSentence,
+  openWorkflows,
   PLAN_ESTIMATE_OPERATIONS,
   persistedRunFacts,
   planDeliverableOf,
@@ -440,6 +441,32 @@ describe("the MongoDB variants (issue #1614)", () => {
 
 describe("workflowAvailability", () => {
   const statementWorkflows = ["investigation", "query-optimization", "database-assessment", "data-analysis"] as const;
+
+  // The workflow classifier is offered exactly these (F2), so a run is never classified into one Start refuses.
+  test.each([...SHIPPED_DATABASE_TYPES])("openWorkflows lists exactly the workflows %s opens, in each mode", (type) => {
+    for (const mode of ["agent", "planning"] as const) {
+      const expected = WORKFLOWS.filter((workflow) => workflowAvailability(mode, workflow, type).open);
+      const listed = openWorkflows(mode, type);
+      expect([...listed]).toEqual(expected);
+      expect(Object.isFrozen(listed)).toBe(true);
+    }
+  });
+
+  test("agent mode opens no operations workflow on MQTT, Sparkplug B, OPC UA and MTConnect, and plan mode opens all five there", () => {
+    for (const type of ["mqtt", "sparkplug", "opcua", "mtconnect"] as const) {
+      expect(openWorkflows("agent", type)).not.toContain("operations");
+      expect([...openWorkflows("planning", type)]).toEqual([...WORKFLOWS]);
+    }
+  });
+
+  test("every engine opens at least one workflow in agent mode", () => {
+    const none = SHIPPED_DATABASE_TYPES.filter((type) => openWorkflows("agent", type).length === 0);
+    expect(none).toEqual([]);
+  });
+
+  test("openWorkflows refuses a type that is not a type id by name", () => {
+    expect(() => openWorkflows("agent", "acmefoo" as DatabaseType)).toThrow(UnknownProviderError);
+  });
 
   // A connection whose type names no provider (FND-1) reaches no table read: an unknown name, an inherited key, a
   // missing type and one that is not text are each refused with the reason `typeIdRefusal` gives them, in both modes.

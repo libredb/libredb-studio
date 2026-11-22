@@ -188,9 +188,10 @@ export const AGENT_REQUIREMENT_ENGINES: Readonly<Record<AgentVariantRequirement,
 
 /**
  * Raised when the manifest is asked about a language it does not hold, or for a variant an agent run cannot do
- * without. Never a database failure: nothing was reached.
+ * without. Never a database failure: nothing was reached. Exported so the workflow classifier raises the manifest's
+ * own class when the workflows it is offered leave nothing to classify into.
  */
-class AgentManifestError extends Error {
+export class AgentManifestError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AgentManifestError";
@@ -450,6 +451,23 @@ export function workflowAvailability(
   const unmet = variant.requires.find((requirement) => !tables.requirementEngines[requirement].includes(type));
   if (unmet !== undefined) return { open: false, cause: "requirement-unmet", sentence: REQUIREMENT_SENTENCES[unmet] };
   return { open: true, statementLanguage: language, variant };
+}
+
+/**
+ * The workflows `workflowAvailability` opens on `type` in `mode`, in the SQL record's order, which is the union's and
+ * the order the workflow classifier lists them in. Read by the classify route, so an objective is classified only into
+ * a workflow Start then opens (F2): in agent mode on an engine with no operations reading, or on one whose language
+ * lacks a variant or a requirement, the refused workflows are never offered. Plan mode opens every workflow.
+ *
+ * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider, from `workflowAvailability`.
+ */
+export function openWorkflows(
+  mode: AgentRunMode,
+  type: DatabaseType,
+  tables: AgentAvailabilityTables = MANIFEST_TABLES,
+): readonly AgentRunWorkflowType[] {
+  const order = Object.keys(tables.variants[DEFAULT_STATEMENT_LANGUAGE]) as AgentRunWorkflowType[];
+  return Object.freeze(order.filter((workflow) => workflowAvailability(mode, workflow, type, tables).open));
 }
 
 /**

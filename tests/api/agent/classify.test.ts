@@ -19,6 +19,7 @@ import { clearRateLimitState } from "@/lib/api/rate-limit";
 import * as realAuth from "@/lib/auth";
 import * as realClassifier from "@/lib/agent/workflow-classifier";
 import * as realSeed from "@/lib/seed/resolve-connection";
+import { openWorkflows } from "@/lib/agent/agent-manifest";
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "ada" }),
@@ -177,7 +178,7 @@ describe("POST /api/agent/classify", () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:cluster", name: "Cluster", type: "kubernetes" });
 
     const res = await POST(
-      classifyRequest({ objective: "which pods are over-provisioned", connectionId: "seed:cluster" }),
+      classifyRequest({ objective: "which pods are over-provisioned", connectionId: "seed:cluster", mode: "agent" }),
     );
 
     expect(res.status).toBe(200);
@@ -185,44 +186,67 @@ describe("POST /api/agent/classify", () => {
       { connectionId: "seed:cluster" },
       { role: "user", username: "ada" },
     );
-    expect(mockClassify).toHaveBeenCalledWith("which pods are over-provisioned", { statementLanguage: "kubectl" });
+    expect(mockClassify).toHaveBeenCalledWith("which pods are over-provisioned", {
+      statementLanguage: "kubectl",
+      workflows: openWorkflows("agent", "kubernetes"),
+    });
   });
 
   test("an SQL connection is classified in SQL's terms", async () => {
-    const res = await POST(classifyRequest({ objective: "why is checkout slow", connectionId: "seed:sales" }));
+    const res = await POST(
+      classifyRequest({ objective: "why is checkout slow", connectionId: "seed:sales", mode: "agent" }),
+    );
 
     expect(res.status).toBe(200);
-    expect(mockClassify).toHaveBeenCalledWith("why is checkout slow", { statementLanguage: "sql" });
+    expect(mockClassify).toHaveBeenCalledWith("why is checkout slow", {
+      statementLanguage: "sql",
+      workflows: openWorkflows("agent", "postgres"),
+    });
   });
 
   test("a LibreDB connection is classified in its own family's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:store", name: "Store", type: "libredb" });
 
-    const res = await POST(classifyRequest({ objective: "which keys hold a role", connectionId: "seed:store" }));
+    const res = await POST(
+      classifyRequest({ objective: "which keys hold a role", connectionId: "seed:store", mode: "agent" }),
+    );
 
     expect(res.status).toBe(200);
-    expect(mockClassify).toHaveBeenCalledWith("which keys hold a role", { statementLanguage: "libredbkv" });
+    expect(mockClassify).toHaveBeenCalledWith("which keys hold a role", {
+      statementLanguage: "libredbkv",
+      workflows: openWorkflows("agent", "libredb"),
+    });
   });
 
   test("an InfluxDB (InfluxQL) connection is classified in its own family's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:metrics", name: "Metrics", type: "influxdb" });
 
-    const res = await POST(classifyRequest({ objective: "which room ran hottest", connectionId: "seed:metrics" }));
+    const res = await POST(
+      classifyRequest({ objective: "which room ran hottest", connectionId: "seed:metrics", mode: "agent" }),
+    );
 
     expect(res.status).toBe(200);
-    expect(mockClassify).toHaveBeenCalledWith("which room ran hottest", { statementLanguage: "influxql" });
+    expect(mockClassify).toHaveBeenCalledWith("which room ran hottest", {
+      statementLanguage: "influxql",
+      workflows: openWorkflows("agent", "influxdb"),
+    });
   });
 
   test("a Weaviate connection is classified in its own family's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:vectors", name: "Vectors", type: "weaviate" });
 
     const res = await POST(
-      classifyRequest({ objective: "how many objects each collection holds", connectionId: "seed:vectors" }),
+      classifyRequest({
+        objective: "how many objects each collection holds",
+        connectionId: "seed:vectors",
+        mode: "agent",
+      }),
     );
 
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("how many objects each collection holds", {
       statementLanguage: "weaviateapi",
+      workflows: openWorkflows("agent", "weaviate"),
     });
   });
 
@@ -230,51 +254,146 @@ describe("POST /api/agent/classify", () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:points", name: "Points", type: "qdrant" });
 
     const res = await POST(
-      classifyRequest({ objective: "how many points each collection holds", connectionId: "seed:points" }),
+      classifyRequest({
+        objective: "how many points each collection holds",
+        connectionId: "seed:points",
+        mode: "agent",
+      }),
     );
 
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("how many points each collection holds", {
       statementLanguage: "qdrantapi",
+      workflows: openWorkflows("agent", "qdrant"),
     });
   });
 
   test("a Neo4j connection is classified in its own family's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:graph", name: "Graph", type: "neo4j" });
 
-    const res = await POST(classifyRequest({ objective: "who knows whom", connectionId: "seed:graph" }));
+    const res = await POST(classifyRequest({ objective: "who knows whom", connectionId: "seed:graph", mode: "agent" }));
 
     expect(res.status).toBe(200);
-    expect(mockClassify).toHaveBeenCalledWith("who knows whom", { statementLanguage: "cypher" });
+    expect(mockClassify).toHaveBeenCalledWith("who knows whom", {
+      statementLanguage: "cypher",
+      workflows: openWorkflows("agent", "neo4j"),
+    });
   });
 
   test("a Milvus connection is classified in its own family's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:vectors", name: "Vectors", type: "milvus" });
 
     const res = await POST(
-      classifyRequest({ objective: "which collections are loaded", connectionId: "seed:vectors" }),
+      classifyRequest({ objective: "which collections are loaded", connectionId: "seed:vectors", mode: "agent" }),
     );
 
     expect(res.status).toBe(200);
-    expect(mockClassify).toHaveBeenCalledWith("which collections are loaded", { statementLanguage: "milvusrpc" });
+    expect(mockClassify).toHaveBeenCalledWith("which collections are loaded", {
+      statementLanguage: "milvusrpc",
+      workflows: openWorkflows("agent", "milvus"),
+    });
   });
 
   test("a Redis connection is classified in its own family's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:cache", name: "Cache", type: "redis" });
 
-    const res = await POST(classifyRequest({ objective: "how many keys are there", connectionId: "seed:cache" }));
+    const res = await POST(
+      classifyRequest({ objective: "how many keys are there", connectionId: "seed:cache", mode: "agent" }),
+    );
 
     expect(res.status).toBe(200);
-    expect(mockClassify).toHaveBeenCalledWith("how many keys are there", { statementLanguage: "rediscli" });
+    expect(mockClassify).toHaveBeenCalledWith("how many keys are there", {
+      statementLanguage: "rediscli",
+      workflows: openWorkflows("agent", "redis"),
+    });
   });
 
   test("a connection with no statement language is classified in SQL's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:lake", name: "Lake", type: "spark" });
 
-    const res = await POST(classifyRequest({ objective: "what is connected", connectionId: "seed:lake" }));
+    const res = await POST(
+      classifyRequest({ objective: "what is connected", connectionId: "seed:lake", mode: "agent" }),
+    );
 
     expect(res.status).toBe(200);
-    expect(mockClassify).toHaveBeenCalledWith("what is connected", { statementLanguage: undefined });
+    expect(mockClassify).toHaveBeenCalledWith("what is connected", {
+      statementLanguage: undefined,
+      workflows: openWorkflows("agent", "spark"),
+    });
+  });
+
+  /*
+    F2: the classifier is offered only the workflows a run on the connection opens in the run's mode, so an
+    Automatic run is never classified into a workflow Start then refuses. In agent mode these four engines offer no
+    operations reading, so the operations workflow does not open there; plan mode opens every workflow.
+  */
+  test.each(["mqtt", "sparkplug", "opcua", "mtconnect"] as const)(
+    "an agent-mode run on %s is offered no operations workflow",
+    async (type) => {
+      mockResolveConnection.mockResolvedValueOnce({ id: "seed:plant", name: "Plant", type });
+
+      const res = await POST(
+        classifyRequest({ objective: "why is the line slow", connectionId: "seed:plant", mode: "agent" }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(mockClassify).toHaveBeenCalledTimes(1);
+      const [, options] = mockClassify.mock.calls[0];
+      expect(options?.workflows).toEqual(["investigation"]);
+    },
+  );
+
+  test.each(["mqtt", "sparkplug", "opcua", "mtconnect"] as const)(
+    "a plan-mode run on %s is offered every workflow",
+    async (type) => {
+      mockResolveConnection.mockResolvedValueOnce({ id: "seed:plant", name: "Plant", type });
+
+      const res = await POST(
+        classifyRequest({ objective: "why is the line slow", connectionId: "seed:plant", mode: "planning" }),
+      );
+
+      expect(res.status).toBe(200);
+      const [, options] = mockClassify.mock.calls[0];
+      expect(options?.workflows).toEqual([
+        "investigation",
+        "query-optimization",
+        "database-assessment",
+        "operations",
+        "data-analysis",
+      ]);
+    },
+  );
+
+  test("an agent-mode run on an engine with no statement language is offered only the operations workflow", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:lake", name: "Lake", type: "spark" });
+
+    const res = await POST(classifyRequest({ objective: "what is running", connectionId: "seed:lake", mode: "agent" }));
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("what is running", {
+      statementLanguage: undefined,
+      workflows: ["operations"],
+    });
+  });
+
+  test("a connection without a mode is refused before it is resolved", async () => {
+    const res = await POST(classifyRequest({ objective: "why is checkout slow", connectionId: "seed:sales" }));
+    const body = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe('mode must be "planning" or "agent" when connectionId is provided');
+    expect(mockResolveConnection).not.toHaveBeenCalled();
+    expect(mockClassify).not.toHaveBeenCalled();
+  });
+
+  test.each([["plan"], [42], [""]])("a mode of %p is refused", async (mode) => {
+    const res = await POST(classifyRequest({ objective: "why is checkout slow", connectionId: "seed:sales", mode }));
+    const body = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe('mode must be "planning" or "agent" when connectionId is provided');
+    expect(mockResolveConnection).not.toHaveBeenCalled();
+    expect(mockClassify).not.toHaveBeenCalled();
   });
 
   test("with no connection id nothing is resolved and no language is passed", async () => {

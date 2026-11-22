@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE, openWorkflows } from "@/lib/agent/agent-manifest";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 import { type AgentWorkflowClassification, classifyAgentWorkflow } from "@/lib/agent/workflow-classifier";
@@ -38,6 +38,16 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
  *    404 — the shape `POST /api/agent/runs` uses. In that order an unauthenticated
  *    caller gets the same 401 whether or not this operator runs an agent at all, so
  *    the route cannot be used to probe for the surface.
+ *
+ * **Why a connection comes with the run's mode.** The classifier is offered only the
+ * workflows a run on the connection opens in that mode (`openWorkflows`), so an
+ * Automatic run is never classified into a workflow Start then refuses: agent mode
+ * opens no operations workflow on an engine that offers agent mode no curated
+ * reading, and no statement workflow on an engine with no statement language, while
+ * plan mode opens every workflow. Without the mode the route cannot know what opens,
+ * and defaulting either way would hide a caller's omission, so a connection without
+ * one is refused before it is resolved. Without a connection there is no engine to
+ * narrow for, and the mode is not read.
  *
  * There is no failure path for classification itself. `classifyAgentWorkflow`
  * resolves for every model error, timeout and unrecognised reply, so a failed
@@ -91,9 +101,14 @@ export async function POST(req: Request) {
     if (connectionId === undefined) {
       classification = await classifyAgentWorkflow(objective);
     } else {
+      const { mode } = body;
+      if (mode !== "planning" && mode !== "agent") {
+        return badRequest('mode must be "planning" or "agent" when connectionId is provided');
+      }
       const connection = await resolveConnection({ connectionId }, guard.session);
       classification = await classifyAgentWorkflow(objective, {
         statementLanguage: AGENT_STATEMENT_LANGUAGE[connection.type] ?? undefined,
+        workflows: openWorkflows(mode, connection.type),
       });
     }
 

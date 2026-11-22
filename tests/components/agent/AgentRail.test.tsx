@@ -5063,6 +5063,25 @@ describe("AgentRail", () => {
       expect(view.getByTestId("agent-workflow-data-analysis").getAttribute("aria-pressed")).toBe("false");
     });
 
+    test.each(["planning", "agent"] as const)(
+      "an Automatic start sends the rail's mode to the classifier with the objective and the connection (%s)",
+      async (mode) => {
+        const fetchMock = mockClassifiedFetch(classified("investigation"));
+        const view = render(<AgentRail {...DEFAULT_PROPS} />);
+        fireEvent.click(view.getByTestId(`agent-mode-${mode}`));
+
+        await startWith(view, "why is checkout slow");
+
+        const calls = classifyCalls(fetchMock) as [RequestInfo | URL, RequestInit?][];
+        expect(calls).toHaveLength(1);
+        expect(JSON.parse(String(calls[0][1]?.body))).toEqual({
+          objective: "why is checkout slow",
+          connectionId: "seed:sales",
+          mode,
+        });
+      },
+    );
+
     test("an Automatic start classifies the objective and opens the run for what came back", async () => {
       const fetchMock = mockClassifiedFetch(classified("query-optimization"));
       const view = render(<AgentRail {...DEFAULT_PROPS} />);
@@ -5070,10 +5089,12 @@ describe("AgentRail", () => {
       await startWith(view, "why is checkout slow");
 
       expect(classifyCalls(fetchMock)).toHaveLength(1);
-      // The connection the run is opened on goes with the objective, so it is classified in that engine's language.
+      // The connection the run is opened on goes with the objective, so it is classified in that engine's language,
+      // and so does the mode, so it is classified only into a workflow that opens there in that mode.
       expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({
         objective: "why is checkout slow",
         connectionId: "seed:sales",
+        mode: "planning",
       });
       expect(openRequests(fetchMock)[0]).toEqual({
         mode: "planning",

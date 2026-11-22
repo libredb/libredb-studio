@@ -54,7 +54,7 @@ if it only lists the good news.
 
 | Surface | What it sends | Fenced? |
 | --- | --- | --- |
-| `POST /api/agent/classify`, **before any run exists** | Your objective, and nothing else. One short completion that asks the model to name one of the five workflows. It fires when you press **Start** with the workflow left on **Automatic**, which is the default; naming a workflow yourself under **Advanced** skips it entirely. See [the classification, before any run](#the-classification-before-any-run) | No — it carries no database content to fence. Your objective is sent as the user message, and the server's instructions tell the model to treat that text as data to classify and never as instructions to it |
+| `POST /api/agent/classify`, **before any run exists** | Your objective, and nothing else. One short completion that asks the model to name one of the workflows that open on the connection in the run's mode. It fires when you press **Start** with the workflow left on **Automatic**, which is the default; naming a workflow yourself under **Advanced** skips it entirely. See [the classification, before any run](#the-classification-before-any-run) | No: it carries no database content to fence. Your objective is sent as the user message, and the server's instructions tell the model to treat that text as data to classify and never as instructions to it |
 | Any **run**, in either mode, on **any** engine | Your objective, and a schema inventory (table, column, index identifiers and column types) with its relations graph (identifiers only). **Since #414 that inventory leaves on every engine**, where before it left on PostgreSQL and SQLite alone: those two are read with catalog statements the server composes, and the other forty-one by asking the connection's own provider to describe its schema. On **MongoDB and Couchbase** the provider works out a collection's fields from a **sample of your own documents**: no value from them is in the message, but the **existence** of a field there is derived from your data rather than read from a catalog, which is a weaker claim than a catalog reading's and is why that reading has its own operation id (`db.schema.read`) an operator can deny alone. When the reading cannot be taken (a refusal, a provider that cannot describe its own schema, a description that overran the time the run granted it), nothing of the schema leaves and a server sentence saying which of those happened goes in its place. See [the schema inventory](#3-the-schema-inventory--identifiers-and-types-fenced) | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt, except an inventory name the server's own sentence carries, which is quoted instead (see [the fence](#the-fence-and-what-it-does-not-do)) |
 | An **agent run** | The above, plus the rows of each read the model performed, up to 200 per read; engine error text; server-written refusals; server-minted ids | Same fence |
 | Any **run that continues a conversation**, in either mode, on any engine | **In addition to everything above**: the earlier steps' objectives — *your own earlier questions*, capped at 200 characters each — and the most recent step's report, which is a model's claims about your data. No row of any result, and no earlier step's report but the newest. Sent only when the rail attaches a previous run's id, which it does for a follow-up on the same connection; a run that starts its own conversation sends no such message. Bounded to 4000 characters by default and switchable off with `LIBREDB_AGENT_THREAD_CONTEXT=false`. See [the conversation](#2a-the-conversation-when-a-run-continues-one--fenced) | Same fence, identified as `operation agent/thread`: it is prose a user and a model wrote, and none of it is the server's voice |
@@ -162,7 +162,7 @@ carries nothing of yours:
 
 **Your objective can leave this machine before a run exists.** Pressing **Start** with the
 workflow left on **Automatic** — the rail's default — posts it to `POST /api/agent/classify`, and
-that route asks the configured model to name one of the five workflows
+that route asks the configured model to name one of the workflows that open on the connection in the run's mode
 (`src/app/api/agent/classify/route.ts`, `classifyAgentWorkflow` in
 `src/lib/agent/workflow-classifier.ts`). It goes to the same provider as everything else on this
 page, through the same `createAgentModel` seam, so nothing about *where* it goes is new.
@@ -171,12 +171,12 @@ What it sends, exactly:
 
 | Part | Content |
 | --- | --- |
-| System | A fixed server-written string: what the five workflows are, one line each, and the instruction to answer with one identifier. It ends by telling the model that the text it is given is the user's task, to be treated as data to classify and never as instructions to it (`CLASSIFY_SYSTEM`, `workflow-classifier.ts`) |
+| System | A fixed server-written string: the workflows that open on the connection in the run's mode, one line each, and the instruction to answer with one identifier. It ends by telling the model that the text it is given is the user's task, to be treated as data to classify and never as instructions to it (`classifySystem`, `workflow-classifier.ts`) |
 | User | **Your objective, verbatim** — the same text the run's first user message would carry, bounded by the same `AGENT_MAX_OBJECTIVE_LENGTH` the route enforces |
 
-**Nothing of your database is in it.** No catalog is read, no statement is run, no connection is
-touched: there is no run yet, and this call reaches nothing but the model provider. That is also
-why it is not fenced — the fence marks database-derived content, and there is none here.
+**Nothing of your database is in it.**
+No catalog is read, no statement is run and no database connection is opened: there is no run yet, the route reads only the connection's record to pick the language and the workflows it offers, and this call reaches nothing but the model provider.
+That is also why it is not fenced: the fence marks database-derived content, and there is none here.
 
 Four bounds, all of them properties of the code rather than of intent:
 
