@@ -169,24 +169,54 @@ export function analyzeStatement(input: StatementAnalysisInput): StatementAnalys
   const route: StatementRoute = runsAsScript(statement, databaseType, capabilities.queryLanguage)
     ? "multi-query"
     : "query";
-  if (!isDangerousQuery(statement, databaseType)) return { decision: "run", statement, range, route };
-
-  const ask = vocabularyTypedConfirmation(databaseType, statement);
-  let typedConfirmation: TypedConfirmation | null = null;
-  if (ask !== undefined) {
-    const expected = typedConfirmationExpected(ask, connectionName);
-    if (expected === undefined) return { decision: "refuse", statement, range, refusal: TYPED_NAME_MISSING_REFUSAL };
-    typedConfirmation =
-      ask.type === "text"
-        ? { type: "text", expected }
-        : { type: "connection-name", expected, targets: [...ask.targets] };
-  }
+  const verdict = confirmationVerdict(statement, databaseType, connectionName);
+  if (verdict.decision === "run") return { decision: "run", statement, range, route };
+  if (verdict.decision === "refuse") return { decision: "refuse", statement, range, refusal: verdict.refusal };
   return {
     decision: "confirm",
     statement,
     range,
     route,
-    unreadable: hasUnreadableRun(statement, databaseType),
-    typedConfirmation,
+    unreadable: verdict.unreadable,
+    typedConfirmation: verdict.typedConfirmation,
   };
+}
+
+/**
+ * Whether the confirmation gate asks about this statement before it runs, and what it asks: steps 4 and 5 of
+ * `analyzeStatement`, apart from the target, the route and the row refusal.
+ *
+ * - `run`: the gate does not ask.
+ * - `confirm`: the statement runs once it is confirmed, by typing the expected value where `typedConfirmation` is not
+ *   null; `unreadable` says part of it could not be read, which is a reason the gate asks.
+ * - `refuse`: the statement is confirmed by typing the connection's name, and the connection has none
+ *   (`TYPED_NAME_MISSING_REFUSAL`).
+ *
+ * One implementation for every reader: `analyzeStatement` composes it, and the run routes classify a submitted
+ * statement with it (`src/lib/api/run-confirmation.ts`). It reads the text with the gate's own readers,
+ * `isDangerousQuery`, `vocabularyTypedConfirmation` and `hasUnreadableRun`, and throws whatever they throw.
+ */
+export type ConfirmationVerdict =
+  | { decision: "run" }
+  | { decision: "confirm"; unreadable: boolean; typedConfirmation: TypedConfirmation | null }
+  | { decision: "refuse"; refusal: string };
+
+export function confirmationVerdict(
+  statement: string,
+  databaseType: DatabaseType,
+  connectionName: string | undefined,
+): ConfirmationVerdict {
+  if (!isDangerousQuery(statement, databaseType)) return { decision: "run" };
+
+  const ask = vocabularyTypedConfirmation(databaseType, statement);
+  let typedConfirmation: TypedConfirmation | null = null;
+  if (ask !== undefined) {
+    const expected = typedConfirmationExpected(ask, connectionName);
+    if (expected === undefined) return { decision: "refuse", refusal: TYPED_NAME_MISSING_REFUSAL };
+    typedConfirmation =
+      ask.type === "text"
+        ? { type: "text", expected }
+        : { type: "connection-name", expected, targets: [...ask.targets] };
+  }
+  return { decision: "confirm", unreadable: hasUnreadableRun(statement, databaseType), typedConfirmation };
 }
