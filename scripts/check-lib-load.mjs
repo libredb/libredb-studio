@@ -271,7 +271,8 @@ export function packPackage(root, temp, tar = "tar") {
 
 /**
  * Loads each entry's closure from `<packageDir>/dist` in a child `node` (scripts/load-lib-closure.mjs) with a 1 GB
- * heap, and returns how many modules it checked and one sentence per failing module, or one naming the timeout.
+ * heap, and returns how many modules it checked and one sentence per failing module, or one naming the timeout, or one
+ * naming the child's exit status and output when that status does not match its failure lines.
  * @param {string} packageDir
  * @param {string[]} entries
  * @param {{ env: Record<string, string | undefined>, timeoutMs?: number }} options
@@ -294,7 +295,11 @@ export function loadFailures(packageDir, entries, { env, timeoutMs = 120_000 }) 
   if (result.error) throw result.error;
   const lines = result.stdout.trim().split("\n");
   const summary = /^checked (\d+) modules$/.exec(lines.at(-1) ?? "");
-  if (summary === null || (result.status !== 0 && result.status !== 1)) {
+  const failureLines = lines.length - 1;
+  // The child exits 0 with no failure line or 1 with at least one. Any other pairing, such as 1 with none from an
+  // unhandled rejection or a late throw in a module's top-level code after the summary, is reported with its stderr.
+  const consistent = (result.status === 0 && failureLines === 0) || (result.status === 1 && failureLines > 0);
+  if (summary === null || !consistent) {
     return {
       modules: 0,
       failures: [

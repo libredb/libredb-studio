@@ -393,6 +393,19 @@ describe("loadFailures", () => {
     });
   });
 
+  test("names a load whose child exits 1 after its summary with no failing module, as a CJS top-level unhandled rejection does", () => {
+    const { packageDir, env } = plantedInstall({
+      "dist/index.js": 'Promise.reject(new Error("planted rejection at load"));\n',
+    });
+
+    expect(loadFailures(packageDir, ["index.js"], { env, timeoutMs: 60_000 })).toEqual({
+      modules: 0,
+      failures: [
+        expect.stringMatching(/^the load child exited 1: checked 1 modules\n[\s\S]*planted rejection at load/),
+      ],
+    });
+  });
+
   test("names a load that does not finish within its timeout", () => {
     const { packageDir, env } = plantedInstall({ "dist/index.mjs": "while (true) {}\n" });
 
