@@ -4510,7 +4510,7 @@ function isNumericColumn(rows: readonly Record<string, unknown>[], column: strin
   return numeric > values.length * 0.8;
 }
 
-/** The column-name refusal, listing the real names — engine text, so fenced naming the provider that relayed them. */
+/** The column-name refusal, listing the real names: engine text, so fenced naming the provider that relayed them. */
 function chartColumnRefusal(
   artifact: AgentArtifactReference,
   relayedBy: string,
