@@ -36,6 +36,13 @@ const DEFAULTED_KEYS = [
   "SEED_ASSETS_DIR",
 ] as const;
 
+/**
+ * The exit owner the launcher hands the server (docs/DISTRIBUTION.md, "Stopping the server"). Not a defaulted key:
+ * those cases clear every key to empty, and an empty value of this one is the operator's choice of Next.js's handler,
+ * so the launcher must keep it. The helper below removes it unless a case sets it.
+ */
+const MANUAL_SIGNAL_HANDLING = "NEXT_MANUAL_SIG_HANDLE";
+
 const SYSTEMD_INVOCATION_ID = "e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2";
 /** Looks like what Docker exports as HOSTNAME for every container process. */
 const CONTAINER_ID = "3f9a1c2b4d5e";
@@ -50,9 +57,12 @@ describe("snap/snapcraft.yaml app environment (#807)", () => {
     expect(app.command).toBe("bin/libredb-studio-launch");
   });
 
-  test.each([...DEFAULTED_KEYS])("does not set %s, which would shadow a systemd override", (key) => {
-    expect(Object.keys(app.environment ?? {})).not.toContain(key);
-  });
+  test.each([...DEFAULTED_KEYS, MANUAL_SIGNAL_HANDLING])(
+    "does not set %s, which would shadow a systemd override",
+    (key) => {
+      expect(Object.keys(app.environment ?? {})).not.toContain(key);
+    },
+  );
 });
 
 describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
@@ -77,7 +87,11 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
     const snap = join(root, "snap");
     mkdirSync(join(snap, "node/bin"), { recursive: true });
     const stubNode = join(snap, "node/bin/node");
-    writeFileSync(stubNode, `#!/bin/sh\n${DEFAULTED_KEYS.map((k) => `echo "${k}=$${k}"`).join("\n")}\n`);
+    writeFileSync(
+      stubNode,
+      `#!/bin/sh\n${DEFAULTED_KEYS.map((k) => `echo "${k}=$${k}"`).join("\n")}\n` +
+        `echo "${MANUAL_SIGNAL_HANDLING}=\${${MANUAL_SIGNAL_HANDLING}-<unset>}"\n`,
+    );
     chmodSync(stubNode, 0o755);
     writeFileSync(join(snap, "server.js"), "");
 
@@ -90,6 +104,7 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
       ...env,
     };
     for (const key of absent) delete childEnv[key];
+    if (!Object.hasOwn(env, MANUAL_SIGNAL_HANDLING)) delete childEnv[MANUAL_SIGNAL_HANDLING];
     const result = Bun.spawnSync([SHELL!, LAUNCHER], {
       env: childEnv,
       stdout: "pipe",
@@ -119,6 +134,7 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
       PORT: "3000",
       HOSTNAME: "127.0.0.1",
       SEED_ASSETS_DIR: join(snap, "seed-assets"),
+      NEXT_MANUAL_SIG_HANDLE: "true",
     });
   });
 
@@ -136,6 +152,7 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
       PORT: "3999",
       HOSTNAME: "0.0.0.0",
       SEED_ASSETS_DIR: "/var/snap/libredb-studio/common/seed-assets",
+      NEXT_MANUAL_SIG_HANDLE: "",
     };
     expect(runLauncher({ INVOCATION_ID: SYSTEMD_INVOCATION_ID, ...overrides }).env).toEqual(overrides);
   });
@@ -146,5 +163,9 @@ describeIf(CANNOT_RUN, "snap/local/launch.sh defaults (#807)", () => {
 
   test("honours LIBREDB_BIND as the opt-in on a direct run", () => {
     expect(runLauncher({ HOSTNAME: CONTAINER_ID, LIBREDB_BIND: "0.0.0.0" }).env.HOSTNAME).toBe("0.0.0.0");
+  });
+
+  test("hands the server NEXT_MANUAL_SIG_HANDLE=true on a direct run too", () => {
+    expect(runLauncher().env.NEXT_MANUAL_SIG_HANDLE).toBe("true");
   });
 });

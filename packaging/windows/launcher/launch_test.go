@@ -185,3 +185,25 @@ func countKey(environ []string, key string) int {
 	}
 	return count
 }
+
+func TestLauncherEnvGivesStudioTheExit(t *testing.T) {
+	env := launcherEnv([]string{"PATH=x"}, testSeedAssets)
+	if last := lastValue(t, env, "NEXT_MANUAL_SIG_HANDLE"); last != "true" {
+		t.Errorf("NEXT_MANUAL_SIG_HANDLE = %q, want true for the bundled Node.js", last)
+	}
+}
+
+// An operator's value is kept as given in any letter case, the empty one included: it
+// leaves the exit to Next.js's handler (docs/DISTRIBUTION.md, "Stopping the server").
+func TestLauncherEnvKeepsAPresetManualSignalHandling(t *testing.T) {
+	for _, preset := range []string{"NEXT_MANUAL_SIG_HANDLE=", "next_manual_sig_handle=", "NEXT_MANUAL_SIG_HANDLE=1"} {
+		env := launcherEnv([]string{preset}, testSeedAssets)
+		if slices.Contains(env, "NEXT_MANUAL_SIG_HANDLE=true") {
+			t.Errorf("preset %q: the launcher added NEXT_MANUAL_SIG_HANDLE=true in %v", preset, env)
+		}
+		want := preset[len("NEXT_MANUAL_SIG_HANDLE="):]
+		if value, ok := envValue(env, "NEXT_MANUAL_SIG_HANDLE"); !ok || value != want {
+			t.Errorf("preset %q: NEXT_MANUAL_SIG_HANDLE = %q (found %v), want %q", preset, value, ok, want)
+		}
+	}
+}

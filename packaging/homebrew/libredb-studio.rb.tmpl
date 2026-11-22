@@ -85,6 +85,13 @@ class LibredbStudio < Formula
       if [ -z "${SEED_ASSETS_DIR:-}" ]; then
         export SEED_ASSETS_DIR="#{libexec}/seed-assets"
       fi
+      # Studio's shutdown handler ends the server on SIGTERM and SIGINT
+      # (docs/DISTRIBUTION.md, "Stopping the server"), since the runtime
+      # below is Node.js. Presence, not emptiness: an operator's empty value
+      # leaves the exit to Next.js's handler.
+      if [ -z "${NEXT_MANUAL_SIG_HANDLE+set}" ]; then
+        export NEXT_MANUAL_SIG_HANDLE=true
+      fi
       exec "#{Formula["node@24"].opt_bin}/node" "#{libexec}/server.js" "$@"
     SCRIPT
     (bin/"libredb-studio").chmod 0755
