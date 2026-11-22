@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { PROVIDER_CACHE_CLOSE_DEADLINE_MS, SHUTDOWN_HOOKS_DEADLINE_MS } from "@/lib/shutdown";
 import { DRAIN_DEADLINE_MS } from "@/lib/shutdown-drain";
 
@@ -66,20 +66,25 @@ type ComposeService = {
 };
 
 /**
- * Whether a Compose service in `file` runs Studio: its image is Studio's, or it builds one of Studio's Dockerfiles in
- * this repository's root. Compose builds `Dockerfile` when `build` is a string, its context, or an object without
- * `dockerfile`. A value the scan cannot resolve, one that interpolates a variable, fails by name.
+ * Whether a Compose service in `file` runs Studio: its image is Studio's, or it builds one of Studio's Dockerfiles with
+ * this repository's root as its context. Compose builds `Dockerfile` when `build` is a string, its context, or an
+ * object without `dockerfile`, and reads `dockerfile` relative to the context. An image, a build context or a
+ * dockerfile that interpolates a variable, a `$` other than the `$$` escape, is a value the scan cannot resolve and
+ * fails by name.
  */
 function runsStudio(file: string, name: string, service: ComposeService): boolean {
-  for (const value of [service.image, typeof service.build === "string" ? service.build : service.build?.context]) {
-    if (value?.includes("${"))
+  const build = typeof service.build === "string" ? { context: service.build } : service.build;
+  for (const value of [service.image, build?.context, build?.dockerfile]) {
+    if (value?.replaceAll("$$", "").includes("$"))
       throw new Error(`${file}: the ${name} service names ${value}, which the scan cannot resolve`);
   }
   if (service.image !== undefined && STUDIO_IMAGE.test(service.image)) return true;
-  if (service.build === undefined) return false;
-  const { context = ".", dockerfile = "Dockerfile" } =
-    typeof service.build === "string" ? { context: service.build } : service.build;
-  return resolve(REPO_ROOT, context) === resolve(REPO_ROOT) && STUDIO_DOCKERFILES.has(dockerfile);
+  if (build === undefined) return false;
+  const { context = ".", dockerfile = "Dockerfile" } = build;
+  return (
+    resolve(REPO_ROOT, context) === resolve(REPO_ROOT) &&
+    STUDIO_DOCKERFILES.has(relative(REPO_ROOT, resolve(REPO_ROOT, context, dockerfile)))
+  );
 }
 
 /** Every Studio service of every Compose file in the repository root, as [file, service name, service]. */
@@ -114,6 +119,7 @@ describe("Compose files", () => {
     ["build given as the root with a trailing slash", { build: "./" }],
     ["a build object without dockerfile", { build: { context: "." } }],
     ["a build object without context", { build: { dockerfile: "Dockerfile.alpine" } }],
+    ["a dockerfile given with a leading ./", { build: { context: ".", dockerfile: "./Dockerfile" } }],
     ["the GHCR image", { image: "ghcr.io/libredb/libredb-studio:latest" }],
     ["the Docker Hub mirror", { image: "libredb/libredb-studio:latest" }],
     ["the Docker Hub mirror by its registry", { image: "docker.io/libredb/libredb-studio" }],
@@ -127,15 +133,22 @@ describe("Compose files", () => {
     ["an image whose name only starts with Studio's", { image: "ghcr.io/libredb/libredb-studio-operator:1" }],
     ["a build in another context", { build: "./operator" }],
     ["another Dockerfile in the root", { build: { context: ".", dockerfile: "operator/Dockerfile" } }],
+    ["an image with an escaped dollar sign", { image: "registry.example/app$$1:1" }],
   ])("the scan classes %s as not Studio", (_shape, service) => {
     expect(runsStudio("compose.yaml", "other", service)).toBe(false);
   });
 
   test.each<[string, ComposeService]>([
     ["image", { image: "${STUDIO_IMAGE}" }],
+    ["image without braces", { image: "$STUDIO_IMAGE" }],
+    ["build string", { build: "$STUDIO_CONTEXT" }],
     ["build context", { build: { context: "${STUDIO_CONTEXT}" } }],
+    ["dockerfile", { build: { context: ".", dockerfile: "${STUDIO_DOCKERFILE:-Dockerfile.alpine}" } }],
+    ["dockerfile after an escaped dollar sign", { build: { context: ".", dockerfile: "$$$STUDIO_DOCKERFILE" } }],
   ])("the scan fails by name on an interpolated %s", (_field, service) => {
-    expect(() => runsStudio("compose.yaml", "studio", service)).toThrow("compose.yaml: the studio service names ${");
+    expect(() => runsStudio("compose.yaml", "studio", service)).toThrow(
+      /^compose\.yaml: the studio service names \S*\$\S*, which the scan cannot resolve$/,
+    );
   });
 
   test("the Compose files' Studio services are the four this repository ships", () => {

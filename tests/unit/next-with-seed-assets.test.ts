@@ -576,6 +576,18 @@ describe("bun start and NEXT_MANUAL_SIG_HANDLE", () => {
     expect(result.stderr).toContain("a .env file Next.js loads for start (.env.local, .env),");
   });
 
+  // Only Windows reads environment names without letter case: there the loader's process.env takes a lower-case key
+  // as NEXT_MANUAL_SIG_HANDLE, so the refusal fires, and it has to find the file by the same rule to name it.
+  testIf(
+    process.platform === "win32" ? null : "letter case in environment names: only Windows ignores it",
+    "start names a .env file that sets NEXT_MANUAL_SIG_HANDLE in another letter case in its refusal",
+    () => {
+      const result = run(checkout(), ["start"], {}, withEnvFile(".env.local", "next_manual_sig_handle=true\n"));
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("a .env file Next.js loads for start (.env.local),");
+    },
+  );
+
   /**
    * `bun --bun run start` in the fixture `root`, which holds package.json's own start script and is the working
    * directory, as in a checkout: Bun runs the script's `node` as Bun, so the launcher and the Next.js CLI run on Bun.
