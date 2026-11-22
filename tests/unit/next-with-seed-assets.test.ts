@@ -14,7 +14,7 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
-import { spawnProbe, untilPrinted } from "../helpers/launcher-spawn-probe";
+import { type SpawnProbeOptions, spawnProbe, untilPrinted } from "../helpers/launcher-spawn-probe";
 import { testIf } from "../helpers/posix-tools";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -478,8 +478,8 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
       : null;
 
   /** Runs the launcher on Node.js with the spawn probe preloaded, `node --import`, from a new checkout fixture. */
-  function probed(args: string[], { signal }: { signal?: "SIGINT" | "SIGTERM" } = {}) {
-    const probe = spawnProbe(fs.mkdtempSync(path.join(tempDir, "probe-")), { signal });
+  function probed(args: string[], options: SpawnProbeOptions = {}) {
+    const probe = spawnProbe(fs.mkdtempSync(path.join(tempDir, "probe-")), options);
     const command = [node(), "--import", probe.importUrl, path.join(checkout(), LAUNCHER), ...args];
     return { probe, command };
   }
@@ -501,6 +501,23 @@ describe("scripts/next-with-seed-assets.mjs on a checkout fixture with a stub Ne
         const { probe, command } = probed(["sleep"], { signal });
         const proc = Bun.spawnSync(command, { cwd: tempDir, env: envWith(), stdout: "pipe", stderr: "pipe" });
         expect(probe.childEnd()).toEqual([null, signal]);
+        expect([proc.exitCode, proc.signalCode ?? null]).toEqual([null, signal]);
+      },
+    );
+  }
+
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    testIf(
+      NO_POSIX_SIGNALS,
+      `ends with a ${signal} that reaches it while it reads the .env files, and starts no Next.js CLI`,
+      () => {
+        // The probe sends the signal at the launcher's first read of the .env in its working directory, inside
+        // loadEnvConfig, before the spawn step; the forwarding is not installed yet, so the signal ends the launcher.
+        const cwd = fs.mkdtempSync(path.join(tempDir, "cwd-"));
+        fs.writeFileSync(path.join(cwd, ".env"), "SOME_SETTING=1\n");
+        const { probe, command } = probed(["start"], { signal, before: ".env" });
+        const proc = Bun.spawnSync(command, { cwd, env: envWith(), stdout: "pipe", stderr: "pipe" });
+        expect(probe.listenersAtSpawn()).toBeNull();
         expect([proc.exitCode, proc.signalCode ?? null]).toEqual([null, signal]);
       },
     );

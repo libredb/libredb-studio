@@ -34,7 +34,7 @@ import {
   OTHER_PROGRAM_PATH_VARIABLES,
 } from "../../bin/lib/launcher-utils.mjs";
 import { MANUAL_SIGNAL_HANDLING_VARIABLE as SERVER_MANUAL_SIGNAL_HANDLING_VARIABLE } from "@/lib/shutdown-handler";
-import { spawnProbe, untilPrinted } from "../helpers/launcher-spawn-probe";
+import { type SpawnProbeOptions, spawnProbe, untilPrinted } from "../helpers/launcher-spawn-probe";
 import { describeIf, missingUnixTool, resolveUnixTool, testIf } from "../helpers/posix-tools";
 import { howItFailed } from "../helpers/spawn-outcome";
 
@@ -1321,7 +1321,7 @@ describe("launcher signal forwarding", () => {
   const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 
   /** The launcher on Node.js against a payload whose server.js is `server`, with the spawn probe preloaded. */
-  function launcherWith(server: string, { signal }: { signal?: "SIGINT" | "SIGTERM" } = {}) {
+  function launcherWith(server: string, options: SpawnProbeOptions = {}) {
     const node = Bun.which("node");
     expect(node).not.toBeNull();
     const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
@@ -1336,7 +1336,7 @@ describe("launcher signal forwarding", () => {
       'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
         `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
     );
-    const probe = spawnProbe(home, { signal });
+    const probe = spawnProbe(home, options);
     const env = { ...process.env };
     for (const name of ["PORT", "LIBREDB_STUDIO_ARCHIVE", "LIBREDB_BIND", "HOSTNAME"]) delete env[name];
     const command = [
@@ -1368,6 +1368,21 @@ describe("launcher signal forwarding", () => {
         const run = Bun.spawnSync(command, { env, stdout: "pipe", stderr: "pipe" });
         expect(probe.childEnd()).toEqual([null, signal]);
         expect([run.exitCode, run.signalCode ?? null]).toEqual([1, null]);
+      },
+    );
+  }
+
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    testIf(
+      NO_POSIX_SIGNALS,
+      `ends with a ${signal} that reaches it while it checks its cached payload, and starts no server`,
+      () => {
+        // The probe sends the signal at the launcher's first look for the payload's server.js, main's cache check,
+        // before the spawn step; the forwarding is not installed yet, so the signal ends the launcher.
+        const { probe, command, env } = launcherWith('console.log("served");', { signal, before: "server.js" });
+        const run = Bun.spawnSync(command, { env, stdout: "pipe", stderr: "pipe" });
+        expect(probe.listenersAtSpawn()).toBeNull();
+        expect([run.exitCode, run.signalCode ?? null]).toEqual([null, signal]);
       },
     );
   }

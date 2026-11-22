@@ -8,6 +8,9 @@
  * spawn runs, as one that reaches the launcher while the server does not exist yet; and it records how the spawned
  * process ended, from an exit listener added before the launcher's own, so the record is written before the launcher
  * acts on that end.
+ *
+ * With `signal` and `before` set, it sends the signal earlier instead: at the launcher's first fs.existsSync or
+ * fs.readFileSync of a path whose base name is `before`, a step the launcher takes before it spawns anything.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -28,12 +31,17 @@ export interface SpawnProbe {
   childEnd(): [number | null, string | null] | null;
 }
 
+/** `before` names a pre-spawn step to send `signal` at, so it is given only together with a signal. */
+export type SpawnProbeOptions =
+  | { readonly signal?: "SIGINT" | "SIGTERM"; readonly before?: never }
+  | { readonly signal: "SIGINT" | "SIGTERM"; readonly before: string };
+
 function readJson<T>(file: string): T | null {
   return fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as T) : null;
 }
 
 /** Writes the preload into `directory`, which keeps its records too. */
-export function spawnProbe(directory: string, { signal }: { signal?: "SIGINT" | "SIGTERM" } = {}): SpawnProbe {
+export function spawnProbe(directory: string, { signal, before }: SpawnProbeOptions = {}): SpawnProbe {
   const atSpawn = path.join(directory, "listeners-at-spawn.json");
   const end = path.join(directory, "child-end.json");
   const preload = path.join(directory, "spawn-probe.mjs");
@@ -41,12 +49,30 @@ export function spawnProbe(directory: string, { signal }: { signal?: "SIGINT" | 
     preload,
     [
       'import childProcess from "node:child_process";',
-      'import { writeFileSync } from "node:fs";',
+      'import fs, { writeFileSync } from "node:fs";',
+      'import { basename } from "node:path";',
       'import { syncBuiltinESMExports } from "node:module";',
+      ...(before === undefined
+        ? []
+        : [
+            "let signalled = false;",
+            'for (const name of ["existsSync", "readFileSync"]) {',
+            "  const original = fs[name];",
+            "  fs[name] = function (file, ...rest) {",
+            `    if (!signalled && typeof file === "string" && basename(file) === ${JSON.stringify(before)}) {`,
+            "      signalled = true;",
+            `      process.kill(process.pid, ${JSON.stringify(signal)});`,
+            "    }",
+            "    return original.call(this, file, ...rest);",
+            "  };",
+            "}",
+          ]),
       "const spawn = childProcess.spawn;",
       "childProcess.spawn = function (...args) {",
       `  writeFileSync(${JSON.stringify(atSpawn)}, JSON.stringify({ SIGINT: process.listenerCount("SIGINT"), SIGTERM: process.listenerCount("SIGTERM") }));`,
-      ...(signal === undefined ? [] : [`  process.kill(process.pid, ${JSON.stringify(signal)});`]),
+      ...(signal === undefined || before !== undefined
+        ? []
+        : [`  process.kill(process.pid, ${JSON.stringify(signal)});`]),
       "  const child = spawn.apply(this, args);",
       `  child.on("exit", (code, signal) => writeFileSync(${JSON.stringify(end)}, JSON.stringify([code, signal])));`,
       "  return child;",
