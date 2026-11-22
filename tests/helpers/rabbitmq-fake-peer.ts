@@ -11,6 +11,7 @@ import { type AmqpSocket, dialAmqp } from "@/lib/db/providers/stream/rabbitmq/am
 import type { BasicProperties, FieldEntry, FieldValue } from "@/lib/db/providers/stream/rabbitmq/amqp/field-table";
 import { readStream, type StopReason } from "@/lib/db/providers/stream/rabbitmq/amqp/read-loop";
 import { type RabbitMQClock, SYSTEM_CLOCK } from "@/lib/db/providers/stream/rabbitmq/limits";
+import { ALLOWS_PRIVATE_HOSTS } from "./egress-decisions";
 
 const utf8 = new TextEncoder();
 
@@ -1091,6 +1092,8 @@ export async function runHostilePeer(
         username: "studio-reader",
         password: ["pa", "ss"].join(""),
         display: `127.0.0.1:${port}`,
+        // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+        egress: ALLOWS_PRIVATE_HOSTS,
       },
       vhost: "/",
       stream: "st",

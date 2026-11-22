@@ -33,6 +33,7 @@ import {
 } from "@/lib/db/providers/keyvalue/mqtt/session";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { TUNNEL_FAR_END, type DatabaseConnection, type SSLMode } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 /** A fabricated credential, so a test that checks where a password goes never carries a real one. */
 const CANARY = `canary-${crypto.randomUUID()}`;
@@ -489,7 +490,7 @@ describe("the real transport, against a loopback server", () => {
    */
   test("a plain TCP dial reaches a listening server", async () => {
     const port = await silentServer();
-    const provider = new MqttProvider(connection({ port }));
+    const provider = new MqttProvider(connection({ port }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     // The dial succeeds and the server then says nothing, which must fail rather than resolve an empty
     // tree: a broker that never sent CONNACK never agreed to speak MQTT, and "no topics" would be a wrong
     // answer rather than an empty one.
@@ -501,7 +502,7 @@ describe("the real transport, against a loopback server", () => {
     await new Promise<void>((resolve) => {
       servers[servers.length - 1]!.close(() => resolve());
     });
-    const provider = new MqttProvider(connection({ port }));
+    const provider = new MqttProvider(connection({ port }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await expect(provider.connect()).rejects.toThrow(/could not be reached/);
   }, 20_000);
 
@@ -552,7 +553,11 @@ describe("the real transport, against a loopback server", () => {
    */
   test("a TLS dial that never completes its handshake fails on the clock, it does not hang", async () => {
     const port = await silentServer();
-    const provider = new MqttProvider(connection({ port, ssl: { mode: "require" } }));
+    const provider = new MqttProvider(
+      connection({ port, ssl: { mode: "require" } }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     const started = Date.now();
     await expect(provider.connect()).rejects.toThrow(/did not finish the TLS handshake/);
     // Bounded by the connect timeout, not by the caller giving up.

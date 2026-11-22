@@ -4,7 +4,7 @@ import { ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
 import { MODBUS_OBJECT_KINDS } from "@/lib/db/providers/industrial/modbus/objects";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
-import { setEgressFlag } from "../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 /**
  * The Modbus provider end to end, over a real socket and without Docker.
@@ -21,13 +21,10 @@ import { setEgressFlag } from "../../helpers/egress-flag";
  * helper every other provider is checked by.
  */
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const originalFlag = process.env[FLAG];
 const servers: Server[] = [];
 
 afterEach(() => {
   for (const server of servers.splice(0)) server.close();
-  setEgressFlag(originalFlag);
 });
 
 /** The fixture's tables, as formulas. `docker/modbus/README.md` carries the same four. */
@@ -152,14 +149,19 @@ const KIND_COUNTS: Readonly<Record<string, number>> = Object.fromEntries(
 );
 
 const provider = (port: number) =>
-  new ModbusProvider({
-    id: "m",
-    name: "device",
-    type: "modbus",
-    host: "127.0.0.1",
-    port,
-    registerMap: MAP,
-  } as unknown as DatabaseConnection);
+  new ModbusProvider(
+    {
+      id: "m",
+      name: "device",
+      type: "modbus",
+      host: "127.0.0.1",
+      port,
+      registerMap: MAP,
+    } as unknown as DatabaseConnection,
+    {},
+    // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+    { egress: ALLOWS_PRIVATE_HOSTS },
+  );
 
 /** Waits for the DEVICE's own side of a fact rather than assuming the two sides are ordered. */
 async function arrives(what: () => boolean, budgetMs = 1000): Promise<void> {
@@ -202,7 +204,6 @@ function hmiRead(port: number, budgetMs: number): Promise<{ answeredInMs: number
 
 describe("the object surface, by the same conformance the other providers answer", () => {
   test("every declared kind counts, lists and describes", async () => {
-    setEgressFlag(undefined);
     const dev = await device();
     await assertObjectSurface(provider(dev.port), {
       containers: [["1"]],
@@ -230,7 +231,6 @@ describe("the four tables, read through the whole provider", () => {
   });
 
   test("a named-point read answers the value its table's formula holds", async () => {
-    setEgressFlag(undefined);
     const dev = await device();
     const result = await provider(dev.port).query('{"read":["volts","amps","inlet","pump","lid"]}');
     const byName = new Map(result.rows.map((row) => [row.point as string, row]));
@@ -245,7 +245,6 @@ describe("the four tables, read through the whole provider", () => {
   });
 
   test("a range read answers the whole descending run, in order", async () => {
-    setEgressFlag(undefined);
     const dev = await device();
     const result = await provider(dev.port).query('{"unit":1,"table":"input_register","address":0,"count":8}');
     // A descending table is used here for the reason the fixture uses one: a reversed range reads
@@ -254,7 +253,6 @@ describe("the four tables, read through the whole provider", () => {
   });
 
   test("the address column carries the register the row answered for", async () => {
-    setEgressFlag(undefined);
     const dev = await device();
     const result = await provider(dev.port).query('{"unit":1,"table":"holding_register","address":3,"count":2}');
     expect(result.rows.map((row) => row.address)).toEqual([3, 4]);
@@ -276,7 +274,6 @@ describe("nothing read once is kept and reused, which is the class a sibling eng
    * two reads on ONE provider, and the second read must answer the new address.
    */
   test("the register map is re-read for every read, not parsed once and kept", async () => {
-    setEgressFlag(undefined);
     const dev = await device();
     const config = {
       id: "m",
@@ -288,7 +285,7 @@ describe("nothing read once is kept and reused, which is the class a sibling eng
         { name: "volts", unitId: 1, table: "holding_register", address: 0, type: "uint16" },
       ]),
     } as unknown as DatabaseConnection;
-    const engine = new ModbusProvider(config);
+    const engine = new ModbusProvider(config, {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const first = await engine.query('{"read":["volts"]}');
     (config as unknown as { registerMap: string }).registerMap = JSON.stringify([
@@ -313,7 +310,6 @@ describe("nothing is held open between reads, which is what a single-client devi
    * that measures nothing.
    */
   test("while one client is held open, another client's read goes unanswered", async () => {
-    setEgressFlag(undefined);
     const dev = await device({ oneClientAtATime: true });
     const held = await hmiRead(dev.port, 1000);
     expect(held).not.toBe("unanswered");
@@ -333,7 +329,6 @@ describe("nothing is held open between reads, which is what a single-client devi
   });
 
   test("after a read, the plant's own client is answered, because the provider kept nothing", async () => {
-    setEgressFlag(undefined);
     const dev = await device({ oneClientAtATime: true });
     await provider(dev.port).query('{"read":["volts"]}');
     // The provider's socket must be gone, not merely idle: on a device that serves one client at
@@ -345,7 +340,6 @@ describe("nothing is held open between reads, which is what a single-client devi
   });
 
   test("three reads in a row take three connections, and leave none of them open", async () => {
-    setEgressFlag(undefined);
     const dev = await device({ oneClientAtATime: true });
     const engine = provider(dev.port);
     for (const statement of ['{"read":["volts"]}', '{"read":["amps"]}', '{"read":["inlet"]}']) {
@@ -366,7 +360,6 @@ describe("a read of many blocks runs over one connection, one exchange at a time
    * exchanges before it. The counts are read at the provider's own writes to this device.
    */
   test("forty separate points answer every row and leave no earlier exchange listening", async () => {
-    setEgressFlag(undefined);
     const dev = await device();
     const points = Array.from({ length: 40 }, (_, at) => ({
       name: `p${at}`,
@@ -375,14 +368,18 @@ describe("a read of many blocks runs over one connection, one exchange at a time
       address: at * 2,
       type: "uint16",
     }));
-    const engine = new ModbusProvider({
-      id: "m",
-      name: "device",
-      type: "modbus",
-      host: "127.0.0.1",
-      port: dev.port,
-      registerMap: JSON.stringify(points),
-    } as unknown as DatabaseConnection);
+    const engine = new ModbusProvider(
+      {
+        id: "m",
+        name: "device",
+        type: "modbus",
+        host: "127.0.0.1",
+        port: dev.port,
+        registerMap: JSON.stringify(points),
+      } as unknown as DatabaseConnection,
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     const atWrite: Array<{ data: number; error: number; close: number }> = [];
     const warnings: string[] = [];

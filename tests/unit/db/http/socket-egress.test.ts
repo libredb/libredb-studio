@@ -1,8 +1,9 @@
 /**
  * socketEgress: the egress rule for one socket dial, the same rule the shared node transport applies when it is built.
- * The literal checks run before a lookup is chosen, because an IP literal never reaches a lookup: with
- * DB_HTTP_BLOCK_PRIVATE_HOSTS on the guard's check, and with `refusesLinkLocal` the link-local check whatever the flag
- * says. A name passes both and dials through the lookup handed back, which checks the address it dials.
+ * It decides by the egress decision it is handed and reads no setting (FND-2 slice 2b-2). The literal checks run before
+ * a lookup is chosen, because an IP literal never reaches a lookup: with a blocking decision the guard's check, and with
+ * `refusesLinkLocal` the link-local check whatever the decision says. A name passes both and dials through the lookup
+ * handed back, which checks the address it dials.
  *
  * No resolver is mocked: the four results are told apart by identity, a literal is refused before anything resolves,
  * and the dials go to `localhost`, which every resolver answers from the hosts file.
@@ -21,6 +22,7 @@ import {
   socketEgress,
 } from "@/lib/db/http/egress-policy";
 import { nodeTlsConnectOptions, nodeTlsMaterial } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import {
   closeAll,
   countingListener,
@@ -30,10 +32,7 @@ import {
   makeCertificates,
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
-import { setEgressFlag } from "../../../helpers/egress-flag";
-
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const original = process.env[FLAG];
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 let certificates: TransportCertificates;
 beforeAll(() => {
@@ -41,13 +40,12 @@ beforeAll(() => {
 }, 30_000);
 
 afterEach(async () => {
-  setEgressFlag(original);
   await closeAll();
 });
 
-function flag(state: "on" | "off"): void {
-  if (state === "on") setEgressFlag("true");
-  else setEgressFlag(undefined);
+/** The decision a case hands: "blocking" blocks private destinations, as an operator's `true` does. */
+function decision(state: "blocking" | "allowing"): EgressDecision {
+  return state === "blocking" ? BLOCKS_PRIVATE_HOSTS : ALLOWS_PRIVATE_HOSTS;
 }
 
 function refusal(run: () => unknown): Error {
@@ -61,37 +59,39 @@ function refusal(run: () => unknown): Error {
 
 describe("the four results for a name", () => {
   test.each([
-    ["on", true, guardedLinkLocalRefusingLookup],
-    ["off", true, linkLocalRefusingLookup],
-    ["on", false, publicAddressLookup],
-    ["off", false, undefined],
-  ] as const)("flag %s, refusesLinkLocal %p", (state, refusesLinkLocal, expected) => {
-    flag(state);
-    expect(socketEgress("db.example.test", { refusesLinkLocal })).toBe(expected as LookupFunction | undefined);
+    ["blocking", true, guardedLinkLocalRefusingLookup],
+    ["allowing", true, linkLocalRefusingLookup],
+    ["blocking", false, publicAddressLookup],
+    ["allowing", false, undefined],
+  ] as const)("a %s decision, refusesLinkLocal %p", (state, refusesLinkLocal, expected) => {
+    expect(socketEgress("db.example.test", { refusesLinkLocal }, decision(state))).toBe(
+      expected as LookupFunction | undefined,
+    );
   });
 });
 
 describe("a literal is checked before any lookup is chosen", () => {
   test.each(["10.0.0.5", "127.0.0.1", "::1", "[::1]", "[fd00::7]"])(
-    "flag on: %s is refused with the guard's sentence under either rule",
+    "with a blocking decision: %s is refused with the guard's sentence under either rule",
     (host) => {
-      flag("on");
       for (const refusesLinkLocal of [true, false]) {
-        const error = refusal(() => socketEgress(host, { refusesLinkLocal }));
+        const error = refusal(() => socketEgress(host, { refusesLinkLocal }, BLOCKS_PRIVATE_HOSTS));
         expect(error).toBeInstanceOf(DatabaseConfigError);
         expect(error.message).toBe(BLOCKED_HOST);
       }
     },
   );
 
-  test("flag on: a link-local literal gets the guard's sentence, because the guard runs first", () => {
-    flag("on");
-    expect(refusal(() => socketEgress("169.254.169.254", { refusesLinkLocal: true })).message).toBe(BLOCKED_HOST);
+  test("with a blocking decision: a link-local literal gets the guard's sentence, because the guard runs first", () => {
+    expect(
+      refusal(() => socketEgress("169.254.169.254", { refusesLinkLocal: true }, BLOCKS_PRIVATE_HOSTS)).message,
+    ).toBe(BLOCKED_HOST);
   });
 
-  test("flag on: an empty host is refused with the guard's sentence", () => {
-    flag("on");
-    expect(refusal(() => socketEgress("", { refusesLinkLocal: true })).message).toBe(BLOCKED_HOST);
+  test("with a blocking decision: an empty host is refused with the guard's sentence", () => {
+    expect(refusal(() => socketEgress("", { refusesLinkLocal: true }, BLOCKS_PRIVATE_HOSTS)).message).toBe(
+      BLOCKED_HOST,
+    );
   });
 
   test.each([
@@ -102,44 +102,33 @@ describe("a literal is checked before any lookup is chosen", () => {
     "[fe80::1%eth0]",
     "[::ffff:169.254.169.254]",
     "[fd00:ec2::254]",
-  ])("flag off, refusesLinkLocal: %s is refused with the link-local sentence", (host) => {
-    flag("off");
-    const error = refusal(() => socketEgress(host, { refusesLinkLocal: true }));
+  ])("with an allowing decision, refusesLinkLocal: %s is refused with the link-local sentence", (host) => {
+    const error = refusal(() => socketEgress(host, { refusesLinkLocal: true }, ALLOWS_PRIVATE_HOSTS));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toBe(LINK_LOCAL_HOST);
   });
 
-  test("flag off, without refusesLinkLocal: a link-local literal gets the runtime's own lookup, as today", () => {
-    flag("off");
-    expect(socketEgress("169.254.169.254", { refusesLinkLocal: false })).toBeUndefined();
+  test("with an allowing decision, without refusesLinkLocal: a link-local literal gets the runtime's own lookup, as today", () => {
+    expect(socketEgress("169.254.169.254", { refusesLinkLocal: false }, ALLOWS_PRIVATE_HOSTS)).toBeUndefined();
   });
 
   test.each(["127.0.0.1", "[::1]", "10.0.0.5"])(
-    "flag off, refusesLinkLocal: the loopback or private literal %s passes",
+    "with an allowing decision, refusesLinkLocal: the loopback or private literal %s passes",
     (host) => {
-      flag("off");
-      expect(socketEgress(host, { refusesLinkLocal: true })).toBe(linkLocalRefusingLookup);
+      expect(socketEgress(host, { refusesLinkLocal: true }, ALLOWS_PRIVATE_HOSTS)).toBe(linkLocalRefusingLookup);
     },
   );
 
   test.each(["::1%lo", "[::1%lo]", "fe80::1%eth0", "2606:4700::1%eth0"])(
-    "flag on: the zoned literal %s is refused with the guard's sentence under either rule",
+    "with a blocking decision: the zoned literal %s is refused with the guard's sentence under either rule",
     (host) => {
-      flag("on");
       for (const refusesLinkLocal of [true, false]) {
-        const error = refusal(() => socketEgress(host, { refusesLinkLocal }));
+        const error = refusal(() => socketEgress(host, { refusesLinkLocal }, BLOCKS_PRIVATE_HOSTS));
         expect(error).toBeInstanceOf(DatabaseConfigError);
         expect(error.message).toBe(BLOCKED_HOST);
       }
     },
   );
-
-  test("an invalid flag value fails closed before any address is read", () => {
-    setEgressFlag("maybe");
-    const error = refusal(() => socketEgress("db.example.test", { refusesLinkLocal: true }));
-    expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect(error.message).toBe("Invalid DB_HTTP_BLOCK_PRIVATE_HOSTS: expected true or false");
-  });
 });
 
 describe("a DNS answer with a zone index", () => {
@@ -183,28 +172,30 @@ function dialPlain(listener: Listener, lookup: LookupFunction | undefined): Prom
 }
 
 describe("a dial through the lookup handed back", () => {
-  test("flag off: localhost dials through the link-local-refusing lookup", async () => {
-    flag("off");
+  test("with an allowing decision: localhost dials through the link-local-refusing lookup", async () => {
     const listener = await countingListener();
-    expect(await dialPlain(listener, socketEgress("localhost", { refusesLinkLocal: true }))).toBe("connected");
+    expect(await dialPlain(listener, socketEgress("localhost", { refusesLinkLocal: true }, ALLOWS_PRIVATE_HOSTS))).toBe(
+      "connected",
+    );
     expect(listener.accepted()).toBe(1);
   });
 
-  test("flag on: localhost is refused by the lookup with the guard's error, and nothing is accepted", async () => {
-    flag("on");
+  test("with a blocking decision: localhost is refused by the lookup with the guard's error, and nothing is accepted", async () => {
     const listener = await countingListener();
-    const outcome = await dialPlain(listener, socketEgress("localhost", { refusesLinkLocal: true }));
+    const outcome = await dialPlain(
+      listener,
+      socketEgress("localhost", { refusesLinkLocal: true }, BLOCKS_PRIVATE_HOSTS),
+    );
     expect(outcome).toBeInstanceOf(DatabaseConfigError);
     expect((outcome as Error).message).toBe(BLOCKED_HOST);
     expect(listener.accepted()).toBe(0);
   });
 
-  test("flag on, over TLS: the lookup's refusal is the error, never a TLS failure, and no handshake starts", async () => {
-    flag("on");
+  test("with a blocking decision, over TLS: the lookup's refusal is the error, never a TLS failure, and no handshake starts", async () => {
     const listener = await httpsListener(certificates.local, jsonAnswer(200, "{}"));
     const material = nodeTlsMaterial({ mode: "verify-full", caCert: certificates.ca }, "localhost");
     if (material === null) throw new Error("expected TLS material");
-    const lookup = socketEgress("localhost", { refusesLinkLocal: true });
+    const lookup = socketEgress("localhost", { refusesLinkLocal: true }, BLOCKS_PRIVATE_HOSTS);
     const events: string[] = [];
     const outcome = await new Promise<Error>((resolve) => {
       const socket = tlsConnect({

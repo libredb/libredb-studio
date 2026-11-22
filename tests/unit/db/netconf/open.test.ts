@@ -17,9 +17,10 @@ import {
 import type { SocketPort, SshPort, SshConnectOptions } from "@/lib/db/providers/network/netconf/dial";
 import type { Transport } from "@/lib/db/providers/network/netconf/session";
 import type { XmlElement, XmlReaderPort } from "@/lib/db/providers/network/netconf/reader-port";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 import { fingerprintOf } from "@/lib/db/providers/network/netconf/hostkey";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const DEVICE_KEY = Buffer.from("the device's host key");
 const PIN = fingerprintOf(DEVICE_KEY);
@@ -58,7 +59,7 @@ interface Seen {
 }
 
 function ports(over: { library?: XmlElement; parseThrows?: boolean; socketError?: unknown } = {}): {
-  ports: { xml: XmlReaderPort; ssh: SshPort; socket: SocketPort };
+  ports: { xml: XmlReaderPort; ssh: SshPort; socket: SocketPort; egress: EgressDecision };
   seen: Seen;
 } {
   const seen: Seen = { dialled: [], connects: [], written: [], closed: { count: 0 } };
@@ -91,6 +92,8 @@ function ports(over: { library?: XmlElement; parseThrows?: boolean; socketError?
   return {
     seen,
     ports: {
+      // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+      egress: ALLOWS_PRIVATE_HOSTS,
       xml: {
         parse: () => {
           if (over.parseThrows) throw new Error("the parser refused this message");

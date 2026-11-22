@@ -43,6 +43,7 @@ import {
   startFakePeer,
 } from "../../../helpers/rabbitmq-fake-peer";
 import { createManagementStub, type ManagementStub, manualDeadlines } from "../../../helpers/rabbitmq-management-stub";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
 const OPERATIONS: ProviderExecutionContext = { readOnly: true, sendsStatements: false };
@@ -163,7 +164,8 @@ async function handle(
   const provider = new RabbitMQProvider(
     rabbitmqConnection(options.target === undefined ? {} : { amqpPort: String(options.target.port) }),
     {},
-    execution,
+    // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
     { managementTransport: stub.factory, dial, deadlineSignal: deadlines.factory },
   );
   providers.push(provider);

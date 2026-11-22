@@ -58,6 +58,7 @@ import {
   TestAmqpConnection,
   TestPublisher,
 } from "../helpers/rabbitmq-test-amqp091";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -173,7 +174,7 @@ async function liarProvider(connection: ManagedConnection): Promise<RabbitMQProv
   const provider = new RabbitMQProvider(
     connection as DatabaseConnection,
     {},
-    { readOnly: true, sendsStatements: true },
+    { readOnly: true, sendsStatements: true, egress: egressDecision() },
     { managementTransport: liar },
   );
   await provider.connect();
@@ -427,7 +428,7 @@ async function main() {
     const provider = new RabbitMQProvider(
       connection as DatabaseConnection,
       {},
-      { readOnly: true, sendsStatements: true },
+      { readOnly: true, sendsStatements: true, egress: egressDecision() },
       { dial: countedDial },
     );
     await provider.connect();

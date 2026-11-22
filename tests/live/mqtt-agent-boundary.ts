@@ -29,6 +29,7 @@ import { MqttProvider } from "@/lib/db/providers/keyvalue/mqtt/index";
 import { type MqttTransport, type MqttTransportFactory, readTopics } from "@/lib/db/providers/keyvalue/mqtt/session";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -281,6 +282,7 @@ async function main(): Promise<void> {
     user: AGENT_USER,
     password: AGENT_SECRET,
     filter: "homes/+/door",
+    egress: egressDecision(),
   });
   const sharedLines = docker("exec", BROKER, "mosquitto_sub", ...asAgent, "-t", "$share/g/factory/#", "-W", "2")
     .split("\n")

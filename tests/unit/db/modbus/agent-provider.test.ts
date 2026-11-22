@@ -3,7 +3,7 @@
  * every refusal made before a socket exists, the per-device pacing across two connections, the run's request bound,
  * the time budget worded as Studio's, failures worded by category, and the surfaces an agent-mode handle answers.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { ModbusDevicePacer, ModbusPacingTimeout } from "@/lib/db/providers/industrial/modbus/agent-pacing";
 import {
@@ -22,19 +22,12 @@ import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db
 import { fenceUntrustedContent, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import type { DatabaseConnection } from "@/lib/types";
 import { fakeModbusDevice, readAdu, type FakeModbusDevice } from "../../../helpers/modbus-fake-device";
-import { setEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const original = process.env[FLAG];
 const devices: FakeModbusDevice[] = [];
-
-beforeEach(() => {
-  setEgressFlag(undefined);
-});
 
 afterEach(async () => {
   for (const device of devices.splice(0)) await device.close();
-  setEgressFlag(original);
 });
 
 const HOLDING = Array.from({ length: 10 }, (_unused, n) => 7000 + 11 * n);
@@ -70,7 +63,8 @@ function provider(
       registerMap: options.map ?? MAP,
     } as unknown as DatabaseConnection,
     {},
-    options.execution ?? AGENT,
+    // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+    { ...(options.execution ?? AGENT), egress: ALLOWS_PRIVATE_HOSTS },
     { pacer: options.pacer ?? new ModbusDevicePacer(5), ...(options.dial === undefined ? {} : { dial: options.dial }) },
   );
 }

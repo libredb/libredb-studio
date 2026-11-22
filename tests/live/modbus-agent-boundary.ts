@@ -25,6 +25,7 @@ import { MODBUS_AGENT_DEVICE_GAP_MS } from "@/lib/db/providers/industrial/modbus
 import { ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const PORT = Number(process.env.MODBUS_AGENT_PORT ?? "19502");
 const SINGLE = Number(process.env.MODBUS_AGENT_SINGLE_PORT ?? "19503");
@@ -87,7 +88,7 @@ function agent(port: number): ModbusProvider {
       registerMap: MAP,
     } as unknown as DatabaseConnection,
     {},
-    { readOnly: true, sendsStatements: true },
+    { readOnly: true, sendsStatements: true, egress: egressDecision() },
   );
 }
 

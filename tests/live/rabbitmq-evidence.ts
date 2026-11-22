@@ -66,6 +66,7 @@ import {
 } from "../helpers/rabbitmq-live";
 import { TestPublisher } from "../helpers/rabbitmq-test-amqp091";
 import { seed, seedHash } from "./rabbitmq-seed";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const record: Record<string, unknown> = {};
 const target = liveTarget();
@@ -94,7 +95,7 @@ function recorded(connection: DatabaseConnection, transport: ManagementTransport
   const provider = new RabbitMQProvider(
     connection,
     {},
-    {},
+    { egress: egressDecision() },
     {
       managementTransport: recordingTransport(transport, exchanges),
       dial: recordingDial(dialAmqp, connections),
@@ -626,7 +627,7 @@ async function digest(): Promise<void> {
     const provider = new RabbitMQProvider(
       connectionTo(target, "studio-reader"),
       {},
-      {},
+      { egress: egressDecision() },
       {
         dial: recordingDial(dialAmqp, connections),
         onSkippedBytes: (view) => {
@@ -729,7 +730,13 @@ async function wan(): Promise<void> {
     for (let n = 0; n < 10; n++) await publisher.publish("", "st-wan", new TextEncoder().encode(JSON.stringify({ n })));
     await publisher.close();
     const port = (proxy.address() as net.AddressInfo).port;
-    const provider = new RabbitMQProvider(connectionTo(target, "studio-wide-read", { amqpPort: String(port) }), {});
+    const provider = new RabbitMQProvider(
+      connectionTo(target, "studio-wide-read", { amqpPort: String(port) }),
+      {},
+      {
+        egress: egressDecision(),
+      },
+    );
     await provider.connect();
     const started = performance.now();
     const result = await provider.query(`{"vhost": "${vhost}", "stream": "st-wan", "from": "first", "limit": 50}`);
@@ -790,7 +797,7 @@ async function noPlugin(): Promise<void> {
     [],
     async (local) => {
       await seed(local);
-      const provider = new RabbitMQProvider(connectionTo(local, "studio-wide-read"), {});
+      const provider = new RabbitMQProvider(connectionTo(local, "studio-wide-read"), {}, { egress: egressDecision() });
       await provider.connect();
       const cautions = ((await provider.testConnectionWarnings?.()) ?? []).map((w) => w.message);
       await provider.disconnect();

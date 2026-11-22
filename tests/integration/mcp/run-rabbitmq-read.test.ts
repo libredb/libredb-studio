@@ -43,6 +43,7 @@ import {
   until,
 } from "../../helpers/rabbitmq-fake-peer";
 import { createManagementStub, type ManagementStub } from "../../helpers/rabbitmq-management-stub";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 pinMcpTestEnvironment();
 
@@ -160,7 +161,8 @@ async function brokerProvider(connection: ManagedConnection, profile: ExecutionP
   const provider = new RabbitMQProvider(
     connection as DatabaseConnection,
     {},
-    { readOnly: agent, sendsStatements: agent },
+    // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+    { readOnly: agent, sendsStatements: agent, egress: ALLOWS_PRIVATE_HOSTS },
     { managementTransport: stub.factory, dial },
   );
   await provider.connect();

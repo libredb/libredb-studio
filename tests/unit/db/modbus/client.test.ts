@@ -2,9 +2,10 @@
  * The dial, and the one regression it exists to prevent.
  *
  * THE CASE THAT MATTERS. The shared egress helpers do not all behave the same way about
- * `DB_HTTP_BLOCK_PRIVATE_HOSTS`: `assertPublicLiteralHost` returns early when the flag is off,
- * `assertPublicDnsAnswers` checks no flag at all, and `guardedNodeOptions` returns `{}` when the
- * flag is off so the lookup is never installed. A provider that calls the DNS guard directly, or
+ * `DB_HTTP_BLOCK_PRIVATE_HOSTS`: `assertPublicLiteralHost` returns early when the decision it is
+ * handed allows private hosts, `assertPublicDnsAnswers` checks no decision at all, and
+ * `guardedNodeOptions` returns `{}` for such a decision so the lookup is never installed. The dial
+ * is handed the decision in `Endpoint.egress`, as the provider hands it the one it was built with. A provider that calls the DNS guard directly, or
  * installs the lookup unconditionally, therefore refuses every NAME-addressed device even with the
  * flag off. For Modbus that is the common case rather than an edge: a controller sits on a local
  * network and is usually addressed by name. The second test below is the one that fails if this
@@ -16,6 +17,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createServer, type Server, type Socket } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { BLOCKED_HOST, LINK_LOCAL_HOST } from "@/lib/db/http/egress-policy";
 import { ModbusFramingError } from "@/lib/db/providers/industrial/modbus/framing";
 import { ModbusValveDefect } from "@/lib/db/providers/industrial/modbus/valve";
 import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "@/lib/db/providers/industrial/modbus/constants";
@@ -29,14 +31,11 @@ import {
 } from "@/lib/db/providers/industrial/modbus/client";
 import { ModbusSession } from "@/lib/db/providers/industrial/modbus/session";
 import { fakeModbusDevice, readAdu } from "../../../helpers/modbus-fake-device";
-import { setEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const originalFlag = process.env[FLAG];
 const open: Server[] = [];
 
 afterEach(() => {
-  setEgressFlag(originalFlag);
   for (const server of open.splice(0)) server.close();
 });
 
@@ -79,11 +78,10 @@ const request = () => {
   return b;
 };
 
-describe("with the guard off, a local device is reachable both ways", () => {
+describe("with an allowing decision, a local device is reachable both ways", () => {
   test("by IP literal", async () => {
-    setEgressFlag(undefined);
     const port = await listener("answer");
-    const socket = await dialModbus({ host: "127.0.0.1", port });
+    const socket = await dialModbus({ host: "127.0.0.1", port, egress: ALLOWS_PRIVATE_HOSTS });
     expect(socket.destroyed).toBe(false);
     socket.destroy();
   });
@@ -93,39 +91,43 @@ describe("with the guard off, a local device is reachable both ways", () => {
    * this, because the DNS guard blocks loopback and checks no flag of its own.
    */
   test("by NAME, which is how a controller is usually addressed", async () => {
-    setEgressFlag(undefined);
     const port = await listener("answer");
-    const socket = await dialModbus({ host: "localhost", port });
+    const socket = await dialModbus({ host: "localhost", port, egress: ALLOWS_PRIVATE_HOSTS });
     expect(socket.destroyed).toBe(false);
     socket.destroy();
   });
 });
 
-describe("with the guard on, the shared rule refuses and its own words are kept", () => {
+describe("with a blocking decision, the shared rule refuses and its own words are kept", () => {
   test("a private literal is refused before any socket exists", async () => {
-    setEgressFlag("true");
-    const error = await dialModbus({ host: "10.20.30.40", port: 502 }).catch((e: unknown) => e);
+    const error = await dialModbus({ host: "10.20.30.40", port: 502, egress: BLOCKS_PRIVATE_HOSTS }).catch(
+      (e: unknown) => e,
+    );
     expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(BLOCKED_HOST);
   });
 
   test("a loopback literal is refused too, which is why the flag is off for local work", async () => {
-    setEgressFlag("true");
-    const error = await dialModbus({ host: "127.0.0.1", port: 502 }).catch((e: unknown) => e);
+    const error = await dialModbus({ host: "127.0.0.1", port: 502, egress: BLOCKS_PRIVATE_HOSTS }).catch(
+      (e: unknown) => e,
+    );
     expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(BLOCKED_HOST);
   });
 });
 
 describe("link-local, where the cost runs the other way than it does for a broker", () => {
   test("refused by default, whatever the flag says", async () => {
-    setEgressFlag(undefined);
-    const error = await dialModbus({ host: "169.254.10.20", port: 502 }).catch((e: unknown) => e);
+    const error = await dialModbus({ host: "169.254.10.20", port: 502, egress: ALLOWS_PRIVATE_HOSTS }).catch(
+      (e: unknown) => e,
+    );
     expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(LINK_LOCAL_HOST);
   });
 
   test("reachable only when the call site says so, which is where that decision belongs", async () => {
-    setEgressFlag(undefined);
     const port = await listener("answer");
-    const socket = await dialModbus({ host: "127.0.0.1", port, refusesLinkLocal: false });
+    const socket = await dialModbus({ host: "127.0.0.1", port, refusesLinkLocal: false, egress: ALLOWS_PRIVATE_HOSTS });
     expect(socket.destroyed).toBe(false);
     socket.destroy();
   });
@@ -133,9 +135,8 @@ describe("link-local, where the cost runs the other way than it does for a broke
 
 describe("one exchange on an open socket", () => {
   test("a complete answer resolves with the frame", async () => {
-    setEgressFlag(undefined);
     const port = await listener("answer");
-    const socket = await dialModbus({ host: "127.0.0.1", port });
+    const socket = await dialModbus({ host: "127.0.0.1", port, egress: ALLOWS_PRIVATE_HOSTS });
     const got = await exchangeOnce(socket, request(), { expect: EXPECT });
     if (got.kind !== "answer") throw new Error(`expected an answer and got ${got.kind}`);
     expect(got.frame.functionCode).toBe(3);
@@ -144,9 +145,8 @@ describe("one exchange on an open socket", () => {
   });
 
   test("a silent device ends by our own timer and names the time", async () => {
-    setEgressFlag(undefined);
     const port = await listener("silent");
-    const socket = await dialModbus({ host: "127.0.0.1", port });
+    const socket = await dialModbus({ host: "127.0.0.1", port, egress: ALLOWS_PRIVATE_HOSTS });
     const error = await exchangeOnce(socket, request(), {
       expect: EXPECT,
       timeoutMs: 40,
@@ -169,9 +169,8 @@ describe("one exchange on an open socket", () => {
    * two outcomes are no longer different.
    */
   test("a device that ends the connection before answering is a ConnectionError, either way", async () => {
-    setEgressFlag(undefined);
     const port = await listener("close");
-    const socket = await dialModbus({ host: "127.0.0.1", port }).catch(() => undefined);
+    const socket = await dialModbus({ host: "127.0.0.1", port, egress: ALLOWS_PRIVATE_HOSTS }).catch(() => undefined);
     if (socket === undefined) return;
     const error = await exchangeOnce(socket, request(), {
       expect: EXPECT,
@@ -228,10 +227,9 @@ describe("the dial timer", () => {
   }
 
   test("a listener that never accepts ends by our timer, and the time is in the sentence", async () => {
-    setEgressFlag(undefined);
     const fake = silentSocket();
     const error = await dialModbus(
-      { host: "203.0.113.7", port: 502 },
+      { host: "203.0.113.7", port: 502, egress: ALLOWS_PRIVATE_HOSTS },
       { dialTimeoutMs: 30, connect: () => fake.socket as never },
     ).catch((e: unknown) => e);
     // A dial that never completes has not failed one read, it has failed the connection, so the
@@ -241,20 +239,18 @@ describe("the dial timer", () => {
   });
 
   test("the socket is destroyed when the dial times out, so nothing is left half open", async () => {
-    setEgressFlag(undefined);
     const fake = silentSocket();
     await dialModbus(
-      { host: "203.0.113.7", port: 502 },
+      { host: "203.0.113.7", port: 502, egress: ALLOWS_PRIVATE_HOSTS },
       { dialTimeoutMs: 20, connect: () => fake.socket as never },
     ).catch(() => undefined);
     expect(fake.destroyed()).toBe(true);
   });
 
   test("the timer is armed with a positive value, which a zero would not be", async () => {
-    setEgressFlag(undefined);
     const fake = silentSocket();
     await dialModbus(
-      { host: "203.0.113.7", port: 502 },
+      { host: "203.0.113.7", port: 502, egress: ALLOWS_PRIVATE_HOSTS },
       { dialTimeoutMs: 25, connect: () => fake.socket as never },
     ).catch(() => undefined);
     expect(fake.timeoutMs()).toBe(25);
@@ -525,7 +521,6 @@ describe("the error event reaches the boundary too", () => {
  */
 describe("the declared timers, on the path that reads them", () => {
   test("the dial arms the declared dial timeout when none is given", async () => {
-    setEgressFlag(undefined);
     let armed = -1;
     const socket = {
       setTimeout(ms: number) {
@@ -546,7 +541,10 @@ describe("the declared timers, on the path that reads them", () => {
       },
       destroyed: false,
     };
-    void dialModbus({ host: "203.0.113.9", port: 502 }, { connect: () => socket as never }).catch(() => undefined);
+    void dialModbus(
+      { host: "203.0.113.9", port: 502, egress: ALLOWS_PRIVATE_HOSTS },
+      { connect: () => socket as never },
+    ).catch(() => undefined);
     await new Promise((r) => setTimeout(r, 5));
     // The LITERAL, not the constant. Asserting `armed === DIAL_TIMEOUT_MS` compares the constant
     // with itself: a mutation to 1 ms armed 1 ms and the test agreed. A number that is a contract
@@ -851,12 +849,11 @@ describe("each exchange removes its own listeners when it settles", () => {
   });
 
   test("forty exchanges on one dialled socket leave it holding only the dial's own listeners", async () => {
-    setEgressFlag(undefined);
     const dev = await fakeModbusDevice({ holding: Array.from({ length: 80 }, (_, at) => 100 + at) });
     const warnings: string[] = [];
     const onWarning = (warning: Error) => warnings.push(warning.name);
     process.on("warning", onWarning);
-    const endpoint = { host: "127.0.0.1", port: dev.port };
+    const endpoint = { host: "127.0.0.1", port: dev.port, egress: ALLOWS_PRIVATE_HOSTS };
     const socket = await dialModbus(endpoint);
     const count = () => ({
       data: (socket as unknown as Socket).listenerCount("data"),
@@ -918,7 +915,9 @@ describe("the TLS material becomes the dial's options", () => {
   test("a plain endpoint dials net, with no TLS option in sight", () => {
     const seen = capturing();
 
-    void dialModbus({ host: "127.0.0.1", port: 502 }, { connect: seen.connect }).catch(() => undefined);
+    void dialModbus({ host: "127.0.0.1", port: 502, egress: ALLOWS_PRIVATE_HOSTS }, { connect: seen.connect }).catch(
+      () => undefined,
+    );
 
     expect(seen.calls[0]?.tls).toBe(false);
     expect(seen.calls[0]?.target).not.toHaveProperty("rejectUnauthorized");
@@ -927,9 +926,10 @@ describe("the TLS material becomes the dial's options", () => {
   test("the material's trust anchor, client pair and host check all reach the options", () => {
     const seen = capturing();
 
-    void dialModbus({ host: "plant.internal", port: 802, tls: material }, { connect: seen.connect }).catch(
-      () => undefined,
-    );
+    void dialModbus(
+      { host: "plant.internal", port: 802, tls: material, egress: ALLOWS_PRIVATE_HOSTS },
+      { connect: seen.connect },
+    ).catch(() => undefined);
 
     const target = seen.calls[0]?.target ?? {};
     expect(seen.calls[0]?.tls).toBe(true);
@@ -947,7 +947,7 @@ describe("the TLS material becomes the dial's options", () => {
     const seen = capturing();
 
     void dialModbus(
-      { host: "127.0.0.1", port: 802, tls: { ...material, identity: "127.0.0.1" } },
+      { host: "127.0.0.1", port: 802, tls: { ...material, identity: "127.0.0.1" }, egress: ALLOWS_PRIVATE_HOSTS },
       { connect: seen.connect },
     ).catch(() => undefined);
 

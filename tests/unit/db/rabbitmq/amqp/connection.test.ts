@@ -15,6 +15,7 @@ import {
 import { dialAmqp } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
 import type { FrameEvent } from "@/lib/db/providers/stream/rabbitmq/amqp/frame-reader";
 import type { AmqpEndpoint } from "@/lib/db/providers/stream/rabbitmq/connection-options";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../../helpers/egress-decisions";
 import {
   bytesOf,
   closeSteps,
@@ -59,6 +60,8 @@ async function connect(
     username: "studio-reader",
     password: secret,
     display: `127.0.0.1:${peer.port}`,
+    // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+    egress: ALLOWS_PRIVATE_HOSTS,
   };
   const controller = new AbortController();
   const socket = await dialAmqp(endpoint, controller.signal);

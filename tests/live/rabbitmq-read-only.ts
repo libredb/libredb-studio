@@ -47,6 +47,7 @@ import {
 } from "../helpers/rabbitmq-oracle";
 import { FrameSplitter, methodId, TestAmqpConnection, TestPublisher } from "../helpers/rabbitmq-test-amqp091";
 import { RABBITMQ_FIXTURE_VHOSTS, RABBITMQ_SEED_TABLE } from "./rabbitmq-seed";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const CANARY = "q-canary";
 const STUDIO_CONNECTION_NAME = "LibreDB Studio";
@@ -112,7 +113,7 @@ async function everySurface(target: RabbitMQLiveTarget): Promise<number> {
   const provider = new RabbitMQProvider(
     connectionAs(target, "studio-wide-read"),
     {},
-    {},
+    { egress: egressDecision() },
     {
       dial: async (endpoint, signal) => {
         dials++;
@@ -225,7 +226,7 @@ async function cancelAfterConsumeOk(target: RabbitMQLiveTarget): Promise<void> {
   const provider = new RabbitMQProvider(
     connectionAs(target, "studio-wide-read"),
     {},
-    {},
+    { egress: egressDecision() },
     {
       dial: async (endpoint, signal) => {
         const socket = await dialAmqp(endpoint, signal);
@@ -265,7 +266,7 @@ async function cancelAfterConsumeOk(target: RabbitMQLiveTarget): Promise<void> {
 }
 
 async function studioReaderChecks(target: RabbitMQLiveTarget): Promise<void> {
-  const provider = new RabbitMQProvider(connectionAs(target, "studio-reader"), {});
+  const provider = new RabbitMQProvider(connectionAs(target, "studio-reader"), {}, { egress: egressDecision() });
   await provider.connect();
   const refused = await settle(() =>
     provider.query('{"vhost": "/", "stream": "st-restricted", "from": "first", "limit": 1}'),
