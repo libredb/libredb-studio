@@ -251,12 +251,9 @@ describe("the GETs of every automatic path", () => {
     const { since: s3, provider: p3 } = await connected();
     const data = await p3.getMonitoringData();
     expect(s3().sort()).toEqual([ALARMS, OVERVIEW].sort());
-    expect(data.performance).toEqual({});
-    expect(data.slowQueries).toEqual([]);
-    expect(data.activeSessions).toEqual([]);
-    expect(data.tables).toEqual([]);
-    expect(data.indexes).toEqual([]);
-    expect(data.storage).toEqual([]);
+    expect(data.overview).toBeDefined();
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions", "tables", "indexes", "storage"]);
+    expect(Object.keys(data).sort()).toEqual(["notOffered", "overview", "timestamp"]);
   });
 
   test("the tree's first paint: the virtual hosts, then the three pages of /", async () => {

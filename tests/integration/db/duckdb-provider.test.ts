@@ -1475,14 +1475,15 @@ describe("monitoring", () => {
     expect(main.location).toBe(":memory:");
   });
 
-  test("getMonitoringData reads every panel and reports no errors", async () => {
-    // Inherited from BaseDatabaseProvider, which reads the seven panels with
+  test("getMonitoringData reads every panel DuckDB offers and reports no errors", async () => {
+    // Inherited from BaseDatabaseProvider, which reads the panels the engine offers with
     // Promise.allSettled - this asserts none of them rejects on this engine.
     provider = await seededMemoryProvider();
 
     const data = await provider.getMonitoringData();
 
     expect(data.errors).toBeUndefined();
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions"]);
     expect(data.overview).toBeDefined();
     expect(data.tables).toBeDefined();
     expect(data.indexes).toBeDefined();

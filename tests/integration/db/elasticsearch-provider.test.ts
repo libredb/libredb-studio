@@ -2848,7 +2848,7 @@ describe("ElasticsearchProvider monitoring", () => {
     expect(health.activeSessions).toEqual([]);
   });
 
-  test("getMonitoringData fills every panel that has a source on a healthy cluster", async () => {
+  test("getMonitoringData fills every panel that has a source on a healthy cluster and lists the rest as not offered", async () => {
     const provider = await connectProvider();
 
     const data = await provider.getMonitoringData();
@@ -2856,10 +2856,11 @@ describe("ElasticsearchProvider monitoring", () => {
     expect(data.overview?.version).toBe("Elasticsearch 9.1.4");
     expect(data.tables).toHaveLength(3);
     expect(data.storage).toHaveLength(1);
-    expect(data.performance).toEqual({});
-    expect(data.slowQueries).toEqual([]);
-    expect(data.activeSessions).toEqual([]);
-    expect(data.indexes).toEqual([]);
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions", "indexes"]);
+    expect(data.performance).toBeUndefined();
+    expect(data.slowQueries).toBeUndefined();
+    expect(data.activeSessions).toBeUndefined();
+    expect(data.indexes).toBeUndefined();
   });
 });
 

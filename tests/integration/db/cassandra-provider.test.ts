@@ -1290,9 +1290,10 @@ describe("a server with no system_views keyspace", () => {
     expect(data.activeSessions).toBeUndefined();
     expect(data.errors?.performance).toContain("system_views.caches");
     expect(data.errors?.activeSessions).toContain("system_views.queries");
-    // The panel that is empty by convention on every build keeps its empty array: an
-    // absent slow-query panel would hide the label the tab already renders.
-    expect(data.slowQueries).toEqual([]);
+    // The slow-query panel has no source on any build, so it is not offered: never read,
+    // and listed rather than answered empty.
+    expect(data.slowQueries).toBeUndefined();
+    expect(data.notOffered).toContain("slowQueries");
   });
 
   test("a typo in a TABLE name inside system_views still fails loudly", async () => {
@@ -1630,12 +1631,11 @@ describe("getMonitoringData", () => {
 
     expect(data.overview?.version).toBe("Apache Cassandra 5.0.9");
     expect(data.performance?.cacheHitRatio).toBe(83.05);
-    // The three panels this engine refuses on every build are absent WITH their reason,
-    // and one failing read no longer costs the panels that answered (#477).
+    // The three panels this engine refuses on every build, and the slow-query panel it has
+    // no source for, are not offered: never read, listed, and with no errors entry.
     expect(data.tables).toBeUndefined();
-    expect(data.errors?.tables).toBe(CASSANDRA_TABLE_STATS_REFUSAL);
-    expect(data.errors?.indexes).toBe(CASSANDRA_INDEX_STATS_REFUSAL);
-    expect(data.errors?.storage).toBe(CASSANDRA_STORAGE_STATS_REFUSAL);
+    expect(data.notOffered).toEqual(["slowQueries", "tables", "indexes", "storage"]);
+    expect(data.errors).toBeUndefined();
   });
 });
 

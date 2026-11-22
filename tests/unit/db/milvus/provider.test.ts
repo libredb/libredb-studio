@@ -360,6 +360,7 @@ describe("monitoring is monitoring-reads.ts's", () => {
     expect(data.tables).toHaveLength(2);
     expect(data.indexes).toHaveLength(2);
     expect(data.errors).toBeUndefined();
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions", "storage"]);
   });
 });
 
