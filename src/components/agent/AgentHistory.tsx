@@ -101,11 +101,10 @@ function readNextCursor(payload: unknown): string | null {
   return typeof wire.nextCursor === "string" ? wire.nextCursor : null;
 }
 
-/** A stable, locale-agnostic rendering of a finish timestamp for the list. */
 /**
- * What a failed reopen says. A run whose ledger names a statement language or goal rule this Studio does not have is
- * answered 409 `AGENT_RUN_UNAVAILABLE` with a sentence naming the id, which is shown as it is; every other failure
- * reads as one sentence.
+ * What a failed reopen says. A run whose ledger names a statement language, workflow or goal rule this Studio does not
+ * have is answered 409 `AGENT_RUN_UNAVAILABLE` with a sentence naming the id, which is shown as it is; every other
+ * failure reads as one sentence.
  */
 function reopenFailureSentence(status: number, payload: unknown): string {
   if (
@@ -122,6 +121,7 @@ function reopenFailureSentence(status: number, payload: unknown): string {
   return "That run could not be reopened.";
 }
 
+/** A stable, locale-agnostic rendering of a finish timestamp for the list. */
 function formatTimestamp(atMs: number): string {
   const date = new Date(atMs);
   if (Number.isNaN(date.getTime())) return "unknown time";

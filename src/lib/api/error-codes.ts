@@ -169,10 +169,12 @@ export const ApiErrorCode = {
   AI_DISABLED: "AI_DISABLED",
 
   /**
-   * An agent run whose ledger header names a statement language or goal rule this Studio does not have, or has retired
-   * (409). Answered by the agent run routes and the drive route rather than `createErrorResponse`
-   * (`agentRunUnavailableResponse` in src/lib/api/agent-run-access.ts), to the run's owner alone: anyone else gets the
-   * 404 a missing run gets. 409 because the run's own record is what is in the way, and no retry on this build succeeds.
+   * An agent run whose ledger header names a statement language, workflow or goal rule this Studio does not have, or has
+   * retired (409). Answered by the agent run routes and the drive route rather than `createErrorResponse`
+   * (`agentRunUnavailableResponse` in src/lib/api/agent-run-access.ts). The session routes answer it to the run's owner
+   * alone, and anyone else gets the 404 a missing run gets; the drive route answers it to the holder of the drive
+   * credential that names the run. 409 because the run's own record is what is in the way, and no retry on this build
+   * succeeds.
    */
   AGENT_RUN_UNAVAILABLE: "AGENT_RUN_UNAVAILABLE",
 

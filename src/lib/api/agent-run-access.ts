@@ -14,7 +14,7 @@ import { logger } from "@/lib/logger";
  * existence and ownership, answered once so three routes cannot drift apart.
  *
  * Ownership is decided against the run's PERSISTED actor, which is the same
- * authority a tool call is authorized by. Two consequences are deliberate:
+ * authority a tool call is authorized by. Three consequences are deliberate:
  *
  *  - **An admin is not exempt.** A run is not an administrative object; it is one
  *    session's investigation, and its ledger cites data that session was allowed to
@@ -24,10 +24,12 @@ import { logger } from "@/lib/logger";
  *    would confirm the run id, which is the one thing a caller guessing ids learns
  *    from.
  *  - **A run this build cannot read is named to its owner alone.** A ledger whose
- *    header names a statement language or goal rule this Studio does not have is
- *    refused by the store with the header's persisted actor, so the owner is
- *    answered 409 `AGENT_RUN_UNAVAILABLE` with the refusal's sentence and anyone
- *    else the 404 below. Nothing of such a run is resolved, built or replayed.
+ *    header names a statement language, workflow or goal rule this Studio does not
+ *    have is refused by the store with the header's persisted actor, so on these
+ *    session routes the owner is answered 409 `AGENT_RUN_UNAVAILABLE` with the
+ *    refusal's sentence and anyone else the 404 below. Nothing of such a run is
+ *    resolved, built or replayed. The drive route has no session: it answers the
+ *    same 409 to the holder of the drive credential that names the run.
  */
 
 export type AgentRunAccess =
@@ -44,7 +46,8 @@ function notFound(): NextResponse {
 }
 
 /**
- * The answer to the owner of a run this build cannot read: 409 `AGENT_RUN_UNAVAILABLE` with the refusal's sentence,
+ * The answer to a caller entitled to a run this build cannot read: its owner on the session routes, and the holder of
+ * the drive credential that names the run on the drive route. 409 `AGENT_RUN_UNAVAILABLE` with the refusal's sentence,
  * logged once at warn. The log names the field and the reason, not the id, which the ledger keeps.
  */
 export function agentRunUnavailableResponse(

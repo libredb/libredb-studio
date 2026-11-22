@@ -10012,7 +10012,7 @@ Found 2026-11-22 while rebasing the agent statement review record (FND-7 slice 2
 
 `sweepStaleRuns` in `src/lib/agent/resume-sweep.ts` reads each listed run's status outside the per-run `try` that guards its drive, so a ledger the store refuses as `MALFORMED_LEDGER` (an event kind no pack declares, a line that is not JSON, a second header) throws out of the pass: `runResumeSweepOnce` logs "agent resume sweep failed" and returns, and no run listed after that ledger is resumed, on that pass or any later one.
 Measured on 2026-11-22 over a real local world: a sweep over a malformed ledger listed before a stale running run threw `MALFORMED_LEDGER` and never reached the running run.
-A ledger that names a statement language or goal rule this Studio does not have is counted and left as it is; a malformed one is not, because skipping corruption needs a log line of its own to stay loud.
+A ledger that names a statement language, workflow or goal rule this Studio does not have is counted and left as it is; a malformed one is not, because skipping corruption needs a log line of its own to stay loud.
 Found 2026-11-22 while planning FND-1 slice 6.
 
 **Done when:** the pass skips a malformed ledger with an error-level line naming its run id and the store's reason, a later stale run is still driven, and a sweep test pins both; cited in `docs/AGENT.md`.

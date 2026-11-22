@@ -23,10 +23,12 @@ import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import { answersProse, modelOver, scriptedModel } from "../../../isolated/fixtures/agent-scripted-model";
 
 /**
- * What a run reads off its persisted statement language, pinned as it was before the run resolver: the truth table of
- * `groundsUnderExecutionProfile`, the refusal a run whose header persists a language no pack serves meets when its ledger
- * is read, in agent and in planning mode, and every refusal of the SQL statement card in the order it gives them, with and without the
- * worked call a model may be given.
+ * What a run reads off its persisted statement language. Pinned as it was before the run resolver: the truth table of
+ * `groundsUnderExecutionProfile`, and every refusal of the SQL statement card in the order it gives them, with and
+ * without the worked call a model may be given. The case of a run whose header persists a language no pack serves no
+ * longer pins a pre-resolver error: it pins the FND-1 read-time refusal (`AgentRunUnavailableError`, from
+ * `runHeaderRefusal` in `run-ledger-ids.ts`) that such a run meets when its ledger is read, in agent and in planning
+ * mode.
  */
 
 const dataDirs: string[] = [];
