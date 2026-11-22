@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_DRIVE_HEADER, verifyAgentDriveToken } from "@/lib/agent/drive-token";
 import { AgentRunServiceError } from "@/lib/agent/run-service";
+import { AgentRunUnavailableError } from "@/lib/agent/run-store";
 import { driveAgentRun } from "@/lib/agent/runtime";
+import { agentRunUnavailableResponse } from "@/lib/api/agent-run-access";
 import { clientAddress } from "@/lib/api/client-address";
 import { createErrorResponse } from "@/lib/api/errors";
 import { RateLimitError, consumeRateLimit } from "@/lib/api/rate-limit";
@@ -105,6 +107,11 @@ export async function POST(req: Request) {
         // succeed and the queue should stop trying.
         return NextResponse.json({ error: error.message }, { status: 409 });
       }
+    }
+    if (error instanceof AgentRunUnavailableError) {
+      // 409, not 5xx: the run's ledger names an id this build does not have, so no
+      // redelivery to this build can drive it, and nothing was resolved or built.
+      return agentRunUnavailableResponse(error, ROUTE);
     }
     return createErrorResponse(error, { route: "api/agent/drive" });
   }

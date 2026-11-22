@@ -54,6 +54,7 @@ const GROUPS = {
     "GOVERNANCE_UNAVAILABLE",
     "TRANSACTION_CREDENTIAL_CHANGED",
   ],
+  agentRun: ["AGENT_RUN_UNAVAILABLE"],
   generic: ["INTERNAL_ERROR", "NETWORK_ERROR"],
 } as const;
 
@@ -76,6 +77,10 @@ describe("ApiErrorCode", () => {
 
   test("contains all LLM error codes", () => {
     for (const code of GROUPS.llm) expect(ApiErrorCode[code]).toBe(code);
+  });
+
+  test("contains the agent run refusal of a run whose ledger names an id this Studio does not have", () => {
+    for (const code of GROUPS.agentRun) expect(ApiErrorCode[code]).toBe(code);
   });
 
   test("contains generic error codes", () => {

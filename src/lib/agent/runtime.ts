@@ -144,6 +144,9 @@ export async function getAgentRunService(): Promise<AgentRunService> {
  * something the run may observe: everything it needs is re-derived from the ledger.
  *
  * @throws AgentRunServiceError when the run does not exist or has already ended.
+ * @throws AgentRunUnavailableError when the run's ledger names a statement language
+ *         or goal rule this build does not have, before anything is resolved or
+ *         recorded: the store refuses the read, which is this function's first step.
  * @throws SeedConnectionError when the run's connection is no longer resolvable —
  *         it was removed, or the actor's role no longer reaches it.
  */
