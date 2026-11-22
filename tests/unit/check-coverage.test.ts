@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -95,5 +95,69 @@ describe("check-coverage CLI", () => {
     const { exitCode, stdout } = runCheck("da-checksum", "SF:src/a.ts\nDA:1,5,3kA9x\nDA:2,2,zzzz\nend_of_record\n");
     expect(exitCode).toBe(0);
     expect(stdout).toContain("2/2 lines (100.00%)");
+  });
+});
+
+describe("check-coverage expects every workspace package", () => {
+  /** A throwaway root holding packages/planted with a package.json and one source file. */
+  function packagesRoot(): string {
+    const root = mkdtempSync(path.join(workDir, "packages-root-"));
+    mkdirSync(path.join(root, "packages/planted/src"), { recursive: true });
+    writeFileSync(path.join(root, "packages/planted/package.json"), '{ "name": "@libredb/planted" }\n');
+    writeFileSync(path.join(root, "packages/planted/src/index.ts"), "export const planted = 1;\n");
+    return root;
+  }
+
+  function runWith(args: string[], content: string): { exitCode: number; stdout: string; stderr: string } {
+    const reportPath = path.join(workDir, `packages-${args.length}-${content.length}.info`);
+    writeFileSync(reportPath, content);
+    const result = Bun.spawnSync(["node", SCRIPT, ...args, reportPath]);
+    return { exitCode: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() };
+  }
+
+  test("fails naming a package with source and no record", () => {
+    const root = packagesRoot();
+
+    const { exitCode, stderr } = runWith([`--packages-from=${root}`], lcov("src/a.ts", [[1, 1]]));
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("packages/planted");
+    expect(stderr).toContain("no coverage record under packages/planted/src/");
+  });
+
+  test("passes when the package has a record", () => {
+    const root = packagesRoot();
+    const report = lcov("src/a.ts", [[1, 1]]) + lcov("packages/planted/src/index.ts", [[1, 2]]);
+
+    const { exitCode, stdout } = runWith([`--packages-from=${root}`], report);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("2/2 lines (100.00%)");
+  });
+
+  test("a package without src/ is expected to contribute nothing", () => {
+    const root = mkdtempSync(path.join(workDir, "packages-bare-"));
+    mkdirSync(path.join(root, "packages/bare"), { recursive: true });
+    writeFileSync(path.join(root, "packages/bare/package.json"), "{}\n");
+
+    expect(runWith([`--packages-from=${root}`], lcov("src/a.ts", [[1, 1]])).exitCode).toBe(0);
+  });
+
+  test("expects nothing without --packages-from", () => {
+    expect(runWith([], lcov("src/a.ts", [[1, 1]])).exitCode).toBe(0);
+  });
+
+  test("refuses --packages-from without a value", () => {
+    for (const option of ["--packages-from=", "--packages-from"]) {
+      const { exitCode, stderr } = runWith([option], lcov("src/a.ts", [[1, 1]]));
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("--packages-from needs a directory");
+    }
+  });
+
+  test("the root coverage:check script passes --packages-from=.", () => {
+    const manifest = JSON.parse(readFileSync(path.resolve(import.meta.dir, "../../package.json"), "utf8"));
+
+    expect(manifest.scripts["coverage:check"]).toBe("node scripts/check-coverage.mjs --packages-from=. coverage/lcov.info");
   });
 });

@@ -161,7 +161,7 @@
     "test:components": "bun tests/run-tests.ts tests/components tests/isolated",
     "test:e2e": "bunx playwright test",
     "test:coverage": "bun tests/run-tests.ts --coverage --merge-into=coverage/lcov.info",
-    "coverage:check": "node scripts/check-coverage.mjs coverage/lcov.info",
+    "coverage:check": "node scripts/check-coverage.mjs --packages-from=. coverage/lcov.info",
     "test:coverage-html": "bun run test:coverage && genhtml coverage/lcov.info --output-directory coverage/html && echo '\n Open coverage/html/index.html in your browser'",
     "knip": "knip",
     "chart:check": "node scripts/sync-chart-version.mjs --check",

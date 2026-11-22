@@ -7,6 +7,7 @@ import path from "node:path";
 // that do not exist on disk so stripNonExecutableLines leaves the records
 // untouched and assertions stay deterministic.
 const SCRIPT = path.resolve(import.meta.dir, "../../scripts/merge-lcov.mjs");
+const CHECK_COVERAGE = path.resolve(import.meta.dir, "../../scripts/check-coverage.mjs");
 const workDir = mkdtempSync(path.join(tmpdir(), "merge-lcov-test-"));
 
 afterAll(() => {
@@ -14,13 +15,24 @@ afterAll(() => {
 });
 
 function runMerge(name: string, inputs: string[]): Map<string, Map<number, number>> {
+  return mergeWithLog(name, inputs).records;
+}
+
+/**
+ * Runs the merge from workDir, so the SF paths resolve against a directory holding none
+ * of them, whatever the repository itself holds under src/ or packages/.
+ */
+function mergeWithLog(
+  name: string,
+  inputs: string[],
+): { records: Map<string, Map<number, number>>; stdout: string; outPath: string } {
   const inputPaths = inputs.map((content, i) => {
     const p = path.join(workDir, `${name}-in-${i}.info`);
     writeFileSync(p, content);
     return p;
   });
   const outPath = path.join(workDir, `${name}-out.info`);
-  const result = Bun.spawnSync(["node", SCRIPT, ...inputPaths, outPath]);
+  const result = Bun.spawnSync(["node", SCRIPT, ...inputPaths, outPath], { cwd: workDir });
   expect(result.exitCode).toBe(0);
 
   const records = new Map<string, Map<number, number>>();
@@ -34,7 +46,7 @@ function runMerge(name: string, inputs: string[]): Map<string, Map<number, numbe
       current.set(ln, hits);
     }
   }
-  return records;
+  return { records, stdout: result.stdout.toString(), outPath };
 }
 
 function lcov(sf: string, lines: Array<[number, number]>): string {
@@ -146,5 +158,49 @@ describe("merge-lcov input manifest", () => {
     const result = Bun.spawnSync(["node", SCRIPT, `--inputs-from=${manifest}`, path.join(workDir, "empty-out.info")]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain(manifest);
+  });
+});
+
+describe("merge-lcov and workspace packages", () => {
+  test("keeps a workspace package's src records", () => {
+    const records = mergeWithLog("package-src", [
+      lcov("packages/planted/src/index.ts", [
+        [1, 2],
+        [3, 0],
+      ]),
+      lcov("src/virtual/kept.ts", [[1, 1]]),
+    ]).records;
+
+    expect([...records.keys()].sort()).toEqual(["packages/planted/src/index.ts", "src/virtual/kept.ts"]);
+    expect(records.get("packages/planted/src/index.ts")!.get(3)).toBe(0);
+  });
+
+  test("drops a workspace package's tests records, and names what it filters", () => {
+    const { records, stdout } = mergeWithLog("package-tests", [
+      lcov("packages/planted/tests/x.test.ts", [[1, 1]]),
+      lcov("packages/planted/package-helper.ts", [[1, 1]]),
+      lcov("tests/helpers/y.ts", [[1, 1]]),
+      lcov("src/components/ui/button.tsx", [[1, 1]]),
+      lcov("src/virtual/kept.ts", [[1, 1]]),
+    ]);
+
+    expect([...records.keys()]).toEqual(["src/virtual/kept.ts"]);
+    expect(stdout).toContain(
+      "Filtered 4 record(s) outside src/ and packages/<name>/src/, or under src/components/ui/",
+    );
+  });
+
+  test("a planted package's uncovered line reaches the 100% gate", () => {
+    const { outPath } = mergeWithLog("package-gate", [
+      lcov("src/virtual/covered.ts", [[1, 4]]),
+      lcov("packages/planted/src/index.ts", [
+        [1, 1],
+        [3, 0],
+      ]),
+    ]);
+
+    const gate = Bun.spawnSync(["node", CHECK_COVERAGE, outPath], { cwd: workDir });
+    expect(gate.exitCode).toBe(1);
+    expect(gate.stderr.toString()).toContain("packages/planted/src/index.ts: 1 line(s) [3]");
   });
 });
