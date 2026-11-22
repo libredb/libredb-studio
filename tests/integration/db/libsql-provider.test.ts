@@ -545,10 +545,10 @@ describe("LibSQLProvider capabilities", () => {
     ).toBe(false);
   });
 
-  test("tells the reader there is no statement history to enable", () => {
+  test("declares no slow-query sentence, because libSQL offers no Queries panel to draw it", () => {
     expect(
       new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels().slowQueriesEmptyState,
-    ).toBe("libSQL keeps no statistics about finished statements, so there is nothing to enable.");
+    ).toBeUndefined();
   });
 });
 

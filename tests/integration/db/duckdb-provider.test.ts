@@ -271,16 +271,11 @@ describe("DuckDBProvider capabilities", () => {
 describe("DuckDBProvider labels", () => {
   const labels = new DuckDBProvider(makeConfig()).getLabels();
 
-  test("the slow-query panel says why it is empty instead of naming a PostgreSQL extension", () => {
-    // #U12: the default sentence tells the reader to install pg_stat_statements.
-    expect(labels.slowQueriesEmptyState).toContain("duckdb_queries()");
-    expect(labels.slowQueriesEmptyState).not.toContain("pg_stat_statements");
-  });
-
-  test("the sessions panel says the list can never have a row, not that none is running", () => {
-    // #D48: the default "No active sessions found." reads as "nothing is running right
-    // now", and duckdb_connections() does not exist, so no row can ever appear.
-    expect(labels.sessionsEmptyState).toContain("duckdb_connections()");
+  test("declares no empty-state sentence, because DuckDB offers neither the Queries nor the Sessions panel", () => {
+    // duckdb_queries() and duckdb_connections() do not exist, so the `ENGINE_FACETS` row
+    // offers neither panel and nothing would render a sentence explaining an empty one.
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
   });
 
   test("the global vacuum wording says what VACUUM actually does on this engine", () => {

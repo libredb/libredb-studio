@@ -249,8 +249,9 @@ describe("docs/providers/qdrant.md quotes what the code says", () => {
     const monitoring = sectionOf(DOC, "## 7. Monitoring & health");
     expect(monitoring).toContain(`\n${labels.tableStatsCaption}\n`);
     expect(labels.tableStatsCaption).toContain(`The first ${QDRANT_BOUNDS.tablesPanelCollections} collections.`);
-    expect(monitoring).toContain(`> ${labels.slowQueriesEmptyState}`);
-    expect(monitoring).toContain(`> ${labels.sessionsEmptyState}`);
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+    expect(monitoring).toContain("declare no empty-state sentence");
   });
 
   test("machine access and the read-only mode are what the records say", () => {

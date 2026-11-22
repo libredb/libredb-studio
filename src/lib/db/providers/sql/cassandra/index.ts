@@ -366,10 +366,6 @@ export class CassandraProvider extends SQLBaseProvider {
       // error here (each measured). The two search engines declare this field for the
       // same reason.
       statementLanguage: "CQL (Cassandra Query Language) - no JOIN, no subquery, no OFFSET",
-      // `getSlowQueries()` is empty by design here (introspect.ts), so this panel is
-      // ALWAYS empty on Cassandra - and it used to name a PostgreSQL extension (#463).
-      slowQueriesEmptyState:
-        "Cassandra keeps no aggregate of finished statements: the slow-query threshold writes to the node's log file rather than to a table.",
     };
   }
 
@@ -918,10 +914,8 @@ export class CassandraProvider extends SQLBaseProvider {
   /**
    * Empty, and it asks the cluster nothing: there is no slow-query log to read.
    *
-   * The one always-empty panel that stays empty. `QueriesTab` renders
-   * `ProviderLabels.slowQueriesEmptyState` in its place, and this provider declares one
-   * (`getLabels()` above), so Cassandra's own sentence already reaches the user here -
-   * which is the thing the absence mechanism exists to deliver.
+   * The Queries panel is not offered (`ENGINE_FACETS`), so core never reads this and
+   * nothing draws it.
    */
   public getSlowQueries(): Promise<SlowQueryStats[]> {
     return Promise.resolve(readSlowQueries());

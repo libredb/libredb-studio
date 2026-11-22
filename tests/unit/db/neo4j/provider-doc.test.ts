@@ -655,9 +655,9 @@ describe("docs/providers/neo4j.md sections 6 and 7 quote the statements the cata
     expect(MONITORING).toContain("never the `parameters` column");
   });
 
-  test("the empty states are the labels' own", () => {
+  test("the sessions empty state is the label's own, and the not-offered Queries panel has none", () => {
     const labels = neo4jLabels();
-    expect(MONITORING).toContain(`"${labels.slowQueriesEmptyState}"`);
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
     expect(MONITORING).toContain(`"${labels.sessionsEmptyState}"`);
   });
 

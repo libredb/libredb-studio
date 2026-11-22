@@ -441,11 +441,8 @@ The Tables tab and Admin > Operations list the first 200 collections of the sele
 The first 200 collections of the database. Row counts are server estimates of flushed segments and do not subtract deletes; POST entities/query with outputFields ["count(*)"] is exact on a loaded collection.
 
 Index statistics carry each index's native type, `AUTOINDEX` as Milvus reports it, and cover only collections whose IndexDetail the user holds.
-Slow queries and sessions are not offered, so `getMonitoringData` never reads them and the dashboard draws no Queries or Sessions tab; the two empty-state labels are the labels for the `[]` that `getSlowQueries()` and `getActiveSessions()` answer, and no surface draws them while the panels are not offered:
-
-> Milvus keeps query statistics on its management port 9091, which Studio does not dial
-
-> Milvus reports client sessions on its management port 9091, which Studio does not dial
+Slow queries and sessions are not offered, so `getMonitoringData` never reads them and the dashboard draws no Queries or Sessions tab.
+Milvus keeps query statistics and reports client sessions on its management port 9091, which Studio does not dial, so `getSlowQueries()` and `getActiveSessions()` answer `[]`, and the labels declare no empty-state sentence for either panel.
 
 For performance, storage and query-node metrics, point a Prometheus server at Milvus's `:9091/metrics` and read it through the Prometheus provider.
 

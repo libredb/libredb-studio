@@ -3149,11 +3149,17 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
-   * Only the global reindex triad; every other label is the SQL default and right.
+   * The global reindex triad and the slow-query empty state; every other label is the SQL
+   * default and right.
    *
    * The Operations tab's reindex card was hardcoded to this wording for every engine
    * (#464), so declaring it here changes nothing on PostgreSQL and lets the two other
    * providers that declare `reindex` say what theirs does instead.
+   *
+   * The Queries tab showed the `pg_stat_statements` advice as its default on every engine
+   * without a sentence of its own, which told BigQuery users to install a PostgreSQL
+   * extension. It is PostgreSQL's advice, so PostgreSQL declares it, and the tab's default
+   * says only that no statistics are available.
    */
   public override getLabels(): ProviderLabels {
     return {
@@ -3161,6 +3167,7 @@ export class PostgresProvider extends SQLBaseProvider {
       reindexGlobalLabel: "Run Reindex",
       reindexGlobalTitle: "Rebuild Indexes",
       reindexGlobalDesc: "Runs REINDEX DATABASE, reconstructing every index in the database.",
+      slowQueriesEmptyState: "Enable pg_stat_statements extension to see query stats.",
     };
   }
 

@@ -234,7 +234,9 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/agent-manifest.ts#planObjectiveOf: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
   [`${AGENT}/agent-manifest.ts#sqlVerifier: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
   [`${AGENT}/agent-manifest.ts#persistedRunFacts: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
-  [`${AGENT}/workflow-classifier.ts#lines: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
+  // The reference variant record read for the workflows' order, which the classifier lists them in (F2).
+  [`${AGENT}/agent-manifest.ts#order: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
+  [`${AGENT}/workflow-classifier.ts#offered: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
   [`${AGENT}/workflow-classifier.ts#isWorkflowType: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
   [`${AGENT}/tools.ts#fingerprint: R5c CURATED_CALL_LANGUAGE`]: 1,
   [`${AGENT}/tools.ts#advice: R5c CURATED_CALL_LANGUAGE`]: 1,

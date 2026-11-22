@@ -589,13 +589,10 @@ describe("labels", () => {
     expect(labels.vacuumGlobalDesc).toContain("nodetool");
   });
 
-  test("the empty slow-query panel says Cassandra keeps no such aggregate", () => {
-    // `getSlowQueries()` is empty by design here, so this panel is ALWAYS empty - and
-    // until #U12 it told the reader to enable a PostgreSQL extension (#427's defect in
-    // another panel). The log file is the fact, so it is what the sentence names.
-    expect(labels.slowQueriesEmptyState).toContain("no aggregate of finished statements");
-    expect(labels.slowQueriesEmptyState).toContain("log file");
-    expect(labels.slowQueriesEmptyState).not.toContain("pg_stat_statements");
+  test("declares no slow-query sentence, because Cassandra offers no Queries panel to draw it", () => {
+    // Cassandra keeps no aggregate of finished statements, so its `ENGINE_FACETS` row does
+    // not offer the panel, and nothing would render a sentence explaining why it is empty.
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
   });
 
   test("the statement language is named, because CQL is not SQL", () => {
@@ -1567,15 +1564,11 @@ describe("the panels that report nothing rather than something wrong", () => {
     await expect(provider.getStorageStats()).rejects.toThrow(CASSANDRA_STORAGE_STATS_REFUSAL);
   });
 
-  test("the slow-query panel stays EMPTY, because its sentence already reaches the user", async () => {
-    // The one always-empty panel that is not converted: `QueriesTab` renders
-    // `ProviderLabels.slowQueriesEmptyState` in place of the empty table, and this
-    // provider declares one. Converting it would move the same sentence from a label
-    // the panel already shows to an error entry, and buy nothing.
+  test("the slow-query read stays EMPTY, and the Queries panel is not offered, so nothing draws it", async () => {
     const { provider } = await connectedProvider();
 
     expect(await provider.getSlowQueries()).toEqual([]);
-    expect(provider.getLabels().slowQueriesEmptyState).toContain("no aggregate of finished statements");
+    expect(provider.getLabels().slowQueriesEmptyState).toBeUndefined();
   });
 });
 

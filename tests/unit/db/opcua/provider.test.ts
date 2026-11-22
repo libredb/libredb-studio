@@ -643,17 +643,16 @@ describe("every surface a server does not have", () => {
     await provider.disconnect();
   });
 
-  test("slow queries and sessions answer empty, and the labels say why in this engine's words", async () => {
+  test("slow queries and sessions answer empty, and the labels carry no copy for those panels", async () => {
     const { provider } = await open();
     expect(await provider.getSlowQueries()).toEqual([]);
     expect(await provider.getActiveSessions()).toEqual([]);
     expect(await provider.getPerformanceMetrics()).toEqual({});
 
     const labels = provider.getLabels();
-    // The defaults are written for a SQL server: measured in a browser, the Queries panel told an
-    // OPC UA reader to install `pg_stat_statements` and Sessions said "No active sessions found."
-    expect(labels.slowQueriesEmptyState).toMatch(/keeps no query log/);
-    expect(labels.sessionsEmptyState).toMatch(/session COUNT/);
+    // Neither panel is offered on OPC UA, so nothing would draw a sentence explaining an empty one.
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
     await provider.disconnect();
   });
 

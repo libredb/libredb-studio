@@ -36,8 +36,6 @@ export function neo4jLabels(): ProviderLabels {
     generateAction: "Generate Cypher",
     searchPlaceholder: "Search labels and relationship types...",
     statementLanguage: STATEMENT_LANGUAGE,
-    slowQueriesEmptyState:
-      "Neo4j Community keeps no query log, and this version does not read the Enterprise query log.",
     sessionsEmptyState: "No transaction is running.",
     tableStatsCaption: "Node counts per label, from the count store.",
     analyzeAction: "Label Statistics",

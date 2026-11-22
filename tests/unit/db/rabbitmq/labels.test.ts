@@ -19,10 +19,10 @@ describe("RABBITMQ_LABELS", () => {
       selectAction: "Read Last Chunk",
       generateAction: "Generate Read Request",
       searchPlaceholder: "Search streams, queues and exchanges...",
-      slowQueriesEmptyState: "RabbitMQ has no query log",
-      sessionsEmptyState:
-        "Studio does not list broker connections, because they name other users and client addresses.",
     });
+    // No sentence for an empty Queries or Sessions panel: neither is offered, so nothing would draw one.
+    expect(RABBITMQ_LABELS.slowQueriesEmptyState).toBeUndefined();
+    expect(RABBITMQ_LABELS.sessionsEmptyState).toBeUndefined();
     expect(Object.isFrozen(RABBITMQ_LABELS)).toBe(true);
   });
 

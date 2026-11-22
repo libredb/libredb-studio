@@ -1980,12 +1980,20 @@ still opens as the right one.
 **Request:**
 
 ```json
-{ "objective": "Why is the orders page slow?" }
+{ "objective": "Why is the orders page slow?", "connectionId": "seed:sales", "mode": "agent" }
 ```
 
 `objective` is required, non-empty, and bounded by the same 4000 characters `POST /api/agent/runs`
 applies — an objective this route would classify but that one would refuse is a model call spent on
 a run that cannot open.
+
+| Field | Meaning |
+|-------|---------|
+| `connectionId` | Optional. The connection the run will open on, resolved under the caller's session; the model is told each workflow in that engine's terms |
+| `mode` | Required with `connectionId`, `"planning"` or `"agent"`: the mode the run will open in. Not read without a connection |
+
+With a connection, the model is offered only the workflows that open on its engine in that mode, so an objective is never classified into a workflow `POST /api/agent/runs` would then refuse.
+Plan mode opens every workflow; agent mode opens no operations workflow on an engine that offers agent mode no curated reading, and no statement workflow on an engine with no statement language.
 
 **Response (200 OK):**
 
@@ -1995,8 +2003,8 @@ a run that cannot open.
 
 | Field | Meaning |
 |-------|---------|
-| `workflowType` | One of the five ids `POST /api/agent/runs` accepts |
-| `outcome` | `"classified"` when the model named one of the five; `"unclassified"` when it did not |
+| `workflowType` | One of the five ids `POST /api/agent/runs` accepts; with a connection, one of the workflows that open on its engine in `mode` |
+| `outcome` | `"classified"` when the model named one of the workflows it was offered; `"unclassified"` when it did not |
 
 **There is no failure response for the classification itself.** A model error, a timeout, an empty
 reply and a reply that is not one of the five ids all answer `200 { "workflowType":
@@ -2010,7 +2018,7 @@ its answer, reaches nothing a caller could not reach without it. It is metered o
 bucket like the run routes, because classification doubles the per-run request count against the
 model provider.
 
-**Refusals:** `400` for a missing, non-string, empty or oversized `objective`; `401` without a
+**Refusals:** `400` for a missing, non-string, empty or oversized `objective`; `400` with `mode must be "planning" or "agent" when connectionId is provided` for a `connectionId` sent without a valid `mode`, before the connection is resolved; `401` without a
 session; `404` when this server runs no agents.
 A `connectionId` naming a seed entry whose type names no provider ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)) answers `400 PROVIDER_UNKNOWN` in the shared error shape, `error` plus `code` plus `statusCode`, with the sentence that quotes its type, and nothing is classified.
 

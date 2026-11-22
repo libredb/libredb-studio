@@ -489,8 +489,8 @@ No plan is requested beside an ordinary run.
 | Overview | The version, start time and uptime from the metadata session, and the table count of the current namespace with a "counted from" line that names it; no size and no connection count |
 | Health | One AnalyzePlan round trip; size and cache ratio "N/A" |
 | Performance | Nothing |
-| Slow queries | Empty: `Spark keeps finished statements in the driver's web UI, which Studio does not read in this version.` |
-| Sessions | Empty: `Spark Connect sessions are listed in the driver's web UI, which Studio does not read in this version. Studio's own sessions last one request each, except the one for the tree and the panels, which Studio keeps while the connection is open.` |
+| Slow queries | Not offered, so not drawn: Spark keeps finished statements in the driver's web UI, which Studio does not read in this version |
+| Sessions | Not offered, so not drawn: Spark Connect sessions are listed in the driver's web UI, which Studio does not read in this version |
 | Tables | Refused: `Spark keeps table statistics only where its catalog stores them, and Studio does not read them in this version.` |
 | Indexes | Empty: no Spark SQL statement lists indexes |
 | Storage | Refused: `Spark reports no storage figure Studio can read in this version.` |

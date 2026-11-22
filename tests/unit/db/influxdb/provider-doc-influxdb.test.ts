@@ -536,10 +536,11 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
     );
   });
 
-  test("the monitoring empty states are the labels'", () => {
+  test("the labels declare no empty state for the Queries and Sessions panels, which are not offered", () => {
     const monitoring = sectionOf(DOC, "## 7. Monitoring & health");
-    expect(monitoring).toContain(`> ${labels.slowQueriesEmptyState}`);
-    expect(monitoring).toContain(`> ${labels.sessionsEmptyState}`);
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+    expect(monitoring).toContain("declare no empty-state sentence");
   });
 
   test("the seed recipe is a connection the seed schema accepts, and its fields are the recipe's in SEED_CONNECTIONS.md", () => {

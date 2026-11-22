@@ -1368,7 +1368,7 @@ describe("the declarations", () => {
     expect(new RegExp("(CREATE|DROP|ALTER|TRUNCATE)\\b", "i").test("DROP TABLE x")).toBe(true);
   });
 
-  test("the labels name metrics and series, the statement language, and why two panels are empty", () => {
+  test("the labels name metrics and series, the statement language and the Tables caption", () => {
     expect(new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels()).toEqual({
       entityName: "Metric",
       entityNamePlural: "Metrics",
@@ -1378,9 +1378,6 @@ describe("the declarations", () => {
       generateAction: "Generate Query",
       searchPlaceholder: "Search metrics or labels...",
       statementLanguage: "PromQL",
-      slowQueriesEmptyState: "Prometheus exposes no query log over its HTTP API, so there are no slow queries to read.",
-      sessionsEmptyState:
-        "Prometheus exposes no session list over its HTTP API: every request is a separate, stateless call.",
       tableStatsCaption: `The metrics with the most head series, at most ${TSDB_TOP_METRICS}`,
       analyzeAction: "TSDB Statistics",
       vacuumAction: "Compact Blocks",

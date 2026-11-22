@@ -597,17 +597,16 @@ describe("DruidProvider metadata", () => {
     expect(labels.generateAction).toBe("Generate Query");
   });
 
-  test("the empty slow-query panel says Druid keeps no query log", () => {
-    // `getSlowQueries()` is empty by design here, so this panel is ALWAYS empty - and
-    // until #U12 it told the reader to enable a PostgreSQL extension.
+  test("declares no slow-query sentence, because Druid offers no Queries panel to draw it", () => {
+    // Druid keeps no query log, so its `ENGINE_FACETS` row does not offer the panel and
+    // nothing would render a sentence explaining why it is empty.
     const { slowQueriesEmptyState } = new DruidProvider(
       makeConnection(),
       {},
       { egress: ALLOWS_PRIVATE_HOSTS },
     ).getLabels();
 
-    expect(slowQueriesEmptyState).toContain("no query log");
-    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    expect(slowQueriesEmptyState).toBeUndefined();
   });
 });
 

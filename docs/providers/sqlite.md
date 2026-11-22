@@ -116,8 +116,8 @@ DatabaseProvider (interface) → BaseDatabaseProvider → SQLBaseProvider → SQ
 `SQLiteProvider` inherits the shared SQL helpers (see
 [PostgreSQL doc §2.2](./postgres.md#22-what-sqlbaseprovider-provides)). It does **not** override
 `prepareQuery()`: SQLite uses standard `LIMIT`, so the base's `LIMIT` injection works. `getLabels()`
-is overridden for **two** things only — the slow-query empty state and the global reindex wording
-([§9](#9-capabilities--labels)) — because the rest of the default SQL wording fits (*Vacuum Table* /
+is overridden for **one** thing only, the global reindex wording
+([§9](#9-capabilities--labels)), because the rest of the default SQL wording fits (*Vacuum Table* /
 *Analyze Table*, since SQLite has real `VACUUM`/`ANALYZE`).
 
 ### Dynamic driver load
@@ -1416,11 +1416,10 @@ narrower than the statement: `VACUUM` is not per-table, which is what
 `vacuum: { perEntity: false, label: 'Vacuum Database' }` says, and the per-row surfaces take
 their wording from that `label` rather than from this field.
 
-One field is overridden: `slowQueriesEmptyState` → *"SQLite keeps no statistics about finished
-statements, so there is nothing to enable."*
-`getSlowQueries()` answers `[]` unconditionally ([§7](#7-monitoring--health)), so the slow-query panel is not offered and the dashboard draws no Queries tab here; before that, the panel was always empty, and its sentence was hardcoded to PostgreSQL's `pg_stat_statements` advice (#463).
+No slow-query sentence is declared.
+`getSlowQueries()` answers `[]` unconditionally ([§7](#7-monitoring--health)), so the slow-query panel is not offered and the dashboard draws no Queries tab here, and a sentence explaining an empty one would have no reader.
 
-Two overrides in total. The second is the Operations tab's global Reindex card, hardcoded to
+One override in total: the Operations tab's global Reindex card, hardcoded to
 PostgreSQL's *"Reconstructs all indexes in the database."* until #464. The global card
 sends no target, so `runMaintenance('reindex')` here runs a bare `REINDEX`
 ([§8](#8-maintenance)), which rebuilds every index in the database **file**:

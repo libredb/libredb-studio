@@ -205,9 +205,9 @@ describe("docs/providers/milvus.md quotes what the code says", () => {
   test("the monitoring labels are the provider's", () => {
     const monitoring = sectionOf(DOC, "## 7. Monitoring & health");
     expect(monitoring).toContain(`\n${labels.tableStatsCaption}\n`);
-    expect(monitoring).toContain(`> ${labels.slowQueriesEmptyState}`);
-    expect(monitoring).toContain(`> ${labels.sessionsEmptyState}`);
-    expect(labels.slowQueriesEmptyState).toContain("9091");
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+    expect(monitoring).toContain("declare no empty-state sentence");
   });
 
   test("the maintenance rows are the declared specs", () => {

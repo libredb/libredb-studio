@@ -528,9 +528,6 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // says in words what `tablesAreDerivedGroupings` says in a flag.
       statementLanguage:
         "LibreDB's own command grammar - exactly one command on one line, in one of the five forms `get <key>`, `put <key> <value>`, `delete <key>`, `prefix <p>` or `range <start> <end>` - and NOT SQL and not a shell: every key is matched EXACTLY, with no glob and no wildcard, so `get users:*` looks up a key literally named `users:*` and answers nothing; the inventory's `prefix:*` rows are groupings this engine summarised, not keys, so reach every entry under one with `prefix users:` and a single entry by its real name",
-      // `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries
-      // panel is ALWAYS empty here - and it used to name a PostgreSQL extension (#463).
-      slowQueriesEmptyState: "LibreDB keeps no statistics about finished statements in this version.",
     };
   }
 
@@ -1453,10 +1450,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   /**
    * Empty, and it reads nothing: there is no log of finished statements to read.
    *
-   * The one always-empty panel that stays empty. `QueriesTab` renders
-   * `ProviderLabels.slowQueriesEmptyState` in place of an empty list and this provider
-   * declares one (`getLabels()` above), so LibreDB's own sentence already reaches the
-   * user here - which is the thing an absent panel exists to deliver.
+   * The Queries panel is not offered (`ENGINE_FACETS`), so core never reads this and
+   * nothing draws it.
    */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     return [];

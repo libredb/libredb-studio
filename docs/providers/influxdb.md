@@ -474,13 +474,9 @@ No kind accepts row writes or source edits: an `influxdb` connection is read-onl
 Health is `GET /ping`, reachability only, never evidence of what the credential may read.
 The overview gives the server's version and `tableCount`, the measurements across the databases visible at connect; the count is a floor, and says so, only when a listing cap cut one.
 A database whose listing the server refuses counts none.
-Slow queries are not read:
-
-> InfluxDB keeps no query log Studio reads; 1.x SHOW QUERIES shows other users' statements and is not read.
-
-Sessions are not read either:
-
-> InfluxDB has no session list: every request stands alone.
+Slow queries are not read: InfluxDB keeps no query log Studio reads, and 1.x SHOW QUERIES shows other users' statements and is not read.
+Sessions are not read either: InfluxDB has no session list, and every request stands alone.
+Neither panel is offered, so the dashboard draws neither, and the labels declare no empty-state sentence for them.
 
 Performance, storage, table and index statistics are empty: no route Studio reads reports them, and `/metrics` is never read.
 
@@ -554,8 +550,6 @@ None: InfluxDB compacts its own storage and keeps no statistics to update.
 | `generateAction` | Generate Query |
 | `searchPlaceholder` | Search measurements... |
 | `statementLanguage` | InfluxQL: one SELECT, SHOW or EXPLAIN statement, no INTO, no Flux; name a measurement as "db".."measurement". |
-| `slowQueriesEmptyState` | InfluxDB keeps no query log Studio reads; 1.x SHOW QUERIES shows other users' statements and is not read. |
-| `sessionsEmptyState` | InfluxDB has no session list: every request stands alone. |
 | `analyzeAction` | Measurement Statistics |
 | `vacuumAction` | Compact Storage |
 | `analyzeGlobalLabel` | Statistics |

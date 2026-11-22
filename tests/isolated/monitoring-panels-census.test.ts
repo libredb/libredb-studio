@@ -63,3 +63,32 @@ describe("monitoring panel reads across the fleet", () => {
     expect(data.errors).toBeUndefined();
   });
 });
+
+/**
+ * The panel each copy field is drawn on. A sentence for the empty answer of a panel, or a caption above its list,
+ * belongs to an engine that offers that panel: where its `ENGINE_FACETS` row does not, nothing draws the panel, and the
+ * copy would document a behaviour no reader has.
+ */
+const COPY_PANEL = {
+  sessionsEmptyState: "activeSessions",
+  slowQueriesEmptyState: "slowQueries",
+  tableStatsCaption: "tables",
+} as const satisfies Record<string, MonitoringPanel>;
+
+describe("empty-state copy across the fleet", () => {
+  test.each([...ALL])(
+    "%s sets no empty-state sentence or table caption for a panel it does not offer",
+    async (type) => {
+      const labels = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getLabels();
+      const offer = ENGINE_FACETS[type].monitoring;
+
+      const unrendered = Object.entries(COPY_PANEL)
+        .filter(
+          ([field, panel]) => labels[field as keyof typeof COPY_PANEL] !== undefined && offer[panel] !== "offered",
+        )
+        .map(([field]) => field);
+
+      expect(unrendered).toEqual([]);
+    },
+  );
+});

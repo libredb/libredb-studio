@@ -158,10 +158,11 @@ describe("the labels of spec 6.3", () => {
       selectAction: "Get Keys",
       generateAction: "Generate Command",
       searchPlaceholder: "Search key prefixes...",
-      slowQueriesEmptyState: "etcd keeps no query log",
-      sessionsEmptyState: "etcd does not report client sessions",
       tableStatsCaption: "The key-prefix groups; a key in no group is counted in the Overview and not here",
     });
+    // No sentence for an empty Queries or Sessions panel: neither is offered, so nothing would draw one.
+    expect(ETCD_LABELS.slowQueriesEmptyState).toBeUndefined();
+    expect(ETCD_LABELS.sessionsEmptyState).toBeUndefined();
   });
 
   test("the analyze and vacuum triads, never rendered, are worded true for etcd anyway", () => {

@@ -2273,7 +2273,7 @@ Found 2026-10-04 while designing the Oxia provider (DECISIONS O1).
 
 ### D206. Oxia ephemeral records and sessions are shown, never made or listed
 
-The Source tab badges an ephemeral record (O11), but no session is created or listed (`getActiveSessions` answers the "Oxia does not list client sessions" state).
+The Source tab badges an ephemeral record (O11), but no session is created or listed (`getActiveSessions` answers `[]` and the Sessions panel is not offered).
 
 Found 2026-10-04 while designing the Oxia provider (DECISIONS O11).
 

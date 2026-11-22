@@ -605,11 +605,8 @@ A Check that answers anything but SERVING:
 
 The overview counts no table and no index, because Oxia has none, and the client API reports no version, uptime or size, so those read N/A; the shard count, the namespace, the key order and each leader are in each shard's Source tab.
 That overview is constants after a reachability probe, so no monitoring panel is offered: the monitoring dashboard draws none for Oxia and says so, and fleet health asks for no overview.
-The provider still declares these empty states for the other panels, which no dashboard panel draws:
-
-- Slow queries: Oxia keeps no query log
-- Sessions: Oxia does not list client sessions
-- Tables: Oxia has no tables: its shards are listed under Shards, and its keys in the Keys panel and with list in the console.
+Oxia keeps no query log, does not list client sessions and has no tables: its shards are listed under Shards, and its keys in the Keys panel and with list in the console.
+The provider therefore declares no empty-state sentence and no table caption, because no panel would draw them.
 
 ### Engine facets
 
@@ -686,9 +683,6 @@ Every capability is written, since the base's defaults are SQL's:
 | `vacuumGlobalLabel` | Compact |
 | `vacuumGlobalTitle` | Not available |
 | `vacuumGlobalDesc` | Oxia compacts its own storage, and Studio sends it no maintenance. |
-| `slowQueriesEmptyState` | Oxia keeps no query log |
-| `sessionsEmptyState` | Oxia does not list client sessions |
-| `tableStatsCaption` | Oxia has no tables: its shards are listed under Shards, and its keys in the Keys panel and with list in the console. |
 
 `statementLanguage`, the sentence plan mode states for the grammar, is built from the command table of section 5.2, so it names every verb and flag the parser takes.
 

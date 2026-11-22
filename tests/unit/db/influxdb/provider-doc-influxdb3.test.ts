@@ -425,8 +425,9 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
 
   test("the monitoring section quotes the labels, the overview's version text and its floor", () => {
     const monitoring = flat(sectionOf(DOC, "## 7. Monitoring & health"));
-    expect(monitoring).toContain(`> ${labels.slowQueriesEmptyState}`);
-    expect(monitoring).toContain(`> ${labels.sessionsEmptyState}`);
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+    expect(monitoring).toContain("declare no empty-state sentence");
     const ping = loadInfluxCapture(CORE, "ping-auth");
     const version = readPing({ status: ping.status, text: ping.body });
     const overview = (cut: boolean) =>

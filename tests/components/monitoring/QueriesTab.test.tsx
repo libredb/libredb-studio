@@ -7,6 +7,8 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { QueriesTab } from "@/components/monitoring/tabs/QueriesTab";
 import type { MonitoringData, ProviderLabels } from "@/lib/db/types";
+import { ClickHouseProvider } from "@/lib/db/providers/sql/clickhouse/index";
+import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 
 mock.module("@/components/ui/tooltip", () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => React.createElement("div", {}, children),
@@ -105,19 +107,41 @@ describe("QueriesTab", () => {
       <QueriesTab data={{ ...makeData(), slowQueries: [] } as MonitoringData} loading={false} />,
     );
     expect(queryByText("No query statistics available.")).not.toBeNull();
-    expect(queryByText("pg_stat_statements required")).not.toBeNull();
+    expect(queryByText("pg_stat_statements required")).toBeNull();
   });
 
-  test("keeps the pg_stat_statements advice when the provider declares no wording of its own", () => {
-    // The component default IS Postgres's sentence, so `postgres` - which declares no
-    // label - renders exactly what it rendered before #U12. Labels can also be absent
-    // because /api/db/provider-meta is still in flight or failed, and the extension
-    // advice is the right guess for the engine the tab was written against.
-    const { queryByText } = render(
+  test("an engine that declares no wording of its own gets no PostgreSQL advice and no badge", () => {
+    // The default used to be PostgreSQL's extension advice, shown to every engine without
+    // a sentence of its own: BigQuery offers this panel and was told to install a
+    // PostgreSQL extension. Labels are also absent while /api/db/provider-meta is in
+    // flight or when it failed, and the neutral line is true for every engine then too.
+    const { container, queryByText } = render(
       <QueriesTab data={{ ...makeData(), slowQueries: [] } as MonitoringData} loading={false} labels={undefined} />,
     );
-    expect(queryByText("Enable pg_stat_statements extension to see query stats.")).not.toBeNull();
-    expect(queryByText("pg_stat_statements required")).not.toBeNull();
+    expect(queryByText("No query statistics available.")).not.toBeNull();
+    expect(container.textContent).not.toContain("pg_stat_statements");
+  });
+
+  test("PostgreSQL's own label renders its pg_stat_statements advice", () => {
+    const labels = new PostgresProvider({
+      id: "pg",
+      name: "t",
+      type: "postgres",
+      host: "localhost",
+      port: 1,
+      database: "app",
+      createdAt: new Date(0),
+    }).getLabels();
+    const advice = labels.slowQueriesEmptyState as string;
+
+    const { queryByText } = render(
+      <QueriesTab data={{ ...makeData(), slowQueries: [] } as MonitoringData} loading={false} labels={labels} />,
+    );
+
+    expect(advice).toContain("pg_stat_statements");
+    expect(queryByText("No query statistics available.")).not.toBeNull();
+    expect(queryByText(advice)).not.toBeNull();
+    expect(queryByText("pg_stat_statements required")).toBeNull();
   });
 
   test("an engine that declares its own empty-state wording gets that instead of Postgres's", () => {
@@ -136,17 +160,23 @@ describe("QueriesTab", () => {
 
     expect(queryByText("The slow log is a node log file that no API returns, so SQL cannot reach it.")).not.toBeNull();
     expect(queryByText("Enable pg_stat_statements extension to see query stats.")).toBeNull();
-    // The badge names a PostgreSQL extension rather than a category, so it cannot be
-    // re-worded from one label without a second one. It is dropped where the engine has
-    // its own answer, and the sentence below carries that answer.
-    expect(queryByText("pg_stat_statements required")).toBeNull();
   });
 
   test("the provider's wording is irrelevant once statistics exist", () => {
     // The label answers "why is this empty", so it must not leak into a populated panel.
-    const labels = { slowQueriesEmptyState: "Cassandra keeps no aggregate of finished statements." } as ProviderLabels;
+    const labels = new ClickHouseProvider({
+      id: "ch",
+      name: "t",
+      type: "clickhouse",
+      host: "localhost",
+      port: 1,
+      database: "app",
+      createdAt: new Date(0),
+    }).getLabels();
+    const sentence = labels.slowQueriesEmptyState as string;
     const { queryByText } = render(<QueriesTab data={makeData()} loading={false} labels={labels} />);
-    expect(queryByText("Cassandra keeps no aggregate of finished statements.")).toBeNull();
+    expect(sentence.length).toBeGreaterThan(0);
+    expect(queryByText(sentence)).toBeNull();
   });
 
   test("renders stats cards and slow query rows", () => {
@@ -303,11 +333,12 @@ describe("a refused slowQueries read", () => {
     expect(queryByText("No query statistics available.")).toBeNull();
   });
 
-  test("an empty list keeps the extension advice", () => {
+  test("an empty list with no label draws no badge", () => {
     const data = { ...makeData(), slowQueries: [] };
     const { queryByTestId, queryByText } = render(<QueriesTab data={data} loading={false} />);
 
     expect(queryByTestId("panel-unavailable")).toBeNull();
-    expect(queryByText("pg_stat_statements required")).not.toBeNull();
+    expect(queryByText("No query statistics available.")).not.toBeNull();
+    expect(queryByText("pg_stat_statements required")).toBeNull();
   });
 });

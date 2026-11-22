@@ -451,9 +451,10 @@ describe("SparkProvider: construction and declarations", () => {
       vacuumGlobalTitle: "Not Run from Studio",
       analyzeGlobalDesc: SPARK_PROVIDER_SENTENCES.analyzeGlobalDesc,
       vacuumGlobalDesc: SPARK_PROVIDER_SENTENCES.vacuumGlobalDesc,
-      slowQueriesEmptyState: SPARK_MONITORING_LABELS.slowQueriesEmptyState,
-      sessionsEmptyState: SPARK_MONITORING_LABELS.sessionsEmptyState,
     });
+    // No sentence for an empty Queries or Sessions panel: neither is offered, so nothing would draw one.
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
     expect(SPARK_PROVIDER_SENTENCES).toStrictEqual({
       maintenanceRefused: "Apache Spark has no maintenance operations in Studio.",
       analyzeGlobalDesc:

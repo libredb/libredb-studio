@@ -539,13 +539,13 @@ export class QdrantProvider extends BaseDatabaseProvider {
     return {};
   }
 
-  /** Empty: Studio never reads Qdrant's slow-request log. `getLabels().slowQueriesEmptyState` says why. */
+  /** Empty: Studio never reads Qdrant's slow-request log, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     this.ensureConnected();
     return [];
   }
 
-  /** Empty: Qdrant reports no client sessions. `getLabels().sessionsEmptyState` says so. */
+  /** Empty: Qdrant reports no client sessions, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
     this.ensureConnected();
     return [];

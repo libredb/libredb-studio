@@ -89,14 +89,13 @@ objective unless you say otherwise**.
 **Investigate**, **Optimize**, **Assess**, **Operate**, **Analyze** — offered in both modes, because
 "how would you make this faster?" is an ordinary thing to ask a plan for.
 
-**Automatic is what the rail opens on, and it means the server reads your objective.** Pressing
-Start posts the objective to `POST /api/agent/classify`, which asks the model to name one of the
-five; the rail says *"Reading your objective to choose a workflow."* while it waits, and opens the
-run for whatever came back. The row used to sit above the objective box, asking you to classify a
-question you had not written yet.
+**Automatic is what the rail opens on, and it means the server reads your objective.**
+Pressing Start posts the objective, the connection and the mode to `POST /api/agent/classify`, which asks the model to name one of the workflows that open on that connection in that mode; the rail says *"Reading your objective to choose a workflow."* while it waits, and opens the run for whatever came back.
+The row used to sit above the objective box, asking you to classify a question you had not written yet.
 
 Three consequences worth knowing before you rely on it:
 
+- **The model is offered only what Start opens.** In agent mode a run on an engine with no curated operations reading is never classified as Operate, no statement workflow is offered on an engine with no statement language, an engine whose language lacks a workflow is never classified into it, and plan mode offers all five.
 - **Naming one yourself skips the reading entirely.** No classification request is made, no model
   tokens are spent on it, and the run opens as the workflow you picked. If you know what you want,
   Advanced is both faster and cheaper.

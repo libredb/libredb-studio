@@ -1665,8 +1665,8 @@ describe("declarations", () => {
     // The control: the base provider's SQL pattern matches that same click.
     expect(new RegExp("(CREATE|DROP|ALTER|TRUNCATE)\\b", "i").test('{"topic":"orders-drop"}')).toBe(true);
     // Every label, and no other: the maintenance ones are never rendered behind supportsMaintenance
-    // false, and are worded true for Kafka all the same (spec 6.3); no Tables caption, since that
-    // list is empty rather than a ranked subset.
+    // false, and are worded true for Kafka all the same (spec 6.3); no empty-state sentence and no
+    // Tables caption, since Kafka offers none of those panels.
     expect(provider.getLabels()).toEqual({
       entityName: "Topic",
       entityNamePlural: "Topics",
@@ -1676,8 +1676,6 @@ describe("declarations", () => {
       generateAction: "Generate Read Request",
       searchPlaceholder: "Search topics...",
       statementLanguage: expect.stringContaining("the JSON read request this editor executes"),
-      slowQueriesEmptyState: "Kafka exposes no query log",
-      sessionsEmptyState: "Kafka does not report client sessions over its protocol",
       analyzeAction: "Analyze Topic",
       vacuumAction: "Compact Topic",
       analyzeGlobalLabel: "Analyze",

@@ -920,13 +920,13 @@ export class EtcdProvider extends BaseDatabaseProvider {
     return {};
   }
 
-  /** Empty: etcd keeps no query log. `getLabels().slowQueriesEmptyState` says so in the panel. */
+  /** Empty: etcd keeps no query log, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     this.ensureConnected();
     return [];
   }
 
-  /** Empty: etcd does not report client sessions. `getLabels().sessionsEmptyState` says so in the panel. */
+  /** Empty: etcd does not report client sessions, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
     this.ensureConnected();
     return [];

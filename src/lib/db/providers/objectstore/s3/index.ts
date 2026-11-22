@@ -689,7 +689,7 @@ export class S3Provider extends BaseDatabaseProvider {
     return [];
   }
 
-  /** S3 has no tables; `tableStatsCaption` says where its buckets and objects are. */
+  /** S3 has no tables, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getTableStats(): Promise<TableStats[]> {
     // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
     if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.tableStats);

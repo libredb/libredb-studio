@@ -115,7 +115,5 @@ export function db2Labels(base: ProviderLabels): ProviderLabels {
     vacuumAction: "Reorganize Table",
     // Db2 has no VACUUM; this slot runs a REORG, which is `optimize`.
     vacuumActionOperation: "optimize",
-    slowQueriesEmptyState: "Db2 query statistics are not read in this version of the Db2 provider.",
-    sessionsEmptyState: "Db2 sessions are not read in this version of the Db2 provider.",
   };
 }

@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { logger } from "@/lib/logger";
 import { LLMConfigError, LLMStreamError } from "@/lib/llm/types";
 import type { AgentModel } from "@/lib/agent/model-adapter";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE, AgentManifestError, openWorkflows } from "@/lib/agent/agent-manifest";
 
 interface GenerateTextCall {
   readonly model: unknown;
@@ -239,6 +239,87 @@ describe("classifying an objective into a workflow", () => {
       });
     },
   );
+
+  /**
+   * F2: the route hands the classifier the workflows a run on the connection opens in its mode, so an objective is
+   * never classified into a workflow Start then refuses. In agent mode MQTT, Sparkplug B, OPC UA and MTConnect offer
+   * agent mode no operations reading, so the operations workflow does not open there.
+   */
+  test.each(["mqtt", "sparkplug", "opcua", "mtconnect"] as const)(
+    "an agent-mode objective on %s is never classified as operations",
+    async (type) => {
+      replies("operations");
+
+      const classification = await classifyAgentWorkflow("why is the broker slow right now", {
+        statementLanguage: AGENT_STATEMENT_LANGUAGE[type] ?? undefined,
+        workflows: openWorkflows("agent", type),
+      });
+
+      expect(classification).toEqual({ workflowType: "investigation", outcome: "unclassified" });
+      expect(lastCall?.system).not.toContain("\noperations:");
+      expect(lastCall?.system).toContain("\ninvestigation:");
+    },
+  );
+
+  test.each(["mqtt", "sparkplug", "opcua", "mtconnect"] as const)(
+    "a plan-mode objective on %s may still be classified as operations",
+    async (type) => {
+      replies("operations");
+
+      const classification = await classifyAgentWorkflow("why is the broker slow right now", {
+        statementLanguage: AGENT_STATEMENT_LANGUAGE[type] ?? undefined,
+        workflows: openWorkflows("planning", type),
+      });
+
+      expect(classification).toEqual({ workflowType: "operations", outcome: "classified" });
+      expect(lastCall?.system).toContain("\noperations:");
+    },
+  );
+
+  test("on an Oracle connection in agent mode the model is not offered query optimization", async () => {
+    replies("query-optimization");
+
+    const classification = await classifyAgentWorkflow("this select takes 40 seconds", {
+      statementLanguage: AGENT_STATEMENT_LANGUAGE.oracle ?? undefined,
+      workflows: openWorkflows("agent", "oracle"),
+    });
+
+    expect(classification).toEqual({ workflowType: "investigation", outcome: "unclassified" });
+    expect(lastCall?.system).not.toContain("query-optimization:");
+    expect(lastCall?.system).toContain("\ndatabase-assessment:");
+  });
+
+  test("a narrowed prompt and the full prompt of one language are two prompts", async () => {
+    await classifyAgentWorkflow("this select takes 40 seconds", { statementLanguage: "sql" });
+    const full = lastCall?.system;
+    await classifyAgentWorkflow("this select takes 40 seconds", {
+      statementLanguage: "sql",
+      workflows: ["investigation", "data-analysis"],
+    });
+    const narrowed = lastCall?.system;
+    await classifyAgentWorkflow("this select takes 40 seconds", { statementLanguage: "sql" });
+
+    expect(narrowed).not.toBe(full);
+    expect(narrowed).not.toContain("query-optimization:");
+    expect(narrowed).toContain("\ndata-analysis:");
+    expect(lastCall?.system).toBe(full as string);
+  });
+
+  test("an offered set with no workflow the language has a variant of is a manifest error, and no model is called", async () => {
+    let thrown: unknown;
+    try {
+      await classifyAgentWorkflow("make the user lookups faster", {
+        statementLanguage: "libredbkv",
+        workflows: ["query-optimization"],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AgentManifestError);
+    expect(createAgentModel).not.toHaveBeenCalled();
+    expect(generateText).not.toHaveBeenCalled();
+  });
 
   test("the objective is handed to the model as data, never as instructions", async () => {
     // The objective is user text going into a system-instructed call, so the prompt

@@ -26,6 +26,4 @@ export const FIRESTORE_LABELS: ProviderLabels = Object.freeze({
   vacuumGlobalTitle: "Not available",
   vacuumGlobalDesc: "Studio sends Firestore no maintenance: this version only reads.",
   statementLanguage: FIRESTORE_STATEMENT_LANGUAGE,
-  slowQueriesEmptyState: "Studio reads no Firestore query statistics",
-  sessionsEmptyState: "Firestore does not list client sessions",
 });

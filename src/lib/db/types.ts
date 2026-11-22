@@ -1898,37 +1898,30 @@ export interface ProviderLabels {
    */
   statementLanguage?: string;
   /**
-   * Why the monitoring Queries tab's "Slowest Queries" panel is empty on this
-   * engine, in that engine's own terms.
+   * Why an offered "Slowest Queries" list is empty on this engine, in that engine's own
+   * terms.
    *
-   * Read by `QueriesTab`, which defaults to PostgreSQL's "Enable
-   * pg_stat_statements extension to see query stats." — the sentence it hardcoded
-   * for every engine until #U12, measured 2026-08-19 in Chrome telling an
-   * OpenSearch cluster to install a PostgreSQL extension. `postgres` therefore
-   * declares nothing, and so does any engine whose statement store really is an
-   * extension away.
+   * Read by the monitoring `QueriesTab`, which renders it under "No query statistics
+   * available."; absent, the tab says only that line. PostgreSQL declares its
+   * `pg_stat_statements` advice here, so the extension is named only on the engine that
+   * has it.
    *
-   * A provider sets this when the Postgres sentence is actively false for it:
-   * either the engine keeps no aggregate of finished statements at all, or the
-   * one it keeps is switched on somewhere else entirely. One field, not one per
-   * sentence — the panel's badge names an extension rather than a category, so it
-   * is dropped where this label is set instead of being re-worded from it.
+   * An engine whose `ENGINE_FACETS` row does not offer `slowQueries` declares none,
+   * because nothing draws the panel there; the monitoring panels census holds that.
    */
   slowQueriesEmptyState?: string;
 
   /**
-   * Why the monitoring Sessions panel and the admin Operations session list are
-   * empty on this engine, in that engine's own terms.
+   * What an empty answer of an offered session panel means on this engine, where "No active
+   * sessions found." would mislead: for example a list of running statements rather than of
+   * sessions.
    *
-   * The counterpart of `slowQueriesEmptyState` for the other half of the same
-   * absence (#518). Both panels default to "No active sessions found.", which a
-   * reader takes as "nothing is running right now" - true on PostgreSQL, and false
-   * on an engine that publishes no session list at all and can never show a row.
+   * Read by the monitoring Sessions tab and the admin Operations session list. A failed read
+   * renders its own reason instead (`activeSessions` absent from the payload, the reason under
+   * `errors`), because a refusal is not an empty answer.
    *
-   * A provider sets this when its `getActiveSessions()` can only ever answer `[]`.
-   * The failure branch beside it is a different fact: it renders a reason only when
-   * the READ failed (`activeSessions` absent from the payload, the reason under
-   * `errors`), and an absence is not an error.
+   * An engine whose `ENGINE_FACETS` row does not offer `activeSessions` declares none, because
+   * nothing draws the panel there; the monitoring panels census holds that.
    */
   sessionsEmptyState?: string;
 
@@ -1948,8 +1941,10 @@ export interface ProviderLabels {
    * frames the list as the top N).
    *
    * Every engine whose list is whole leaves this absent, and both lists then render as they always
-   * have. Optional, like every field added to this published interface after the fact, so an
-   * external implementer keeps compiling.
+   * have. An engine whose `ENGINE_FACETS` row does not offer `tables` declares none, because neither
+   * list nor the agent's table reading exists for it; the monitoring panels census holds that.
+   * Optional, like every field added to this published interface after the fact, so an external
+   * implementer keeps compiling.
    */
   tableStatsCaption?: string;
 }

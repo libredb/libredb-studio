@@ -128,7 +128,7 @@ the case [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) names ClickHouse
 | `buildLimitClause()` | `LIMIT n` / `LIMIT n OFFSET m`, both accepted by Druid |
 | `shouldEnableSSL()` | Inherited but **never called**, deliberately. It infers TLS from substrings in the host name, which would silently switch a self-hosted cluster whose hostname merely contains one. TLS here comes from the connection's own `ssl` config only ([§4.3](#43-tls)) |
 | `prepareQuery()` (base) | The shared query limiter; `DruidProvider` calls it first and only overrides the `OFFSET`-with-no-`LIMIT` case |
-| `getLabels()` (base) | Everything but the two entity labels and the slow-query empty state ([§9](#9-capabilities--labels)) |
+| `getLabels()` (base) | Everything but the two entity labels ([§9](#9-capabilities--labels)) |
 
 Not in the list: a placeholder helper. `SQLBaseProvider` no longer has one (#304 removed it).
 Positional `?` still binds via `query(sql, params)`
@@ -1689,13 +1689,12 @@ Both halves of that are real constraints, not scope cuts made lightly:
 
 ### `getLabels()` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts))
 
-Three overrides:
+Two overrides:
 
 - `entityName` → **"Datasource"**, `entityNamePlural` → **"Datasources"**. Datasource is the Druid
   word for a table, and the sidebar is where a user meets it.
-- `slowQueriesEmptyState` → **"Druid keeps no query log: no system table and no endpoint holds
-  finished queries."**
-  `getSlowQueries()` is empty by design, so the slow-query panel is not offered and the dashboard draws no Queries tab here; before that, the panel was **always** empty, and its hardcoded sentence used to tell the reader to enable `pg_stat_statements` (#463).
+
+No slow-query sentence is declared: `getSlowQueries()` is empty by design, so the slow-query panel is not offered and the dashboard draws no Queries tab here, and nothing would draw one.
 
 Everything else is inherited on purpose. **A Druid row is a row**, so renaming it would only make the
 grid speak a dialect the cluster does not. The maintenance labels are irrelevant here

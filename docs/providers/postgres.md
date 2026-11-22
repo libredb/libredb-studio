@@ -2499,18 +2499,19 @@ PostgreSQL keeps the default SQL vocabulary from `BaseDatabaseProvider` (entity 
 row → *row*, *Select Top 50*, *Vacuum Table*, *Analyze Table*, etc.) — the generic SQL wording
 already fits.
 
-`getLabels()` is overridden for **one** triad only: the Operations tab's global Reindex card, which
-was hardcoded to *"Run Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."*
-for every engine (#464). That wording was written for this engine — the global card
-sends no target, so `runMaintenance('reindex')` here runs `REINDEX DATABASE`
-([§9](#9-maintenance)) — so declaring it changes nothing on PostgreSQL and lets the
-other providers that offer `reindex`, such as SQLite, libSQL and Couchbase, say what theirs does instead:
+`getLabels()` is overridden for two things: the Operations tab's global Reindex card and the Queries tab's empty slow-query list.
+The reindex triad is the wording the card hardcoded for every engine, *"Run Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."* (#464).
+That wording was written for this engine: the global card sends no target, so `runMaintenance('reindex')` here runs `REINDEX DATABASE` ([§9](#9-maintenance)).
+Declaring it changes nothing on PostgreSQL and lets the other providers that offer `reindex`, such as SQLite, libSQL and Couchbase, say what theirs does instead.
+`slowQueriesEmptyState` is the `pg_stat_statements` advice the Queries tab used to show as its default on every engine without a sentence of its own.
+It is PostgreSQL's advice, so PostgreSQL declares it, and the tab's default says only *"No query statistics available."*:
 
 | Field | Value |
 | --- | --- |
 | `reindexGlobalLabel` | *Run Reindex* |
 | `reindexGlobalTitle` | *Rebuild Indexes* |
 | `reindexGlobalDesc` | *Runs REINDEX DATABASE, reconstructing every index in the database.* |
+| `slowQueriesEmptyState` | *Enable pg_stat_statements extension to see query stats.* |
 
 ### SQL writing
 

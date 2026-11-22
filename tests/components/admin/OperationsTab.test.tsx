@@ -135,6 +135,7 @@ import { render, act, cleanup, fireEvent, waitFor, within } from "@testing-libra
 import React from "react";
 
 import { OperationsTab } from "@/components/admin/tabs/OperationsTab";
+import { SNOWFLAKE_MONITORING_LABELS } from "@/lib/db/providers/sql/snowflake/monitoring";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import {
   SYNTHETIC_ENTITY_CAPABILITIES,
@@ -1952,14 +1953,14 @@ describe("OperationsTab", () => {
     expect(getByTestId("operations-sessions-empty").textContent).toBe("No active sessions found.");
   });
 
-  // #D48. The default sentence reads as "nothing is running right now", which is false
-  // on an engine whose session list does not exist. Both branches are pinned so the
-  // fallback cannot quietly become the only path again.
+  // #D48. The default sentence reads as "no session is open right now", which misleads
+  // on an engine whose offered list is something else: Snowflake lists running statements.
+  // Both branches are pinned so the fallback cannot quietly become the only path again.
   test("an engine declaring sessionsEmptyState replaces the empty-state copy", async () => {
-    const duckdb = "DuckDB publishes no session list - there is no duckdb_connections() table function.";
+    const snowflake = SNOWFLAKE_MONITORING_LABELS.sessionsEmptyState;
     mockMetadata = {
       capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"] },
-      labels: { sessionsEmptyState: duckdb },
+      labels: { sessionsEmptyState: snowflake },
     };
     monitoringOverride = { data: { activeSessions: [], tables: defaultTables } };
     let renderResult: ReturnType<typeof render>;
@@ -1967,13 +1968,13 @@ describe("OperationsTab", () => {
       renderResult = render(<OperationsTab />);
     });
 
-    expect(renderResult!.getByTestId("operations-sessions-empty").textContent).toBe(duckdb);
+    expect(renderResult!.getByTestId("operations-sessions-empty").textContent).toBe(snowflake);
   });
 
   test("a refused read outranks the label, because a refusal is not an absence", async () => {
     mockMetadata = {
       capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"] },
-      labels: { sessionsEmptyState: "DuckDB publishes no session list." },
+      labels: { sessionsEmptyState: SNOWFLAKE_MONITORING_LABELS.sessionsEmptyState },
     };
     monitoringOverride = {
       data: { tables: defaultTables, errors: { activeSessions: "permission denied" } },

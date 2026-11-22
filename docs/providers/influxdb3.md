@@ -514,13 +514,9 @@ Health is `GET /ping`, reachability only, never evidence of what the token may r
 The overview's version names the server and the session database, `InfluxDB 3 Core 3.12.0, database home` on the tested server, because no tree node names the database.
 Its table count is the session database's tables; past the listing cap it is a floor, counted from "the first 2,000 tables the session database's table listing returned".
 Uptime, size and the connection limit read "N/A" or 0, because no route Studio reads reports them.
-Slow queries are not read:
-
-> InfluxDB 3 records queries in a server-wide table that shows other users' statements and marks a streamed query finished early, so Studio does not read it.
-
-Sessions are not read either:
-
-> InfluxDB has no session list: every request stands alone.
+Slow queries are not read: InfluxDB 3 records queries in a server-wide table that shows other users' statements and marks a streamed query finished early, so Studio does not read it.
+Sessions are not read either: InfluxDB has no session list, and every request stands alone.
+Neither panel is offered, so the dashboard draws neither, and the labels declare no empty-state sentence for them.
 
 Performance, storage, table and index statistics are empty, and `/metrics` is never read ([D200](../BACKLOG.md)).
 

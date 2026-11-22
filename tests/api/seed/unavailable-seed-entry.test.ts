@@ -186,7 +186,11 @@ describe("a seed whose type names no provider, on the agent routes", () => {
   test("POST /api/agent/classify answers it 400 PROVIDER_UNKNOWN and classifies nothing", async () => {
     const classify = spyOn(workflowClassifier, "classifyAgentWorkflow");
     try {
-      const result = await answer("agent/classify", { objective: "why is checkout slow", connectionId: "seed:acme" });
+      const result = await answer("agent/classify", {
+        objective: "why is checkout slow",
+        connectionId: "seed:acme",
+        mode: "agent",
+      });
 
       expect(result).toEqual(PROVIDER_UNKNOWN);
       expect(classify).not.toHaveBeenCalled();
