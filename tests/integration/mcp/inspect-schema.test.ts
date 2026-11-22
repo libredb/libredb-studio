@@ -41,7 +41,7 @@ import {
   MCP_UNTRUSTED_NOTICE,
   providerTextNotice,
 } from "@/lib/mcp/output";
-import { ExecutionProfileError, StudioProfileRefusal } from "@/lib/db/errors";
+import { DatabaseConfigError, ExecutionProfileError, StudioProfileRefusal } from "@/lib/db/errors";
 import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
 import { secretForms } from "@/lib/db/utils/server-text";
 import type { ManagedConnection } from "@/lib/seed";
@@ -1422,6 +1422,42 @@ describe("a provider's text on inspect_schema", () => {
       content: [
         { type: "text", text: providerTextNotice(AUTHOR) },
         { type: "text", text: "inspect_schema cannot run on this connection: the role may write." },
+      ],
+    });
+  });
+
+  test("a database the provider refuses to open is answered behind a notice naming the provider", async () => {
+    const connection = {
+      id: "seed:fixed",
+      name: "fixed",
+      type: "postgres" as const,
+      seedId: "fixed",
+      createdAt: new Date(),
+    } as ManagedConnection;
+    const provider = {
+      getCapabilities: () => ({ catalogSessions: true }),
+      forCatalog: async () => {
+        throw new DatabaseConfigError('"payroll" cannot be opened', "postgres");
+      },
+    } as unknown as DatabaseProvider;
+    const context = {
+      caller: { username: "alice", role: "admin" as const },
+      resolve: async () => connection,
+      textScrub: fakeTextScrub,
+      acquire: async () => provider,
+    } as unknown as McpConnectionContext;
+    const result = await inspectSchema(
+      InspectSchemaInputSchema.parse({ connection_id: "seed:fixed", database: "payroll" }),
+      {
+        context,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result).toEqual({
+      isError: true,
+      content: [
+        { type: "text", text: providerTextNotice(AUTHOR) },
+        { type: "text", text: 'The database could not be opened: "payroll" cannot be opened.' },
       ],
     });
   });

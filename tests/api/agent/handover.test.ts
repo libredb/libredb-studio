@@ -526,6 +526,13 @@ describe("a replay whose provider's text carries the connection's credential", (
     },
   );
 
+  test("a connection that no longer resolves is answered before any provider is built", async () => {
+    mockResolveConnection.mockRejectedValueOnce(new Error("the connection is gone"));
+    const res = await POST(request(), params());
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(mockAcquire).not.toHaveBeenCalled();
+  });
+
   test("a success's warnings are withheld in the body", async () => {
     mockResolveConnection.mockResolvedValue({ ...SEED_CONNECTION, password } as never);
     mockQueryReadOnly.mockResolvedValueOnce({ ...RESULT, warnings: [{ message: `notice ${password}` }] } as never);
