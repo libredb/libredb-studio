@@ -22,10 +22,27 @@ const WITHHELD = "(the server's text was withheld because it contained the confi
 const JWT_SHAPE = /^eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*$/;
 
 /**
- * Each non-empty secret, its base64, its `encodeURIComponent` form, and each dot-separated segment of a value
- * shaped as a JWT.
+ * The base64 of a secret behind a prefix of `offset` bytes, without the characters the prefix touches: the first 2
+ * for a one-byte prefix, the first 3 for a two-byte prefix.
+ */
+function base64AtOffset(secret: string, offset: 1 | 2): string {
+  return Buffer.concat([Buffer.alloc(offset), Buffer.from(secret, "utf8")])
+    .toString("base64")
+    .replace(/=+$/, "")
+    .slice(offset === 1 ? 2 : 3);
+}
+
+/**
+ * Each non-empty secret, its base64 at each of the three byte offsets, its `encodeURIComponent` form, and each
+ * dot-separated segment of a value shaped as a JWT.
  *
- * The base64 form is written without its `=` padding, so it is found in a padded and an unpadded text alike.
+ * Every base64 form is written without its `=` padding, so it is found in a padded and an unpadded text alike.
+ * Base64 encodes three bytes in four characters, so the base64 of a value that ends with the secret holds one of the
+ * three forms whatever the length of what precedes the secret, as in an HTTP Basic header's `user:secret` or an ApiKey
+ * header's `id:secret`.
+ * An offset form leaves out the characters a preceding byte touches, and those also carry the top bits of the
+ * secret's first byte, so it also matches a value whose first character differs from the secret's only in those bits.
+ * No form is shorter than the secret itself for a secret of two or more characters.
  */
 export function secretForms(secrets: readonly string[]): readonly string[] {
   const forms = new Set<string>();
@@ -33,6 +50,8 @@ export function secretForms(secrets: readonly string[]): readonly string[] {
     if (secret === "") continue;
     forms.add(secret);
     forms.add(Buffer.from(secret, "utf8").toString("base64").replace(/=+$/, ""));
+    forms.add(base64AtOffset(secret, 1));
+    forms.add(base64AtOffset(secret, 2));
     forms.add(encodeURIComponent(secret));
     if (JWT_SHAPE.test(secret)) {
       for (const segment of secret.split(".")) if (segment !== "") forms.add(segment);
