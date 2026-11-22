@@ -805,7 +805,7 @@ incomplete — so where the incompleteness is known in advance, as with an empty
 grounding says so in words.
 
 **"Which databases?"** See the table at the top, and its #414 note. The short version: Operate works
-everywhere and was driven live on every engine the table marks Verified in its Operate column, Redis among them, which has no SQL at all; the
+on every engine that offers agent mode an operational reading, which is every engine but MQTT, Sparkplug B, OPC UA and MTConnect, and was driven live on every engine the table marks Verified in its Operate column, Redis among them, which has no SQL at all; the
 other four workflows need a read-only statement path, which PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino provide; plan mode has no engine limit and since
 #414 no grounding limit either: it composes catalog statements on PostgreSQL and SQLite and asks every other
 engine's own provider to describe itself, in every workflow, Operate included since #411 on a reduced

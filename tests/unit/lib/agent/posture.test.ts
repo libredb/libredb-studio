@@ -278,7 +278,7 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
     expect(posture.qualifier).toBe("plan mode drafts here, and the operations workflow still runs");
     expect(posture.title).toBe("Agent mode has no read-only statement path on Apache Spark");
     expect(posture.body).toBe(
-      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
+      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine.`,
     );
   });
 
@@ -305,8 +305,15 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
     expect(posture.qualifier).toBe("no connection is resolved, so no engine has been established");
     expect(posture.title).toBe("Agent mode has no connection to execute on");
     expect(posture.body).toBe(
-      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs wherever a connection does, and plan mode drafts on every engine.`,
+      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs on every engine that offers agent mode an operational reading, and plan mode drafts on every engine.`,
     );
+  });
+
+  test("the unresolved arm claims no engine-independent reach", () => {
+    const posture = agentPosture({ mode: "agent", engine: null, engineLabel: "", handover: false });
+
+    expect(posture.body).not.toContain("wherever a connection does");
+    expect(posture.body).toContain("it runs on every engine that offers agent mode an operational reading");
   });
 
   test.each([
@@ -748,6 +755,37 @@ describe("a connection whose last run was refused for the connection itself", ()
     expect(posture.qualifier).toContain("plan mode drafts here");
     expect(posture.title).toContain("MongoDB");
     expect(posture.body).toStartWith(refusal);
+  });
+
+  test.each(["mqtt", "sparkplug", "opcua", "mtconnect"] as const)(
+    "the refused arm on an engine without a reading does not say the operations workflow runs (%s)",
+    (engine) => {
+      const posture = agentPosture({
+        mode: "agent",
+        engine,
+        engineLabel: getDBConfig(engine).label,
+        handover: false,
+        refusedHere: refusal,
+      });
+      expect(posture.tone).toBe("blocked");
+      expect(posture.qualifier).toBe("plan mode drafts here");
+      expect(posture.body).toBe(`${refusal} Plan mode drafts on every connection.`);
+      expect(`${posture.qualifier} ${posture.body}`).not.toContain("operations workflow");
+    },
+  );
+
+  test("the refused arm on an engine with a reading still names the operations workflow", () => {
+    const posture = agentPosture({
+      mode: "agent",
+      engine: "mongodb",
+      engineLabel: getDBConfig("mongodb").label,
+      handover: false,
+      refusedHere: refusal,
+    });
+    expect(posture.qualifier).toBe("plan mode drafts here, and the operations workflow still runs");
+    expect(posture.body).toBe(
+      `${refusal} Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement.`,
+    );
   });
 
   test("leaves plan mode, an unsupported engine and a connection with no refusal as they were", () => {

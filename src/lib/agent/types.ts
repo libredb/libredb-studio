@@ -249,10 +249,13 @@ export const AGENT_WORKFLOW_PRESENTS_ANSWER: Readonly<Record<AgentRunWorkflowTyp
  *
  * `operations` is the false one, and it is the whole reason this record exists rather
  * than a blanket rule about agent mode. Its tools are the curated provider readings
- * every engine implements, served under `AGENT_OPERATIONS_PROFILE`, whose acquisition
- * does not require `queryReadOnly` (`PROFILE_ACQUISITION` in `src/lib/db/factory.ts`).
- * A refusal that ignored this axis would withhold from MySQL, Oracle, SQL Server,
- * MongoDB, Redis and the rest a workflow that runs on them today (#411).
+ * the run's engine offers (its `ENGINE_FACETS` row's `agentReadings`), served under
+ * `AGENT_OPERATIONS_PROFILE`, whose acquisition does not require `queryReadOnly`
+ * (`PROFILE_ACQUISITION` in `src/lib/db/factory.ts`). A refusal that ignored this axis
+ * would withhold from MySQL, Oracle, SQL Server, MongoDB, Redis and the rest a workflow
+ * that runs on them today (#411). Where it does not open is decided by the other axis,
+ * the `agent-readings` requirement in `agent-manifest.ts`: an engine that offers no
+ * reading is refused the workflow in agent mode.
  *
  * It says nothing about PLAN mode, which drafts on every engine and executes nothing it
  * drafts: a caller reading this record has to have established the mode first, exactly
@@ -344,8 +347,10 @@ export type AgentRunFailureReason =
    * user chose, not a fault of the server — which is why it is not `internal`.
    *
    * NARROWER for the `operations` workflow (#325), and narrower is all it is. That
-   * workflow's own reads go through the curated provider methods every engine
-   * implements, under `AGENT_OPERATIONS_PROFILE`, so it never asks for a read-only
+   * workflow's own reads go through the curated provider methods its engine offers to
+   * agent mode (its `ENGINE_FACETS` row's `agentReadings`; an engine that offers none is
+   * refused the workflow by the `agent-readings` requirement, not by this reason),
+   * under `AGENT_OPERATIONS_PROFILE`, so it never asks for a read-only
    * STATEMENT path; and since #411 it takes a server-side catalog capture before its
    * first turn, which does acquire a profile. WHICH profile depends on the reading, and
    * that is what keeps this reason out of an operations run (#414): the composed catalog

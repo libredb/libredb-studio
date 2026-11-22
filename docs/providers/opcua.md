@@ -946,6 +946,7 @@ The refusals and empty arrays above are what each method answers when called dir
 Which of the seven monitoring panels and which maintenance operations `opcua` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/opcua/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
 The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -1343,7 +1344,7 @@ A failure is worded by its category and the status code's name, with this provid
 ### 14.3 What agent mode reads: the read roots
 
 Agent mode reads only beneath read roots, the node ids an operator declares on the seed connection as `agentReadRoots` ([SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md#an-opc-ua-connections-read-roots)).
-A statement-sending agent profile (`agent-read-only` and `agent-handover`) on a connection that declares none is refused when it opens, before any socket, with `READ_ROOTS_REQUIRED`, and the runs route refuses such a Start with `read-roots-required` before a run exists; plan mode and the operations workflow read nothing beneath roots and are not refused.
+A statement-sending agent profile (`agent-read-only` and `agent-handover`) on a connection that declares none is refused when it opens, before any socket, with `READ_ROOTS_REQUIRED`, and the runs route refuses such a Start with `read-roots-required` before a run exists; plan mode reads nothing beneath roots and is not refused, and the operations workflow, which reads nothing beneath roots either, does not open in agent mode on OPC UA at all, because the engine offers agent mode no curated reading.
 A connection a browser or a client supplies cannot carry roots, and a governed connection carries none.
 The editor (the console, the Keys panel, the overview) never consults the roots.
 
@@ -1431,7 +1432,8 @@ The agent reads it through `runServerPack` and `agentEnginePack`.
 Both overlays are empty, so the engine resolves to the `opcuaread` family pack itself.
 The `opcuaread` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `opcuaread` statement-language family's own.
-The family offers the investigation workflow, through `run_read_query` with one request, and the operations workflow; it offers no query optimization or database assessment, since a server has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The family offers the investigation workflow, through `run_read_query` with one request, and holds an operations variant; it offers no query optimization or database assessment, since a server has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The operations workflow still does not open in agent mode on OPC UA: the engine offers agent mode no curated reading, so Start refuses it with the reason, and plan mode drafts instead.
 The tool description, the investigation rule and the grounding notes tell the model to report the unit beside every value and never to assume one, and that agent mode reads only beneath the connection's read roots, which `{"browse": "i=85"}` lists, every other node id answering as one the server does not hold.
 Plan mode's safety strip says the family's own words (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/opcuaread/client.ts)) beside core's pill, *Executes nothing it drafts*: "nothing is read from the server to ground it, and the request it drafts is never sent", because no kind is listed and the shared strip's "one schema read grounds it" would not be true here; plan mode follows the provider's `statementLanguage` label, which names the console's two reads and not the read roots, since the roots bound agent mode's reads and not what plan mode drafts for the editor.
 Since no inventory ever grounds it, the family declares `ungroundedPlanning` in [`server.ts`](../../src/lib/agent/languages/opcuaread/server.ts): an ungrounded plan is given the statement contract with the node ids its question names as its only names, in place of the no-inventory refusal, and drafts `NO STATEMENT:` when the question names none (measured: asked for the values of two named nodes, it drafted `{"read": [...]}` of both, which the editor ran).

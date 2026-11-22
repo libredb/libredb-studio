@@ -340,21 +340,21 @@
       "headline": "Cannot execute on BigQuery",
       "qualifier": "plan mode drafts here, and the operations workflow still runs",
       "title": "Agent mode has no read-only statement path on BigQuery",
-      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On BigQuery a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine."
+      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On BigQuery a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine."
     },
     {
       "tone": "blocked",
       "headline": "Cannot execute on Snowflake",
       "qualifier": "plan mode drafts here, and the operations workflow still runs",
       "title": "Agent mode has no read-only statement path on Snowflake",
-      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Snowflake a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine."
+      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Snowflake a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine."
     },
     {
       "tone": "blocked",
       "headline": "Cannot execute on Apache Spark",
       "qualifier": "plan mode drafts here, and the operations workflow still runs",
       "title": "Agent mode has no read-only statement path on Apache Spark",
-      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine."
+      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine."
     },
     {
       "tone": "blocked",
@@ -627,7 +627,7 @@
       "headline": "Cannot execute on Databend",
       "qualifier": "plan mode drafts here, and the operations workflow still runs",
       "title": "Agent mode has no read-only statement path on Databend",
-      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Databend a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine."
+      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Databend a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine."
     },
     {
       "tone": "reads",
@@ -674,9 +674,9 @@
     {
       "tone": "blocked",
       "headline": "Refused on this connection",
-      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "qualifier": "plan mode drafts here",
       "title": "Agent mode cannot run on this MQTT connection as it is configured",
-      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection."
     },
     {
       "tone": "reads",
@@ -723,9 +723,9 @@
     {
       "tone": "blocked",
       "headline": "Refused on this connection",
-      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "qualifier": "plan mode drafts here",
       "title": "Agent mode cannot run on this OPC UA connection as it is configured",
-      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection."
     },
     {
       "tone": "reads",
@@ -737,9 +737,9 @@
     {
       "tone": "blocked",
       "headline": "Refused on this connection",
-      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "qualifier": "plan mode drafts here",
       "title": "Agent mode cannot run on this MTConnect connection as it is configured",
-      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection."
     },
     {
       "tone": "safe",
@@ -807,9 +807,9 @@
     {
       "tone": "blocked",
       "headline": "Refused on this connection",
-      "qualifier": "plan mode drafts here, and the operations workflow still runs",
+      "qualifier": "plan mode drafts here",
       "title": "Agent mode cannot run on this Sparkplug B connection as it is configured",
-      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection, and the operations workflow still runs here, because it sends no statement."
+      "body": "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain. Plan mode drafts on every connection."
     },
     {
       "tone": "reads",
@@ -830,7 +830,7 @@
       "headline": "Cannot execute yet",
       "qualifier": "no connection is resolved, so no engine has been established",
       "title": "Agent mode has no connection to execute on",
-      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs wherever a connection does, and plan mode drafts on every engine."
+      "body": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. No connection is resolved here, so this panel cannot say which engine you are on, or whether it is one of those: until one is resolved, agent mode executes nothing. The operations workflow sends no statement at all, so it runs on every engine that offers agent mode an operational reading, and plan mode drafts on every engine."
     }
   ]
 }

@@ -413,6 +413,7 @@ maintenance operations.
 Which of the seven monitoring panels and which maintenance operations `mqtt` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/keyvalue/mqtt/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
 The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -718,7 +719,8 @@ The agent reads it through `runServerPack` and `agentEnginePack`.
 Both overlays are empty, so the engine resolves to the `mqttread` family pack itself.
 The `mqttread` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `mqttread` statement-language family's own.
-The family offers the investigation workflow, through `run_read_query` with one read request, and the operations workflow; it offers no query optimization or database assessment, since a broker has no plan and no profile, and no data analysis, whose tools need stored values, and no workflow hands an answer to the editor.
+The family offers the investigation workflow, through `run_read_query` with one read request, and holds an operations variant; it offers no query optimization or database assessment, since a broker has no plan and no profile, and no data analysis, whose tools need stored values, and no workflow hands an answer to the editor.
+The operations workflow still does not open in agent mode on MQTT: the engine offers agent mode no curated reading, so Start refuses it with the reason, and plan mode drafts instead.
 The investigation rule tells the model to read a topic the question names directly, to read the window only for the broker's totals, never to guess a topic, and to report a topic not seen as not seen in that window, never as absent.
 A plan of the investigation is prose: an MQTT connection has no query console, so there is no statement for the editor to run, and plan mode is ungrounded on it, as agent mode is.
 Plan mode's safety strip says the family's own words (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/mqttread/client.ts)) beside core's pill, *Executes nothing it drafts*: "no topic is listed for it; opening the connection is a handshake that subscribes to nothing", because MQTT has no command that lists topics and topic names are withheld, so the shared strip's "one schema read grounds it" would not be true here.

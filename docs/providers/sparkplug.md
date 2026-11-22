@@ -262,6 +262,7 @@ during this read" and "a death arrived during this read".
 Which of the seven monitoring panels and which maintenance operations `sparkplug` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/sparkplug/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
 The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
 
 | Monitoring panel | Offered | Why |
 |---|---|---|
@@ -445,7 +446,8 @@ The agent reads it through `runServerPack` and `agentEnginePack`.
 Both overlays are empty, so the engine resolves to the `sparkplugread` family pack itself.
 The `sparkplugread` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `sparkplugread` statement-language family's own.
-The family offers the investigation workflow, through `run_read_query` with one read request, and the operations workflow; it offers no query optimization or database assessment, since a broker has no plan and no profile, and no data analysis, whose tools need stored values, and no workflow hands an answer to the editor.
+The family offers the investigation workflow, through `run_read_query` with one read request, and holds an operations variant; it offers no query optimization or database assessment, since a broker has no plan and no profile, and no data analysis, whose tools need stored values, and no workflow hands an answer to the editor.
+The operations workflow still does not open in agent mode on Sparkplug B: the engine offers agent mode no curated reading, so Start refuses it with the reason, and plan mode drafts instead.
 The investigation rule tells the model to read a group, edge node or device the question names directly, to read the window only for the plant's totals, never to guess an id, and to report an object not seen as not seen in that window, never as absent or offline.
 A plan of the investigation is prose: the editor's console request reads metric values, which agent mode never reads, and plan mode is ungrounded on it, as agent mode is.
 Plan mode's safety strip says the family's own words (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/sparkplugread/client.ts)) beside core's pill, *Executes nothing it drafts*: "no group, edge node or device is listed for it; opening the connection is a handshake that subscribes to nothing", because Sparkplug has no command that lists edge nodes or devices and their ids are withheld, so the shared strip's "one schema read grounds it" would not be true here.

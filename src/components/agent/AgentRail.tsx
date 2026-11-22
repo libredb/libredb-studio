@@ -1909,7 +1909,7 @@ export const AgentRail = React.memo(function AgentRail({
     not read it, the button stays live, and the run this rail opens is refused by the
     server exactly as it was. A notice that also disabled Start would be this surface
     deciding a question the server decides — and it would be wrong for the operations
-    workflow, which runs on every engine because it sends no statement at all.
+    workflow, which runs without a statement path because it sends no statement at all.
 
     `null` is not one of these engines: nothing has been resolved, so which engine this
     is has not been established, and an amber card about an engine nobody named would be

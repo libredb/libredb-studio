@@ -766,9 +766,24 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart).not.toHaveBeenCalled();
   });
 
+  test("an operations run on mqtt is refused 400 with the requirement's sentence before a run is opened", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:plant", name: "Plant", type: "mqtt" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }));
+    const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(
+      "Agent mode takes no operational reading on this engine: it offers agent mode none of the session, slow-query, table, index, storage or health readings, so the operations workflow's reading tool could only refuse. Plan mode drafts here.",
+    );
+    expect(body.refused).toBe("engine-unsupported");
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+  });
+
   test("the operations workflow still opens on the same connection", async () => {
-    // It sends no statement at all: its reads are the curated provider methods every
-    // engine implements, under a profile whose gate does not ask for `queryReadOnly`.
+    // It sends no statement at all: its reads are the curated readings this engine offers
+    // agent mode, under a profile whose gate does not ask for `queryReadOnly`.
     mockResolveConnection.mockResolvedValueOnce(UNSUPPORTED_ENGINE);
 
     const res = await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }));
@@ -830,17 +845,18 @@ describe("POST /api/agent/runs", () => {
     expect(source.includes("@/lib/db/providers/")).toBe(false);
   });
 
-  test("plan mode and the operations workflow open on the same connection, and roots open the investigation", async () => {
+  test("plan mode opens on the same connection, and roots open the investigation", async () => {
     mockResolveConnection.mockResolvedValueOnce(ROOTLESS_PLANT);
     expect((await POST(startRequest({ ...VALID_BODY, mode: "planning" }))).status).toBe(202);
+    // The operations workflow is not opened here at all: OPC UA offers agent mode no curated reading, roots or not.
     mockResolveConnection.mockResolvedValueOnce(ROOTLESS_PLANT);
-    expect((await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }))).status).toBe(202);
+    expect((await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }))).status).toBe(400);
     mockResolveConnection.mockResolvedValueOnce({
       ...ROOTLESS_PLANT,
       agentReadRoots: ["nsu=urn:plant;s=Line1"],
     } as never);
     expect((await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }))).status).toBe(202);
-    expect(mockStart).toHaveBeenCalledTimes(3);
+    expect(mockStart).toHaveBeenCalledTimes(2);
   });
 
   test("an Apache Spark investigation is refused with the posture's own paragraph", async () => {
