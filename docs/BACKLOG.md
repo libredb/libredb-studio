@@ -33,7 +33,7 @@ None of it is a GitHub issue.
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U221 · 206
 - [Dependencies](#dependencies) — P1-P14 · 12
-- [Documentation](#documentation) — DOC3-DOC37 · 31
+- [Documentation](#documentation) — DOC3-DOC38 · 32
 - [Release pipeline](#release-pipeline) — REL1-REL11 · 10
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
@@ -8079,6 +8079,16 @@ The `readsFileAccessPosture` row of the capability table in `docs/ADDING_A_PROVI
 Found 2026-11-05 in the review of #2255.
 
 **Done when:** the row names both engines and what each does with a denied handle, and a test holds the engines the row names to the true rows of `READS_FILE_ACCESS_POSTURE`.
+
+### DOC38. No test holds the safety strip table or the two "every engine but" lists to what the posture module renders
+
+The table under "The safety strip is one module's reading, in four levels" in `docs/AGENT.md` states, for each level and arm, the pill, the qualifier and the engines it applies to.
+Its first plan-mode row and the plan-mode row of the strip table in `docs/AGENT_GUIDE.md` both say the shared qualifier holds "on every engine but Modbus, MQTT, Sparkplug B, Prometheus and OPC UA".
+`agentPosture` in `src/lib/agent/posture.ts` decides each of those answers, and a language pack's `posture.plan` decides which engines leave the shared plan words, so a pack that gains or drops its own plan words changes the truth of both lists.
+No test reads the table or either list, so they were corrected by hand and can drift again unseen.
+Found 2026-11-22 in the review of the change that moved the strip's tone and headline into core.
+
+**Done when:** a test holds each row of the strip table and both "every engine but" lists to what `agentPosture` renders for each engine and arm, for example by reading `tests/fixtures/agent/posture/golden-posture.json`.
 
 ## Release pipeline
 
