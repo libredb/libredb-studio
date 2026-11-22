@@ -13,8 +13,11 @@ import {
   QueryError,
   ReadAllowanceExceededError,
   RefusedBeforeSendError,
+  StudioBudgetRefusal,
   StudioProfileRefusal,
+  StudioTimeoutRefusal,
   ProviderTextWithheldError,
+  TimeoutError,
 } from "@/lib/db/errors";
 import {
   isStudioRefusal,
@@ -322,6 +325,21 @@ describe("isStudioRefusal", () => {
     expect(isStudioRefusal(new ExecutionProfileError("refused", "READ_ROOTS_REQUIRED"))).toBe(false);
     expect(isStudioRefusal(new RefusedBeforeSendError("refused", "postgres"))).toBe(false);
     expect(isStudioRefusal("text")).toBe(false);
+  });
+
+  test("the core budget and time classes are Studio's, and a plain QueryError or TimeoutError is not", () => {
+    const budgetRefusal = new StudioBudgetRefusal("refused by the row budget", "postgres", "SELECT 1");
+    const timeRefusal = new StudioTimeoutRefusal("did not answer in time", "postgres", 50);
+    expect(isStudioRefusal(budgetRefusal)).toBe(true);
+    expect(isStudioRefusal(timeRefusal)).toBe(true);
+    expect(isStudioRefusal(new QueryError("refused by the row budget", "postgres"))).toBe(false);
+    expect(isStudioRefusal(new TimeoutError("did not answer in time", "postgres", 50))).toBe(false);
+    expect(budgetRefusal).toBeInstanceOf(QueryError);
+    expect(budgetRefusal.name).toBe("QueryError");
+    expect(budgetRefusal.query).toBe("SELECT 1");
+    expect(timeRefusal).toBeInstanceOf(TimeoutError);
+    expect(timeRefusal.name).toBe("TimeoutError");
+    expect(timeRefusal.timeout).toBe(50);
   });
 
   test("a StudioProfileRefusal keeps the name ExecutionProfileError", () => {

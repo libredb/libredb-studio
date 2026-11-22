@@ -266,6 +266,22 @@ export class ReadAllowanceExceededError extends RefusedBeforeSendError {
 }
 
 /**
+ * A row or byte budget refusal, or the core read path's time refusal, that Studio's core raised over a provider's
+ * answer (`runReadOnlyStatement` and `runReadOnlyReading`). It exists only to mark Studio's sentence apart from a
+ * provider's, which raises the same sentences as a plain `QueryError`, so the agent says this one in Studio's voice
+ * and fences a provider's as database content. Its `name` stays `QueryError`, so a log line, an error body and a
+ * reader of the name see no difference. No provider constructs it; tests/unit/db/operations/provider-text-census.test.ts
+ * holds that.
+ */
+export class StudioBudgetRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, StudioBudgetRefusal.prototype);
+  }
+}
+
+/**
  * What `beginTransaction()` raises when the server accepted the BEGIN and its own status
  * says no transaction is open, the providers that can read that status (PostgreSQL's
  * ReadyForQuery byte, MySQL's `SERVER_STATUS_IN_TRANS`) share it. Measured 2026-10-04 on
@@ -308,6 +324,20 @@ export class TimeoutError extends DatabaseError {
     super(message, provider, ApiErrorCode.TIMEOUT_ERROR, query);
     this.name = "TimeoutError";
     Object.setPrototypeOf(this, TimeoutError.prototype);
+  }
+}
+
+/**
+ * A time limit Studio's own read set and the read outlasted: the agent's statistics read. It exists only to mark
+ * Studio's sentence apart from a provider's timeout, so the agent says this one in Studio's voice. Its `name` stays
+ * `TimeoutError`, so a log line, an error body and a reader of the name see no difference. No provider constructs it;
+ * tests/unit/db/operations/provider-text-census.test.ts holds that.
+ */
+export class StudioTimeoutRefusal extends TimeoutError {
+  constructor(message: string, provider?: DatabaseType, timeout?: number) {
+    super(message, provider, timeout);
+    this.name = "TimeoutError";
+    Object.setPrototypeOf(this, StudioTimeoutRefusal.prototype);
   }
 }
 

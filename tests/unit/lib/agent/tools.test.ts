@@ -3618,6 +3618,10 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
       // Refused before the read was sent: a smaller read that fits what the run's read allowance has left is the repair.
       ReadAllowanceExceededError: "repairable",
       TimeoutError: "repairable",
+      // Core's own row, byte or time refusal of an answer, a QueryError: narrowing the statement is the repair.
+      StudioBudgetRefusal: "repairable",
+      // The statistics read outlasting the time Studio gave it, a TimeoutError: a narrower read is the repair.
+      StudioTimeoutRefusal: "repairable",
       QueryCancelledError: "repairable",
       AuthenticationError: "repairable",
       // A grant the agent's least-privilege credential lacks: reading another object is the repair.

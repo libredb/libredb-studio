@@ -74,7 +74,7 @@ import {
   PoolExhaustedError,
   QueryError,
   RefusedBeforeSendError,
-  TimeoutError,
+  StudioTimeoutRefusal,
 } from "@/lib/db/errors";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import {
@@ -3160,7 +3160,8 @@ export async function readStatisticsForGrounding(
         read = await withinGrantedTime(
           provider.query(sql),
           budget.statementTimeoutMs,
-          () => new TimeoutError("the statistics read did not answer in time", dialect, budget.statementTimeoutMs),
+          () =>
+            new StudioTimeoutRefusal("the statistics read did not answer in time", dialect, budget.statementTimeoutMs),
           holdUntilSettled,
         );
       } catch (error) {
