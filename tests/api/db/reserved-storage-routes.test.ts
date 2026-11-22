@@ -29,6 +29,7 @@ mock.module("@/lib/auth", () => ({
 
 const { POST: testConnectionPost } = await import("@/app/api/db/test-connection/route");
 const { POST: providerMetaPost } = await import("@/app/api/db/provider-meta/route");
+const { POST: queryPost } = await import("@/app/api/db/query/route");
 
 const workDir = mkdtempSync(join(tmpdir(), "libredb-reserved-routes-"));
 const storageFile = join(workDir, "libredb-storage.db");
@@ -131,7 +132,7 @@ const ADMINISTRATOR_REFUSAL =
 const FILESYSTEM_READS = ["realpathSync", "lstatSync", "statSync", "readlinkSync"] as const;
 
 describe("a role whose file-access posture SQLite refuses is answered with that refusal before Studio reads the path it names (FND-2 slice 3)", () => {
-  test("Test Connection and provider-meta answer the user role the administrator refusal for Studio's storage file, a path under a regular file, an unreadable directory and a self-referencing link, and read none of them", async () => {
+  test("Test Connection, provider-meta and a query naming a database answer the user role the administrator refusal for Studio's storage file, a path under a regular file, an unreadable directory and a self-referencing link, and read none of them", async () => {
     role = "user";
     const plain = join(workDir, "plain-for-user");
     writeFileSync(plain, "");
@@ -141,18 +142,22 @@ describe("a role whose file-access posture SQLite refuses is answered with that 
     const selfLink = join(workDir, "self-link");
     symlinkSync(selfLink, selfLink);
     const paths = [storageFile, join(plain, "x.db"), join(locked, "x.db"), selfLink];
+    // The query route reads the connection's declarations before it opens one when the body names a database (a key's
+    // database), so it builds a provider there too.
     const routes = [
-      ["/api/db/test-connection", testConnectionPost],
-      ["/api/db/provider-meta", providerMetaPost],
+      ["/api/db/test-connection", testConnectionPost, {}],
+      ["/api/db/provider-meta", providerMetaPost, {}],
+      ["/api/db/query", queryPost, { sql: "SELECT 1", database: 0 }],
     ] as const;
     const spies = FILESYSTEM_READS.map((name) => spyOn(fs, name));
     try {
       const answers: unknown[] = [];
       for (const database of paths) {
-        for (const [route, post] of routes) {
+        for (const [route, post, fields] of routes) {
           const connection = { id: "inline-user-file", name: "User file", type: "sqlite", database };
+          const body = { connection, ...fields };
           // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is read on its own.
-          const response = await post(createMockRequest(route, { method: "POST", body: { connection } }) as never);
+          const response = await post(createMockRequest(route, { method: "POST", body }) as never);
           // oxlint-disable-next-line no-await-in-loop -- as above.
           answers.push([route, database, response.status, await parseResponseJSON(response)]);
         }
