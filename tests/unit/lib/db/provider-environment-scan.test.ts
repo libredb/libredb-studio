@@ -100,9 +100,13 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
     expect(readsTheSetting("const flag = <string>process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;", "probe.ts")).toBe(true);
   });
 
-  test("the read detector parses a .tsx file as TSX, so a read inside JSX is found", () => {
+  test("the read detector parses a .tsx file as TSX, so JSX text that looks like a comment opener hides no read", () => {
+    // Parsed as TS, the `/*` in the JSX text opens a block comment that swallows the read below it.
     expect(
-      readsTheSetting("export const Flag = () => <span>{process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS}</span>;", "probe.tsx"),
+      readsTheSetting(
+        "export const Hint = () => <p>matches src/*.ts</p>;\nexport const a = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;",
+        "probe.tsx",
+      ),
     ).toBe(true);
   });
 
