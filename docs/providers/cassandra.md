@@ -1285,7 +1285,7 @@ panel has the opposite obligation — it is the surface that must say what it co
 
 ### Engine facets
 
-Which of the seven monitoring panels `cassandra` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/cassandra/engine-facets.ts).
+Which of the seven monitoring panels and which maintenance operations `cassandra` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/cassandra/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
 The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
@@ -1298,6 +1298,9 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 | `tables` | No | `getTableStats` refuses with `CASSANDRA_TABLE_STATS_REFUSAL` without asking the engine |
 | `indexes` | No | `getIndexStats` refuses with `CASSANDRA_INDEX_STATS_REFUSAL` without asking the engine |
 | `storage` | No | `getStorageStats` refuses with `CASSANDRA_STORAGE_STATS_REFUSAL` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
 ---
 

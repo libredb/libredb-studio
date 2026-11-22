@@ -503,7 +503,7 @@ The 60 s connection pulse sends one AnalyzePlan on the metadata session, which a
 
 #### Engine facets
 
-Which of the seven monitoring panels `spark` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/spark/engine-facets.ts).
+Which of the seven monitoring panels and which maintenance operations `spark` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/spark/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
 The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
@@ -516,6 +516,9 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 | `tables` | No | `getTableStats` refuses with `SPARK_MONITORING_LABELS.tablesRefused` without asking the engine |
 | `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
 | `storage` | No | `getStorageStats` refuses with `SPARK_MONITORING_LABELS.storageRefused` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
 ### 8.3 Plan mode and agent operations
 

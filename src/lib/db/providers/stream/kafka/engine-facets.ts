@@ -10,6 +10,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `activeSessions`: `getActiveSessions` answers `[]` without asking the engine.
  * - `tables`: `getTableStats` answers `[]` without asking the engine.
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
+ *
+ * Maintenance: `kafka` offers no maintenance operation.
  */
 export const KAFKA_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -21,4 +23,5 @@ export const KAFKA_ENGINE_FACETS: EngineFacets = {
     indexes: "not-offered",
     storage: "offered",
   },
+  maintenance: [],
 };

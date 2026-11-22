@@ -11,6 +11,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `tables`: `getTableStats` refuses with `SPARK_MONITORING_LABELS.tablesRefused` without asking the engine.
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
  * - `storage`: `getStorageStats` refuses with `SPARK_MONITORING_LABELS.storageRefused` without asking the engine.
+ *
+ * Maintenance: `spark` offers no maintenance operation.
  */
 export const SPARK_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -22,4 +24,5 @@ export const SPARK_ENGINE_FACETS: EngineFacets = {
     indexes: "not-offered",
     storage: "not-offered",
   },
+  maintenance: [],
 };

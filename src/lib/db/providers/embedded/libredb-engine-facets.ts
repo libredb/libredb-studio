@@ -9,6 +9,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `slowQueries`: `getSlowQueries` answers `[]` without asking the engine.
  * - `activeSessions`: `getActiveSessions` refuses with `LIBREDB_ACTIVE_SESSIONS_REFUSAL` without asking the engine.
  * - `indexes`: `getIndexStats` refuses with `LIBREDB_INDEX_STATS_REFUSAL` without asking the engine.
+ *
+ * Maintenance: `libredb` offers no maintenance operation.
  */
 export const LIBREDB_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -20,4 +22,5 @@ export const LIBREDB_ENGINE_FACETS: EngineFacets = {
     indexes: "not-offered",
     storage: "offered",
   },
+  maintenance: [],
 };

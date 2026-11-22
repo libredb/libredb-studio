@@ -6,6 +6,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * the session, slow-query, table, index and storage members on every engine:
  *
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
+ *
+ * Maintenance: `trino` offers `kill`, in its provider's declaration order.
  */
 export const TRINO_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -17,4 +19,5 @@ export const TRINO_ENGINE_FACETS: EngineFacets = {
     indexes: "not-offered",
     storage: "offered",
   },
+  maintenance: ["kill"],
 };

@@ -8,6 +8,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `performance`: `getPerformanceMetrics` answers `{}` without asking the engine.
  * - `slowQueries`: `getSlowQueries` answers `[]` without asking the engine.
  * - `storage`: `getStorageStats` answers `[]` without asking the engine.
+ *
+ * Maintenance: `neo4j` offers no maintenance operation.
  */
 export const NEO4J_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -19,4 +21,5 @@ export const NEO4J_ENGINE_FACETS: EngineFacets = {
     indexes: "offered",
     storage: "not-offered",
   },
+  maintenance: [],
 };

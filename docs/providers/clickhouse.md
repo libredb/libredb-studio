@@ -1632,7 +1632,7 @@ Two honest zeroes in the overview, so neither reads as a measurement:
 
 ### Engine facets
 
-Which of the seven monitoring panels `clickhouse` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/clickhouse/engine-facets.ts).
+Which of the seven monitoring panels and which maintenance operations `clickhouse` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/clickhouse/engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
 The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
@@ -1645,6 +1645,9 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 | `tables` | Yes | `getTableStats` asks the engine |
 | `indexes` | Yes | `getIndexStats` asks the engine |
 | `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `optimize`, `analyze`, `kill`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
 
 ---
 

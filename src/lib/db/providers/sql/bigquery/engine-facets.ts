@@ -6,6 +6,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * the session, slow-query, table, index and storage members on every engine:
  *
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
+ *
+ * Maintenance: `bigquery` offers no maintenance operation.
  */
 export const BIGQUERY_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -17,4 +19,5 @@ export const BIGQUERY_ENGINE_FACETS: EngineFacets = {
     indexes: "not-offered",
     storage: "offered",
   },
+  maintenance: [],
 };

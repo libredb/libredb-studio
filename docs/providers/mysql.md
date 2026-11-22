@@ -2178,7 +2178,7 @@ that is what MySQL itself calls index bytes.
 
 ### Engine facets
 
-Which of the seven monitoring panels `mysql` offers is its row in `ENGINE_FACETS`, declared in [`mysql-engine-facets.ts`](../../src/lib/db/providers/sql/mysql-engine-facets.ts).
+Which of the seven monitoring panels and which maintenance operations `mysql` offers is its row in `ENGINE_FACETS`, declared in [`mysql-engine-facets.ts`](../../src/lib/db/providers/sql/mysql-engine-facets.ts).
 `getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
 The agent's `inspect_operations` tool does not read this row yet: it still calls the session, slow-query, table, index and storage methods directly.
 
@@ -2191,6 +2191,10 @@ The agent's `inspect_operations` tool does not read this row yet: it still calls
 | `tables` | Yes | `getTableStats` asks the engine |
 | `indexes` | Yes | `getIndexStats` asks the engine |
 | `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `analyze`, `optimize`, `check`, `kill`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+The connected server may accept fewer ([section 9.1](#91-which-verbs-the-connected-server-has-measured-at-connect)), and an operation it does not accept is refused with the same code after connect.
 
 ---
 

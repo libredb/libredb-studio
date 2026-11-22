@@ -8,6 +8,8 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `performance`: `getPerformanceMetrics` answers `{}` without asking the engine.
  * - `slowQueries`: `getSlowQueries` answers `[]` without asking the engine.
  * - `activeSessions`: `getActiveSessions` answers `[]` without asking the engine.
+ *
+ * Maintenance: `duckdb` offers `vacuum`, `analyze` and `optimize`, in its provider's declaration order.
  */
 export const DUCKDB_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -19,4 +21,5 @@ export const DUCKDB_ENGINE_FACETS: EngineFacets = {
     indexes: "offered",
     storage: "offered",
   },
+  maintenance: ["vacuum", "analyze", "optimize"],
 };

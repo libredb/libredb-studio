@@ -159,6 +159,13 @@ describe("engine facets registry census", () => {
     expect(measured).toEqual(Object.fromEntries(ALL.map((id) => [id, [...EXPECTED_OFFERED[id]]])));
   });
 
+  test("no row lists a maintenance operation twice", () => {
+    const repeated = ALL.filter(
+      (id) => new Set(ENGINE_FACETS[id].maintenance).size !== ENGINE_FACETS[id].maintenance.length,
+    );
+    expect(repeated).toEqual([]);
+  });
+
   test("engineFacetsFor answers the row of a type id", () => {
     for (const id of ALL) expect(engineFacetsFor(id)).toBe(ENGINE_FACETS[id]);
   });
